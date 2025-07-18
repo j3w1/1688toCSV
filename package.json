@@ -1,0 +1,29 @@
+{
+    "devDependencies": {
+        "@webpack-cli/generators": "^3.0.7",
+        "autoprefixer": "^10.4.20",
+        "css-loader": "^7.1.2",
+        "html-webpack-plugin": "^5.6.0",
+        "mini-css-extract-plugin": "^2.9.1",
+        "postcss": "^8.4.45",
+        "postcss-loader": "^8.1.1",
+        "prettier": "^3.3.3",
+        "sass": "^1.78.0",
+        "sass-loader": "^16.0.1",
+        "style-loader": "^4.0.0",
+        "webpack": "^5.94.0",
+        "webpack-cli": "^5.1.4",
+        "webpack-dev-server": "^5.1.0",
+        "workbox-webpack-plugin": "^7.1.0"
+    },
+    "version": "1.0.0",
+    "description": "A Chrome extension to effortlessly export 1688.com order details into a clean CSV format.",
+    "name": "1688tocsv",
+    "scripts": {
+        "build": "webpack --mode=production --node-env=production",
+        "build:dev": "webpack --mode=development",
+        "build:prod": "webpack --mode=production --node-env=production",
+        "watch": "webpack --watch",
+        "serve": "webpack serve"
+    }
+}
