@@ -293,7 +293,7 @@
         }
       }
 
-      // Extract discount
+      // Extract discount - Modified to sum all discount items
       let discount = '0'
       if (discountCell && discountCell.shadowRoot) {
         const discountDiv = findElementInShadowDOM(
@@ -301,12 +301,20 @@
           '.order-table-discount'
         )
         if (discountDiv) {
-          const discountText = discountDiv.textContent || ''
-          // Look for discount pattern like "优惠共0.99元"
-          const discountMatch = discountText.match(/(\d+\.?\d*)\s*元/)
-          if (discountMatch) {
-            discount = discountMatch[1]
-          }
+          const priceSpans = findAllElementsInShadowDOM(
+            discountDiv,
+            '.order-table-discount-item-price'
+          )
+          let totalDiscount = 0
+          priceSpans.forEach((span) => {
+            const text = span.textContent || ''
+            // Extract any number (integer or float) from the text, handling "省" or "减" prefixes
+            const match = text.match(/(\d+\.?\d*)/)
+            if (match && match[1]) {
+              totalDiscount += parseFloat(match[1])
+            }
+          })
+          discount = totalDiscount.toFixed(2) // Format to 2 decimal places
         }
       }
 
