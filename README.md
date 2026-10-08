@@ -28,7 +28,7 @@ To use this extension locally in your Chrome browser, follow these steps:
      Unzip the file to a location on your computer.
    - If you have Git installed, you can clone the repository using the command:
      ```bash
-     git clone https://github.com/1w3j/1688toCSV.git
+     git clone https://github.com/j3w1/1688toCSV.git
      ```
 
 2. **Open Chrome Extensions Page:**
