@@ -2,7 +2,7 @@ const controlKey = Symbol.for('1688tocsv.pageDownloadCleanup')
 
 // Keep the native download link in the order document. Generate the current
 // file synchronously during its click, before the browser follows the link.
-export function mountPageDownload(document, prepareFile) {
+export function mountPageDownload(document, prepareFile, actions = {}) {
   const view = document.defaultView
   view[controlKey]?.()
   const host = document.createElement('div')
@@ -32,6 +32,11 @@ export function mountPageDownload(document, prepareFile) {
     .status { margin: 8px 0 0; overflow-wrap: anywhere; font-size: 12px; color: #58614f; }
     .status:empty { margin: 0; }
     .status[data-tone='error'] { color: #972e21; }
+    .library-actions { display: flex; gap: 6px; margin-top: 8px; }
+    button { font: inherit; cursor: pointer; flex: 1; padding: 8px 5px;
+      border: 1px solid #d9dfd2; border-radius: 6px; background: white; color: #52634b; font-size: 11px; }
+    button:hover { background: #e9eee2; }
+    button:focus-visible { outline: 3px solid #456fba; outline-offset: 3px; }
   `
   )
   const control = element('aside')
@@ -44,6 +49,29 @@ export function mountPageDownload(document, prepareFile) {
   status.className = 'status'
   status.setAttribute('role', 'status')
   status.setAttribute('aria-live', 'polite')
+  if (actions.saveOrder || actions.openLibrary) {
+    const buttons = element('div', '', control)
+    buttons.className = 'library-actions'
+    for (const [label, handler] of [
+      ['Save order', actions.saveOrder],
+      ['Spreadsheet ↗', actions.openLibrary],
+    ]) {
+      if (!handler) continue
+      const button = element('button', label, buttons)
+      button.addEventListener('click', async () => {
+        button.disabled = true
+        try {
+          status.dataset.tone = 'notice'
+          status.textContent = (await handler()) || ''
+        } catch (error) {
+          status.dataset.tone = 'error'
+          status.textContent = error.message
+        } finally {
+          button.disabled = false
+        }
+      })
+    }
+  }
   function releaseFile() {
     if (url) view.URL.revokeObjectURL(url)
     url = undefined

@@ -1,8 +1,16 @@
 {
   "manifest_version": 3,
   "name": "1688toCSV",
-  "version": "1.1.4",
-  "description": "Export 1688 order details to a clean CSV, locally in your browser.",
+  "version": "2.0.0",
+  "description": "Keep a local 1688 order spreadsheet, reconcile changes, and copy products and images to Excel.",
+  "permissions": ["alarms", "clipboardWrite", "unlimitedStorage", "tabs"],
+  "host_permissions": ["https://cbu01.alicdn.com/*"],
+  "background": {
+    "service_worker": "background.js"
+  },
+  "action": {
+    "default_title": "Open order spreadsheet"
+  },
   "content_security_policy": {
     "extension_pages": "script-src 'self'; object-src 'self'"
   },
@@ -13,6 +21,14 @@
         "https://air.1688.com/app/ctf-page/trade-order-detail/index.html*"
       ],
       "js": ["content.js"]
+    },
+    {
+      "matches": [
+        "https://air.1688.com/app/ctf-page/trade-order-list/buyer-order-list.html*",
+        "https://work.1688.com/*"
+      ],
+      "all_frames": true,
+      "js": ["list-content.js"]
     }
   ],
   "icons": {

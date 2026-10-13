@@ -18,6 +18,12 @@ try {
   await page.goto(`${preview.url}/export.html`)
   await page.locator('tbody tr').nth(1).waitFor()
   await page.screenshot({ path: 'screenshots/csv-file-screenshot.png' })
+  await page.setViewportSize({ width: 1440, height: 1060 })
+  await page.goto(`${preview.url}/library.html`)
+  await page.locator('#sheet-body tr').nth(7).waitFor()
+  await page.screenshot({ path: 'screenshots/order-library.png' })
+  await page.setViewportSize({ width: 390, height: 844 })
+  await page.screenshot({ path: 'screenshots/order-library-narrow.png' })
   console.log('README screenshots refreshed from synthetic preview data')
 } finally {
   await browser.close()

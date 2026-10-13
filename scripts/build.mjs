@@ -22,7 +22,12 @@ if (manifest.version !== pkg.version)
   throw new Error('Manifest and package versions differ')
 await build({
   absWorkingDir: root,
-  entryPoints: { content: 'src/content.js' },
+  entryPoints: {
+    content: 'src/content.js',
+    'list-content': 'src/list-content.js',
+    background: 'src/background.js',
+    library: 'src/library.js',
+  },
   outdir: output,
   bundle: true,
   format: 'iife',
@@ -33,6 +38,8 @@ await build({
 await cp(path.join(root, 'icons'), path.join(output, 'icons'), {
   recursive: true,
 })
+for (const resource of ['library.html', 'library.css'])
+  await cp(path.join(root, 'src', resource), path.join(output, resource))
 await writeFile(
   path.join(output, 'manifest.json'),
   JSON.stringify(manifest, null, 2) + '\n'
@@ -40,6 +47,10 @@ await writeFile(
 const resources = [
   ...Object.values(manifest.icons),
   ...manifest.content_scripts.flatMap((script) => script.js),
+  manifest.background.service_worker,
+  'library.html',
+  'library.css',
+  'library.js',
 ]
 for (const resource of resources) await readFile(path.join(output, resource))
 console.log(

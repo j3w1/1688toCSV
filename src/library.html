@@ -1,0 +1,161 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width,initial-scale=1" />
+    <title>Order library · 1688toCSV</title>
+    <link rel="stylesheet" href="library.css" />
+    <script type="module" src="library.js"></script>
+  </head>
+  <body>
+    <header class="topbar">
+      <a class="brand" href="library.html"
+        ><span class="brand-mark">1688</span
+        ><span>Order library<small>Your purchasing workspace</small></span></a
+      ><span class="local-label"><i></i> Stored in this browser</span>
+      <div class="top-actions">
+        <button id="backup">Back up</button><button id="restore">Restore</button
+        ><input
+          id="backup-file"
+          type="file"
+          accept="application/json,.json"
+          hidden
+        />
+      </div>
+    </header>
+    <main>
+      <section class="intro">
+        <div>
+          <p class="eyebrow">ORDERS → EXCEL</p>
+          <h1>Every order. One sheet.</h1>
+          <p>
+            Collect your orders, keep changes in sync, and copy exactly what you
+            need.
+          </p>
+        </div>
+        <a
+          class="button primary"
+          href="https://air.1688.com/app/ctf-page/trade-order-list/buyer-order-list.html?page=1&amp;pageSize=10"
+          target="_blank"
+          rel="noreferrer"
+          >Open 1688 orders <span aria-hidden="true">↗</span></a
+        >
+      </section>
+      <section class="stats" aria-label="Library overview">
+        <div><span id="order-count">0</span><small>Saved orders</small></div>
+        <div><span id="product-count">0</span><small>Product rows</small></div>
+        <div>
+          <span id="changed-count">0</span><small>Orders with changes</small>
+        </div>
+        <div><span id="checked-at">—</span><small>Last checked</small></div>
+      </section>
+      <section
+        id="jobs"
+        class="jobs"
+        aria-label="Import progress"
+        hidden
+      ></section>
+      <div class="workspace">
+        <aside class="orders-pane" aria-label="Saved orders">
+          <div class="pane-heading">
+            <h2>Orders</h2>
+            <button id="all-orders" class="text-button">Show all</button>
+          </div>
+          <div id="order-list"></div>
+          <div class="pane-footer">
+            <button id="refresh-orders">Refresh all</button
+            ><button id="remove-orders">Remove selected</button>
+          </div>
+        </aside>
+        <section class="sheet-pane" aria-label="Order spreadsheet">
+          <div class="sheet-toolbar">
+            <div>
+              <h2 id="sheet-title">All products</h2>
+              <p id="selection-summary">0 rows</p>
+            </div>
+            <div class="copy-actions">
+              <button id="copy-values">Copy values</button
+              ><button id="copy-images">Copy images</button
+              ><button id="copy-excel" class="primary">Copy to Excel</button>
+            </div>
+          </div>
+          <div class="filterbar">
+            <label class="search"
+              ><span class="sr-only">Search products and orders</span
+              ><input
+                id="search"
+                type="search"
+                placeholder="Search products, sellers, order IDs or tags…" /></label
+            ><label
+              ><span class="sr-only">Order status</span
+              ><select id="status-filter">
+                <option value="">All statuses</option>
+              </select></label
+            ><label class="check"
+              ><input id="changes-only" type="checkbox" />Changed only</label
+            ><label class="check"
+              ><input
+                id="include-headers"
+                type="checkbox"
+                checked
+              />Headers</label
+            >
+          </div>
+          <div id="empty-state" class="empty-state">
+            <span aria-hidden="true">▦</span>
+            <h2>Your orders belong here.</h2>
+            <p>
+              Open your 1688 order list and choose
+              <strong>Import all matching</strong> or select a few orders.
+              Product details will appear here as they are collected.
+            </p>
+          </div>
+          <div
+            class="table-scroll"
+            tabindex="0"
+            aria-label="Scrollable product rows"
+          >
+            <table>
+              <thead>
+                <tr>
+                  <th class="select-col">
+                    <input
+                      id="select-rows"
+                      type="checkbox"
+                      aria-label="Select all filtered products"
+                    />
+                  </th>
+                  <th>Thumbnail</th>
+                  <th>Description</th>
+                  <th class="numeric">Price</th>
+                  <th class="numeric">Quantity</th>
+                  <th class="numeric">Discount</th>
+                </tr>
+              </thead>
+              <tbody id="sheet-body"></tbody>
+            </table>
+          </div>
+          <div class="sheet-footer">
+            <p id="paste-help">
+              Paste into a blank Excel range. Pictures are sized to standard
+              rows; resize after pasting.
+            </p>
+            <div>
+              <button id="previous-page" aria-label="Previous product page">
+                ←</button
+              ><span id="page-label">Page 1</span
+              ><button id="next-page" aria-label="Next product page">→</button>
+            </div>
+          </div>
+        </section>
+      </div>
+      <p id="feedback" role="status" aria-live="polite"></p>
+    </main>
+    <dialog id="order-details">
+      <form method="dialog">
+        <button class="dialog-close" aria-label="Close order details">×</button>
+      </form>
+      <div id="details-content"></div>
+    </dialog>
+  </body>
+</html>

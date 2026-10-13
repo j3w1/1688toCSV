@@ -19,12 +19,20 @@ const repository = fileURLToPath(new URL('../../', import.meta.url))
 const syntheticOrderId = '1234567890123456789'
 
 async function startFixtureServer() {
-  const server = createServer((request, response) => {
+  const server = createServer(async (request, response) => {
+    const pathname = new URL(request.url, 'http://127.0.0.1').pathname
     if (
-      !['/fixture.html', '/unsupported'].includes(
-        new URL(request.url, 'http://127.0.0.1').pathname
+      ['/src/database.js', '/src/clipboard.js', '/src/money.js'].includes(
+        pathname
       )
     ) {
+      response.writeHead(200, {
+        'Content-Type': 'text/javascript; charset=utf-8',
+      })
+      response.end(await readFile(path.join(repository, pathname.slice(1))))
+      return
+    }
+    if (!['/fixture.html', '/unsupported'].includes(pathname)) {
       response.writeHead(404)
       response.end()
       return
@@ -46,7 +54,7 @@ async function prepareExtension(directory) {
   await cp(path.join(repository, 'dist'), directory, { recursive: true })
   const manifestPath = path.join(directory, 'manifest.json')
   const manifest = JSON.parse(await readFile(manifestPath, 'utf8'))
-  // Test-only inspection and reinjection. Production has no privileged APIs.
+  // Additional test-only inspection and reinjection permissions.
   manifest.permissions = [
     ...new Set([...(manifest.permissions ?? []), 'downloads', 'scripting']),
   ]
@@ -68,7 +76,11 @@ async function prepareExtension(directory) {
   // There is intentionally no remote page match in the disposable fixture copy.
   manifest.content_scripts = manifest.content_scripts.map((script) => ({
     ...script,
-    matches: ['http://127.0.0.1/fixture.html*'],
+    matches: [
+      script.js.includes('list-content.js')
+        ? 'http://127.0.0.1/list.html*'
+        : 'http://127.0.0.1/fixture.html*',
+    ],
   }))
   await writeFile(manifestPath, JSON.stringify(manifest, null, 2))
   await writeFile(

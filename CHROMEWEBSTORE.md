@@ -2,195 +2,145 @@
 
 > Last Updated: 2026-10-13
 >
-> Draft store listing for version 1.1.4. Local verification passed, and the user confirmed a one-click download on a live 1688 order in the embedded browser. No store submission or publication was performed. Publisher details, a live privacy policy, and store artwork remain unfinished.
+> Draft for development version 2.0.0. No store submission or publication. Live multi-order import acceptance remains pending.
 
 ## Store Listing
 
-**Extension Name** [REQUIRED]
+**Extension Name** [REQUIRED]: 1688toCSV
 
-1688toCSV
+**Short Description** [REQUIRED]: Keep a local 1688 order spreadsheet, reconcile changes, and copy products and images to Excel.
 
-**Short Description** [REQUIRED]
-
-Export 1688 order details to a clean CSV, locally in your browser.
-
-**Detailed Description** [REQUIRED — draft copy]
+**Detailed Description** [REQUIRED — draft]
 
 ```text
-Export the product rows from a 1688 order detail page to a CSV for your spreadsheet.
+Turn 1688 purchases into a local, copyable order spreadsheet.
 
-Save product image links, descriptions, original unit prices, quantities, and total item-row discounts. Chinese text and multiline descriptions are preserved. The filename includes the seller name and the last four digits of the order number.
+Collect selected orders or all pages of the currently filtered purchased-orders list. See thumbnails, descriptions and variants, original unit prices, quantities and discounts together. Copy five columns into Excel with separate pictures, copy values alone, or copy individual or grouped product images.
+
+Refresh saved orders when needed. Changed products are highlighted, previous versions remain available, and your notes and tags stay separate. Whole-order price adjustments are distributed across products while original amounts remain visible. Shipping stays separate.
 
 HOW TO USE
-Open a supported 1688 order detail page and wait for its product rows to appear.
-Click Download CSV in the 1688toCSV control at the bottom right of the page.
-Your browser may ask where to save the file. Check your downloads to confirm that it finished.
-After installing or reloading the extension, refresh an already-open order page to show the control.
-
-DISCOUNTS
-The Discount column contains the total discount for each product row. When the page shows a total row discount, that value is used instead of recalculating it from rounded unit prices. Whole-order price adjustments, including 商品改价, are not distributed across product rows.
+Set the filters on your 1688 order list. Choose Import all matching, or select order checkboxes and choose Import selected. Keep the list open while collection runs. Open the spreadsheet from the page or extension icon, select products, and choose Copy to Excel. Bulk images are compact pictures aligned with standard Excel rows; paste into a blank range and resize afterward. The one-click single-order CSV option remains, with its original item-discount behavior.
 
 PRIVACY
-Order details are processed locally to create the file you request. The extension does not upload order data, track your browsing activity, or use analytics. It does not submit, pay for, or change orders. The CSV you save remains under your control and may contain sensitive purchase information.
+Orders, versions, notes and cached pictures stay in your browser. Back up and restore using a local file. No developer service receives your orders and no analytics are used. The extension does not read passwords/authentication cookies or submit, pay for, or alter orders. Importing opens 1688 pages using your existing session; displaying/copying thumbnails may request Alibaba CDN images.
 
 SCOPE
-This extension exports one open order detail page at a time. It does not export the purchased-orders list or all orders in your account. If required product data cannot be read, it shows an error instead of creating a partial export.
+One buyer account per library and the observed supported page layouts. Imports are user-requested; opening a saved order refreshes it. Incomplete pages, login screens and totals that do not reconcile preserve the previous good version. Keep backups before uninstalling or clearing your profile.
 ```
 
-Add the publisher's confirmed support contact to the final copy before submission. The function described above is present in the 1.1.4 build; verification results are recorded below.
+**Category** [REQUIRED]: Shopping — proposed; confirm in Dashboard.
 
-**Category** [REQUIRED]
+**Single Purpose** [REQUIRED]: Maintain a local spreadsheet of 1688 purchase orders for reconciliation and copying into Excel.
 
-Shopping — proposed category; confirm the matching category in the Developer Dashboard when preparing submission.
-
-**Single Purpose** [REQUIRED]
-
-Export product rows from the current 1688 order detail page to a local CSV file.
-
-**Primary Language** [REQUIRED]
-
-English. The interface is English; exported product text retains its original language.
+**Primary Language** [REQUIRED]: English UI; original product languages retained.
 
 ## Graphics & Assets
 
-| Asset                               | Target dimensions       | Status                                                                                 | Existing file or planned content                                                            |
-| ----------------------------------- | ----------------------- | -------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------- |
-| Store icon [REQUIRED]               | 128 × 128 PNG           | Existing file has the correct dimensions; branding and final store suitability pending | [icons/icon128.png](icons/icon128.png)                                                      |
-| Screenshot 1 [REQUIRED]             | 1280 × 800 or 640 × 400 | Not prepared for store upload                                                          | Supported synthetic order page with the bottom-right Download CSV control                   |
-| Screenshot 2 [RECOMMENDED]          | 1280 × 800 or 640 × 400 | Not prepared for store upload                                                          | Resulting synthetic CSV with the original price, quantity, and row discount columns visible |
-| Screenshot 3                        | 1280 × 800 or 640 × 400 | Not planned                                                                            | —                                                                                           |
-| Screenshot 4                        | 1280 × 800 or 640 × 400 | Not planned                                                                            | —                                                                                           |
-| Screenshot 5                        | 1280 × 800 or 640 × 400 | Not planned                                                                            | —                                                                                           |
-| Small promotional tile              | 440 × 280               | Not created                                                                            | Original extension branding                                                                 |
-| Marquee promotional tile [OPTIONAL] | 1400 × 560              | Not created                                                                            | —                                                                                           |
+| Asset                  | Dimensions                           | Status / file                                                                       |
+| ---------------------- | ------------------------------------ | ----------------------------------------------------------------------------------- |
+| Store icon             | 128 × 128 PNG                        | Present; artwork rights and store suitability unfinished: [icon](icons/icon128.png) |
+| Screenshot 1           | Store target 1280 × 800 or 640 × 400 | README only: [library](screenshots/order-library.png)                               |
+| Screenshot 2           | Store target 1280 × 800 or 640 × 400 | README only: [page control](screenshots/1688toCSV-download.png)                     |
+| Screenshot 3           | Store target 1280 × 800 or 640 × 400 | README only: [narrow library](screenshots/order-library-narrow.png)                 |
+| Small promotional tile | 440 × 280                            | Not created                                                                         |
+| Optional marquee       | 1400 × 560                           | Not created                                                                         |
 
-### Screenshot Notes
-
-The [page-control screenshot](screenshots/1688toCSV-download.png) and [CSV screenshot](screenshots/csv-file-screenshot.png) were regenerated for the 1.1.4 interface using synthetic order data. They are README assets, not store-ready artwork. Compose and inspect separate store images at the required dimensions before submission. The extension has no popup; obsolete popup screenshots must not be used for the listing.
-
-The 16, 48, and 128 pixel PNG icon files have been checked against their declared dimensions. The current icon artwork includes 1688/Alibaba and spreadsheet branding. Rights to that artwork have not been established in this task; confirm permission to use it or replace it with original artwork before a store submission. Do not imply endorsement or affiliation.
-
-Google's [store image guidance](https://developer.chrome.com/docs/webstore/images?authuser=8) specifies the screenshot sizes and required image types. Its current instructions include a small promotional image among the required assets; the installed skill template labels that tile recommended. Keep it unfinished until the submission assets and Dashboard requirements are reconciled.
+All screenshots use synthetic orders and need separate store-sized composition. Existing icons include 1688/Alibaba and spreadsheet branding; rights were not established in this task. Confirm permission or replace with original artwork before submission. Do not imply affiliation.
 
 ## Permissions Justification
 
-The production 1.1.4 [manifest](manifest.json) declares no API permissions, explicit `host_permissions`, or optional permissions. The page-only flow removes `activeTab`, `scripting`, and `tabs`; the unused `storage` permission is also absent. A native file link requests the download without download-management permission. No permission is reserved for a future feature.
+The production [manifest](manifest.json) requests no downloads, scripting, activeTab, cookies, history or clipboard-read permission.
 
-There is no extension action, popup, service worker, or extension messaging. Icons are declared at the manifest's top level. The packaged content script installs the page control on the routes below; order extraction happens only when the user clicks **Download CSV**, without polling or stored exports.
+| Permission                 | Type | Purpose                                                                                                       |
+| -------------------------- | ---- | ------------------------------------------------------------------------------------------------------------- |
+| tabs                       | API  | Identify/manage tabs for explicit imports; detect interrupted navigation and close only importer-created tabs |
+| alarms                     | API  | Continue checkpointed steps while a requested import is active; no scheduled account crawler                  |
+| clipboardWrite             | API  | Copy product values and pictures after a user copy action                                                     |
+| unlimitedStorage           | API  | Retain orders, earlier versions and pictures beyond small default limits; disk errors still report failures   |
+| https://cbu01.alicdn.com/* | Host | Fetch and cache public product thumbnails for display and copying, without credentials                        |
 
-### Automatic content-script access
+Packaged content scripts match these pages:
 
-These are `content_scripts.matches` entries, not `host_permissions`. They cause the packaged download control to appear on the two declared order-detail routes:
+| Match                                                                     | Purpose                                                                                                                |
+| ------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------- |
+| https://air.1688.com/app/ctf-page/trade-order-detail/index.html*          | Save/read complete orders, refresh saved orders, CSV controls                                                          |
+| https://trade.1688.com/order/new_step_order_detail.htm*                   | Declared legacy route when its layout is supported                                                                     |
+| https://air.1688.com/app/ctf-page/trade-order-list/buyer-order-list.html* | Order discovery and pagination                                                                                         |
+| https://work.1688.com/*                                                   | Recognize the buyer workbench's directly rendered or embedded list; only mount controls when a supported list is found |
 
-| Match pattern                                                      | User-facing reason                                                                                                                    |
-| ------------------------------------------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------- |
-| `https://trade.1688.com/order/new_step_order_detail.htm*`          | Display the download control on the declared legacy 1688 order-detail route. Export still requires a readable supported order layout. |
-| `https://air.1688.com/app/ctf-page/trade-order-detail/index.html*` | Display the download control and read product rows on the current declared 1688 order-detail route.                                   |
-
-The isolated automated test copy adds localhost access and download inspection for tests. Those additions are not part of the production permissions or the store submission package.
+List scripts run in matching frames because the workbench hosts a separate list application. The toolbar opens a full extension page, with no popup. Test-only localhost and inspection permissions do not ship.
 
 ## Privacy & Data Use
 
-### Data Collection
+**Does the extension handle user data? Yes, locally.**
 
-**Does the extension handle user data? Yes, locally.** It reads the selected order's website content to prepare the CSV. No developer-operated collection, off-device transmission, analytics, or persistent extension storage was found in the inspected production source. Do not answer “no data handling” merely because processing is local: Google's [user-data FAQ](https://developer.chrome.com/docs/webstore/program-policies/user-data-faq) expressly includes local processing and website scraping.
+| Data type                                                    | Handling                                               | Off-device use                                                           |
+| ------------------------------------------------------------ | ------------------------------------------------------ | ------------------------------------------------------------------------ |
+| Seller names and order/product-entry IDs                     | Retained for identity and reconciliation               | No developer upload                                                      |
+| Prices, quantities, discounts, shipping, totals              | Validated, retained with history and copied on request | No developer upload                                                      |
+| Product text, variants, pictures                             | Local database/cache                                   | Image requests reach Alibaba CDN; imports make normal 1688 page requests |
+| User notes/tags                                              | Stored locally and included in backups                 | No developer upload                                                      |
+| Supported URLs/filters                                       | Explicit import and retained checkpoints               | Requests to 1688 to load those pages                                     |
+| Authentication information                                   | No password/token/cookie extraction                    | Normal navigation uses the signed-in browser session                     |
+| Recipient addresses, private communications, general history | Not intentionally extracted or logged                  | None                                                                     |
+| Analytics, advertising, creditworthiness                     | Not collected for these purposes                       | None                                                                     |
 
-| Data type                           | Accessed or processed?                                                                                             | Transmitted off-device by this extension? | Purpose                                               | Shared with third parties by this extension? |
-| ----------------------------------- | ------------------------------------------------------------------------------------------------------------------ | ----------------------------------------- | ----------------------------------------------------- | -------------------------------------------- |
-| Personally identifiable information | Seller/member login name; order identifier; product text may contain identifying information                       | No                                        | Name the export and identify the open order           | No                                           |
-| Health information                  | Not intentionally selected; arbitrary product descriptions are exported as website content                         | No                                        | No health-specific feature                            | No                                           |
-| Financial information               | Product prices, quantities, item-row discounts, and purchase details in the open order                             | No                                        | Create the requested order CSV                        | No                                           |
-| Authentication information          | No passwords, tokens, or authentication cookies; member names are disclosed above                                  | No                                        | None                                                  | No                                           |
-| Personal communications             | Not intentionally selected                                                                                         | No                                        | None                                                  | No                                           |
-| Location                            | No dedicated recipient-address or location extraction                                                              | No                                        | None                                                  | No                                           |
-| Web history / browsing activity     | Current order-page URL and order identifier only; no history API, browsing log, or background tracking             | No                                        | Recognize a supported order page and its order number | No                                           |
-| User activity                       | Responds to local download clicks; no interaction log or analytics                                                 | No                                        | Carry out the requested export                        | No                                           |
-| Website content                     | Product image URLs, descriptions, variants, product numbers, prices, quantities, discounts, and seller/member name | No                                        | Create the requested CSV and filename                 | No                                           |
+Orders, histories, notes, jobs and images persist in IndexedDB. Cached images are deduplicated by URL. Removing an order removes its versions; shared images may remain cached. Backups include orders/history/notes/cached images, not active jobs. Uninstalling or deleting the profile can delete the library. Clipboard data and saved files are subsequently controlled by the operating system and user.
 
-Production data handling is implemented in [src/extract.js](src/extract.js), [src/csv.js](src/csv.js), [src/page-download.js](src/page-download.js), and [src/content.js](src/content.js).
-
-The page control prepares a fresh CSV in memory when clicked. The previous in-memory file URL is released before another export and on page navigation; replacing the control also releases it. The extension does not retain an order database or synchronize exports. A downloaded file remains on the user's device until the user deletes it. Normal browser download records are controlled by the browser.
-
-The CSV contains product image URLs rather than downloaded images. The extension does not fetch those images for the export. Opening those links or importing them into another application may cause that application to make network requests; that is outside this extension's export operation.
+Implementation: [database](src/database.js), [snapshots](src/order-snapshot.js), [import controller](src/import-controller.js), [background](src/background.js), [images](src/images.js), [clipboard](src/clipboard.js).
 
 ### Data Use Certification
 
-The inspected implementation supports these statements. The publisher must confirm and submit the actual Dashboard certifications:
+Publisher confirmation and Dashboard submission remain outstanding:
 
-- [ ] Data is not sold to third parties.
-- [ ] Data is not used for purposes unrelated to the extension's order-export functionality.
-- [ ] Data is not used for creditworthiness or lending purposes.
+- [ ] Data is not sold.
+- [ ] Data is not used outside the order-library purpose.
+- [ ] Data is not used for creditworthiness/lending.
 
 ## Privacy Policy
 
-**Privacy Policy URL** [REQUIRED BEFORE SUBMISSION]
+**Privacy Policy URL** [REQUIRED]: Not supplied or published.
 
-Not provided. No privacy policy has been published or uploaded by this task. The policy must identify the actual publisher and contact address and describe the local data handling above. Verify that the final URL is publicly accessible before using it in the Developer Dashboard.
-
-**Draft policy content for the publisher to complete**
-
-```text
-1688toCSV processes information from the 1688 order detail page you open to create a CSV when you request it. This includes product descriptions and image links, original prices, quantities, item discounts, the seller/member name, and the order identifier used in the interface and filename.
-
-Processing takes place in your browser. The extension does not upload the order data to the developer or another service, use analytics, or retain an order database. Temporary export data is held in memory and released when replaced or when the page is left. Files you download remain on your device until you delete them.
-
-The extension does not read passwords or authentication cookies. It does not submit, pay for, or change orders. Exported files may contain sensitive purchase information; you control how you store or share those files.
-
-Product image links remain links in the CSV. Other applications may retrieve those images if you choose to open or import the links.
-
-Publisher identity, effective date, privacy contact, and policy-change contact method must be supplied before this policy is published.
-```
+Draft substance: records, history, notes and pictures remain locally stored. No developer-operated uploads or analytics. Import/refresh access 1688 in the existing session; pictures may be requested from Alibaba CDN. No credential extraction or order transactions. Users control copying, backups, restore and removal. Add publisher identity, effective date and contact information before publication.
 
 ## Distribution
 
-**Visibility:** Not selected. No public, unlisted, or private store distribution has been authorized or configured by this task.
-
-**Regions:** Not selected.
+**Visibility / regions:** Not selected. Repository push authority does not authorize store submission.
 
 ## Developer Info
 
-**Publisher Name** [REQUIRED]
+**Publisher name/contact email** [REQUIRED]: Not provided; do not infer a legal identity from the repository owner.
 
-Not provided; do not infer a legal publisher identity from the GitHub repository owner.
+**Support route** [RECOMMENDED]: Not confirmed.
 
-**Contact Email** [REQUIRED]
-
-Not provided.
-
-**Support URL / Email** [RECOMMENDED]
-
-Not selected. Confirm a monitored public support route before submission.
-
-**Homepage URL** [RECOMMENDED]
-
-Candidate: [j3w1/1688toCSV repository](https://github.com/j3w1/1688toCSV). This is the verified repository remote, not a confirmed public store homepage or support commitment.
+**Homepage** [RECOMMENDED]: Candidate [j3w1/1688toCSV](https://github.com/j3w1/1688toCSV).
 
 ## Version History
 
-No Chrome Web Store submission or publication history was established in this task. The following records the verified development version and its draft store-listing status.
-
-| Version | Date       | Changes                                                                                                                                                                                     | Status                                                                                                    |
-| ------- | ---------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------- |
-| 1.1.4   | 2026-10-13 | Add a persistent Download CSV control directly on supported order pages; prepare current order data on each download click; remove the popup, extension messaging, and all API permissions. | Draft store listing — local verification passed; live one-click download confirmed by user; not submitted |
+| Version | Date       | Changes                                                                                                                            | Status                                                               |
+| ------- | ---------- | ---------------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------- |
+| 2.0.0   | 2026-10-13 | Multi-order library, resumable imports, reconciliation/history, order-adjustment allocation, Excel pictures, notes, backup/restore | Development candidate; not submitted; live import acceptance pending |
+| 1.1.4   | 2026-10-13 | One-click CSV page control; removed popup                                                                                          | Local tests passed; user confirmed live download; not submitted      |
 
 ## Review Notes
 
-### Development Verification
+### Development verification
 
-- `npm run verify` passed against the production 1.1.4 build: source and documentation checks, 54 unit checks, and 10 Chromium browser scenarios.
-- Browser tests checked completed CSV files, Chinese filenames and BOM, current row discounts including 47.20, repeated downloads, keyboard activation, malformed data, reinjection, URL cleanup, and the 320px layout.
-- The same page control produced a completed synthetic CSV in the embedded browser with one click. The user then reloaded 1.1.4, refreshed a real 1688 order, and confirmed one click saved the CSV with no popup or second button. Agent access to the live page remained blocked by browser policy; this live result is user-reported.
-- Focused independent source review found no actionable defects. These results establish the tested development flow, not Chrome Web Store acceptance or compatibility with every 1688 layout.
+- Three private detail captures (21, 5 and 40 products) and two list captures were inspected offline. They preserve full IDs, variants, explicit item discounts and reconciled order totals. No private captures are committed.
+- Synthetic unit and isolated Chromium tests cover extraction, allocation, database/backup transactions, job recovery and spreadsheet/clipboard behavior. Run npm run verify against the final candidate.
+- npm run test:excel passed for synthetic browser copying into a fresh Windows Excel workbook: five columns, eight separate pictures at rows 2–9, numeric price/quantity cells. No workbook was saved; the previous clipboard was restored.
+- Live multi-page import, changes to real orders and clipboard behavior in the embedded browser remain separate pending acceptance. Agent access to live 1688 is blocked by browser-tool policy; no alternate live automation is used.
 
-### Known Issues / Limitations
+### Known limitations
 
-- Whole-order price adjustments, including 商品改价, are not allocated across product rows. The `Discount` column is a total for each item row, not a per-unit value.
-- Export depends on the supported order-page structure. The purchased-orders list and account-wide export are outside scope. A declared legacy URL match does not establish live compatibility with every legacy page layout.
-- One click on the page control requests the download. The browser may still show a file-location prompt or deny the save. “Save requested” is not proof that the file finished saving; cancellation is not retried automatically.
-- Live acceptance covers the user's tested order and browser. Other order layouts, including legacy pages, still require their own acceptance checks.
-- Publisher identity, contact, distribution settings, a public privacy policy, original or authorized store artwork, and store-sized screenshots remain unfinished. No submission ZIP or Dashboard entry was created by this task.
-- For a future submission, package the verified production `dist` contents only. Exclude this document, repository metadata, source tooling, tests, private orders, and local test profiles.
+- One buyer account per library; no automatic account detection.
+- Unsupported layouts, installment totals, unknown adjustments and inconsistent totals report errors and preserve good saved data.
+- Bulk images use standard-height Excel rows and are floating pictures. Custom row heights, other spreadsheet apps and native in-cell conversion need separate verification.
+- Cached images work offline; unfetched images still need a connection. Large uncached copies can take time.
+- Legacy CSV preserves item discounts; library copying also allocates order adjustments.
+- Publisher details, public privacy policy, rights-cleared artwork, store screenshots and Dashboard settings remain unfinished. No store package or submission was created.
 
-### Rejection History
+### Rejection history
 
-No store review or rejection history was provided or verified.
+No store review or rejection history was supplied or verified.

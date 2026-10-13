@@ -13,8 +13,12 @@ export function findOrderTable(document) {
 function requiredNumber(value, field, rowNumber, { integer = false } = {}) {
   const match = value.match(numberPattern)
   const result = match?.[0].replaceAll(',', '')
+  const remainder = match
+    ? value.slice(0, match.index) + value.slice(match.index + match[0].length)
+    : value
   if (
     !result ||
+    /[\d.,]/.test(remainder) ||
     /[-−]\s*\d/.test(value) ||
     !Number.isFinite(Number(result)) ||
     (integer && (!/^\d+$/.test(result) || Number(result) <= 0))
@@ -135,7 +139,7 @@ function extractRow(row, index) {
     throw new Error(`Row ${rowNumber}: product description is missing.`)
   const description = [
     title,
-    text(goodsQuery.one('.sku c-t')),
+    ...goodsQuery.all('.sku c-t').map(text),
     text(goodsQuery.one('.sku .product-number')),
   ]
     .filter(Boolean)
@@ -152,7 +156,9 @@ function extractRow(row, index) {
     priceBlock?.querySelector(':scope > div')
   const priceText = text(priceElement)
   const price = requiredNumber(
-    priceText.match(new RegExp(`(-?${numberPattern.source})\\s*元`))?.[1] || '',
+    priceText.match(
+      new RegExp(`^([−-]?${numberPattern.source})\\s*元(?:\\s*[/／][^\\d]*)?$`)
+    )?.[1] || '',
     'price',
     rowNumber
   )

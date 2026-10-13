@@ -1,0 +1,335 @@
+import { detailUrl } from './order-list.js'
+
+const active = (job) => job.state === 'running'
+const errorText = (error) =>
+  String(error?.message || error || 'The import could not continue.').slice(
+    0,
+    500
+  )
+
+function summarize(job) {
+  job.completed = job.orders.filter((order) => order.state === 'done').length
+  job.failed = job.orders.filter((order) => order.state === 'failed').length
+  job.discovered = job.orders.length
+  return job
+}
+
+export function createImportController({
+  repository,
+  browser,
+  now = () => Date.now(),
+  makeId = () => crypto.randomUUID(),
+}) {
+  async function write(job) {
+    job.updatedAt = new Date(now()).toISOString()
+    await repository.putJob(summarize(job))
+    return job
+  }
+
+  async function ensureIdle() {
+    if ((await repository.listJobs()).some(active))
+      throw new Error('Pause the current import before starting another one.')
+  }
+
+  function baseJob(kind) {
+    return {
+      id: makeId(),
+      accountId: 'local',
+      kind,
+      state: 'running',
+      phase: 'details',
+      createdAt: new Date(now()).toISOString(),
+      updatedAt: new Date(now()).toISOString(),
+      orders: [],
+      page: 0,
+      total: 0,
+      error: '',
+      workerTabId: null,
+    }
+  }
+
+  function queued(order) {
+    const sourceUrl = detailUrl(order.sourceUrl, order.orderId)
+    if (!sourceUrl) throw new Error('An order has an unsupported detail URL.')
+    return {
+      orderId: order.orderId,
+      sourceUrl,
+      expectedRows: order.expectedRows,
+      state: 'pending',
+      error: '',
+    }
+  }
+
+  async function releaseWorker(job) {
+    const tabId = job.workerTabId
+    job.workerTabId = null
+    job.currentOrderId = null
+    job.detailStartedAt = null
+    job.detailAttempts = 0
+    // Checkpoint before closing, so the tab-removal event is not mistaken for a user interruption.
+    await write(job)
+    await browser.closeDetailTab(tabId, job.id)
+  }
+
+  async function pause(jobId, reason = 'Paused by you.') {
+    const job = await repository.getJob(jobId)
+    if (!job) throw new Error('That import no longer exists.')
+    if (!active(job)) return job
+    job.state = 'paused'
+    job.error = reason
+    await releaseWorker(job)
+    return job
+  }
+
+  async function start({ scope, orderIds, source }) {
+    await ensureIdle()
+    if (!['all', 'selected'].includes(scope))
+      throw new Error('Choose all filtered orders or selected orders.')
+    if (
+      !source ||
+      !Number.isInteger(source.tabId) ||
+      !Number.isInteger(source.frameId)
+    )
+      throw new Error('Start import from the order-list page.')
+    const list = await browser.readList(source)
+    const job = baseJob('import')
+    Object.assign(job, {
+      source,
+      filterKey: list.filterKey,
+      total: list.total,
+      pageSize: list.pageSize,
+      sourcePage: list.page,
+    })
+    if (scope === 'all') {
+      job.phase = 'scan'
+      job.nextPage = 1
+    } else {
+      const ids =
+        orderIds ||
+        list.orders
+          .filter((order) => order.selected)
+          .map((order) => order.orderId)
+      if (
+        !Array.isArray(ids) ||
+        !ids.length ||
+        ids.some((id) => typeof id !== 'string')
+      )
+        throw new Error('Select at least one order on this page.')
+      const requested = new Set(ids)
+      const orders = list.orders.filter((order) => requested.has(order.orderId))
+      if (orders.length !== requested.size)
+        throw new Error(
+          'Selected orders changed. Select them again on the current page.'
+        )
+      job.orders = orders.map(queued)
+      job.total = job.orders.length
+    }
+    await write(job)
+    await browser.schedule()
+    return job
+  }
+
+  async function refresh(orderIds) {
+    await ensureIdle()
+    const records = await repository.listOrders()
+    if (
+      orderIds !== undefined &&
+      (!Array.isArray(orderIds) ||
+        orderIds.some((id) => typeof id !== 'string'))
+    )
+      throw new Error('Invalid order selection.')
+    const ids = orderIds?.length
+      ? new Set(orderIds)
+      : new Set(records.map((record) => record.snapshot.orderId))
+    const orders = records.filter((record) => ids.has(record.snapshot.orderId))
+    if (!orders.length || orders.length !== ids.size)
+      throw new Error('Choose saved orders to refresh.')
+    const job = baseJob('refresh')
+    // A refreshed order may have gained or lost lines; old row counts are not completeness evidence.
+    job.orders = orders.map((record) => queued(record.snapshot))
+    job.total = job.orders.length
+    await write(job)
+    await browser.schedule()
+    return job
+  }
+
+  async function resume(jobId) {
+    await ensureIdle()
+    const job = await repository.getJob(jobId)
+    if (!job) throw new Error('That import no longer exists.')
+    if (!['paused', 'completed-with-errors'].includes(job.state))
+      throw new Error('This import has nothing to resume.')
+    if (job.phase === 'scan') {
+      const list = await browser.readList(job.source)
+      assertList(job, list)
+      if (![job.page, job.nextPage, job.sourcePage].includes(list.page))
+        throw new Error(
+          'Return the order list to the page where import paused before resuming.'
+        )
+    }
+    for (const order of job.orders)
+      if (order.state === 'failed')
+        Object.assign(order, { state: 'pending', error: '' })
+    job.state = 'running'
+    job.error = ''
+    await write(job)
+    await browser.schedule()
+    return job
+  }
+
+  function assertList(job, list) {
+    if (list.filterKey !== job.filterKey)
+      throw new Error(
+        'The order-list filters changed. Restore the original filters to resume, or start a new import.'
+      )
+    if (list.total !== job.total || list.pageSize !== job.pageSize)
+      throw new Error(
+        'The filtered order list changed. Start a new import to scan it consistently.'
+      )
+  }
+
+  async function scan(job) {
+    let list = await browser.readList(job.source)
+    assertList(job, list)
+    if (list.page !== job.nextPage) {
+      if (![job.page, job.sourcePage].includes(list.page))
+        throw new Error(
+          'The order-list page changed unexpectedly. Import paused.'
+        )
+      job.pendingPage = job.nextPage
+      await write(job) // The target survives worker termination and a full-page navigation.
+      list = await browser.changePage(job.source, job.nextPage)
+      assertList(job, list)
+    }
+    if (list.page !== job.nextPage)
+      throw new Error('The order list did not reach the requested page.')
+    const pageIds = list.orders.map((order) => order.orderId).join(',')
+    if (job.previousPageIds === pageIds && job.page !== list.page)
+      throw new Error('Pagination returned the same orders. Import paused.')
+    const known = new Set(job.orders.map((order) => order.orderId))
+    for (const order of list.orders)
+      if (!known.has(order.orderId)) {
+        job.orders.push(queued(order))
+        known.add(order.orderId)
+      }
+    job.page = list.page
+    job.sourcePage = list.page
+    job.pendingPage = null
+    job.previousPageIds = pageIds
+    job.nextPage = list.page + 1
+    if (list.page >= Math.max(1, Math.ceil(list.total / list.pageSize))) {
+      if (job.orders.length !== job.total)
+        throw new Error(
+          'Orders shifted between pages. Start a new import to avoid missing orders.'
+        )
+      job.phase = 'details'
+    }
+    await write(job)
+    return 'continue'
+  }
+
+  async function details(job) {
+    const order = job.orders.find((item) => item.state === 'pending')
+    if (!order) {
+      job.state = job.orders.some((item) => item.state === 'failed')
+        ? 'completed-with-errors'
+        : 'completed'
+      await releaseWorker(job)
+      return 'finished'
+    }
+    if (!Number.isInteger(job.workerTabId)) {
+      job.currentOrderId = order.orderId
+      job.detailStartedAt = now()
+      job.detailAttempts = 0
+      await write(job)
+      job.workerTabId = await browser.openDetailTab(order.sourceUrl, job.id)
+      await write(job)
+      return 'wait'
+    }
+    const tab = await browser.getDetailTab(job.workerTabId, job.id)
+    if (!tab) throw new Error('The import tab was closed. Resume to reopen it.')
+    if (tab.url && !detailUrl(tab.url, order.orderId))
+      throw new Error(
+        'The import tab left the order page. Complete sign-in or verification, then resume.'
+      )
+    if (tab.status !== 'complete') {
+      if (now() - job.detailStartedAt > 90000)
+        throw new Error(
+          'The order page did not finish loading. Check your connection or sign-in, then resume.'
+        )
+      return 'wait'
+    }
+    job.detailAttempts += 1
+    await write(job)
+    let snapshot
+    try {
+      snapshot = await browser.readDetail(job.workerTabId, order.orderId)
+      if (
+        snapshot.orderId !== order.orderId ||
+        !detailUrl(snapshot.sourceUrl, order.orderId)
+      )
+        throw new Error('The detail page returned a different order.')
+      if (order.expectedRows && snapshot.items.length !== order.expectedRows)
+        throw new Error(
+          `Expected ${order.expectedRows} product rows but read ${snapshot.items.length}. No saved data was replaced.`
+        )
+      await repository.saveSnapshot(snapshot)
+      order.state = 'done'
+      order.error = ''
+    } catch (error) {
+      if (
+        error?.retryable &&
+        job.detailAttempts < 3 &&
+        now() - job.detailStartedAt < 90000
+      )
+        return 'wait'
+      order.state = 'failed'
+      order.error = errorText(error)
+    }
+    await write(job)
+    await releaseWorker(job)
+    await browser.changed()
+    return 'continue'
+  }
+
+  async function tick() {
+    const job = (await repository.listJobs()).find(active)
+    if (!job) {
+      await browser.unschedule()
+      return 'finished'
+    }
+    try {
+      return job.phase === 'scan' ? await scan(job) : await details(job)
+    } catch (error) {
+      await pause(job.id, errorText(error))
+      await browser.changed()
+      return 'finished'
+    }
+  }
+
+  async function startup() {
+    for (const job of await repository.listJobs())
+      if (active(job))
+        await pause(job.id, 'Browser restarted. Resume when you are ready.')
+    await browser.unschedule()
+  }
+
+  async function removedTab(tabId) {
+    for (const job of await repository.listJobs()) {
+      if (!active(job)) continue
+      if (
+        (job.phase === 'scan' && job.source?.tabId === tabId) ||
+        job.workerTabId === tabId
+      ) {
+        await pause(
+          job.id,
+          job.source?.tabId === tabId
+            ? 'The order-list tab was closed.'
+            : 'The import tab was closed. Resume to reopen it.'
+        )
+      }
+    }
+  }
+
+  return { start, refresh, pause, resume, tick, startup, removedTab }
+}

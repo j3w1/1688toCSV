@@ -15,7 +15,32 @@ export async function startPreview({ port = 0 } = {}) {
     write: false,
     format: 'esm',
   })
+  const library = await build({
+    absWorkingDir: root,
+    entryPoints: ['preview/library-entry.js'],
+    bundle: true,
+    write: false,
+    format: 'esm',
+  })
   const assets = new Map([
+    [
+      '/library.html',
+      [
+        'text/html; charset=utf-8',
+        (await readFile(path.join(root, 'src/library.html'), 'utf8')).replace(
+          'src="library.js"',
+          'src="library-preview.js"'
+        ),
+      ],
+    ],
+    [
+      '/library-preview.js',
+      ['text/javascript', library.outputFiles[0].contents],
+    ],
+    [
+      '/library.css',
+      ['text/css', await readFile(path.join(root, 'src/library.css'))],
+    ],
     [
       '/',
       [
@@ -80,7 +105,7 @@ if (
 ) {
   const preview = await startPreview({ port: 4173 })
   console.log(
-    `Synthetic order-page preview: ${preview.url}\nUse ?state=error for invalid-order feedback. No live orders.\nNo watch mode: restart preview after changes.`
+    `Synthetic order-page preview: ${preview.url}\nOrder library preview: ${preview.url}/library.html\nUse ?state=error for invalid-order feedback. No live orders.\nNo watch mode: restart preview after changes.`
   )
   for (const signal of ['SIGINT', 'SIGTERM'])
     process.on(signal, async () => {
