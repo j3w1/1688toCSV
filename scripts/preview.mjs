@@ -24,6 +24,10 @@ export async function startPreview({ port = 0 } = {}) {
   })
   const assets = new Map([
     [
+      '/theme.js',
+      ['text/javascript', await readFile(path.join(root, 'src/theme.js'))],
+    ],
+    [
       '/library.html',
       [
         'text/html; charset=utf-8',

@@ -4,6 +4,10 @@ A local order library for 1688: collect multiple orders, reconcile changes, and 
 
 <a href="screenshots/order-library.png"><img src="screenshots/order-library.png" alt="Order library with synthetic products and Excel copy controls" width="720" /></a>
 
+<details><summary>Dark appearance</summary>
+<a href="screenshots/order-library-dark.png"><img src="screenshots/order-library-dark.png" alt="Dark order library with synthetic products" width="720" /></a>
+</details>
+
 ## Install or update
 
 Use **Node.js 24** and its bundled npm:
@@ -19,12 +23,17 @@ Load **dist** through **Extensions → Developer mode → Load unpacked**. In th
 ## Collect orders
 
 1. Open your 1688 purchased-orders list and set date, status and search filters.
-2. Choose **Import all matching** for every page of that filtered list, or tick the website's order checkboxes and choose **Import selected**.
-3. Keep the list tab open during discovery. The spreadsheet opens as a full page; there is no extension popup.
+2. Tick the website's order checkboxes and choose **Import selected**. This is the primary action.
+3. For a deliberate bulk collection, expand **More import options → Import all matching…**, review the order/page counts, then confirm. Changing filters invalidates that confirmation.
+4. Keep the list tab open during discovery. Progress, errors, and **Pause import** are visible on the list itself. **Spreadsheet ↗** opens the full library page; there is no extension popup.
 
-The importer reads complete detail pages, one at a time. List cards can hide most products, so they are used for discovery and completeness checks. Progress shows saved and failed orders. Pause/resume is available; a browser restart leaves interrupted jobs paused. Changing filters or an unreadable page stops discovery instead of mixing results. Login and verification screens need your interaction.
+The importer reads complete detail pages, one at a time, reusing one **visible** tab. This supports the Codex embedded browser, which rejects extension-created background tabs. The reader closes when collection finishes or pauses; tabs you navigate elsewhere are left open. List cards can hide most products, so they are used for discovery and completeness checks. Progress shows saved and failed orders. Pause/resume is available; a browser restart leaves interrupted jobs paused. Resuming a bulk job also requires confirmation. Changing filters or an unreadable page stops discovery instead of mixing results. Login and verification screens need your interaction.
 
 On a detail page, **Save order** adds that order. The extension icon and **Spreadsheet ↗** open the library.
+
+If upgrading from 2.0.0 after seeing **“Owl extension-created tabs must be active”**, reload the extension and refresh the library/list pages, then resume the small selected-order job. Its queue is preserved; do not resume an old bulk job unless you intend to collect its full scope. Opening the spreadsheet does not itself prove any order was saved: check the saved count and progress error.
+
+**Settings → Appearance** offers System, Light, and Dark. System follows your device; an explicit choice persists and synchronizes across library tabs. The list-page controls follow your device's color scheme.
 
 ## Copy to Excel
 

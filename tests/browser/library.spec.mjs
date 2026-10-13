@@ -29,6 +29,53 @@ async function openLibrary(extension) {
   await page.goto(`${extension.extensionBaseUrl}/library.html`)
   return page
 }
+
+test('resuming an old bulk import requires a visible scope confirmation', async ({
+  extension,
+}) => {
+  await seed(extension)
+  await extension.inspector.evaluate(
+    () =>
+      new Promise((resolve, reject) => {
+        const request = indexedDB.open('1688-order-library')
+        request.onerror = () => reject(request.error)
+        request.onsuccess = () => {
+          const db = request.result
+          const tx = db.transaction('jobs', 'readwrite')
+          tx.objectStore('jobs').put({
+            id: 'legacy-bulk-test',
+            state: 'paused',
+            phase: 'details',
+            kind: 'import',
+            page: 67,
+            total: 667,
+            orders: [],
+            error: 'Previous job paused',
+            updatedAt: new Date().toISOString(),
+          })
+          tx.oncomplete = () => {
+            db.close()
+            resolve()
+          }
+          tx.onerror = () => {
+            db.close()
+            reject(tx.error)
+          }
+        }
+      })
+  )
+  const page = await openLibrary(extension)
+  await page
+    .getByRole('button', { name: 'Resume / retry', exact: true })
+    .click()
+  const dialog = page.getByRole('dialog', { name: 'Confirm bulk import' })
+  await expect(dialog).toBeVisible()
+  await expect(dialog).toContainText('667 orders')
+  await dialog.getByRole('button', { name: 'Cancel', exact: true }).click()
+  await expect(dialog).not.toBeVisible()
+  await expect(page.locator('#jobs')).toContainText('paused')
+  expect(extension.unexpectedRequests).toEqual([])
+})
 test('library restores complete orders and copies five columns with separate images', async ({
   extension,
 }) => {

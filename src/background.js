@@ -33,7 +33,8 @@ async function changed() {
 const marker = (id) => `#1688tocsv-import=${encodeURIComponent(id)}`
 function owns(tab, id) {
   try {
-    return new URL(tab.pendingUrl || tab.url).hash === marker(id)
+    const url = tab.pendingUrl || tab.url
+    return Boolean(detailUrl(url)) && new URL(url).hash === marker(id)
   } catch {
     return false
   }
@@ -73,9 +74,18 @@ const browser = {
     }
     const tab = await chrome.tabs.create({
       url: `${url}${marker(id)}`,
-      active: false,
+      active: true,
     })
     return tab.id
+  },
+  async navigateDetailTab(tabId, url, id) {
+    const tab = await this.getDetailTab(tabId, id)
+    if (!tab)
+      throw new Error(
+        'The import tab was closed or changed. Resume to reopen it.'
+      )
+    if (detailUrl(tab.pendingUrl || tab.url) !== detailUrl(url))
+      await chrome.tabs.update(tabId, { url: `${url}${marker(id)}` })
   },
   async getDetailTab(tabId, id) {
     try {
@@ -148,7 +158,7 @@ async function openLibrary() {
   const url = chrome.runtime.getURL('library.html')
   const existing = (await chrome.tabs.query({})).find((tab) => tab.url === url)
   if (existing) return chrome.tabs.update(existing.id, { active: true })
-  return chrome.tabs.create({ url })
+  return chrome.tabs.create({ url, active: true })
 }
 function isExtensionPage(sender) {
   return (
@@ -163,6 +173,31 @@ function requireContent(sender, kind) {
     !(kind === 'list' ? isListUrl(sender.url) : detailUrl(sender.url))
   ) {
     throw new Error('This action must start on a supported 1688 order page.')
+  }
+}
+function sameSource(job, sender) {
+  return (
+    job.source?.tabId === sender.tab?.id &&
+    (job.source?.frameId ?? 0) === (sender.frameId ?? 0)
+  )
+}
+function jobStatus(job) {
+  const { id, state, phase, kind, page, total, updatedAt } = job
+  return {
+    id,
+    state,
+    phase,
+    kind,
+    page,
+    total,
+    updatedAt,
+    error:
+      job.error ||
+      job.orders.find((order) => order.state === 'failed')?.error ||
+      '',
+    completed: job.orders.filter((order) => order.state === 'done').length,
+    failed: job.orders.filter((order) => order.state === 'failed').length,
+    discovered: job.orders.length,
   }
 }
 async function dispatch(message, sender, repository, controller) {
@@ -209,8 +244,29 @@ async function dispatch(message, sender, repository, controller) {
       return controller.start({
         scope: message.scope,
         orderIds: message.orderIds,
+        expectedScope: message.expectedScope,
         source: { tabId: sender.tab.id, frameId: sender.frameId ?? 0 },
       })
+    case 'IMPORT_STATUS':
+      requireContent(sender, 'list')
+      return {
+        jobs: (await repository.listJobs())
+          .filter((job) => sameSource(job, sender))
+          .sort((a, b) => b.updatedAt.localeCompare(a.updatedAt))
+          .map(jobStatus),
+      }
+    case 'IMPORT_PAUSE':
+    case 'IMPORT_RESUME': {
+      if (!isExtensionPage(sender)) {
+        requireContent(sender, 'list')
+        const job = await repository.getJob(message.jobId)
+        if (!job || !sameSource(job, sender))
+          throw new Error('This import belongs to another order-list tab.')
+      }
+      return message.type === 'IMPORT_PAUSE'
+        ? controller.pause(message.jobId)
+        : controller.resume(message.jobId)
+    }
   }
   if (!isExtensionPage(sender))
     throw new Error('Open the extension spreadsheet to use this action.')
@@ -231,10 +287,6 @@ async function dispatch(message, sender, repository, controller) {
       return loadThumbnail(message.url, repository)
     case 'BACKUP_EXPORT':
       return repository.exportBackup()
-    case 'IMPORT_PAUSE':
-      return controller.pause(message.jobId)
-    case 'IMPORT_RESUME':
-      return controller.resume(message.jobId)
     case 'REFRESH_ORDERS':
       return controller.refresh(message.orderIds)
     case 'LIBRARY_NOTES': {
@@ -277,6 +329,7 @@ chrome.runtime.onMessage.addListener((message, sender, respond) => {
         'IMAGE_GET',
         'LIBRARY_QUERY',
         'JOBS_QUERY',
+        'IMPORT_STATUS',
         'LIBRARY_HISTORY',
         'BACKUP_EXPORT',
       ].includes(message.type)

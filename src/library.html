@@ -2,6 +2,8 @@
 <html lang="en">
   <head>
     <meta charset="utf-8" />
+    <meta name="color-scheme" content="light dark" />
+    <script src="theme.js"></script>
     <meta name="viewport" content="width=device-width,initial-scale=1" />
     <title>Order library · 1688toCSV</title>
     <link rel="stylesheet" href="library.css" />
@@ -14,6 +16,18 @@
         ><span>Order library<small>Your purchasing workspace</small></span></a
       ><span class="local-label"><i></i> Stored in this browser</span>
       <div class="top-actions">
+        <details class="settings">
+          <summary>Settings</summary>
+          <div class="settings-panel">
+            <label for="theme-preference">Appearance</label>
+            <select id="theme-preference">
+              <option value="system">System</option>
+              <option value="light">Light</option>
+              <option value="dark">Dark</option>
+            </select>
+            <p>Choose a theme for this browser. System follows your device.</p>
+          </div>
+        </details>
         <button id="backup">Back up</button><button id="restore">Restore</button
         ><input
           id="backup-file"
@@ -105,9 +119,9 @@
             <span aria-hidden="true">▦</span>
             <h2>Your orders belong here.</h2>
             <p>
-              Open your 1688 order list and choose
-              <strong>Import all matching</strong> or select a few orders.
-              Product details will appear here as they are collected.
+              Open your 1688 order list, select a few orders and choose
+              <strong>Import selected</strong>. Product details will appear here
+              as they are collected.
             </p>
           </div>
           <div

@@ -19,6 +19,46 @@ function node(tag, text, className) {
   return element
 }
 
+async function confirmBulkResume(job) {
+  const count = job.total || job.discovered || job.orders?.length || 0
+  if (job.page <= 1 && count <= 10) return true
+  const dialog = node('dialog')
+  dialog.setAttribute('aria-label', 'Confirm bulk import')
+  dialog.append(
+    node('h2', `Resume collection of ${count.toLocaleString()} orders?`),
+    node(
+      'p',
+      'This resumes the previous bulk import, using one visible detail tab to collect the remaining orders. Cancel if you only want a few selected orders.'
+    )
+  )
+  const cancel = node('button', 'Cancel'),
+    proceed = node(
+      'button',
+      `Resume ${count.toLocaleString()} orders`,
+      'primary'
+    )
+  dialog.append(cancel, proceed)
+  document.body.append(dialog)
+  return new Promise((resolve) => {
+    let confirmed = false
+    cancel.addEventListener('click', () => dialog.close())
+    proceed.addEventListener('click', () => {
+      confirmed = true
+      dialog.close()
+    })
+    dialog.addEventListener(
+      'close',
+      () => {
+        dialog.remove()
+        resolve(confirmed)
+      },
+      { once: true }
+    )
+    dialog.showModal()
+    cancel.focus()
+  })
+}
+
 export async function startLibrary(
   transport = (message) => chrome.runtime.sendMessage(message),
   repository = null
@@ -346,7 +386,17 @@ export async function startLibrary(
           job.state === 'running' ? 'Pause' : 'Resume / retry'
         )
         button.addEventListener('click', async () => {
+          button.disabled = true
           try {
+            if (job.state !== 'running' && !(await confirmBulkResume(job)))
+              return
+            button.textContent =
+              job.state === 'running' ? 'Pausing…' : 'Resuming…'
+            feedback(
+              job.state === 'running'
+                ? 'Pausing import…'
+                : 'Resuming import. One visible detail tab will read the remaining orders.'
+            )
             await send(
               job.state === 'running' ? 'IMPORT_PAUSE' : 'IMPORT_RESUME',
               { jobId: job.id }
@@ -354,6 +404,10 @@ export async function startLibrary(
             await refresh()
           } catch (error) {
             feedback(error.message, true)
+          } finally {
+            button.disabled = false
+            button.textContent =
+              job.state === 'running' ? 'Pause' : 'Resume / retry'
           }
         })
         container.append(button)

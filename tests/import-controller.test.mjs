@@ -63,6 +63,11 @@ function setup(pages = [[row('10001'), row('10002')]]) {
     async getDetailTab() {
       return tab
     },
+    async navigateDetailTab(tabId, sourceUrl, jobId) {
+      assert.equal(tabId, 42)
+      calls.push(['navigate', sourceUrl, jobId])
+      tab = { ...tab, url: sourceUrl, status: 'complete' }
+    },
     async closeDetailTab(tabId, jobId) {
       calls.push(['close', tabId, jobId])
       tab = null
@@ -128,6 +133,57 @@ test('all matching scans every page before reading complete sequential details',
   assert.equal(s.jobs.get(job.id).state, 'completed')
   assert.equal(s.jobs.get(job.id).completed, 3)
   assert.equal(s.saved.size, 3)
+  assert.equal(s.calls.filter(([type]) => type === 'open').length, 1)
+  assert.equal(s.calls.filter(([type]) => type === 'navigate').length, 2)
+  assert.equal(s.calls.filter(([type]) => type === 'close').length, 1)
+})
+
+test('navigation checkpoints survive interruption without opening another tab', async () => {
+  const s = setup()
+  const job = await s.controller.start({
+    scope: 'selected',
+    source,
+    orderIds: ['10001', '10002'],
+  })
+  await s.controller.tick()
+  await s.controller.tick()
+  const pending = s.jobs.get(job.id)
+  Object.assign(pending, {
+    currentOrderId: '10002',
+    detailStartedAt: 1000,
+    detailAttempts: 0,
+    detailNavigationPending: true,
+  })
+  s.setTab({ id: 42, url: url('10002'), status: 'complete' })
+  const resumed = createImportController({
+    repository: s.repository,
+    browser: s.browser,
+  })
+  await resumed.tick()
+  await resumed.tick()
+  await resumed.tick()
+  assert.equal(s.jobs.get(job.id).state, 'completed')
+  assert.equal(s.saved.size, 2)
+  assert.equal(s.calls.filter(([type]) => type === 'open').length, 1)
+})
+
+test('paused jobs from version 2.0.0 resume without new navigation fields', async () => {
+  const s = setup()
+  const job = await s.controller.start({
+    scope: 'selected',
+    source,
+    orderIds: ['10001'],
+  })
+  await s.controller.pause(job.id)
+  const legacy = s.jobs.get(job.id)
+  delete legacy.detailNavigationPending
+  legacy.error = 'Owl extension-created tabs must be active.'
+  await s.controller.resume(job.id)
+  await s.controller.tick()
+  await s.controller.tick()
+  await s.controller.tick()
+  assert.equal(s.jobs.get(job.id).state, 'completed')
+  assert.equal(s.saved.size, 1)
 })
 test('selected imports validate IDs against the current page and prevent concurrent jobs', async () => {
   const s = setup()
@@ -145,6 +201,20 @@ test('selected imports validate IDs against the current page and prevent concurr
     ['10002']
   )
   await assert.rejects(s.controller.start({ scope: 'all', source }), /Pause/)
+})
+
+test('bulk import rejects a scope changed after confirmation', async () => {
+  const s = setup()
+  const expectedScope = { filterKey: 'original', total: 2, pageSize: 2 }
+  s.setFilter('different')
+  await assert.rejects(
+    s.controller.start({ scope: 'all', source, expectedScope }),
+    /Review the import again/
+  )
+  assert.equal(s.jobs.size, 0)
+  s.setFilter('original')
+  await s.controller.start({ scope: 'all', source, expectedScope })
+  assert.equal(s.jobs.size, 1)
 })
 test('filter drift pauses discovery without saving any order', async () => {
   const s = setup()

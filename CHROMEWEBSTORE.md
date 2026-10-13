@@ -1,8 +1,8 @@
 # Chrome Web Store Listing — 1688toCSV
 
-> Last Updated: 2026-10-13
+> Last Updated: 2026-10-14
 >
-> Draft for development version 2.0.0. No store submission or publication. Live multi-order import acceptance remains pending.
+> Draft for development version 2.0.1. No store submission or publication. Live multi-order import acceptance remains pending.
 
 ## Store Listing
 
@@ -20,7 +20,7 @@ Collect selected orders or all pages of the currently filtered purchased-orders 
 Refresh saved orders when needed. Changed products are highlighted, previous versions remain available, and your notes and tags stay separate. Whole-order price adjustments are distributed across products while original amounts remain visible. Shipping stays separate.
 
 HOW TO USE
-Set the filters on your 1688 order list. Choose Import all matching, or select order checkboxes and choose Import selected. Keep the list open while collection runs. Open the spreadsheet from the page or extension icon, select products, and choose Copy to Excel. Bulk images are compact pictures aligned with standard Excel rows; paste into a blank range and resize afterward. The one-click single-order CSV option remains, with its original item-discount behavior.
+Set the filters on your 1688 order list. Select order checkboxes and choose Import selected. For bulk collection, expand More import options, review the order/page counts, and confirm Import all matching. Bulk resume also requires confirmation. Keep the list open while collection runs; progress, errors and Pause are available there. One visible detail tab is reused, including in the Codex embedded browser. Open the spreadsheet from the page or extension icon, select products, and choose Copy to Excel. Bulk images are compact pictures aligned with standard Excel rows; paste into a blank range and resize afterward. The one-click single-order CSV option remains, with its original item-discount behavior.
 
 PRIVACY
 Orders, versions, notes and cached pictures stay in your browser. Back up and restore using a local file. No developer service receives your orders and no analytics are used. The extension does not read passwords/authentication cookies or submit, pay for, or alter orders. Importing opens 1688 pages using your existing session; displaying/copying thumbnails may request Alibaba CDN images.
@@ -86,7 +86,7 @@ List scripts run in matching frames because the workbench hosts a separate list 
 | Recipient addresses, private communications, general history | Not intentionally extracted or logged                  | None                                                                     |
 | Analytics, advertising, creditworthiness                     | Not collected for these purposes                       | None                                                                     |
 
-Orders, histories, notes, jobs and images persist in IndexedDB. Cached images are deduplicated by URL. Removing an order removes its versions; shared images may remain cached. Backups include orders/history/notes/cached images, not active jobs. Uninstalling or deleting the profile can delete the library. Clipboard data and saved files are subsequently controlled by the operating system and user.
+Orders, histories, notes, jobs and images persist in IndexedDB. Cached images are deduplicated by URL. Removing an order removes its versions; shared images may remain cached. Backups include orders/history/notes/cached images, not active jobs. The local appearance preference (System, Light or Dark) is stored in localStorage and synchronized across extension pages. Uninstalling or deleting the profile can delete the library. Clipboard data and saved files are subsequently controlled by the operating system and user.
 
 Implementation: [database](src/database.js), [snapshots](src/order-snapshot.js), [import controller](src/import-controller.js), [background](src/background.js), [images](src/images.js), [clipboard](src/clipboard.js).
 
@@ -118,10 +118,11 @@ Draft substance: records, history, notes and pictures remain locally stored. No 
 
 ## Version History
 
-| Version | Date       | Changes                                                                                                                            | Status                                                               |
-| ------- | ---------- | ---------------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------- |
-| 2.0.0   | 2026-10-13 | Multi-order library, resumable imports, reconciliation/history, order-adjustment allocation, Excel pictures, notes, backup/restore | Development candidate; not submitted; live import acceptance pending |
-| 1.1.4   | 2026-10-13 | One-click CSV page control; removed popup                                                                                          | Local tests passed; user confirmed live download; not submitted      |
+| Version | Date       | Changes                                                                                                                                       | Status                                                                                                              |
+| ------- | ---------- | --------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------- |
+| 2.0.1   | 2026-10-14 | Explicit active tabs for embedded-browser compatibility, one reusable detail reader, safer bulk import/resume, on-list progress and dark mode | Local regression verification; corrected live import acceptance pending                                             |
+| 2.0.0   | 2026-10-13 | Multi-order library, resumable imports, reconciliation/history, order-adjustment allocation, Excel pictures, notes, backup/restore            | Superseded: user verified 67-page discovery; detail import failed because embedded browser rejected background tabs |
+| 1.1.4   | 2026-10-13 | One-click CSV page control; removed popup                                                                                                     | Local tests passed; user confirmed live download; not submitted                                                     |
 
 ## Review Notes
 
@@ -130,7 +131,7 @@ Draft substance: records, history, notes and pictures remain locally stored. No 
 - Three private detail captures (21, 5 and 40 products) and two list captures were inspected offline. They preserve full IDs, variants, explicit item discounts and reconciled order totals. No private captures are committed.
 - Synthetic unit and isolated Chromium tests cover extraction, allocation, database/backup transactions, job recovery and spreadsheet/clipboard behavior. Run npm run verify against the final candidate.
 - npm run test:excel passed for synthetic browser copying into a fresh Windows Excel workbook: five columns, eight separate pictures at rows 2–9, numeric price/quantity cells. No workbook was saved; the previous clipboard was restored.
-- Live multi-page import, changes to real orders and clipboard behavior in the embedded browser remain separate pending acceptance. Agent access to live 1688 is blocked by browser-tool policy; no alternate live automation is used.
+- User confirmed discovery across 67 real list pages in 2.0.0. A supplied screenshot identified the detail-import failure: the embedded browser requires active extension-created tabs. 2.0.1 explicitly requests active tabs and tests this restriction with a rejecting browser shim. Corrected live detail import, reconciliation and embedded-browser clipboard acceptance remain pending. Agent access to live 1688 is blocked by browser-tool policy; no alternate live automation is used.
 
 ### Known limitations
 

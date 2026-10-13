@@ -66,6 +66,7 @@ export function createImportController({
     job.currentOrderId = null
     job.detailStartedAt = null
     job.detailAttempts = 0
+    job.detailNavigationPending = false
     // Checkpoint before closing, so the tab-removal event is not mistaken for a user interruption.
     await write(job)
     await browser.closeDetailTab(tabId, job.id)
@@ -81,7 +82,7 @@ export function createImportController({
     return job
   }
 
-  async function start({ scope, orderIds, source }) {
+  async function start({ scope, orderIds, source, expectedScope }) {
     await ensureIdle()
     if (!['all', 'selected'].includes(scope))
       throw new Error('Choose all filtered orders or selected orders.')
@@ -92,6 +93,15 @@ export function createImportController({
     )
       throw new Error('Start import from the order-list page.')
     const list = await browser.readList(source)
+    if (
+      expectedScope &&
+      (list.filterKey !== expectedScope.filterKey ||
+        list.total !== expectedScope.total ||
+        list.pageSize !== expectedScope.pageSize)
+    )
+      throw new Error(
+        'The order-list filters or count changed. Review the import again before continuing.'
+      )
     const job = baseJob('import')
     Object.assign(job, {
       source,
@@ -248,10 +258,30 @@ export function createImportController({
     }
     const tab = await browser.getDetailTab(job.workerTabId, job.id)
     if (!tab) throw new Error('The import tab was closed. Resume to reopen it.')
-    if (tab.url && !detailUrl(tab.url, order.orderId))
+    if (
+      !job.detailNavigationPending &&
+      job.currentOrderId &&
+      tab.status === 'complete' &&
+      !detailUrl(tab.pendingUrl || tab.url, job.currentOrderId)
+    )
       throw new Error(
         'The import tab left the order page. Complete sign-in or verification, then resume.'
       )
+    if (job.currentOrderId !== order.orderId) {
+      job.currentOrderId = order.orderId
+      job.detailStartedAt = now()
+      job.detailAttempts = 0
+      job.detailNavigationPending = true
+      await write(job)
+    }
+    if (job.detailNavigationPending) {
+      // Repeating navigation after a worker interruption is safe: the adapter
+      // checks the target URL before navigating the single owned tab again.
+      await browser.navigateDetailTab(job.workerTabId, order.sourceUrl, job.id)
+      job.detailNavigationPending = false
+      await write(job)
+      return 'wait'
+    }
     if (tab.status !== 'complete') {
       if (now() - job.detailStartedAt > 90000)
         throw new Error(
@@ -259,6 +289,10 @@ export function createImportController({
         )
       return 'wait'
     }
+    if (tab.url && !detailUrl(tab.url, order.orderId))
+      throw new Error(
+        'The import tab left the order page. Complete sign-in or verification, then resume.'
+      )
     job.detailAttempts += 1
     await write(job)
     let snapshot
@@ -287,7 +321,6 @@ export function createImportController({
       order.error = errorText(error)
     }
     await write(job)
-    await releaseWorker(job)
     await browser.changed()
     return 'continue'
   }

@@ -4,6 +4,7 @@ import { readFile } from 'node:fs/promises'
 import vm from 'node:vm'
 import { parseHTML } from 'linkedom'
 import { readOrderList, goToListPage } from '../src/order-list.js'
+import { mountListToolbar } from '../src/list-toolbar.js'
 
 test('list controls recover after delayed shadow hydration beyond fifteen seconds', async () => {
   const source = (
@@ -22,6 +23,7 @@ test('list controls recover after delayed shadow hydration beyond fifteen second
     document,
     readOrderList,
     goToListPage,
+    mountListToolbar,
     location: {
       href: 'https://air.1688.com/app/ctf-page/trade-order-list/buyer-order-list.html',
     },

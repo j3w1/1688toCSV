@@ -22,9 +22,12 @@ async function startFixtureServer() {
   const server = createServer(async (request, response) => {
     const pathname = new URL(request.url, 'http://127.0.0.1').pathname
     if (
-      ['/src/database.js', '/src/clipboard.js', '/src/money.js'].includes(
-        pathname
-      )
+      [
+        '/src/database.js',
+        '/src/clipboard.js',
+        '/src/money.js',
+        '/src/list-toolbar.js',
+      ].includes(pathname)
     ) {
       response.writeHead(200, {
         'Content-Type': 'text/javascript; charset=utf-8',
