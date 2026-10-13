@@ -21,11 +21,12 @@ test('recognized documentation routes to lightweight checks', () => {
   assert.deepEqual(
     classifyPaths([
       'README.md',
+      'CHROMEWEBSTORE.md',
       'docs/development.md',
       'screenshots/popup.png',
       'README.md',
     ]),
-    { category: 'docs', docs: true, code: false, count: 3 }
+    { category: 'docs', docs: true, code: false, count: 4 }
   )
 })
 

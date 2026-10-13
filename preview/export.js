@@ -1,6 +1,5 @@
-const rows = await fetch('/fixture-data.json').then((response) =>
-  response.json()
-)
+const response = await fetch('/fixture-data.json')
+const rows = await response.json()
 for (const row of rows.dataRows) {
   const tr = document.createElement('tr')
   const imageCell = document.createElement('td')

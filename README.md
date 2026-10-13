@@ -2,7 +2,7 @@
 
 Export a 1688 order detail page to a CSV with product descriptions, original unit prices, quantities, and item discounts. Chinese text and spreadsheet-friendly CSV escaping are preserved.
 
-<a href="screenshots/1688toCSV-popup.png"><img src="screenshots/1688toCSV-popup.png" alt="1688toCSV ready to export a synthetic order" width="320" /></a>
+<a href="screenshots/1688toCSV-download.png"><img src="screenshots/1688toCSV-download.png" alt="One-click CSV download on a synthetic order page" width="240" /></a>
 
 ## Set up and install
 
@@ -23,13 +23,9 @@ If you previously installed the repository root, remove that old extension entry
 ## Export an order
 
 1. Open a 1688 **order detail** page, not the purchased-orders list.
-2. Open the extension and wait for **Ready to export**.
-3. Click **Download CSV** to open the save panel on the order page.
-4. Close the extension popup if it covers the panel, then click **Save CSV**. The filename uses the seller name and order suffix.
+2. Click **Download CSV** at the bottom right of the order page. The filename uses the seller name and order suffix. Complete a save dialog if your browser asks where to save.
 
-The save panel uses a normal webpage file link that stays alive when the popup closes. This avoids the extension-popup download API that returns `USER_CANCELED` in some embedded browsers. **Save requested** means the save was handed to the browser; check the selected folder to confirm completion. A canceled save is never automatically retried.
-
-<a href="screenshots/1688toCSV-success.png"><img src="screenshots/1688toCSV-success.png" alt="Save panel for synthetic order data" width="320" /></a>
+No popup or second confirmation is needed. The page button reads the current order each time you click it, then saves through a normal file link. **Save requested** means the save was handed to the browser; check your downloads to confirm completion. Incomplete or unreadable order data shows an error without saving a partial file.
 
 <a href="screenshots/csv-file-screenshot.png"><img src="screenshots/csv-file-screenshot.png" alt="CSV preview generated from synthetic order data" width="720" /></a>
 
@@ -43,21 +39,21 @@ All screenshots use synthetic data. The extension reads the open order page; it 
 
 After a requested code change, the agent explicitly runs **`npm run verify`** to rebuild and test the final candidate. There is no watch mode. For UI changes, the agent also regenerates the screenshots and checks the documentation.
 
-| Command                | Purpose                                                                                    |
-| ---------------------- | ------------------------------------------------------------------------------------------ |
-| `npm run verify`       | Source and docs checks, regression tests, production build, and Chromium extension tests   |
-| `npm run build`        | Build a complete production extension into `dist`                                          |
-| `npm run build:dev`    | Build once with development output                                                         |
-| `npm run test:browser` | Test the existing `dist` build in Chromium                                                 |
-| `npm run preview`      | Serve a local popup preview with synthetic UI states; open the URL printed in the terminal |
-| `npm run screenshots`  | Regenerate the ready popup, save panel, and CSV screenshots above from synthetic data      |
-| `npm run check:docs`   | Validate local documentation links, screenshots, and documented package scripts            |
+| Command                | Purpose                                                                                  |
+| ---------------------- | ---------------------------------------------------------------------------------------- |
+| `npm run verify`       | Source and docs checks, regression tests, production build, and Chromium extension tests |
+| `npm run build`        | Build a complete production extension into `dist`                                        |
+| `npm run build:dev`    | Build once with development output                                                       |
+| `npm run test:browser` | Test the existing `dist` build in Chromium                                               |
+| `npm run preview`      | Serve a local order-page preview; open the URL printed in the terminal                   |
+| `npm run screenshots`  | Regenerate the page download control and CSV screenshots from synthetic data             |
+| `npm run check:docs`   | Validate local documentation links, screenshots, and documented package scripts          |
 
 After every rebuild, **reload the installed extension and refresh the order page** before testing a download. Browser content scripts from the previous build otherwise remain in the open page.
 
-The automated browser smoke test runs in a separate temporary Chromium profile. It uses a **test copy** of the built manifest with localhost access, permission to inspect completed downloads, and an adapter that points the popup's active-tab lookup at a synthetic order tab. Extraction, content-script messaging, and page-link downloads then use the real extension code and browser. The installed package keeps its production manifest and does not request download-management permission. This test does not use a normal browser profile or access live 1688 orders.
+The automated browser tests run in a separate temporary Chromium profile. A **test copy** of the built manifest grants localhost access and permissions for inspecting downloads and reinjecting the script. Extraction and one-click page downloads use the real extension code. The installed package uses only content scripts on the two supported 1688 order-detail paths: no popup, background worker, polling, extension API permissions, or stored exports. Tests use synthetic orders and never access a normal browser profile or live orders.
 
-The preview exercises UI states using simulated browser APIs. A successful preview is not a live export test. If browser policy prevents the agent from accessing 1688, the user completes the reload, refresh, and download step; the agent can inspect the resulting CSV or error. Report automated test results and live-site acceptance separately. Never commit private order data, exports, or unsanitized page fixtures.
+The preview exercises the same download control with synthetic order data. A successful preview is not a live export test. If browser policy prevents the agent from accessing 1688, the user completes the reload, refresh, and download step; the agent can inspect the resulting CSV or error. Report automated test results and live-site acceptance separately. Never commit private order data, exports, or unsanitized page fixtures.
 
 ## GitHub checks
 
@@ -71,4 +67,4 @@ The preview exercises UI states using simulated browser APIs. A successful previ
 
 Manual runs and unavailable comparisons run both routes. The stable **`required`** check passes only when every routed job succeeds; required jobs that fail, cancel, or skip make it fail. CI routing does not manage repository labels or Projects.
 
-See [AGENTS.md](AGENTS.md) for the standing development process and the separate CE Metadata cooperation contract.
+See [AGENTS.md](AGENTS.md) for the standing development process and the separate CE Metadata cooperation contract. [CHROMEWEBSTORE.md](CHROMEWEBSTORE.md) tracks draft listing details, permissions, privacy, and remaining store requirements.

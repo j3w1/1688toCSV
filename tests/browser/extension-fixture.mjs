@@ -1,9 +1,7 @@
 import { test as base, chromium } from '@playwright/test'
-import { build } from 'esbuild'
 import { createHash, generateKeyPairSync } from 'node:crypto'
 import { createServer } from 'node:http'
 import {
-  copyFile,
   cp,
   mkdir,
   mkdtemp,
@@ -22,7 +20,11 @@ const syntheticOrderId = '1234567890123456789'
 
 async function startFixtureServer() {
   const server = createServer((request, response) => {
-    if (new URL(request.url, 'http://127.0.0.1').pathname !== '/fixture.html') {
+    if (
+      !['/fixture.html', '/unsupported'].includes(
+        new URL(request.url, 'http://127.0.0.1').pathname
+      )
+    ) {
       response.writeHead(404)
       response.end()
       return
@@ -44,8 +46,10 @@ async function prepareExtension(directory) {
   await cp(path.join(repository, 'dist'), directory, { recursive: true })
   const manifestPath = path.join(directory, 'manifest.json')
   const manifest = JSON.parse(await readFile(manifestPath, 'utf8'))
-  // Test-only inspection of real completed files; production saves use page links.
-  manifest.permissions = [...new Set([...manifest.permissions, 'downloads'])]
+  // Test-only inspection and reinjection. Production has no privileged APIs.
+  manifest.permissions = [
+    ...new Set([...(manifest.permissions ?? []), 'downloads', 'scripting']),
+  ]
   // A new public key determines this disposable extension's ID without needing
   // a background worker. Neither the key nor localhost access reaches dist.
   const { publicKey } = generateKeyPairSync('rsa', { modulusLength: 1024 })
@@ -64,24 +68,13 @@ async function prepareExtension(directory) {
   // There is intentionally no remote page match in the disposable fixture copy.
   manifest.content_scripts = manifest.content_scripts.map((script) => ({
     ...script,
-    matches: [localhostMatch],
+    matches: ['http://127.0.0.1/fixture.html*'],
   }))
   await writeFile(manifestPath, JSON.stringify(manifest, null, 2))
-  await copyFile(
-    path.join(directory, 'popup.js'),
-    path.join(directory, 'production-popup.js')
+  await writeFile(
+    path.join(directory, 'inspector.html'),
+    '<!doctype html><html lang="en"><title>Test inspector</title><body></body></html>'
   )
-  const productionHtml = (
-    await readFile(path.join(directory, 'popup.html'), 'utf8')
-  ).replace('src="popup.js"', 'src="production-popup.js"')
-  await writeFile(path.join(directory, 'production-popup.html'), productionHtml)
-  await build({
-    entryPoints: [path.join(repository, 'tests/browser/popup-entry.js')],
-    outfile: path.join(directory, 'popup.js'),
-    bundle: true,
-    format: 'iife',
-    target: 'chrome120',
-  })
   return extensionId
 }
 
@@ -144,40 +137,30 @@ export const test = base.extend({
         )
       }
       await setOrder()
-      const popup = await context.newPage()
-      await popup.goto(
-        `chrome-extension://${extensionId}/popup.html?unsupported=1`
-      )
-      const tabId = await popup.evaluate(async (url) => {
+      const inspector = await context.newPage()
+      await inspector.goto(`chrome-extension://${extensionId}/inspector.html`)
+      const tabId = await inspector.evaluate(async (url) => {
         const tabs = await chrome.tabs.query({})
         return tabs.find((tab) => tab.url === url)?.id
       }, fixtureUrl)
       if (!Number.isInteger(tabId))
         throw new Error('Synthetic fixture tab was not found')
-      const downloads = await context.newCDPSession(popup)
+      const downloads = await context.newCDPSession(inspector)
       // Chromium's ordinary download flow preserves chrome.downloads filename
       // suggestions. The disposable profile sets the target directory above.
       await downloads.send('Browser.setDownloadBehavior', {
         behavior: 'default',
         eventsEnabled: true,
       })
-      async function openPopup({ unsupported = false } = {}) {
-        const query = new URLSearchParams({ fixtureTab: String(tabId) })
-        if (unsupported) query.set('unsupported', '1')
-        await popup.goto(
-          `chrome-extension://${extensionId}/popup.html?${query}`
-        )
-        return popup
-      }
       await use({
         context,
         extensionBaseUrl: `chrome-extension://${extensionId}`,
-        popup,
+        origin: local.origin,
+        inspector,
         orderPage,
         tabId,
         downloadPath,
         unexpectedRequests,
-        openPopup,
         setOrder,
       })
     } finally {

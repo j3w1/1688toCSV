@@ -14,15 +14,16 @@ and tests that build in Chromium. Do not add watch mode or leave rebuilding to t
 generated `dist` folder as the unpacked extension; the root manifest remains source.
 
 For UI changes, run `npm run screenshots` to regenerate the README screenshots from synthetic data,
-then run `npm run check:docs`. Use `npm run preview` when inspecting popup states locally. Keep
+then run `npm run check:docs`. Use `npm run preview` when inspecting the page download control locally. Keep
 fixtures and screenshots synthetic; never commit real orders, downloaded exports, credentials,
 or unsanitized page captures. Preserve documented calculation limitations unless their correction
 is explicitly within scope.
 
 After every rebuild, reload the installed extension and refresh its order page before browser
 acceptance. Automated Chromium tests use a temporary profile, a test copy of the manifest with
-localhost access, and a popup tab-selection adapter. They exercise actual extraction, messaging,
-and downloading against synthetic content. Do not claim this proves live 1688 compatibility.
+localhost access and test-only permissions for download inspection and script reinjection.
+They exercise actual extraction and one-click page downloads against synthetic content.
+Do not claim this proves live 1688 compatibility.
 
 When browser policy prevents live-site access, have the user perform the reload, refresh, and
 download step and inspect the supplied CSV or error. Report builds, regression tests, automated

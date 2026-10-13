@@ -49,7 +49,9 @@ export function buildOrderFixture(document, options = {}) {
     return nested ? shadow(tag, parent).root : parent
   }
 
-  document.body.replaceChildren()
+  // Updating a synthetic SPA replaces its application, not extension controls
+  // mounted alongside it in the document body.
+  document.querySelector('app-root')?.remove()
   const app = shadow('app-root', document.body)
   const layout = maybeNest(app.root, 'order-layout')
   const info = shadow('order-info', layout)

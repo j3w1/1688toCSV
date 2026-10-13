@@ -7,6 +7,7 @@ const rootDocuments = new Set([
   'AGENTS.md',
   'CONTRIBUTING.md',
   'CHANGELOG.md',
+  'CHROMEWEBSTORE.md',
   'LICENSE',
   'LICENSE.md',
 ])

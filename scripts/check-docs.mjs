@@ -125,11 +125,7 @@ for (const [name, command] of Object.entries(scripts)) {
   }
 }
 
-for (const filename of [
-  '1688toCSV-popup.png',
-  '1688toCSV-success.png',
-  'csv-file-screenshot.png',
-]) {
+for (const filename of ['1688toCSV-download.png', 'csv-file-screenshot.png']) {
   const path = join(root, 'screenshots', filename)
   if (!existsSync(path)) {
     problems.push(`Missing required screenshot: screenshots/${filename}`)
@@ -153,6 +149,6 @@ if (problems.length) {
   process.exitCode = 1
 } else {
   console.log(
-    `Documentation checks passed (${documents.length} Markdown files, 3 required screenshots).`
+    `Documentation checks passed (${documents.length} Markdown files, 2 required screenshots).`
   )
 }

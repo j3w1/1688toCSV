@@ -13,21 +13,17 @@ export async function startPreview({ port = 0 } = {}) {
     entryPoints: ['preview/entry.js'],
     bundle: true,
     write: false,
-    format: 'iife',
+    format: 'esm',
   })
   const assets = new Map([
     [
       '/',
       [
         'text/html; charset=utf-8',
-        await readFile(path.join(root, 'src/popup.html')),
+        await readFile(path.join(root, 'preview/index.html')),
       ],
     ],
-    [
-      '/popup.css',
-      ['text/css', await readFile(path.join(root, 'src/popup.css'))],
-    ],
-    ['/popup.js', ['text/javascript', entry.outputFiles[0].contents]],
+    ['/entry.js', ['text/javascript', entry.outputFiles[0].contents]],
     [
       '/export.html',
       [
@@ -84,7 +80,7 @@ if (
 ) {
   const preview = await startPreview({ port: 4173 })
   console.log(
-    `Synthetic popup preview: ${preview.url}\nStates: ?state=loading, unsupported, error, timeout. No live orders.\nNo watch mode: restart preview after changes.`
+    `Synthetic order-page preview: ${preview.url}\nUse ?state=error for invalid-order feedback. No live orders.\nNo watch mode: restart preview after changes.`
   )
   for (const signal of ['SIGINT', 'SIGTERM'])
     process.on(signal, async () => {

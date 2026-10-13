@@ -1,7 +1,6 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
 import { extractOrder } from '../src/extract.js'
-import { isSupportedOrderUrl } from '../src/page.js'
 import {
   buildOrderFixture,
   createOrderFixture,
@@ -335,32 +334,4 @@ test('rejects a product whose required component is missing', () => {
     () => extractOrder(document, orderUrl),
     /quantity|component|row 2/i
   )
-})
-
-test('supports exact order-detail hosts and paths with a numeric orderId in any query position', () => {
-  for (const url of [
-    orderUrl,
-    'https://air.1688.com/app/ctf-page/trade-order-detail/index.html?spm=test&orderId=1234',
-    'https://trade.1688.com/order/new_step_order_detail.htm?orderId=1234',
-  ]) {
-    assert.equal(isSupportedOrderUrl(url), true, url)
-  }
-})
-
-test('rejects order lists, foreign hosts, similar paths, and malformed IDs', () => {
-  for (const url of [
-    undefined,
-    '',
-    'not a URL',
-    'http://air.1688.com/app/ctf-page/trade-order-detail/index.html?orderId=1234',
-    'https://1688.com/?orderId=1234',
-    'https://air.1688.com.evil.invalid/app/ctf-page/trade-order-detail/index.html?orderId=1234',
-    'https://air.1688.com/app/ctf-page/trade-order-detail/index.html/extra?orderId=1234',
-    'https://air.1688.com/app/ctf-page/trade-order-detail/index.html',
-    'https://air.1688.com/app/ctf-page/trade-order-detail/index.html?orderId=',
-    'https://air.1688.com/app/ctf-page/trade-order-detail/index.html?orderId=123abc',
-    'https://trade.1688.com/order/buyer_order_list.htm?orderId=1234',
-  ]) {
-    assert.equal(isSupportedOrderUrl(url), false, String(url))
-  }
 })

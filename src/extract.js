@@ -10,12 +10,6 @@ export function findOrderTable(document) {
   return deepQuery(appRoot).one('order-table')?.shadowRoot || null
 }
 
-export function orderReadiness(document) {
-  const table = findOrderTable(document)
-  const rowCount = table ? deepQuery(table).all('tr.table-row').length : 0
-  return { status: rowCount ? 'ready' : 'loading', rowCount }
-}
-
 function requiredNumber(value, field, rowNumber, { integer = false } = {}) {
   const match = value.match(numberPattern)
   const result = match?.[0].replaceAll(',', '')

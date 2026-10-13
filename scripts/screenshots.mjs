@@ -11,14 +11,9 @@ try {
     deviceScaleFactor: 2,
   })
   await page.goto(preview.url)
-  await page.getByText('Ready to export', { exact: true }).waitFor()
   await page
-    .locator('body')
-    .screenshot({ path: 'screenshots/1688toCSV-popup.png' })
-  await page.getByRole('button', { name: 'Download CSV' }).click()
-  await page
-    .getByRole('dialog', { name: 'Save order CSV' })
-    .screenshot({ path: 'screenshots/1688toCSV-success.png' })
+    .getByRole('complementary', { name: '1688toCSV' })
+    .screenshot({ path: 'screenshots/1688toCSV-download.png' })
   await page.setViewportSize({ width: 960, height: 420 })
   await page.goto(`${preview.url}/export.html`)
   await page.locator('tbody tr').nth(1).waitFor()
