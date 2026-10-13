@@ -103,6 +103,20 @@ export function buildOrderFixture(document, options = {}) {
 
     const discountRoot = maybeNest(discount.root, 'discount-content')
     const discountValues = element('div', discountRoot, 'order-table-discount')
+    if (row.discountSummary !== undefined) {
+      const summary = element(
+        'div',
+        discountValues,
+        'order-table-discount-summary'
+      )
+      const parts = Array.isArray(row.discountSummary)
+        ? row.discountSummary
+        : [row.discountSummary]
+      for (const part of parts) {
+        const partRoot = maybeNest(summary, 'discount-summary-part')
+        element('span', partRoot, '', part)
+      }
+    }
     for (const amount of row.discounts ?? []) {
       const itemRoot = maybeNest(discountValues, 'discount-line')
       element('span', itemRoot, 'order-table-discount-item-price', amount)

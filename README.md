@@ -2,7 +2,7 @@
 
 Export a 1688 order detail page to a CSV with product descriptions, original unit prices, quantities, and item discounts. Chinese text and spreadsheet-friendly CSV escaping are preserved.
 
-![1688toCSV ready to export a synthetic order](screenshots/1688toCSV-popup.png)
+<a href="screenshots/1688toCSV-popup.png"><img src="screenshots/1688toCSV-popup.png" alt="1688toCSV ready to export a synthetic order" width="320" /></a>
 
 ## Set up and install
 
@@ -26,11 +26,15 @@ If you previously installed the repository root, remove that old extension entry
 2. Open the extension and wait for **Ready to export**.
 3. Click **Download CSV**. The filename uses the seller name and order suffix.
 
-![Successful export of synthetic order data](screenshots/1688toCSV-success.png)
+If the browser reports that it could not start the download, first check your downloads. If the file is absent, click **Save CSV another way**, close the extension popup, and click **Save CSV** in the panel on the order page. This uses a normal webpage file link that stays alive when the popup closes. **Save requested** means the save was handed to the browser; check the selected folder to confirm completion. A rejected save is never automatically retried.
 
-![CSV preview generated from synthetic order data](screenshots/csv-file-screenshot.png)
+<a href="screenshots/1688toCSV-success.png"><img src="screenshots/1688toCSV-success.png" alt="Successful export of synthetic order data" width="320" /></a>
+
+<a href="screenshots/csv-file-screenshot.png"><img src="screenshots/csv-file-screenshot.png" alt="CSV preview generated from synthetic order data" width="720" /></a>
 
 All screenshots use synthetic data. The extension reads the open order page; it does not submit or change the order.
+
+**Discounts:** the `Discount` column contains the total discount for that product row, not a per-unit amount. An explicit row summary such as **优惠共47.20元** exports as **47.20**, without adding its breakdown again or recalculating it from rounded unit prices. When no summary is present, item-level discount components are summed. An unreadable advertised discount stops the export instead of silently exporting zero.
 
 **Calculation limitation:** the whole-order price adjustment, **商品改价**, is not allocated proportionally across product discounts. Item-level discounts are exported; whole-order adjustment allocation remains outstanding.
 

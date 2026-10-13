@@ -88,6 +88,18 @@ for (const document of documents) {
   )) {
     validateTarget(document, match[1])
   }
+  // GitHub-compatible HTML lets screenshots specify a readable display width.
+  // Validate both their image source and optional full-size link target.
+  for (const tag of rendered.matchAll(/<(img|a)\b[^>]*>/gi)) {
+    const attribute = tag[1].toLowerCase() === 'img' ? 'src' : 'href'
+    const target = tag[0].match(
+      new RegExp(
+        `\\s${attribute}\\s*=\\s*(?:"([^"]*)"|'([^']*)'|([^\\s"'=<>\x60]+))`,
+        'i'
+      )
+    )
+    if (target) validateTarget(document, target[1] ?? target[2] ?? target[3])
+  }
   for (const match of text.matchAll(/\bnpm\s+run\s+([\w:.-]+)/g)) {
     if (!Object.hasOwn(scripts, match[1]))
       problems.push(

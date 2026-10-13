@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "1688toCSV",
-  "version": "1.1.0",
+  "version": "1.1.2",
   "description": "Export 1688 order details to a clean CSV, locally in your browser.",
   "permissions": ["activeTab", "downloads", "storage", "scripting", "tabs"],
   "content_security_policy": {

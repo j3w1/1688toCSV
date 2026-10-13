@@ -1,6 +1,6 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
-import { waitForDownload, downloadOrder } from '../src/download.js'
+import { waitForDownload, downloadOrder, prepareCsv } from '../src/download.js'
 
 function downloadApi(items = [{ state: 'in_progress' }]) {
   const listeners = new Set()
@@ -63,13 +63,16 @@ test('exports UTF-8 data and uses conflict-safe browser downloads', async () => 
     request = options
     return 9
   }
-  const name = await downloadOrder(api, {
-    sellerName: '示例',
-    orderSuffix: '1234',
-    dataRows: [
-      { description: '测试', price: '3', quantity: '2', discount: '0' },
-    ],
-  })
+  const name = await downloadOrder(
+    api,
+    prepareCsv({
+      sellerName: '示例',
+      orderSuffix: '1234',
+      dataRows: [
+        { description: '测试', price: '3', quantity: '2', discount: '0' },
+      ],
+    })
+  )
   assert.equal(name, '示例_1234.csv')
   assert.equal(request.conflictAction, 'uniquify')
   assert.equal(request.saveAs, false)
@@ -85,12 +88,44 @@ test('reports the actual filename after Chrome resolves a duplicate', async () =
     { state: 'complete', filename: 'C:\\Downloads\\示例_1234 (1).csv' },
   ])
   api.download = async () => 9
-  const filename = await downloadOrder(api, {
-    sellerName: '示例',
-    orderSuffix: '1234',
-    dataRows: [
-      { description: 'Test', price: '1', quantity: '1', discount: '0' },
-    ],
-  })
+  const filename = await downloadOrder(
+    api,
+    prepareCsv({
+      sellerName: '示例',
+      orderSuffix: '1234',
+      dataRows: [
+        { description: 'Test', price: '1', quantity: '1', discount: '0' },
+      ],
+    })
+  )
   assert.equal(filename, '示例_1234 (1).csv')
+})
+
+test('a rejected start reports the browser handoff failure without blaming the user or retrying', async () => {
+  const api = downloadApi()
+  let attempts = 0
+  const cause = new Error('USER_CANCELED')
+  api.download = async () => {
+    attempts++
+    throw cause
+  }
+  await assert.rejects(
+    downloadOrder(api, { filename: 'test.csv', csv: 'test' }),
+    (error) => {
+      assert.match(error.message, /could not start/)
+      assert.equal(error.cause, cause)
+      return true
+    }
+  )
+  assert.equal(attempts, 1)
+  assert.equal(api.listeners.size, 0)
+})
+
+test('structured cancellation is distinct from an opaque start error', async () => {
+  const api = downloadApi([{ state: 'interrupted', error: 'USER_CANCELED' }])
+  await assert.rejects(
+    waitForDownload(api, 9),
+    /browser canceled.*No save was confirmed/
+  )
+  assert.equal(api.listeners.size, 0)
 })

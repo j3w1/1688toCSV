@@ -2,7 +2,10 @@ import { filenameFor, toCsv } from './csv.js'
 
 export function waitForDownload(downloads, id, timeoutMs = 30000) {
   return new Promise((resolve, reject) => {
+    let settled = false
     const finish = (error) => {
+      if (settled) return
+      settled = true
       clearTimeout(timer)
       downloads.onChanged.removeListener(onChanged)
       error ? reject(error) : resolve()
@@ -12,7 +15,9 @@ export function waitForDownload(downloads, id, timeoutMs = 30000) {
       else if (state === 'interrupted')
         finish(
           new Error(
-            `Download interrupted${error ? `: ${error}` : ''}. Try again.`
+            error === 'USER_CANCELED'
+              ? 'The browser canceled the download. No save was confirmed.'
+              : `Download interrupted${error ? `: ${error}` : ''}. Try again.`
           )
         )
     }
@@ -37,15 +42,28 @@ export function waitForDownload(downloads, id, timeoutMs = 30000) {
   })
 }
 
-export async function downloadOrder(downloads, order) {
-  const filename = filenameFor(order)
-  const url = `data:text/csv;charset=utf-8,${encodeURIComponent(toCsv(order.dataRows))}`
-  const id = await downloads.download({
-    url,
-    filename,
-    conflictAction: 'uniquify',
-    saveAs: false,
-  })
+export function prepareCsv(order) {
+  return { filename: filenameFor(order), csv: toCsv(order.dataRows) }
+}
+
+export async function downloadOrder(downloads, file) {
+  const { filename, csv } = file
+  const url = `data:text/csv;charset=utf-8,${encodeURIComponent(csv)}`
+  let id
+  try {
+    id = await downloads.download({
+      url,
+      filename,
+      conflictAction: 'uniquify',
+      saveAs: false,
+    })
+  } catch (cause) {
+    // Start-error strings are browser-specific; do not infer a user action from them.
+    throw new Error(
+      'The browser could not start the download. Check your downloads before trying Save CSV another way.',
+      { cause }
+    )
+  }
   await waitForDownload(downloads, id)
   // Chrome may add a suffix when the same order has already been exported.
   const [saved] = await downloads.search({ id })

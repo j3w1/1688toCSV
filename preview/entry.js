@@ -1,8 +1,11 @@
 import { mountPopup } from '../src/popup.js'
 import { toCsv } from '../src/csv.js'
+import { prepareCsv } from '../src/download.js'
+import { openSavePanel } from '../src/save-panel.js'
 
 // Explicit UI preview adapter. Never bundled into the installed extension.
 const scenario = new URL(location.href).searchParams.get('state') || 'ready'
+document.querySelector('.brand > span:last-child').textContent = 'DEMO PREVIEW'
 const order = {
   sellerName: '示例工厂',
   orderSuffix: '6789',
@@ -38,6 +41,11 @@ const api = {
       ]
     },
     async sendMessage(_id, { action }) {
+      if (action === 'preparePageSave') {
+        const file = prepareCsv(order)
+        openSavePanel(document, file)
+        return { status: 'save-ready', filename: file.filename }
+      }
       if (action === 'ping') {
         if (scenario === 'loading' && ++attempts < 20)
           return { status: 'loading' }
@@ -55,8 +63,7 @@ const api = {
   scripting: { async executeScript() {} },
   downloads: {
     async download({ filename }) {
-      if (scenario === 'download-error')
-        throw new Error('The browser could not save this file. Try again.')
+      if (scenario === 'download-error') throw new Error('USER_CANCELED')
       const link = document.createElement('a')
       const url = URL.createObjectURL(
         new Blob([toCsv(order.dataRows)], { type: 'text/csv;charset=utf-8' })

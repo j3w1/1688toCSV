@@ -180,3 +180,142 @@ test('a malformed product fails the full export and creates no partial download'
   expect(await popup.evaluate(() => chrome.downloads.search({}))).toEqual([])
   expect(extension.unexpectedRequests).toEqual([])
 })
+
+test('a rejected API start can save from the order page after its extension popup closes', async ({
+  extension,
+}) => {
+  const popup = await extension.openPopup()
+  await expect(popup.locator('body')).toHaveAttribute('data-state', 'ready')
+  await popup.evaluate(() => {
+    chrome.downloads.download = async () => {
+      throw new Error('USER_CANCELED')
+    }
+  })
+  await popup.getByRole('button', { name: /Download CSV/ }).click()
+  await expect(popup.locator('#feedback')).toContainText('could not start')
+  expect(await popup.evaluate(() => chrome.downloads.search({}))).toEqual([])
+  const alternate = popup.getByRole('button', { name: 'Save CSV another way' })
+  await expect(alternate).toBeVisible()
+  await alternate.click()
+  await expect(popup.locator('body')).toHaveAttribute('data-state', 'requested')
+  await expect(popup.locator('#feedback')).toContainText('Close this popup')
+  const panel = extension.orderPage.getByRole('dialog', {
+    name: 'Save order CSV',
+  })
+  await expect(panel).toBeVisible()
+  const link = panel.getByRole('link', { name: 'Save CSV', exact: true })
+  const firstUrl = await link.getAttribute('href')
+  expect(firstUrl).toMatch(/^blob:http:\/\/127\.0\.0\.1:/)
+  await expect(link).toHaveAttribute('download', '示例工厂_6789.csv')
+  await alternate.click()
+  await expect.poll(() => link.getAttribute('href')).not.toBe(firstUrl)
+  await expect(panel).toHaveCount(1)
+  expect(
+    await extension.orderPage.evaluate(async (url) => {
+      try {
+        await fetch(url)
+        return false
+      } catch {
+        return true
+      }
+    }, firstUrl)
+  ).toBe(true)
+  await popup.close()
+  const downloadWait = extension.orderPage.waitForEvent('download')
+  await link.click()
+  const download = await downloadWait
+  expect(download.suggestedFilename()).toBe('示例工厂_6789.csv')
+  expect(await download.failure()).toBeNull()
+  // With Chromium's default download behavior, its real filename is not the
+  // Playwright-managed GUID artifact path. Query the completed browser item.
+  const inspector = await extension.context.newPage()
+  await inspector.goto(`${extension.extensionBaseUrl}/production-popup.html`)
+  const [saved] = await inspector.evaluate(() => chrome.downloads.search({}))
+  expect(saved.state).toBe('complete')
+  expect(path.basename(saved.filename)).toBe('示例工厂_6789.csv')
+  const bytes = await readFile(saved.filename)
+  expect([...bytes.subarray(0, 3)]).toEqual([0xef, 0xbb, 0xbf])
+  expect(bytes.toString('utf8')).toMatch(/,12\.50,4,2\.10\r\n/)
+  expect(bytes.toString('utf8')).toMatch(/,8\.00,2,0\.30\r\n/)
+  await expect(panel.getByRole('status')).toContainText('Save requested')
+  const url = await link.getAttribute('href')
+  await panel.getByRole('button', { name: 'Close', exact: true }).click()
+  await expect(panel).toHaveCount(0)
+  expect(
+    await extension.orderPage.evaluate(async (url) => {
+      try {
+        await fetch(url)
+        return false
+      } catch {
+        return true
+      }
+    }, url)
+  ).toBe(true)
+  expect(extension.unexpectedRequests).toEqual([])
+})
+
+test('the saved CSV preserves row discount summaries instead of recomputing rounded unit prices', async ({
+  extension,
+}) => {
+  await extension.setOrder({
+    rows: [
+      {
+        title: 'Synthetic item A',
+        price: '3.00',
+        discountedPrice: '2.84',
+        quantity: '300',
+        discountSummary: ['优惠', '共', '47.20', '元'],
+        discounts: ['省40.00元', '减7.20元'],
+      },
+      {
+        title: 'Synthetic item B',
+        price: '3.90',
+        discountedPrice: '3.89',
+        quantity: '20',
+        discountSummary: '优惠共0.20元',
+      },
+    ],
+  })
+  const popup = await extension.openPopup()
+  await expect(popup.locator('body')).toHaveAttribute('data-state', 'ready')
+  await popup.getByRole('button', { name: /Download CSV/ }).click()
+  await expect(popup.locator('body')).toHaveAttribute('data-state', 'success')
+  const [download] = await popup.evaluate(() => chrome.downloads.search({}))
+  expect(download.state).toBe('complete')
+  const csv = await readFile(download.filename, 'utf8')
+  expect(csv).toMatch(/,3\.00,300,47\.20\r\n/)
+  expect(csv).toMatch(/,3\.90,20,0\.20\r\n/)
+})
+
+test('the page-save handoff revalidates the order and never opens a partial export', async ({
+  extension,
+}) => {
+  const popup = await extension.openPopup()
+  await expect(popup.locator('body')).toHaveAttribute('data-state', 'ready')
+  await popup.evaluate(() => {
+    chrome.downloads.download = async () => {
+      throw new Error('USER_CANCELED')
+    }
+  })
+  await popup.getByRole('button', { name: /Download CSV/ }).click()
+  await expect(popup.locator('#save-csv')).toBeVisible()
+  await extension.setOrder({
+    rows: [
+      {
+        title: 'Changed synthetic item',
+        price: '3.00',
+        quantity: '300',
+        discountSummary: '优惠共未知元',
+      },
+    ],
+  })
+  await popup.getByRole('button', { name: 'Save CSV another way' }).click()
+  await expect(popup.locator('#status-text')).toHaveText(
+    'Could not open the save panel'
+  )
+  await expect(popup.locator('#feedback')).toContainText('Row 1')
+  await expect(
+    extension.orderPage.getByRole('dialog', { name: 'Save order CSV' })
+  ).toHaveCount(0)
+  expect(await popup.evaluate(() => chrome.downloads.search({}))).toEqual([])
+})

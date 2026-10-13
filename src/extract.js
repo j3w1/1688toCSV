@@ -46,6 +46,83 @@ function sumDiscounts(amounts) {
   return `${cents / 100n}.${String(cents % 100n).padStart(2, '0')}`
 }
 
+// textContent does not cross shadow boundaries. Follow the rendered component
+// tree, including assigned slot content, without reading product copy or prices
+// as if they were row discounts.
+function discountText(node) {
+  if (node.nodeType === 3) return node.textContent
+  if (
+    [
+      'order-table-goods',
+      'order-table-pay',
+      'order-table-number',
+      'script',
+      'style',
+      'template',
+    ].includes(node.localName)
+  )
+    return ''
+  const assigned =
+    node.localName === 'slot' && node.assignedNodes?.({ flatten: true })
+  const children = assigned?.length
+    ? assigned
+    : (node.shadowRoot || node).childNodes
+  return [...children].map(discountText).join('')
+}
+
+function rowDiscount(row, discount, rowNumber) {
+  const rowText = discountText(row).replace(/\s+/g, '')
+  const summaries = rowText.split('优惠共').slice(1)
+  if (summaries.length) {
+    const amounts = summaries.map((summary) => {
+      const amount = summary.match(
+        new RegExp(`^[:：]?[¥￥]?(${numberPattern.source})元`)
+      )?.[1]
+      if (!amount) {
+        throw new Error(
+          `Row ${rowNumber}: the advertised discount summary is missing or invalid.`
+        )
+      }
+      return amount
+        .replaceAll(',', '')
+        .replace(/^0+(?=\d)/, '')
+        .replace(/(\.\d*?)0+$/, '$1')
+        .replace(/\.$/, '')
+    })
+    if (new Set(amounts).size !== 1) {
+      throw new Error(
+        `Row ${rowNumber}: conflicting discount summaries were found.`
+      )
+    }
+    // The displayed per-product total is authoritative. Adding its breakdown
+    // again, or deriving it from a rounded discounted unit price, overcounts it.
+    return sumDiscounts([amounts[0]])
+  }
+
+  const amounts = []
+  const discountArea = row.querySelector(':scope > td:nth-child(4)') || discount
+  if (discountArea) {
+    for (const item of deepQuery(discountArea).all(
+      '.order-table-discount-item-price'
+    )) {
+      amounts.push(requiredNumber(discountText(item), 'discount', rowNumber))
+    }
+    const advertised = discountText(discountArea).replace(/\s+/g, '')
+    if (
+      !amounts.length &&
+      advertised &&
+      !/^(?:[-—–]+|无|无优惠|暂无优惠|无折扣|0(?:\.0+)?(?:元)?)$/.test(
+        advertised
+      )
+    ) {
+      throw new Error(
+        `Row ${rowNumber}: the advertised discount could not be read.`
+      )
+    }
+  }
+  return sumDiscounts(amounts)
+}
+
 function extractRow(row, index) {
   const rowNumber = index + 1
   const cells = deepQuery(row)
@@ -91,21 +168,12 @@ function extractRow(row, index) {
     rowNumber,
     { integer: true }
   )
-  const discounts = []
-  if (discount) {
-    for (const item of deepQuery(discount).all(
-      '.order-table-discount-item-price'
-    )) {
-      const amount = requiredNumber(text(item), 'discount', rowNumber)
-      discounts.push(amount)
-    }
-  }
   return {
     thumbnail,
     description,
     price,
     quantity,
-    discount: sumDiscounts(discounts),
+    discount: rowDiscount(row, discount, rowNumber),
   }
 }
 

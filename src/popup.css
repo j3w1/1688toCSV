@@ -1,4 +1,10 @@
 :root {
+  /* Action popups size themselves from the document's intrinsic width. */
+  width: 380px;
+  min-width: 380px;
+  max-height: 600px;
+  overflow-x: hidden;
+  overflow-y: auto;
   color-scheme: light;
   font-family: 'Segoe UI', system-ui, sans-serif;
   color: #252820;
@@ -9,13 +15,10 @@
 }
 body {
   margin: 0;
-  width: 380px;
-  max-width: 100vw;
-  max-height: 600px;
-  overflow-y: auto;
+  width: 100%;
 }
 main {
-  padding: 22px;
+  padding: 18px;
 }
 header,
 .brand,
@@ -53,7 +56,7 @@ header {
   border-radius: 5px;
 }
 .intro {
-  margin: 24px 0 18px;
+  margin: 18px 0;
 }
 .eyebrow,
 .label {
@@ -66,7 +69,7 @@ header {
   margin: 0 0 12px;
 }
 h1 {
-  font-size: 34px;
+  font-size: 28px;
   line-height: 1.09;
   letter-spacing: -1.5px;
   margin: 0;
@@ -157,6 +160,13 @@ button {
   box-shadow: 0 3px 0 #d7420d;
   transition: background 0.15s;
 }
+.download > span:first-of-type {
+  white-space: nowrap;
+}
+.download svg,
+.download .arrow {
+  flex-shrink: 0;
+}
 .download:hover:enabled {
   background: #e94d15;
 }
@@ -174,7 +184,8 @@ button {
   margin-left: auto;
   font-size: 18px;
 }
-button:focus-visible {
+button:focus-visible,
+a:focus-visible {
   outline: 3px solid #456fba;
   outline-offset: 4px;
 }
@@ -204,6 +215,31 @@ footer {
 #feedback[data-tone='error'] {
   color: #972e21;
   background: #fff0eb;
+}
+#feedback[data-tone='notice'] {
+  background: #eef0ed;
+  color: #4c5547;
+}
+.alternate-save {
+  display: block;
+  width: 100%;
+  border: 1px solid #adb79e;
+  border-radius: 7px;
+  padding: 11px 8px;
+  margin-top: 10px;
+  color: #385128;
+  background: #fff;
+  text-align: center;
+  font-size: 12px;
+  font-weight: 600;
+  text-decoration: none;
+}
+.alternate-save:hover:enabled {
+  background: #eef2e8;
+}
+.alternate-save:disabled {
+  cursor: wait;
+  opacity: 0.65;
 }
 .retry {
   border: 0;
