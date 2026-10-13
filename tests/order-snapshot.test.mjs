@@ -141,6 +141,20 @@ test('optional discount summaries allow labels and empty presentation states', (
   assert.throws(() => snapshot(conflicting), /discount total does not match/)
 })
 
+test('payable text ignores framework comments around split currency and decimals', () => {
+  const source = fixture({ usd: true })
+  for (const child of [...source.payable.childNodes]) {
+    source.payable.insertBefore(
+      source.document.createComment('?lit$8321$'),
+      child
+    )
+  }
+  source.payable.append(source.document.createComment('/render:amount'))
+  assert.equal(snapshot(source).totals.payable, '68.00')
+  source.payable.append(source.document.createTextNode(' ¥1.00'))
+  assert.throws(() => snapshot(source), /CNY payable amount/)
+})
+
 test('reads a complete canonical snapshot with full string identities and isolated status', () => {
   const result = snapshot(fixture({ usd: true }))
   assert.deepEqual(

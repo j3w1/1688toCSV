@@ -34,7 +34,7 @@ function completeOrder(document, orderId, summary = '2.40') {
       <dl><dt>运费</dt><dd>¥4.40</dd></dl>
       <dl><dt>商品优惠</dt><dd>减 ¥2.40</dd></dl>
     </div><div class="total-discount">2.40</div>
-    <div class="total-sum-pay"><span class="sum-pay-label">实付款</span>¥68.00</div>`
+    <div class="total-sum-pay"><!--?lit$8321$--><span class="sum-pay-label">实付款</span><!--amount:start--><span class="fd-cny">¥</span><!--?lit$8321$-->68.<span class="sub-ammount">00</span><!--amount:end--></div>`
   app.append(totals)
   totals.shadowRoot.querySelector('.total-discount').textContent = summary
 }

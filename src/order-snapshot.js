@@ -161,6 +161,8 @@ function readTotals(appQuery) {
     [...payable.childNodes]
       .filter(
         (node) =>
+          // Direct comment nodes contain framework markers, not payment text.
+          (node.nodeType === 1 || node.nodeType === 3) &&
           !node.classList?.contains('sum-pay-label') &&
           !node.classList?.contains('ask-icon-box')
       )

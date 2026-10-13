@@ -29,11 +29,15 @@ Load **dist** through **Extensions → Developer mode → Load unpacked**. In th
 
 The importer reads complete detail pages, one at a time, reusing one **visible** tab. This supports the Codex embedded browser, which rejects extension-created background tabs. The reader closes when collection finishes or pauses; tabs you navigate elsewhere are left open. List cards can hide most products, so they are used for discovery and completeness checks. Progress shows saved and failed orders. Pause/resume is available; a browser restart leaves interrupted jobs paused. Resuming a bulk job also requires confirmation. Changing filters or an unreadable page stops discovery instead of mixing results. Login and verification screens need your interaction.
 
+**Import selected opens the detail pages automatically.** You do not need to open each order yourself. The current importer needs that reader tab to collect the full products and reconcile their amounts; selecting orders on the list only creates the queue.
+
 On a detail page, **Save order** adds that order. The extension icon and **Spreadsheet ↗** open the library.
 
 If upgrading from 2.0.0 after seeing **“Owl extension-created tabs must be active”**, reload the extension and refresh the library/list pages, then resume the small selected-order job. Its queue is preserved; do not resume an old bulk job unless you intend to collect its full scope. Opening the spreadsheet does not itself prove any order was saved: check the saved count and progress error.
 
 Version 2.0.2 fixes **“Discount total is missing or invalid”** for labelled or empty optional discount summaries. Product discounts still reconcile with the detailed order totals and payable amount. Slow-rendering detail pages use bounded retries, and tab lookup errors are reported separately from an actually closed tab. Existing failed queues can be retried after updating.
+
+Version 2.0.3 fixes a cause of **“The CNY payable amount is missing or ambiguous”**: HTML comment markers surrounding the amount were being read as payment text. The parser now ignores those non-display nodes while retaining strict currency and amount checks. Browser import fixtures include these markers, which the saved offline captures did not retain around their totals.
 
 **Settings → Appearance** offers System, Light, and Dark. System follows your device; an explicit choice persists and synchronizes across library tabs. The list-page controls follow your device's color scheme.
 
