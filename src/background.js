@@ -246,6 +246,24 @@ async function dispatch(message, sender, repository, controller) {
       )
         throw new Error('Unsupported source page.')
       return openLibrary()
+    case 'OPEN_LIBRARY_HERE': {
+      requireContent(sender, isListUrl(sender.url) ? 'list' : 'detail')
+      const tabId = sender.tab.id
+      if (
+        (await repository.listJobs()).some(
+          (job) =>
+            job.state === 'running' &&
+            (job.source?.tabId === tabId || job.workerTabId === tabId)
+        )
+      )
+        throw new Error(
+          'Pause or finish this import before opening the spreadsheet in this tab.'
+        )
+      return chrome.tabs.update(tabId, {
+        url: chrome.runtime.getURL('library.html'),
+        active: true,
+      })
+    }
     case 'CONTENT_READY':
       requireContent(sender, 'detail')
       return true

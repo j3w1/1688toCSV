@@ -2,7 +2,7 @@
 
 > Last Updated: 2026-10-14
 >
-> Draft for development version 2.0.3. No store submission or publication. Live multi-order import acceptance remains pending.
+> Draft for development version 2.0.4. No store submission or publication. Live multi-order import acceptance remains pending.
 
 ## Store Listing
 
@@ -120,6 +120,7 @@ Draft substance: records, history, notes and pictures remain locally stored. No 
 
 | Version | Date       | Changes                                                                                                                                       | Status                                                                                                              |
 | ------- | ---------- | --------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------- |
+| 2.0.4   | 2026-10-14 | Separate spreadsheet-opening errors from import progress; offer current-tab library navigation with saved data retained | User screenshot reports one order saved; current-tab navigation regression tested locally, embedded acceptance pending |
 | 2.0.3   | 2026-10-14 | Exclude framework comment nodes from payable text; cover split currency and decimals in packaged imports | Local unit and browser regression verification; live embedded-browser acceptance remains unverified |
 | 2.0.2   | 2026-10-14 | Tolerant optional discount-summary presentation, bounded readiness retries, accurate tab errors, packaged end-to-end import tests | Edge synthetic import/retry/theme and private offline replay verified; live embedded-browser acceptance unverified |
 | 2.0.1   | 2026-10-14 | Explicit active tabs for embedded-browser compatibility, one reusable detail reader, safer bulk import/resume, on-list progress and dark mode | Local regression verification; corrected live import acceptance pending                                             |
@@ -136,6 +137,7 @@ Draft substance: records, history, notes and pictures remain locally stored. No 
 - User confirmed discovery across 67 real list pages in 2.0.0. A supplied screenshot identified the detail-import failure: the embedded browser requires active extension-created tabs. 2.0.1 explicitly requests active tabs and tests this restriction with a rejecting browser shim. Corrected live detail import, reconciliation and embedded-browser clipboard acceptance remain pending. Agent access to live 1688 is blocked by browser-tool policy; no alternate live automation is used.
 - A subsequent screenshot showed 2.0.1 rejecting the optional discount summary. Version 2.0.2 accepts labels/empty presentation states while preserving checks against detailed discounts, product totals and payable amounts. Packaged import tests now exercise real browser messaging, navigation, persistence and copying on locally fulfilled `.test` pages. Isolated Microsoft Edge also imported all 66 rows from three inert private captures, preserving the 47.20 item discount in the five-row order. Private captures and test profiles are not published; live embedded-browser acceptance remains unverified.
 - A later screenshot showed the payable parser rejecting an order. Version 2.0.3 fixes a reproduced cause of that exact error: direct HTML comment nodes were concatenated into the amount. Tests now include rendering comments between the label, currency, integer and fractional amount. The live DOM cause cannot be confirmed from the screenshot alone; rejecting conflicting currencies and unreconciled totals remains covered.
+- The latest user screenshot reports one saved order and a separate embedded-browser tab-presentation error. Version 2.0.4 exposes a current-tab spreadsheet action and the fallback address on both successful and rejected new-tab requests. The worker refuses to replace a tab used by a running import. Synthetic browser tests cover saved-data continuity; live current-tab navigation is not yet verified.
 
 ### Known limitations
 

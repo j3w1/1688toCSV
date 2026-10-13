@@ -31,6 +31,8 @@ The importer reads complete detail pages, one at a time, reusing one **visible**
 
 **Import selected opens the detail pages automatically.** You do not need to open each order yourself. The current importer needs that reader tab to collect the full products and reconcile their amounts; selecting orders on the list only creates the queue.
 
+If **Spreadsheet ↗** cannot show a new tab, choose **Open spreadsheet here** in the list controls. This opens the library in the current tab and keeps saved orders. Pause or finish any import using that tab first. A selectable spreadsheet address remains available if the browser also rejects navigation. A completed import and a failed attempt to display the spreadsheet are reported separately.
+
 On a detail page, **Save order** adds that order. The extension icon and **Spreadsheet ↗** open the library.
 
 If upgrading from 2.0.0 after seeing **“Owl extension-created tabs must be active”**, reload the extension and refresh the library/list pages, then resume the small selected-order job. Its queue is preserved; do not resume an old bulk job unless you intend to collect its full scope. Opening the spreadsheet does not itself prove any order was saved: check the saved count and progress error.
@@ -38,6 +40,8 @@ If upgrading from 2.0.0 after seeing **“Owl extension-created tabs must be act
 Version 2.0.2 fixes **“Discount total is missing or invalid”** for labelled or empty optional discount summaries. Product discounts still reconcile with the detailed order totals and payable amount. Slow-rendering detail pages use bounded retries, and tab lookup errors are reported separately from an actually closed tab. Existing failed queues can be retried after updating.
 
 Version 2.0.3 fixes a cause of **“The CNY payable amount is missing or ambiguous”**: HTML comment markers surrounding the amount were being read as payment text. The parser now ignores those non-display nodes while retaining strict currency and amount checks. Browser import fixtures include these markers, which the saved offline captures did not retain around their totals.
+
+Version 2.0.4 keeps spreadsheet-opening failures separate from saved-import progress and offers current-tab navigation even when the browser blocks creation of a new spreadsheet tab.
 
 **Settings → Appearance** offers System, Light, and Dark. System follows your device; an explicit choice persists and synchronizes across library tabs. The list-page controls follow your device's color scheme.
 

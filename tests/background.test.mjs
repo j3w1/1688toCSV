@@ -424,6 +424,46 @@ test('embedded browser creates explicit active tabs and reuses one detail tab ac
   assert.ok(s.tabs.has(library.data.id))
 })
 
+test('spreadsheet fallback navigates only the requesting idle order tab without creating a tab', async () => {
+  const s = setup()
+  s.chrome.tabs.create = async () => {
+    throw new Error(
+      'Owl extension-created tab was blocked before presentation.'
+    )
+  }
+  const blocked = await s.send({ type: 'OPEN_LIBRARY' }, sender)
+  assert.equal(blocked.ok, false)
+  assert.match(blocked.error, /blocked before presentation/)
+  const result = await s.send({ type: 'OPEN_LIBRARY_HERE' }, sender)
+  assert.equal(result.ok, true)
+  assert.equal(s.tabs.get(7).url, origin + 'library.html')
+  assert.equal(s.tabs.size, 1)
+  assert.equal(s.calls.filter(([type]) => type === 'create').length, 0)
+  assert.equal(
+    (
+      await s.send(
+        { type: 'OPEN_LIBRARY_HERE' },
+        { ...sender, url: 'https://example.com/' }
+      )
+    ).ok,
+    false
+  )
+})
+
+test('spreadsheet fallback cannot replace a tab used by a running import', async () => {
+  for (const job of [
+    { id: 'running', state: 'running', source: { tabId: 7 }, orders: [] },
+    { id: 'running', state: 'running', workerTabId: 7, orders: [] },
+  ]) {
+    const s = setup()
+    s.jobs.set(job.id, job)
+    const result = await s.send({ type: 'OPEN_LIBRARY_HERE' }, sender)
+    assert.equal(result.ok, false)
+    assert.match(result.error, /Pause or finish/)
+    assert.equal(s.tabs.get(7).url, listUrl)
+  }
+})
+
 test('list progress and pause/resume are limited to the original source tab and frame', async () => {
   const s = setup()
   const created = await s.send(

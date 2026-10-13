@@ -22,6 +22,10 @@ async function setup(extension, jobs = []) {
       readList: () => structuredClone(state.list),
       send: async (type, data) => {
         state.calls.push({ type, data })
+        if (type === 'OPEN_LIBRARY' && state.blockLibrary)
+          throw new Error(
+            'Owl extension-created tab was blocked before presentation.'
+          )
         if (type === 'IMPORT_STATUS')
           return { jobs: structuredClone(state.jobs) }
         if (type === 'IMPORT_START') {
@@ -170,6 +174,56 @@ test('selected import shows progress, errors and working pause/resume on the lis
   await expect(page.getByRole('status')).toContainText(
     'Spreadsheet tab requested'
   )
+})
+
+test('blocked spreadsheet creation keeps completed import visible and offers current-tab navigation', async ({
+  extension,
+}) => {
+  const page = await setup(extension, [
+    {
+      id: 'saved',
+      state: 'completed',
+      phase: 'details',
+      total: 1,
+      discovered: 1,
+      completed: 1,
+      failed: 0,
+    },
+  ])
+  await page.evaluate(() => {
+    toolbarTest.blockLibrary = true
+  })
+  await page.getByRole('button', { name: 'Spreadsheet ↗', exact: true }).click()
+  await expect(page.getByRole('status')).toContainText(
+    'spreadsheet could not open in a new tab'
+  )
+  await expect(page.getByRole('status')).toContainText('saved orders are kept')
+  await expect(
+    page.getByText('completed · 1 saved / 1 discovered', { exact: true })
+  ).toBeVisible()
+  await expect(
+    page.getByRole('textbox', { name: 'Spreadsheet address' })
+  ).toBeVisible()
+  await page.setViewportSize({ width: 320, height: 800 })
+  expect(
+    await page.evaluate(
+      () => document.documentElement.scrollWidth <= innerWidth
+    )
+  ).toBe(true)
+  await page
+    .getByRole('button', { name: 'Open spreadsheet here', exact: true })
+    .click()
+  expect((await mutations(page)).map((call) => call.type)).toEqual([
+    'OPEN_LIBRARY',
+    'OPEN_LIBRARY_HERE',
+  ])
+  await page.evaluate(async () => {
+    toolbarTest.jobs[0].state = 'running'
+    await toolbar.refresh()
+  })
+  await expect(
+    page.getByRole('button', { name: 'Open spreadsheet here', exact: true })
+  ).toBeDisabled()
 })
 
 test('an old bulk job also requires confirmation before resume and controls fit narrow screens', async ({

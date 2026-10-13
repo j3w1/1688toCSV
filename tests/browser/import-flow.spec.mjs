@@ -111,6 +111,13 @@ test('selected import reaches persistent spreadsheet and clipboard through real 
   expect(visited).toEqual(ids)
   await library.reload()
   await expect(library.locator('#order-count')).toHaveText('2')
+  await list.getByRole('button', { name: 'Spreadsheet ↗', exact: true }).click()
+  await list
+    .getByRole('button', { name: 'Open spreadsheet here', exact: true })
+    .click()
+  await expect(list).toHaveURL(`${extension.extensionBaseUrl}/library.html`)
+  await expect(list.locator('#order-count')).toHaveText('2')
+  await expect(list.locator('#sheet-body tr')).toHaveCount(4)
 })
 
 test('delayed rendering and labelled discount summaries import complete products', async ({

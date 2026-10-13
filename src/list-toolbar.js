@@ -113,11 +113,19 @@ export function mountListToolbar(document, { readList, send }) {
     'primary'
   )
   button(nav, 'Spreadsheet ↗', async () => {
-    await send('OPEN_LIBRARY')
-    report(
-      'Spreadsheet tab requested. If it is not visible, open the address below in a browser tab.'
-    )
     address.hidden = false
+    openHere.hidden = false
+    try {
+      await send('OPEN_LIBRARY')
+      report(
+        'Spreadsheet tab requested. If it is not visible, choose Open spreadsheet here or use the address below.'
+      )
+    } catch (error) {
+      report(
+        `The spreadsheet could not open in a new tab. Your saved orders are kept. Choose Open spreadsheet here or use the address below. ${error.message}`,
+        true
+      )
+    }
   })
   const address = make('input')
   address.type = 'text'
@@ -129,6 +137,17 @@ export function mountListToolbar(document, { readList, send }) {
   // The caller owns the extension URL; no page-provided URL is used here.
   address.value = globalThis.chrome?.runtime?.getURL?.('library.html') || ''
   address.addEventListener('click', () => address.select())
+  const fallbackActions = make('div')
+  fallbackActions.className = 'actions'
+  const openHere = button(
+    fallbackActions,
+    'Open spreadsheet here',
+    async () => {
+      await send('OPEN_LIBRARY_HERE')
+      report('Opening the spreadsheet in this tab…')
+    }
+  )
+  openHere.hidden = true
   const all = button(
     options,
     'Import all matching…',
@@ -199,6 +218,10 @@ export function mountListToolbar(document, { readList, send }) {
     const running = latestJob?.state === 'running'
     selected.disabled = running
     all.disabled = running
+    openHere.disabled = running
+    openHere.title = running
+      ? 'Pause or finish this import before leaving the order list.'
+      : ''
   }
   async function refresh() {
     if (querying || disposed) return
@@ -245,7 +268,8 @@ export function mountListToolbar(document, { readList, send }) {
     confirmation,
     progress,
     feedback,
-    address
+    address,
+    fallbackActions
   )
   root.append(style, aside)
   document.body.append(host)
