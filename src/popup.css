@@ -220,27 +220,6 @@ footer {
   background: #eef0ed;
   color: #4c5547;
 }
-.alternate-save {
-  display: block;
-  width: 100%;
-  border: 1px solid #adb79e;
-  border-radius: 7px;
-  padding: 11px 8px;
-  margin-top: 10px;
-  color: #385128;
-  background: #fff;
-  text-align: center;
-  font-size: 12px;
-  font-weight: 600;
-  text-decoration: none;
-}
-.alternate-save:hover:enabled {
-  background: #eef2e8;
-}
-.alternate-save:disabled {
-  cursor: wait;
-  opacity: 0.65;
-}
 .retry {
   border: 0;
   background: transparent;

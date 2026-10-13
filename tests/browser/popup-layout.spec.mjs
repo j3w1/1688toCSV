@@ -25,9 +25,6 @@ async function popupLayout(extension) {
     const button = document
       .getElementById('download-csv-order')
       .getBoundingClientRect()
-    const alternate = document
-      .getElementById('save-csv')
-      .getBoundingClientRect()
     return {
       width: view.innerWidth,
       height: view.innerHeight,
@@ -35,8 +32,6 @@ async function popupLayout(extension) {
       contentHeight: document.body.scrollHeight,
       buttonBottom: button.bottom,
       buttonWidth: button.width,
-      alternateBottom: alternate.bottom,
-      alternateWidth: alternate.width,
       rootBoxWidth: document.documentElement.getBoundingClientRect().width,
     }
   })
@@ -58,48 +53,52 @@ test('the native action popup opens at full width with compact ready content', a
   expect(extension.unexpectedRequests).toEqual([])
 })
 
-test('native popup recovery controls stay full width and long feedback can scroll', async ({
+test('native popup prepares the page save at full width and long error feedback can scroll', async ({
   extension,
 }) => {
   await openActionPopup(extension)
   await extension.popup.evaluate(() => {
     const view = chrome.extension.getViews({ type: 'popup' })[0]
-    view.chrome.downloads.download = async () => {
-      throw new Error('USER_CANCELED')
-    }
     view.document.getElementById('download-csv-order').click()
   })
   await expect
     .poll(() =>
       extension.popup.evaluate(
         () =>
-          chrome.extension
-            .getViews({ type: 'popup' })[0]
-            ?.document.getElementById('save-csv').hidden
+          chrome.extension.getViews({ type: 'popup' })[0]?.document.body.dataset
+            .state
       )
     )
-    .toBe(false)
-  const recovered = await popupLayout(extension)
-  expect(recovered.rootBoxWidth).toBe(380)
+    .toBe('requested')
+  await expect(
+    extension.orderPage.getByRole('dialog', { name: 'Save order CSV' })
+  ).toBeVisible()
+  const requested = await popupLayout(extension)
+  expect(requested.rootBoxWidth).toBe(380)
   // On short screens Chromium can add its native vertical scrollbar outside
   // the 380px document. The actual content must not shrink or overflow sideways.
-  expect(recovered.width).toBeGreaterThanOrEqual(recovered.rootBoxWidth)
-  expect(recovered.width).toBeLessThanOrEqual(400)
-  expect(recovered.contentWidth).toBe(recovered.width)
-  expect(recovered.height).toBeLessThanOrEqual(600)
-  expect(recovered.contentHeight).toBeLessThanOrEqual(600)
-  expect(recovered.alternateWidth).toBe(recovered.buttonWidth)
-  expect(recovered.alternateWidth).toBeGreaterThan(300)
-  expect(recovered.alternateBottom).toBeLessThanOrEqual(recovered.height + 1)
+  expect(requested.width).toBeGreaterThanOrEqual(requested.rootBoxWidth)
+  expect(requested.width).toBeLessThanOrEqual(400)
+  expect(requested.contentWidth).toBe(requested.width)
+  expect(requested.height).toBeLessThanOrEqual(600)
+  expect(requested.contentHeight).toBeLessThanOrEqual(600)
+  expect(requested.buttonWidth).toBeGreaterThan(300)
+  expect(requested.buttonBottom).toBeLessThanOrEqual(requested.height + 1)
 
   await extension.popup.evaluate(() => {
     const view = chrome.extension.getViews({ type: 'popup' })[0]
+    // Exercise error layout with synthetic long diagnostics without changing
+    // the successful real page-save handoff above.
+    view.document.body.dataset.state = 'error'
+    view.document.getElementById('feedback').dataset.tone = 'error'
     view.document.getElementById('feedback').textContent =
       'Synthetic diagnostic detail. '.repeat(100)
+    view.document.getElementById('retry').hidden = false
   })
   const overflowing = await popupLayout(extension)
   expect(overflowing.rootBoxWidth).toBe(380)
-  expect(overflowing.width).toBe(recovered.width)
+  expect(overflowing.width).toBeGreaterThanOrEqual(overflowing.rootBoxWidth)
+  expect(overflowing.width).toBeLessThanOrEqual(400)
   expect(overflowing.contentWidth).toBe(overflowing.width)
   expect(overflowing.height).toBeLessThanOrEqual(600)
   expect(overflowing.contentHeight).toBeGreaterThan(overflowing.height)

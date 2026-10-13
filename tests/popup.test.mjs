@@ -23,33 +23,11 @@ function setup(overrides = {}) {
       async sendMessage(_id, { action }) {
         return action === 'ping'
           ? { status: 'ready', rowCount: 2 }
-          : {
-              data: {
-                sellerName: 'Fixture',
-                orderSuffix: '6789',
-                dataRows: [
-                  {
-                    description: '示例',
-                    price: '1.50',
-                    quantity: '2',
-                    discount: '0',
-                  },
-                ],
-              },
-            }
+          : { status: 'save-ready', filename: 'Fixture_6789.csv' }
       },
       ...overrides,
     },
     scripting: { async executeScript() {} },
-    downloads: {
-      async download() {
-        return 1
-      },
-      async search() {
-        return [{ state: 'complete' }]
-      },
-      onChanged: { addListener() {}, removeListener() {} },
-    },
   }
   return {
     document,
@@ -128,37 +106,34 @@ test('waits for late order rows and provides retry when a page remains empty', a
   assert.equal(empty.button.disabled, true)
   assert.equal(empty.document.getElementById('retry').hidden, false)
 })
-test('successful export waits for download completion and prevents duplicate clicks', async () => {
+test('the primary button prepares the page save directly and prevents concurrent duplicate requests', async () => {
   const { document, api, button } = setup()
   let complete
-  let completed = false
-  let downloads = 0
-  api.downloads.download = async () => {
-    downloads++
-    return 1
+  let requests = 0
+  api.tabs.sendMessage = async (id, request) => {
+    assert.equal(id, 4)
+    if (request.action === 'ping') return { status: 'ready', rowCount: 2 }
+    assert.equal(request.action, 'preparePageSave')
+    requests++
+    return new Promise((resolve) => {
+      complete = () =>
+        resolve({ status: 'save-ready', filename: 'Fixture_6789.csv' })
+    })
   }
-  api.downloads.search = async () =>
-    completed
-      ? [{ state: 'complete' }]
-      : new Promise((resolve) => {
-          complete = () => {
-            completed = true
-            resolve([{ state: 'complete' }])
-          }
-        })
   await mountPopup(api, document)
   button.click()
   button.click()
   await waitFor(() => complete)
-  assert.equal(downloads, 1)
+  assert.equal(requests, 1)
   assert.equal(document.body.dataset.state, 'exporting')
   complete()
-  await waitFor(() => document.body.dataset.state === 'success')
+  await waitFor(() => document.body.dataset.state === 'requested')
   assert.equal(button.disabled, false)
-  assert.equal(
+  assert.match(
     document.getElementById('feedback').textContent,
-    'Fixture_6789.csv'
+    /Save CSV.*order page/
   )
+  assert.equal(document.getElementById('feedback').dataset.tone, 'notice')
 })
 test('extraction errors remain visible and do not trigger a download', async () => {
   const { document, api, button } = setup({
@@ -168,91 +143,38 @@ test('extraction errors remain visible and do not trigger a download', async () 
         : { error: 'Row 2: quantity is missing.' }
     },
   })
-  api.downloads.download = () => assert.fail('Invalid order must not download')
   await mountPopup(api, document)
   button.click()
   await waitFor(() => document.body.dataset.state === 'error')
   assert.match(document.getElementById('feedback').textContent, /quantity/)
   assert.equal(button.disabled, false)
-  assert.equal(document.getElementById('save-csv').hidden, true)
 })
 
-test('a rejected download opens a page save panel only after a separate user click', async () => {
+test('a missing page-save acknowledgement is an error rather than an apparent success', async () => {
   const { document, api, button } = setup()
-  let attempts = 0
-  api.downloads.download = async () => {
-    attempts++
-    throw new Error('USER_CANCELED')
-  }
-  let panelRequests = 0
-  const sendMessage = api.tabs.sendMessage
-  api.tabs.sendMessage = async (tabId, request) => {
-    if (request.action === 'preparePageSave') {
-      panelRequests++
-      return { status: 'save-ready', filename: 'Fixture_6789.csv' }
-    }
-    return sendMessage(tabId, request)
-  }
+  api.tabs.sendMessage = async (_id, { action }) =>
+    action === 'ping' ? { status: 'ready', rowCount: 2 } : undefined
   await mountPopup(api, document)
   button.click()
   await waitFor(() => document.body.dataset.state === 'error')
-  const alternate = document.getElementById('save-csv')
-  assert.equal(alternate.hidden, false)
   assert.match(
     document.getElementById('feedback').textContent,
-    /could not start/
+    /could not open/
   )
-  assert.equal(attempts, 1)
-  assert.equal(panelRequests, 0)
-  alternate.click()
-  alternate.click()
-  await waitFor(() => document.body.dataset.state === 'requested')
-  assert.equal(document.body.dataset.state, 'requested')
-  assert.match(
-    document.getElementById('feedback').textContent,
-    /Close this popup.*Save CSV.*order page/
-  )
-  assert.equal(document.getElementById('feedback').dataset.tone, 'notice')
-  assert.equal(attempts, 1)
-  assert.equal(panelRequests, 1)
-  document.defaultView.dispatchEvent(new document.defaultView.Event('pagehide'))
-  assert.equal(alternate.hidden, true)
+  assert.equal(button.disabled, false)
 })
 
-test('rechecking the order hides the recovery control', async () => {
+test('an export error can be cleared by checking the order again', async () => {
   const { document, api, button } = setup()
-  api.downloads.download = async () => {
-    throw new Error('USER_CANCELED')
-  }
+  api.tabs.sendMessage = async (_id, { action }) =>
+    action === 'ping'
+      ? { status: 'ready', rowCount: 2 }
+      : { error: 'Row 2: discount summary is invalid.' }
   await mountPopup(api, document)
   button.click()
   await waitFor(() => document.body.dataset.state === 'error')
-  const alternate = document.getElementById('save-csv')
+  assert.match(document.getElementById('feedback').textContent, /Row 2/)
   document.getElementById('retry').click()
   await waitFor(() => document.body.dataset.state === 'ready')
-  assert.equal(alternate.hidden, true)
-})
-
-test('page-save extraction errors remain visible and do not claim a save', async () => {
-  const { document, api, button } = setup()
-  api.downloads.download = async () => {
-    throw new Error('USER_CANCELED')
-  }
-  const sendMessage = api.tabs.sendMessage
-  api.tabs.sendMessage = async (id, request) =>
-    request.action === 'preparePageSave'
-      ? { error: 'Row 2: discount summary is invalid.' }
-      : sendMessage(id, request)
-  await mountPopup(api, document)
-  button.click()
-  await waitFor(() => document.body.dataset.state === 'error')
-  document.getElementById('save-csv').click()
-  await waitFor(
-    () =>
-      document.getElementById('status-text').textContent ===
-      'Could not open the save panel'
-  )
-  assert.equal(document.body.dataset.state, 'error')
-  assert.match(document.getElementById('feedback').textContent, /Row 2/)
-  assert.equal(button.disabled, false)
+  assert.equal(document.getElementById('feedback').hidden, true)
 })

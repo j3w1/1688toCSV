@@ -1,7 +1,7 @@
 import { mountPopup } from '../../src/popup.js'
 
-// Only active-tab selection is adapted. Messaging, script injection, and file
-// downloads are the real extension APIs against the isolated localhost tab.
+// Only active-tab selection is adapted. Messaging and script injection use
+// real extension APIs; downloads use the page link on the isolated localhost tab.
 const parameters = new URLSearchParams(location.search)
 const tabId = Number(parameters.get('fixtureTab'))
 const metadataUrl = parameters.has('unsupported')
@@ -15,7 +15,6 @@ mountPopup(
       sendMessage: chrome.tabs.sendMessage.bind(chrome.tabs),
     },
     scripting: chrome.scripting,
-    downloads: chrome.downloads,
   },
   document,
   { pollMs: 25, timeoutMs: 500 }

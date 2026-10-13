@@ -1,6 +1,5 @@
 import { mountPopup } from '../src/popup.js'
-import { toCsv } from '../src/csv.js'
-import { prepareCsv } from '../src/download.js'
+import { prepareCsv } from '../src/csv.js'
 import { openSavePanel } from '../src/save-panel.js'
 
 // Explicit UI preview adapter. Never bundled into the installed extension.
@@ -41,7 +40,7 @@ const api = {
       ]
     },
     async sendMessage(_id, { action }) {
-      if (action === 'preparePageSave') {
+      if (action === 'preparePageSave' && scenario !== 'error') {
         const file = prepareCsv(order)
         openSavePanel(document, file)
         return { status: 'save-ready', filename: file.filename }
@@ -57,27 +56,9 @@ const api = {
           error:
             'Row 2: product details are incomplete. Refresh the order and try again.',
         }
-      return { data: order }
+      return undefined
     },
   },
   scripting: { async executeScript() {} },
-  downloads: {
-    async download({ filename }) {
-      if (scenario === 'download-error') throw new Error('USER_CANCELED')
-      const link = document.createElement('a')
-      const url = URL.createObjectURL(
-        new Blob([toCsv(order.dataRows)], { type: 'text/csv;charset=utf-8' })
-      )
-      link.href = url
-      link.download = filename
-      link.click()
-      setTimeout(() => URL.revokeObjectURL(url), 1000)
-      return 1
-    },
-    onChanged: { addListener() {}, removeListener() {} },
-    async search() {
-      return [{ state: 'complete' }]
-    },
-  },
 }
 mountPopup(api, document, { timeoutMs: 3000 })

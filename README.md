@@ -24,11 +24,12 @@ If you previously installed the repository root, remove that old extension entry
 
 1. Open a 1688 **order detail** page, not the purchased-orders list.
 2. Open the extension and wait for **Ready to export**.
-3. Click **Download CSV**. The filename uses the seller name and order suffix.
+3. Click **Download CSV** to open the save panel on the order page.
+4. Close the extension popup if it covers the panel, then click **Save CSV**. The filename uses the seller name and order suffix.
 
-If the browser reports that it could not start the download, first check your downloads. If the file is absent, click **Save CSV another way**, close the extension popup, and click **Save CSV** in the panel on the order page. This uses a normal webpage file link that stays alive when the popup closes. **Save requested** means the save was handed to the browser; check the selected folder to confirm completion. A rejected save is never automatically retried.
+The save panel uses a normal webpage file link that stays alive when the popup closes. This avoids the extension-popup download API that returns `USER_CANCELED` in some embedded browsers. **Save requested** means the save was handed to the browser; check the selected folder to confirm completion. A canceled save is never automatically retried.
 
-<a href="screenshots/1688toCSV-success.png"><img src="screenshots/1688toCSV-success.png" alt="Successful export of synthetic order data" width="320" /></a>
+<a href="screenshots/1688toCSV-success.png"><img src="screenshots/1688toCSV-success.png" alt="Save panel for synthetic order data" width="320" /></a>
 
 <a href="screenshots/csv-file-screenshot.png"><img src="screenshots/csv-file-screenshot.png" alt="CSV preview generated from synthetic order data" width="720" /></a>
 
@@ -49,12 +50,12 @@ After a requested code change, the agent explicitly runs **`npm run verify`** to
 | `npm run build:dev`    | Build once with development output                                                         |
 | `npm run test:browser` | Test the existing `dist` build in Chromium                                                 |
 | `npm run preview`      | Serve a local popup preview with synthetic UI states; open the URL printed in the terminal |
-| `npm run screenshots`  | Regenerate the ready, success, and CSV screenshots above from synthetic data               |
+| `npm run screenshots`  | Regenerate the ready popup, save panel, and CSV screenshots above from synthetic data      |
 | `npm run check:docs`   | Validate local documentation links, screenshots, and documented package scripts            |
 
 After every rebuild, **reload the installed extension and refresh the order page** before testing a download. Browser content scripts from the previous build otherwise remain in the open page.
 
-The automated browser smoke test runs in a separate temporary Chromium profile. It uses a **test copy** of the built manifest with localhost access and an adapter that points the popup's active-tab lookup at a synthetic order tab. Extraction, content-script messaging, and downloading then use the real extension code and Chromium APIs. The installed package keeps its production manifest. This test does not use a normal browser profile or access live 1688 orders.
+The automated browser smoke test runs in a separate temporary Chromium profile. It uses a **test copy** of the built manifest with localhost access, permission to inspect completed downloads, and an adapter that points the popup's active-tab lookup at a synthetic order tab. Extraction, content-script messaging, and page-link downloads then use the real extension code and browser. The installed package keeps its production manifest and does not request download-management permission. This test does not use a normal browser profile or access live 1688 orders.
 
 The preview exercises UI states using simulated browser APIs. A successful preview is not a live export test. If browser policy prevents the agent from accessing 1688, the user completes the reload, refresh, and download step; the agent can inspect the resulting CSV or error. Report automated test results and live-site acceptance separately. Never commit private order data, exports, or unsanitized page fixtures.
 

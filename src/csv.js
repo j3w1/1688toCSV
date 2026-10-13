@@ -37,3 +37,7 @@ export function filenameFor({ sellerName, orderSuffix }) {
       .slice(0, 80) || fallback
   return `${clean(sellerName, 'Unknown Seller')}_${clean(orderSuffix, 'XXXX')}.csv`
 }
+
+export function prepareCsv(order) {
+  return { filename: filenameFor(order), csv: toCsv(order.dataRows) }
+}

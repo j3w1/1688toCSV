@@ -16,9 +16,8 @@ try {
     .locator('body')
     .screenshot({ path: 'screenshots/1688toCSV-popup.png' })
   await page.getByRole('button', { name: 'Download CSV' }).click()
-  await page.getByText('Saved to downloads', { exact: true }).waitFor()
   await page
-    .locator('body')
+    .getByRole('dialog', { name: 'Save order CSV' })
     .screenshot({ path: 'screenshots/1688toCSV-success.png' })
   await page.setViewportSize({ width: 960, height: 420 })
   await page.goto(`${preview.url}/export.html`)

@@ -84,7 +84,7 @@ if (
 ) {
   const preview = await startPreview({ port: 4173 })
   console.log(
-    `Synthetic popup preview: ${preview.url}\nStates: ?state=loading, unsupported, error, download-error, timeout. No live orders.\nNo watch mode: restart preview after changes.`
+    `Synthetic popup preview: ${preview.url}\nStates: ?state=loading, unsupported, error, timeout. No live orders.\nNo watch mode: restart preview after changes.`
   )
   for (const signal of ['SIGINT', 'SIGTERM'])
     process.on(signal, async () => {

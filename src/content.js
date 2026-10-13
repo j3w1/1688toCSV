@@ -1,5 +1,5 @@
 import { extractOrder, orderReadiness } from './extract.js'
-import { prepareCsv } from './download.js'
+import { prepareCsv } from './csv.js'
 import { openSavePanel } from './save-panel.js'
 
 const listenerKey = Symbol.for('1688tocsv.messageListener')
@@ -16,12 +16,6 @@ function handleMessage(request, _sender, respond) {
       const file = prepareCsv(extractOrder(document, location.href))
       openSavePanel(document, file)
       respond({ status: 'save-ready', filename: file.filename })
-    } catch (error) {
-      respond({ error: error.message })
-    }
-  } else if (request?.action === 'extractData') {
-    try {
-      respond({ data: extractOrder(document, location.href) })
     } catch (error) {
       respond({ error: error.message })
     }

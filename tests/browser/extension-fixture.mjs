@@ -44,6 +44,8 @@ async function prepareExtension(directory) {
   await cp(path.join(repository, 'dist'), directory, { recursive: true })
   const manifestPath = path.join(directory, 'manifest.json')
   const manifest = JSON.parse(await readFile(manifestPath, 'utf8'))
+  // Test-only inspection of real completed files; production saves use page links.
+  manifest.permissions = [...new Set([...manifest.permissions, 'downloads'])]
   // A new public key determines this disposable extension's ID without needing
   // a background worker. Neither the key nor localhost access reaches dist.
   const { publicKey } = generateKeyPairSync('rsa', { modulusLength: 1024 })

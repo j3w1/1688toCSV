@@ -2,6 +2,25 @@ import { readFile } from 'node:fs/promises'
 import path from 'node:path'
 import { test, expect } from './extension-fixture.mjs'
 
+async function prepareSave(extension, popup) {
+  await popup.getByRole('button', { name: /Download CSV/ }).click()
+  await expect(popup.locator('body')).toHaveAttribute('data-state', 'requested')
+  const panel = extension.orderPage.getByRole('dialog', {
+    name: 'Save order CSV',
+  })
+  await expect(panel).toBeVisible()
+  return panel
+}
+
+async function saveFromPanel(extension, panel) {
+  const pending = extension.orderPage.waitForEvent('download')
+  await panel.getByRole('link', { name: 'Save CSV', exact: true }).click()
+  const download = await pending
+  expect(download.suggestedFilename()).toBe('示例工厂_6789.csv')
+  expect(await download.failure()).toBeNull()
+  await expect(panel.getByRole('status')).toContainText('Save requested')
+}
+
 test('unmodified production popup bundle loads under extension CSP and classifies its current tab', async ({
   extension,
 }) => {
@@ -32,8 +51,9 @@ test('real extension messaging exports a completed CSV download from nested synt
   const popup = await extension.openPopup()
   await expect(popup.locator('body')).toHaveAttribute('data-state', 'ready')
   await expect(popup.locator('#row-count')).toHaveText('2')
-  await popup.getByRole('button', { name: /Download CSV/ }).click()
-  await expect(popup.locator('body')).toHaveAttribute('data-state', 'success')
+  const panel = await prepareSave(extension, popup)
+  expect(await popup.evaluate(() => chrome.downloads.search({}))).toEqual([])
+  await saveFromPanel(extension, panel)
   const downloads = await popup.evaluate(() => chrome.downloads.search({}))
   expect(downloads).toHaveLength(1)
   expect(downloads[0].state).toBe('complete')
@@ -53,8 +73,8 @@ test('real extension messaging exports a completed CSV download from nested synt
   expect(text.trimEnd().split('\r\n')).toHaveLength(3)
   expect(text).toMatch(/,12\.50,4,2\.10\r\n/)
   expect(text).toMatch(/,8\.00,2,0\.30(?:\r\n)?$/)
-  await popup.getByRole('button', { name: /Download CSV/ }).click()
-  await expect(popup.locator('body')).toHaveAttribute('data-state', 'success')
+  await prepareSave(extension, popup)
+  await saveFromPanel(extension, panel)
   const repeatedDownloads = await popup.evaluate(() =>
     chrome.downloads.search({})
   )
@@ -63,9 +83,9 @@ test('real extension messaging exports a completed CSV download from nested synt
   expect(repeated.state).toBe('complete')
   expect(repeated.filename).not.toBe(downloads[0].filename)
   expect(await readFile(repeated.filename)).toEqual(bytes)
-  await expect(popup.locator('#feedback')).toHaveText(
-    path.basename(repeated.filename)
-  )
+  // The popup confirms handoff only; completion and the browser's conflict
+  // suffix are verified from the actual saved files above.
+  await expect(popup.locator('body')).toHaveAttribute('data-state', 'requested')
   expect(extension.unexpectedRequests).toEqual([])
 })
 
@@ -177,37 +197,26 @@ test('a malformed product fails the full export and creates no partial download'
   await popup.getByRole('button', { name: /Download CSV/ }).click()
   await expect(popup.locator('body')).toHaveAttribute('data-state', 'error')
   await expect(popup.locator('#feedback')).toContainText('Row 2')
+  await expect(
+    extension.orderPage.getByRole('dialog', { name: 'Save order CSV' })
+  ).toHaveCount(0)
   expect(await popup.evaluate(() => chrome.downloads.search({}))).toEqual([])
   expect(extension.unexpectedRequests).toEqual([])
 })
 
-test('a rejected API start can save from the order page after its extension popup closes', async ({
+test('the page save survives popup closure and revokes replaced and closed file links', async ({
   extension,
 }) => {
   const popup = await extension.openPopup()
   await expect(popup.locator('body')).toHaveAttribute('data-state', 'ready')
-  await popup.evaluate(() => {
-    chrome.downloads.download = async () => {
-      throw new Error('USER_CANCELED')
-    }
-  })
-  await popup.getByRole('button', { name: /Download CSV/ }).click()
-  await expect(popup.locator('#feedback')).toContainText('could not start')
+  const panel = await prepareSave(extension, popup)
   expect(await popup.evaluate(() => chrome.downloads.search({}))).toEqual([])
-  const alternate = popup.getByRole('button', { name: 'Save CSV another way' })
-  await expect(alternate).toBeVisible()
-  await alternate.click()
-  await expect(popup.locator('body')).toHaveAttribute('data-state', 'requested')
   await expect(popup.locator('#feedback')).toContainText('Close this popup')
-  const panel = extension.orderPage.getByRole('dialog', {
-    name: 'Save order CSV',
-  })
-  await expect(panel).toBeVisible()
   const link = panel.getByRole('link', { name: 'Save CSV', exact: true })
   const firstUrl = await link.getAttribute('href')
   expect(firstUrl).toMatch(/^blob:http:\/\/127\.0\.0\.1:/)
   await expect(link).toHaveAttribute('download', '示例工厂_6789.csv')
-  await alternate.click()
+  await prepareSave(extension, popup)
   await expect.poll(() => link.getAttribute('href')).not.toBe(firstUrl)
   await expect(panel).toHaveCount(1)
   expect(
@@ -221,11 +230,7 @@ test('a rejected API start can save from the order page after its extension popu
     }, firstUrl)
   ).toBe(true)
   await popup.close()
-  const downloadWait = extension.orderPage.waitForEvent('download')
-  await link.click()
-  const download = await downloadWait
-  expect(download.suggestedFilename()).toBe('示例工厂_6789.csv')
-  expect(await download.failure()).toBeNull()
+  await saveFromPanel(extension, panel)
   // With Chromium's default download behavior, its real filename is not the
   // Playwright-managed GUID artifact path. Query the completed browser item.
   const inspector = await extension.context.newPage()
@@ -237,7 +242,6 @@ test('a rejected API start can save from the order page after its extension popu
   expect([...bytes.subarray(0, 3)]).toEqual([0xef, 0xbb, 0xbf])
   expect(bytes.toString('utf8')).toMatch(/,12\.50,4,2\.10\r\n/)
   expect(bytes.toString('utf8')).toMatch(/,8\.00,2,0\.30\r\n/)
-  await expect(panel.getByRole('status')).toContainText('Save requested')
   const url = await link.getAttribute('href')
   await panel.getByRole('button', { name: 'Close', exact: true }).click()
   await expect(panel).toHaveCount(0)
@@ -278,8 +282,8 @@ test('the saved CSV preserves row discount summaries instead of recomputing roun
   })
   const popup = await extension.openPopup()
   await expect(popup.locator('body')).toHaveAttribute('data-state', 'ready')
-  await popup.getByRole('button', { name: /Download CSV/ }).click()
-  await expect(popup.locator('body')).toHaveAttribute('data-state', 'success')
+  const panel = await prepareSave(extension, popup)
+  await saveFromPanel(extension, panel)
   const [download] = await popup.evaluate(() => chrome.downloads.search({}))
   expect(download.state).toBe('complete')
   const csv = await readFile(download.filename, 'utf8')
@@ -292,13 +296,6 @@ test('the page-save handoff revalidates the order and never opens a partial expo
 }) => {
   const popup = await extension.openPopup()
   await expect(popup.locator('body')).toHaveAttribute('data-state', 'ready')
-  await popup.evaluate(() => {
-    chrome.downloads.download = async () => {
-      throw new Error('USER_CANCELED')
-    }
-  })
-  await popup.getByRole('button', { name: /Download CSV/ }).click()
-  await expect(popup.locator('#save-csv')).toBeVisible()
   await extension.setOrder({
     rows: [
       {
@@ -309,10 +306,8 @@ test('the page-save handoff revalidates the order and never opens a partial expo
       },
     ],
   })
-  await popup.getByRole('button', { name: 'Save CSV another way' }).click()
-  await expect(popup.locator('#status-text')).toHaveText(
-    'Could not open the save panel'
-  )
+  await popup.getByRole('button', { name: /Download CSV/ }).click()
+  await expect(popup.locator('body')).toHaveAttribute('data-state', 'error')
   await expect(popup.locator('#feedback')).toContainText('Row 1')
   await expect(
     extension.orderPage.getByRole('dialog', { name: 'Save order CSV' })
