@@ -1,0 +1,8 @@
+node_modules/
+dist/
+work/
+test-results/
+playwright-report/
+package-lock.json
+# Preserve the authoritative CE Metadata cooperation text.
+AGENTS.md

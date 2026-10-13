@@ -1,89 +1,69 @@
-![icon48.png](icons/icon48.png)
+# 1688toCSV
 
-# 1688toCSV Chrome Extension
+Export a 1688 order detail page to a CSV with product descriptions, original unit prices, quantities, and item discounts. Chinese text and spreadsheet-friendly CSV escaping are preserved.
 
-## Overview
+![1688toCSV ready to export a synthetic order](screenshots/1688toCSV-popup.png)
 
-The `1688toCSV` Chrome Extension is designed to simplify the process of extracting order details from 1688.com directly
-into a downloadable CSV file. This tool is invaluable for users who frequently need to log or process their 1688 orders,
-providing a quick and efficient way to get structured data.
+## Set up and install
 
-**Intention:** To allow users to export an CSV file containing comprehensive details of their 1688.com orders, making
-data management and analysis straightforward.
+Use **Node.js 24** and its bundled npm. From the repository folder:
 
-## Features
+```sh
+npm ci
+npx playwright install --no-shell chromium
+npm run verify
+```
 
-- **One-Click Export:** Quickly download order details as a CSV with a single button click.
-- **Detailed Information:** Captures essential order data including product descriptions, prices (undiscounted),
-  quantities, and discounts.
-- **User-Friendly:** Simple interface integrated directly into the Chrome browser.
+Verification checks source and documentation, runs regression tests, builds the complete extension into `dist`, and tests the built extension in Chromium.
 
-## Installation (For Local Use in Chrome)
+In the desktop app, open **Settings → Browser → Extensions**, enable **Developer mode**, click **Load unpacked**, and select the repository's **`dist` folder**. In Chrome, the same controls are on `chrome://extensions`.
 
-To use this extension locally in your Chrome browser, follow these steps:
+If you previously installed the repository root, remove that old extension entry before loading `dist` to avoid duplicate copies. The root [manifest.json](manifest.json) is a source file; `dist` is the installable extension. Load `dist` once, then use its **Reload** control after subsequent builds.
 
-1. **Download or Clone the Repository:**
+## Export an order
 
-   - If you're downloading directly, click the "Code" button on the GitHub repository page and select "Download ZIP"
-     Unzip the file to a location on your computer.
-   - If you have Git installed, you can clone the repository using the command:
-     ```bash
-     git clone https://github.com/j3w1/1688toCSV.git
-     ```
+1. Open a 1688 **order detail** page, not the purchased-orders list.
+2. Open the extension and wait for **Ready to export**.
+3. Click **Download CSV**. The filename uses the seller name and order suffix.
 
-2. **Open Chrome Extensions Page:**
+![Successful export of synthetic order data](screenshots/1688toCSV-success.png)
 
-   - Open your Chrome browser.
-   - Type `chrome://extensions` into the address bar and press Enter.
+![CSV preview generated from synthetic order data](screenshots/csv-file-screenshot.png)
 
-3. **Enable Developer Mode:**
+All screenshots use synthetic data. The extension reads the open order page; it does not submit or change the order.
 
-   - On the Extensions page, toggle on the "Developer mode" switch, usually located in the top-right corner.
+**Calculation limitation:** the whole-order price adjustment, **商品改价**, is not allocated proportionally across product discounts. Item-level discounts are exported; whole-order adjustment allocation remains outstanding.
 
-4. **Load Unpacked Extension:**
+## Development cycle
 
-   - Click the "Load unpacked" button that appears.
+After a requested code change, the agent explicitly runs **`npm run verify`** to rebuild and test the final candidate. There is no watch mode. For UI changes, the agent also regenerates the screenshots and checks the documentation.
 
-5. **Select the Project Folder:**
+| Command                | Purpose                                                                                    |
+| ---------------------- | ------------------------------------------------------------------------------------------ |
+| `npm run verify`       | Source and docs checks, regression tests, production build, and Chromium extension tests   |
+| `npm run build`        | Build a complete production extension into `dist`                                          |
+| `npm run build:dev`    | Build once with development output                                                         |
+| `npm run test:browser` | Test the existing `dist` build in Chromium                                                 |
+| `npm run preview`      | Serve a local popup preview with synthetic UI states; open the URL printed in the terminal |
+| `npm run screenshots`  | Regenerate the ready, success, and CSV screenshots above from synthetic data               |
+| `npm run check:docs`   | Validate local documentation links, screenshots, and documented package scripts            |
 
-   - A file dialog will open. Navigate to and select the root folder of the `1688toCSV` repository that you downloaded
-     or cloned.
+After every rebuild, **reload the installed extension and refresh the order page** before testing a download. Browser content scripts from the previous build otherwise remain in the open page.
 
-6. **Extension Installed:**
-   - The extension should now appear in your list of installed extensions. You might need to pin it to your Chrome
-     toolbar for easy access (look for a puzzle piece icon in the toolbar, click it, and then click the pin icon next
-     to "1688toCSV").
+The automated browser smoke test runs in a separate temporary Chromium profile. It uses a **test copy** of the built manifest with localhost access and an adapter that points the popup's active-tab lookup at a synthetic order tab. Extraction, content-script messaging, and downloading then use the real extension code and Chromium APIs. The installed package keeps its production manifest. This test does not use a normal browser profile or access live 1688 orders.
 
-## How to Use
+The preview exercises UI states using simulated browser APIs. A successful preview is not a live export test. If browser policy prevents the agent from accessing 1688, the user completes the reload, refresh, and download step; the agent can inspect the resulting CSV or error. Report automated test results and live-site acceptance separately. Never commit private order data, exports, or unsanitized page fixtures.
 
-1. **Navigate to your 1688 Order Detail Page:**
+## GitHub checks
 
-   - Open your Chrome browser and go to any 1688.com order detail page (e.g.,
-     `https://air.1688.com/app/ctf-page/trade-order-detail/index.html?orderId=...`).
+[CI](.github/workflows/ci.yml) runs on pull requests, pushes to `main`, and manual dispatch. Complete Git diffs route each change:
 
-2. **Open the Extension Popup:**
+| Classification        | Checks                                                                    |
+| --------------------- | ------------------------------------------------------------------------- |
+| Documentation only    | Lightweight documentation validation without installing dependencies      |
+| Code or unknown paths | Locked dependency install and full verification, including Chromium tests |
+| Mixed                 | Both documentation and code checks                                        |
 
-   - Click on the `1688toCSV` extension icon in your Chrome toolbar. This will open a small popup window.
+Manual runs and unavailable comparisons run both routes. The stable **`required`** check passes only when every routed job succeeds; required jobs that fail, cancel, or skip make it fail. CI routing does not manage repository labels or Projects.
 
-   ### Extension Popup
-
-   ![1688toCSV-popup.png](screenshots/1688toCSV-popup.png)
-
-3. **Download the CSV File:**
-
-   - Once the popup confirms "Page ready" (indicated by the green dot and text), click the "Download CSV" button.
-   - A CSV file containing the order details will be downloaded to your default downloads folder. The filename will be
-     dynamically generated based on the seller name and order suffix (e.g., `SellerName_OrderSuffix.csv`).
-
-   ### Example Exported CSV File
-
-   ![csv-file-screenshot.png](screenshots/csv-file-screenshot.png)
-
-## Contribution
-
-Feel free to fork the repository and submit pull requests if you have any improvements or bug fixes.
-
-## TODO
-
-- Implement the calculation of "商品改价" (whole order discount) and distribute it proportionally into each product's
-  discount row. Currently, this discount is not included in the individual product discount calculations.
+See [AGENTS.md](AGENTS.md) for the standing development process and the separate CE Metadata cooperation contract.

@@ -128,3 +128,8 @@ dist
 .pnp.*
 
 /.idea/
+
+# Local verification output and disposable browser profiles
+work/
+test-results/
+playwright-report/

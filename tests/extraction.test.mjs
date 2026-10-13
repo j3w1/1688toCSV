@@ -1,0 +1,207 @@
+import test from 'node:test'
+import assert from 'node:assert/strict'
+import { extractOrder } from '../src/extract.js'
+import { isSupportedOrderUrl } from '../src/page.js'
+import {
+  buildOrderFixture,
+  createOrderFixture,
+} from './fixtures/order-fixture.mjs'
+
+const orderUrl =
+  'https://air.1688.com/app/ctf-page/trade-order-detail/index.html?orderId=1234567890123456789'
+
+function simpleRow(overrides = {}) {
+  return {
+    title: 'Synthetic product',
+    price: '12.50',
+    quantity: '4',
+    discounts: [],
+    ...overrides,
+  }
+}
+
+test('extracts products, seller, and exact order suffix through nested open shadows', () => {
+  const document = createOrderFixture({
+    rows: [
+      simpleRow({
+        title: ' 测试香薰蜡烛 ',
+        sku: ' 颜色：暖白 ',
+        productNumber: ' 货号：DEMO-001 ',
+        thumbnail: 'https://example.invalid/product.64x64.jpg',
+        discountedPrice: '11.975',
+        discounts: ['省2.00元', '减0.10元'],
+      }),
+    ],
+  })
+  assert.deepEqual(extractOrder(document, orderUrl), {
+    sellerName: '示例工厂',
+    orderSuffix: '6789',
+    dataRows: [
+      {
+        thumbnail: 'https://example.invalid/product.jpg',
+        description: '测试香薰蜡烛\n颜色：暖白\n货号：DEMO-001',
+        price: '12.50',
+        quantity: '4',
+        discount: '2.10',
+      },
+    ],
+  })
+})
+
+test('keeps source row order and adds decimal discounts without binary precision drift', () => {
+  const result = extractOrder(createOrderFixture(), orderUrl)
+  assert.equal(result.dataRows.length, 2)
+  assert.match(result.dataRows[0].description, /^测试香薰蜡烛/)
+  assert.match(result.dataRows[1].description, /^桌面收纳盒/)
+  assert.equal(result.dataRows[0].discount, '2.10')
+  assert.equal(result.dataRows[1].discount, '0.30')
+  assert.equal(result.dataRows[0].price, '12.50')
+})
+
+test('single prices, absent optional images/SKU/discounts, and missing seller work', () => {
+  const result = extractOrder(
+    createOrderFixture({
+      sellerName: null,
+      nested: false,
+      rows: [simpleRow({ thumbnail: null, price: '0.01', quantity: '1' })],
+    }),
+    orderUrl
+  )
+  assert.equal(result.sellerName, 'Unknown Seller')
+  assert.deepEqual(result.dataRows, [
+    {
+      thumbnail: '',
+      description: 'Synthetic product',
+      price: '0.01',
+      quantity: '1',
+      discount: '0.00',
+    },
+  ])
+})
+
+test('supports grouped prices and quantities without truncating the number', () => {
+  const { dataRows } = extractOrder(
+    createOrderFixture({
+      rows: [
+        simpleRow({
+          price: '1,234.50',
+          quantity: '1,200 件',
+          discounts: ['省1,000.20元', '减0.10元'],
+        }),
+      ],
+    }),
+    orderUrl
+  )
+  assert.equal(dataRows[0].price, '1234.50')
+  assert.equal(dataRows[0].quantity, '1200')
+  assert.equal(dataRows[0].discount, '1000.30')
+})
+
+test('does not allocate unrelated whole-order discount into product rows', () => {
+  const document = createOrderFixture({ rows: [simpleRow()] })
+  const total = document.createElement('div')
+  total.className = 'order-total-discount'
+  total.textContent = '商品改价：100.00元'
+  document.querySelector('app-root').shadowRoot.appendChild(total)
+  assert.equal(extractOrder(document, orderUrl).dataRows[0].discount, '0.00')
+})
+
+test('rounds monetary discounts once after summing, including sub-cent amounts', () => {
+  const result = extractOrder(
+    createOrderFixture({
+      rows: [simpleRow({ discounts: ['省0.005元', '减0.005元'] })],
+    }),
+    orderUrl
+  )
+  assert.equal(result.dataRows[0].discount, '0.01')
+})
+
+test('fails clearly when the order application, table, or rows have not loaded', async (t) => {
+  await t.test('missing application', () => {
+    const document = createOrderFixture()
+    document.body.replaceChildren()
+    assert.throws(
+      () => extractOrder(document, orderUrl),
+      /app-root|application|page/i
+    )
+  })
+  await t.test('missing application shadow', () => {
+    const document = createOrderFixture()
+    document.body.replaceChildren(document.createElement('app-root'))
+    assert.throws(
+      () => extractOrder(document, orderUrl),
+      /shadow|application|page/i
+    )
+  })
+  await t.test('missing table', () => {
+    const document = createOrderFixture()
+    buildOrderFixture(document).orderTable.remove()
+    assert.throws(() => extractOrder(document, orderUrl), /table/i)
+  })
+  await t.test('empty table', () => {
+    assert.throws(
+      () => extractOrder(createOrderFixture({ rows: [] }), orderUrl),
+      /row|product|empty/i
+    )
+  })
+})
+
+test('rejects a malformed product instead of exporting a silent partial order', async (t) => {
+  const cases = [
+    ['missing title', { title: '   ' }, /description|title|product/i],
+    ['missing price', { price: null }, /price/i],
+    ['nonnumeric price', { price: 'unavailable' }, /price/i],
+    ['negative price', { price: '-2.00' }, /price/i],
+    ['missing quantity', { quantity: '' }, /quantity/i],
+    ['zero quantity', { quantity: '0' }, /quantity/i],
+    ['negative quantity', { quantity: '-2' }, /quantity/i],
+    ['fractional quantity', { quantity: '1.5' }, /quantity/i],
+    ['malformed discount', { discounts: ['省未知元'] }, /discount/i],
+  ]
+  for (const [label, overrides, error] of cases) {
+    await t.test(label, () => {
+      const document = createOrderFixture({
+        rows: [simpleRow(), simpleRow(overrides)],
+      })
+      assert.throws(() => extractOrder(document, orderUrl), error)
+    })
+  }
+})
+
+test('rejects a product whose required component is missing', () => {
+  const document = createOrderFixture()
+  const fixture = buildOrderFixture(document)
+  fixture.cells[1].number.host.remove()
+  assert.throws(
+    () => extractOrder(document, orderUrl),
+    /quantity|component|row 2/i
+  )
+})
+
+test('supports exact order-detail hosts and paths with a numeric orderId in any query position', () => {
+  for (const url of [
+    orderUrl,
+    'https://air.1688.com/app/ctf-page/trade-order-detail/index.html?spm=test&orderId=1234',
+    'https://trade.1688.com/order/new_step_order_detail.htm?orderId=1234',
+  ]) {
+    assert.equal(isSupportedOrderUrl(url), true, url)
+  }
+})
+
+test('rejects order lists, foreign hosts, similar paths, and malformed IDs', () => {
+  for (const url of [
+    undefined,
+    '',
+    'not a URL',
+    'http://air.1688.com/app/ctf-page/trade-order-detail/index.html?orderId=1234',
+    'https://1688.com/?orderId=1234',
+    'https://air.1688.com.evil.invalid/app/ctf-page/trade-order-detail/index.html?orderId=1234',
+    'https://air.1688.com/app/ctf-page/trade-order-detail/index.html/extra?orderId=1234',
+    'https://air.1688.com/app/ctf-page/trade-order-detail/index.html',
+    'https://air.1688.com/app/ctf-page/trade-order-detail/index.html?orderId=',
+    'https://air.1688.com/app/ctf-page/trade-order-detail/index.html?orderId=123abc',
+    'https://trade.1688.com/order/buyer_order_list.htm?orderId=1234',
+  ]) {
+    assert.equal(isSupportedOrderUrl(url), false, String(url))
+  }
+})

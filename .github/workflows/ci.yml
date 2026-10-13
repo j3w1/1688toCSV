@@ -1,0 +1,94 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  classify:
+    name: Classify changes
+    runs-on: ubuntu-latest
+    outputs:
+      category: ${{ steps.route.outputs.category }}
+      docs: ${{ steps.route.outputs.docs }}
+      code: ${{ steps.route.outputs.code }}
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 24
+          package-manager-cache: false
+      - name: Verify routing rules
+        run: node --test tests/classify-changes.test.mjs
+      - name: Classify complete diff
+        id: route
+        run: node scripts/classify-changes.mjs
+
+  docs:
+    name: Documentation
+    needs: classify
+    if: needs.classify.outputs.docs == 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 24
+          package-manager-cache: false
+      - run: npm run check:docs
+
+  code:
+    name: Code and browser
+    needs: classify
+    if: needs.classify.outputs.code == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 24
+          cache: npm
+      - run: npm ci
+      - name: Install test browser
+        run: npx playwright install --with-deps --no-shell chromium
+      - name: Verify source, package, and extension in Chromium
+        run: npm run verify
+
+  required:
+    name: required
+    needs: [classify, docs, code]
+    if: always()
+    runs-on: ubuntu-latest
+    steps:
+      - name: Require every routed check to pass
+        env:
+          CLASSIFY_RESULT: ${{ needs.classify.result }}
+          DOCS_EXPECTED: ${{ needs.classify.outputs.docs }}
+          CODE_EXPECTED: ${{ needs.classify.outputs.code }}
+          DOCS_RESULT: ${{ needs.docs.result }}
+          CODE_RESULT: ${{ needs.code.result }}
+        run: |
+          node --input-type=module <<'NODE'
+          import assert from 'node:assert/strict';
+          const env = process.env;
+          assert.equal(env.CLASSIFY_RESULT, 'success', 'Change classification must succeed');
+          assert.ok([env.DOCS_EXPECTED, env.CODE_EXPECTED].includes('true'), 'At least one verification route must run');
+          for (const check of ['DOCS', 'CODE']) {
+            assert.ok(['true', 'false'].includes(env[`${check}_EXPECTED`]), `${check} route must be explicit`);
+            const expected = env[`${check}_EXPECTED`] === 'true' ? 'success' : 'skipped';
+            assert.equal(env[`${check}_RESULT`], expected, `${check} check did not reach its required result`);
+          }
+          console.log('Every required check passed.');
+          NODE

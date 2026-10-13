@@ -6,6 +6,34 @@ release decisions inside an explicitly authorized change. Never commit credentia
 data, downloaded exports, or personal/provider configuration. Metadata work does not authorize an
 extension build, package update, publication, store release, or production mutation.
 
+## Development workflow
+
+After requested code changes, run `npm run verify` against the final candidate. This explicitly
+checks source and documentation, runs regression tests, rebuilds the complete extension in `dist`,
+and tests that build in Chromium. Do not add watch mode or leave rebuilding to the user. Load the
+generated `dist` folder as the unpacked extension; the root manifest remains source.
+
+For UI changes, run `npm run screenshots` to regenerate the README screenshots from synthetic data,
+then run `npm run check:docs`. Use `npm run preview` when inspecting popup states locally. Keep
+fixtures and screenshots synthetic; never commit real orders, downloaded exports, credentials,
+or unsanitized page captures. Preserve documented calculation limitations unless their correction
+is explicitly within scope.
+
+After every rebuild, reload the installed extension and refresh its order page before browser
+acceptance. Automated Chromium tests use a temporary profile, a test copy of the manifest with
+localhost access, and a popup tab-selection adapter. They exercise actual extraction, messaging,
+and downloading against synthetic content. Do not claim this proves live 1688 compatibility.
+
+When browser policy prevents live-site access, have the user perform the reload, refresh, and
+download step and inspect the supplied CSV or error. Report builds, regression tests, automated
+browser tests, and live-site acceptance separately, identifying passed, failed, blocked, and
+not-run checks. A preview or ready state alone does not verify a completed download.
+
+Documentation-only changes use `npm run check:docs`; code and mixed changes use full verification.
+Keep GitHub CI routing and its stable `required` check aligned with this process. CI routing is
+independent of the CE Metadata label and Project authority described below. Commit, push, and
+release only when the user has authorized those delivery actions.
+
 ## CE Metadata integration
 
 This repository is managed by the CE Metadata. Nothing is installed here: the GitHub
