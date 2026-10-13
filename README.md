@@ -33,6 +33,8 @@ On a detail page, **Save order** adds that order. The extension icon and **Sprea
 
 If upgrading from 2.0.0 after seeing **“Owl extension-created tabs must be active”**, reload the extension and refresh the library/list pages, then resume the small selected-order job. Its queue is preserved; do not resume an old bulk job unless you intend to collect its full scope. Opening the spreadsheet does not itself prove any order was saved: check the saved count and progress error.
 
+Version 2.0.2 fixes **“Discount total is missing or invalid”** for labelled or empty optional discount summaries. Product discounts still reconcile with the detailed order totals and payable amount. Slow-rendering detail pages use bounded retries, and tab lookup errors are reported separately from an actually closed tab. Existing failed queues can be retried after updating.
+
 **Settings → Appearance** offers System, Light, and Dark. System follows your device; an explicit choice persists and synchronizes across library tabs. The list-page controls follow your device's color scheme.
 
 ## Copy to Excel
@@ -86,9 +88,13 @@ The one-click **Download CSV** remains on detail pages. It preserves displayed *
 
 No watch mode. Rebuild after source changes and regenerate screenshots for UI changes. Never commit private orders, exports, offline captures, profiles or credentials. The test manifest's localhost and inspection access do not ship.
 
+The packaged import tests cover selection → tab navigation → extraction → persistent storage → spreadsheet → clipboard, plus failed-queue retry and delayed rendering. They substitute reserved `.test` domains in a disposable extension copy and fulfill every synthetic page locally; real network requests are blocked. On Windows with Edge installed, run them in PowerShell with `$env:EXTENSION_TEST_CHANNEL='msedge'; npm run test:browser -- tests/browser/import-flow.spec.mjs` and remove that environment variable afterward. Default verification uses Chromium.
+
 Architecture separates page adapters, exact monetary calculations, IndexedDB reconciliation, persistent import orchestration and spreadsheet/clipboard UI. Extend adapters and synthetic fixtures for new layouts; keep selectors out of the library UI. Database and backup versions support future migrations.
 
 Adapters were checked offline against two supplied list captures and three detail captures. Those private files are not fixtures. Live pagination/import in the embedded browser remains separate acceptance: mock tests and successful clipboard tests do not prove live-site behavior.
+
+The 2.0.2 packaged extension also imported all 66 product rows from the three inert private detail captures in isolated Microsoft Edge; the five-row order retained its 47.20 item discount. That local replay does not establish live-site or embedded-browser acceptance.
 
 [CI](.github/workflows/ci.yml) routes documentation-only changes to lightweight validation, code to full verification, and mixed changes to both. The stable **required** job rejects failures, cancellations and unexpected skips. Desktop Excel acceptance runs locally because hosted Linux CI has no desktop Excel.
 

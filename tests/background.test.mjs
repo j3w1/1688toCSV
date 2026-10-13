@@ -231,9 +231,130 @@ test('marker recovers a tab created before checkpoint and never closes navigated
   await adapter.closeDetailTab(null, 'job-known')
   assert.equal(s.tabs.has(55), false)
   s.tabs.set(56, { id: 56, url: url('10001'), status: 'complete' })
-  assert.equal(await adapter.getDetailTab(56, 'job-known'), null)
+  await assert.rejects(
+    adapter.getDetailTab(56, 'job-known'),
+    /left its marked order page/
+  )
   await adapter.closeDetailTab(56, 'job-known')
   assert.equal(s.tabs.has(56), true)
+})
+
+test('tab lookup distinguishes missing IDs from browser API failures', async () => {
+  const s = setup()
+  await s.send({ type: 'JOBS_QUERY' })
+  const adapter = s.adapter()
+  assert.equal(await adapter.getDetailTab(55, 'job-known'), null)
+  s.tabs.set(55, {
+    id: 55,
+    url: url('10001') + '#1688tocsv-import=job-known',
+    status: 'complete',
+  })
+  const failure = new Error('The browser could not inspect this tab')
+  s.chrome.tabs.get = async () => {
+    throw failure
+  }
+  await assert.rejects(adapter.getDetailTab(55, 'job-known'), (error) => {
+    assert.equal(error, failure)
+    return true
+  })
+  s.chrome.tabs.query = async () => {
+    throw new Error('The browser could not list tabs either')
+  }
+  await assert.rejects(adapter.getDetailTab(55, 'job-known'), (error) => {
+    assert.equal(error, failure)
+    return true
+  })
+  assert.equal(s.tabs.has(55), true)
+  assert.equal(s.calls.filter(([type]) => type === 'remove').length, 0)
+})
+
+test('blank pending URL does not hide a loaded marked order URL', async () => {
+  const s = setup()
+  const result = await s.send(
+    { type: 'IMPORT_START', scope: 'selected', orderIds: ['10001'] },
+    sender
+  )
+  await settle()
+  const tabId = s.jobs.get(result.data.id).workerTabId
+  Object.assign(s.tabs.get(tabId), {
+    pendingUrl: 'about:blank',
+    status: 'complete',
+  })
+  s.chrome.tabs.onUpdated.emit(tabId, { status: 'complete' })
+  await settle()
+  assert.equal(s.saved.size, 1)
+  assert.equal(s.jobs.get(result.data.id).state, 'completed')
+  assert.equal(s.tabs.has(tabId), false)
+  assert.equal(s.calls.filter(([type]) => type === 'create').length, 1)
+})
+
+test('an initially blank loading tab waits until its marked order arrives', async () => {
+  const s = setup()
+  const result = await s.send(
+    { type: 'IMPORT_START', scope: 'selected', orderIds: ['10001'] },
+    sender
+  )
+  await settle()
+  const tabId = s.jobs.get(result.data.id).workerTabId
+  const orderUrl = s.tabs.get(tabId).url
+  Object.assign(s.tabs.get(tabId), {
+    url: 'about:blank',
+    pendingUrl: '',
+    status: 'loading',
+  })
+  s.chrome.alarms.onAlarm.emit({ name: 'order-import' })
+  await settle()
+  assert.equal(s.jobs.get(result.data.id).state, 'running')
+  assert.equal(s.jobs.get(result.data.id).workerTabId, tabId)
+  assert.equal(s.saved.size, 0)
+  assert.equal(s.calls.filter((call) => call[2] === 'DETAIL_READ').length, 0)
+  assert.equal(s.tabs.has(tabId), true)
+  Object.assign(s.tabs.get(tabId), { url: orderUrl, status: 'complete' })
+  s.chrome.tabs.onUpdated.emit(tabId, { status: 'complete' })
+  await settle()
+  assert.equal(s.jobs.get(result.data.id).state, 'completed')
+  assert.equal(s.saved.size, 1)
+})
+
+test('a completed tab without its URL reports unreadable metadata and stays open', async () => {
+  const s = setup()
+  const result = await s.send(
+    { type: 'IMPORT_START', scope: 'selected', orderIds: ['10001'] },
+    sender
+  )
+  await settle()
+  const tabId = s.jobs.get(result.data.id).workerTabId
+  Object.assign(s.tabs.get(tabId), { url: undefined, status: 'complete' })
+  s.chrome.tabs.onUpdated.emit(tabId, { status: 'complete' })
+  await settle()
+  const job = s.jobs.get(result.data.id)
+  assert.equal(job.state, 'paused')
+  assert.match(job.error, /did not provide the import tab URL/)
+  assert.equal(s.saved.size, 0)
+  assert.equal(s.calls.filter((call) => call[2] === 'DETAIL_READ').length, 0)
+  assert.equal(s.tabs.has(tabId), true)
+})
+
+test('a concrete unrelated pending navigation cannot be read or closed', async () => {
+  for (const pendingUrl of ['https://example.com/', url('10002')]) {
+    const s = setup()
+    const result = await s.send(
+      { type: 'IMPORT_START', scope: 'selected', orderIds: ['10001'] },
+      sender
+    )
+    await settle()
+    const tabId = s.jobs.get(result.data.id).workerTabId
+    Object.assign(s.tabs.get(tabId), { pendingUrl, status: 'loading' })
+    s.chrome.alarms.onAlarm.emit({ name: 'order-import' })
+    await settle()
+    const job = s.jobs.get(result.data.id)
+    assert.equal(job.state, 'paused')
+    assert.match(job.error, /left its marked order page/)
+    assert.equal(s.saved.size, 0)
+    assert.equal(s.calls.filter((call) => call[2] === 'DETAIL_READ').length, 0)
+    assert.equal(s.calls.filter(([type]) => type === 'remove').length, 0)
+    assert.equal(s.tabs.has(tabId), true)
+  }
 })
 test('startup leaves interrupted import paused and library updates broadcast', async () => {
   const s = setup()

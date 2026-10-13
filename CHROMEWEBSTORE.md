@@ -2,7 +2,7 @@
 
 > Last Updated: 2026-10-14
 >
-> Draft for development version 2.0.1. No store submission or publication. Live multi-order import acceptance remains pending.
+> Draft for development version 2.0.2. No store submission or publication. Live multi-order import acceptance remains pending.
 
 ## Store Listing
 
@@ -120,6 +120,7 @@ Draft substance: records, history, notes and pictures remain locally stored. No 
 
 | Version | Date       | Changes                                                                                                                                       | Status                                                                                                              |
 | ------- | ---------- | --------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------- |
+| 2.0.2   | 2026-10-14 | Tolerant optional discount-summary presentation, bounded readiness retries, accurate tab errors, packaged end-to-end import tests | Edge synthetic import/retry/theme and private offline replay verified; live embedded-browser acceptance unverified |
 | 2.0.1   | 2026-10-14 | Explicit active tabs for embedded-browser compatibility, one reusable detail reader, safer bulk import/resume, on-list progress and dark mode | Local regression verification; corrected live import acceptance pending                                             |
 | 2.0.0   | 2026-10-13 | Multi-order library, resumable imports, reconciliation/history, order-adjustment allocation, Excel pictures, notes, backup/restore            | Superseded: user verified 67-page discovery; detail import failed because embedded browser rejected background tabs |
 | 1.1.4   | 2026-10-13 | One-click CSV page control; removed popup                                                                                                     | Local tests passed; user confirmed live download; not submitted                                                     |
@@ -132,6 +133,7 @@ Draft substance: records, history, notes and pictures remain locally stored. No 
 - Synthetic unit and isolated Chromium tests cover extraction, allocation, database/backup transactions, job recovery and spreadsheet/clipboard behavior. Run npm run verify against the final candidate.
 - npm run test:excel passed for synthetic browser copying into a fresh Windows Excel workbook: five columns, eight separate pictures at rows 2–9, numeric price/quantity cells. No workbook was saved; the previous clipboard was restored.
 - User confirmed discovery across 67 real list pages in 2.0.0. A supplied screenshot identified the detail-import failure: the embedded browser requires active extension-created tabs. 2.0.1 explicitly requests active tabs and tests this restriction with a rejecting browser shim. Corrected live detail import, reconciliation and embedded-browser clipboard acceptance remain pending. Agent access to live 1688 is blocked by browser-tool policy; no alternate live automation is used.
+- A subsequent screenshot showed 2.0.1 rejecting the optional discount summary. Version 2.0.2 accepts labels/empty presentation states while preserving checks against detailed discounts, product totals and payable amounts. Packaged import tests now exercise real browser messaging, navigation, persistence and copying on locally fulfilled `.test` pages. Isolated Microsoft Edge also imported all 66 rows from three inert private captures, preserving the 47.20 item discount in the five-row order. Private captures and test profiles are not published; live embedded-browser acceptance remains unverified.
 
 ### Known limitations
 

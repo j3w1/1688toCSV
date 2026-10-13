@@ -31,9 +31,15 @@ async function changed() {
   }
 }
 const marker = (id) => `#1688tocsv-import=${encodeURIComponent(id)}`
+const blankUrl = (url) => !url || url === 'about:blank'
+const detailTabUrl = (tab) =>
+  detailUrl(tab.pendingUrl) ? tab.pendingUrl : tab.url
 function owns(tab, id) {
   try {
-    const url = tab.pendingUrl || tab.url
+    // A blank pending URL can be a browser loading placeholder. A concrete
+    // unrelated destination means the user or sign-in flow owns the tab now.
+    if (!blankUrl(tab.pendingUrl) && !detailUrl(tab.pendingUrl)) return false
+    const url = detailTabUrl(tab)
     return Boolean(detailUrl(url)) && new URL(url).hash === marker(id)
   } catch {
     return false
@@ -52,7 +58,12 @@ async function content(tabId, message, frameId = 0) {
     )
   }
   if (!response?.ok)
-    throw new Error(response?.error || 'The order page did not respond.')
+    throw Object.assign(
+      new Error(response?.error || 'The order page did not respond.'),
+      {
+        retryable: response?.retryable === true,
+      }
+    )
   return response.data
 }
 const browser = {
@@ -68,7 +79,7 @@ const browser = {
     // worker stopped between creating the tab and saving its numeric ID.
     const existing = (await chrome.tabs.query({})).find((tab) => owns(tab, id))
     if (existing) {
-      if (detailUrl(existing.pendingUrl || existing.url) !== detailUrl(url))
+      if (detailUrl(detailTabUrl(existing)) !== detailUrl(url))
         await chrome.tabs.update(existing.id, { url: `${url}${marker(id)}` })
       return existing.id
     }
@@ -84,16 +95,39 @@ const browser = {
       throw new Error(
         'The import tab was closed or changed. Resume to reopen it.'
       )
-    if (detailUrl(tab.pendingUrl || tab.url) !== detailUrl(url))
+    if (detailUrl(detailTabUrl(tab)) !== detailUrl(url))
       await chrome.tabs.update(tabId, { url: `${url}${marker(id)}` })
   },
   async getDetailTab(tabId, id) {
+    let tab
     try {
-      const tab = await chrome.tabs.get(tabId)
-      return !id || owns(tab, id) ? tab : null
-    } catch {
-      return null
+      tab = await chrome.tabs.get(tabId)
+    } catch (error) {
+      // Browser API failures do not prove that the tab was closed.
+      let tabs
+      try {
+        tabs = await chrome.tabs.query({})
+      } catch {
+        throw error
+      }
+      if (!tabs.some((candidate) => candidate.id === tabId)) return null
+      throw error
     }
+    if (!id) return tab
+    if (owns(tab, id))
+      return {
+        ...tab,
+        pendingUrl: detailUrl(tab.pendingUrl) ? tab.pendingUrl : undefined,
+      }
+    if (blankUrl(tab.url) && blankUrl(tab.pendingUrl)) {
+      if (tab.status === 'loading') return tab
+      throw new Error(
+        'The browser did not provide the import tab URL. Refresh the order page, then resume.'
+      )
+    }
+    throw new Error(
+      'The import tab left its marked order page. Complete sign-in or verification, then resume.'
+    )
   },
   async closeDetailTab(tabId, id) {
     const tab = Number.isInteger(tabId)

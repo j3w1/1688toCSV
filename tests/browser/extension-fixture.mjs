@@ -53,7 +53,7 @@ async function startFixtureServer() {
   return { server, origin }
 }
 
-async function prepareExtension(directory) {
+async function prepareExtension(directory, importFlow) {
   await cp(path.join(repository, 'dist'), directory, { recursive: true })
   const manifestPath = path.join(directory, 'manifest.json')
   const manifest = JSON.parse(await readFile(manifestPath, 'utf8'))
@@ -85,6 +85,29 @@ async function prepareExtension(directory) {
         : 'http://127.0.0.1/fixture.html*',
     ],
   }))
+  if (importFlow) {
+    // Run the production pipeline on reserved, synthetic .test origins only.
+    // Static origin substitutions do not replace any browser APIs or logic.
+    for (const name of [
+      'background.js',
+      'content.js',
+      'list-content.js',
+      'library.js',
+    ]) {
+      const file = path.join(directory, name)
+      await writeFile(
+        file,
+        (await readFile(file, 'utf8')).replaceAll('1688.com', '1688.test')
+      )
+    }
+    manifest.host_permissions = ['https://*.1688.test/*', localhostMatch]
+    manifest.content_scripts[0].matches = [
+      'https://air.1688.test/app/ctf-page/trade-order-detail/index.html*',
+    ]
+    manifest.content_scripts[1].matches = [
+      'https://air.1688.test/app/ctf-page/trade-order-list/buyer-order-list.html*',
+    ]
+  }
   await writeFile(manifestPath, JSON.stringify(manifest, null, 2))
   await writeFile(
     path.join(directory, 'inspector.html'),
@@ -94,7 +117,8 @@ async function prepareExtension(directory) {
 }
 
 export const test = base.extend({
-  extension: async ({}, use) => {
+  importFlow: [false, { option: true }],
+  extension: async ({ importFlow }, use) => {
     const temporaryParent = await realpath(tmpdir())
     const temporaryRoot = await mkdtemp(
       path.join(temporaryParent, '1688tocsv-browser-')
@@ -105,7 +129,7 @@ export const test = base.extend({
     let context
     let server
     try {
-      const extensionId = await prepareExtension(extensionPath)
+      const extensionId = await prepareExtension(extensionPath, importFlow)
       await mkdir(downloadPath, { recursive: true })
       await mkdir(path.join(profilePath, 'Default'), { recursive: true })
       await writeFile(
@@ -120,7 +144,7 @@ export const test = base.extend({
       const local = await startFixtureServer()
       server = local.server
       context = await chromium.launchPersistentContext(profilePath, {
-        channel: 'chromium',
+        channel: process.env.EXTENSION_TEST_CHANNEL || 'chromium',
         headless: true,
         acceptDownloads: true,
         downloadsPath: downloadPath,

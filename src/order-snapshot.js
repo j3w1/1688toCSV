@@ -138,9 +138,14 @@ function readTotals(appQuery) {
 
   const summaries = query.all('.total-discount')
   if (summaries.length > 1) throw new Error('The discount total is ambiguous.')
+  // This optional presentation field can include labels or be empty/hidden.
+  // Read an unambiguous amount when available; the authoritative breakdown,
+  // product discounts, and payable total are independently reconciled below.
+  const summaryAmounts =
+    compact(text(summaries[0])).match(new RegExp(amountPattern, 'g')) || []
   if (
-    summaries.length &&
-    readAmount(text(summaries[0]), 'Discount total') !== totals.sourceDiscount
+    summaryAmounts.length === 1 &&
+    readAmount(summaryAmounts[0], 'Discount total') !== totals.sourceDiscount
   )
     throw new Error('The order discount total does not match its breakdown.')
 

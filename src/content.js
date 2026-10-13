@@ -26,7 +26,11 @@ async function readReadyOrder() {
     }
     await new Promise((resolve) => setTimeout(resolve, 300))
   }
-  throw error || new Error('The order page was closed.')
+  // The page may still be hydrating after this bounded read. Let the importer
+  // retry within its existing attempt/time limit without saving partial data.
+  throw Object.assign(error || new Error('The order page was closed.'), {
+    retryable: !disposed,
+  })
 }
 mountPageDownload(
   document,
@@ -52,7 +56,11 @@ function listener(message, sender, respond) {
         throw new Error('This page shows a different order.')
       respond({ ok: true, data: snapshot })
     } catch (error) {
-      respond({ ok: false, error: error.message })
+      respond({
+        ok: false,
+        error: error.message,
+        retryable: error.retryable === true,
+      })
     }
   })()
   return true

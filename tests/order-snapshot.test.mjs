@@ -125,6 +125,22 @@ function snapshot(source) {
   })
 }
 
+test('optional discount summaries allow labels and empty presentation states', () => {
+  for (const summary of [
+    '优惠共 ¥ 2.40 元',
+    '已优惠2.40元 查看明细',
+    '',
+    '查看优惠明细',
+  ]) {
+    const source = fixture()
+    source.totalDiscount.textContent = summary
+    assert.equal(snapshot(source).totals.sourceDiscount, '2.40')
+  }
+  const conflicting = fixture()
+  conflicting.totalDiscount.textContent = '优惠共2.41元'
+  assert.throws(() => snapshot(conflicting), /discount total does not match/)
+})
+
 test('reads a complete canonical snapshot with full string identities and isolated status', () => {
   const result = snapshot(fixture({ usd: true }))
   assert.deepEqual(
