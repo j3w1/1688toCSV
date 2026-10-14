@@ -24,14 +24,14 @@ Open **Extensions → Developer mode → Load unpacked** and select **dist**. In
 
 1. Open your [1688 orders](https://work.1688.com/home/buyer.htm), tick the orders you want, and choose **Import selected**. Confirm the count when asked and keep the list open while the reader tab works.
 2. Open **Spreadsheet ↗**. If a new tab is blocked, use **Open spreadsheet here** after the import finishes.
-3. Choose the orders to prepare, select a **Packing month**, and click **Prepare labels**. This month controls the CE codes; it does not change the purchase date.
+3. Choose the orders to prepare, check the **Packing month** (the current month by default), and click **Prepare labels**. This month controls new CE codes; saved preparation keeps its assigned month.
 4. Review the suggested product groups, variants and sizes. Set a short Spanish name and Chinese category, then **Save preparation** to assign codes. Merge or split groups when the suggestions need correction.
 
 Resolve any **Choose a size code** prompt before copying labels. Names and codes remain editable after saving.
 
 ## Edit labels and copy to Excel
 
-Click **Barcode** or **Carton mark** and edit the preview. **Enter** or leaving the field saves; **Escape** cancels the edit. Click **Copy label**, then paste into Excel. **Settings** controls dimensions, resolution, logo and vocabulary.
+Click **Barcode** or **Carton mark** and edit the preview. **Enter** or leaving the field saves; **Escape** cancels the edit. Click **Copy label**, then paste into Excel. Click the dimmed background to close an overlay. **Settings** controls dimensions, resolution, logo and vocabulary.
 
 <a href="screenshots/label-editor.png"><img src="screenshots/label-editor.png" alt="Editable barcode label with synthetic CE code and Spanish product name" width="480" /></a>
 
@@ -50,6 +50,6 @@ Filter orders by purchase month or date range, then use **Refresh matching order
 
 Data stays in this browser. Use **Data → Back up** before uninstalling, clearing its profile or moving computers; **Restore** brings it back with your reserved codes. Refreshes preserve your preparation edits. Use one buyer account per library.
 
-Discounts include each product's reduction and its share of order-wide price changes. Shipping, customization charges and red-packet reductions (红包) stay separate in order totals. The detail-page **Download CSV** also remains available, with product discounts only.
+Discounts include each product's reduction and its share of order-wide price changes. Order-only shop discounts, shipping, customization charges and red-packet reductions (红包) stay separate in order totals. The detail-page **Download CSV** also remains available, with product discounts only.
 
 For development commands, code allocation, backups and test coverage, see [development notes](docs/development.md). [Store preparation](CHROMEWEBSTORE.md) records permissions, privacy and publication status.

@@ -1,0 +1,162 @@
+import { test, expect } from './extension-fixture.mjs'
+import { createDemoRecords } from '../../preview/library-fixture.js'
+
+async function openLibrary(extension, fallback = false) {
+  const records = await extension.inspector.evaluate(
+    `(${createDemoRecords.toString()})(document)`
+  )
+  const record = records[0]
+  for (const [index, item] of record.snapshot.items.entries()) {
+    item.title = '合成玻璃罐'
+    item.productNumber = `SYNTHETIC-${index}`
+    item.skuProperties = []
+    item.description = item.title
+  }
+  const result = await extension.inspector.evaluate(
+    async (orders) =>
+      chrome.runtime.sendMessage({
+        type: 'BACKUP_RESTORE',
+        backup: {
+          format: '1688-order-library',
+          version: 1,
+          exportedAt: new Date().toISOString(),
+          orders,
+          history: [],
+          images: [],
+        },
+      }),
+    [record]
+  )
+  expect(result.ok, result.error).toBe(true)
+  const page = await extension.context.newPage()
+  if (fallback)
+    await page.addInitScript(() => {
+      delete HTMLDialogElement.prototype.closedBy
+      delete HTMLDialogElement.prototype.requestClose
+    })
+  await page.goto(`${extension.extensionBaseUrl}/library.html`)
+  await expect(page.locator('#sheet-body tr')).toHaveCount(3)
+  return page
+}
+async function backdrop(page, dialog) {
+  const box = await dialog.boundingBox()
+  const x = box.x > 10 ? box.x - 5 : box.x + box.width + 5
+  await page.mouse.click(x, Math.max(2, box.y + 10))
+}
+
+for (const fallback of [false, true]) {
+  test(`dialogs dismiss only on backdrop clicks (${fallback ? 'Chrome 120 fallback' : 'native'})`, async ({
+    extension,
+  }) => {
+    const page = await openLibrary(extension, fallback)
+    const dialog = page.locator('#order-details')
+    await dialog.evaluate((node) => {
+      node.innerHTML = '<h2>Dialog test</h2><p>Selection stays inside.</p>'
+      node.showModal()
+    })
+    // Emulate old Chrome: current Chromium still recognizes the native attribute
+    // even after its API accessor has been removed for the fallback test.
+    if (fallback)
+      await dialog.evaluate((node) =>
+        node.setAttribute('closedby', 'closerequest')
+      )
+    await dialog.locator('p').click()
+    await expect(dialog).toBeVisible()
+    const box = await dialog.boundingBox()
+    await page.mouse.click(box.x + 2, box.y + 2)
+    await expect(dialog).toBeVisible()
+    await page.mouse.move(box.x + 30, box.y + 30)
+    await page.mouse.down()
+    await page.mouse.move(box.x - 5, box.y + 30)
+    await page.mouse.up()
+    await expect(dialog).toBeVisible()
+    await backdrop(page, dialog)
+    await expect(dialog).not.toBeVisible()
+    await dialog.evaluate((node) => node.showModal())
+    await page.keyboard.press('Escape')
+    await expect(dialog).not.toBeVisible()
+  })
+}
+
+test('backdrop cancels a confirmation without copying or starting the operation', async ({
+  extension,
+}) => {
+  const page = await openLibrary(extension)
+  await page.evaluate(() => {
+    window.clipboardWrites = 0
+    navigator.clipboard.write = async () => {
+      window.clipboardWrites++
+    }
+    navigator.clipboard.writeText = async () => {
+      window.clipboardWrites++
+    }
+  })
+  await page.getByRole('button', { name: 'Copy values', exact: true }).click()
+  const dialog = page.getByRole('dialog', {
+    name: 'Confirm operation',
+    exact: true,
+  })
+  await expect(dialog).toBeVisible()
+  await backdrop(page, dialog)
+  await expect(dialog).not.toBeVisible()
+  await expect(
+    page.getByRole('button', { name: 'Copy values', exact: true })
+  ).toBeEnabled()
+  expect(await page.evaluate(() => window.clipboardWrites)).toBe(0)
+  await expect(page.locator('#sheet-body tr')).toHaveCount(3)
+})
+
+test('label backdrop saves a valid blurred edit, preserves Escape restore, and keeps invalid edits open', async ({
+  extension,
+}) => {
+  const page = await openLibrary(extension)
+  await page.getByLabel('Packing month', { exact: true }).fill('2026-10')
+  await page
+    .getByRole('button', { name: 'Prepare labels', exact: true })
+    .click()
+  const preparation = page.getByRole('dialog', {
+    name: 'Preparation',
+    exact: true,
+  })
+  await preparation
+    .getByRole('button', { name: 'Save preparation', exact: true })
+    .click()
+  await expect(
+    preparation.getByLabel('Product code', { exact: true }).first()
+  ).toHaveValue(/^CE2610\d{4}$/)
+  await backdrop(page, preparation)
+  await expect(preparation).not.toBeVisible()
+  const open = page
+    .locator('#sheet-body tr')
+    .first()
+    .getByRole('button', { name: 'Barcode', exact: true })
+  await open.click()
+  const label = page.getByRole('dialog', { name: 'Label editor', exact: true })
+  const spanish = label.getByRole('textbox', {
+    name: 'Spanish product name',
+    exact: true,
+  })
+  await expect(
+    label.getByRole('button', { name: 'Copy label', exact: true })
+  ).toBeEnabled({ timeout: 20000 })
+  await spanish.fill('frasco transparente')
+  await backdrop(page, label)
+  await expect(label).not.toBeVisible({ timeout: 20000 })
+  await open.click()
+  await expect(spanish).toHaveValue('FRASCO TRANSPARENTE')
+  await spanish.fill('discarded edit')
+  await spanish.press('Escape')
+  await expect(spanish).toHaveValue('FRASCO TRANSPARENTE')
+  await expect(label).toBeVisible()
+  const code = label.getByRole('textbox', { name: 'Barcode code', exact: true })
+  await code.fill('INVALID')
+  await backdrop(page, label)
+  await expect(label.locator('.label-editor-status')).toContainText(
+    'Enter a CE code',
+    { timeout: 20000 }
+  )
+  await expect(label).toBeVisible()
+  await code.press('Escape')
+  await backdrop(page, label)
+  await expect(label).not.toBeVisible({ timeout: 20000 })
+})

@@ -18,6 +18,8 @@ function completeOrder(
     summary = '2.40',
     customization = false,
     redPacket = false,
+    shopDiscount = false,
+    foreignFee = false,
     unsupported = false,
   } = {}
 ) {
@@ -39,7 +41,10 @@ function completeOrder(
   })
   const totals = document.createElement('order-total-price')
   const payable = (
-    (6800 + (customization ? 1250 : 0) - (redPacket ? 125 : 0)) /
+    (6800 +
+      (customization ? 1250 : 0) -
+      (redPacket ? 125 : 0) -
+      (shopDiscount ? 160 : 0)) /
     100
   )
     .toFixed(2)
@@ -51,6 +56,8 @@ function completeOrder(
       <dl><dt>商品优惠</dt><dd>减 ¥2.40</dd></dl>
       ${customization ? '<dl><dt>定制服务</dt><dd>¥12.50</dd></dl>' : ''}
       ${redPacket ? '<dl><dt>红包</dt><dd>减 ¥1.25</dd></dl>' : ''}
+      ${shopDiscount ? '<dl><dt>店铺优惠</dt><dd>减 ¥1.60</dd></dl>' : ''}
+      ${foreignFee ? '<dl><dt>外币支付手续费</dt><dd>（≈）</dd></dl>' : ''}
       ${unsupported ? '<dl><dt>未知费用</dt><dd>¥1.11</dd></dl>' : ''}
     </div><div class="total-discount">2.40</div>
     <div class="total-sum-pay"><!--?lit$8321$--><span class="sum-pay-label">实付款</span><!--amount:start--><span class="fd-cny">¥</span><!--?lit$8321$-->${payable[0]}.<span class="sub-ammount">${payable[1]}</span><!--amount:end--></div>`
@@ -65,6 +72,8 @@ async function setup(
     summary = '2.40',
     customization = false,
     redPacket = false,
+    shopDiscount = false,
+    foreignFee = false,
     unsupportedIds = [],
   } = {}
 ) {
@@ -89,7 +98,7 @@ async function setup(
       body = `<script>
         ${buildOrderFixture.toString()}
         ${completeOrder.toString()}
-        setTimeout(() => completeOrder(document, ${JSON.stringify(id)}, ${JSON.stringify({ summary, customization, redPacket, unsupported: unsupportedIds.includes(id) })}), ${typeof delay === 'object' ? delay[id] || 0 : delay});
+        setTimeout(() => completeOrder(document, ${JSON.stringify(id)}, ${JSON.stringify({ summary, customization, redPacket, shopDiscount, foreignFee, unsupported: unsupportedIds.includes(id) })}), ${typeof delay === 'object' ? delay[id] || 0 : delay});
       </script>`
     }
     await route.fulfill({
@@ -136,6 +145,51 @@ async function assertImported(extension, library) {
   expect(copied).toContain('0.30')
   expect(extension.unexpectedRequests).toEqual([])
 }
+
+test('order-only shop discounts and unspecified foreign fees import without changing copied product discounts', async ({
+  extension,
+}) => {
+  const { list, library } = await setup(extension, {
+    shopDiscount: true,
+    foreignFee: true,
+    redPacket: true,
+    summary: '优惠共5.25元',
+  })
+  await list
+    .getByRole('button', { name: 'Import selected', exact: true })
+    .click()
+  await list
+    .getByRole('button', { name: 'Import 2 selected orders', exact: true })
+    .click()
+  await assertImported(extension, library)
+  const { data } = await extension.inspector.evaluate(() =>
+    chrome.runtime.sendMessage({ type: 'LIBRARY_QUERY' })
+  )
+  for (const { snapshot } of data.orders) {
+    expect(snapshot.foreignCurrencyFeeUnspecified).toBe(true)
+    expect(snapshot.totals.orderDiscount).toBe('1.60')
+    expect(snapshot.totals.sourceDiscount).toBe('2.40')
+    expect(snapshot.totals.redPacketDiscount).toBe('1.25')
+    expect(snapshot.totals.goodsNet).toBe('62.00')
+    expect(snapshot.totals.payable).toBe('65.15')
+    expect(snapshot.items.map((item) => item.discount)).toEqual([
+      '2.10',
+      '0.30',
+    ])
+    expect(snapshot.items.map((item) => item.allocatedDiscount)).toEqual([
+      '0.00',
+      '0.00',
+    ])
+  }
+  await library.locator('.order-card button').first().click()
+  await expect(library.locator('#order-details')).toContainText(
+    'Shop discount (order only)'
+  )
+  await expect(library.locator('#order-details')).toContainText('¥ −1.60')
+  await expect(library.locator('#order-details')).toContainText(
+    'Foreign-currency payment fee: amount not shown by the page.'
+  )
+})
 
 test('red-packet payment reduction imports separately alongside customization and product discounts', async ({
   extension,

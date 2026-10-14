@@ -1,5 +1,46 @@
+const dismissibleDialogs = new WeakSet()
+
+export function enableLightDismiss(dialog) {
+  if (dismissibleDialogs.has(dialog)) return
+  dismissibleDialogs.add(dialog)
+  dialog.setAttribute('closedby', 'any')
+  if ('closedBy' in HTMLDialogElement.prototype) return
+
+  // Chrome 120: a backdrop click targets the dialog itself, as does its padding.
+  // Require both ends outside so selecting text or dragging out cannot dismiss.
+  let startedOutside = false
+  const outside = (event) => {
+    if (event.target !== dialog) return false
+    const rect = dialog.getBoundingClientRect()
+    return (
+      event.clientX < rect.left ||
+      event.clientX > rect.right ||
+      event.clientY < rect.top ||
+      event.clientY > rect.bottom
+    )
+  }
+  dialog.addEventListener('pointerdown', (event) => {
+    startedOutside = event.button === 0 && outside(event)
+  })
+  dialog.addEventListener('pointercancel', () => {
+    startedOutside = false
+  })
+  dialog.addEventListener('close', () => {
+    startedOutside = false
+  })
+  dialog.addEventListener('click', (event) => {
+    const dismiss = startedOutside && outside(event)
+    startedOutside = false
+    if (!dismiss || !dialog.open) return
+    if (typeof dialog.requestClose === 'function') dialog.requestClose()
+    else if (dialog.dispatchEvent(new Event('cancel', { cancelable: true })))
+      dialog.close()
+  })
+}
+
 export function element(tag, text, className) {
   const node = document.createElement(tag)
+  if (tag === 'dialog') enableLightDismiss(node)
   if (text !== undefined) node.textContent = text
   if (className) node.className = className
   return node

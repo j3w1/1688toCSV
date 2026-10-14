@@ -96,9 +96,7 @@ test('structured products prepare, preserve edits and copy exact headerless sour
   extension,
 }) => {
   const { page, record } = await openWorkspace(extension)
-  await expect(page.getByLabel('Packing month', { exact: true })).toHaveValue(
-    ''
-  )
+  await page.getByLabel('Packing month', { exact: true }).fill('')
   await page
     .getByRole('button', { name: 'Prepare labels', exact: true })
     .click()
@@ -222,6 +220,87 @@ test('structured products prepare, preserve edits and copy exact headerless sour
   expect(library.ok, library.error).toBe(true)
   expect(library.data.orders[0].snapshot).toEqual(record.snapshot)
   expect(extension.unexpectedRequests).toEqual([])
+})
+
+test('packing month starts in the local current month and preserves chosen and saved months', async ({
+  extension,
+}) => {
+  await seedStructuredOrder(extension)
+  const page = await extension.context.newPage()
+  const browser = await extension.context.newCDPSession(page)
+  await browser.send('Emulation.setTimezoneOverride', {
+    timezoneId: 'Asia/Shanghai',
+  })
+  await page.clock.setFixedTime(new Date('2026-12-31T16:30:00Z'))
+  await page.goto(`${extension.extensionBaseUrl}/library.html`)
+  const month = page.getByLabel('Packing month', { exact: true })
+  await expect(month).toHaveValue('2027-01')
+  await expect(page.locator('#sheet-body tr')).toHaveCount(3)
+  await page
+    .getByRole('button', { name: 'Prepare labels', exact: true })
+    .click()
+  const dialog = page.getByRole('dialog', { name: 'Preparation', exact: true })
+  await expect(dialog.locator('.preparation-heading')).toContainText(
+    'Packing January 2027'
+  )
+  await dialog
+    .getByRole('button', { name: 'Close preparation', exact: true })
+    .click()
+
+  await month.fill('2027-02')
+  await page
+    .getByLabel('Search products and orders', { exact: true })
+    .fill('TEST-JAR')
+  await expect(page.locator('#sheet-body tr')).toHaveCount(2)
+  await expect(month).toHaveValue('2027-02')
+  await page.getByLabel('Search products and orders', { exact: true }).fill('')
+  await expect(page.locator('#sheet-body tr')).toHaveCount(3)
+  await page
+    .getByRole('button', { name: 'Prepare labels', exact: true })
+    .click()
+  await expect(dialog.locator('.preparation-heading')).toContainText(
+    'Packing February 2027'
+  )
+  await dialog
+    .getByRole('button', { name: 'Save preparation', exact: true })
+    .click()
+  await expect(
+    dialog
+      .locator('.preparation-group')
+      .first()
+      .getByLabel('Product code', { exact: true })
+  ).toHaveValue(/^CE2702\d{4}$/)
+  await dialog
+    .getByRole('button', { name: 'Close preparation', exact: true })
+    .click()
+  await expect(month).toHaveValue('2027-02')
+
+  await month.fill('2027-03')
+  await page
+    .getByRole('button', { name: 'Edit preparation', exact: true })
+    .click()
+  await expect(dialog.locator('.preparation-heading')).toContainText(
+    'Packing February 2027'
+  )
+  await dialog
+    .getByRole('button', { name: 'Close preparation', exact: true })
+    .click()
+  await expect(month).toHaveValue('2027-03')
+  await page.reload()
+  await expect(month).toHaveValue('2027-01')
+  await page
+    .getByRole('button', { name: 'Edit preparation', exact: true })
+    .click()
+  await expect(dialog.locator('.preparation-heading')).toContainText(
+    'Packing February 2027'
+  )
+  await expect(
+    dialog
+      .locator('.preparation-group')
+      .first()
+      .getByLabel('Product code', { exact: true })
+  ).toHaveValue(/^CE2702\d{4}$/)
+  await browser.detach()
 })
 
 async function copiedLabel(page, dialog) {

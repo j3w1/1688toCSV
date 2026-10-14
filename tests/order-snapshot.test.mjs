@@ -129,6 +129,123 @@ function snapshot(source) {
   })
 }
 
+test('shop discounts stay separate only to the extent not already present in product rows', () => {
+  // The footer reports 2.40 product discounts plus a 1.60 shop coupon.
+  for (const [rowDiscount, orderDiscount] of [
+    ['2.10', '1.60'],
+    ['2.90', '0.80'],
+    ['3.70', undefined],
+  ]) {
+    const source = fixture({
+      rows: [
+        { price: '12.50', quantity: '4', sourceDiscount: rowDiscount },
+        { price: '8.00', quantity: '2', sourceDiscount: '0.30' },
+      ],
+      totals: {
+        goodsGross: '66.00',
+        shipping: '4.40',
+        sourceDiscount: '2.40',
+        payable: '66.40',
+      },
+    })
+    source.field('店铺优惠', '减 ¥1.60')
+    source.totalDiscount.textContent = '优惠共4.00元'
+    const result = snapshot(source)
+    assert.equal(result.totals.orderDiscount, orderDiscount)
+    assert.equal(result.totals.goodsNet, '62.00')
+    assert.equal(result.totals.payable, '66.40')
+    assert.equal(result.items[0].sourceDiscount, rowDiscount)
+    assert.equal(result.items[0].discount, rowDiscount)
+    assert.equal(result.items[0].allocatedDiscount, '0.00')
+    assert.equal(
+      result.totals.sourceDiscount,
+      centsToMoney(moneyToCents(rowDiscount) + 30n)
+    )
+  }
+})
+
+test('an order-only shop coupon and red packet both reconcile without inventing product discounts', () => {
+  const source = fixture({
+    rows: [{ price: '2.50', quantity: '400', sourceDiscount: '0.00' }],
+    totals: {
+      goodsGross: '1,000.00',
+      shipping: '0.00',
+      sourceDiscount: '0.00',
+      customizationService: '¥0.00',
+      redPacketDiscount: '减 ¥\n 12.50',
+      payable: '986.25',
+    },
+  })
+  source.field('店铺优惠', '减 ¥1.25')
+  source.totalDiscount.textContent = '共优惠 ¥13.75'
+  const result = snapshot(source)
+  assert.equal(result.totals.orderDiscount, '1.25')
+  assert.equal(result.totals.redPacketDiscount, '12.50')
+  assert.equal(result.totals.goodsNet, '998.75')
+  assert.equal(result.totals.payable, '986.25')
+  assert.equal(result.totals.sourceDiscount, '0.00')
+  assert.equal(result.items[0].discount, '0.00')
+  assert.equal(result.items[0].allocatedDiscount, '0.00')
+})
+
+test('a shop coupon cannot hide missing non-shop discounts, excess row discounts, incomplete goods or incorrect payable', () => {
+  for (const rowDiscount of ['2.09', '3.71']) {
+    const source = fixture({
+      rows: [
+        { price: '12.50', quantity: '4', sourceDiscount: rowDiscount },
+        { price: '8.00', quantity: '2', sourceDiscount: '0.30' },
+      ],
+    })
+    source.field('店铺优惠', '减 ¥1.60')
+    source.totalDiscount.textContent = '4.00'
+    assert.throws(() => snapshot(source), /Product rows do not reconcile/)
+  }
+  const mismatch = fixture()
+  mismatch.field('店铺优惠', '减 ¥1.60')
+  mismatch.totalDiscount.textContent = '4.00'
+  assert.throws(() => snapshot(mismatch), /payable amount does not reconcile/)
+  mismatch.fields['原价总计'].textContent = '¥67.60'
+  assert.throws(() => snapshot(mismatch), /Product rows do not reconcile/)
+  const noShop = fixture()
+  noShop.fields['商品优惠'].textContent = '减 ¥4.00'
+  noShop.totalDiscount.textContent = '4.00'
+  assert.throws(() => snapshot(noShop), /Product rows do not reconcile/)
+})
+
+test('a foreign-currency fee placeholder is preserved as unspecified only when CNY independently reconciles', () => {
+  for (const value of ['（≈）', ' ( ≈ ) ']) {
+    const source = fixture({ usd: true })
+    source.field('外币支付手续费', value)
+    const result = snapshot(source)
+    assert.equal(result.foreignCurrencyFeeUnspecified, true)
+    assert.deepEqual(result.totals, snapshot(fixture()).totals)
+    assert.deepEqual(result.items, snapshot(fixture()).items)
+    source.fields['运费'].textContent = '¥5.00'
+    assert.throws(() => snapshot(source), /payable amount does not reconcile/)
+  }
+  assert.equal(snapshot(fixture()).foreignCurrencyFeeUnspecified, undefined)
+  for (const value of [
+    '',
+    '0',
+    '¥0.00',
+    '（≈$1.00）',
+    '（≈）¥1.00',
+    'unknown',
+    '（≈）extra',
+  ]) {
+    const source = fixture()
+    source.field('外币支付手续费', value)
+    assert.throws(
+      () => snapshot(source),
+      /foreign-currency payment fee display is not supported/
+    )
+  }
+  const duplicate = fixture()
+  duplicate.field('外币支付手续费', '（≈）')
+  duplicate.field('外币支付手续费', '（≈）')
+  assert.throws(() => snapshot(duplicate), /labels are missing or ambiguous/)
+})
+
 test('purchase date uses the first creation step, never payment or import time', () => {
   const source = fixture()
   const addStep = (order, title, date) => {

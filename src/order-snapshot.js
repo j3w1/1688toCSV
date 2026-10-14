@@ -130,6 +130,8 @@ function readTotals(appQuery) {
   const query = deepQuery(host.shadowRoot)
   const fields = query.all('.detail-price dl')
   const totals = { sourceDiscount: 0n, orderAdjustment: 0n }
+  let shopDiscount = 0n
+  let foreignCurrencyFeeUnspecified = false
   const labels = new Set()
   for (const field of fields) {
     if (
@@ -146,7 +148,15 @@ function readTotals(appQuery) {
     else if (label === '运费') totals.shipping = readAmount(value, label)
     else if (label === '定制服务')
       totals.customizationService = readAmount(value, 'Customization service')
-    else if (label === '红包') {
+    else if (label === '外币支付手续费') {
+      // The page can show a conversion placeholder with no fee amount.
+      // Preserve that uncertainty separately; never manufacture a zero fee.
+      if (!['（≈）', '(≈)'].includes(compact(value)))
+        throw new Error(
+          'The foreign-currency payment fee display is not supported.'
+        )
+      foreignCurrencyFeeUnspecified = true
+    } else if (label === '红包') {
       const discount = readAmount(value, 'Red-packet discount', {
         signed: true,
       })
@@ -159,6 +169,7 @@ function readTotals(appQuery) {
       const discount = readAmount(value, label, { signed: true })
       if (discount < 0n) throw new Error(`${label} is not a reduction.`)
       totals.sourceDiscount += discount
+      if (label === '店铺优惠') shopDiscount += discount
     } else
       throw Object.assign(new Error(`Unsupported order total: ${label}.`), {
         retryable: false,
@@ -212,7 +223,7 @@ function readTotals(appQuery) {
   )
   if (!match) throw new Error('The CNY payable amount is missing or ambiguous.')
   totals.payable = moneyToCents(match[1].replaceAll(',', ''))
-  return totals
+  return { totals, shopDiscount, foreignCurrencyFeeUnspecified }
 }
 
 /** Allocate a signed reduction in exact cents, preserving source item order. */
@@ -289,7 +300,8 @@ export function extractOrderSnapshot(
     price: normalizePrice(row.price),
     sourceDiscount: discount,
   }))
-  const totals = readTotals(appQuery)
+  const { totals, shopDiscount, foreignCurrencyFeeUnspecified } =
+    readTotals(appQuery)
   const actualGross = items.reduce(
     (sum, item) => sum + lineGrossCents(item.price, item.quantity),
     0n
@@ -298,15 +310,21 @@ export function extractOrderSnapshot(
     (sum, item) => sum + moneyToCents(item.sourceDiscount),
     0n
   )
+  // A shop coupon may appear only in the order breakdown, partly on rows,
+  // or entirely on rows. Only its evidenced remainder stays order-only.
+  const orderDiscount = totals.sourceDiscount - actualDiscount
   if (
     actualGross !== totals.goodsGross ||
-    actualDiscount !== totals.sourceDiscount
+    orderDiscount < 0n ||
+    orderDiscount > shopDiscount
   )
     throw new Error(
       'Product rows do not reconcile with the order totals. The order may be incomplete.'
     )
+  totals.sourceDiscount = actualDiscount
+  if (orderDiscount > 0n) totals.orderDiscount = orderDiscount
   totals.goodsNet =
-    totals.goodsGross - totals.sourceDiscount - totals.orderAdjustment
+    totals.goodsGross - actualDiscount - totals.orderAdjustment - orderDiscount
   if (
     totals.goodsNet < 0n ||
     totals.payable < 0n ||
@@ -336,6 +354,9 @@ export function extractOrderSnapshot(
       ? { sellerShopOrigin: order.sellerShopOrigin }
       : {}),
     status,
+    ...(foreignCurrencyFeeUnspecified
+      ? { foreignCurrencyFeeUnspecified: true }
+      : {}),
     observedAt: new Date(observedAt).toISOString(),
     ...(purchasedAt ? { purchasedAt } : {}),
     items: items.map((item, index) => ({

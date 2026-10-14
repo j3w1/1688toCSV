@@ -5,7 +5,7 @@ import {
   pngImage,
 } from './clipboard.js'
 import { openDatabase } from './database.js'
-import { confirmScope, yieldUI } from './ui.js'
+import { confirmScope, yieldUI, enableLightDismiss } from './ui.js'
 import { startPackingWorkspace } from './packing-workspace.js'
 import { createImportReport, importJobView } from './import-report.js'
 
@@ -42,6 +42,7 @@ const dateLabel = (value) =>
     : '—'
 function node(tag, text, className) {
   const element = document.createElement(tag)
+  if (tag === 'dialog') enableLightDismiss(element)
   if (text !== undefined) element.textContent = text
   if (className) element.className = className
   return element
@@ -108,6 +109,8 @@ export async function startLibrary(
   transport = (message) => chrome.runtime.sendMessage(message),
   repository = null
 ) {
+  for (const dialog of document.querySelectorAll('dialog'))
+    enableLightDismiss(dialog)
   let records = [],
     jobs = [],
     page = 0,
@@ -799,6 +802,9 @@ export async function startLibrary(
       ['Original goods', order.totals.goodsGross],
       ['Product discounts', order.totals.sourceDiscount],
       ['Order adjustment (allocated)', order.totals.orderAdjustment],
+      ...(order.totals.orderDiscount !== undefined
+        ? [['Shop discount (order only)', `−${order.totals.orderDiscount}`]]
+        : []),
       ['Goods after discounts', order.totals.goodsNet],
       ['Shipping', order.totals.shipping],
       ...(order.totals.customizationService !== undefined
@@ -819,9 +825,16 @@ export async function startLibrary(
       totals,
       node(
         'p',
-        'Order-wide price changes are allocated in proportion to each product’s value after its own discounts. Shipping, customization services and red-packet payment reductions stay separate. Discounts are totals per row.'
+        'Order-wide price changes are allocated in proportion to each product’s value after its own discounts. Order-only shop discounts, shipping, customization services and red-packet payment reductions stay separate. Discounts are totals per row.'
       )
     )
+    if (order.foreignCurrencyFeeUnspecified)
+      content.append(
+        node(
+          'p',
+          'Foreign-currency payment fee: amount not shown by the page. The CNY order total reconciles; no fee amount has been assumed.'
+        )
+      )
     const notesLabel = node('label', 'Your notes'),
       notes = node('textarea')
     notes.id = 'order-notes'

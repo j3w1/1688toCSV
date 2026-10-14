@@ -374,6 +374,230 @@ test('invalid red-packet values and negative payable reject snapshots and backup
   expect(result.orders[0].snapshot.totals).toEqual(snapshot().totals)
 })
 
+test('order-only discounts and unspecified foreign fees preserve product rows and roundtrip current and historical observations', async ({
+  extension,
+}) => {
+  const page = await openTestDatabase(extension)
+  const result = await page.evaluate(async (first) => {
+    await library.saveSnapshot(first)
+    const oldBackup = await library.exportBackup()
+    const discountedSnapshot = {
+      ...first,
+      observedAt: '2026-01-02T12:00:00.000Z',
+      totals: {
+        ...first.totals,
+        orderDiscount: '3.00',
+        goodsNet: '21.00',
+        payable: '23.00',
+      },
+    }
+    const discounted = await library.saveSnapshot(discountedSnapshot)
+    const flaggedSnapshot = {
+      ...discountedSnapshot,
+      observedAt: '2026-01-03T12:00:00.000Z',
+      foreignCurrencyFeeUnspecified: true,
+    }
+    const flagged = await library.saveSnapshot(flaggedSnapshot)
+    const repeated = await library.saveSnapshot({
+      ...flaggedSnapshot,
+      observedAt: '2026-01-04T12:00:00.000Z',
+    })
+    const zero = await library.saveSnapshot({
+      ...flaggedSnapshot,
+      observedAt: '2026-01-05T12:00:00.000Z',
+      totals: { ...first.totals, orderDiscount: '0.00' },
+    })
+    const combined = await library.saveSnapshot({
+      ...flaggedSnapshot,
+      observedAt: '2026-01-06T12:00:00.000Z',
+      totals: {
+        ...discountedSnapshot.totals,
+        customizationService: '5.00',
+        redPacketDiscount: '1.00',
+        payable: '27.00',
+      },
+    })
+    const backup = await library.exportBackup()
+    const restored = await openOrderDatabase({
+      name: `${databaseName}-order-discount`,
+    })
+    await restored.restoreBackup(oldBackup)
+    const oldRecord = await restored.getOrder(first.orderId)
+    await restored.restoreBackup(backup)
+    const record = await restored.getOrder(first.orderId)
+    const history = await restored.getHistory(first.orderId)
+    restored.close()
+    return {
+      discounted,
+      flagged,
+      repeated,
+      zero,
+      combined,
+      backup,
+      oldRecord,
+      record,
+      history,
+    }
+  }, snapshot())
+  expect(result.oldRecord.snapshot).toEqual(snapshot())
+  expect(result.oldRecord.snapshot).not.toHaveProperty(
+    'foreignCurrencyFeeUnspecified'
+  )
+  expect(result.oldRecord.snapshot.totals).not.toHaveProperty('orderDiscount')
+  expect(result.discounted.changed).toBe(true)
+  expect(result.discounted.order.revision).toBe(2)
+  expect(result.discounted.order.snapshot.totals).toEqual({
+    ...snapshot().totals,
+    orderDiscount: '3.00',
+    goodsNet: '21.00',
+    payable: '23.00',
+  })
+  expect(result.flagged.changed).toBe(true)
+  expect(result.flagged.order.revision).toBe(3)
+  expect(result.flagged.order.changedEntryIds).toEqual([])
+  expect(result.flagged.order.snapshot.totals).toEqual(
+    result.discounted.order.snapshot.totals
+  )
+  expect(result.flagged.order.snapshot.foreignCurrencyFeeUnspecified).toBe(true)
+  expect(result.repeated.changed).toBe(false)
+  expect(result.repeated.order.revision).toBe(3)
+  expect(result.zero.order.snapshot.totals).toEqual({
+    ...snapshot().totals,
+    orderDiscount: '0.00',
+  })
+  expect(result.combined.order.snapshot.totals).toEqual({
+    ...snapshot().totals,
+    orderDiscount: '3.00',
+    goodsNet: '21.00',
+    customizationService: '5.00',
+    redPacketDiscount: '1.00',
+    payable: '27.00',
+  })
+  expect(result.record.snapshot).toEqual(result.combined.order.snapshot)
+  expect(result.backup.orders[0].snapshot).toEqual(
+    result.combined.order.snapshot
+  )
+  const history = result.history.sort((a, b) => a.revision - b.revision)
+  expect(history).toHaveLength(4)
+  expect(
+    history.map(({ snapshot: item }) => item.totals.orderDiscount)
+  ).toEqual([undefined, '3.00', '3.00', '0.00'])
+  expect(
+    history.map(({ snapshot: item }) =>
+      Object.hasOwn(item, 'foreignCurrencyFeeUnspecified')
+    )
+  ).toEqual([false, false, true, true])
+  expect(history.map(({ snapshot: item }) => item)).toEqual(
+    result.backup.history
+      .sort((a, b) => a.revision - b.revision)
+      .map(({ snapshot: item }) => item)
+  )
+  for (const record of [
+    result.discounted.order,
+    result.flagged.order,
+    result.record,
+    ...history,
+  ])
+    expect(record.snapshot.items).toEqual(snapshot().items)
+})
+
+test('invalid order-only discounts or foreign-fee flags reject snapshots and entire backups atomically', async ({
+  extension,
+}) => {
+  const page = await openTestDatabase(extension)
+  const result = await page.evaluate(async (first) => {
+    await library.saveSnapshot(first)
+    const backup = await library.exportBackup()
+    const next = structuredClone(backup.orders[0])
+    next.snapshot.orderId = '9999999999999999999'
+    next.snapshot.sourceUrl = first.sourceUrl.replace(
+      first.orderId,
+      next.snapshot.orderId
+    )
+    const invalidTotals = [
+      { orderDiscount: '-1.00', goodsNet: '25.00', payable: '27.00' },
+      { orderDiscount: '0.001' },
+      { orderDiscount: '25.00', goodsNet: '-1.00', payable: '1.00' },
+      { orderDiscount: '3.00' },
+      { orderDiscount: '3.00', goodsNet: '21.00', payable: '26.00' },
+      ...[null, undefined, 1, '', '减¥1.00', '+1.00', '1 2.00', 'unknown'].map(
+        (orderDiscount) => ({
+          orderDiscount,
+          goodsNet: '23.00',
+          payable: '25.00',
+        })
+      ),
+    ]
+    const cases = [
+      ...invalidTotals.map((totals) => ({
+        totals: { ...first.totals, ...totals },
+      })),
+      ...[false, null, undefined, 0, 1, 'true', 'false', {}, []].map(
+        (foreignCurrencyFeeUnspecified) => ({ foreignCurrencyFeeUnspecified })
+      ),
+    ]
+    const rejected = []
+    for (const values of cases) {
+      const invalid = {
+        ...first,
+        observedAt: '2026-01-02T12:00:00.000Z',
+        ...values,
+      }
+      for (const operation of [
+        () => library.saveSnapshot(invalid),
+        () =>
+          library.restoreBackup({
+            ...backup,
+            orders: [
+              next,
+              {
+                ...backup.orders[0],
+                snapshot: invalid,
+                lastCheckedAt: invalid.observedAt,
+              },
+            ],
+          }),
+        () =>
+          library.restoreBackup({
+            ...backup,
+            orders: [
+              next,
+              {
+                ...backup.orders[0],
+                snapshot: { ...first, observedAt: '2026-01-03T12:00:00.000Z' },
+                lastCheckedAt: '2026-01-03T12:00:00.000Z',
+              },
+            ],
+            history: [
+              {
+                ...backup.orders[0],
+                snapshot: invalid,
+                lastCheckedAt: invalid.observedAt,
+              },
+            ],
+          }),
+      ]) {
+        try {
+          await operation()
+        } catch (error) {
+          rejected.push(error.message)
+        }
+      }
+    }
+    return {
+      rejected,
+      expectedRejections: cases.length * 3,
+      orders: await library.listOrders(),
+      history: await library.getHistory(first.orderId),
+    }
+  }, snapshot())
+  expect(result.rejected).toHaveLength(result.expectedRejections)
+  expect(result.orders).toHaveLength(1)
+  expect(result.orders[0].revision).toBe(1)
+  expect(result.orders[0].snapshot).toEqual(snapshot())
+  expect(result.history).toEqual([])
+})
+
 test('purchase dates enrich old records, survive refresh and roundtrip without inventing dates', async ({
   extension,
 }) => {

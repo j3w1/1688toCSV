@@ -15,7 +15,11 @@ const totalFields = [
   'goodsNet',
   'payable',
 ]
-const optionalTotalFields = ['customizationService', 'redPacketDiscount']
+const optionalTotalFields = [
+  'customizationService',
+  'redPacketDiscount',
+  'orderDiscount',
+]
 
 function object(value, label) {
   if (!value || typeof value !== 'object' || Array.isArray(value))
@@ -114,7 +118,8 @@ function validateAmounts(items, totals) {
   const amounts = Object.fromEntries(
     Object.entries(totals).map(([field, value]) => [field, moneyToCents(value)])
   )
-  const goodsNet = goodsGross - sourceDiscount - orderAdjustment
+  const orderDiscount = amounts.orderDiscount ?? 0n
+  const goodsNet = goodsGross - sourceDiscount - orderAdjustment - orderDiscount
   const customizationService = amounts.customizationService ?? 0n
   const redPacketDiscount = amounts.redPacketDiscount ?? 0n
   if (
@@ -123,6 +128,7 @@ function validateAmounts(items, totals) {
     orderAdjustment !== amounts.orderAdjustment ||
     goodsNet !== amounts.goodsNet ||
     goodsNet < 0n ||
+    orderDiscount < 0n ||
     amounts.shipping < 0n ||
     customizationService < 0n ||
     redPacketDiscount < 0n ||
@@ -172,6 +178,11 @@ function validateSnapshot(input) {
     'Order totals'
   )
   validateAmounts(items, totals)
+  if (
+    Object.hasOwn(input, 'foreignCurrencyFeeUnspecified') &&
+    input.foreignCurrencyFeeUnspecified !== true
+  )
+    throw new Error('foreignCurrencyFeeUnspecified must be true when present')
   const purchasedAt = purchaseTimestamp(input.purchasedAt)
   if (input.purchasedAt !== undefined && !purchasedAt)
     throw new Error('purchasedAt must be a valid purchase timestamp')
@@ -193,6 +204,9 @@ function validateSnapshot(input) {
       ? { sellerShopOrigin: sellerShopOrigin(input.sellerShopOrigin) }
       : {}),
     status: string(input.status, 'status', { empty: false }),
+    ...(input.foreignCurrencyFeeUnspecified
+      ? { foreignCurrencyFeeUnspecified: true }
+      : {}),
     observedAt: date(input.observedAt, 'observedAt'),
     ...(purchasedAt ? { purchasedAt } : {}),
     items,

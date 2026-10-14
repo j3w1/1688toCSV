@@ -95,6 +95,11 @@ export async function startPackingWorkspace({
   changed,
   feedback,
 }) {
+  const monthInput = $('packing-month')
+  if (!monthInput.value) {
+    const today = new Date()
+    monthInput.value = `${today.getFullYear()}-${String(today.getMonth() + 1).padStart(2, '0')}`
+  }
   let preparations = new Map(),
     membership = new Map(),
     preferences,

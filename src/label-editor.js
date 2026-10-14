@@ -29,6 +29,17 @@ export function mountLabelEditor(container, options) {
   let destroyed = false
   let ready = false
   const inputs = new Map()
+  const dialog = container.closest('dialog')
+  const dismiss = async (event) => {
+    // Backdrop focus changes use the same save path as ordinary field blur.
+    // Keep the editor mounted until that save completes, or show its error.
+    if (!dirty() && !pendingCommit) return
+    event.preventDefault()
+    if (await commit()) {
+      if (!destroyed && dialog?.open) dialog.close()
+    }
+  }
+  dialog?.addEventListener('cancel', dismiss)
   const root = element('section', 'label-editor')
   const preview = element('div', 'label-editor-preview')
   const image = element('img', 'label-editor-image')
@@ -312,6 +323,7 @@ export function mountLabelEditor(container, options) {
       latest ? { ...latest.result, model: { ...latest.model } } : null,
     destroy() {
       destroyed = true
+      dialog?.removeEventListener('cancel', dismiss)
       revision++
       previewVersion++
       clearTimeout(timer)
