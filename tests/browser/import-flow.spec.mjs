@@ -1,5 +1,6 @@
 import { test, expect } from './extension-fixture.mjs'
 import { buildOrderFixture } from '../fixtures/order-fixture.mjs'
+import { readFile } from 'node:fs/promises'
 
 test.use({ importFlow: true })
 
@@ -13,8 +14,12 @@ const ids = ['9990000000000000001', '9990000000000000002']
 function completeOrder(
   document,
   orderId,
-  summary = '2.40',
-  customization = false
+  {
+    summary = '2.40',
+    customization = false,
+    redPacket = false,
+    unsupported = false,
+  } = {}
 ) {
   const built = buildOrderFixture(document)
   const app = built.appRoot.shadowRoot
@@ -33,21 +38,35 @@ function completeOrder(
     anchor.href = `https://trade.1688.test/order/offer_snapshot.htm?order_entry_id=${orderId}${index}`
   })
   const totals = document.createElement('order-total-price')
+  const payable = (
+    (6800 + (customization ? 1250 : 0) - (redPacket ? 125 : 0)) /
+    100
+  )
+    .toFixed(2)
+    .split('.')
   totals.attachShadow({ mode: 'open' }).innerHTML = `
     <div class="detail-price">
       <dl><dt>原价总计</dt><dd>¥66.00</dd></dl>
       <dl><dt>运费</dt><dd>¥4.40</dd></dl>
       <dl><dt>商品优惠</dt><dd>减 ¥2.40</dd></dl>
       ${customization ? '<dl><dt>定制服务</dt><dd>¥12.50</dd></dl>' : ''}
+      ${redPacket ? '<dl><dt>红包</dt><dd>减 ¥1.25</dd></dl>' : ''}
+      ${unsupported ? '<dl><dt>未知费用</dt><dd>¥1.11</dd></dl>' : ''}
     </div><div class="total-discount">2.40</div>
-    <div class="total-sum-pay"><!--?lit$8321$--><span class="sum-pay-label">实付款</span><!--amount:start--><span class="fd-cny">¥</span><!--?lit$8321$-->${customization ? '80.' : '68.'}<span class="sub-ammount">${customization ? '50' : '00'}</span><!--amount:end--></div>`
+    <div class="total-sum-pay"><!--?lit$8321$--><span class="sum-pay-label">实付款</span><!--amount:start--><span class="fd-cny">¥</span><!--?lit$8321$-->${payable[0]}.<span class="sub-ammount">${payable[1]}</span><!--amount:end--></div>`
   app.append(totals)
   totals.shadowRoot.querySelector('.total-discount').textContent = summary
 }
 
 async function setup(
   extension,
-  { delay = 0, summary = '2.40', customization = false } = {}
+  {
+    delay = 0,
+    summary = '2.40',
+    customization = false,
+    redPacket = false,
+    unsupportedIds = [],
+  } = {}
 ) {
   const visited = []
   await extension.context.route(`${origin}/**`, async (route) => {
@@ -70,7 +89,7 @@ async function setup(
       body = `<script>
         ${buildOrderFixture.toString()}
         ${completeOrder.toString()}
-        setTimeout(() => completeOrder(document, ${JSON.stringify(id)}, ${JSON.stringify(summary)}, ${JSON.stringify(customization)}), ${typeof delay === 'object' ? delay[id] || 0 : delay});
+        setTimeout(() => completeOrder(document, ${JSON.stringify(id)}, ${JSON.stringify({ summary, customization, redPacket, unsupported: unsupportedIds.includes(id) })}), ${typeof delay === 'object' ? delay[id] || 0 : delay});
       </script>`
     }
     await route.fulfill({
@@ -117,6 +136,128 @@ async function assertImported(extension, library) {
   expect(copied).toContain('0.30')
   expect(extension.unexpectedRequests).toEqual([])
 }
+
+test('red-packet payment reduction imports separately alongside customization and product discounts', async ({
+  extension,
+}) => {
+  const { list, library } = await setup(extension, {
+    customization: true,
+    redPacket: true,
+    summary: '优惠共3.65元',
+  })
+  await list
+    .getByRole('button', { name: 'Import selected', exact: true })
+    .click()
+  await list
+    .getByRole('button', { name: 'Import 2 selected orders', exact: true })
+    .click()
+  await assertImported(extension, library)
+  const { data } = await extension.inspector.evaluate(() =>
+    chrome.runtime.sendMessage({ type: 'LIBRARY_QUERY' })
+  )
+  for (const { snapshot } of data.orders) {
+    expect(snapshot.totals.redPacketDiscount).toBe('1.25')
+    expect(snapshot.totals.customizationService).toBe('12.50')
+    expect(snapshot.totals.payable).toBe('79.25')
+    expect(snapshot.totals.goodsNet).toBe('63.60')
+    expect(snapshot.items.map((item) => item.discount)).toEqual([
+      '2.10',
+      '0.30',
+    ])
+  }
+  await library.locator('.order-card button').first().click()
+  await expect(library.locator('#order-details')).toContainText(
+    'Red-packet discount (payment only)'
+  )
+  await expect(library.locator('#order-details')).toContainText('¥ −1.25')
+})
+
+test('unsupported totals promptly retain bounded financial evidence, continue other orders and survive successful retry in a report', async ({
+  extension,
+}) => {
+  const unsupportedIds = [ids[0]]
+  const { list, library, visited } = await setup(extension, { unsupportedIds })
+  await list
+    .getByRole('button', { name: 'Import selected', exact: true })
+    .click()
+  await list
+    .getByRole('button', { name: 'Import 2 selected orders', exact: true })
+    .click()
+  await library.getByRole('button', { name: /^Activity/ }).click()
+  // A known unsupported label is terminal; it must not spend 45 seconds in hydration retries.
+  await expect(library.locator('#jobs')).toContainText(
+    'completed with errors',
+    { timeout: 12000 }
+  )
+  await expect(library.locator('#order-count')).toHaveText('1')
+  const before = await extension.inspector.evaluate(() =>
+    chrome.runtime.sendMessage({ type: 'JOBS_QUERY' })
+  )
+  expect(before.data.jobs[0].orders[0].lastFailure).toBeUndefined()
+  const failure = await extension.inspector.evaluate(
+    (jobId) =>
+      new Promise((resolve, reject) => {
+        const request = indexedDB.open('1688-order-library')
+        request.onerror = () => reject(request.error)
+        request.onsuccess = () => {
+          const db = request.result
+          const tx = db.transaction('jobs', 'readonly')
+          const result = tx.objectStore('jobs').get(jobId)
+          tx.oncomplete = () => {
+            db.close()
+            resolve(result.result.orders[0].lastFailure)
+          }
+          tx.onerror = () => {
+            db.close()
+            reject(tx.error)
+          }
+        }
+      }),
+    before.data.jobs[0].id
+  )
+  expect(failure.message).toContain('未知费用')
+  expect(failure.diagnostics.fields).toContainEqual({
+    label: '未知费用',
+    value: '¥1.11',
+  })
+  expect(failure.diagnostics.products.gross).toBe('66.00')
+  expect(failure.diagnostics.products.discount).toBe('2.40')
+  expect(failure.diagnostics.products.count).toBe(2)
+  expect(failure.diagnostics.products.sample[0].discount).toBe('2.10')
+  expect(failure.diagnostics.payable).toContain('68.00')
+  expect(JSON.stringify(failure)).not.toMatch(/<html|sellerName|thumbnail|sku/)
+  unsupportedIds.length = 0
+  await library
+    .getByRole('button', { name: 'Resume / retry', exact: true })
+    .click()
+  await expect(library.locator('#order-count')).toHaveText('2', {
+    timeout: 12000,
+  })
+  await expect
+    .poll(
+      async () =>
+        (
+          await extension.inspector.evaluate(() =>
+            chrome.runtime.sendMessage({ type: 'JOBS_QUERY' })
+          )
+        ).data.jobs[0].state
+    )
+    .toBe('completed')
+  expect(visited).toEqual([...ids, ids[0]])
+  const downloaded = library.waitForEvent('download')
+  await library
+    .getByRole('button', { name: 'Save import report', exact: true })
+    .click()
+  expect(await (await downloaded).failure()).toBeNull()
+  const downloads = await extension.inspector.evaluate(() =>
+    chrome.downloads.search({})
+  )
+  const report = JSON.parse(await readFile(downloads[0].filename, 'utf8'))
+  expect(report.counts.saved).toBe(2)
+  expect(report.counts.failed).toBe(0)
+  expect(report.orders[0].lastFailure).toEqual(failure)
+  expect(extension.unexpectedRequests).toEqual([])
+})
 
 test('customization services survive complete import without changing copied product discounts', async ({
   extension,

@@ -217,6 +217,163 @@ test('invalid customization service rejects snapshots and entire backups before 
   expect(result.orders[0].snapshot.totals).toEqual(snapshot().totals)
 })
 
+test('red packets stay separate through changes, old backups and combined customization charges', async ({
+  extension,
+}) => {
+  const page = await openTestDatabase(extension)
+  const result = await page.evaluate(async (first) => {
+    const existing = {
+      ...first,
+      totals: {
+        ...first.totals,
+        customizationService: '5.00',
+        payable: '31.00',
+      },
+    }
+    await library.saveSnapshot(existing)
+    const oldBackup = await library.exportBackup()
+    const discounted = {
+      ...existing,
+      observedAt: '2026-01-02T12:00:00.000Z',
+      totals: {
+        ...existing.totals,
+        redPacketDiscount: '2.00',
+        payable: '29.00',
+      },
+    }
+    const added = await library.saveSnapshot(discounted)
+    const repeated = await library.saveSnapshot({
+      ...discounted,
+      observedAt: '2026-01-03T12:00:00.000Z',
+    })
+    const changed = await library.saveSnapshot({
+      ...discounted,
+      observedAt: '2026-01-04T12:00:00.000Z',
+      totals: {
+        ...existing.totals,
+        redPacketDiscount: '3.00',
+        payable: '28.00',
+      },
+    })
+    const zero = await library.saveSnapshot({
+      ...existing,
+      observedAt: '2026-01-05T12:00:00.000Z',
+      totals: { ...existing.totals, redPacketDiscount: '0.00' },
+    })
+    const backup = await library.exportBackup()
+    const restored = await openOrderDatabase({
+      name: `${databaseName}-red-packets`,
+    })
+    await restored.restoreBackup(oldBackup)
+    const oldRecord = await restored.getOrder(first.orderId)
+    await restored.restoreBackup(backup)
+    const record = await restored.getOrder(first.orderId)
+    const history = await restored.getHistory(first.orderId)
+    restored.close()
+    return { added, repeated, changed, zero, oldRecord, record, history }
+  }, snapshot())
+  expect(result.oldRecord.snapshot.totals).toEqual({
+    ...snapshot().totals,
+    customizationService: '5.00',
+    payable: '31.00',
+  })
+  expect(result.added.changed).toBe(true)
+  expect(result.added.order.revision).toBe(2)
+  expect(result.added.order.snapshot.totals.redPacketDiscount).toBe('2.00')
+  expect(result.repeated.changed).toBe(false)
+  expect(result.repeated.order.revision).toBe(2)
+  expect(result.changed.changed).toBe(true)
+  expect(result.changed.order.revision).toBe(3)
+  expect(result.changed.order.changedEntryIds).toEqual([])
+  expect(result.zero.order.revision).toBe(4)
+  expect(result.record.snapshot.totals).toEqual({
+    ...snapshot().totals,
+    customizationService: '5.00',
+    payable: '31.00',
+    redPacketDiscount: '0.00',
+  })
+  for (const record of [
+    result.added.order,
+    result.changed.order,
+    result.record,
+    ...result.history,
+  ])
+    expect(record.snapshot.items).toEqual(snapshot().items)
+  expect(
+    result.history
+      .map(({ snapshot: item }) => item.totals.redPacketDiscount)
+      .sort()
+  ).toEqual(['2.00', '3.00', undefined])
+})
+
+test('invalid red-packet values and negative payable reject snapshots and backups atomically', async ({
+  extension,
+}) => {
+  const page = await openTestDatabase(extension)
+  const result = await page.evaluate(async (first) => {
+    await library.saveSnapshot(first)
+    const backup = await library.exportBackup()
+    const next = structuredClone(backup.orders[0])
+    next.snapshot.orderId = '9999999999999999999'
+    next.snapshot.sourceUrl = first.sourceUrl.replace(
+      first.orderId,
+      next.snapshot.orderId
+    )
+    const cases = [
+      { redPacketDiscount: '-1.00', payable: '27.00' },
+      { redPacketDiscount: '1.00', payable: '26.00' },
+      { redPacketDiscount: '0.001', payable: '26.00' },
+      { redPacketDiscount: '27.00', payable: '-1.00' },
+      {
+        redPacketDiscount: '32.00',
+        customizationService: '5.00',
+        payable: '-1.00',
+      },
+      ...[null, undefined, 1, '', '减¥1.00', '+1.00', '1 2.00', 'unknown'].map(
+        (redPacketDiscount) => ({ redPacketDiscount, payable: '25.00' })
+      ),
+    ]
+    const rejected = []
+    for (const values of cases) {
+      const invalid = {
+        ...first,
+        observedAt: '2026-01-02T12:00:00.000Z',
+        totals: { ...first.totals, ...values },
+      }
+      for (const operation of [
+        () => library.saveSnapshot(invalid),
+        () =>
+          library.restoreBackup({
+            ...backup,
+            orders: [
+              next,
+              {
+                ...backup.orders[0],
+                snapshot: invalid,
+                lastCheckedAt: invalid.observedAt,
+              },
+            ],
+          }),
+      ]) {
+        try {
+          await operation()
+        } catch (error) {
+          rejected.push(error.message)
+        }
+      }
+    }
+    return {
+      rejected,
+      expectedRejections: cases.length * 2,
+      orders: await library.listOrders(),
+    }
+  }, snapshot())
+  expect(result.rejected).toHaveLength(result.expectedRejections)
+  expect(result.orders).toHaveLength(1)
+  expect(result.orders[0].revision).toBe(1)
+  expect(result.orders[0].snapshot.totals).toEqual(snapshot().totals)
+})
+
 test('purchase dates enrich old records, survive refresh and roundtrip without inventing dates', async ({
   extension,
 }) => {

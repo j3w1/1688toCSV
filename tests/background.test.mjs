@@ -4,6 +4,8 @@ import { readFile } from 'node:fs/promises'
 import vm from 'node:vm'
 import { createImportController } from '../src/import-controller.js'
 import { detailUrl, isListUrl } from '../src/order-list.js'
+import { importJobView } from '../src/import-report.js'
+import { financialDiagnostics } from '../src/import-diagnostics.js'
 
 const sourceCode = (
   await readFile(new URL('../src/background.js', import.meta.url), 'utf8')
@@ -154,6 +156,8 @@ function setup({ orderIds = ['10001'] } = {}) {
     },
     detailUrl,
     isListUrl,
+    importJobView,
+    financialDiagnostics,
     loadThumbnail: async () => '',
     URL,
     console,
@@ -168,6 +172,32 @@ const settle = async () => {
   for (let i = 0; i < 20; i++)
     await new Promise((resolve) => setImmediate(resolve))
 }
+
+test('progress responses omit failure evidence without erasing saved diagnostics', async () => {
+  const s = setup()
+  const lastFailure = {
+    message: 'Unsupported total',
+    diagnostics: { version: 1 },
+  }
+  s.jobs.set('bulk', {
+    id: 'bulk',
+    state: 'paused',
+    orders: Array.from({ length: 667 }, (_, i) => ({
+      orderId: String(10000 + i),
+      state: 'failed',
+      error: 'Unsupported total',
+      lastFailure,
+    })),
+  })
+  for (const type of ['JOBS_QUERY', 'LIBRARY_QUERY']) {
+    const reply = await s.send({ type })
+    assert.equal(reply.ok, true)
+    assert.equal(reply.data.jobs[0].orders.length, 667)
+    assert.equal(reply.data.jobs[0].orders[0].error, 'Unsupported total')
+    assert.equal(reply.data.jobs[0].orders[0].lastFailure, undefined)
+  }
+  assert.deepEqual(s.jobs.get('bulk').orders[0].lastFailure, lastFailure)
+})
 
 test('dismissal is library-only, refuses running jobs and preserves saved data', async () => {
   const s = setup()

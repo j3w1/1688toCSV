@@ -1,4 +1,13 @@
 import { detailUrl } from './order-list.js'
+import { financialDiagnostics } from './import-diagnostics.js'
+
+/** Progress views omit saved evidence; report export reads the full job locally. */
+export function importJobView(job) {
+  return {
+    ...job,
+    orders: (job.orders || []).map(({ lastFailure, ...order }) => order),
+  }
+}
 
 /** A local diagnostic snapshot; deliberately excludes page content and filters. */
 export function createImportReport(
@@ -12,6 +21,15 @@ export function createImportReport(
     state: order.state,
     expectedRows: order.expectedRows ?? null,
     error: order.error || '',
+    ...(order.lastFailure
+      ? {
+          lastFailure: {
+            at: String(order.lastFailure.at || '').slice(0, 32),
+            message: String(order.lastFailure.message || '').slice(0, 500),
+            diagnostics: financialDiagnostics(order.lastFailure.diagnostics),
+          },
+        }
+      : {}),
   }))
   const saved = orders.filter((order) => order.state === 'done').length
   const failed = orders.filter((order) => order.state === 'failed').length

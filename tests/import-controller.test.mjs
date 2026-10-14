@@ -1,6 +1,7 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
 import { createImportController } from '../src/import-controller.js'
+import { createImportReport } from '../src/import-report.js'
 
 const url = (id) =>
   `https://air.1688.com/app/ctf-page/trade-order-detail/index.html?orderId=${id}`
@@ -335,6 +336,46 @@ test('database errors are failed saves, never counted as completed orders', asyn
   assert.equal(s.jobs.get(job.id).completed, 0)
   assert.equal(s.jobs.get(job.id).failed, 1)
   assert.match(s.jobs.get(job.id).orders[0].error, /Disk is full/)
+})
+
+test('last financial failure survives retry and successful save in the local import report', async () => {
+  const s = setup()
+  s.browser.readDetail = async () => {
+    throw Object.assign(
+      new Error('Unsupported order total: synthetic field.'),
+      {
+        diagnostics: {
+          version: 1,
+          extensionVersion: 'test',
+          fields: [{ label: 'synthetic field', value: '减 ¥1.00' }],
+          cookies: 'must not persist',
+        },
+      }
+    )
+  }
+  const job = await s.controller.start({
+    scope: 'selected',
+    source,
+    orderIds: ['10001'],
+  })
+  await s.controller.tick()
+  await s.controller.tick()
+  await s.controller.tick()
+  const before = s.jobs.get(job.id).orders[0].lastFailure
+  assert.equal(before.diagnostics.fields[0].value, '减 ¥1.00')
+  assert.doesNotMatch(JSON.stringify(before), /must not persist|cookies/)
+  await s.controller.resume(job.id)
+  assert.deepEqual(s.jobs.get(job.id).orders[0].lastFailure, before)
+  s.browser.readDetail = async (tabId, orderId) => snapshot(orderId)
+  await s.controller.tick()
+  await s.controller.tick()
+  await s.controller.tick()
+  const report = createImportReport(s.jobs.get(job.id), 'test')
+  assert.equal(report.counts.failed, 0)
+  assert.equal(report.orders[0].error, '')
+  assert.equal(report.orders[0].state, 'done')
+  assert.deepEqual(report.orders[0].lastFailure, before)
+  assert.equal(s.saved.size, 1)
 })
 test('pending jobs survive controller recreation and browser restart pauses ownership', async () => {
   const s = setup()

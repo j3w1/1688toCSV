@@ -15,6 +15,7 @@ const totalFields = [
   'goodsNet',
   'payable',
 ]
+const optionalTotalFields = ['customizationService', 'redPacketDiscount']
 
 function object(value, label) {
   if (!value || typeof value !== 'object' || Array.isArray(value))
@@ -115,6 +116,7 @@ function validateAmounts(items, totals) {
   )
   const goodsNet = goodsGross - sourceDiscount - orderAdjustment
   const customizationService = amounts.customizationService ?? 0n
+  const redPacketDiscount = amounts.redPacketDiscount ?? 0n
   if (
     goodsGross !== amounts.goodsGross ||
     sourceDiscount !== amounts.sourceDiscount ||
@@ -123,7 +125,10 @@ function validateAmounts(items, totals) {
     goodsNet < 0n ||
     amounts.shipping < 0n ||
     customizationService < 0n ||
-    goodsNet + amounts.shipping + customizationService !== amounts.payable
+    redPacketDiscount < 0n ||
+    amounts.payable < 0n ||
+    goodsNet + amounts.shipping + customizationService - redPacketDiscount !==
+      amounts.payable
   )
     throw new Error('Product amounts do not reconcile with the order totals')
 }
@@ -155,11 +160,15 @@ function validateSnapshot(input) {
   if (new Set(items.map((item) => item.entryId)).size !== items.length)
     throw new Error('An order contains duplicate product entry IDs')
   const orderId = identifier(input.orderId, 'orderId')
+  const totalValues = object(input.totals, 'Order totals')
   const totals = decimals(
-    input.totals,
-    Object.hasOwn(object(input.totals, 'Order totals'), 'customizationService')
-      ? [...totalFields, 'customizationService']
-      : totalFields,
+    totalValues,
+    [
+      ...totalFields,
+      ...optionalTotalFields.filter((field) =>
+        Object.hasOwn(totalValues, field)
+      ),
+    ],
     'Order totals'
   )
   validateAmounts(items, totals)

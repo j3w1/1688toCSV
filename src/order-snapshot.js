@@ -35,7 +35,7 @@ function readAmount(value, name, { signed = false } = {}) {
   if (signed && !match[1])
     throw new Error(`${name} has no explicit increase or reduction sign.`)
   const amount = moneyToCents(match[2].replaceAll(',', ''))
-  // Positive values are reductions, so they can be added to row discounts.
+  // Signed values use positive reductions and negative increases.
   return /[增加+]/.test(match[1]) ? -amount : amount
 }
 
@@ -146,13 +146,23 @@ function readTotals(appQuery) {
     else if (label === '运费') totals.shipping = readAmount(value, label)
     else if (label === '定制服务')
       totals.customizationService = readAmount(value, 'Customization service')
-    else if (label === '商品改价')
+    else if (label === '红包') {
+      const discount = readAmount(value, 'Red-packet discount', {
+        signed: true,
+      })
+      if (!/^(?:减少|减|[−-])/.test(value.trim()) || discount < 0n)
+        throw new Error('Red-packet discount is not an explicit reduction.')
+      totals.redPacketDiscount = discount
+    } else if (label === '商品改价')
       totals.orderAdjustment = readAmount(value, label, { signed: true })
     else if (label.includes('优惠')) {
       const discount = readAmount(value, label, { signed: true })
       if (discount < 0n) throw new Error(`${label} is not a reduction.`)
       totals.sourceDiscount += discount
-    } else throw new Error(`Unsupported order total: ${label}.`)
+    } else
+      throw Object.assign(new Error(`Unsupported order total: ${label}.`), {
+        retryable: false,
+      })
   }
   if (totals.goodsGross === undefined || totals.shipping === undefined)
     throw new Error('The original goods total or shipping total is missing.')
@@ -164,9 +174,14 @@ function readTotals(appQuery) {
   // product discounts, and payable total are independently reconciled below.
   const summaryAmounts =
     compact(text(summaries[0])).match(new RegExp(amountPattern, 'g')) || []
+  if (totals.redPacketDiscount !== undefined && summaryAmounts.length > 1)
+    throw new Error('The order discount total is ambiguous.')
   if (
     summaryAmounts.length === 1 &&
-    readAmount(summaryAmounts[0], 'Discount total') !== totals.sourceDiscount
+    ![
+      totals.sourceDiscount,
+      totals.sourceDiscount + (totals.redPacketDiscount ?? 0n),
+    ].includes(readAmount(summaryAmounts[0], 'Discount total'))
   )
     throw new Error('The order discount total does not match its breakdown.')
 
@@ -294,7 +309,11 @@ export function extractOrderSnapshot(
     totals.goodsGross - totals.sourceDiscount - totals.orderAdjustment
   if (
     totals.goodsNet < 0n ||
-    totals.goodsNet + totals.shipping + (totals.customizationService ?? 0n) !==
+    totals.payable < 0n ||
+    totals.goodsNet +
+      totals.shipping +
+      (totals.customizationService ?? 0n) -
+      (totals.redPacketDiscount ?? 0n) !==
       totals.payable
   )
     throw new Error(

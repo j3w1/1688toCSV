@@ -2,6 +2,7 @@ import { extractOrder } from './extract.js'
 import { prepareCsv } from './csv.js'
 import { mountPageDownload } from './page-download.js'
 import { extractOrderSnapshot } from './order-snapshot.js'
+import { collectFinancialDiagnostics } from './import-diagnostics.js'
 
 const controllerKey = Symbol.for('1688tocsv.detailController')
 globalThis[controllerKey]?.()
@@ -22,6 +23,7 @@ async function readReadyOrder() {
     try {
       return extractOrderSnapshot(document, location.href)
     } catch (failure) {
+      if (failure.retryable === false) throw failure
       error = failure
     }
     await new Promise((resolve) => setTimeout(resolve, 300))
@@ -60,6 +62,11 @@ function listener(message, sender, respond) {
         ok: false,
         error: error.message,
         retryable: error.retryable === true,
+        diagnostics: collectFinancialDiagnostics(
+          document,
+          location.href,
+          chrome.runtime.getManifest().version
+        ),
       })
     }
   })()

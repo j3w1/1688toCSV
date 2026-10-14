@@ -1,4 +1,5 @@
 import { detailUrl } from './order-list.js'
+import { financialDiagnostics } from './import-diagnostics.js'
 
 const active = (job) => job.state === 'running'
 const errorText = (error) =>
@@ -342,6 +343,11 @@ export function createImportController({
         return 'wait'
       order.state = 'failed'
       order.error = errorText(error)
+      order.lastFailure = {
+        at: new Date(now()).toISOString(),
+        message: order.error,
+        diagnostics: financialDiagnostics(error?.diagnostics),
+      }
     }
     await write(job)
     if (saved) await browser.changed()

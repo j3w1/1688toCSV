@@ -93,6 +93,8 @@ function fixture(options = {}) {
   field('运费', `¥ ${expected.shipping}`)
   if (expected.customizationService !== undefined)
     field('定制服务', expected.customizationService)
+  if (expected.redPacketDiscount !== undefined)
+    field('红包', expected.redPacketDiscount)
   if (expected.orderAdjustment !== undefined)
     field('商品改价', expected.orderAdjustment)
   field('商品优惠', `减 ¥ ${expected.sourceDiscount}`)
@@ -431,6 +433,152 @@ test('customization service rejects ambiguous or invalid amounts and unreconcile
   duplicate.field('定制服务', '¥0.00')
   duplicate.field('定制服务', '¥0.00')
   assert.throws(() => snapshot(duplicate), /labels are missing or ambiguous/)
+})
+
+test('red packets reduce the payable separately from goods, product discounts and customization', () => {
+  const original = snapshot(fixture())
+  assert.equal(Object.hasOwn(original.totals, 'redPacketDiscount'), false)
+  for (const [value, discount, payable, customizationService] of [
+    ['减 ¥1.00', '1.00', '67.00', undefined],
+    ['减少￥1.50元', '1.50', '66.50', undefined],
+    ['− ¥ 2.00', '2.00', '66.00', undefined],
+    ['-1.00', '1.00', '67.00', undefined],
+    ['减¥0.00', '0.00', '68.00', undefined],
+    ['减¥68.00', '68.00', '0.00', undefined],
+    ['减¥12.50', '12.50', '60.50', '¥5.00'],
+  ]) {
+    const result = snapshot(
+      fixture({
+        totals: {
+          ...original.totals,
+          orderAdjustment: '减 ¥0.00',
+          redPacketDiscount: value,
+          ...(customizationService ? { customizationService } : {}),
+          payable,
+        },
+      })
+    )
+    assert.equal(result.totals.redPacketDiscount, discount)
+    assert.equal(result.totals.payable, payable)
+    assert.equal(result.totals.goodsNet, original.totals.goodsNet)
+    assert.equal(result.totals.sourceDiscount, original.totals.sourceDiscount)
+    assert.equal(result.totals.orderAdjustment, original.totals.orderAdjustment)
+    if (customizationService)
+      assert.equal(result.totals.customizationService, '5.00')
+    assert.deepEqual(result.items, original.items)
+  }
+})
+
+test('red-packet discount summaries accept only reconciled product or combined reductions', () => {
+  for (const [summary, accepted] of [
+    ['优惠共2.40元', true],
+    ['优惠共3.40元', true],
+    ['', true],
+    ['查看优惠明细', true],
+    ['优惠共3.41元', false],
+    ['商品2.40元 红包1.00元', false],
+  ]) {
+    const source = fixture({
+      totals: {
+        goodsGross: '66.00',
+        shipping: '4.40',
+        sourceDiscount: '2.40',
+        redPacketDiscount: '减¥1.00',
+        payable: '67.00',
+      },
+    })
+    source.totalDiscount.textContent = summary
+    if (accepted)
+      assert.equal(snapshot(source).totals.redPacketDiscount, '1.00')
+    else assert.throws(() => snapshot(source), /discount total/, summary)
+  }
+})
+
+test('red packets reject unsigned, increased, invalid, duplicate and mismatched amounts', () => {
+  for (const value of [
+    '',
+    '待定',
+    '1.00',
+    '¥1.00',
+    '减免费',
+    '减$1.00',
+    '加¥1.00',
+    '+1.00',
+    '增加￥0.00',
+    '+0.00',
+    '减¥1.00 ¥2.00',
+    '减¥1,00.00',
+    '减¥0.001',
+    '减1 2.00',
+    '减12 .00',
+    '减¥1.00起',
+  ]) {
+    const source = fixture()
+    source.field('红包', value)
+    assert.throws(
+      () => snapshot(source),
+      /Red-packet discount|decimal places/,
+      value
+    )
+  }
+  const mismatch = fixture()
+  mismatch.field('红包', '减¥1.00')
+  assert.throws(() => snapshot(mismatch), /payable amount does not reconcile/)
+  const duplicate = fixture()
+  duplicate.field('红包', '减¥0.00')
+  duplicate.field('红包', '减¥0.00')
+  assert.throws(() => snapshot(duplicate), /labels are missing or ambiguous/)
+  const excessive = fixture({
+    totals: {
+      goodsGross: '66.00',
+      shipping: '4.40',
+      sourceDiscount: '2.40',
+      redPacketDiscount: '减¥69.00',
+      payable: '-1.00',
+    },
+  })
+  assert.throws(() => snapshot(excessive), /CNY payable|does not reconcile/)
+})
+
+test('red packets already folded into row or breakdown discounts cannot be counted twice', () => {
+  const options = {
+    totals: {
+      goodsGross: '66.00',
+      shipping: '4.40',
+      sourceDiscount: '2.40',
+      redPacketDiscount: '减¥1.00',
+      payable: '67.00',
+    },
+  }
+  const rowsIncludePacket = fixture({
+    ...options,
+    rows: [
+      { price: '12.50', quantity: '4', sourceDiscount: '3.10' },
+      { price: '8.00', quantity: '2', sourceDiscount: '0.30' },
+    ],
+  })
+  assert.throws(
+    () => snapshot(rowsIncludePacket),
+    /Product rows do not reconcile/
+  )
+  const breakdownIncludesPacket = fixture({
+    totals: { ...options.totals, sourceDiscount: '3.40' },
+  })
+  assert.throws(
+    () => snapshot(breakdownIncludesPacket),
+    /Product rows do not reconcile/
+  )
+  const bothIncludePacket = fixture({
+    rows: [
+      { price: '12.50', quantity: '4', sourceDiscount: '3.10' },
+      { price: '8.00', quantity: '2', sourceDiscount: '0.30' },
+    ],
+    totals: { ...options.totals, sourceDiscount: '3.40' },
+  })
+  assert.throws(
+    () => snapshot(bothIncludePacket),
+    /payable amount does not reconcile/
+  )
 })
 
 test('money arithmetic preserves fractional unit prices and values beyond JS safe integers', () => {

@@ -2,6 +2,8 @@ import { openDatabase } from './database.js'
 import { createImportController } from './import-controller.js'
 import { detailUrl, isListUrl } from './order-list.js'
 import { loadThumbnail } from './images.js'
+import { financialDiagnostics } from './import-diagnostics.js'
+import { importJobView } from './import-report.js'
 
 const alarmName = 'order-import'
 // This lock only orders concurrent events in one worker lifetime. Every job
@@ -64,6 +66,7 @@ async function content(tabId, message, frameId = 0) {
       new Error(response?.error || 'The order page did not respond.'),
       {
         retryable: response?.retryable === true,
+        diagnostics: financialDiagnostics(response?.diagnostics),
       }
     )
   return response.data
@@ -331,10 +334,10 @@ async function dispatch(message, sender, repository, controller) {
     case 'LIBRARY_QUERY':
       return {
         orders: await repository.listOrders(),
-        jobs: await repository.listJobs(),
+        jobs: (await repository.listJobs()).map(importJobView),
       }
     case 'JOBS_QUERY':
-      return { jobs: await repository.listJobs() }
+      return { jobs: (await repository.listJobs()).map(importJobView) }
     case 'LIBRARY_HISTORY':
       return repository.getHistory(message.orderId)
     case 'IMAGE_GET':

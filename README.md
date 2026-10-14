@@ -50,6 +50,6 @@ Filter orders by purchase month or date range, then use **Refresh matching order
 
 Data stays in this browser. Use **Data → Back up** before uninstalling, clearing its profile or moving computers; **Restore** brings it back with your reserved codes. Refreshes preserve your preparation edits. Use one buyer account per library.
 
-Discounts include each product's reduction and its share of order-wide price changes; shipping and customization charges stay separate. The detail-page **Download CSV** also remains available, with product discounts only.
+Discounts include each product's reduction and its share of order-wide price changes. Shipping, customization charges and red-packet reductions (红包) stay separate in order totals. The detail-page **Download CSV** also remains available, with product discounts only.
 
 For development commands, code allocation, backups and test coverage, see [development notes](docs/development.md). [Store preparation](CHROMEWEBSTORE.md) records permissions, privacy and publication status.

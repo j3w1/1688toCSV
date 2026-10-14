@@ -7,7 +7,7 @@ import {
 import { openDatabase } from './database.js'
 import { confirmScope, yieldUI } from './ui.js'
 import { startPackingWorkspace } from './packing-workspace.js'
-import { createImportReport } from './import-report.js'
+import { createImportReport, importJobView } from './import-report.js'
 
 const $ = (id) => document.getElementById(id)
 const keyFor = (row) => `${row.orderId}/${row.entryId}`
@@ -163,7 +163,7 @@ export async function startLibrary(
       if (type === 'LIBRARY_QUERY')
         return {
           orders: await repository.listOrders(),
-          jobs: await repository.listJobs(),
+          jobs: (await repository.listJobs()).map(importJobView),
         }
       if (type === 'LIBRARY_HISTORY') return repository.getHistory(data.orderId)
       if (type === 'BACKUP_EXPORT') return repository.exportBackup()
@@ -630,9 +630,9 @@ export async function startLibrary(
       report.addEventListener('click', async () => {
         report.disabled = true
         try {
-          const current = (await send('JOBS_QUERY')).jobs.find(
-            (item) => item.id === job.id
-          )
+          const current = repository
+            ? await repository.getJob(job.id)
+            : (await send('JOBS_QUERY')).jobs.find((item) => item.id === job.id)
           if (!current) throw new Error('That import no longer exists.')
           const value = createImportReport(
             current,
@@ -804,6 +804,14 @@ export async function startLibrary(
       ...(order.totals.customizationService !== undefined
         ? [['Customization service', order.totals.customizationService]]
         : []),
+      ...(order.totals.redPacketDiscount !== undefined
+        ? [
+            [
+              'Red-packet discount (payment only)',
+              `−${order.totals.redPacketDiscount}`,
+            ],
+          ]
+        : []),
       ['Order total', order.totals.payable],
     ])
       totals.append(node('dt', label), node('dd', `¥ ${value}`))
@@ -811,7 +819,7 @@ export async function startLibrary(
       totals,
       node(
         'p',
-        'Order-wide reductions are allocated in proportion to each product’s value after its own discounts. Shipping and customization services stay separate. Discounts are totals per row.'
+        'Order-wide price changes are allocated in proportion to each product’s value after its own discounts. Shipping, customization services and red-packet payment reductions stay separate. Discounts are totals per row.'
       )
     )
     const notesLabel = node('label', 'Your notes'),
