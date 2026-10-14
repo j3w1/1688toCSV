@@ -114,6 +114,7 @@ function validateAmounts(items, totals) {
     Object.entries(totals).map(([field, value]) => [field, moneyToCents(value)])
   )
   const goodsNet = goodsGross - sourceDiscount - orderAdjustment
+  const customizationService = amounts.customizationService ?? 0n
   if (
     goodsGross !== amounts.goodsGross ||
     sourceDiscount !== amounts.sourceDiscount ||
@@ -121,7 +122,8 @@ function validateAmounts(items, totals) {
     goodsNet !== amounts.goodsNet ||
     goodsNet < 0n ||
     amounts.shipping < 0n ||
-    goodsNet + amounts.shipping !== amounts.payable
+    customizationService < 0n ||
+    goodsNet + amounts.shipping + customizationService !== amounts.payable
   )
     throw new Error('Product amounts do not reconcile with the order totals')
 }
@@ -153,7 +155,13 @@ function validateSnapshot(input) {
   if (new Set(items.map((item) => item.entryId)).size !== items.length)
     throw new Error('An order contains duplicate product entry IDs')
   const orderId = identifier(input.orderId, 'orderId')
-  const totals = decimals(input.totals, totalFields, 'Order totals')
+  const totals = decimals(
+    input.totals,
+    Object.hasOwn(object(input.totals, 'Order totals'), 'customizationService')
+      ? [...totalFields, 'customizationService']
+      : totalFields,
+    'Order totals'
+  )
   validateAmounts(items, totals)
   const purchasedAt = purchaseTimestamp(input.purchasedAt)
   if (input.purchasedAt !== undefined && !purchasedAt)

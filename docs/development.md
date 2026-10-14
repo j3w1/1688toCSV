@@ -30,7 +30,7 @@ Render at most 50 order cards and 100 product rows per page. Filtering and copy 
 
 Copying includes selected product rows, or all filtered rows across pagination when none are selected. Headers default off and follow the remembered checkbox. Order dividers are presentation only. Product images use original CDN sources; individual image copying preserves their pixels, while bulk images use a compact display size for standard Excel rows. They paste as separate floating pictures, not native in-cell images.
 
-Price is the original unit price. Discount is the total reduction for a product row: an explicit item discount plus its allocated share of a whole-order adjustment. Allocation is proportional after item discounts, with deterministic cent rounding; price increases produce negative allocations. Shipping remains separate. Unknown financial fields, unsupported installments and inconsistent totals fail validation. Legacy CSV exports item discounts only.
+Price is the original unit price. Discount is the total reduction for a product row: an explicit item discount plus its allocated share of a whole-order adjustment. Allocation is proportional after item discounts, with deterministic cent rounding; price increases produce negative allocations. Shipping remains separate. The optional `totals.customizationService` field retains the `定制服务` charge separately: payable must equal goods net plus shipping plus this nonnegative charge. Absence remains compatible with old snapshots/backups. Unknown financial fields, unsupported installments and inconsistent totals fail validation. Legacy CSV exports item discounts only.
 
 ## Packing data and labels
 
@@ -47,6 +47,8 @@ Future workbook automation should consume validated snapshots plus preparation m
 ## Backups
 
 Version 2 backups include orders, history, notes, cached pictures, preparations, allocation counters, issued-code reservations and packing preferences, including the local vocabulary and selected logo. Import jobs are not restored. Version 1 order-library backups remain accepted. Restore validates the whole file and commits atomically, preserves existing notes, merges newer observations and preparation edits, and rejects conflicting code ownership or equally dated conflicting preparation edits. Keep reservations when moving a library; restoring into independent libraries is not a shared numbering service.
+
+Activity can export an `1688-import-report` JSON snapshot with extension version, discovery/save/failure counts, scanned pages and every queued order's ID, canonical detail URL, state, expected row count and error. Reports omit filters and page content; they do not restart jobs and are not database backups. Use a backup alongside a report when analyzing imported product data. A paused scan retains discovery; completed-with-errors retry revisits only failed orders. The 667-order synthetic regression covers 67 pages, scan interruption, independent controller recovery, partial failure and retry without rereading successful details.
 
 Removing an order also removes its history and preparation, but keeps issued codes reserved; shared images can remain cached. Unfetched pictures require a connection. Theme and Headers preferences belong to the browser and are not included in the packing backup. One buyer account per library is supported.
 

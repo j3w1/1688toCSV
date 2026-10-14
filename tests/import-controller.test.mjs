@@ -11,7 +11,7 @@ const row = (id, extra = {}) => ({
   ...extra,
 })
 const snapshot = (id) => ({ orderId: id, sourceUrl: url(id), items: [{}, {}] })
-function setup(pages = [[row('10001'), row('10002')]]) {
+function setup(pages = [[row('10001'), row('10002')]], pageSize = 2) {
   const jobs = new Map(),
     saved = new Map(),
     calls = []
@@ -40,7 +40,7 @@ function setup(pages = [[row('10001'), row('10002')]]) {
   function list() {
     return {
       page,
-      pageSize: 2,
+      pageSize,
       total: pages.flat().length,
       filterKey: filters,
       orders: pages[page - 1],
@@ -116,6 +116,63 @@ function setup(pages = [[row('10001'), row('10002')]]) {
   }
 }
 const source = { tabId: 5, frameId: 2 }
+test('67-page import checkpoints every order, continues after failures, and retries only failures', async () => {
+  const all = Array.from({ length: 667 }, (_, i) => row(String(10000 + i)))
+  const pages = Array.from({ length: 67 }, (_, i) =>
+    all.slice(i * 10, (i + 1) * 10)
+  )
+  const s = setup(pages, 10)
+  const readIds = []
+  const failures = new Set(['10002', '10333', '10666'])
+  s.browser.readDetail = async (tabId, orderId) => {
+    readIds.push(orderId)
+    if (failures.has(orderId))
+      throw new Error('Unsupported order total: synthetic charge.')
+    return snapshot(orderId)
+  }
+  const job = await s.controller.start({ scope: 'all', source })
+  for (let i = 0; i < 20; i++) await s.controller.tick()
+  await s.controller.pause(job.id)
+  assert.equal(s.jobs.get(job.id).discovered, 200)
+  await s.controller.tick()
+  assert.equal(s.jobs.get(job.id).discovered, 200)
+  assert.equal(readIds.length, 0)
+  const resumed = createImportController({
+    repository: s.repository,
+    browser: s.browser,
+  })
+  await resumed.resume(job.id)
+  for (let i = 0; i < 47; i++) await resumed.tick()
+  assert.equal(s.jobs.get(job.id).phase, 'details')
+  assert.equal(s.jobs.get(job.id).discovered, 667)
+  assert.equal(s.saved.size, 0)
+  for (let i = 0; i < 1400 && s.jobs.get(job.id).state === 'running'; i++)
+    await resumed.tick()
+  const finished = s.jobs.get(job.id)
+  assert.equal(finished.state, 'completed-with-errors')
+  assert.equal(finished.completed, 664)
+  assert.equal(finished.failed, 3)
+  assert.equal(finished.remaining, 3)
+  assert.equal(s.saved.size, 664)
+  assert.equal(new Set(readIds).size, 667)
+  assert.equal(s.calls.filter(([type]) => type === 'open').length, 1)
+  const pageCalls = s.calls.filter(([type]) => type === 'page').length
+  const successfulRecords = new Map(s.saved)
+  failures.clear()
+  readIds.length = 0
+  await resumed.resume(job.id)
+  for (let i = 0; i < 10 && s.jobs.get(job.id).state === 'running'; i++)
+    await resumed.tick()
+  assert.deepEqual(readIds, ['10002', '10333', '10666'])
+  assert.equal(s.calls.filter(([type]) => type === 'page').length, pageCalls)
+  assert.equal(s.jobs.get(job.id).state, 'completed')
+  assert.equal(s.jobs.get(job.id).completed, 667)
+  assert.equal(s.jobs.get(job.id).remaining, 0)
+  assert.equal(s.saved.size, 667)
+  for (const [id, value] of successfulRecords)
+    assert.equal(s.saved.get(id), value)
+})
+
 test('all matching scans every page before reading complete sequential details', async () => {
   const s = setup([[row('10001'), row('10002')], [row('10003')]])
   s.setPage(2)

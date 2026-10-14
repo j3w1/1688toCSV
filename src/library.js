@@ -7,6 +7,7 @@ import {
 import { openDatabase } from './database.js'
 import { confirmScope, yieldUI } from './ui.js'
 import { startPackingWorkspace } from './packing-workspace.js'
+import { createImportReport } from './import-report.js'
 
 const $ = (id) => document.getElementById(id)
 const keyFor = (row) => `${row.orderId}/${row.entryId}`
@@ -44,6 +45,17 @@ function node(tag, text, className) {
   if (text !== undefined) element.textContent = text
   if (className) element.className = className
   return element
+}
+
+function downloadJson(value, filename) {
+  const url = URL.createObjectURL(
+    new Blob([JSON.stringify(value)], { type: 'application/json' })
+  )
+  const anchor = node('a')
+  anchor.href = url
+  anchor.download = filename
+  anchor.click()
+  setTimeout(() => URL.revokeObjectURL(url), 60000)
 }
 
 async function confirmBulkResume(job) {
@@ -612,6 +624,34 @@ export async function startLibrary(
         )
       container.append(details)
       const actions = node('div', undefined, 'job-actions')
+      const report = node('button', 'Save import report', 'text-button')
+      report.title =
+        'Save every order status and error for this import. This does not start or retry any orders.'
+      report.addEventListener('click', async () => {
+        report.disabled = true
+        try {
+          const current = (await send('JOBS_QUERY')).jobs.find(
+            (item) => item.id === job.id
+          )
+          if (!current) throw new Error('That import no longer exists.')
+          const value = createImportReport(
+            current,
+            globalThis.chrome?.runtime?.getManifest?.().version || 'preview'
+          )
+          downloadJson(
+            value,
+            `1688-import-report-${value.exportedAt.slice(0, 10)}.json`
+          )
+          feedback(
+            'Import report requested. Check your downloads. Use Data → Back up to save the product database too.'
+          )
+        } catch (error) {
+          feedback(error.message, true)
+        } finally {
+          report.disabled = false
+        }
+      })
+      actions.append(report)
       if (job.state !== 'completed') {
         const button = node(
           'button',
@@ -761,6 +801,9 @@ export async function startLibrary(
       ['Order adjustment (allocated)', order.totals.orderAdjustment],
       ['Goods after discounts', order.totals.goodsNet],
       ['Shipping', order.totals.shipping],
+      ...(order.totals.customizationService !== undefined
+        ? [['Customization service', order.totals.customizationService]]
+        : []),
       ['Order total', order.totals.payable],
     ])
       totals.append(node('dt', label), node('dd', `¥ ${value}`))
@@ -768,7 +811,7 @@ export async function startLibrary(
       totals,
       node(
         'p',
-        'Order-wide reductions are allocated in proportion to each product’s value after its own discounts. Shipping stays separate. Discounts are totals per row.'
+        'Order-wide reductions are allocated in proportion to each product’s value after its own discounts. Shipping and customization services stay separate. Discounts are totals per row.'
       )
     )
     const notesLabel = node('label', 'Your notes'),
@@ -1007,14 +1050,10 @@ export async function startLibrary(
   })
   action('backup', async () => {
     const backup = await send('BACKUP_EXPORT')
-    const url = URL.createObjectURL(
-      new Blob([JSON.stringify(backup)], { type: 'application/json' })
+    downloadJson(
+      backup,
+      `1688-orders-${new Date().toISOString().slice(0, 10)}.json`
     )
-    const a = node('a')
-    a.href = url
-    a.download = `1688-orders-${new Date().toISOString().slice(0, 10)}.json`
-    a.click()
-    setTimeout(() => URL.revokeObjectURL(url), 60000)
     feedback('Backup requested. Check your downloads.')
   })
   action('restore', () => $('backup-file').click())

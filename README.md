@@ -44,12 +44,12 @@ Click **Barcode** or **Carton mark** and edit the preview. **Enter** or leaving 
 
 Select rows to limit a copy; otherwise all filtered rows are used. **Headers** starts off and remembers your choice. Batch actions ask for confirmation. Pictures paste as floating images; successful buttons show **Copied**.
 
-Filter orders by purchase month or date range, then use **Refresh matching orders**. You can also refresh selected orders or all orders. Use **Activity** to pause, retry or dismiss imports. The sun/moon button changes the default dark appearance.
+Filter orders by purchase month or date range, then use **Refresh matching orders**. You can also refresh selected orders or all orders. Use **Activity** to pause, retry or dismiss imports, or **Save import report** to inspect every result. Retry keeps successful saves and revisits failures. The sun/moon button changes the default dark appearance.
 
 ## Keep your data
 
 Data stays in this browser. Use **Data → Back up** before uninstalling, clearing its profile or moving computers; **Restore** brings it back with your reserved codes. Refreshes preserve your preparation edits. Use one buyer account per library.
 
-Discounts include each product's reduction and its share of order-wide price changes; shipping stays separate. The detail-page **Download CSV** also remains available, with product discounts only.
+Discounts include each product's reduction and its share of order-wide price changes; shipping and customization charges stay separate. The detail-page **Download CSV** also remains available, with product discounts only.
 
 For development commands, code allocation, backups and test coverage, see [development notes](docs/development.md). [Store preparation](CHROMEWEBSTORE.md) records permissions, privacy and publication status.

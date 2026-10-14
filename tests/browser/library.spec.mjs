@@ -1,6 +1,6 @@
 import { test, expect } from './extension-fixture.mjs'
 import { createDemoRecords } from '../../preview/library-fixture.js'
-import { stat, writeFile } from 'node:fs/promises'
+import { readFile, stat, writeFile } from 'node:fs/promises'
 
 async function seed(extension) {
   const records = await extension.inspector.evaluate(
@@ -38,6 +38,90 @@ async function confirmOperation(page, name) {
   await dialog.getByRole('button', { name, exact: true }).click()
   await expect(dialog).not.toBeVisible()
 }
+
+test('Activity exports every bulk-import failure without resuming work or changing saved orders', async ({
+  extension,
+}) => {
+  await seed(extension)
+  await extension.inspector.evaluate(
+    () =>
+      new Promise((resolve, reject) => {
+        const request = indexedDB.open('1688-order-library')
+        request.onerror = () => reject(request.error)
+        request.onsuccess = () => {
+          const db = request.result
+          const tx = db.transaction('jobs', 'readwrite')
+          tx.objectStore('jobs').put({
+            id: 'synthetic-report',
+            kind: 'import',
+            scope: 'all',
+            phase: 'details',
+            state: 'completed-with-errors',
+            total: 667,
+            page: 67,
+            pageSize: 10,
+            filterKey: 'private filter excluded from report',
+            updatedAt: new Date().toISOString(),
+            orders: Array.from({ length: 667 }, (_, i) => ({
+              orderId: String(10000 + i),
+              sourceUrl: `https://air.1688.com/app/ctf-page/trade-order-detail/index.html?orderId=${10000 + i}`,
+              state: i < 4 ? 'failed' : 'done',
+              error: i < 4 ? 'Unsupported order total: synthetic service.' : '',
+              expectedRows: 2,
+            })),
+          })
+          tx.oncomplete = () => {
+            db.close()
+            resolve()
+          }
+          tx.onerror = () => {
+            db.close()
+            reject(tx.error)
+          }
+        }
+      })
+  )
+  const before = await extension.inspector.evaluate(() =>
+    chrome.runtime.sendMessage({ type: 'JOBS_QUERY' })
+  )
+  const page = await openLibrary(extension)
+  await page.getByRole('button', { name: /^Activity/ }).click()
+  const downloaded = page.waitForEvent('download')
+  await page
+    .getByRole('button', { name: 'Save import report', exact: true })
+    .click()
+  const download = await downloaded
+  expect(await download.failure()).toBeNull()
+  const downloads = await extension.inspector.evaluate(() =>
+    chrome.downloads.search({})
+  )
+  expect(downloads).toHaveLength(1)
+  expect(downloads[0].state).toBe('complete')
+  const report = JSON.parse(await readFile(downloads[0].filename, 'utf8'))
+  expect(report.format).toBe('1688-import-report')
+  expect(report.orders).toHaveLength(667)
+  expect(report.counts).toEqual({
+    expected: 667,
+    discovered: 667,
+    saved: 663,
+    failed: 4,
+    pending: 0,
+    undiscovered: 0,
+    remaining: 4,
+  })
+  expect(report.errors).toEqual([
+    { message: 'Unsupported order total: synthetic service.', count: 4 },
+  ])
+  expect(report.orders[3].error).toContain('synthetic service')
+  expect(report.job.totalPages).toBe(67)
+  expect(JSON.stringify(report)).not.toContain('private filter')
+  await expect(page.locator('#order-count')).toHaveText('3')
+  const after = await extension.inspector.evaluate(() =>
+    chrome.runtime.sendMessage({ type: 'JOBS_QUERY' })
+  )
+  expect(after).toEqual(before)
+  expect(extension.unexpectedRequests).toEqual([])
+})
 
 test('resuming an old bulk import requires a visible scope confirmation', async ({
   extension,

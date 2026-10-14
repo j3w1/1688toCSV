@@ -91,6 +91,8 @@ function fixture(options = {}) {
   }
   field('原价总计', `¥ ${expected.goodsGross}`)
   field('运费', `¥ ${expected.shipping}`)
+  if (expected.customizationService !== undefined)
+    field('定制服务', expected.customizationService)
   if (expected.orderAdjustment !== undefined)
     field('商品改价', expected.orderAdjustment)
   field('商品优惠', `减 ¥ ${expected.sourceDiscount}`)
@@ -369,6 +371,66 @@ test('signed price increases produce negative allocations and reconcile the incr
     result.items.reduce((sum, row) => sum + moneyToCents(row.discount), 0n),
     139n
   )
+})
+
+test('customization service is an optional separate charge, never a product price or discount', () => {
+  const original = snapshot(fixture())
+  assert.equal(Object.hasOwn(original.totals, 'customizationService'), false)
+  for (const [value, charge, payable] of [
+    ['¥ 12.50', '12.50', '80.50'],
+    ['￥1,000.00 元', '1000.00', '1068.00'],
+    ['0', '0.00', '68.00'],
+  ]) {
+    const result = snapshot(
+      fixture({
+        totals: {
+          ...original.totals,
+          orderAdjustment: '减 ¥0.00',
+          customizationService: value,
+          payable,
+        },
+      })
+    )
+    assert.equal(result.totals.customizationService, charge)
+    assert.equal(result.totals.payable, payable)
+    assert.equal(result.totals.goodsNet, original.totals.goodsNet)
+    assert.equal(result.totals.shipping, original.totals.shipping)
+    assert.deepEqual(result.items, original.items)
+  }
+})
+
+test('customization service rejects ambiguous or invalid amounts and unreconciled payable', () => {
+  for (const value of [
+    '',
+    '待定',
+    '-1.00',
+    '−1.00',
+    '+1.00',
+    '减 ¥1.00',
+    '$1.00',
+    '¥1.00 ¥2.00',
+    '1,00.00',
+    '1.001',
+    '1 2.00',
+    '12 .00',
+    '免费',
+    '¥1.00 起',
+  ]) {
+    const source = fixture()
+    source.field('定制服务', value)
+    assert.throws(
+      () => snapshot(source),
+      /Customization service|decimal places/,
+      value
+    )
+  }
+  const mismatch = fixture()
+  mismatch.field('定制服务', '¥1.00')
+  assert.throws(() => snapshot(mismatch), /payable amount does not reconcile/)
+  const duplicate = fixture()
+  duplicate.field('定制服务', '¥0.00')
+  duplicate.field('定制服务', '¥0.00')
+  assert.throws(() => snapshot(duplicate), /labels are missing or ambiguous/)
 })
 
 test('money arithmetic preserves fractional unit prices and values beyond JS safe integers', () => {

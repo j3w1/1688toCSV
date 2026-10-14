@@ -24,11 +24,13 @@ function one(query, selector, name) {
 }
 
 function readAmount(value, name, { signed = false } = {}) {
-  const match = compact(value).match(
-    new RegExp(
-      `^(${signed ? '(?:减少|增加|减|增|加|[+−-])?' : ''})[¥￥]?(${amountPattern})(?:元)?$`
+  const match = value
+    .trim()
+    .match(
+      new RegExp(
+        `^(${signed ? '(?:减少|增加|减|增|加|[+−-])?' : ''})\\s*[¥￥]?\\s*(${amountPattern})\\s*(?:元)?$`
+      )
     )
-  )
   if (!match) throw new Error(`${name} is missing or invalid.`)
   if (signed && !match[1])
     throw new Error(`${name} has no explicit increase or reduction sign.`)
@@ -142,6 +144,8 @@ function readTotals(appQuery) {
     labels.add(label)
     if (label === '原价总计') totals.goodsGross = readAmount(value, label)
     else if (label === '运费') totals.shipping = readAmount(value, label)
+    else if (label === '定制服务')
+      totals.customizationService = readAmount(value, 'Customization service')
     else if (label === '商品改价')
       totals.orderAdjustment = readAmount(value, label, { signed: true })
     else if (label.includes('优惠')) {
@@ -290,7 +294,8 @@ export function extractOrderSnapshot(
     totals.goodsGross - totals.sourceDiscount - totals.orderAdjustment
   if (
     totals.goodsNet < 0n ||
-    totals.goodsNet + totals.shipping !== totals.payable
+    totals.goodsNet + totals.shipping + (totals.customizationService ?? 0n) !==
+      totals.payable
   )
     throw new Error(
       'The payable amount does not reconcile with the order totals.'

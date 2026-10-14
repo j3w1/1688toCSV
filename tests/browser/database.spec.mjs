@@ -64,6 +64,159 @@ async function openTestDatabase(extension) {
   return page
 }
 
+test('customization service survives refresh, change detection and backup without changing product amounts', async ({
+  extension,
+}) => {
+  const page = await openTestDatabase(extension)
+  const result = await page.evaluate(async (first) => {
+    const original = await library.saveSnapshot(first)
+    const oldBackup = await library.exportBackup()
+    const unchanged = await library.saveSnapshot({
+      ...first,
+      observedAt: '2026-01-02T12:00:00.000Z',
+    })
+    const chargedSnapshot = {
+      ...first,
+      observedAt: '2026-01-03T12:00:00.000Z',
+      totals: {
+        ...first.totals,
+        customizationService: '12.50',
+        payable: '38.50',
+      },
+    }
+    const charged = await library.saveSnapshot(chargedSnapshot)
+    const repeated = await library.saveSnapshot({
+      ...chargedSnapshot,
+      observedAt: '2026-01-04T12:00:00.000Z',
+    })
+    const changed = await library.saveSnapshot({
+      ...chargedSnapshot,
+      observedAt: '2026-01-05T12:00:00.000Z',
+      totals: {
+        ...first.totals,
+        customizationService: '15.00',
+        payable: '41.00',
+      },
+    })
+    const zero = await library.saveSnapshot({
+      ...first,
+      observedAt: '2026-01-06T12:00:00.000Z',
+      totals: { ...first.totals, customizationService: '0.00' },
+    })
+    const backup = await library.exportBackup()
+    const restored = await openOrderDatabase({
+      name: `${databaseName}-customization`,
+    })
+    await restored.restoreBackup(oldBackup)
+    const oldRecord = await restored.getOrder(first.orderId)
+    await restored.restoreBackup(backup)
+    const record = await restored.getOrder(first.orderId)
+    const history = await restored.getHistory(first.orderId)
+    restored.close()
+    return {
+      original,
+      unchanged,
+      charged,
+      repeated,
+      changed,
+      zero,
+      oldRecord,
+      record,
+      history,
+    }
+  }, snapshot())
+  expect(result.unchanged.changed).toBe(false)
+  expect(result.unchanged.order.revision).toBe(1)
+  expect(result.oldRecord.snapshot.totals).toEqual(snapshot().totals)
+  expect(result.charged.order.revision).toBe(2)
+  expect(result.charged.order.snapshot.totals.customizationService).toBe(
+    '12.50'
+  )
+  expect(result.repeated.changed).toBe(false)
+  expect(result.repeated.order.revision).toBe(2)
+  expect(result.changed.changed).toBe(true)
+  expect(result.changed.order.revision).toBe(3)
+  expect(result.changed.order.changedEntryIds).toEqual([])
+  expect(result.zero.order.revision).toBe(4)
+  expect(result.record.snapshot.totals).toEqual({
+    ...snapshot().totals,
+    customizationService: '0.00',
+  })
+  for (const item of [
+    result.charged.order,
+    result.changed.order,
+    result.record,
+  ])
+    expect(item.snapshot.items).toEqual(result.original.order.snapshot.items)
+  expect(
+    result.history
+      .map(({ snapshot: entry }) => entry.totals.customizationService)
+      .sort()
+  ).toEqual(['12.50', '15.00', undefined])
+})
+
+test('invalid customization service rejects snapshots and entire backups before writing', async ({
+  extension,
+}) => {
+  const page = await openTestDatabase(extension)
+  const result = await page.evaluate(async (first) => {
+    await library.saveSnapshot(first)
+    const backup = await library.exportBackup()
+    const next = structuredClone(backup.orders[0])
+    next.snapshot.orderId = '9999999999999999999'
+    next.snapshot.sourceUrl = first.sourceUrl.replace(
+      first.orderId,
+      next.snapshot.orderId
+    )
+    const rejected = []
+    const cases = [
+      { customizationService: '-1.00', payable: '25.00' },
+      { customizationService: '1.00', payable: '26.00' },
+      { customizationService: '0.001', payable: '26.00' },
+      ...[null, undefined, 1, '', '¥1.00', '+1.00', '1 2.00', 'unknown'].map(
+        (customizationService) => ({ customizationService, payable: '27.00' })
+      ),
+    ]
+    for (const values of cases) {
+      const invalid = {
+        ...first,
+        observedAt: '2026-01-02T12:00:00.000Z',
+        totals: { ...first.totals, ...values },
+      }
+      for (const operation of [
+        () => library.saveSnapshot(invalid),
+        () =>
+          library.restoreBackup({
+            ...backup,
+            orders: [
+              next,
+              {
+                ...backup.orders[0],
+                snapshot: invalid,
+                lastCheckedAt: invalid.observedAt,
+              },
+            ],
+          }),
+      ]) {
+        try {
+          await operation()
+        } catch (error) {
+          rejected.push(error.message)
+        }
+      }
+    }
+    return {
+      rejected,
+      expectedRejections: cases.length * 2,
+      orders: await library.listOrders(),
+    }
+  }, snapshot())
+  expect(result.rejected).toHaveLength(result.expectedRejections)
+  expect(result.orders).toHaveLength(1)
+  expect(result.orders[0].revision).toBe(1)
+  expect(result.orders[0].snapshot.totals).toEqual(snapshot().totals)
+})
+
 test('purchase dates enrich old records, survive refresh and roundtrip without inventing dates', async ({
   extension,
 }) => {

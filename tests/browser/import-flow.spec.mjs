@@ -10,7 +10,12 @@ const detailUrl = (id) =>
 const ids = ['9990000000000000001', '9990000000000000002']
 
 // All pages are synthetic and fulfilled in-process; no requests reach 1688.
-function completeOrder(document, orderId, summary = '2.40') {
+function completeOrder(
+  document,
+  orderId,
+  summary = '2.40',
+  customization = false
+) {
   const built = buildOrderFixture(document)
   const app = built.appRoot.shadowRoot
   const field = document.createElement('div')
@@ -33,13 +38,17 @@ function completeOrder(document, orderId, summary = '2.40') {
       <dl><dt>原价总计</dt><dd>¥66.00</dd></dl>
       <dl><dt>运费</dt><dd>¥4.40</dd></dl>
       <dl><dt>商品优惠</dt><dd>减 ¥2.40</dd></dl>
+      ${customization ? '<dl><dt>定制服务</dt><dd>¥12.50</dd></dl>' : ''}
     </div><div class="total-discount">2.40</div>
-    <div class="total-sum-pay"><!--?lit$8321$--><span class="sum-pay-label">实付款</span><!--amount:start--><span class="fd-cny">¥</span><!--?lit$8321$-->68.<span class="sub-ammount">00</span><!--amount:end--></div>`
+    <div class="total-sum-pay"><!--?lit$8321$--><span class="sum-pay-label">实付款</span><!--amount:start--><span class="fd-cny">¥</span><!--?lit$8321$-->${customization ? '80.' : '68.'}<span class="sub-ammount">${customization ? '50' : '00'}</span><!--amount:end--></div>`
   app.append(totals)
   totals.shadowRoot.querySelector('.total-discount').textContent = summary
 }
 
-async function setup(extension, { delay = 0, summary = '2.40' } = {}) {
+async function setup(
+  extension,
+  { delay = 0, summary = '2.40', customization = false } = {}
+) {
   const visited = []
   await extension.context.route(`${origin}/**`, async (route) => {
     const url = new URL(route.request().url())
@@ -61,7 +70,7 @@ async function setup(extension, { delay = 0, summary = '2.40' } = {}) {
       body = `<script>
         ${buildOrderFixture.toString()}
         ${completeOrder.toString()}
-        setTimeout(() => completeOrder(document, ${JSON.stringify(id)}, ${JSON.stringify(summary)}), ${typeof delay === 'object' ? delay[id] || 0 : delay});
+        setTimeout(() => completeOrder(document, ${JSON.stringify(id)}, ${JSON.stringify(summary)}, ${JSON.stringify(customization)}), ${typeof delay === 'object' ? delay[id] || 0 : delay});
       </script>`
     }
     await route.fulfill({
@@ -108,6 +117,34 @@ async function assertImported(extension, library) {
   expect(copied).toContain('0.30')
   expect(extension.unexpectedRequests).toEqual([])
 }
+
+test('customization services survive complete import without changing copied product discounts', async ({
+  extension,
+}) => {
+  test.setTimeout(80_000)
+  const { list, library } = await setup(extension, { customization: true })
+  await list
+    .getByRole('button', { name: 'Import selected', exact: true })
+    .click()
+  await list
+    .getByRole('button', { name: 'Import 2 selected orders', exact: true })
+    .click()
+  await assertImported(extension, library)
+  const result = await extension.inspector.evaluate(() =>
+    chrome.runtime.sendMessage({ type: 'LIBRARY_QUERY' })
+  )
+  expect(result.ok).toBe(true)
+  for (const record of result.data.orders) {
+    expect(record.snapshot.totals.customizationService).toBe('12.50')
+    expect(record.snapshot.totals.payable).toBe('80.50')
+    expect(record.snapshot.totals.goodsNet).toBe('63.60')
+  }
+  await library.locator('.order-card button').first().click()
+  await expect(library.locator('#order-details')).toContainText(
+    'Customization service'
+  )
+  await expect(library.locator('#order-details')).toContainText('¥ 12.50')
+})
 
 test('selected import reaches persistent spreadsheet and clipboard through real extension messaging', async ({
   extension,
