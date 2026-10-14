@@ -67,9 +67,21 @@ test('image copy stays compact with touch input and copied feedback', async ({
     expect(copyBounds.y).toBeGreaterThanOrEqual(
       photoBounds.y + photoBounds.height
     )
-    expect(
-      await copy.evaluate((node) => node.scrollWidth <= node.clientWidth)
-    ).toBe(true)
+    // Wider fallback fonts must fit without making the photo action taller.
+    // Two short lines still fit in its 26px target when a platform needs them.
+    for (const family of ['', 'Verdana']) {
+      await copy.evaluate((node, font) => {
+        node.style.fontFamily = font
+      }, family)
+      expect(
+        await copy.evaluate(
+          (node) =>
+            node.scrollWidth <= node.clientWidth &&
+            node.scrollHeight <= node.clientHeight
+        )
+      ).toBe(true)
+    }
+    await copy.evaluate((node) => node.style.removeProperty('font-family'))
   }
   await extension.context.grantPermissions([
     'clipboard-read',

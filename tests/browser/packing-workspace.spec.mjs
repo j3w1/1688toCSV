@@ -651,6 +651,16 @@ test('preparation has no collapsibles and keeps categories, names, grouping and 
   const groups = dialog.locator('.preparation-group')
   const first = groups.first()
   const variant = first.locator('.variants tbody tr').first()
+  // Preview completion changes row height. Finish that layout work before
+  // positioning the pointer over a grouping action for its delayed hover hint.
+  await expect(first.getByAltText('Carton mark preview')).toBeVisible({
+    timeout: 20_000,
+  })
+  await expect(first.getByAltText('Barcode preview')).toHaveCount(2, {
+    timeout: 20_000,
+  })
+  for (const preview of await first.getByAltText('Barcode preview').all())
+    await expect(preview).toBeVisible()
   await expect(dialog.locator('details, summary')).toHaveCount(0)
   for (const section of [
     dialog.locator('.order-tools'),
