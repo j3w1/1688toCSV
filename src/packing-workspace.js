@@ -8,6 +8,7 @@ import { mountLabelEditor } from './label-editor.js'
 import { createPreparationHistory } from './preparation-history.js'
 import { acknowledgePreparation } from './preparation-save.js'
 import { createPreparationMedia, preparationHelp } from './preparation-media.js'
+import { createRowSelection } from './row-selection.js'
 import { element as el, confirmScope, copied, yieldUI } from './ui.js'
 import {
   preparationColumns,
@@ -61,11 +62,6 @@ function inlineField(title, value, change, placeholder = '') {
   input.placeholder = placeholder
   return label
 }
-function selection(check) {
-  const target = el('label', undefined, 'selection-hit')
-  target.append(check)
-  return target
-}
 function button(text, handler, className) {
   const result = el('button', text, className)
   result.addEventListener('click', async () => {
@@ -76,11 +72,6 @@ function button(text, handler, className) {
     }
   })
   return result
-}
-function disclosure(title, className = '') {
-  const details = el('details', undefined, className)
-  details.append(el('summary', title))
-  return details
 }
 function showError(message) {
   const target = $('label-dialog').open
@@ -134,6 +125,58 @@ export async function startPackingWorkspace({
     ? new BroadcastChannel('1688-preparation')
     : null
   const variantPages = new Map()
+  const selectionStates = new Map()
+  let activeSelection
+  function detachPreparationSelection() {
+    if (!activeSelection) return
+    activeSelection.cards.clear()
+    activeSelection.controller.detach()
+    for (const variants of activeSelection.variants.values())
+      variants.controller.detach()
+    activeSelection = null
+  }
+  function preparationSelection(draft) {
+    let state = selectionStates.get(draft.orderId)
+    if (!state) {
+      state = {
+        groups: new Set(),
+        variants: new Map(),
+        cards: new Map(),
+        keys: [],
+      }
+      state.controller = createRowSelection({
+        selected: state.groups,
+        getKeys: () => state.keys,
+        onChange: () => {
+          for (const [id, card] of state.cards)
+            card.classList.toggle('is-selected', state.groups.has(id))
+        },
+      })
+      selectionStates.set(draft.orderId, state)
+    }
+    state.keys = draft.groups.map((group) => group.id)
+    const groupIds = new Set(state.keys)
+    for (const id of state.groups)
+      if (!groupIds.has(id)) state.groups.delete(id)
+    for (const id of state.variants.keys())
+      if (!groupIds.has(id)) state.variants.delete(id)
+    for (const group of draft.groups) {
+      let variants = state.variants.get(group.id)
+      if (!variants) {
+        variants = { selected: new Set(), keys: [] }
+        variants.controller = createRowSelection({
+          selected: variants.selected,
+          getKeys: () => variants.keys,
+        })
+        state.variants.set(group.id, variants)
+      }
+      variants.keys = group.variants.map((variant) => variant.id)
+      const ids = new Set(variants.keys)
+      for (const id of variants.selected)
+        if (!ids.has(id)) variants.selected.delete(id)
+    }
+    return state
+  }
   const history = createPreparationHistory(),
     checkpoints = new Map()
   let undoButton,
@@ -282,7 +325,10 @@ export async function startPackingWorkspace({
   $('preparation-content').addEventListener('focusout', () =>
     history.breakGroup()
   )
-  $('preparation-dialog').addEventListener('close', () => media.reset())
+  $('preparation-dialog').addEventListener('close', () => {
+    media.reset()
+    detachPreparationSelection()
+  })
   $('preparation-dialog').addEventListener('cancel', (event) => {
     if (!pendingSaves.size && !saveWork && !preparationBusy) return
     event.preventDefault()
@@ -512,6 +558,9 @@ export async function startPackingWorkspace({
         ? extendPreparation(preparations.get(snapshot.orderId), snapshot)
         : createPreparation(snapshot, month, preferences.vocabulary)
     )
+    const orderIds = new Set(drafts.map((draft) => draft.orderId))
+    for (const id of selectionStates.keys())
+      if (!orderIds.has(id)) selectionStates.delete(id)
     current = 0
     groupPage = 0
     history.clear()
@@ -574,8 +623,11 @@ export async function startPackingWorkspace({
     checkpoint()
     media.reset()
     codeFields.clear()
+    detachPreparationSelection()
     const host = $('preparation-content'),
       draft = drafts[current]
+    const selection = preparationSelection(draft)
+    activeSelection = selection
     host.replaceChildren(el('h2', 'Prepare products & labels'))
     const heading = el('div', undefined, 'preparation-heading'),
       select = el('select')
@@ -615,7 +667,7 @@ export async function startPackingWorkspace({
       heading,
       el(
         'p',
-        'Changes save automatically. Click a photo to zoom or a label to edit and copy.',
+        'Click rows to select · Shift selects a range · Ctrl selects separate rows. Changes save automatically.',
         'packing-help'
       )
     )
@@ -647,15 +699,19 @@ export async function startPackingWorkspace({
       input.setAttribute('aria-describedby', help.id)
       host.append(help, seller)
     }
-    let categoryValue = ''
-    const orderTools = disclosure('Order tools', 'order-tools')
+    const categories = new Set(draft.groups.map((group) => group.category))
+    let categoryValue = categories.size === 1 ? [...categories][0] : ''
+    const orderTools = el('section', undefined, 'order-tools')
+    orderTools.setAttribute('aria-label', 'Order tools')
     const orderCategory = field(
       'Chinese category for this order',
-      '',
+      categoryValue,
       (value) => {
         categoryValue = value
       }
     )
+    orderCategory.querySelector('input').placeholder =
+      categories.size > 1 ? 'Mixed categories' : 'Add a category'
     const applyCategory = prepButton('Apply to this order', () => {
       for (const group of draft.groups) group.category = categoryValue
       renderPreparation()
@@ -711,9 +767,9 @@ export async function startPackingWorkspace({
     orderTools.append(
       preparationHelp(
         prepButton('Merge products', async () => {
-          const ids = [...host.querySelectorAll('.group-select:checked')].map(
-            (check) => check.value
-          )
+          const ids = draft.groups
+            .filter((group) => selection.groups.has(group.id))
+            .map((group) => group.id)
           if (ids.length < 2)
             throw new Error('Select at least two product groups to merge.')
           const target = draft.groups.find((g) => g.id === ids[0]),
@@ -745,24 +801,44 @@ export async function startPackingWorkspace({
     )
     host.append(actions, orderTools)
     updateHistoryButtons()
+    groupPage = Math.min(
+      groupPage,
+      Math.max(0, Math.ceil(draft.groups.length / 20) - 1)
+    )
     const pageGroups = draft.groups.slice(groupPage * 20, (groupPage + 1) * 20)
     for (const group of pageGroups) {
       const card = el('section', undefined, 'preparation-group'),
-        title = el(
-          'h3',
+        title = el('h3'),
+        selectGroup = el(
+          'button',
           group.spanishName || `Product ${draft.groups.indexOf(group) + 1}`
-        ),
-        check = el('input')
-      check.type = 'checkbox'
-      check.className = 'group-select'
-      check.value = group.id
-      check.setAttribute('aria-label', `Select group ${group.title}`)
-      title.prepend(selection(check))
-      const originalTitle = disclosure(
-        'Original product name',
-        'original-product-name'
+        )
+      selectGroup.type = 'button'
+      selectGroup.className = 'group-select'
+      selectGroup.setAttribute('aria-label', `Select group ${group.title}`)
+      selection.controller.bind(selectGroup, group.id, {
+        attribute: 'aria-pressed',
+      })
+      selection.cards.set(group.id, card)
+      card.classList.toggle('is-selected', selection.groups.has(group.id))
+      const isCardTarget = (event) =>
+        !event.target.closest(
+          'button, a, input, select, textarea, label, [contenteditable="true"], .variants'
+        )
+      card.addEventListener('pointerdown', (event) => {
+        if (event.shiftKey && isCardTarget(event)) event.preventDefault()
+      })
+      card.addEventListener('click', (event) => {
+        if (!isCardTarget(event)) return
+        selectGroup.focus({ preventScroll: true })
+        selection.controller.select(group.id, event)
+      })
+      title.append(selectGroup)
+      const originalTitle = el('div', undefined, 'original-product-name')
+      originalTitle.append(
+        el('span', 'Original product name'),
+        el('p', group.title)
       )
-      originalTitle.append(el('p', group.title))
       card.append(title, originalTitle)
       const fields = el('div', undefined, 'group-fields')
       const productCode = preparationHelp(
@@ -818,8 +894,18 @@ export async function startPackingWorkspace({
       const scroll = el('div', undefined, 'variant-scroll'),
         table = el('table', undefined, 'variants'),
         head = el('tr')
-      for (const label of ['', 'Photo', 'Product variant', 'Barcode'])
-        head.append(el('th', label))
+      table.setAttribute('role', 'grid')
+      table.setAttribute(
+        'aria-label',
+        `Variants for ${group.spanishName || group.title}`
+      )
+      table.setAttribute('aria-multiselectable', 'true')
+      for (const label of ['#', 'Photo', 'Product variant', 'Barcode']) {
+        const column = el('th', label)
+        column.scope = 'col'
+        head.append(column)
+      }
+      const variantSelection = selection.variants.get(group.id)
       const thead = el('thead')
       thead.append(head)
       table.append(thead)
@@ -839,18 +925,13 @@ export async function startPackingWorkspace({
         variantPage * 50,
         (variantPage + 1) * 50
       )) {
-        const row = el('tr'),
-          choose = el('input')
-        choose.type = 'checkbox'
-        choose.value = variant.id
-        choose.className = 'variant-select'
-        choose.dataset.group = group.id
-        choose.setAttribute(
-          'aria-label',
-          `Select variant ${variant.variant || variant.size || variant.id}`
+        const row = el('tr')
+        variantSelection.controller.bind(row, variant.id)
+        const td = el(
+          'td',
+          String(group.variants.indexOf(variant) + 1),
+          'variant-index'
         )
-        const td = el('td')
-        td.append(selection(choose))
         if (variant.entryIds.length > 1)
           td.append(el('small', `${variant.entryIds.length} source rows`))
         row.append(td)
@@ -865,22 +946,22 @@ export async function startPackingWorkspace({
         ]
         if (uniquePhotos.length) photoCell.append(media.photo(uniquePhotos[0]))
         if (uniquePhotos.length > 1) {
-          const otherPhotos = disclosure(
-            `${uniquePhotos.length - 1} more photos`
-          )
-          const gallery = el('div'),
-            navigation = el('div', undefined, 'dialog-actions')
+          const otherPhotos = el('div', undefined, 'variant-gallery'),
+            gallery = el('div', undefined, 'variant-gallery-grid'),
+            navigation = el('div', undefined, 'gallery-navigation'),
+            pageLabel = el('span')
           let photoPage = 0
-          const pages = Math.ceil((uniquePhotos.length - 1) / 10)
+          const pages = Math.ceil((uniquePhotos.length - 1) / 4)
           function showPhotos() {
             media.forget(gallery)
             gallery.replaceChildren(
               ...uniquePhotos
-                .slice(1 + photoPage * 10, 11 + photoPage * 10)
+                .slice(1 + photoPage * 4, 5 + photoPage * 4)
                 .map((item) => media.photo(item))
             )
             previous.disabled = photoPage === 0
             next.disabled = photoPage + 1 === pages
+            pageLabel.textContent = `${photoPage + 1} / ${pages}`
           }
           const previous = prepButton('Previous photos', () => {
               photoPage--
@@ -890,15 +971,13 @@ export async function startPackingWorkspace({
               photoPage++
               showPhotos()
             })
-          if (pages > 1) navigation.append(previous, next)
+          previous.textContent = '‹'
+          previous.setAttribute('aria-label', 'Previous photos')
+          next.textContent = '›'
+          next.setAttribute('aria-label', 'Next photos')
+          if (pages > 1) navigation.append(previous, pageLabel, next)
           otherPhotos.append(gallery, navigation)
-          otherPhotos.addEventListener('toggle', () => {
-            if (otherPhotos.open) showPhotos()
-            else {
-              media.forget(gallery)
-              gallery.replaceChildren()
-            }
-          })
+          showPhotos()
           photoCell.append(otherPhotos)
         }
         const option = el('td', undefined, 'variant-option')
@@ -946,7 +1025,7 @@ export async function startPackingWorkspace({
               if (key === 'sizeSuffix') variant.needsSizeMapping = false
               updateCodeReadout()
             },
-            'None'
+            '—'
           )
           labelField.classList.add(`code-part-${key}`)
           const codeInput = labelField.querySelector('input')
@@ -1019,14 +1098,14 @@ export async function startPackingWorkspace({
         )
         card.append(navigation)
       }
-      const groupTools = disclosure('Grouping tools', 'group-tools')
+      const groupTools = el('section', undefined, 'group-tools')
+      groupTools.setAttribute('aria-label', 'Grouping tools')
+      groupTools.append(el('h4', 'Grouping tools'))
       const groupActions = el('div', undefined, 'dialog-actions')
       groupActions.append(
         preparationHelp(
           prepButton('Share one barcode', () => {
-            const ids = [
-              ...card.querySelectorAll('.variant-select:checked'),
-            ].map((check) => check.value)
+            const ids = [...variantSelection.selected]
             if (ids.length < 2)
               throw new Error('Select at least two matching product variants.')
             const target = group.variants.find((v) => ids.includes(v.id))
@@ -1043,11 +1122,7 @@ export async function startPackingWorkspace({
         ),
         preparationHelp(
           prepButton('Give rows separate barcodes', async () => {
-            const ids = new Set(
-              [...card.querySelectorAll('.variant-select:checked')].map(
-                (check) => check.value
-              )
-            )
+            const ids = variantSelection.selected
             const selected = group.variants.filter(
               (v) => ids.has(v.id) && v.entryIds.length > 1
             )
@@ -1083,9 +1158,7 @@ export async function startPackingWorkspace({
         ),
         preparationHelp(
           prepButton('Move to new product', () => {
-            const ids = [
-              ...card.querySelectorAll('.variant-select:checked'),
-            ].map((check) => check.value)
+            const ids = [...variantSelection.selected]
             if (!ids.length || ids.length === group.variants.length)
               throw new Error(
                 'Select some, but not all, variants to split into a new product group.'
@@ -1132,6 +1205,9 @@ export async function startPackingWorkspace({
       prepButton('Copy carton marks', async () => bulkLabels('mark'))
     )
     host.append(output)
+    selection.controller.paint()
+    for (const variants of selection.variants.values())
+      variants.controller.paint()
   }
 
   async function chooseImageBatch(rows, size = 20) {

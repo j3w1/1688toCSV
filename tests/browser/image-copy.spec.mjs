@@ -103,10 +103,16 @@ test('single picture copies original non-square pixels with inline success', asy
     .poll(() => preview.evaluate((image) => image.naturalWidth))
     .toBe(64)
   const button = row.getByRole('button', { name: 'Copy image', exact: true })
+  const before = await button.boundingBox()
+  expect(before.height).toBeLessThanOrEqual(30)
+  expect(before.width).toBeLessThanOrEqual(76)
   await button.click()
   await expect(
     row.getByRole('button', { name: 'Copied', exact: true })
   ).toHaveClass(/copied/)
+  const after = await button.boundingBox()
+  expect(after.width).toBe(before.width)
+  expect(after.height).toBe(before.height)
   const size = await page.evaluate(async () => {
     const item = (await navigator.clipboard.read())[0]
     const picture = await createImageBitmap(await item.getType('image/png'))
@@ -125,11 +131,11 @@ test('bulk picture copying preserves full pixels in separate compact Excel cells
   const { records } = await seedPictures(extension)
   const page = await openLibrary(extension)
   await page
-    .getByRole('checkbox', {
-      name: `Select order ${records[0].snapshot.orderId}`,
+    .getByRole('option', {
+      name: `Order ${records[0].snapshot.orderId}`,
       exact: true,
     })
-    .check()
+    .click()
   for (const id of ['copy-images', 'copy-excel']) {
     const button = page.locator(`#${id}`)
     await button.click()

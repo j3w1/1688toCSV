@@ -29,7 +29,7 @@ Open **Extensions → Developer mode → Load unpacked** and select **dist**. In
 
 Resolve any **Choose a size code** prompt before copying labels. Names and codes remain editable after saving.
 
-Click any product photo to zoom in. **Code options** stays visible beside each variant; use **Grouping tools** when needed. Hover over a field or action for a short hint.
+Click a product photo, scroll to zoom and drag to inspect it. Use **Fit**, **100%** or fullscreen. Categories, original names, **Code options** and **Grouping tools** stay visible. Hover over a field or action for a short hint.
 
 **Undo** and **Redo** restore pending edits until autosave completes. Invalid entries stay in the form with an explanation; closing waits for a successful save.
 
@@ -50,9 +50,9 @@ Click a label preview, **Barcode** or **Carton mark** to edit it. In a barcode, 
 | **Copy preparation columns**        | Your chosen code, barcode, description, Spanish description and financial columns; the base code appears once per product group |
 | **Copy group codes**                | One base code per group                                                                                                         |
 
-Select rows to limit a copy; otherwise all filtered rows are used. **Headers** starts off and remembers your choice. Batch actions ask for confirmation. Pictures paste as floating images; successful buttons show **Copied**.
+Click a row to select it, **Shift-click** for a range, or **Ctrl-click** to add or remove individual rows. The same controls work for orders and preparation. Buttons and photos act independently. With no product rows selected, copying includes all filtered rows. **Headers** starts off and remembers your choice. Batch actions ask for confirmation. Pictures paste as floating images; successful buttons show **Copied**.
 
-Search orders by seller or order number and filter by purchase month or date range, then use **Refresh matching orders**. You can also refresh selected orders or all orders. Use **Activity** to pause, retry or dismiss imports. **Save import report** is available in Activity and beside Pause/Resume on the order page. Retry keeps successful saves and revisits failures. The sun/moon button changes the default dark appearance.
+Double-click an order card, or press **Enter**, to open details. Search orders by seller or order number and filter by purchase month or date range, then use **Refresh matching orders**. You can also refresh selected orders or all orders. Use **Activity** to pause, retry or dismiss imports. **Save import report** is available in Activity and beside Pause/Resume on the order page. Retry keeps successful saves and revisits failures. The sun/moon button changes the default dark appearance.
 
 During collection, the reader panel and Activity show progress, saved products, the latest result and time on the current order. Failed orders are counted separately.
 

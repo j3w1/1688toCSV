@@ -86,7 +86,7 @@ test('order search combines seller, member login and order IDs with purchase fil
   await page.getByLabel('From', { exact: true }).fill('2026-10-08')
   await page.getByLabel('Through', { exact: true }).fill('2026-10-08')
   await expect(page.locator('.order-card')).toHaveCount(1)
-  await page.locator('.order-card input[type=checkbox]').check()
+  await page.locator('.order-card').click()
   await expect(page.locator('#refresh-orders')).toHaveText('Refresh 1')
   await search.fill('unknown seller')
   await expect(page.locator('.order-card')).toHaveCount(0)

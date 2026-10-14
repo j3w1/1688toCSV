@@ -123,7 +123,8 @@ export function mountLabelEditor(container, options) {
   }
 
   function controls(disabled) {
-    for (const input of inputs.values()) input.disabled = disabled
+    // Preserve keyboard focus so Escape still reaches the field during a save.
+    for (const input of inputs.values()) input.readOnly = disabled
     copy.disabled = disabled || !ready
   }
 
@@ -194,7 +195,7 @@ export function mountLabelEditor(container, options) {
     try {
       const next = { ...model, ...printableModel() }
       const operation = async () => {
-        // Set pendingCommit before disabling the focused input can trigger blur.
+        // Expose the in-flight operation before locking fields and rendering.
         await Promise.resolve()
         try {
           controls(true)
@@ -242,8 +243,11 @@ export function mountLabelEditor(container, options) {
     }
   }
 
-  function resetDraft() {
-    if (pendingCommit) return
+  async function resetDraft() {
+    // A write already sent cannot be cancelled. Restore the last accepted value
+    // after it settles, retaining a successful save or discarding a rejected draft.
+    if (pendingCommit) await pendingCommit
+    if (destroyed) return
     resetCopied()
     revision++
     model = { ...committed }
@@ -297,7 +301,7 @@ export function mountLabelEditor(container, options) {
         revision++
         queuePreview()
       })
-      input.addEventListener('keydown', (event) => {
+      input.addEventListener('keydown', async (event) => {
         if (event.isComposing) return
         if (event.key === 'Enter') {
           event.preventDefault()
@@ -305,8 +309,8 @@ export function mountLabelEditor(container, options) {
         } else if (event.key === 'Escape') {
           event.preventDefault()
           event.stopPropagation()
-          resetDraft()
-          input.blur()
+          await resetDraft()
+          if (!destroyed) input.blur()
         }
       })
       input.addEventListener('blur', () => void commit())
@@ -346,7 +350,7 @@ export function mountLabelEditor(container, options) {
         revision++
         queuePreview()
       })
-      input.addEventListener('keydown', (event) => {
+      input.addEventListener('keydown', async (event) => {
         if (event.isComposing) return
         if (event.key === 'Enter') {
           event.preventDefault()
@@ -354,8 +358,8 @@ export function mountLabelEditor(container, options) {
         } else if (event.key === 'Escape') {
           event.preventDefault()
           event.stopPropagation()
-          resetDraft()
-          input.blur()
+          await resetDraft()
+          if (!destroyed) input.blur()
         }
       })
       input.addEventListener('blur', () => void commit())

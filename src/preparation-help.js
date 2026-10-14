@@ -21,6 +21,10 @@ export function preparationHelp(target, text) {
     observer,
     controls = []
 
+  function ownsDialog(node) {
+    return (node?.closest?.('dialog') ?? null) === target.closest('dialog')
+  }
+
   function position() {
     if (!target.isConnected || !target.getClientRects().length) return close()
     const bounds = target.getBoundingClientRect(),
@@ -55,7 +59,12 @@ export function preparationHelp(target, text) {
   }
   function show() {
     clearTimeout(timer)
-    if (dismissed || !target.isConnected || !target.getClientRects().length)
+    if (
+      dismissed ||
+      !target.isConnected ||
+      !target.getClientRects().length ||
+      !ownsDialog(doc.activeElement)
+    )
       return
     if (activeHint === close) return
     activeHint?.()
@@ -86,10 +95,19 @@ export function preparationHelp(target, text) {
       'keydown',
       (event) => {
         if (event.key !== 'Escape') return
+        // A photo or label dialog above this form owns its own Escape action.
+        if (!ownsDialog(event.target)) return close()
         event.preventDefault()
         event.stopPropagation()
         dismissed = hovered || focused
         close()
+      },
+      options
+    )
+    doc.addEventListener(
+      'focusin',
+      (event) => {
+        if (!ownsDialog(event.target)) close()
       },
       options
     )

@@ -110,3 +110,64 @@ test('hover hints have a positioned fallback without Popover support', async ({
   await expect(page.locator('dialog')).toHaveJSProperty('open', true)
   await page.close()
 })
+
+for (const fallback of [false, true]) {
+  test(`a ${fallback ? 'fallback' : 'native'} hint cannot consume Escape or reopen beneath another modal`, async ({
+    extension,
+  }) => {
+    const page = await helpFixture(extension, { fallback })
+    await page.locator('#field input').focus()
+    await expect(page.getByRole('tooltip')).toBeVisible()
+    const remaining = await page.evaluate(() => {
+      const nested = document.createElement('dialog')
+      nested.id = 'photo'
+      nested.innerHTML = '<button>Fit</button>'
+      document.body.append(nested)
+      nested.showModal()
+      nested.querySelector('button').focus()
+      return document.querySelectorAll('.preparation-help-popover').length
+    })
+    // Check in the opening task, before the old hint's delayed close can hide the race.
+    expect(remaining).toBe(0)
+    await page.keyboard.press('Escape')
+    await expect(page.locator('#photo')).toHaveJSProperty('open', false)
+    await expect(page.locator('dialog').first()).toHaveJSProperty('open', true)
+
+    await page.locator('#field input').focus()
+    await expect(page.getByRole('tooltip')).toBeVisible()
+    await page.evaluate(() => {
+      const nested = document.createElement('dialog')
+      nested.id = 'label'
+      nested.innerHTML = '<input aria-label="Size code" value="L" />'
+      const input = nested.querySelector('input')
+      input.addEventListener('keydown', (event) => {
+        if (event.key !== 'Escape') return
+        event.preventDefault()
+        event.stopPropagation()
+        input.value = 'S'
+      })
+      document.body.append(nested)
+      nested.showModal()
+      input.focus()
+    })
+    await page.keyboard.press('Escape')
+    await expect(page.getByLabel('Size code', { exact: true })).toHaveValue('S')
+    await expect(page.locator('#label')).toHaveJSProperty('open', true)
+    await page.locator('#label').evaluate((dialog) => dialog.close())
+
+    await page.locator('#action').focus()
+    await page.keyboard.press('Escape')
+    // A queued hover must also respect the modal that gained focus before it fires.
+    await page.evaluate(() => {
+      document
+        .querySelector('#field')
+        .dispatchEvent(new PointerEvent('pointerenter'))
+      document.querySelector('#photo').showModal()
+    })
+    await page.waitForTimeout(450)
+    await expect(page.locator('.preparation-help-popover')).toHaveCount(0)
+    await page.keyboard.press('Escape')
+    await expect(page.locator('#photo')).toHaveJSProperty('open', false)
+    await page.close()
+  })
+}

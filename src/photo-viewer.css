@@ -1,0 +1,93 @@
+.product-photo-dialog {
+  width: min(1000px, calc(100vw - 32px));
+  max-width: 1000px;
+  max-height: calc(100dvh - 24px);
+  padding: 18px;
+  overflow: hidden;
+}
+.photo-viewer-frame {
+  position: relative;
+  display: grid;
+  grid-template-rows: auto auto minmax(0, 1fr) auto;
+  height: min(82dvh, 840px);
+  min-height: 0;
+}
+.photo-viewer-frame > .dialog-close {
+  position: absolute;
+  top: 0;
+  right: 0;
+  min-height: 32px;
+  width: 32px;
+}
+.photo-viewer-frame > h2 {
+  margin: 0 40px 12px 0;
+}
+.photo-viewport {
+  position: relative;
+  width: 100%;
+  height: 100%;
+  min-height: 0;
+  overflow: hidden;
+  background: var(--field);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  touch-action: none;
+  -webkit-user-select: none;
+  user-select: none;
+}
+.photo-viewport.can-pan {
+  cursor: grab;
+}
+.photo-viewport.dragging {
+  cursor: grabbing;
+}
+.photo-viewport img {
+  position: absolute;
+  inset: 0 auto auto 0;
+  max-width: none;
+  max-height: none;
+  margin: 0;
+  transform-origin: 0 0;
+  pointer-events: none;
+}
+.photo-zoom-actions {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-bottom: 10px;
+}
+.photo-zoom-actions button {
+  min-height: 32px;
+  padding: 4px 10px;
+  font-size: 13px;
+}
+.photo-zoom-actions button:first-child,
+.photo-zoom-actions button:nth-child(3) {
+  min-width: 34px;
+  font-size: 19px;
+}
+.photo-zoom-value {
+  min-width: 48px;
+  text-align: center;
+  font-variant-numeric: tabular-nums;
+  font-size: 13px;
+}
+.photo-viewer-status {
+  margin: 10px 0 0;
+  color: var(--muted);
+  font-size: 12px;
+  line-height: 1.5;
+}
+.photo-viewer-frame:fullscreen {
+  box-sizing: border-box;
+  width: 100%;
+  height: 100%;
+  padding: 20px;
+  color: var(--text);
+  background: var(--surface);
+}
+.photo-viewer-frame:fullscreen .dialog-close {
+  top: 16px;
+  right: 16px;
+}

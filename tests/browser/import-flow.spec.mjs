@@ -189,7 +189,7 @@ test('missing sellers import products but require identification before label pr
         snapshot.sellerUnavailable && snapshot.items.length === 2
     )
   ).toBe(true)
-  await library.locator('.order-card button').first().click()
+  await library.locator('.order-card').first().dblclick()
   await expect(library.locator('#order-details')).toContainText(
     'Products and totals are saved'
   )
@@ -304,7 +304,7 @@ test('wholesale prices and embedded adjustments import without double deductions
       '0.30',
     ])
   }
-  await library.locator('.order-card button').first().click()
+  await library.locator('.order-card').first().dblclick()
   await expect(library.locator('#order-details')).toContainText(
     'Wholesale discount (already in prices)'
   )
@@ -352,7 +352,7 @@ test('legacy promotions, free-shipping badges and included customization import 
       '0.00',
     ])
   }
-  await library.locator('.order-card button').first().click()
+  await library.locator('.order-card').first().dblclick()
   await expect(library.locator('#order-details')).toContainText(
     'Original total (includes customization)'
   )
@@ -396,7 +396,7 @@ test('order-only shop discounts and unspecified foreign fees import without chan
       '0.00',
     ])
   }
-  await library.locator('.order-card button').first().click()
+  await library.locator('.order-card').first().dblclick()
   await expect(library.locator('#order-details')).toContainText(
     'Order-only discount'
   )
@@ -434,7 +434,7 @@ test('red-packet payment reduction imports separately alongside customization an
       '0.30',
     ])
   }
-  await library.locator('.order-card button').first().click()
+  await library.locator('.order-card').first().dblclick()
   await expect(library.locator('#order-details')).toContainText(
     'Red-packet discount (payment only)'
   )
@@ -571,7 +571,7 @@ test('customization services survive complete import without changing copied pro
     expect(record.snapshot.totals.payable).toBe('80.50')
     expect(record.snapshot.totals.goodsNet).toBe('63.60')
   }
-  await library.locator('.order-card button').first().click()
+  await library.locator('.order-card').first().dblclick()
   await expect(library.locator('#order-details')).toContainText(
     'Customization service'
   )
@@ -602,8 +602,8 @@ test('selected import reaches persistent spreadsheet and clipboard through real 
   await expect(list.locator('#sheet-body tr')).toHaveCount(4)
   // Refresh all remains explicit even with one selected order and a text filter.
   await list
-    .getByRole('checkbox', { name: `Select order ${ids[0]}`, exact: true })
-    .check()
+    .getByRole('option', { name: `Order ${ids[0]}`, exact: true })
+    .click()
   await list
     .getByRole('searchbox', { name: 'Search products and orders', exact: true })
     .fill('no matching synthetic product')

@@ -44,6 +44,7 @@ await cp(path.join(root, 'src/assets'), path.join(output, 'assets'), {
 for (const resource of [
   'library.html',
   'library.css',
+  'photo-viewer.css',
   'packing.css',
   'label-editor.css',
   'theme.js',
@@ -59,6 +60,7 @@ const resources = [
   manifest.background.service_worker,
   'library.html',
   'library.css',
+  'photo-viewer.css',
   'library.js',
   'theme.js',
   'packing.css',

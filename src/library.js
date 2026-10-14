@@ -15,6 +15,7 @@ import {
 } from './import-progress.js'
 import { createPhotoViewer } from './photo-viewer.js'
 import { presentOrderStatus } from './order-presentation.js'
+import { createRowSelection } from './row-selection.js'
 
 const $ = (id) => document.getElementById(id)
 const keyFor = (row) => `${row.orderId}/${row.entryId}`
@@ -67,12 +68,6 @@ function dateBadge(order) {
   date.title = 'Purchase date'
   return date
 }
-function selectionTarget(check) {
-  const label = node('label', undefined, 'selection-hit')
-  label.append(check)
-  return label
-}
-
 function downloadJson(value, filename) {
   const url = URL.createObjectURL(
     new Blob([JSON.stringify(value)], { type: 'application/json' })
@@ -155,6 +150,27 @@ export async function startLibrary(
     selectedRows = new Set(),
     preparedImages = new Map(),
     loadingImages = new Map()
+  const productSelection = createRowSelection({
+    selected: selectedRows,
+    getKeys: () => filteredRows().map(keyFor),
+    onChange: updateSelection,
+  })
+  const orderSelection = createRowSelection({
+    selected: selectedOrders,
+    getKeys: () => matchingOrders().map(({ snapshot }) => snapshot.orderId),
+    onChange: () => {
+      productSelection.reset()
+      page = 0
+      renderRows()
+      updateOrderActions()
+      packing?.updateActions()
+    },
+    onActivate: (key) => {
+      const record = records.find(({ snapshot }) => snapshot.orderId === key)
+      if (record)
+        void openDetails(record).catch((error) => feedback(error.message, true))
+    },
+  })
   const imageObserver = new IntersectionObserver(
     async (entries) => {
       for (const entry of entries)
@@ -362,9 +378,8 @@ export async function startLibrary(
       selected = rows.filter((row) => selectedRows.has(keyFor(row)))
     $('selection-summary').textContent =
       `${rows.length.toLocaleString()} rows${selected.length ? ` · ${selected.length.toLocaleString()} selected` : ' · all filtered rows will copy'}`
-    $('select-rows').checked = !!rows.length && selected.length === rows.length
-    $('select-rows').indeterminate =
-      !!selected.length && selected.length < rows.length
+    $('select-rows').disabled = !rows.length || selected.length === rows.length
+    $('clear-rows').disabled = !selectedRows.size
     for (const id of ['copy-excel', 'copy-values', 'copy-images'])
       $(id).disabled = !rows.length || copyBusy
   }
@@ -417,24 +432,16 @@ export async function startLibrary(
       if (month !== lastMonth)
         list.append(node('h3', monthLabel(month), 'order-month'))
       lastMonth = month
-      const card = node(
-        'div',
-        undefined,
-        `order-card${selectedOrders.has(order.orderId) ? ' active' : ''}`
-      )
-      const check = node('input')
-      check.type = 'checkbox'
-      check.checked = selectedOrders.has(order.orderId)
-      check.setAttribute('aria-label', `Select order ${order.orderId}`)
-      check.addEventListener('change', () => {
-        if (check.checked) selectedOrders.add(order.orderId)
-        else selectedOrders.delete(order.orderId)
-        selectedRows.clear()
-        page = 0
-        render()
-      })
-      const button = node('button', order.sellerName)
-      button.append(
+      const card = node('div', undefined, 'order-card')
+      card.setAttribute('role', 'option')
+      card.setAttribute('aria-label', `Order ${order.orderId}`)
+      card.setAttribute('aria-describedby', `order-summary-${order.orderId}`)
+      card.title =
+        'Click to select. Shift-click for a range. Double-click or Enter for details.'
+      const summary = node('div', undefined, 'order-summary')
+      summary.id = `order-summary-${order.orderId}`
+      summary.append(node('strong', order.sellerName))
+      summary.append(
         node(
           'small',
           `…${order.orderId.slice(-8)} · ${order.items.length} products`
@@ -442,18 +449,21 @@ export async function startLibrary(
       )
       const meta = node('span', undefined, 'order-card-meta')
       meta.append(statusBadge(order.status), dateBadge(order))
-      button.append(meta)
-      button.addEventListener('click', () =>
-        openDetails(record).catch((error) => feedback(error.message, true))
-      )
+      summary.append(meta)
       const badge = node(
         'span',
         record.revision > 1 ? 'Updated' : 'Saved',
         `badge${record.revision > 1 ? ' changed' : ''}`
       )
-      card.append(selectionTarget(check), button, badge)
+      card.append(summary, badge)
+      orderSelection.bind(card, order.orderId)
       list.append(card)
     }
+    orderSelection.paint()
+    updateOrderActions()
+  }
+  function updateOrderActions() {
+    const matching = matchingOrders()
     $('refresh-orders').textContent = selectedOrders.size
       ? `Refresh ${selectedOrders.size}`
       : 'Refresh selected'
@@ -473,23 +483,21 @@ export async function startLibrary(
     const body = $('sheet-body')
     body.replaceChildren()
     let previousOrder
-    for (const row of rows.slice(page * pageSize, (page + 1) * pageSize)) {
+    for (const [index, row] of rows
+      .slice(page * pageSize, (page + 1) * pageSize)
+      .entries()) {
       const changed = row.record.changedEntryIds.includes(row.entryId)
       const tr = node('tr', undefined, changed ? 'changed-row' : '')
       if (previousOrder && previousOrder !== row.orderId)
         tr.classList.add('order-boundary')
       previousOrder = row.orderId
-      const selection = node('td', undefined, 'select-col')
-      const check = node('input')
-      check.type = 'checkbox'
-      check.checked = selectedRows.has(keyFor(row))
-      check.setAttribute('aria-label', `Select product ${row.entryId}`)
-      check.addEventListener('change', () => {
-        if (check.checked) selectedRows.add(keyFor(row))
-        else selectedRows.delete(keyFor(row))
-        updateSelection()
-      })
-      selection.append(selectionTarget(check))
+      const selection = node(
+        'td',
+        String(page * pageSize + index + 1),
+        'row-number'
+      )
+      tr.setAttribute('aria-label', `Product ${row.entryId}`)
+      productSelection.bind(tr, keyFor(row))
       const thumb = node('td', undefined, 'thumb-cell')
       const image = node('img')
       image.width = 54
@@ -501,7 +509,7 @@ export async function startLibrary(
       if (preparedImages.has(row.thumbnail))
         image.src = preparedImages.get(row.thumbnail)
       else imageObserver.observe(image)
-      const imageButton = node('button', 'Copy image')
+      const imageButton = node('button', 'Copy image', 'photo-copy-button')
       imageButton.addEventListener('click', () =>
         copyAction(imageButton, async () => {
           const original = await send('IMAGE_GET', { url: row.thumbnail })
@@ -566,6 +574,7 @@ export async function startLibrary(
     $('page-label').textContent = `${page + 1} / ${maxPage + 1}`
     $('previous-page').disabled = page === 0
     $('next-page').disabled = page === maxPage
+    productSelection.paint()
     updateSelection()
   }
   function renderJobs() {
@@ -682,7 +691,7 @@ export async function startLibrary(
       updateJobView(job)
       container.append(details)
       const actions = node('div', undefined, 'job-actions')
-      const report = node('button', 'Save import report', 'text-button')
+      const report = node('button', 'Save import report')
       report.title =
         'Save every order status and error for this import. This does not start or retry any orders.'
       report.addEventListener('click', async () => {
@@ -740,10 +749,10 @@ export async function startLibrary(
               job.state === 'running' ? 'Pause' : 'Resume / retry'
           }
         })
-        actions.append(button)
+        actions.prepend(button)
       }
       if (job.state !== 'running' && !job.dismissedAt) {
-        const dismiss = node('button', 'Dismiss', 'text-button')
+        const dismiss = node('button', 'Dismiss')
         dismiss.title =
           'Hide this message without removing saved orders. Find it later under Show dismissed.'
         dismiss.addEventListener('click', async () => {
@@ -1089,8 +1098,8 @@ export async function startLibrary(
     )
   action('all-orders', () => {
     clearTimeout(orderSearchTimer)
-    selectedOrders.clear()
-    selectedRows.clear()
+    orderSelection.reset()
+    productSelection.reset()
     $('month-filter').value = ''
     $('order-search').value = ''
     $('date-from').value = ''
@@ -1157,8 +1166,8 @@ export async function startLibrary(
     )
       return
     await send('LIBRARY_REMOVE', { orderIds: [...selectedOrders] })
-    selectedOrders.clear()
-    selectedRows.clear()
+    orderSelection.reset()
+    productSelection.reset()
     await refresh()
     feedback('Selected orders removed from the library.')
   })
@@ -1184,23 +1193,20 @@ export async function startLibrary(
       $('backup-file').value = ''
     }
   })
-  $('select-rows').addEventListener('change', () => {
-    for (const row of filteredRows())
-      if ($('select-rows').checked) selectedRows.add(keyFor(row))
-      else selectedRows.delete(keyFor(row))
-    renderRows()
-  })
+  $('select-rows').addEventListener('click', () => productSelection.selectAll())
+  $('clear-rows').addEventListener('click', () => productSelection.clear())
   $('search').addEventListener('input', () => {
     clearTimeout(searchTimer)
     searchTimer = setTimeout(() => {
       page = 0
+      productSelection.reset()
       renderRows()
     }, 150)
   })
   $('order-search').addEventListener('input', () => {
     clearTimeout(orderSearchTimer)
-    selectedOrders.clear()
-    selectedRows.clear()
+    orderSelection.reset()
+    productSelection.reset()
     page = 0
     orderPage = 0
     orderSearchTimer = setTimeout(render, 150)
@@ -1208,12 +1214,13 @@ export async function startLibrary(
   for (const id of ['status-filter', 'changes-only'])
     $(id).addEventListener('change', () => {
       page = 0
+      productSelection.reset()
       renderRows()
     })
   for (const id of ['month-filter', 'date-from', 'date-to'])
     $(id).addEventListener('change', () => {
-      selectedOrders.clear()
-      selectedRows.clear()
+      orderSelection.reset()
+      productSelection.reset()
       page = 0
       orderPage = 0
       render()

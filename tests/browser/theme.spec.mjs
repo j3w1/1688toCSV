@@ -203,7 +203,7 @@ test('both palettes keep readable text, semantic badges and primary controls', a
   }
 })
 
-test('larger native checkboxes keep label targets, mixed selection and keyboard focus', async ({
+test('preference checkboxes keep generous labels and native keyboard focus without row checkboxes', async ({
   extension,
 }) => {
   const records = await extension.inspector.evaluate(
@@ -227,51 +227,37 @@ test('larger native checkboxes keep label targets, mixed selection and keyboard 
   expect(result.ok, result.error).toBe(true)
   const page = await openLibrary(extension)
   await expect(page.locator('#sheet-body tr')).toHaveCount(8)
-  const firstRow = page.locator('#sheet-body tr').first()
-  const checkbox = firstRow.getByRole('checkbox')
-  const target = firstRow.locator('label.selection-hit')
-  for (const label of [
-    target,
-    page.locator('.order-card label.selection-hit').first(),
-  ]) {
-    const bounds = await label.boundingBox()
-    expect(bounds.width).toBeGreaterThanOrEqual(44)
-    expect(bounds.height).toBeGreaterThanOrEqual(44)
-  }
-  await expect(checkbox).toHaveCSS('width', '21px')
-  await expect(checkbox).toHaveCSS('height', '21px')
-  await expect(checkbox).toHaveCSS('appearance', 'auto')
-  await target.click({ position: { x: 4, y: 4 } })
-  await expect(checkbox).toBeChecked()
-  await expect(page.locator('#select-rows')).toHaveJSProperty(
-    'indeterminate',
-    true
-  )
-  await expect(page.locator('#select-rows')).toHaveCSS('appearance', 'auto')
-  await checkbox.focus()
-  await checkbox.press('Space')
-  await expect(checkbox).not.toBeChecked()
-  await expect(checkbox).toHaveCSS('outline-style', 'solid')
-  await expect(checkbox).toHaveCSS('outline-width', '3px')
-  await expect(page.locator('#select-rows')).toHaveJSProperty(
-    'indeterminate',
-    false
-  )
-
+  await expect(
+    page.locator(
+      '#sheet-body input[type=checkbox], .order-card input[type=checkbox]'
+    )
+  ).toHaveCount(0)
   const headers = page.getByLabel('Headers', { exact: true })
-  await headers.locator('..').click({ position: { x: 28, y: 20 } })
+  const target = headers.locator('..')
+  const bounds = await target.boundingBox()
+  expect(bounds.width).toBeGreaterThanOrEqual(44)
+  expect(bounds.height).toBeGreaterThanOrEqual(44)
+  await expect(headers).toHaveCSS('width', '21px')
+  await expect(headers).toHaveCSS('height', '21px')
+  await expect(headers).toHaveCSS('appearance', 'auto')
+  await target.click({ position: { x: 28, y: 20 } })
   await expect(headers).toBeChecked()
+  await headers.focus()
+  await headers.press('Space')
+  await expect(headers).not.toBeChecked()
+  await expect(headers).toHaveCSS('outline-style', 'solid')
+  await expect(headers).toHaveCSS('outline-width', '3px')
+  await page.getByRole('button', { name: 'Switch to light theme' }).click()
+  await expect(headers).toHaveCSS('accent-color', 'rgb(155, 91, 37)')
+  await headers.focus()
+  await headers.press('Space')
+  await expect(headers).toBeChecked()
+  await expect(headers).toHaveCSS('outline-color', 'rgb(149, 81, 29)')
   await headers.evaluate((input) => {
     input.disabled = true
   })
   await expect(headers).toBeDisabled()
   await expect(headers).toHaveCSS('cursor', 'not-allowed')
   await expect(headers).toHaveCSS('opacity', '0.5')
-  await page.getByRole('button', { name: 'Switch to light theme' }).click()
-  await expect(checkbox).toHaveCSS('accent-color', 'rgb(155, 91, 37)')
-  await checkbox.focus()
-  await checkbox.press('Space')
-  await expect(checkbox).toBeChecked()
-  await expect(checkbox).toHaveCSS('outline-color', 'rgb(149, 81, 29)')
   expect(extension.unexpectedRequests).toEqual([])
 })

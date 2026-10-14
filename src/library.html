@@ -118,7 +118,16 @@
           <button id="refresh-filtered" class="text-button">
             Refresh matching orders
           </button>
-          <div id="order-list"></div>
+          <p class="selection-help">
+            Click to select · Shift-click for a range<br />Double-click for
+            details
+          </p>
+          <div
+            id="order-list"
+            role="listbox"
+            aria-label="Saved orders"
+            aria-multiselectable="true"
+          ></div>
           <div class="order-pagination">
             <button id="orders-prev" aria-label="Previous order page">←</button
             ><span id="orders-page"></span
@@ -181,16 +190,14 @@
             tabindex="0"
             aria-label="Scrollable product rows"
           >
-            <table>
+            <table
+              role="grid"
+              aria-label="Products"
+              aria-multiselectable="true"
+            >
               <thead>
                 <tr>
-                  <th class="select-col">
-                    <input
-                      id="select-rows"
-                      type="checkbox"
-                      aria-label="Select all filtered products"
-                    />
-                  </th>
+                  <th class="row-number" scope="col">#</th>
                   <th>Thumbnail</th>
                   <th>Description & labels</th>
                   <th class="numeric">Price</th>
@@ -202,9 +209,13 @@
             </table>
           </div>
           <div class="sheet-footer">
-            <p id="paste-help">
-              Copy chosen values or pictures into Excel. Headers are optional.
-            </p>
+            <div class="row-selection-actions">
+              <button id="select-rows">Select all rows</button>
+              <button id="clear-rows">Clear selection</button>
+              <span id="paste-help"
+                >Click · Shift-click range · Ctrl-click toggle</span
+              >
+            </div>
             <div>
               <button id="previous-page" aria-label="Previous product page">
                 ←</button

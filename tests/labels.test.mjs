@@ -754,6 +754,71 @@ test('slow repeated mark rendering shows pending work until the current image is
   )
 })
 
+test('Escape during an in-flight label save restores rejected drafts and preserves accepted saves', async (t) => {
+  for (const rejectSave of [true, false]) {
+    const page = await pageFor(t, true)
+    await page.evaluate((rejectSave) => {
+      const dialog = document.createElement('dialog')
+      dialog.append(document.getElementById('editor'))
+      document.body.append(dialog)
+      dialog.showModal()
+      globalThis.attempts = 0
+      globalThis.editor = LabelEditor.mountLabelEditor(
+        document.getElementById('editor'),
+        {
+          model: {
+            kind: 'barcode',
+            code: 'CE26100101S',
+            spanishName: 'TAZA',
+          },
+          onCommit: (next) => {
+            attempts++
+            return new Promise((resolve, reject) => {
+              globalThis.finishCommit = () => {
+                if (rejectSave) reject(new Error('Code is already assigned'))
+                else resolve(next)
+              }
+            })
+          },
+        }
+      )
+    }, rejectSave)
+    await page.waitForFunction(
+      () => !document.querySelector('.label-editor-copy').disabled
+    )
+    const code = page.getByRole('textbox', {
+      name: 'Barcode code',
+      exact: true,
+    })
+    await code.fill('CE26100101L')
+    await code.press('Enter')
+    await page.waitForFunction(() => typeof finishCommit === 'function')
+    // Use the keyboard's actual focus, as a person does while the save is pending.
+    await page.keyboard.press('Escape')
+    await page.evaluate(() => finishCommit())
+    await page.waitForFunction(() => {
+      const input = document.querySelector('.label-editor-code')
+      return !input.disabled && !input.readOnly
+    })
+    assert.equal(
+      await code.inputValue(),
+      rejectSave ? 'CE26100101S' : 'CE26100101L'
+    )
+    await page.waitForFunction(
+      () => !document.querySelector('.label-editor-copy').disabled
+    )
+    assert.equal(await page.evaluate(() => attempts), 1)
+    assert.equal(
+      await page.evaluate(() => document.querySelector('dialog').open),
+      true
+    )
+    assert.equal(
+      await page.evaluate(() => editor.getLatestValidRender().model.code),
+      rejectSave ? 'CE26100101S' : 'CE26100101L'
+    )
+  }
+})
+
 test('editor reports save and copy failures without reporting success or copying stale drafts', async (t) => {
   const page = await pageFor(t, true)
   await page.evaluate(() => {

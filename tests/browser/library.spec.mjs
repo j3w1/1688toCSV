@@ -246,7 +246,7 @@ test('filters and explicit product selections determine copy scope', async ({
     .getByRole('searchbox', { name: 'Search products and orders', exact: true })
     .fill('candle')
   await expect(page.locator('#sheet-body tr')).toHaveCount(2)
-  await page.locator('#sheet-body input[type=checkbox]').first().check()
+  await page.locator('#sheet-body tr').first().locator('.product-title').click()
   await page.getByRole('checkbox', { name: 'Headers', exact: true }).uncheck()
   await extension.context.grantPermissions([
     'clipboard-read',
@@ -267,12 +267,174 @@ test('filters and explicit product selections determine copy scope', async ({
     .check()
   await expect(page.locator('#sheet-body tr')).toHaveCount(1)
 })
+test('order cards select across their full surface, range-select and open details only on double-click or Enter', async ({
+  extension,
+}) => {
+  await seed(extension)
+  const page = await openLibrary(extension)
+  const cards = page.locator('.order-card')
+  const card = cards.first()
+  const details = page.locator('#order-details')
+  const close = details.getByRole('button', { name: 'Close order details' })
+  await expect(cards).toHaveCount(3)
+  await expect(cards.locator('input[type=checkbox]')).toHaveCount(0)
+  await expect(card).toHaveAttribute('aria-selected', 'false')
+  for (const target of [
+    card.locator('.badge'),
+    card.locator('.order-status'),
+    card.locator('.purchase-date'),
+  ]) {
+    await target.click()
+    await expect(card).toHaveAttribute('aria-selected', 'true')
+    await expect(details).not.toBeVisible()
+    await expect(page.locator('#sheet-body tr')).toHaveCount(3)
+    await page.getByRole('button', { name: 'Show all', exact: true }).click()
+  }
+  // Padding and labels belong to the same selection and hover surface.
+  const box = await card.boundingBox()
+  await page.mouse.click(box.x + box.width - 3, box.y + box.height - 3)
+  await expect(card).toHaveAttribute('aria-selected', 'true')
+  await expect(details).not.toBeVisible()
+  await cards.last().click({ modifiers: ['Shift'] })
+  await expect(page.locator('.order-card[aria-selected=true]')).toHaveCount(3)
+  await expect(page.locator('#sheet-body tr')).toHaveCount(8)
+  await cards.nth(1).click({ modifiers: ['Control'] })
+  await expect(page.locator('.order-card[aria-selected=true]')).toHaveCount(2)
+  await expect(cards.nth(1)).toHaveAttribute('aria-selected', 'false')
+  await expect(page.locator('#sheet-body tr')).toHaveCount(5)
+  await cards.nth(1).click()
+  await expect(page.locator('.order-card[aria-selected=true]')).toHaveCount(1)
+  await expect(cards.nth(1)).toHaveAttribute('aria-selected', 'true')
+
+  await card.dblclick()
+  await expect(details).toBeVisible()
+  await close.click()
+  await expect(card).toBeFocused()
+  await card.press('Enter')
+  await expect(details).toBeVisible()
+  await close.click()
+  await expect(card).toBeFocused()
+  await card.locator('.badge').hover()
+  expect(
+    await card.evaluate((node) => getComputedStyle(node).backgroundColor)
+  ).not.toBe('rgba(0, 0, 0, 0)')
+  expect(extension.unexpectedRequests).toEqual([])
+})
+
+test('product rows support ranges and toggles while image and copy actions preserve selection', async ({
+  extension,
+}) => {
+  await seed(extension)
+  const page = await openLibrary(extension)
+  const rows = page.locator('#sheet-body tr')
+  await expect(rows).toHaveCount(8)
+  await expect(rows.locator('input[type=checkbox]')).toHaveCount(0)
+  const selected = page.locator('#sheet-body tr[aria-selected=true]')
+  await rows.nth(1).locator('.product-title').click()
+  await rows
+    .nth(4)
+    .locator('.product-title')
+    .click({ modifiers: ['Shift'] })
+  await expect(selected).toHaveCount(4)
+  await expect(rows.nth(0)).toHaveAttribute('aria-selected', 'false')
+  await expect(rows.nth(1)).toHaveAttribute('aria-selected', 'true')
+  await expect(rows.nth(4)).toHaveAttribute('aria-selected', 'true')
+  await rows
+    .nth(2)
+    .locator('.product-title')
+    .click({ modifiers: ['Control'] })
+  await expect(selected).toHaveCount(3)
+  await expect(rows.nth(2)).toHaveAttribute('aria-selected', 'false')
+  await rows
+    .nth(6)
+    .locator('.product-title')
+    .click({ modifiers: ['Control'] })
+  await expect(selected).toHaveCount(4)
+  await expect(page.locator('#selection-summary')).toContainText('4 selected')
+
+  const beforeActions = await selected.evaluateAll((items) =>
+    items.map((item) => item.dataset.selectionKey)
+  )
+  await rows
+    .first()
+    .getByRole('button', { name: /^Zoom product photo/ })
+    .click()
+  const photo = page.getByRole('dialog', { name: 'Product photo', exact: true })
+  await expect(photo).toBeVisible()
+  await photo
+    .getByRole('button', { name: 'Close product photo', exact: true })
+    .click()
+  await extension.context.grantPermissions([
+    'clipboard-read',
+    'clipboard-write',
+  ])
+  await rows
+    .first()
+    .getByRole('button', { name: 'Copy image', exact: true })
+    .click()
+  await expect(
+    rows.first().getByRole('button', { name: 'Copied', exact: true })
+  ).toBeVisible()
+  expect(
+    await selected.evaluateAll((items) =>
+      items.map((item) => item.dataset.selectionKey)
+    )
+  ).toEqual(beforeActions)
+  await expect(page.locator('#order-details')).not.toBeVisible()
+
+  await page
+    .getByRole('button', { name: 'Select all rows', exact: true })
+    .click()
+  await expect(selected).toHaveCount(8)
+  await page
+    .getByRole('button', { name: 'Clear selection', exact: true })
+    .click()
+  await expect(selected).toHaveCount(0)
+  await rows.nth(2).locator('.product-title').click()
+  await expect(selected).toHaveCount(1)
+  await rows.nth(2).press('Shift+ArrowDown')
+  await expect(selected).toHaveCount(2)
+  await expect(rows.nth(3)).toBeFocused()
+  await rows.nth(3).press('Control+Space')
+  await expect(selected).toHaveCount(1)
+  await expect(rows.nth(3)).toHaveAttribute('aria-selected', 'false')
+  await rows.nth(3).press('Control+ArrowDown')
+  await expect(rows.nth(4)).toBeFocused()
+  await expect(selected).toHaveCount(1)
+  await rows.nth(4).press('Escape')
+  await expect(selected).toHaveCount(0)
+  await rows.nth(4).press('Control+a')
+  await expect(selected).toHaveCount(8)
+  await expect(page.locator('.order-card[aria-selected=true]')).toHaveCount(0)
+  await page
+    .getByRole('searchbox', { name: 'Search products and orders', exact: true })
+    .fill('candle')
+  await expect(rows).toHaveCount(2)
+  await rows.first().locator('.product-title').click()
+  await rows
+    .last()
+    .locator('.product-title')
+    .click({ modifiers: ['Shift'] })
+  await expect(selected).toHaveCount(2)
+  await expect(page.locator('#selection-summary')).toHaveText(
+    '2 rows · 2 selected'
+  )
+  await page.locator('.order-card').first().click()
+  await expect(rows).toHaveCount(1)
+  await expect(selected).toHaveCount(0)
+  await expect(page.locator('.order-card[aria-selected=true]')).toHaveCount(1)
+  expect(extension.unexpectedRequests).toEqual([])
+})
+
 test('notes are editable separately and survive a later source revision', async ({
   extension,
 }) => {
   const records = await seed(extension)
   const page = await openLibrary(extension)
-  await page.getByRole('button', { name: /Habitat Studio/ }).click()
+  await page
+    .locator('.order-card')
+    .filter({ hasText: 'Habitat Studio' })
+    .dblclick()
   await expect(page.getByRole('dialog')).toBeVisible()
   await page.getByLabel('Your notes').fill('Reserved for display')
   await page.getByLabel('Tags (comma separated)').fill('October, home')
@@ -302,7 +464,10 @@ test('notes are editable separately and survive a later source revision', async 
   await expect(page.locator('#sheet-body')).toContainText(
     'Revised synthetic product'
   )
-  await page.getByRole('button', { name: /Habitat Studio/ }).click()
+  await page
+    .locator('.order-card')
+    .filter({ hasText: 'Habitat Studio' })
+    .dblclick()
   await expect(page.getByLabel('Your notes')).toHaveValue(
     'Reserved for display'
   )
@@ -341,11 +506,11 @@ test('copy images only produces one picture per selected row', async ({
   const records = await seed(extension)
   const page = await openLibrary(extension)
   await page
-    .getByRole('checkbox', {
-      name: `Select order ${records[0].snapshot.orderId}`,
+    .getByRole('option', {
+      name: `Order ${records[0].snapshot.orderId}`,
       exact: true,
     })
-    .check()
+    .click()
   await expect(page.locator('#sheet-body tr')).toHaveCount(3)
   await extension.context.grantPermissions([
     'clipboard-read',
@@ -433,7 +598,10 @@ test('purchase dates group orders by month while separators stay out of copied v
   await expect(page.locator('#sheet-body tr').first()).toContainText(
     '12 Oct 2026'
   )
-  await page.getByRole('button', { name: /Habitat Studio/ }).click()
+  await page
+    .locator('.order-card')
+    .filter({ hasText: 'Habitat Studio' })
+    .dblclick()
   await expect(page.locator('#order-details time.purchase-date')).toHaveText(
     '12 Oct 2026'
   )
@@ -444,6 +612,7 @@ test('purchase dates group orders by month while separators stay out of copied v
     page.locator('#order-details time.purchase-date')
   ).toHaveAttribute('title', 'Purchase date')
   await page.getByRole('button', { name: 'Close order details' }).click()
+  await page.getByRole('button', { name: 'Show all', exact: true }).click()
   await expect(page.locator('tr.order-boundary')).toHaveCount(2)
   await page
     .getByLabel('Purchase month', { exact: true })
@@ -522,6 +691,18 @@ test('old import messages can be dismissed persistently without losing orders or
   await expect(page.locator('.job').first()).toContainText(
     'Recent stopped import'
   )
+  const actions = page.locator('.job').first().locator('.job-actions button')
+  await expect(actions).toHaveText([
+    'Resume / retry',
+    'Save import report',
+    'Dismiss',
+  ])
+  for (const action of await actions.all()) {
+    const box = await action.boundingBox()
+    expect(box.height).toBeGreaterThanOrEqual(28)
+    expect(box.height).toBeLessThanOrEqual(34)
+    await expect(action).toHaveCSS('border-top-width', '1px')
+  }
   await page
     .getByRole('button', { name: 'Dismiss', exact: true })
     .first()
@@ -634,6 +815,7 @@ test('large libraries bound order and product DOM while progress updates avoid r
   await expect(page.locator('#orders-page')).toHaveText('1 / 15')
   const initialProducts = await page.locator('#sheet-body tr').allTextContents()
   const initialOrders = await page.locator('.order-card').allTextContents()
+  await page.locator('#sheet-body tr').nth(98).locator('.product-title').click()
   await page
     .getByRole('button', { name: 'Next product page', exact: true })
     .click()
@@ -643,6 +825,26 @@ test('large libraries bound order and product DOM while progress updates avoid r
     initialProducts
   )
   await page
+    .locator('#sheet-body tr')
+    .nth(1)
+    .locator('.product-title')
+    .click({ modifiers: ['Shift'] })
+  await expect(page.locator('#selection-summary')).toContainText('4 selected')
+  await expect(page.locator('#sheet-body tr[aria-selected=true]')).toHaveCount(
+    2
+  )
+  await page
+    .getByRole('button', { name: 'Previous product page', exact: true })
+    .click()
+  await expect(page.locator('#sheet-body tr[aria-selected=true]')).toHaveCount(
+    2
+  )
+  await page
+    .getByRole('button', { name: 'Clear selection', exact: true })
+    .click()
+
+  await page.locator('.order-card').nth(49).click()
+  await page
     .getByRole('button', { name: 'Next order page', exact: true })
     .click()
   await expect(page.locator('#orders-page')).toHaveText('2 / 15')
@@ -650,6 +852,13 @@ test('large libraries bound order and product DOM while progress updates avoid r
   expect(await page.locator('.order-card').allTextContents()).not.toEqual(
     initialOrders
   )
+  await page
+    .locator('.order-card')
+    .nth(1)
+    .click({ modifiers: ['Shift'] })
+  await expect(page.locator('#refresh-orders')).toHaveText('Refresh 3')
+  await expect(page.locator('.order-card[aria-selected=true]')).toHaveCount(2)
+  await expect(page.locator('#sheet-body tr')).toHaveCount(9)
   await page
     .getByRole('searchbox', { name: 'Search orders', exact: true })
     .fill('SUPPLIER 0749')
@@ -659,6 +868,8 @@ test('large libraries bound order and product DOM while progress updates avoid r
   )
   await expect(page.locator('#orders-page')).toHaveText('1 / 1')
   await expect(page.locator('#sheet-body tr')).toHaveCount(3)
+  await page.locator('.order-card').click({ modifiers: ['Shift'] })
+  await expect(page.locator('#refresh-orders')).toHaveText('Refresh 1')
   await page
     .getByRole('searchbox', { name: 'Search orders', exact: true })
     .clear()
@@ -672,6 +883,14 @@ test('large libraries bound order and product DOM while progress updates avoid r
     'Load-test product 0749/0'
   )
   await expect(page.locator('#page-label')).toHaveText('1 / 1')
+  await page
+    .locator('#sheet-body tr')
+    .locator('.product-title')
+    .click({ modifiers: ['Shift'] })
+  await expect(page.locator('#selection-summary')).toContainText('1 selected')
+  await page
+    .getByRole('button', { name: 'Clear selection', exact: true })
+    .click()
   await page
     .getByRole('searchbox', { name: 'Search products and orders', exact: true })
     .clear()
@@ -806,7 +1025,7 @@ test('purchase date refresh scopes are inclusive, cancellable and inert when emp
   await expect(page.locator('.order-card .purchase-date')).toHaveText(
     '8 Oct 2026'
   )
-  await page.locator('.order-card input[type=checkbox]').check()
+  await page.locator('.order-card').click()
   await expect(page.locator('#refresh-orders')).toHaveText('Refresh 1')
   await page.getByLabel('From', { exact: true }).fill('2026-10-20')
   await page.getByLabel('Through', { exact: true }).fill('2026-10-21')
