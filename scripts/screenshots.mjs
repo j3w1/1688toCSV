@@ -14,6 +14,7 @@ try {
   await page.goto(`${preview.url}/library.html`)
   await page.locator('#sheet-body tr').nth(7).waitFor()
   await page.locator('#packing-month').fill('2026-10')
+  await page.locator('#packing-month').blur()
   await page.screenshot({ path: 'screenshots/order-library-dark.png' })
   await page.getByRole('button', { name: 'Switch to light theme' }).click()
   await page.screenshot({ path: 'screenshots/order-library.png' })

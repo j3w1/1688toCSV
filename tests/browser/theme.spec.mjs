@@ -11,15 +11,15 @@ async function openLibrary(extension, scheme = 'light') {
 async function expectDark(page) {
   await expect(page.locator('html')).toHaveCSS(
     'background-color',
-    'rgb(12, 19, 34)'
+    'rgb(23, 21, 18)'
   )
   await expect(page.locator('.sheet-pane')).toHaveCSS(
     'background-color',
-    'rgb(21, 31, 49)'
+    'rgb(36, 33, 29)'
   )
   await expect(page.locator('#search')).toHaveCSS(
     'background-color',
-    'rgb(16, 26, 43)'
+    'rgb(29, 26, 22)'
   )
 }
 
@@ -36,7 +36,7 @@ test('dark is the default and a stored system preference still follows the devic
   await page.locator('#order-details').evaluate((dialog) => dialog.showModal())
   await expect(page.locator('#order-details')).toHaveCSS(
     'background-color',
-    'rgb(21, 31, 49)'
+    'rgb(36, 33, 29)'
   )
   await page.locator('#order-details').evaluate((dialog) => dialog.close())
   await page.emulateMedia({ colorScheme: 'dark' })
@@ -49,7 +49,7 @@ test('dark is the default and a stored system preference still follows the devic
   await page.reload()
   await expect(page.locator('html')).toHaveCSS(
     'background-color',
-    'rgb(244, 246, 250)'
+    'rgb(246, 243, 238)'
   )
   await expect(page.locator('html')).toHaveCSS('color-scheme', 'light dark')
   await page.emulateMedia({ colorScheme: 'dark' })
@@ -70,7 +70,7 @@ test('explicit light and dark themes persist and synchronize without losing over
   for (const current of [page, second]) {
     await expect(current.locator('html')).toHaveCSS(
       'background-color',
-      'rgb(244, 246, 250)'
+      'rgb(246, 243, 238)'
     )
     await expect(current.locator('meta[name="color-scheme"]')).toHaveAttribute(
       'content',
@@ -95,7 +95,7 @@ test('explicit light and dark themes persist and synchronize without losing over
   await page.getByRole('button', { name: 'Switch to light theme' }).click()
   await expect(page.locator('html')).toHaveCSS(
     'background-color',
-    'rgb(244, 246, 250)'
+    'rgb(246, 243, 238)'
   )
   await expect(page.locator('html')).toHaveCSS('color-scheme', 'light')
   await page.getByRole('button', { name: 'Switch to dark theme' }).click()
@@ -129,7 +129,7 @@ test('theme controls fit a narrow viewport and remain usable when preference sto
   await page.getByRole('button', { name: 'Switch to light theme' }).click()
   await expect(page.locator('html')).toHaveCSS(
     'background-color',
-    'rgb(244, 246, 250)'
+    'rgb(246, 243, 238)'
   )
   await page.getByRole('button', { name: 'Switch to dark theme' }).click()
   await expectDark(page)
@@ -198,7 +198,7 @@ test('both palettes keep readable text, semantic badges and primary controls', a
     )
     await expect(page.getByLabel('Headers', { exact: true })).toHaveCSS(
       'accent-color',
-      scheme === 'dark' ? 'rgb(122, 196, 255)' : 'rgb(36, 109, 197)'
+      scheme === 'dark' ? 'rgb(232, 173, 99)' : 'rgb(155, 91, 37)'
     )
   }
 })
@@ -268,10 +268,10 @@ test('larger native checkboxes keep label targets, mixed selection and keyboard 
   await expect(headers).toHaveCSS('cursor', 'not-allowed')
   await expect(headers).toHaveCSS('opacity', '0.5')
   await page.getByRole('button', { name: 'Switch to light theme' }).click()
-  await expect(checkbox).toHaveCSS('accent-color', 'rgb(36, 109, 197)')
+  await expect(checkbox).toHaveCSS('accent-color', 'rgb(155, 91, 37)')
   await checkbox.focus()
   await checkbox.press('Space')
   await expect(checkbox).toBeChecked()
-  await expect(checkbox).toHaveCSS('outline-color', 'rgb(22, 117, 216)')
+  await expect(checkbox).toHaveCSS('outline-color', 'rgb(149, 81, 29)')
   expect(extension.unexpectedRequests).toEqual([])
 })

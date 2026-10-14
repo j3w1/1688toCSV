@@ -30,7 +30,7 @@ export function mountPageDownload(document, prepareFile, actions = {}) {
       border-radius: 8px; background: #e64b10; color: white; text-decoration: none;
       text-align: center; font-weight: 650; }
     a:hover { background: #c93e08; }
-    a:focus-visible { outline: 3px solid #456fba; outline-offset: 3px; }
+    a:focus-visible { outline: 3px solid #95511d; outline-offset: 3px; }
     .status { margin: 8px 0 0; overflow-wrap: anywhere; font-size: 12px; color: #58614f; }
     .status:empty { margin: 0; }
     .status[data-tone='error'] { color: #972e21; }
@@ -38,7 +38,7 @@ export function mountPageDownload(document, prepareFile, actions = {}) {
     button { font: inherit; cursor: pointer; flex: 1; padding: 8px 5px;
       border: 1px solid #d9dfd2; border-radius: 6px; background: white; color: #52634b; font-size: 11px; }
     button:hover { background: #e9eee2; }
-    button:focus-visible { outline: 3px solid #456fba; outline-offset: 3px; }
+    button:focus-visible { outline: 3px solid #95511d; outline-offset: 3px; }
     [hidden] { display: none !important; }
     aside[data-importing] { width: 300px; max-height: calc(100dvh - 32px); overflow-y: auto; }
     .import-section { border-top: 1px solid #d9dfd2; margin-top: 10px; padding-top: 10px; }

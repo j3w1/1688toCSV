@@ -488,10 +488,10 @@ select {
   text-transform: uppercase;
 }
 .variants .variant-code-options .code-part-variantSuffix {
-  border-inline-start: 3px solid #28a4c4;
+  border-inline-start: 3px solid #b77c32;
 }
 .variants .variant-code-options .code-part-sizeSuffix {
-  border-inline-start: 3px solid #9a78d4;
+  border-inline-start: 3px solid #bf6b58;
 }
 .variant-code-readout {
   display: block;

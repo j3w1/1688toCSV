@@ -1,102 +1,102 @@
 /* Semantic colors work in Chrome 120 without light-dark(). */
 :root {
-  --page: #f4f6fa;
-  --surface: #ffffff;
-  --text: #182337;
-  --muted: #58677f;
-  --border: #d7dfeb;
-  --divider: #e7edf5;
-  --hover: #eef3fa;
-  --field: #f7f9fc;
+  --page: #f6f3ee;
+  --surface: #fffdf9;
+  --text: #2c2723;
+  --muted: #6f6358;
+  --border: #d8cfc3;
+  --divider: #e9e1d6;
+  --hover: #eee6da;
+  --field: #faf7f1;
   --accent: #c74335;
   --accent-hover: #ab342b;
-  --on-accent: #ffffff;
-  --accent-text: #136b99;
-  --control-accent: #246dc5;
-  --selected: #e9f2ff;
-  --success: #e7f5ef;
-  --success-text: #22684d;
-  --warning: #fff4db;
-  --warning-text: #805a16;
+  --on-accent: #fffdf9;
+  --accent-text: #855621;
+  --control-accent: #9b5b25;
+  --selected: #f4e6d1;
+  --success: #eaf1df;
+  --success-text: #48652b;
+  --warning: #fff2ce;
+  --warning-text: #785516;
   --warning-border: #e9d4a5;
-  --info: #e7f2fc;
-  --info-text: #226593;
-  --danger: #fdebef;
-  --danger-text: #a32e42;
+  --info: #f2e5dd;
+  --info-text: #875237;
+  --danger: #fce8e2;
+  --danger-text: #9c3542;
   --changed: #fffaf0;
-  --thumb: #edf2f8;
-  --focus: #1675d8;
-  --feedback: #1d334d;
-  --on-feedback: #ffffff;
+  --thumb: #ede5da;
+  --focus: #95511d;
+  --feedback: #45382b;
+  --on-feedback: #fffdf9;
   --error: #b5363e;
-  --on-error: #ffffff;
+  --on-error: #fffdf9;
 }
 @media (prefers-color-scheme: dark) {
   :root:not(:has(> head > meta[name='color-scheme'][content='light'])) {
-    --page: #0c1322;
-    --surface: #151f31;
-    --text: #edf3fc;
-    --muted: #a9b8cf;
-    --border: #34455e;
-    --divider: #27364e;
-    --hover: #20304a;
-    --field: #101a2b;
+    --page: #171512;
+    --surface: #24211d;
+    --text: #f3eee5;
+    --muted: #c2b5a2;
+    --border: #544a3e;
+    --divider: #3d352c;
+    --hover: #332d25;
+    --field: #1d1a16;
     --accent: #fb8b79;
     --accent-hover: #ff9d8d;
     --on-accent: #291714;
-    --accent-text: #8ac9f5;
-    --control-accent: #7ac4ff;
-    --selected: #1b3351;
-    --success: #163c36;
-    --success-text: #8eddbd;
-    --warning: #3d311e;
+    --accent-text: #e8bd7c;
+    --control-accent: #e8ad63;
+    --selected: #443421;
+    --success: #2c3824;
+    --success-text: #bbd99b;
+    --warning: #43351c;
     --warning-text: #f1ce86;
-    --warning-border: #6f5630;
-    --info: #19364e;
-    --info-text: #a0d9fc;
-    --danger: #47242f;
-    --danger-text: #ffb5c5;
-    --changed: #302b24;
-    --thumb: #223149;
-    --focus: #7ec8ff;
-    --feedback: #244865;
-    --on-feedback: #edf5ff;
-    --error: #f5a0a6;
-    --on-error: #39151e;
+    --warning-border: #705c33;
+    --info: #402e23;
+    --info-text: #edbd97;
+    --danger: #482824;
+    --danger-text: #ffb6a6;
+    --changed: #393023;
+    --thumb: #393126;
+    --focus: #e8b875;
+    --feedback: #493a29;
+    --on-feedback: #fff4e3;
+    --error: #f5a099;
+    --on-error: #381918;
   }
 }
 :root:has(> head > meta[name='color-scheme'][content='dark']) {
   color-scheme: dark;
-  --page: #0c1322;
-  --surface: #151f31;
-  --text: #edf3fc;
-  --muted: #a9b8cf;
-  --border: #34455e;
-  --divider: #27364e;
-  --hover: #20304a;
-  --field: #101a2b;
+  --page: #171512;
+  --surface: #24211d;
+  --text: #f3eee5;
+  --muted: #c2b5a2;
+  --border: #544a3e;
+  --divider: #3d352c;
+  --hover: #332d25;
+  --field: #1d1a16;
   --accent: #fb8b79;
   --accent-hover: #ff9d8d;
   --on-accent: #291714;
-  --accent-text: #8ac9f5;
-  --control-accent: #7ac4ff;
-  --selected: #1b3351;
-  --success: #163c36;
-  --success-text: #8eddbd;
-  --warning: #3d311e;
+  --accent-text: #e8bd7c;
+  --control-accent: #e8ad63;
+  --selected: #443421;
+  --success: #2c3824;
+  --success-text: #bbd99b;
+  --warning: #43351c;
   --warning-text: #f1ce86;
-  --warning-border: #6f5630;
-  --info: #19364e;
-  --info-text: #a0d9fc;
-  --danger: #47242f;
-  --danger-text: #ffb5c5;
-  --changed: #302b24;
-  --thumb: #223149;
-  --focus: #7ec8ff;
-  --feedback: #244865;
-  --on-feedback: #edf5ff;
-  --error: #f5a0a6;
-  --on-error: #39151e;
+  --warning-border: #705c33;
+  --info: #402e23;
+  --info-text: #edbd97;
+  --danger: #482824;
+  --danger-text: #ffb6a6;
+  --changed: #393023;
+  --thumb: #393126;
+  --focus: #e8b875;
+  --feedback: #493a29;
+  --on-feedback: #fff4e3;
+  --error: #f5a099;
+  --on-error: #381918;
 }
 :root:has(> head > meta[name='color-scheme'][content='light']) {
   color-scheme: light;
@@ -119,6 +119,16 @@
 }
 body {
   margin: 0;
+}
+::selection {
+  background: var(--selected);
+  color: var(--text);
+}
+input::-webkit-datetime-edit-month-field:focus,
+input::-webkit-datetime-edit-day-field:focus,
+input::-webkit-datetime-edit-year-field:focus {
+  background: var(--selected);
+  color: var(--text);
 }
 button,
 input,
@@ -679,7 +689,7 @@ td.select-col {
   background: var(--feedback);
   color: var(--on-feedback);
   border-radius: 8px;
-  box-shadow: 0 8px 28px #080f2026;
+  box-shadow: 0 8px 28px #17120c26;
   font-size: 12px;
   max-width: 900px;
   margin: 20px auto 0;
@@ -701,7 +711,7 @@ dialog {
   color: var(--text);
 }
 dialog::backdrop {
-  background: #060d1b9e;
+  background: #100d099e;
 }
 .dialog-close {
   float: right;
