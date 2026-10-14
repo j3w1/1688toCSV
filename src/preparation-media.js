@@ -1,5 +1,6 @@
 import { createLabelRenderer } from './labels.js'
 import { element as el } from './ui.js'
+export { preparationHelp } from './preparation-help.js'
 
 async function smallImage(blob, width = 360) {
   const source = await createImageBitmap(blob, {
@@ -112,7 +113,7 @@ export function createPreparationMedia({
         if (request.error) throw new Error(request.error)
         if (!request.code)
           throw new Error(
-            'Save preparation to assign a code and show this label.'
+            'Assigning a product code… Enter the seller login if requested.'
           )
         const result = await renderer.render({
           ...request,
@@ -314,43 +315,4 @@ export function createPreparationMedia({
       renderer.dispose()
     },
   }
-}
-
-export function preparationHelp(title, text) {
-  const wrap = el('span', undefined, 'preparation-help'),
-    trigger = el('button', '?'),
-    panel = el('div', undefined, 'preparation-help-popover')
-  trigger.type = 'button'
-  trigger.setAttribute('aria-label', `Help: ${title}`)
-  panel.id = `help-${crypto.randomUUID()}`
-  panel.append(el('strong', title), el('p', text))
-  const close = el('button', 'Close')
-  panel.append(close)
-  if ('popover' in HTMLElement.prototype) {
-    panel.setAttribute('popover', 'auto')
-    trigger.setAttribute('popovertarget', panel.id)
-    close.onclick = () => panel.hidePopover()
-  } else {
-    panel.hidden = true
-    trigger.setAttribute('aria-expanded', 'false')
-    trigger.setAttribute('aria-controls', panel.id)
-    const toggle = (open) => {
-      panel.hidden = !open
-      trigger.setAttribute('aria-expanded', String(open))
-    }
-    trigger.onclick = () => toggle(panel.hidden)
-    close.onclick = () => {
-      toggle(false)
-      trigger.focus()
-    }
-    panel.onkeydown = (event) => {
-      if (event.key === 'Escape') {
-        event.stopPropagation()
-        toggle(false)
-        trigger.focus()
-      }
-    }
-  }
-  wrap.append(trigger, panel)
-  return wrap
 }

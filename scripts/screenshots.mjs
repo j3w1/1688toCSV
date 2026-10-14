@@ -25,8 +25,10 @@ try {
     .fill('VELA AROMATICA')
   await group.getByLabel('Chinese category', { exact: true }).fill('工艺品')
   await page
-    .getByRole('button', { name: 'Save preparation', exact: true })
-    .click()
+    .locator('.preparation-save-status')
+    .filter({ hasText: 'Saved automatically' })
+    .waitFor()
+  await group.locator('h3').click()
   await group.getByAltText('Carton mark preview').waitFor()
   await group.getByAltText('Barcode preview').first().waitFor()
   await page.locator('#preparation-dialog').evaluate((dialog) => {

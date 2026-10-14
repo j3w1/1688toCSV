@@ -1,8 +1,8 @@
 # Chrome Web Store Listing — 1688toCSV
 
-> Last Updated: 2026-10-14
+> Last Updated: 2026-10-15
 >
-> Version 2.2.6 passed local verification, Chromium, Edge and Windows Excel checks. Synthetic screenshots are refreshed. The latest supplied export contains 104 saved orders; the full live collection remains incomplete. No store submission or publication. Earlier verification and live browser observations are recorded separately.
+> Version 2.2.7 passed local verification, Chromium, Edge and Windows Excel checks. Synthetic screenshots are refreshed. The latest supplied export contains 104 saved orders; the full live collection remains incomplete. No store submission or publication. Earlier verification and live browser observations are recorded separately.
 
 ## Store Listing
 
@@ -17,7 +17,7 @@ Prepare 1688 purchases for packing and copying into Excel.
 
 Collect selected orders, browse purchases by month or date range, and review original product descriptions, variants, prices, quantities and discounts. Choose a packing month, review suggested product groups, and save CE product codes. Add uppercase Spanish short names and Chinese categories using an editable local vocabulary. Review variant and size suffixes before preparing labels.
 
-Review product photos with original-image zoom and see carton and barcode previews beside each product. Code and grouping tools stay collapsed until needed. Share one barcode, give source rows separate barcodes or move options to a new product. Undo and Redo restore unsaved text and grouping changes; saving clears that order's history.
+Review product photos with original-image zoom and see carton and barcode previews beside each product. Preparation saves automatically; invalid entries stay visible until corrected. Hover over a field or action for a short hint. Code and grouping tools stay collapsed until needed. Share one barcode, give source rows separate barcodes or move variants to a new product. Undo and Redo restore pending edits until autosave completes.
 
 Edit barcode and carton-mark text directly in a label preview. Barcode code bands fit their text; carton marks use larger CE, product codes and categories with compact blank operational fields. Copy printable label images, chosen preparation columns, source values or separate product pictures into Excel. Product codes appear once per group in preparation columns. Headers start off and remember your choice. Settings control label dimensions, resolution, logo and vocabulary. The workspace starts dark and remembers your light/dark choice.
 
@@ -53,7 +53,7 @@ One buyer account per library and the observed supported page layouts. Imports a
 | Small promotional tile | 440 × 280                            | Not created                                                                              |
 | Optional marquee       | 1400 × 560                           | Not created                                                                              |
 
-Workspace and label-editor screenshots use synthetic orders and were regenerated for version 2.2.4; store submission needs separate store-sized composition. Existing icons include 1688/Alibaba and spreadsheet branding; rights were not established in this task. The bundled Casa Elida label logo and any user-selected replacement also need appropriate rights for their intended use. Confirm permission or replace artwork before submission. Do not imply affiliation.
+Workspace and label-editor screenshots use synthetic orders and were regenerated for version 2.2.7; store submission needs separate store-sized composition. Existing icons include 1688/Alibaba and spreadsheet branding; rights were not established in this task. The bundled Casa Elida label logo and any user-selected replacement also need appropriate rights for their intended use. Confirm permission or replace artwork before submission. Do not imply affiliation.
 
 ## Permissions Justification
 
@@ -130,6 +130,7 @@ Draft substance: records, history, notes, pictures, preparation edits, reserved 
 
 | Version | Date       | Changes                                                                                                                                                                         | Status                                                                                                                                             |
 | ------- | ---------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------- |
+| 2.2.7   | 2026-10-15 | Automatic preparation saving, safe overlay dismissal, hover/focus hints, simpler product-variant fields and read-only source-size references                                    | Local, Chromium, Edge and Windows Excel checks passed; no store submission                                                                         |
 | 2.2.6   | 2026-10-14 | Preparation photos and label previews, clearer grouping tools, unsaved Undo/Redo, larger carton text, fitted barcode bands and exact invalid-discount diagnostics               | Local, Chromium, Edge, Windows Excel and backup checks passed; full live collection incomplete; no store submission                                |
 | 2.2.5   | 2026-10-14 | Save valid products when seller identity is missing; require identification before label allocation; export import reports from the order page                                  | Local, Chromium, Edge and supplied-backup checks passed; live full collection outstanding; no store submission                                     |
 | 2.2.4   | 2026-10-14 | Reconcile wholesale prices and adjustments already included in row discounts; searchable orders and clearer continuing-import progress                                          | Local, Chromium, Edge and supplied-export checks passed; live retry and full collection outstanding; no store submission                           |
@@ -148,6 +149,8 @@ Draft substance: records, history, notes, pictures, preparation edits, reserved 
 ## Review Notes
 
 ### Development verification
+
+- Version 2.2.7 passed source/docs checks, 211 unit checks, the explicit production rebuild, 101 packaged Chromium tests, 23 focused Edge tests and four Windows Excel clipboard checks in disposable workbooks. Autosave coverage includes typing during a delayed write, independent order failures, cross-tab conflicts, confirmation before discarding a failed draft, and safe X/backdrop/Escape dismissal. Hover/focus hints include the Chrome 120 fallback. Synthetic screenshots were refreshed. Live embedded-browser acceptance and physical printing remain unverified.
 
 - Version 2.2.6 passed source/docs checks, 209 unit checks, the production rebuild, 93 packaged Chromium tests and 12 focused Edge tests. All four Windows Excel clipboard checks passed in disposable preformatted workbooks; barcode dimensions measured 40.040 × 19.932 mm and carton marks 148.519 × 104.775 mm. The clipboard was restored and supplied workbooks were untouched. The 104-order/975-row backup restored unchanged in an isolated database. Synthetic screenshots were refreshed. Independent review identified an async save/Undo race, fixed with a shared operation lock and verified by a delayed-save regression. Full browser verification also caught and rechecked seller-field focus after validation. The release adds preparation photos and original-image zoom, visible carton/barcode previews, collapsed code/grouping tools, unsaved Undo/Redo and revised label geometry. Invalid-discount evidence now retains the amount text capped at 160 characters and its row number; financial behavior is unchanged. The latest supplied report records 67/67 pages discovered, 104 orders saved, 4 failed and 559 pending. The supplied backup contains 104 orders and 975 product rows. These exports establish a saved subset; the full 667-order collection remains incomplete. Live agent access remains blocked; physical printing and hardware scanner acceptance remain unverified.
 

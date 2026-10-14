@@ -89,7 +89,19 @@ async function openDetails(details) {
   await expect(details).toHaveJSProperty('open', true)
 }
 
-async function prepare(page, { save = true } = {}) {
+async function waitForAutosave(dialog) {
+  await expect(dialog.locator('.preparation-save-status')).toHaveText(
+    'Saved automatically'
+  )
+}
+
+async function pauseAutosave(page) {
+  const now = new Date()
+  await page.clock.install({ time: now })
+  await page.clock.pauseAt(now)
+}
+
+async function prepare(page) {
   await page.getByLabel('Packing month', { exact: true }).fill('2026-10')
   await page
     .getByRole('button', { name: 'Prepare labels', exact: true })
@@ -99,16 +111,7 @@ async function prepare(page, { save = true } = {}) {
   await expect(
     dialog.locator('.preparation-group').first().locator('.variants tbody tr')
   ).toHaveCount(2)
-  await expect(
-    dialog
-      .locator('.preparation-group')
-      .first()
-      .getByLabel('Product code', { exact: true })
-  ).toHaveValue('')
-  if (!save) return dialog
-  await dialog
-    .getByRole('button', { name: 'Save preparation', exact: true })
-    .click()
+  await waitForAutosave(dialog)
   await expect(
     dialog
       .locator('.preparation-group')
@@ -148,22 +151,20 @@ test('structured products prepare, preserve edits and copy exact headerless sour
   await openDetails(variant.locator('.variant-code-options'))
   await variant.getByRole('textbox', { name: /^Variant code / }).fill('b')
   await variant.getByRole('textbox', { name: /^Size code / }).fill('xs')
-  await dialog
-    .getByRole('button', { name: 'Save preparation', exact: true })
-    .click()
+  await waitForAutosave(dialog)
   await expect(
     group.getByLabel('Spanish short name', { exact: true })
-  ).toHaveValue('FRASCO TRANSPARENTE')
+  ).toHaveValue(/frasco transparente/i)
   await expect(
     group.getByLabel('Chinese category', { exact: true })
   ).toHaveValue('玻璃制品')
   await openDetails(variant.locator('.variant-code-options'))
   await expect(
     variant.getByRole('textbox', { name: /^Variant code / })
-  ).toHaveValue('B')
+  ).toHaveValue(/b/i)
   await expect(
     variant.getByRole('textbox', { name: /^Size code / })
-  ).toHaveValue('XS')
+  ).toHaveValue(/xs/i)
   await dialog
     .getByRole('button', { name: 'Close preparation', exact: true })
     .click()
@@ -272,6 +273,7 @@ test('packing month starts in the local current month and preserves chosen and s
   await expect(dialog.locator('.preparation-heading')).toContainText(
     'Packing January 2027'
   )
+  await waitForAutosave(dialog)
   await dialog
     .getByRole('button', { name: 'Close preparation', exact: true })
     .click()
@@ -285,20 +287,17 @@ test('packing month starts in the local current month and preserves chosen and s
   await page.getByLabel('Search products and orders', { exact: true }).fill('')
   await expect(page.locator('#sheet-body tr')).toHaveCount(3)
   await page
-    .getByRole('button', { name: 'Prepare labels', exact: true })
+    .getByRole('button', { name: 'Edit preparation', exact: true })
     .click()
   await expect(dialog.locator('.preparation-heading')).toContainText(
-    'Packing February 2027'
+    'Packing January 2027'
   )
-  await dialog
-    .getByRole('button', { name: 'Save preparation', exact: true })
-    .click()
   await expect(
     dialog
       .locator('.preparation-group')
       .first()
       .getByLabel('Product code', { exact: true })
-  ).toHaveValue(/^CE2702\d{4}$/)
+  ).toHaveValue(/^CE2701\d{4}$/)
   await dialog
     .getByRole('button', { name: 'Close preparation', exact: true })
     .click()
@@ -309,7 +308,7 @@ test('packing month starts in the local current month and preserves chosen and s
     .getByRole('button', { name: 'Edit preparation', exact: true })
     .click()
   await expect(dialog.locator('.preparation-heading')).toContainText(
-    'Packing February 2027'
+    'Packing January 2027'
   )
   await dialog
     .getByRole('button', { name: 'Close preparation', exact: true })
@@ -321,14 +320,14 @@ test('packing month starts in the local current month and preserves chosen and s
     .getByRole('button', { name: 'Edit preparation', exact: true })
     .click()
   await expect(dialog.locator('.preparation-heading')).toContainText(
-    'Packing February 2027'
+    'Packing January 2027'
   )
   await expect(
     dialog
       .locator('.preparation-group')
       .first()
       .getByLabel('Product code', { exact: true })
-  ).toHaveValue(/^CE2702\d{4}$/)
+  ).toHaveValue(/^CE2701\d{4}$/)
   await browser.detach()
 })
 
@@ -371,7 +370,7 @@ test('preparation shows product photos, zooms originals and opens saved labels f
       revoke(url)
     }
   })
-  const dialog = await prepare(page, { save: false })
+  const dialog = await prepare(page)
   const group = dialog.locator('.preparation-group').first()
   const photoButton = group.getByRole('button', {
     name: `Zoom product photo ${record.snapshot.items[0].entryId}`,
@@ -381,9 +380,6 @@ test('preparation shows product photos, zooms originals and opens saved labels f
   await expect(photoButton.getByAltText('Product photo')).toBeVisible()
   const thumbnail = await photoButton.locator('img').getAttribute('src')
   expect(thumbnail).toMatch(/^blob:/)
-  await expect(
-    group.getByRole('button', { name: 'Edit carton mark', exact: true })
-  ).toContainText('Save preparation to assign a code')
   await photoButton.click()
   const photo = page.getByRole('dialog', { name: 'Product photo', exact: true })
   const original = photo.locator('.photo-viewport img')
@@ -416,18 +412,9 @@ test('preparation shows product photos, zooms originals and opens saved labels f
   await page.mouse.click(Math.max(2, box.x - 5), Math.max(2, box.y + 10))
   await expect(photo).not.toBeVisible()
   await expect(dialog).toBeVisible()
-  await dialog
-    .getByRole('button', { name: 'Save preparation', exact: true })
-    .click()
   const code = group.getByLabel('Product code', { exact: true })
   await expect(code).toHaveValue(/^CE2610\d{4}$/)
   const baseCode = await code.inputValue()
-  expect(
-    await page.evaluate(
-      (url) => window.revokedPreparationImages.includes(url),
-      thumbnail
-    )
-  ).toBe(true)
 
   const barcode = group
     .locator('.variants tbody tr')
@@ -528,14 +515,21 @@ test('preparation shows product photos, zooms originals and opens saved labels f
       )
     )
     .toBe(true)
+  expect(
+    await page.evaluate(
+      (url) => window.revokedPreparationImages.includes(url),
+      thumbnail
+    )
+  ).toBe(true)
   expect(extension.unexpectedRequests).toEqual([])
 })
 
-test('advanced tools start collapsed and keyboard help explains sizes and grouping without changing data', async ({
+test('advanced tools stay collapsed and field hints explain codes without extra buttons or editable size notes', async ({
   extension,
 }) => {
   const { page } = await openWorkspace(extension)
-  const dialog = await prepare(page, { save: false })
+  const dialog = await prepare(page)
+  const original = await packingBackup(extension)
   const groups = dialog.locator('.preparation-group')
   const first = groups.first()
   const variant = first.locator('.variants tbody tr').first()
@@ -552,46 +546,43 @@ test('advanced tools start collapsed and keyboard help explains sizes and groupi
   await expect(
     first.getByRole('button', { name: 'Share one barcode', exact: true })
   ).not.toBeVisible()
+  await expect(dialog.getByRole('button', { name: /^Help:/ })).toHaveCount(0)
   await expect(
     variant.getByLabel('Size on order', { exact: true })
-  ).toHaveValue('300ml')
+  ).toHaveCount(0)
+  await expect(variant.locator('.source-size')).toHaveText('Order size: 300ml')
+  await expect(
+    variant.getByLabel('Product variant', { exact: true })
+  ).toHaveValue('颜色: 透明')
   await openDetails(variant.locator('.variant-code-options'))
   await expect(
     variant.getByRole('textbox', { name: /^Size code / })
   ).toHaveValue('S')
-  const codeHelp = variant.getByRole('button', {
-    name: 'Help: Variant and size codes',
-    exact: true,
-  })
+  const codeHelp = variant.getByRole('textbox', { name: /^Size code / })
   await codeHelp.focus()
-  await codeHelp.press('Enter')
-  const codePanel = codeHelp.locator('..').locator('.preparation-help-popover')
+  const codePanel = dialog.getByRole('tooltip')
   await expect(codePanel).toBeVisible()
-  await expect(codePanel).toContainText(
-    'The option and size describe the product'
+  await expect(codePanel).toHaveText(
+    'Added to the barcode: S for small, L for large. Leave blank if not needed.'
   )
-  await expect(codePanel).toContainText('product code + A + S')
   await page.keyboard.press('Escape')
   await expect(codePanel).not.toBeVisible()
   await expect(dialog).toBeVisible()
 
   await openDetails(first.locator('.group-tools'))
   const splitHelp = first.getByRole('button', {
-    name: 'Help: Give rows separate barcodes',
+    name: 'Give rows separate barcodes',
     exact: true,
   })
-  await splitHelp.click()
-  const splitPanel = splitHelp
-    .locator('..')
-    .locator('.preparation-help-popover')
-  await expect(splitPanel).toContainText('several original order rows')
-  await expect(splitPanel).toContainText(
-    'product code and carton mark stay shared'
-  )
-  await splitPanel.getByRole('button', { name: 'Close', exact: true }).click()
+  await splitHelp.hover()
+  const splitPanel = dialog.getByRole('tooltip')
+  await expect(splitPanel).toContainText('barcode')
+  await expect(splitPanel.getByRole('button')).toHaveCount(0)
+  await page.keyboard.press('Escape')
   await expect(splitPanel).not.toBeVisible()
   await expect(first.locator('.variants tbody tr')).toHaveCount(2)
 
+  await pauseAutosave(page)
   await openDetails(dialog.locator('.order-tools'))
   await dialog
     .getByLabel('Chinese category for this order', { exact: true })
@@ -614,8 +605,8 @@ test('advanced tools start collapsed and keyboard help explains sizes and groupi
     groups.nth(1).getByLabel('Chinese category', { exact: true })
   ).toHaveValue('日用品')
   const backup = await packingBackup(extension)
-  expect(backup.preparations).toEqual([])
-  expect(backup.issuedCodes).toEqual([])
+  expect(backup.preparations).toEqual(original.preparations)
+  expect(backup.issuedCodes).toEqual(original.issuedCodes)
   await page.setViewportSize({ width: 390, height: 844 })
   expect(
     await dialog.evaluate((node) => node.scrollWidth <= node.clientWidth + 1)
@@ -628,12 +619,13 @@ test('advanced tools start collapsed and keyboard help explains sizes and groupi
   expect(extension.unexpectedRequests).toEqual([])
 })
 
-test('undo and redo restore unsaved typing and grouping while save clears that order history', async ({
+test('undo and redo restore pending typing and grouping while autosave clears that order history', async ({
   extension,
 }) => {
   const { page, record } = await openWorkspace(extension)
   const dialog = await prepare(page)
   const original = await packingBackup(extension)
+  await pauseAutosave(page)
   const first = dialog.locator('.preparation-group').first()
   const name = first.getByLabel('Spanish short name', { exact: true })
   const undo = dialog.getByRole('button', { name: 'Undo', exact: true })
@@ -665,6 +657,7 @@ test('undo and redo restore unsaved typing and grouping while save clears that o
   expect(unsaved.issuedCodes).toEqual(original.issuedCodes)
   expect(unsaved.allocations).toEqual(original.allocations)
   expect(unsaved.orders[0].snapshot).toEqual(record.snapshot)
+  await page.clock.runFor(801)
   const saved = await savePreparationAndRead(extension, dialog)
   await expect(undo).toBeDisabled()
   await expect(redo).toBeDisabled()
@@ -678,10 +671,10 @@ test('undo and redo restore unsaved typing and grouping while save clears that o
   expect(saved.orders[0].snapshot).toEqual(record.snapshot)
   const base = first.getByLabel('Product code', { exact: true })
   await base.fill('INVALID')
-  await dialog
-    .getByRole('button', { name: 'Save preparation', exact: true })
-    .click()
-  await expect(dialog.getByRole('alert')).toBeVisible()
+  await page.clock.runFor(801)
+  await expect(dialog.locator('.preparation-save-status')).toContainText(
+    'Not saved'
+  )
   await expect(base).toHaveValue('INVALID')
   await expect(undo).toBeEnabled()
   expect((await packingBackup(extension)).preparations).toEqual(
@@ -692,15 +685,19 @@ test('undo and redo restore unsaved typing and grouping while save clears that o
   expect(extension.unexpectedRequests).toEqual([])
 })
 
-test('undo follows edits across order switches and saving one order keeps the other draft history', async ({
+test('undo follows pending edits across orders and autosave never prepares an unopened order', async ({
   extension,
 }) => {
   await seedStructuredOrder(extension)
   await seedStructuredOrder(extension, '900000000000000004')
+  await seedStructuredOrder(extension, '900000000000000005')
   const page = await extension.context.newPage()
   await page.goto(`${extension.extensionBaseUrl}/library.html`)
-  await expect(page.locator('#sheet-body tr')).toHaveCount(6)
-  const dialog = await prepare(page, { save: false })
+  await expect(page.locator('#sheet-body tr')).toHaveCount(9)
+  const dialog = await prepare(page)
+  const original = await packingBackup(extension)
+  expect(original.preparations).toHaveLength(1)
+  await pauseAutosave(page)
   const order = dialog.getByLabel('Preparation order', { exact: true })
   const name = dialog
     .locator('.preparation-group')
@@ -708,7 +705,7 @@ test('undo follows edits across order switches and saving one order keeps the ot
     .getByLabel('Spanish short name', { exact: true })
   const undo = dialog.getByRole('button', { name: 'Undo', exact: true })
   const redo = dialog.getByRole('button', { name: 'Redo', exact: true })
-  await expect(order.locator('option')).toHaveCount(2)
+  await expect(order.locator('option')).toHaveCount(3)
   await name.fill('PRIMER BORRADOR')
   await order.selectOption('1')
   await name.fill('SEGUNDO BORRADOR')
@@ -726,27 +723,16 @@ test('undo follows edits across order switches and saving one order keeps the ot
   await expect(order).toHaveValue('1')
   await expect(name).toHaveValue('SEGUNDO BORRADOR')
   const unsaved = await packingBackup(extension)
-  expect(unsaved.preparations).toEqual([])
-  expect(unsaved.issuedCodes).toEqual([])
-  await dialog
-    .getByRole('button', { name: 'Save preparation', exact: true })
-    .click()
+  expect(unsaved.preparations).toEqual(original.preparations)
+  expect(unsaved.issuedCodes).toEqual(original.issuedCodes)
+  await page.clock.runFor(801)
+  await waitForAutosave(dialog)
   await expect(
     dialog
       .locator('.preparation-group')
       .first()
       .getByLabel('Product code', { exact: true })
   ).toHaveValue(/^CE2610\d{4}$/)
-  await expect(undo).toBeEnabled()
-  await expect(redo).toBeDisabled()
-  await undo.click()
-  await expect(order).toHaveValue('0')
-  await expect(name).toHaveValue('FRASCO DE VIDRIO')
-  await redo.click()
-  await expect(name).toHaveValue('PRIMER BORRADOR')
-  await dialog
-    .getByRole('button', { name: 'Save preparation', exact: true })
-    .click()
   await expect(undo).toBeDisabled()
   await expect(redo).toBeDisabled()
   const saved = await packingBackup(extension)
@@ -766,7 +752,7 @@ test('undo follows edits across order switches and saving one order keeps the ot
   expect(extension.unexpectedRequests).toEqual([])
 })
 
-test('pending preparation save disables editing and undo until its durable transaction completes', async ({
+test('autosave preserves focus and newer typing while an earlier database write completes', async ({
   extension,
 }) => {
   const { page } = await openWorkspace(extension)
@@ -779,12 +765,6 @@ test('pending preparation save disables editing and undo until its durable trans
   const undo = dialog.getByRole('button', { name: 'Undo', exact: true })
   const redo = dialog.getByRole('button', { name: 'Redo', exact: true })
   const order = dialog.getByLabel('Preparation order', { exact: true })
-  const save = dialog.getByRole('button', {
-    name: 'Save preparation',
-    exact: true,
-  })
-  await name.fill('GUARDADO SEGURO')
-  await expect(undo).toBeEnabled()
   await page.evaluate(() => {
     // Keep the real write transaction pending, emulating a slow local database.
     // No repository method, saved data or UI handler is replaced.
@@ -809,33 +789,214 @@ test('pending preparation save disables editing and undo until its durable trans
       return result
     }
   })
-  await save.click()
+  await name.fill('GUARDADO SEGURO')
+  const originalInput = await name.elementHandle()
   await expect
     .poll(() => page.evaluate(() => window.preparationSaveStarted))
     .toBe(true)
-  await expect(save).toBeDisabled()
-  await expect(undo).toBeDisabled()
-  await expect(redo).toBeDisabled()
-  await expect(name).toBeDisabled()
-  await expect(order).toBeDisabled()
-  await expect(dialog.locator('.variant-select').first()).toBeDisabled()
-  await page.keyboard.type('SHOULD NOT EDIT')
-  await expect(name).toHaveValue('GUARDADO SEGURO')
+  await expect(dialog.locator('.preparation-save-status')).toHaveText('Saving…')
+  await expect(name).toBeEnabled()
+  await expect(name).toBeFocused()
+  await page.keyboard.type(' ACTUALIZADO')
+  await expect(name).toHaveValue('GUARDADO SEGURO ACTUALIZADO')
   await page.evaluate(() => {
     window.holdPreparationSave = false
   })
-  await expect(save).toBeEnabled()
+  await waitForAutosave(dialog)
   await expect(name).toBeEnabled()
   await expect(order).toBeEnabled()
   await expect(undo).toBeDisabled()
   await expect(redo).toBeDisabled()
-  await expect(name).toHaveValue('GUARDADO SEGURO')
+  await expect(name).toHaveValue('GUARDADO SEGURO ACTUALIZADO')
+  await expect(name).toBeFocused()
+  expect(await originalInput.evaluate((input) => input.isConnected)).toBe(true)
+  await originalInput.dispose()
   const saved = await packingBackup(extension)
   expect(saved.preparations[0].revision).toBe(
-    original.preparations[0].revision + 1
+    original.preparations[0].revision + 2
   )
-  expect(saved.preparations[0].groups[0].spanishName).toBe('GUARDADO SEGURO')
+  expect(saved.preparations[0].groups[0].spanishName).toBe(
+    'GUARDADO SEGURO ACTUALIZADO'
+  )
   expect(saved.issuedCodes).toEqual(original.issuedCodes)
+  expect(saved.orders).toEqual(original.orders)
+  expect(extension.unexpectedRequests).toEqual([])
+})
+
+for (const closeMethod of ['close button', 'dark background', 'Escape']) {
+  test(`preparation ${closeMethod} preserves invalid edits and saves valid edits before closing`, async ({
+    extension,
+  }) => {
+    const { page } = await openWorkspace(extension)
+    const dialog = await prepare(page)
+    const original = await packingBackup(extension)
+    await pauseAutosave(page)
+    const first = dialog.locator('.preparation-group').first()
+    const code = first.getByLabel('Product code', { exact: true })
+    const name = first.getByLabel('Spanish short name', { exact: true })
+    async function close() {
+      // Dismiss field help first so Escape exercises the dialog itself.
+      await dialog
+        .getByRole('heading', {
+          name: 'Prepare products & labels',
+          exact: true,
+        })
+        .click()
+      await page.clock.runFor(151)
+      if (closeMethod === 'close button')
+        await dialog
+          .getByRole('button', { name: 'Close preparation', exact: true })
+          .click()
+      else if (closeMethod === 'dark background') {
+        const bounds = await dialog.boundingBox()
+        await page.mouse.click(
+          Math.max(2, bounds.x - 5),
+          Math.max(2, bounds.y + 10)
+        )
+      } else await page.keyboard.press('Escape')
+    }
+    await name.fill('NOMBRE CONSERVADO')
+    await code.fill('INVALID')
+    await close()
+    await expect(dialog).toBeVisible()
+    await expect(dialog.locator('.preparation-save-status')).toContainText(
+      'Not saved'
+    )
+    await expect(name).toHaveValue('NOMBRE CONSERVADO')
+    await expect(code).toHaveValue('INVALID')
+    expect((await packingBackup(extension)).preparations).toEqual(
+      original.preparations
+    )
+    await code.fill(original.preparations[0].groups[0].baseCode)
+    await close()
+    await expect(dialog).not.toBeVisible()
+    const saved = await packingBackup(extension)
+    expect(saved.preparations[0].groups[0].spanishName).toBe(
+      'NOMBRE CONSERVADO'
+    )
+    expect(saved.issuedCodes).toEqual(original.issuedCodes)
+    expect(saved.orders).toEqual(original.orders)
+    await page
+      .getByRole('button', { name: 'Edit preparation', exact: true })
+      .click()
+    await expect(name).toHaveValue('NOMBRE CONSERVADO')
+    expect(extension.unexpectedRequests).toEqual([])
+  })
+}
+
+test('a conflicting autosave preserves the draft until saved-version recovery is confirmed', async ({
+  extension,
+}) => {
+  const { page } = await openWorkspace(extension)
+  const dialog = await prepare(page)
+  const original = await packingBackup(extension)
+  await pauseAutosave(page)
+  const name = dialog
+    .locator('.preparation-group')
+    .first()
+    .getByLabel('Spanish short name', { exact: true })
+  await name.fill('BORRADOR LOCAL')
+  const otherPage = await extension.context.newPage()
+  await otherPage.goto(`${extension.extensionBaseUrl}/library.html`)
+  await otherPage
+    .getByRole('button', { name: 'Edit preparation', exact: true })
+    .click()
+  const otherDialog = otherPage.getByRole('dialog', {
+    name: 'Preparation',
+    exact: true,
+  })
+  await otherDialog
+    .locator('.preparation-group')
+    .first()
+    .getByLabel('Spanish short name', { exact: true })
+    .fill('GUARDADO EN OTRA PESTANA')
+  // The context clock also applies to new tabs. Closing flushes the second
+  // tab's real write while the first tab retains its pending local draft.
+  await otherDialog
+    .getByRole('button', { name: 'Close preparation', exact: true })
+    .click()
+  await expect(otherDialog).not.toBeVisible()
+  await page.clock.runFor(801)
+  await expect(dialog.locator('.preparation-save-status')).toContainText(
+    'Not saved'
+  )
+  await expect(name).toHaveValue('BORRADOR LOCAL')
+  await dialog
+    .getByRole('button', { name: 'Reload saved version', exact: true })
+    .click()
+  const confirmation = page.getByRole('dialog', {
+    name: 'Confirm operation',
+    exact: true,
+  })
+  await expect(confirmation).toContainText('unsaved')
+  await confirmation
+    .getByRole('button', { name: 'Cancel', exact: true })
+    .click()
+  await expect(name).toHaveValue('BORRADOR LOCAL')
+  await expect(dialog.locator('.preparation-save-status')).toContainText(
+    'Not saved'
+  )
+  await dialog
+    .getByRole('button', { name: 'Reload saved version', exact: true })
+    .click()
+  await confirmation
+    .getByRole('button', { name: 'Reload 1 preparation', exact: true })
+    .click()
+  await expect(name).toHaveValue('GUARDADO EN OTRA PESTANA')
+  await waitForAutosave(dialog)
+  await expect(
+    dialog.getByRole('button', { name: 'Undo', exact: true })
+  ).toBeDisabled()
+  await name.fill('CONTINUAR EDITANDO')
+  await page.clock.runFor(801)
+  await waitForAutosave(dialog)
+  const saved = await packingBackup(extension)
+  expect(saved.preparations[0].groups[0].spanishName).toBe('CONTINUAR EDITANDO')
+  expect(saved.issuedCodes).toEqual(original.issuedCodes)
+  expect(saved.orders).toEqual(original.orders)
+  expect(extension.unexpectedRequests).toEqual([])
+})
+
+test('one invalid order does not prevent another edited order from saving automatically', async ({
+  extension,
+}) => {
+  await seedStructuredOrder(extension)
+  await seedStructuredOrder(extension, '900000000000000004')
+  const page = await extension.context.newPage()
+  await page.goto(`${extension.extensionBaseUrl}/library.html`)
+  await expect(page.locator('#sheet-body tr')).toHaveCount(6)
+  const dialog = await prepare(page)
+  const original = await packingBackup(extension)
+  await pauseAutosave(page)
+  const order = dialog.getByLabel('Preparation order', { exact: true })
+  const first = dialog.locator('.preparation-group').first()
+  await first.getByLabel('Product code', { exact: true }).fill('INVALID')
+  await order.selectOption('1')
+  await first
+    .getByLabel('Spanish short name', { exact: true })
+    .fill('PEDIDO VALIDO')
+  await page.clock.runFor(801)
+  await waitForAutosave(dialog)
+  const saved = await packingBackup(extension)
+  expect(saved.preparations).toHaveLength(2)
+  expect(
+    saved.preparations.find(
+      (prep) => prep.orderId === original.preparations[0].orderId
+    )
+  ).toEqual(original.preparations[0])
+  expect(
+    saved.preparations.find(
+      (prep) => prep.orderId !== original.preparations[0].orderId
+    ).groups[0].spanishName
+  ).toBe('PEDIDO VALIDO')
+  await order.selectOption('0')
+  await expect(first.getByLabel('Product code', { exact: true })).toHaveValue(
+    'INVALID'
+  )
+  await page.clock.runFor(801)
+  await expect(dialog.locator('.preparation-save-status')).toContainText(
+    'Not saved'
+  )
   expect(saved.orders).toEqual(original.orders)
   expect(extension.unexpectedRequests).toEqual([])
 })
@@ -987,25 +1148,8 @@ async function packingBackup(extension) {
 }
 
 async function savePreparationAndRead(extension, dialog) {
-  const revision = (await packingBackup(extension)).preparations[0].revision
-  const previousButton = await dialog
-    .getByRole('button', { name: 'Save preparation', exact: true })
-    .elementHandle()
-  await dialog
-    .getByRole('button', { name: 'Save preparation', exact: true })
-    .click()
-  let backup
-  await expect
-    .poll(async () => {
-      backup = await packingBackup(extension)
-      return backup.preparations[0].revision
-    })
-    .toBe(revision + 1)
-  await expect
-    .poll(() => previousButton.evaluate((button) => button.isConnected))
-    .toBe(false)
-  await previousButton.dispose()
-  return backup
+  await waitForAutosave(dialog)
+  return packingBackup(extension)
 }
 
 test('combining, separating, splitting and merging preserve source rows and saved code ownership', async ({
@@ -1124,9 +1268,6 @@ test('combining, separating, splitting and merging preserve source rows and save
     .getByRole('button', { name: 'Move to new product', exact: true })
     .click()
   await expect(groups).toHaveCount(3)
-  await expect(
-    groups.nth(2).getByLabel('Product code', { exact: true })
-  ).toHaveValue('')
   backup = await savePreparationAndRead(extension, dialog)
   const splitCode = backup.preparations[0].groups[2].baseCode
   expect(splitCode).toMatch(/^CE2610\d{4}$/)
@@ -1192,7 +1333,7 @@ async function observeLabelOutput(page, extension) {
   })
 }
 
-test('dirty preparation blocks both bulk label actions before rendering or copying saved text', async ({
+test('invalid preparation blocks batch labels and a corrected pending edit saves before confirmation', async ({
   extension,
 }) => {
   const { page } = await openWorkspace(extension, { previews: false })
@@ -1204,10 +1345,16 @@ test('dirty preparation blocks both bulk label actions before rendering or copyi
     .first()
     .getByLabel('Spanish short name', { exact: true })
     .fill('nombre pendiente')
+  const base = dialog
+    .locator('.preparation-group')
+    .first()
+    .getByLabel('Product code', { exact: true })
+  await base.fill('INVALID')
   for (const name of ['Copy barcode images', 'Copy carton marks']) {
     await dialog.getByRole('button', { name, exact: true }).click()
-    await expect(dialog.getByRole('alert')).toHaveText(
-      'Save each edited preparation before copying its label images.'
+    await expect(dialog.getByRole('alert')).toContainText('Base code')
+    await expect(dialog.locator('.preparation-save-status')).toContainText(
+      'Not saved'
     )
     await expect(
       page.getByRole('dialog', { name: 'Confirm operation', exact: true })
@@ -1227,8 +1374,7 @@ test('dirty preparation blocks both bulk label actions before rendering or copyi
     'Synthetic label cancellation sentinel'
   )
 
-  const saved = await savePreparationAndRead(extension, dialog)
-  expect(saved.preparations[0].groups[0].spanishName).toBe('NOMBRE PENDIENTE')
+  await base.fill(original.preparations[0].groups[0].baseCode)
   await dialog
     .getByRole('button', { name: 'Copy barcode images', exact: true })
     .click()
@@ -1242,6 +1388,8 @@ test('dirty preparation blocks both bulk label actions before rendering or copyi
       exact: true,
     })
   ).toBeVisible()
+  const saved = await packingBackup(extension)
+  expect(saved.preparations[0].groups[0].spanishName).toBe('NOMBRE PENDIENTE')
   await confirmation
     .getByRole('button', { name: 'Cancel', exact: true })
     .click()

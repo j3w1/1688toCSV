@@ -6,6 +6,7 @@ import {
 import { DEFAULT_LABEL_SETTINGS, renderLabel } from './labels.js'
 import { mountLabelEditor } from './label-editor.js'
 import { createPreparationHistory } from './preparation-history.js'
+import { acknowledgePreparation } from './preparation-save.js'
 import { createPreparationMedia, preparationHelp } from './preparation-media.js'
 import { element as el, confirmScope, copied, yieldUI } from './ui.js'
 import {
@@ -75,7 +76,7 @@ function showError(message) {
       : $('settings-dialog').open
         ? $('settings-content')
         : $('feedback')
-  let error = target.querySelector('.packing-error')
+  let error = target.querySelector('p.packing-error')
   if (!error) {
     error = el('p', undefined, 'packing-error')
     error.setAttribute('role', 'alert')
@@ -124,12 +125,82 @@ export async function startPackingWorkspace({
   let undoButton,
     redoButton,
     preparationBusy = false
+  let saveTimer, saveWork, saveStatus, reloadPreparationButton
+  const pendingSaves = new Set(),
+    saveErrors = new Map(),
+    codeFields = new Map()
+  function updateSaveStatus() {
+    if (!saveStatus) return
+    const id = drafts[current]?.orderId
+    const error = saveErrors.get(id)
+    saveStatus.textContent = error
+      ? `Not saved — ${error} Your edits are still here.`
+      : pendingSaves.has(id) || saveWork
+        ? 'Saving…'
+        : preparations.has(id)
+          ? 'Saved automatically'
+          : 'Changes save automatically'
+    saveStatus.classList.toggle('packing-error', Boolean(error))
+    if (reloadPreparationButton) {
+      reloadPreparationButton.hidden = !error
+      reloadPreparationButton.textContent = preparations.has(id)
+        ? 'Reload saved version'
+        : 'Discard pending edits'
+    }
+  }
+  function scheduleSave(draft = drafts[current]) {
+    if (!draft) return
+    pendingSaves.add(draft.orderId)
+    saveErrors.delete(draft.orderId)
+    clearTimeout(saveTimer)
+    saveTimer = setTimeout(() => {
+      if (preparationBusy) scheduleSave(draft)
+      else void flushSaves().catch(() => {}) // The inline status retains the error.
+    }, 800)
+    updateSaveStatus()
+  }
+  async function flushSaves() {
+    clearTimeout(saveTimer)
+    while (saveWork) await saveWork
+    if (!pendingSaves.size) return
+    saveWork = (async () => {
+      // Let saveWork be assigned before the first write starts.
+      await Promise.resolve()
+      const failed = new Set()
+      let firstError
+      while (pendingSaves.size) {
+        const id = [...pendingSaves].find((entry) => !failed.has(entry))
+        if (!id) break
+        pendingSaves.delete(id)
+        const index = drafts.findIndex((draft) => draft.orderId === id)
+        if (index < 0) continue
+        try {
+          await saveDraft(index)
+          saveErrors.delete(id)
+        } catch (error) {
+          pendingSaves.add(id)
+          saveErrors.set(id, error.message)
+          failed.add(id)
+          firstError ||= error
+        }
+      }
+      if (firstError) throw firstError
+    })()
+    updateSaveStatus()
+    try {
+      await saveWork
+    } finally {
+      saveWork = null
+      updateSaveStatus()
+    }
+  }
   async function preparationAction(action) {
     if (preparationBusy) return
     preparationBusy = true
     $('preparation-content').disabled = true
     let focusId
     try {
+      if (saveWork) await saveWork
       return await action()
     } catch (error) {
       focusId = error.focusId
@@ -172,7 +243,8 @@ export async function startPackingWorkspace({
     const next = JSON.stringify(draft),
       before = checkpoints.get(draft.orderId)
     if (before !== undefined)
-      history.record(draft.orderId, before, next, mergeKey)
+      if (history.record(draft.orderId, before, next, mergeKey))
+        scheduleSave(draft)
     checkpoints.set(draft.orderId, next)
     updateHistoryButtons()
   }
@@ -182,6 +254,7 @@ export async function startPackingWorkspace({
     current = drafts.findIndex((draft) => draft.orderId === result.orderId)
     drafts[current] = result.value
     checkpoints.set(result.orderId, JSON.stringify(result.value))
+    scheduleSave(result.value)
     groupPage = 0
     renderPreparation()
   }
@@ -196,6 +269,37 @@ export async function startPackingWorkspace({
     history.breakGroup()
   )
   $('preparation-dialog').addEventListener('close', () => media.reset())
+  $('preparation-dialog').addEventListener('cancel', (event) => {
+    if (!pendingSaves.size && !saveWork && !preparationBusy) return
+    event.preventDefault()
+    if (preparationBusy) return
+    void preparationAction(async () => {
+      await flushSaves()
+      $('preparation-dialog').close()
+    }).catch(() => {
+      const failed = drafts.findIndex((draft) => saveErrors.has(draft.orderId))
+      if (failed >= 0 && failed !== current) {
+        current = failed
+        renderPreparation()
+      }
+      updateSaveStatus()
+    })
+  })
+  // Dialog forms otherwise bypass cancel and could destroy a pending label edit.
+  for (const id of ['preparation-dialog', 'label-dialog']) {
+    const modal = $(id)
+    modal.querySelector('form').addEventListener('submit', (event) => {
+      event.preventDefault()
+      if (typeof modal.requestClose === 'function') modal.requestClose()
+      else if (modal.dispatchEvent(new Event('cancel', { cancelable: true })))
+        modal.close()
+    })
+  }
+  addEventListener('beforeunload', (event) => {
+    if (!pendingSaves.size && !saveWork) return
+    event.preventDefault()
+    event.returnValue = ''
+  })
   async function reload() {
     preparations = new Map(
       (await repository.listPreparations()).map((item) => [item.orderId, item])
@@ -239,7 +343,20 @@ export async function startPackingWorkspace({
     const result = await repository.savePreparation(draft, {
       expectedRevision: draft.revision,
     })
-    await reload()
+    const previous = preparations.get(result.orderId)
+    for (const group of previous?.groups || [])
+      for (const variant of group.variants)
+        for (const entryId of variant.entryIds)
+          membership.delete(`${result.orderId}/${entryId}`)
+    preparations.set(result.orderId, result)
+    for (const group of result.groups)
+      for (const variant of group.variants)
+        for (const entryId of variant.entryIds)
+          membership.set(`${result.orderId}/${entryId}`, {
+            prep: result,
+            group,
+            variant,
+          })
     changed()
     channel?.postMessage('changed')
     return result
@@ -352,6 +469,7 @@ export async function startPackingWorkspace({
       throw new Error(
         'Wait for preparation to finish saving before reopening it.'
       )
+    await flushSaves()
     const records = selectedRecords()
     if (!records.length)
       throw new Error('Select orders or products to prepare.')
@@ -374,26 +492,61 @@ export async function startPackingWorkspace({
     checkpoints.clear()
     renderPreparation()
     dialog($('preparation-dialog'))
+    if (
+      drafts[current].sellerId &&
+      JSON.stringify(drafts[current]) !==
+        JSON.stringify(preparations.get(drafts[current].orderId))
+    )
+      scheduleSave()
   }
   async function saveDraft(index) {
     if (!drafts[index].sellerId.trim()) {
-      current = index
-      renderPreparation()
       throw Object.assign(
-        new Error(
-          'Enter the seller member login before saving preparation or assigning label codes.'
-        ),
+        new Error('Enter the seller member login to assign label codes.'),
         { focusId: 'preparation-seller' }
       )
     }
-    drafts[index] = await saved(drafts[index])
-    checkpoints.set(drafts[index].orderId, JSON.stringify(drafts[index]))
-    history.clear(drafts[index].orderId)
-    return drafts[index]
+    const draft = drafts[index]
+    if (
+      JSON.stringify(draft) === JSON.stringify(preparations.get(draft.orderId))
+    ) {
+      history.clear(draft.orderId)
+      updateHistoryButtons()
+      return draft
+    }
+    const previous = preparations.get(draft.orderId)
+    if (
+      draft.groups.some(
+        (group) =>
+          !group.baseCode &&
+          previous?.groups.some((old) => old.id === group.id && old.baseCode)
+      )
+    )
+      throw new Error(
+        'Enter a complete product code. Clearing an assigned code cannot create a new one.'
+      )
+    const submitted = structuredClone(draft)
+    const result = await saved(submitted)
+    acknowledgePreparation(draft, submitted, result)
+    const next = JSON.stringify(draft)
+    history.clear(draft.orderId)
+    history.record(draft.orderId, JSON.stringify(result), next)
+    checkpoints.set(draft.orderId, next)
+    if (index === current) {
+      for (const group of draft.groups) {
+        const input = codeFields.get(group.id)
+        if (input && input !== document.activeElement)
+          input.value = group.baseCode
+      }
+      updateHistoryButtons()
+      media.refresh()
+    }
+    return draft
   }
   function renderPreparation() {
     checkpoint()
     media.reset()
+    codeFields.clear()
     const host = $('preparation-content'),
       draft = drafts[current]
     host.replaceChildren(el('h2', 'Prepare products & labels'))
@@ -415,6 +568,13 @@ export async function startPackingWorkspace({
       current = Number(select.value)
       groupPage = 0
       renderPreparation()
+      if (
+        drafts[current].sellerId &&
+        !pendingSaves.has(drafts[current].orderId) &&
+        JSON.stringify(drafts[current]) !==
+          JSON.stringify(preparations.get(drafts[current].orderId))
+      )
+        scheduleSave()
     }
     heading.append(
       select,
@@ -428,7 +588,7 @@ export async function startPackingWorkspace({
       heading,
       el(
         'p',
-        'Check the photos, name each product, then save. Click a label preview to edit or copy it.',
+        'Changes save automatically. Click a photo to zoom or a label to edit and copy.',
         'packing-help'
       )
     )
@@ -474,87 +634,86 @@ export async function startPackingWorkspace({
       renderPreparation()
     })
     orderTools.append(
-      orderCategory,
-      applyCategory,
       preparationHelp(
-        'Order category',
-        'Use one Chinese carton category for every product in this order, for example 玻璃 for glass. Applying replaces the categories in this form; Undo restores them.'
+        orderCategory,
+        'One Chinese name for all carton marks in this order. For example, 玻璃 means glass.'
+      ),
+      preparationHelp(
+        applyCategory,
+        'Replace the Chinese category for every product in this order.'
       )
     )
     const actions = el('div', undefined, 'dialog-actions preparation-actions')
     undoButton = prepButton('Undo', () => travel('undo'))
     redoButton = prepButton('Redo', () => travel('redo'))
+    saveStatus = el('span', '', 'preparation-save-status')
+    saveStatus.setAttribute('role', 'status')
+    reloadPreparationButton = prepButton('Reload saved version', async () => {
+      const hasSavedVersion = preparations.has(draft.orderId)
+      if (
+        !(await confirmScope({
+          action: hasSavedVersion ? 'Reload' : 'Discard',
+          count: 1,
+          unit: 'preparation',
+          detail:
+            'This replaces unsaved edits for this order with the latest saved version, or the original product suggestions if none exists. Cancel keeps your edits here.',
+        }))
+      )
+        return
+      await reload()
+      const latest =
+        preparations.get(draft.orderId) ||
+        createPreparation(source, draft.month, preferences.vocabulary)
+      drafts[current] = structuredClone(latest)
+      pendingSaves.delete(draft.orderId)
+      saveErrors.delete(draft.orderId)
+      history.clear(draft.orderId)
+      checkpoints.set(draft.orderId, JSON.stringify(latest))
+      renderPreparation()
+    })
     actions.append(
-      undoButton,
-      redoButton,
       preparationHelp(
-        'Undo and redo',
-        'Undo or redo unsaved text and grouping changes. Saving clears the history for that order. Previously issued product codes remain reserved.'
-      )
+        undoButton,
+        'Undo edits that have not yet been saved. Autosave clears this history.'
+      ),
+      preparationHelp(redoButton, 'Restore an undone edit before autosave.'),
+      saveStatus,
+      reloadPreparationButton
     )
-    actions.append(
-      prepButton(
-        'Save preparation',
-        async () => {
-          await saveDraft(current)
-          renderPreparation()
-        },
-        'primary'
-      )
-    )
-    if (drafts.length > 1)
-      orderTools.append(
-        prepButton(`Save all ${drafts.length} preparations`, async () => {
-          if (
-            !(await confirmScope({
-              action: 'Prepare',
-              count: drafts.length,
-              detail:
-                'Product groups will receive permanent codes. Existing codes stay unchanged.',
-            }))
-          )
-            return
-          for (let i = 0; i < drafts.length; i++) {
-            await saveDraft(i)
-            await yieldUI()
-          }
-          renderPreparation()
-        })
-      )
+    updateSaveStatus()
     orderTools.append(
-      prepButton('Merge products', async () => {
-        const ids = [...host.querySelectorAll('.group-select:checked')].map(
-          (check) => check.value
-        )
-        if (ids.length < 2)
-          throw new Error('Select at least two product groups to merge.')
-        const target = draft.groups.find((g) => g.id === ids[0]),
-          used = new Set(
-            target.variants.map((v) => v.variantSuffix + v.sizeSuffix)
-          )
-        if (target.baseCode)
-          for (const code of await repository.getReservedBarcodes(
-            target.baseCode,
-            { accountId: draft.accountId }
-          ))
-            used.add(code.slice(target.baseCode.length))
-        for (const group of draft.groups.filter(
-          (g) => ids.includes(g.id) && g !== target
-        ))
-          for (const variant of group.variants) {
-            if (used.has(variant.variantSuffix + variant.sizeSuffix))
-              variant.variantSuffix = unusedSuffix(used, variant.sizeSuffix)
-            used.add(variant.variantSuffix + variant.sizeSuffix)
-            target.variants.push(variant)
-          }
-        draft.groups = draft.groups.filter(
-          (g) => !ids.includes(g.id) || g === target
-        )
-        renderPreparation()
-      }),
       preparationHelp(
-        'Merge products',
-        'Select product groups to give them one shared product code and carton mark. Each option keeps a distinct barcode. The first selected product is kept; any retired codes stay reserved.'
+        prepButton('Merge products', async () => {
+          const ids = [...host.querySelectorAll('.group-select:checked')].map(
+            (check) => check.value
+          )
+          if (ids.length < 2)
+            throw new Error('Select at least two product groups to merge.')
+          const target = draft.groups.find((g) => g.id === ids[0]),
+            used = new Set(
+              target.variants.map((v) => v.variantSuffix + v.sizeSuffix)
+            )
+          if (target.baseCode)
+            for (const code of await repository.getReservedBarcodes(
+              target.baseCode,
+              { accountId: draft.accountId }
+            ))
+              used.add(code.slice(target.baseCode.length))
+          for (const group of draft.groups.filter(
+            (g) => ids.includes(g.id) && g !== target
+          ))
+            for (const variant of group.variants) {
+              if (used.has(variant.variantSuffix + variant.sizeSuffix))
+                variant.variantSuffix = unusedSuffix(used, variant.sizeSuffix)
+              used.add(variant.variantSuffix + variant.sizeSuffix)
+              target.variants.push(variant)
+            }
+          draft.groups = draft.groups.filter(
+            (g) => !ids.includes(g.id) || g === target
+          )
+          renderPreparation()
+        }),
+        'Give selected products one product code and carton mark. Variants keep separate barcodes.'
       )
     )
     host.append(actions, orderTools)
@@ -579,18 +738,33 @@ export async function startPackingWorkspace({
       originalTitle.append(el('p', group.title))
       card.append(title, originalTitle)
       const fields = el('div', undefined, 'group-fields')
-      fields.append(
+      const productCode = preparationHelp(
         field(
           'Product code',
           group.baseCode,
           (v) => (group.baseCode = v.toUpperCase())
         ),
-        field(
-          'Spanish short name',
-          group.spanishName,
-          (v) => (group.spanishName = v.toUpperCase())
+        'Shared by all variants of this product. Printed on its carton mark.'
+      )
+      codeFields.set(group.id, productCode.querySelector('input'))
+      fields.append(
+        productCode,
+        preparationHelp(
+          field(
+            'Spanish short name',
+            group.spanishName,
+            (v) => (group.spanishName = v.toUpperCase())
+          ),
+          'Printed on barcode labels in uppercase.'
         ),
-        field('Chinese category', group.category, (v) => (group.category = v))
+        preparationHelp(
+          field(
+            'Chinese category',
+            group.category,
+            (v) => (group.category = v)
+          ),
+          'Printed on the carton mark, for example 玻璃 for glass.'
+        )
       )
       const overview = el('div', undefined, 'product-overview')
       const carton = el('div', undefined, 'carton-preview')
@@ -611,7 +785,7 @@ export async function startPackingWorkspace({
       const scroll = el('div', undefined, 'variant-scroll'),
         table = el('table', undefined, 'variants'),
         head = el('tr')
-      for (const label of ['', 'Photo', 'Product option', 'Barcode'])
+      for (const label of ['', 'Photo', 'Product variant', 'Barcode'])
         head.append(el('th', label))
       const thead = el('thead')
       thead.append(head)
@@ -696,15 +870,19 @@ export async function startPackingWorkspace({
         }
         const option = el('td', undefined, 'variant-option')
         option.append(
-          field('Option', variant.variant, (value) => {
-            variant.variant = value
-          })
+          preparationHelp(
+            field('Product variant', variant.variant, (value) => {
+              variant.variant = value
+            }),
+            'Describe what differs, such as color or scent. This note is not printed.'
+          )
         )
         if (variant.size)
           option.append(
-            field('Size on order', variant.size, (value) => {
-              variant.size = value
-            })
+            preparationHelp(
+              el('small', `Order size: ${variant.size}`, 'source-size'),
+              'From the order. Helps you choose a size code; this measurement is not printed.'
+            )
           )
         const codeOptions = disclosure('Code options', 'variant-code-options')
         codeOptions.open = Boolean(variant.needsSizeMapping)
@@ -719,20 +897,15 @@ export async function startPackingWorkspace({
           labelField
             .querySelector('input')
             .setAttribute('aria-label', `${label} ${variant.id}`)
-          codeOptions.append(labelField)
-        }
-        if (!variant.size)
           codeOptions.append(
-            field('Size on order', variant.size, (value) => {
-              variant.size = value
-            })
+            preparationHelp(
+              labelField,
+              key === 'variantSuffix'
+                ? 'Added to the product code: A for black, B for pink. Leave blank if not needed.'
+                : 'Added to the barcode: S for small, L for large. Leave blank if not needed.'
+            )
           )
-        codeOptions.append(
-          preparationHelp(
-            'Variant and size codes',
-            'The option and size describe the product, such as black and 300 ml. Variant code A and size code S are the short endings in its barcode: product code + A + S. Keep an ending empty when it is not needed to distinguish products.'
-          )
-        )
+        }
         if (variant.needsSizeMapping)
           codeOptions.append(
             el('small', 'Choose a size code', 'needs-preparation')
@@ -790,88 +963,85 @@ export async function startPackingWorkspace({
       const groupTools = disclosure('Grouping tools', 'group-tools')
       const groupActions = el('div', undefined, 'dialog-actions')
       groupActions.append(
-        prepButton('Share one barcode', () => {
-          const ids = [...card.querySelectorAll('.variant-select:checked')].map(
-            (check) => check.value
-          )
-          if (ids.length < 2)
-            throw new Error(
-              'Select at least two variants that represent the same product option.'
-            )
-          const target = group.variants.find((v) => ids.includes(v.id))
-          for (const variant of group.variants.filter(
-            (v) => ids.includes(v.id) && v !== target
-          ))
-            target.entryIds.push(...variant.entryIds)
-          group.variants = group.variants.filter(
-            (v) => !ids.includes(v.id) || v === target
-          )
-          renderPreparation()
-        }),
         preparationHelp(
-          'Share one barcode',
-          'Select options that are actually the same product. Their original quantities and prices stay separate; they share one barcode.'
-        ),
-        prepButton('Give rows separate barcodes', async () => {
-          const ids = new Set(
-            [...card.querySelectorAll('.variant-select:checked')].map(
-              (check) => check.value
-            )
-          )
-          const selected = group.variants.filter(
-            (v) => ids.has(v.id) && v.entryIds.length > 1
-          )
-          if (!selected.length)
-            throw new Error('Select a variant containing multiple source rows.')
-          const used = new Set(
-            group.variants.map((v) => v.variantSuffix + v.sizeSuffix)
-          )
-          if (group.baseCode)
-            for (const code of await repository.getReservedBarcodes(
-              group.baseCode,
-              { accountId: draft.accountId }
+          prepButton('Share one barcode', () => {
+            const ids = [
+              ...card.querySelectorAll('.variant-select:checked'),
+            ].map((check) => check.value)
+            if (ids.length < 2)
+              throw new Error('Select at least two matching product variants.')
+            const target = group.variants.find((v) => ids.includes(v.id))
+            for (const variant of group.variants.filter(
+              (v) => ids.includes(v.id) && v !== target
             ))
-              used.add(code.slice(group.baseCode.length))
-          for (const variant of selected) {
-            for (const entryId of variant.entryIds.slice(1)) {
-              const suffix = unusedSuffix(used, variant.sizeSuffix)
-              used.add(suffix + variant.sizeSuffix)
-              group.variants.push({
-                ...structuredClone(variant),
-                id: crypto.randomUUID(),
-                entryIds: [entryId],
-                variantSuffix: suffix,
-              })
-            }
-            variant.entryIds = variant.entryIds.slice(0, 1)
-          }
-          renderPreparation()
-        }),
-        preparationHelp(
-          'Give rows separate barcodes',
-          'A combined option may contain several original order rows. Select it to make each row a separate barcode option again. The product code and carton mark stay shared.'
-        ),
-        prepButton('Move to new product', () => {
-          const ids = [...card.querySelectorAll('.variant-select:checked')].map(
-            (check) => check.value
-          )
-          if (!ids.length || ids.length === group.variants.length)
-            throw new Error(
-              'Select some, but not all, variants to split into a new product group.'
+              target.entryIds.push(...variant.entryIds)
+            group.variants = group.variants.filter(
+              (v) => !ids.includes(v.id) || v === target
             )
-          const separated = {
-            ...structuredClone(group),
-            id: crypto.randomUUID(),
-            baseCode: '',
-            variants: group.variants.filter((v) => ids.includes(v.id)),
-          }
-          group.variants = group.variants.filter((v) => !ids.includes(v.id))
-          draft.groups.push(separated)
-          renderPreparation()
-        }),
+            renderPreparation()
+          }),
+          'Give matching variants one barcode. Original prices and quantities stay separate.'
+        ),
         preparationHelp(
-          'Move to new product',
-          'Select some options to move them into a new product group. On Save, that group receives its own product code and carton mark.'
+          prepButton('Give rows separate barcodes', async () => {
+            const ids = new Set(
+              [...card.querySelectorAll('.variant-select:checked')].map(
+                (check) => check.value
+              )
+            )
+            const selected = group.variants.filter(
+              (v) => ids.has(v.id) && v.entryIds.length > 1
+            )
+            if (!selected.length)
+              throw new Error(
+                'Select a variant containing multiple source rows.'
+              )
+            const used = new Set(
+              group.variants.map((v) => v.variantSuffix + v.sizeSuffix)
+            )
+            if (group.baseCode)
+              for (const code of await repository.getReservedBarcodes(
+                group.baseCode,
+                { accountId: draft.accountId }
+              ))
+                used.add(code.slice(group.baseCode.length))
+            for (const variant of selected) {
+              for (const entryId of variant.entryIds.slice(1)) {
+                const suffix = unusedSuffix(used, variant.sizeSuffix)
+                used.add(suffix + variant.sizeSuffix)
+                group.variants.push({
+                  ...structuredClone(variant),
+                  id: crypto.randomUUID(),
+                  entryIds: [entryId],
+                  variantSuffix: suffix,
+                })
+              }
+              variant.entryIds = variant.entryIds.slice(0, 1)
+            }
+            renderPreparation()
+          }),
+          'Split a combined variant back into one barcode per original order row.'
+        ),
+        preparationHelp(
+          prepButton('Move to new product', () => {
+            const ids = [
+              ...card.querySelectorAll('.variant-select:checked'),
+            ].map((check) => check.value)
+            if (!ids.length || ids.length === group.variants.length)
+              throw new Error(
+                'Select some, but not all, variants to split into a new product group.'
+              )
+            const separated = {
+              ...structuredClone(group),
+              id: crypto.randomUUID(),
+              baseCode: '',
+              variants: group.variants.filter((v) => ids.includes(v.id)),
+            }
+            group.variants = group.variants.filter((v) => !ids.includes(v.id))
+            draft.groups.push(separated)
+            renderPreparation()
+          }),
+          'Give selected variants their own product code and carton mark.'
         )
       )
       groupTools.append(groupActions)
@@ -952,33 +1122,30 @@ export async function startPackingWorkspace({
     })
   }
   async function bulkLabels(kind) {
-    if (
-      drafts.some(
-        (draft) =>
-          JSON.stringify(draft) !==
-          JSON.stringify(preparations.get(draft.orderId))
-      )
-    )
-      throw new Error(
-        'Save each edited preparation before copying its label images.'
-      )
-    const targets = []
+    await flushSaves()
+    const targets = [],
+      pending = []
     const selected = new Set(
       getRows().map((row) => `${row.orderId}/${row.entryId}`)
     )
     for (const record of selectedRecords()) {
-      const prep = preparations.get(record.snapshot.orderId)
+      const prep =
+        drafts.find((draft) => draft.orderId === record.snapshot.orderId) ||
+        preparations.get(record.snapshot.orderId)
       if (!prep)
-        throw new Error('Save all selected preparations before copying labels.')
+        throw new Error('Open preparation for the selected orders first.')
+      if (
+        JSON.stringify(prep) !== JSON.stringify(preparations.get(prep.orderId))
+      )
+        pending.push(prep)
       for (const group of activeGroups(prep, record.snapshot)) {
         const variants = group.variants.filter((variant) =>
           variant.entryIds.some((id) => selected.has(`${prep.orderId}/${id}`))
         )
         if (!variants.length) continue
-        if (kind === 'mark') targets.push(outputModel(prep, group, null, kind))
+        if (kind === 'mark') targets.push({ prep, group, variant: null })
         else
-          for (const variant of variants)
-            targets.push(outputModel(prep, group, variant, kind))
+          for (const variant of variants) targets.push({ prep, group, variant })
       }
     }
     if (!targets.length) throw new Error('No active labels to copy.')
@@ -988,10 +1155,25 @@ export async function startPackingWorkspace({
         action: 'Copy',
         count: targets.length,
         unit: kind === 'mark' ? 'carton marks' : 'barcode labels',
-        detail: 'Images will be generated at the configured print size.',
+        detail:
+          'Images will be generated at the configured print size.' +
+          (pending.length
+            ? ` This also prepares ${pending.length} orders that have not been saved yet.`
+            : ''),
       }))
     )
       return
+    for (const prep of pending) await saveDraft(drafts.indexOf(prep))
+    const models = targets.map(({ prep, group, variant }) => {
+      const latest = preparations.get(prep.orderId)
+      const savedGroup = latest.groups.find((entry) => entry.id === group.id)
+      return outputModel(
+        latest,
+        savedGroup,
+        savedGroup.variants.find((entry) => entry.id === variant?.id),
+        kind
+      )
+    })
     const frozenSettings = structuredClone(settings()),
       frozenLogo = logoUrl()
     const geometry = frozenSettings[kind]
@@ -1004,7 +1186,7 @@ export async function startPackingWorkspace({
       Math.floor((64 * 1024 * 1024) / estimatedBytes)
     )
     const batch = await chooseImageBatch(
-      targets,
+      models,
       Math.min(budgetCount, kind === 'mark' ? 4 : 20)
     )
     if (!batch) return

@@ -116,9 +116,9 @@ try {
     exact: true,
   })
   await expect(preparation.locator('.preparation-group')).toHaveCount(2)
-  await preparation
-    .getByRole('button', { name: 'Save preparation', exact: true })
-    .click()
+  await expect(preparation.locator('.preparation-save-status')).toHaveText(
+    'Saved automatically'
+  )
   const baseField = preparation
     .locator('.preparation-group')
     .first()

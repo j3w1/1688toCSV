@@ -312,8 +312,19 @@ select {
   padding: 0;
   min-width: 0;
 }
-.preparation-actions .primary {
+.preparation-save-status {
   margin-left: auto;
+  font-size: 12px;
+  color: var(--muted);
+  max-width: 640px;
+}
+.preparation-save-status.packing-error {
+  color: var(--error);
+}
+.source-size {
+  display: block;
+  color: var(--muted);
+  margin: 8px 0;
 }
 .order-tools,
 .group-tools,
@@ -473,34 +484,34 @@ select {
 .variant-photos details .preparation-photo {
   margin-block: 6px;
 }
-.preparation-help {
-  display: inline-flex;
-  align-items: center;
+.preparation-hint {
+  text-decoration-line: underline;
+  text-decoration-style: dotted;
+  text-decoration-color: var(--muted);
+  text-underline-offset: 4px;
 }
-.preparation-help > button {
-  border-radius: 50%;
-  width: 26px;
-  height: 26px;
-  padding: 0 !important;
-  font-size: 13px;
+.preparation-hint input {
+  text-decoration: none;
 }
 .preparation-help-popover {
-  width: min(400px, calc(100vw - 40px));
-  padding: 20px;
+  position: fixed;
+  inset: auto;
+  margin: 0;
+  z-index: 25;
+  width: max-content;
+  max-width: min(320px, calc(100vw - 16px));
+  max-height: calc(100vh - 16px);
+  overflow: auto;
+  padding: 10px 12px;
   border: 1px solid var(--border);
-  border-radius: 10px;
-  box-shadow: 0 12px 45px #0005;
+  border-radius: 7px;
+  box-shadow: 0 5px 18px #0004;
   background: var(--surface);
   color: var(--text);
-}
-.preparation-help-popover p {
-  line-height: 1.6;
+  line-height: 1.5;
   font-size: 14px;
-}
-.preparation-help-popover:not([popover]) {
-  position: fixed;
-  inset: 20% 20px auto auto;
-  z-index: 25;
+  font-weight: 400;
+  text-decoration: none;
 }
 .product-photo-dialog {
   width: min(1000px, calc(100vw - 32px));

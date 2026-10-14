@@ -193,23 +193,54 @@ test('missing sellers import products but require identification before label pr
   })
   await expect(seller).toHaveValue('')
   await dialog
-    .getByRole('button', { name: 'Save preparation', exact: true })
+    .getByLabel('Spanish short name', { exact: true })
+    .first()
+    .fill('PRODUCTO')
+  await dialog
+    .getByRole('button', { name: 'Close preparation', exact: true })
     .click()
   await expect(seller).toBeFocused()
-  await expect(dialog.getByRole('alert')).toContainText(
+  await expect(dialog.locator('.preparation-save-status')).toContainText(
     'Enter the seller member login'
   )
   await expect(
     dialog.getByLabel('Product code', { exact: true }).first()
   ).toHaveValue('')
-  await seller.fill('identified-synthetic-shop')
+  // A missing seller must not trap the user after a new, unallocated draft fails.
   await dialog
-    .getByRole('button', { name: 'Save preparation', exact: true })
+    .getByRole('button', { name: 'Discard pending edits', exact: true })
     .click()
+  const discard = library.getByRole('dialog', {
+    name: 'Confirm operation',
+    exact: true,
+  })
+  await discard.getByRole('button', { name: 'Cancel', exact: true }).click()
+  await expect(
+    dialog.getByLabel('Spanish short name', { exact: true }).first()
+  ).toHaveValue('PRODUCTO')
+  await dialog
+    .getByRole('button', { name: 'Discard pending edits', exact: true })
+    .click()
+  await discard
+    .getByRole('button', { name: 'Discard 1 preparation', exact: true })
+    .click()
+  await dialog
+    .getByRole('button', { name: 'Close preparation', exact: true })
+    .click()
+  await expect(dialog).not.toBeVisible()
+  await library
+    .getByRole('button', { name: 'Prepare labels', exact: true })
+    .click()
+  await seller.fill('identified-synthetic-shop')
+  await expect(dialog.locator('.preparation-save-status')).toHaveText(
+    'Saved automatically'
+  )
   await expect(
     dialog.getByLabel('Product code', { exact: true }).first()
   ).toHaveValue(/^CE\d{8}$/)
-  await expect(dialog.getByRole('alert')).toHaveCount(0)
+  await expect(dialog.locator('.preparation-save-status')).not.toHaveClass(
+    /packing-error/
+  )
   await library.reload()
   await library
     .getByRole('button', { name: 'Prepare labels', exact: true })

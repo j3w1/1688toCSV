@@ -118,9 +118,9 @@ test('label backdrop saves a valid blurred edit, preserves Escape restore, and k
     name: 'Preparation',
     exact: true,
   })
-  await preparation
-    .getByRole('button', { name: 'Save preparation', exact: true })
-    .click()
+  await expect(preparation.locator('.preparation-save-status')).toHaveText(
+    'Saved automatically'
+  )
   await expect(
     preparation.getByLabel('Product code', { exact: true }).first()
   ).toHaveValue(/^CE2610\d{4}$/)
@@ -148,6 +148,13 @@ test('label backdrop saves a valid blurred edit, preserves Escape restore, and k
   await spanish.press('Escape')
   await expect(spanish).toHaveValue('FRASCO TRANSPARENTE')
   await expect(label).toBeVisible()
+  await spanish.fill('frasco guardado al cerrar')
+  await label
+    .getByRole('button', { name: 'Close label editor', exact: true })
+    .click()
+  await expect(label).not.toBeVisible({ timeout: 20000 })
+  await open.click()
+  await expect(spanish).toHaveValue('FRASCO GUARDADO AL CERRAR')
   const code = label.getByRole('textbox', { name: 'Barcode code', exact: true })
   await code.fill('INVALID')
   await backdrop(page, label)

@@ -25,13 +25,13 @@ Open **Extensions → Developer mode → Load unpacked** and select **dist**. In
 1. Open your [1688 orders](https://work.1688.com/home/buyer.htm), tick the orders you want, and choose **Import selected**. Confirm the count when asked and keep the list open while the reader tab works.
 2. Open **Spreadsheet ↗**. If a new tab is blocked, use **Open spreadsheet here** after the import finishes.
 3. Choose the orders to prepare, check the **Packing month** (the current month by default), and click **Prepare labels**. This month controls new CE codes; saved preparation keeps its assigned month.
-4. Check the product photos, options and sizes. Set a short Spanish name and Chinese category, then **Save preparation** to assign codes. Carton and barcode previews show the labels beside their products.
+4. Check the product photos and variants. Set a short Spanish name and Chinese category. **Changes save automatically**; label previews appear beside their products.
 
 Resolve any **Choose a size code** prompt before copying labels. Names and codes remain editable after saving.
 
-Click a photo to zoom in. Open **Code options** or **Grouping tools** when needed; their **?** buttons explain each action.
+Click a photo to zoom in. Open **Code options** or **Grouping tools** when needed. Hover over a field or action for a short hint.
 
-**Undo** and **Redo** restore unsaved text and grouping changes. Saving clears the history for that order; issued codes remain reserved.
+**Undo** and **Redo** restore pending edits until autosave completes. Invalid entries stay in the form with an explanation; closing waits for a successful save.
 
 <a href="screenshots/preparation.png"><img src="screenshots/preparation.png" alt="Preparation form with synthetic product photos, carton and barcode previews, and Undo and Redo controls" width="640" /></a>
 
