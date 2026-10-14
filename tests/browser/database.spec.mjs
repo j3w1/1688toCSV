@@ -1362,6 +1362,158 @@ test('structured source fields survive snapshot and backup validation', async ({
   expect(result.rejected).toBe(true)
 })
 
+test('unavailable source sellers require an authored identity before codes and preserve it through refresh and backup', async ({
+  extension,
+}) => {
+  const page = await openTestDatabase(extension)
+  const result = await page.evaluate(async (first) => {
+    const { createPreparation, validatePreparation } =
+      await import('/src/packing-model.js')
+    const missing = {
+      ...first,
+      sellerName: 'Seller unavailable',
+      sellerUnavailable: true,
+    }
+    await library.saveSnapshot(missing)
+    const draft = createPreparation(missing, '2026-10')
+    const initialSeller = draft.sellerId
+    const preparationErrors = []
+    for (const sellerId of [
+      '',
+      '  ',
+      'Seller unavailable',
+      ' Unknown Seller ',
+    ]) {
+      for (const operation of [
+        () => validatePreparation({ ...draft, sellerId }),
+        () => library.savePreparation({ ...draft, sellerId }),
+      ]) {
+        try {
+          await operation()
+        } catch (error) {
+          preparationErrors.push(error.message)
+        }
+      }
+    }
+    const afterRejected = await library.exportBackup()
+    draft.sellerId = 'verified-seller'
+    draft.groups[0].spanishName = 'CAJA'
+    const authored = await library.savePreparation(draft)
+    await library.saveSnapshot({
+      ...missing,
+      observedAt: '2026-01-02T12:00:00.000Z',
+      status: 'Updated while unavailable',
+    })
+    const afterRefresh = await library.getPreparation(first.orderId)
+    const backup = await library.exportBackup()
+    const restored = await openOrderDatabase({
+      name: `${databaseName}-missing-seller`,
+    })
+    await restored.restoreBackup(backup)
+    const roundtrip = {
+      order: await restored.getOrder(first.orderId),
+      preparation: await restored.getPreparation(first.orderId),
+      backup: await restored.exportBackup(),
+    }
+    const newOrder = structuredClone(backup.orders[0])
+    newOrder.snapshot.orderId = '9999999999999999999'
+    newOrder.snapshot.sourceUrl = first.sourceUrl.replace(
+      first.orderId,
+      newOrder.snapshot.orderId
+    )
+    const malformed = [
+      ...[false, undefined, null, 'true'].map((sellerUnavailable) => ({
+        ...backup.orders[0].snapshot,
+        sellerUnavailable,
+      })),
+      { ...backup.orders[0].snapshot, sellerName: 'Named seller' },
+      { ...backup.orders[0].snapshot, sellerMemberLogin: 'real-login' },
+    ]
+    const flagAbsent = structuredClone(backup.orders[0].snapshot)
+    delete flagAbsent.sellerUnavailable
+    malformed.push(flagAbsent)
+    const restoreErrors = []
+    for (const snapshot of malformed) {
+      try {
+        await restored.restoreBackup({
+          ...backup,
+          orders: [newOrder, { ...backup.orders[0], snapshot }],
+        })
+      } catch (error) {
+        restoreErrors.push(error.message)
+      }
+    }
+    const afterMalformed = await restored.exportBackup()
+    const identified = {
+      ...missing,
+      sellerName: 'Seller supplied by source',
+      sellerMemberLogin: 'source-login',
+      observedAt: '2026-01-03T12:00:00.000Z',
+    }
+    delete identified.sellerUnavailable
+    await restored.saveSnapshot(identified)
+    const afterIdentified = {
+      order: await restored.getOrder(first.orderId),
+      preparation: await restored.getPreparation(first.orderId),
+      backup: await restored.exportBackup(),
+    }
+    restored.close()
+    return {
+      initialSeller,
+      preparationErrors,
+      afterRejected,
+      authored,
+      afterRefresh,
+      backup,
+      roundtrip,
+      restoreErrors,
+      afterMalformed,
+      afterIdentified,
+    }
+  }, snapshot())
+  expect(result.initialSeller).toBe('')
+  expect(result.preparationErrors).toHaveLength(8)
+  expect(
+    result.preparationErrors.every((error) =>
+      error.includes('Identify the seller')
+    )
+  ).toBe(true)
+  for (const field of ['preparations', 'allocations', 'issuedCodes'])
+    expect(result.afterRejected[field]).toEqual([])
+  expect(result.afterRejected.orders[0].snapshot.sellerUnavailable).toBe(true)
+  expect(result.authored.sellerId).toBe('verified-seller')
+  expect(result.authored.groups.map((group) => group.baseCode)).toEqual([
+    'CE26100101',
+    'CE26100102',
+  ])
+  expect(result.afterRefresh).toEqual(result.authored)
+  expect(result.roundtrip.order.snapshot.sellerUnavailable).toBe(true)
+  expect(result.roundtrip.order.snapshot).not.toHaveProperty(
+    'sellerMemberLogin'
+  )
+  expect(result.roundtrip.preparation).toEqual(result.authored)
+  expect(result.restoreErrors).toHaveLength(7)
+  for (const field of [
+    'orders',
+    'history',
+    'preparations',
+    'allocations',
+    'issuedCodes',
+  ]) {
+    expect(result.roundtrip.backup[field]).toEqual(result.backup[field])
+    expect(result.afterMalformed[field]).toEqual(result.backup[field])
+  }
+  expect(result.afterIdentified.order.snapshot).not.toHaveProperty(
+    'sellerUnavailable'
+  )
+  expect(result.afterIdentified.order.snapshot.sellerMemberLogin).toBe(
+    'source-login'
+  )
+  expect(result.afterIdentified.preparation).toEqual(result.authored)
+  for (const field of ['allocations', 'issuedCodes'])
+    expect(result.afterIdentified.backup[field]).toEqual(result.backup[field])
+})
+
 test('concurrent database connections allocate unique codes and reject stale preparation edits', async ({
   extension,
 }) => {

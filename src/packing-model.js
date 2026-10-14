@@ -192,7 +192,9 @@ export function createPreparation(snapshot, month, vocabulary = []) {
   return {
     accountId: snapshot.accountId || 'local',
     orderId: snapshot.orderId,
-    sellerId: (snapshot.sellerMemberLogin || snapshot.sellerName || '').trim(),
+    sellerId: snapshot.sellerUnavailable
+      ? ''
+      : (snapshot.sellerMemberLogin || snapshot.sellerName || '').trim(),
     month,
     revision: 0,
     updatedAt: new Date().toISOString(),
@@ -336,10 +338,15 @@ export function validatePreparation(input) {
   const orderId = text(input.orderId, 'Preparation order ID', false)
   if (!/^[1-9]\d*$/.test(orderId))
     throw new Error('Preparation order ID must be a decimal ID')
+  const sellerId = text(input.sellerId, 'Seller identity')
+  if (!sellerId || /^(?:Seller unavailable|Unknown Seller)$/i.test(sellerId))
+    throw new Error(
+      'Identify the seller before saving preparation or assigning label codes.'
+    )
   return {
     accountId: text(input.accountId, 'Preparation account', false),
     orderId,
-    sellerId: text(input.sellerId, 'Seller identity', false),
+    sellerId,
     month,
     revision: input.revision,
     updatedAt: new Date(input.updatedAt).toISOString(),

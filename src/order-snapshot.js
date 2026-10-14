@@ -298,8 +298,8 @@ export function extractOrderSnapshot(
     one(appQuery, '.step-detail-header .stress', 'Order status')
   )
   if (!status) throw new Error('Order status is missing.')
-  if (!order.sellerName || order.sellerName === 'Unknown Seller')
-    throw new Error('The seller name is missing.')
+  const sellerUnavailable =
+    !order.sellerName || order.sellerName === 'Unknown Seller'
   const rows = deepQuery(findOrderTable(document)).all('tr.table-row')
   const items = order.dataRows.map(({ discount, ...row }, index) => ({
     entryId: entryIdentity(rows[index], index),
@@ -387,7 +387,8 @@ export function extractOrderSnapshot(
     schemaVersion: 1,
     accountId: 'local',
     ...identity,
-    sellerName: order.sellerName,
+    sellerName: sellerUnavailable ? 'Seller unavailable' : order.sellerName,
+    ...(sellerUnavailable ? { sellerUnavailable: true } : {}),
     ...(order.sellerMemberLogin
       ? { sellerMemberLogin: order.sellerMemberLogin }
       : {}),

@@ -21,10 +21,14 @@ function completeOrder(
     shopDiscount = false,
     foreignFee = false,
     includedDiscounts = false,
+    missingSeller = false,
     unsupported = false,
   } = {}
 ) {
-  const built = buildOrderFixture(document)
+  const built = buildOrderFixture(
+    document,
+    missingSeller ? { sellerName: null } : {}
+  )
   const app = built.appRoot.shadowRoot
   const field = document.createElement('div')
   field.className = 'order-info-receipt-content-item'
@@ -77,6 +81,7 @@ async function setup(
     shopDiscount = false,
     foreignFee = false,
     includedDiscounts = false,
+    missingSeller = false,
     unsupportedIds = [],
   } = {}
 ) {
@@ -101,7 +106,7 @@ async function setup(
       body = `<script>
         ${buildOrderFixture.toString()}
         ${completeOrder.toString()}
-        setTimeout(() => completeOrder(document, ${JSON.stringify(id)}, ${JSON.stringify({ summary, customization, redPacket, shopDiscount, foreignFee, includedDiscounts, unsupported: unsupportedIds.includes(id) })}), ${typeof delay === 'object' ? delay[id] || 0 : delay});
+        setTimeout(() => completeOrder(document, ${JSON.stringify(id)}, ${JSON.stringify({ summary, customization, redPacket, shopDiscount, foreignFee, includedDiscounts, missingSeller, unsupported: unsupportedIds.includes(id) })}), ${typeof delay === 'object' ? delay[id] || 0 : delay});
       </script>`
     }
     await route.fulfill({
@@ -148,6 +153,74 @@ async function assertImported(extension, library) {
   expect(copied).toContain('0.30')
   expect(extension.unexpectedRequests).toEqual([])
 }
+
+test('missing sellers import products but require identification before label preparation', async ({
+  extension,
+}) => {
+  const { list, library } = await setup(extension, { missingSeller: true })
+  await list
+    .getByRole('button', { name: 'Import selected', exact: true })
+    .click()
+  await list
+    .getByRole('button', { name: 'Import 2 selected orders', exact: true })
+    .click()
+  await assertImported(extension, library)
+  const { data } = await extension.inspector.evaluate(() =>
+    chrome.runtime.sendMessage({ type: 'LIBRARY_QUERY' })
+  )
+  expect(
+    data.orders.every(
+      ({ snapshot }) =>
+        snapshot.sellerUnavailable && snapshot.items.length === 2
+    )
+  ).toBe(true)
+  await library.locator('.order-card button').first().click()
+  await expect(library.locator('#order-details')).toContainText(
+    'Products and totals are saved'
+  )
+  await library
+    .getByRole('button', { name: 'Close order details', exact: true })
+    .click()
+  await library
+    .getByRole('button', { name: 'Prepare labels', exact: true })
+    .click()
+  const dialog = library.getByRole('dialog', {
+    name: 'Preparation',
+    exact: true,
+  })
+  const seller = dialog.getByLabel('Seller member login (required)', {
+    exact: true,
+  })
+  await expect(seller).toHaveValue('')
+  await dialog
+    .getByRole('button', { name: 'Save preparation', exact: true })
+    .click()
+  await expect(seller).toBeFocused()
+  await expect(dialog.getByRole('alert')).toContainText(
+    'Enter the seller member login'
+  )
+  await expect(
+    dialog.getByLabel('Product code', { exact: true }).first()
+  ).toHaveValue('')
+  await seller.fill('identified-synthetic-shop')
+  await dialog
+    .getByRole('button', { name: 'Save preparation', exact: true })
+    .click()
+  await expect(
+    dialog.getByLabel('Product code', { exact: true }).first()
+  ).toHaveValue(/^CE\d{8}$/)
+  await expect(dialog.getByRole('alert')).toHaveCount(0)
+  await library.reload()
+  await library
+    .getByRole('button', { name: 'Prepare labels', exact: true })
+    .click()
+  await expect(seller).toHaveValue('identified-synthetic-shop')
+  await dialog.getByLabel('Preparation order').selectOption('1')
+  await expect(seller).toHaveValue('')
+  await expect(
+    dialog.getByLabel('Product code', { exact: true }).first()
+  ).toHaveValue('')
+})
 
 test('wholesale prices and embedded adjustments import without double deductions in Excel copying', async ({
   extension,
@@ -328,6 +401,27 @@ test('unsupported totals promptly retain bounded financial evidence, continue ot
   expect(failure.diagnostics.products.sample[0].discount).toBe('2.10')
   expect(failure.diagnostics.payable).toContain('68.00')
   expect(JSON.stringify(failure)).not.toMatch(/<html|sellerName|thumbnail|sku/)
+  const listDownload = list.waitForEvent('download')
+  await list
+    .getByRole('button', { name: 'Save import report', exact: true })
+    .click()
+  expect(await (await listDownload).failure()).toBeNull()
+  const listFiles = await extension.inspector.evaluate(() =>
+    chrome.downloads.search({})
+  )
+  const listReport = JSON.parse(await readFile(listFiles[0].filename, 'utf8'))
+  expect(listReport.counts).toMatchObject({
+    discovered: 2,
+    saved: 1,
+    failed: 1,
+  })
+  expect(listReport.orders[0].lastFailure).toEqual(failure)
+  expect(
+    await extension.inspector.evaluate(() =>
+      chrome.runtime.sendMessage({ type: 'JOBS_QUERY' })
+    )
+  ).toEqual(before)
+  expect(visited).toEqual(ids)
   unsupportedIds.length = 0
   await library
     .getByRole('button', { name: 'Resume / retry', exact: true })
@@ -354,7 +448,8 @@ test('unsupported totals promptly retain bounded financial evidence, continue ot
   const downloads = await extension.inspector.evaluate(() =>
     chrome.downloads.search({})
   )
-  const report = JSON.parse(await readFile(downloads[0].filename, 'utf8'))
+  const latest = downloads.reduce((a, b) => (a.id > b.id ? a : b))
+  const report = JSON.parse(await readFile(latest.filename, 'utf8'))
   expect(report.counts.saved).toBe(2)
   expect(report.counts.failed).toBe(0)
   expect(report.orders[0].lastFailure).toEqual(failure)

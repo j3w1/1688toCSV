@@ -129,6 +129,34 @@ function snapshot(source) {
   })
 }
 
+test('missing seller retains complete reconciled products with an explicit unavailable identity', () => {
+  const source = fixture({
+    rows: [{ price: '0.53', quantity: '2', sourceDiscount: '0.00' }],
+    totals: {
+      goodsGross: '5.06',
+      shipping: '1.75',
+      sourceDiscount: '0.00',
+      payable: '2.81',
+    },
+  })
+  for (const node of deepQuery(source.document).all(
+    '.order-info-user-content-item'
+  ))
+    node.remove()
+  source.field('批发优惠', '减 ¥4.00')
+  source.totalDiscount.textContent = '4.00'
+  const result = snapshot(source)
+  assert.equal(result.sellerName, 'Seller unavailable')
+  assert.equal(result.sellerUnavailable, true)
+  assert.equal(result.sellerMemberLogin, undefined)
+  assert.equal(result.items.length, 1)
+  assert.equal(result.items[0].discount, '0.00')
+  assert.equal(result.totals.priceIncludedDiscount, '4.00')
+  assert.equal(result.totals.payable, '2.81')
+  source.fields['运费'].textContent = '¥2.75'
+  assert.throws(() => snapshot(source), /payable amount does not reconcile/)
+})
+
 test('wholesale prices and adjustments already in row discounts are not subtracted twice', () => {
   for (const includedAdjustment of [false, true]) {
     const rowDiscount = includedAdjustment ? '15.00' : '10.00'

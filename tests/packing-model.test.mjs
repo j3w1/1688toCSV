@@ -33,6 +33,27 @@ function sku(color, size, other = []) {
   ]
 }
 
+test('unavailable seller cannot allocate labels until a real identity is supplied', () => {
+  const draft = createPreparation(
+    source([{}], {
+      sellerName: 'Seller unavailable',
+      sellerUnavailable: true,
+    }),
+    '2026-10'
+  )
+  assert.equal(draft.sellerId, '')
+  for (const sellerId of ['', '   ', 'Seller unavailable', 'Unknown Seller']) {
+    assert.throws(
+      () => allocatePreparation({ ...draft, sellerId }, [], []),
+      /Identify the seller/
+    )
+  }
+  draft.sellerId = 'identified-synthetic-seller'
+  const result = allocatePreparation(draft, [], [])
+  assert.equal(result.preparation.sellerId, draft.sellerId)
+  assert.equal(result.preparation.groups[0].baseCode, 'CE26100101')
+})
+
 test('suggestions retain source entries, first-seen variants, named sizes and local vocabulary', () => {
   const snapshot = source([
     { skuProperties: sku('red', 'S') },

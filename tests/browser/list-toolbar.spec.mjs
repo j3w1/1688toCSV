@@ -1,4 +1,6 @@
 import { test, expect } from './extension-fixture.mjs'
+import { readFile } from 'node:fs/promises'
+import { createImportReport } from '../../src/import-report.js'
 
 async function setup(extension, jobs = []) {
   const page = await extension.context.newPage()
@@ -28,6 +30,13 @@ async function setup(extension, jobs = []) {
           )
         if (type === 'IMPORT_STATUS')
           return { jobs: structuredClone(state.jobs) }
+        if (type === 'IMPORT_REPORT') {
+          if (!state.reportValue)
+            throw new Error(
+              'This import is no longer available. Refresh the order list.'
+            )
+          return structuredClone(state.reportValue)
+        }
         if (type === 'IMPORT_START') {
           const job = {
             id: 'synthetic-job',
@@ -58,6 +67,159 @@ async function mutations(page) {
     toolbarTest.calls.filter((call) => call.type !== 'IMPORT_STATUS')
   )
 }
+
+test('the list toolbar downloads complete import reports in every job state without starting work and releases files', async ({
+  extension,
+}) => {
+  const page = await setup(extension)
+  await page.evaluate(() => {
+    window.reportUrls = []
+    const create = URL.createObjectURL.bind(URL)
+    URL.createObjectURL = (blob) => {
+      const url = create(blob)
+      reportUrls.push(url)
+      return url
+    }
+    const timeout = window.setTimeout.bind(window)
+    window.setTimeout = (callback, delay, ...args) => {
+      if (delay === 60000) window.releaseReportOnTimeout = callback
+      return timeout(callback, delay, ...args)
+    }
+  })
+  for (const state of [
+    'running',
+    'paused',
+    'completed-with-errors',
+    'completed',
+  ]) {
+    const job = {
+      id: 'synthetic-report',
+      kind: 'import',
+      scope: 'all',
+      phase: 'details',
+      state,
+      total: 667,
+      page: 67,
+      pageSize: 10,
+      createdAt: '2026-10-14T12:00:00.000Z',
+      updatedAt: '2026-10-14T12:01:00.000Z',
+      filterKey: 'excluded private filter',
+      orders: Array.from({ length: 667 }, (_, index) => ({
+        orderId: String(10000 + index),
+        sourceUrl: `https://air.1688.com/app/ctf-page/trade-order-detail/index.html?orderId=${10000 + index}`,
+        state:
+          state === 'completed' || index < 21
+            ? 'done'
+            : index < 24
+              ? 'failed'
+              : state === 'completed-with-errors'
+                ? 'done'
+                : 'pending',
+        ...(index >= 21 && index < 24
+          ? {
+              error:
+                state === 'completed' ? '' : 'Synthetic reconciliation failure',
+              lastFailure: {
+                at: '2026-10-14T12:01:00.000Z',
+                message: 'Synthetic reconciliation failure',
+                diagnostics: {
+                  version: 1,
+                  fields: [{ label: '原价总计', value: '¥30.00' }],
+                  products: { count: 2, gross: '25.00', discount: '1.00' },
+                },
+              },
+            }
+          : {}),
+      })),
+    }
+    const value = createImportReport(job, 'test')
+    await page.evaluate(
+      async ({ job, value }) => {
+        toolbarTest.jobs = [
+          {
+            ...job,
+            discovered: value.counts.discovered,
+            completed: value.counts.saved,
+            failed: value.counts.failed,
+          },
+        ]
+        toolbarTest.reportValue = value
+        await toolbar.refresh()
+      },
+      { job, value }
+    )
+    const pending = page.waitForEvent('download')
+    await page
+      .getByRole('button', { name: 'Save import report', exact: true })
+      .click()
+    const download = await pending
+    expect(download.suggestedFilename()).toMatch(
+      /^1688-import-report-\d{4}-\d{2}-\d{2}\.json$/
+    )
+    expect(await download.failure()).toBeNull()
+    const files = await extension.inspector.evaluate(() =>
+      chrome.downloads.search({})
+    )
+    const latest = files.reduce((a, b) => (a.id > b.id ? a : b))
+    expect(latest.state).toBe('complete')
+    expect(JSON.parse(await readFile(latest.filename, 'utf8'))).toEqual(value)
+    await expect(page.getByRole('status')).toContainText(
+      'Import report save requested'
+    )
+    expect(
+      (await mutations(page)).every(
+        (call) => call.type === 'IMPORT_REPORT' && call.data.jobId === job.id
+      )
+    ).toBe(true)
+    expect(await page.evaluate(() => toolbarTest.jobs[0].state)).toBe(state)
+    const file = await page.evaluate(() => reportUrls.at(-1))
+    expect(
+      await page.evaluate(async (url) => (await fetch(url)).ok, file)
+    ).toBe(true)
+    if (state !== 'completed') {
+      await page.evaluate(() => releaseReportOnTimeout())
+      expect(
+        await page.evaluate(async (url) => {
+          try {
+            await fetch(url)
+            return false
+          } catch {
+            return true
+          }
+        }, file)
+      ).toBe(true)
+    }
+  }
+  // A stale button surfaces the durable-job error without saving or resuming.
+  const before = await extension.inspector.evaluate(() =>
+    chrome.downloads.search({})
+  )
+  await page.evaluate(() => {
+    toolbarTest.reportValue = null
+  })
+  await page
+    .getByRole('button', { name: 'Save import report', exact: true })
+    .click()
+  await expect(page.getByRole('status')).toHaveText(
+    'This import is no longer available. Refresh the order list.'
+  )
+  expect(
+    await extension.inspector.evaluate(() => chrome.downloads.search({}))
+  ).toEqual(before)
+  const remainingFile = await page.evaluate(() => reportUrls.at(-1))
+  await page.evaluate(() => toolbar.dispose())
+  expect(
+    await page.evaluate(async (url) => {
+      try {
+        await fetch(url)
+        return false
+      } catch {
+        return true
+      }
+    }, remainingFile)
+  ).toBe(true)
+  expect(extension.unexpectedRequests).toEqual([])
+})
 
 test('a bulk scan paused before discovery still confirms the complete requested total', async ({
   extension,

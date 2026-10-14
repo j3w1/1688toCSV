@@ -4,7 +4,7 @@ import { readFile } from 'node:fs/promises'
 import vm from 'node:vm'
 import { createImportController } from '../src/import-controller.js'
 import { detailUrl, isListUrl } from '../src/order-list.js'
-import { importJobView } from '../src/import-report.js'
+import { createImportReport, importJobView } from '../src/import-report.js'
 import { financialDiagnostics } from '../src/import-diagnostics.js'
 
 const sourceCode = (
@@ -72,6 +72,7 @@ function setup({ orderIds = ['10001'] } = {}) {
     runtime: {
       id: 'synthetic',
       getURL: (path) => origin + path,
+      getManifest: () => ({ version: '2.2.5' }),
       onMessage: event(),
       onStartup: event(),
       onInstalled: event(),
@@ -157,6 +158,7 @@ function setup({ orderIds = ['10001'] } = {}) {
     detailUrl,
     isListUrl,
     importJobView,
+    createImportReport,
     financialDiagnostics,
     loadThumbnail: async () => '',
     URL,
@@ -197,6 +199,117 @@ test('progress responses omit failure evidence without erasing saved diagnostics
     assert.equal(reply.data.jobs[0].orders[0].lastFailure, undefined)
   }
   assert.deepEqual(s.jobs.get('bulk').orders[0].lastFailure, lastFailure)
+})
+
+test('the source list can export a durable import report without changing or advancing any job', async () => {
+  for (const state of [
+    'running',
+    'paused',
+    'completed-with-errors',
+    'completed',
+  ]) {
+    const s = setup()
+    const states =
+      state === 'completed'
+        ? ['done', 'done', 'done']
+        : state === 'completed-with-errors'
+          ? ['done', 'failed', 'done']
+          : ['done', 'failed', 'pending']
+    const diagnostics = {
+      version: 1,
+      fields: [{ label: '原价总计', value: '¥30.00' }],
+      products: { count: 2, gross: '25.00', discount: '1.00' },
+    }
+    const job = {
+      id: 'report-job',
+      kind: 'import',
+      scope: 'all',
+      phase: 'details',
+      state,
+      source: { tabId: sender.tab.id, frameId: sender.frameId },
+      total: 3,
+      page: 1,
+      pageSize: 10,
+      createdAt: '2026-10-14T12:00:00.000Z',
+      updatedAt: '2026-10-14T12:01:00.000Z',
+      filterKey: 'excluded private filter',
+      orders: states.map((orderState, i) => ({
+        orderId: String(10001 + i),
+        sourceUrl: url(String(10001 + i)),
+        state: orderState,
+        error:
+          orderState === 'failed' ? 'Synthetic reconciliation failure' : '',
+        ...(orderState === 'failed'
+          ? {
+              lastFailure: {
+                at: '2026-10-14T12:01:00.000Z',
+                message: 'Synthetic reconciliation failure',
+                diagnostics,
+              },
+            }
+          : {}),
+      })),
+    }
+    s.jobs.set(job.id, structuredClone(job))
+    const response = await s.send(
+      { type: 'IMPORT_REPORT', jobId: job.id },
+      sender
+    )
+    assert.equal(response.ok, true)
+    assert.equal(response.data.format, '1688-import-report')
+    assert.equal(response.data.extensionVersion, '2.2.5')
+    assert.equal(response.data.job.state, state)
+    assert.deepEqual(
+      response.data.orders.map((order) => order.state),
+      states
+    )
+    if (state !== 'completed')
+      assert.deepEqual(
+        response.data.orders[1].lastFailure.diagnostics,
+        financialDiagnostics(diagnostics)
+      )
+    assert.equal(
+      JSON.stringify(response.data).includes('excluded private filter'),
+      false
+    )
+    await settle()
+    assert.deepEqual(s.jobs.get(job.id), job)
+    assert.deepEqual(s.calls, [])
+    assert.equal(s.tabs.size, 1)
+    assert.equal(s.saved.size, 0)
+  }
+})
+
+test('import reports reject another source tab or frame, unsupported callers and deleted jobs', async () => {
+  const s = setup()
+  const job = {
+    id: 'owned',
+    source: { tabId: sender.tab.id, frameId: sender.frameId },
+    orders: [],
+  }
+  s.jobs.set(job.id, job)
+  for (const other of [
+    { ...sender, tab: { id: 8 } },
+    { ...sender, frameId: 0 },
+    { ...sender, url: 'https://example.com/' },
+    { ...sender, id: 'another-extension' },
+    own,
+  ]) {
+    const response = await s.send(
+      { type: 'IMPORT_REPORT', jobId: job.id },
+      other
+    )
+    assert.equal(response.ok, false)
+  }
+  s.jobs.delete(job.id)
+  for (const jobId of ['owned', undefined]) {
+    const response = await s.send({ type: 'IMPORT_REPORT', jobId }, sender)
+    assert.equal(response.ok, false)
+    assert.match(response.error, /no longer available/)
+  }
+  await settle()
+  assert.deepEqual(s.calls, [])
+  assert.equal(s.tabs.size, 1)
 })
 
 test('dismissal is library-only, refuses running jobs and preserves saved data', async () => {

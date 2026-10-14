@@ -292,6 +292,14 @@ export async function startPackingWorkspace({
     dialog($('preparation-dialog'))
   }
   async function saveDraft(index) {
+    if (!drafts[index].sellerId.trim()) {
+      current = index
+      renderPreparation()
+      $('preparation-seller')?.focus()
+      throw new Error(
+        'Enter the seller member login before saving preparation or assigning label codes.'
+      )
+    }
     drafts[index] = await saved(drafts[index])
     return drafts[index]
   }
@@ -304,7 +312,10 @@ export async function startPackingWorkspace({
     select.setAttribute('aria-label', 'Preparation order')
     drafts.forEach((prep, index) =>
       select.append(
-        new Option(`${prep.sellerId} · …${prep.orderId.slice(-8)}`, index)
+        new Option(
+          `${prep.sellerId || 'Seller unavailable'} · …${prep.orderId.slice(-8)}`,
+          index
+        )
       )
     )
     select.value = String(current)
@@ -329,6 +340,34 @@ export async function startPackingWorkspace({
         'packing-help'
       )
     )
+    const source = getRecords().find(
+      ({ snapshot }) => snapshot.orderId === draft.orderId
+    )?.snapshot
+    if (source?.sellerUnavailable || !draft.sellerId) {
+      const help = el(
+        'p',
+        'Seller unavailable on the source page. Enter the seller’s 1688 member login to assign label codes. Reuse the same login for this seller’s other orders.',
+        'packing-help'
+      )
+      help.id = 'preparation-seller-help'
+      const seller = field(
+        'Seller member login (required)',
+        draft.sellerId,
+        (value) => {
+          draft.sellerId = value
+        }
+      )
+      const input = seller.querySelector('input')
+      input.id = 'preparation-seller'
+      seller.htmlFor = input.id
+      input.required = true
+      input.autocomplete = 'off'
+      input.autocapitalize = 'off'
+      input.setAttribute('autocorrect', 'off')
+      input.spellcheck = false
+      input.setAttribute('aria-describedby', help.id)
+      host.append(help, seller)
+    }
     const orderCategory = field(
       'Chinese category for this order',
       '',

@@ -187,6 +187,20 @@ function validateSnapshot(input) {
     'Order totals'
   )
   validateAmounts(items, totals)
+  if (Object.hasOwn(input, 'sellerUnavailable')) {
+    if (
+      input.sellerUnavailable !== true ||
+      input.sellerName !== 'Seller unavailable' ||
+      (input.sellerMemberLogin !== undefined && input.sellerMemberLogin !== '')
+    )
+      throw new Error(
+        'Unavailable seller must have no member login and use the Seller unavailable name'
+      )
+  } else if (input.sellerName === 'Seller unavailable') {
+    throw new Error(
+      'Seller unavailable requires an explicit sellerUnavailable flag'
+    )
+  }
   if (
     Object.hasOwn(input, 'foreignCurrencyFeeUnspecified') &&
     input.foreignCurrencyFeeUnspecified !== true
@@ -201,6 +215,7 @@ function validateSnapshot(input) {
     orderId,
     sourceUrl: detailUrl(input.sourceUrl, orderId),
     sellerName: string(input.sellerName, 'sellerName', { empty: false }),
+    ...(input.sellerUnavailable ? { sellerUnavailable: true } : {}),
     ...(input.sellerMemberLogin !== undefined
       ? {
           sellerMemberLogin: string(

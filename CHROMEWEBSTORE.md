@@ -2,7 +2,7 @@
 
 > Last Updated: 2026-10-14
 >
-> Version 2.2.4 passed local, isolated Chromium/Edge and supplied-export checks. The full live collection remains outstanding. No store submission or publication. Earlier verification and live browser observations are recorded separately.
+> Version 2.2.5 passed local, isolated Chromium/Edge and supplied-backup checks. The full live collection remains outstanding. No store submission or publication. Earlier verification and live browser observations are recorded separately.
 
 ## Store Listing
 
@@ -22,6 +22,8 @@ Edit barcode and carton-mark text directly in a label preview. Copy printable la
 Search by seller or order number and combine with purchase-date filters. Refresh all saved orders, selected orders or matching orders. Multiple-item actions show their scope for confirmation. Activity holds progress, pause/retry controls, old notices and a downloadable report of every import result, including the latest failure details retained after retry. Source changes retain previous versions and preserve your notes and preparation edits. Price adjustments not already included in row discounts are distributed across products; wholesale reductions already in prices are counted once; order-only shop discounts, shipping, customization charges and red-packet reductions stay separate in order totals. A foreign-currency fee with no displayed amount is clearly marked as unspecified. New preparation starts with the current month. Click the dimmed background to close an overlay or cancel a confirmation.
 
 HOW TO USE
+
+Orders without seller information retain their products and totals, with a clear notice. Identify the seller before assigning label codes. Save an import report directly beside the order-page Pause/Resume controls or from Activity.
 Select order checkboxes on your 1688 order list and choose Import selected. Confirm the scope and keep the list open while the reader tab works. Open the spreadsheet, choose orders and a Packing month, then select Prepare labels. Review the suggestions and save preparation. Open a product's Barcode or Carton mark to edit and copy its label. Paste the chosen values or images into Excel. The single-order CSV button remains available.
 
 PRIVACY
@@ -125,6 +127,7 @@ Draft substance: records, history, notes, pictures, preparation edits, reserved 
 
 | Version | Date       | Changes                                                                                                                                                                         | Status                                                                                                                 |
 | ------- | ---------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------- |
+| 2.2.5   | 2026-10-14 | Save valid products when seller identity is missing; require identification before label allocation; export import reports from the order page | Local, Chromium, Edge and supplied-backup checks passed; live full collection outstanding; no store submission |
 | 2.2.4   | 2026-10-14 | Reconcile wholesale prices and adjustments already included in row discounts; searchable orders and clearer continuing-import progress | Local, Chromium, Edge and supplied-export checks passed; live retry and full collection outstanding; no store submission |
 | 2.2.3   | 2026-10-14 | Separate order-only shop discounts, retain unspecified foreign-fee notices, default packing month to the local current month, and dismiss overlays by backdrop click | Local, Chromium, Edge and supplied-export checks passed; live full collection outstanding; no store submission |
 | 2.2.2   | 2026-10-14 | Separate red-packet reductions, bounded failure evidence retained after retry, and prompt continuation past unsupported totals | Local, Chromium, Edge and supplied offline checks passed; live 67-page collection unverified; no store submission |
@@ -141,6 +144,8 @@ Draft substance: records, history, notes, pictures, preparation edits, reserved 
 ## Review Notes
 
 ### Development verification
+
+- Version 2.2.5 passed source/docs checks, 197 unit checks, the production rebuild, 88 packaged Chromium tests and 4 focused Edge tests. Coverage includes missing-seller import through preparation, no allocation before identification, authored identity preservation through refresh/backup, atomic malformed-backup rejection, and complete report downloads without import side effects. Independent review found no actionable issues. The supplied 22-order/182-row backup restored unchanged in an isolated database; synthetic README screenshots were regenerated. The latest supplied live report confirms all 67 pages discovered, 37 orders saved and one missing-seller failure, with the three earlier discount failures now saved. The full 667-order collection remains incomplete. Live agent access is blocked; native Excel and physical printing were not rerun because their implementation is unchanged.
 
 - Version 2.2.4 passed source/docs checks, 193 unit checks, the production rebuild, 85 packaged Chromium tests and 8 focused Edge tests. New coverage verifies already-included wholesale/price-adjustment reductions, strict ambiguity rejection, atomic backup validation, search with purchase filters, empty/cancelled/frozen refresh scopes, bounded pagination and continuing-import progress. Independent review findings were fixed and rechecked. The supplied 22-order/182-row backup restored unchanged in an isolated database. All three reported financial failures reconciled in inert reconstructed fixtures; one uses aggregate evidence for three rows omitted from the report sample. The later live report records 67/67 list pages discovered, 667 queued orders, 32 saved and 3 failed before user pause; it is not full collection acceptance. Synthetic screenshots were refreshed. Live agent access remains blocked; native Excel and printing were not rerun because label rendering and clipboard formats are unchanged.
 

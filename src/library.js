@@ -807,6 +807,14 @@ export async function startLibrary(
     link.target = '_blank'
     link.rel = 'noreferrer'
     content.append(link)
+    if (order.sellerUnavailable)
+      content.append(
+        node(
+          'p',
+          'Seller unavailable on the source page. Products and totals are saved. Identify the seller in Prepare labels before assigning label codes.',
+          'packing-help'
+        )
+      )
     const totals = node('dl')
     for (const [label, value] of [
       ['Original goods', order.totals.goodsGross],

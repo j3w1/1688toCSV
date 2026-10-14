@@ -29,6 +29,8 @@ Open **Extensions → Developer mode → Load unpacked** and select **dist**. In
 
 Resolve any **Choose a size code** prompt before copying labels. Names and codes remain editable after saving.
 
+Orders marked **Seller unavailable** keep their products and totals. Enter the seller's member login in **Prepare labels** before assigning codes.
+
 ## Edit labels and copy to Excel
 
 Click **Barcode** or **Carton mark** and edit the preview. **Enter** or leaving the field saves; **Escape** cancels the edit. Click **Copy label**, then paste into Excel. Click the dimmed background to close an overlay. **Settings** controls dimensions, resolution, logo and vocabulary.
@@ -44,7 +46,7 @@ Click **Barcode** or **Carton mark** and edit the preview. **Enter** or leaving 
 
 Select rows to limit a copy; otherwise all filtered rows are used. **Headers** starts off and remembers your choice. Batch actions ask for confirmation. Pictures paste as floating images; successful buttons show **Copied**.
 
-Search orders by seller or order number and filter by purchase month or date range, then use **Refresh matching orders**. You can also refresh selected orders or all orders. Use **Activity** to pause, retry or dismiss imports, or **Save import report** to inspect every result. Retry keeps successful saves and revisits failures. The sun/moon button changes the default dark appearance.
+Search orders by seller or order number and filter by purchase month or date range, then use **Refresh matching orders**. You can also refresh selected orders or all orders. Use **Activity** to pause, retry or dismiss imports. **Save import report** is available in Activity and beside Pause/Resume on the order page. Retry keeps successful saves and revisits failures. The sun/moon button changes the default dark appearance.
 
 ## Keep your data
 

@@ -3,7 +3,7 @@ import { createImportController } from './import-controller.js'
 import { detailUrl, isListUrl } from './order-list.js'
 import { loadThumbnail } from './images.js'
 import { financialDiagnostics } from './import-diagnostics.js'
-import { importJobView } from './import-report.js'
+import { createImportReport, importJobView } from './import-report.js'
 
 const alarmName = 'order-import'
 // This lock only orders concurrent events in one worker lifetime. Every job
@@ -313,6 +313,20 @@ async function dispatch(message, sender, repository, controller) {
           .sort((a, b) => b.updatedAt.localeCompare(a.updatedAt))
           .map(jobStatus),
       }
+    case 'IMPORT_REPORT': {
+      requireContent(sender, 'list')
+      const job =
+        typeof message.jobId === 'string'
+          ? await repository.getJob(message.jobId)
+          : undefined
+      if (!job)
+        throw new Error(
+          'This import is no longer available. Refresh the order list.'
+        )
+      if (!sameSource(job, sender))
+        throw new Error('This import belongs to another order-list tab.')
+      return createImportReport(job, chrome.runtime.getManifest().version)
+    }
     case 'IMPORT_PAUSE':
     case 'IMPORT_RESUME': {
       if (!isExtensionPage(sender)) {
@@ -390,6 +404,7 @@ chrome.runtime.onMessage.addListener((message, sender, respond) => {
         'LIBRARY_QUERY',
         'JOBS_QUERY',
         'IMPORT_STATUS',
+        'IMPORT_REPORT',
         'LIBRARY_HISTORY',
         'BACKUP_EXPORT',
       ].includes(message.type)

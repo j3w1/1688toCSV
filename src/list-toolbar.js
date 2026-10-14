@@ -19,6 +19,10 @@ export function mountListToolbar(document, { readList, send }) {
   progress.hidden = true
   const progressText = make('p')
   progressText.setAttribute('aria-live', 'polite')
+  const progressActions = make('div')
+  progressActions.className = 'actions'
+  progress.append(progressText, progressActions)
+  const reportFiles = new Map()
   const options = make('details')
   options.append(make('summary', 'More import options'))
   const confirmation = make('section')
@@ -225,7 +229,7 @@ export function mountListToolbar(document, { readList, send }) {
     },
     'secondary'
   )
-  const pause = button(progress, 'Pause import', async () => {
+  const pause = button(progressActions, 'Pause import', async () => {
     if (!latestJob) return
     const job = latestJob
     const total = Math.max(
@@ -258,7 +262,44 @@ export function mountListToolbar(document, { readList, send }) {
       )
     } else await resume()
   })
-  progress.prepend(progressText)
+  function releaseReport(url) {
+    clearTimeout(reportFiles.get(url))
+    reportFiles.delete(url)
+    document.defaultView.URL.revokeObjectURL(url)
+  }
+  button(
+    progressActions,
+    'Save import report',
+    async () => {
+      if (!latestJob)
+        throw new Error('No import is available. Refresh the order list.')
+      const value = await send('IMPORT_REPORT', { jobId: latestJob.id })
+      if (disposed) return
+      const view = document.defaultView
+      const url = view.URL.createObjectURL(
+        new view.Blob([JSON.stringify(value)], { type: 'application/json' })
+      )
+      reportFiles.set(
+        url,
+        setTimeout(() => releaseReport(url), 60000)
+      )
+      const anchor = make('a')
+      anchor.href = url
+      anchor.download = `1688-import-report-${new Date().toISOString().slice(0, 10)}.json`
+      anchor.hidden = true
+      root.append(anchor)
+      try {
+        anchor.click()
+        report('Import report save requested. Check your downloads.')
+      } catch (error) {
+        releaseReport(url)
+        throw error
+      } finally {
+        anchor.remove()
+      }
+    },
+    'secondary'
+  )
   function applyRunningState() {
     const running = latestJob?.state === 'running'
     selected.disabled = running
@@ -332,6 +373,7 @@ export function mountListToolbar(document, { readList, send }) {
     dispose() {
       disposed = true
       clearTimeout(statusTimer)
+      for (const url of reportFiles.keys()) releaseReport(url)
       document.defaultView?.removeEventListener('focus', focus)
       host.remove()
     },
