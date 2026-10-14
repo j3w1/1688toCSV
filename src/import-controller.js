@@ -74,6 +74,9 @@ export function createImportController({
     job.detailStartedAt = null
     job.detailAttempts = 0
     job.detailNavigationPending = false
+    job.detailStage = null
+    job.currentRows = null
+    job.detailError = ''
     // Checkpoint before closing, so the tab-removal event is not mistaken for a user interruption.
     await write(job)
     await browser.closeDetailTab(tabId, job.id)
@@ -186,6 +189,22 @@ export function createImportController({
           'Return the order list to the page where import paused before resuming.'
         )
     }
+    const missingRows = job.orders.filter(
+      (order) => order.state === 'done' && !Number.isInteger(order.savedRows)
+    )
+    if (missingRows.length) {
+      const savedRows = new Map(
+        (await repository.listOrders())
+          .filter((record) => Array.isArray(record.snapshot?.items))
+          .map((record) => [
+            record.snapshot.orderId,
+            record.snapshot.items.length,
+          ])
+      )
+      for (const order of missingRows)
+        if (savedRows.has(order.orderId))
+          order.savedRows = savedRows.get(order.orderId)
+    }
     for (const order of job.orders)
       if (order.state === 'failed')
         Object.assign(order, { state: 'pending', error: '' })
@@ -270,6 +289,9 @@ export function createImportController({
       job.currentOrderId = order.orderId
       job.detailStartedAt = now()
       job.detailAttempts = 0
+      job.detailStage = 'loading'
+      job.currentRows = null
+      job.detailError = ''
       await write(job)
       job.workerTabId = await browser.openDetailTab(order.sourceUrl, job.id)
       await write(job)
@@ -291,11 +313,18 @@ export function createImportController({
       job.detailStartedAt = now()
       job.detailAttempts = 0
       job.detailNavigationPending = true
+      job.detailStage = 'loading'
+      job.currentRows = null
+      job.detailError = ''
       await write(job)
     }
     if (job.detailNavigationPending) {
       // Repeating navigation after a worker interruption is safe: the adapter
       // checks the target URL before navigating the single owned tab again.
+      if (job.detailStage !== 'loading') {
+        job.detailStage = 'loading'
+        await write(job)
+      }
       await browser.navigateDetailTab(job.workerTabId, order.sourceUrl, job.id)
       job.detailNavigationPending = false
       await write(job)
@@ -313,6 +342,7 @@ export function createImportController({
         'The import tab left the order page. Complete sign-in or verification, then resume.'
       )
     job.detailAttempts += 1
+    job.detailStage = 'reading'
     await write(job)
     let snapshot,
       saved = false
@@ -327,6 +357,9 @@ export function createImportController({
         throw new Error(
           `Expected ${order.expectedRows} product rows but read ${snapshot.items.length}. No saved data was replaced.`
         )
+      job.currentRows = snapshot.items.length
+      job.detailStage = 'saving'
+      await write(job)
       await repository.saveSnapshot({
         ...snapshot,
         ...(order.purchasedAt ? { purchasedAt: order.purchasedAt } : {}),
@@ -334,13 +367,27 @@ export function createImportController({
       saved = true
       order.state = 'done'
       order.error = ''
+      order.savedRows = snapshot.items.length
+      job.detailError = ''
+      job.latestResult = {
+        orderId: order.orderId,
+        outcome: 'saved',
+        rows: order.savedRows,
+        sellerName: String(snapshot.sellerName || '').slice(0, 160),
+        payable: String(snapshot.totals?.payable || ''),
+        at: new Date(now()).toISOString(),
+      }
     } catch (error) {
       if (
         error?.retryable &&
         job.detailAttempts < 3 &&
         now() - job.detailStartedAt < 90000
-      )
+      ) {
+        job.detailStage = 'retrying'
+        job.detailError = errorText(error)
+        await write(job)
         return 'wait'
+      }
       order.state = 'failed'
       order.error = errorText(error)
       order.lastFailure = {
@@ -348,7 +395,14 @@ export function createImportController({
         message: order.error,
         diagnostics: financialDiagnostics(error?.diagnostics),
       }
+      job.latestResult = {
+        orderId: order.orderId,
+        outcome: 'failed',
+        error: order.error,
+        at: new Date(now()).toISOString(),
+      }
     }
+    job.detailStage = 'next'
     await write(job)
     if (saved) await browser.changed()
     return 'continue'

@@ -117,6 +117,217 @@ function setup(pages = [[row('10001'), row('10002')]], pageSize = 2) {
   }
 }
 const source = { tabId: 5, frameId: 2 }
+
+function deferred() {
+  let resolve
+  const promise = new Promise((complete) => {
+    resolve = complete
+  })
+  return { promise, resolve }
+}
+
+test('detail progress checkpoints distinguish blocked reads and saves from completed work', async () => {
+  const s = setup()
+  const reading = deferred(),
+    readResult = deferred(),
+    saving = deferred(),
+    saveResult = deferred()
+  s.browser.readDetail = async () => {
+    reading.resolve()
+    return readResult.promise
+  }
+  const saveSnapshot = s.repository.saveSnapshot
+  s.repository.saveSnapshot = async (value) => {
+    saving.resolve()
+    await saveResult.promise
+    await saveSnapshot(value)
+  }
+  const job = await s.controller.start({
+    scope: 'selected',
+    source,
+    orderIds: ['10001', '10002'],
+  })
+  await s.controller.tick()
+  assert.equal(s.jobs.get(job.id).detailStage, 'loading')
+  const tick = s.controller.tick()
+  await reading.promise
+  const readingJob = s.jobs.get(job.id)
+  assert.equal(readingJob.detailStage, 'reading')
+  assert.equal(readingJob.currentOrderId, '10001')
+  assert.equal(readingJob.currentRows, null)
+  assert.equal(readingJob.completed, 0)
+  assert.equal(readingJob.latestResult, undefined)
+
+  s.advance(1000)
+  readResult.resolve({
+    ...snapshot('10001'),
+    sellerName: 'Synthetic seller',
+    totals: { payable: '12.34' },
+  })
+  await saving.promise
+  const savingJob = s.jobs.get(job.id)
+  assert.equal(savingJob.detailStage, 'saving')
+  assert.equal(savingJob.currentRows, 2)
+  assert.equal(savingJob.completed, 0)
+  assert.equal(savingJob.orders[0].savedRows, undefined)
+  assert.equal(savingJob.latestResult, undefined)
+  assert.equal(s.saved.size, 0)
+  assert.equal(s.calls.filter(([type]) => type === 'changed').length, 0)
+
+  saveResult.resolve()
+  await tick
+  const completed = s.jobs.get(job.id)
+  assert.equal(completed.detailStage, 'next')
+  assert.equal(completed.completed, 1)
+  assert.equal(completed.orders[0].savedRows, 2)
+  assert.deepEqual(completed.latestResult, {
+    orderId: '10001',
+    outcome: 'saved',
+    rows: 2,
+    sellerName: 'Synthetic seller',
+    payable: '12.34',
+    at: '1970-01-01T00:00:02.000Z',
+  })
+  await s.controller.tick()
+  assert.equal(s.jobs.get(job.id).detailStage, 'loading')
+  assert.equal(s.jobs.get(job.id).currentOrderId, '10002')
+  assert.equal(s.jobs.get(job.id).currentRows, null)
+  assert.deepEqual(s.jobs.get(job.id).latestResult, completed.latestResult)
+})
+
+test('retry checkpoints retain bounded reasons without counting attempts as collected orders', async () => {
+  const s = setup([[row('10001')]])
+  const reason = 'The order is still loading. '.repeat(40)
+  s.browser.readDetail = async () => {
+    throw Object.assign(new Error(reason), { retryable: true })
+  }
+  const job = await s.controller.start({
+    scope: 'selected',
+    source,
+    orderIds: ['10001'],
+  })
+  await s.controller.tick()
+  for (let attempt = 1; attempt <= 2; attempt++) {
+    assert.equal(await s.controller.tick(), 'wait')
+    const retrying = s.jobs.get(job.id)
+    assert.equal(retrying.detailStage, 'retrying')
+    assert.equal(retrying.detailAttempts, attempt)
+    assert.equal(retrying.detailError, reason.slice(0, 500))
+    assert.equal(retrying.completed, 0)
+    assert.equal(retrying.failed, 0)
+    assert.equal(retrying.latestResult, undefined)
+    assert.equal(retrying.orders[0].savedRows, undefined)
+  }
+  assert.equal(await s.controller.tick(), 'continue')
+  const failed = s.jobs.get(job.id)
+  assert.equal(failed.detailStage, 'next')
+  assert.equal(failed.detailAttempts, 3)
+  assert.equal(failed.completed, 0)
+  assert.equal(failed.failed, 1)
+  assert.deepEqual(failed.latestResult, {
+    orderId: '10001',
+    outcome: 'failed',
+    error: reason.slice(0, 500),
+    at: '1970-01-01T00:00:01.000Z',
+  })
+  assert.equal(s.saved.size, 0)
+})
+
+test('successful retry clears its error and counts saved rows once', async () => {
+  const s = setup([[row('10001')]])
+  s.browser.readDetail = async () => {
+    throw Object.assign(new Error('Waiting for product rows'), {
+      retryable: true,
+    })
+  }
+  const job = await s.controller.start({
+    scope: 'selected',
+    source,
+    orderIds: ['10001'],
+  })
+  await s.controller.tick()
+  await s.controller.tick()
+  s.browser.readDetail = async () => ({
+    ...snapshot('10001'),
+    sellerName: 'x'.repeat(300),
+  })
+  await s.controller.tick()
+  const saved = s.jobs.get(job.id)
+  assert.equal(saved.detailError, '')
+  assert.equal(saved.orders[0].savedRows, 2)
+  assert.equal(saved.latestResult.rows, 2)
+  assert.equal(saved.latestResult.sellerName.length, 160)
+  assert.equal(saved.completed, 1)
+  assert.equal(saved.failed, 0)
+  assert.equal(s.calls.filter(([type]) => type === 'changed').length, 1)
+})
+
+test('legacy saved-row totals are backfilled only on resume without replacing snapshots or known counts', async () => {
+  const s = setup([[row('10001'), row('10002'), row('10003'), row('10004')]])
+  let listCalls = 0
+  const listOrders = s.repository.listOrders
+  s.repository.listOrders = async () => {
+    listCalls++
+    return listOrders()
+  }
+  const job = await s.controller.start({
+    scope: 'selected',
+    source,
+    orderIds: ['10001', '10002', '10003', '10004'],
+  })
+  await s.controller.tick()
+  await s.controller.tick()
+  await s.controller.pause(job.id)
+  assert.equal(listCalls, 0)
+  const legacy = s.jobs.get(job.id)
+  delete legacy.orders[0].savedRows
+  legacy.orders[1].state = 'done'
+  legacy.orders[2].state = 'done'
+  legacy.orders[2].savedRows = 7
+  const original = s.saved.get('10001')
+  s.saved.set('10003', snapshot('10003'))
+  await s.controller.resume(job.id)
+  assert.equal(listCalls, 1)
+  const resumed = s.jobs.get(job.id)
+  assert.equal(resumed.orders[0].savedRows, 2)
+  assert.equal(resumed.orders[1].savedRows, undefined)
+  assert.equal(resumed.orders[2].savedRows, 7)
+  assert.equal(resumed.orders[3].savedRows, undefined)
+  assert.equal(s.saved.get('10001'), original)
+  assert.equal(s.saved.size, 2)
+})
+
+test('pause and restart clear current read progress while retaining the last result', async () => {
+  for (const stop of ['pause', 'startup']) {
+    const s = setup()
+    const job = await s.controller.start({
+      scope: 'selected',
+      source,
+      orderIds: ['10001', '10002'],
+    })
+    await s.controller.tick()
+    await s.controller.tick()
+    const latestResult = structuredClone(s.jobs.get(job.id).latestResult)
+    await s.controller.tick()
+    s.browser.readDetail = async () => {
+      throw Object.assign(new Error('Rows are loading'), { retryable: true })
+    }
+    await s.controller.tick()
+    assert.equal(s.jobs.get(job.id).detailStage, 'retrying')
+    await s.controller[stop](job.id)
+    const paused = s.jobs.get(job.id)
+    assert.equal(paused.state, 'paused')
+    assert.equal(paused.currentOrderId, null)
+    assert.equal(paused.detailStage, null)
+    assert.equal(paused.currentRows, null)
+    assert.equal(paused.detailError, '')
+    assert.equal(paused.detailStartedAt, null)
+    assert.equal(paused.detailAttempts, 0)
+    assert.deepEqual(paused.latestResult, latestResult)
+    assert.equal(paused.orders[0].savedRows, 2)
+  }
+})
+
 test('67-page import checkpoints every order, continues after failures, and retries only failures', async () => {
   const all = Array.from({ length: 667 }, (_, i) => row(String(10000 + i)))
   const pages = Array.from({ length: 67 }, (_, i) =>

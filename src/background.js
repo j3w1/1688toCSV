@@ -4,6 +4,7 @@ import { detailUrl, isListUrl } from './order-list.js'
 import { loadThumbnail } from './images.js'
 import { financialDiagnostics } from './import-diagnostics.js'
 import { createImportReport, importJobView } from './import-report.js'
+import { importProgress } from './import-progress.js'
 
 const alarmName = 'order-import'
 // This lock only orders concurrent events in one worker lifetime. Every job
@@ -218,27 +219,23 @@ function sameSource(job, sender) {
   )
 }
 function jobStatus(job) {
-  const { id, state, phase, kind, scope, page, total, updatedAt } = job
-  const completed = job.orders.filter((order) => order.state === 'done').length
   return {
-    id,
-    state,
-    phase,
-    kind,
-    scope,
-    page,
-    total,
-    updatedAt,
+    ...importProgress(job),
     error:
       job.error ||
-      (state !== 'running' &&
+      (job.state !== 'running' &&
         job.orders.find((order) => order.state === 'failed')?.error) ||
       '',
-    completed,
-    remaining: Math.max(0, Math.max(total || 0, job.orders.length) - completed),
-    failed: job.orders.filter((order) => order.state === 'failed').length,
-    discovered: job.orders.length,
   }
+}
+function sameReader(job, sender) {
+  return (
+    job.workerTabId === sender.tab?.id &&
+    typeof job.currentOrderId === 'string' &&
+    (sender.frameId ?? 0) === 0 &&
+    owns({ url: sender.url }, job.id) &&
+    Boolean(detailUrl(sender.url, job.currentOrderId))
+  )
 }
 async function dispatch(message, sender, repository, controller) {
   if (!message || typeof message.type !== 'string')
@@ -313,6 +310,14 @@ async function dispatch(message, sender, repository, controller) {
           .sort((a, b) => b.updatedAt.localeCompare(a.updatedAt))
           .map(jobStatus),
       }
+    case 'READER_STATUS': {
+      requireContent(sender, 'detail')
+      const job = (await repository.listJobs()).find(
+        (candidate) =>
+          candidate.state === 'running' && sameReader(candidate, sender)
+      )
+      return job ? jobStatus(job) : null
+    }
     case 'IMPORT_REPORT': {
       requireContent(sender, 'list')
       const job =
@@ -330,10 +335,15 @@ async function dispatch(message, sender, repository, controller) {
     case 'IMPORT_PAUSE':
     case 'IMPORT_RESUME': {
       if (!isExtensionPage(sender)) {
-        requireContent(sender, 'list')
+        const readerPause =
+          message.type === 'IMPORT_PAUSE' && detailUrl(sender.url)
+        requireContent(sender, readerPause ? 'detail' : 'list')
         const job = await repository.getJob(message.jobId)
-        if (!job || !sameSource(job, sender))
-          throw new Error('This import belongs to another order-list tab.')
+        if (
+          !job ||
+          !(readerPause ? sameReader(job, sender) : sameSource(job, sender))
+        )
+          throw new Error('This import belongs to another tab.')
       }
       return message.type === 'IMPORT_PAUSE'
         ? controller.pause(message.jobId)
@@ -404,6 +414,7 @@ chrome.runtime.onMessage.addListener((message, sender, respond) => {
         'LIBRARY_QUERY',
         'JOBS_QUERY',
         'IMPORT_STATUS',
+        'READER_STATUS',
         'IMPORT_REPORT',
         'LIBRARY_HISTORY',
         'BACKUP_EXPORT',

@@ -148,7 +148,7 @@ test('structured products prepare, preserve edits and copy exact headerless sour
     .fill('frasco transparente')
   await group.getByLabel('Chinese category', { exact: true }).fill('玻璃制品')
   const variant = group.locator('.variants tbody tr').first()
-  await openDetails(variant.locator('.variant-code-options'))
+  await expect(variant.locator('.variant-code-options')).toBeVisible()
   await variant.getByRole('textbox', { name: /^Variant code / }).fill('b')
   await variant.getByRole('textbox', { name: /^Size code / }).fill('xs')
   await waitForAutosave(dialog)
@@ -158,7 +158,7 @@ test('structured products prepare, preserve edits and copy exact headerless sour
   await expect(
     group.getByLabel('Chinese category', { exact: true })
   ).toHaveValue('玻璃制品')
-  await openDetails(variant.locator('.variant-code-options'))
+  await expect(variant.locator('.variant-code-options')).toBeVisible()
   await expect(
     variant.getByRole('textbox', { name: /^Variant code / })
   ).toHaveValue(/b/i)
@@ -237,7 +237,7 @@ test('structured products prepare, preserve edits and copy exact headerless sour
   await expect(
     group.getByLabel('Chinese category', { exact: true })
   ).toHaveValue('玻璃制品')
-  await openDetails(variant.locator('.variant-code-options'))
+  await expect(variant.locator('.variant-code-options')).toBeVisible()
   await expect(
     variant.getByRole('textbox', { name: /^Variant code / })
   ).toHaveValue('B')
@@ -480,7 +480,7 @@ test('preparation shows product photos, zooms originals and opens saved labels f
       await previous.dispose()
     }
   }
-  await expect(label.getByLabel('Barcode code', { exact: true })).toHaveValue(
+  await expect(label.getByLabel('Barcode code', { exact: true })).toHaveText(
     `${baseCode}S`
   )
   await expect(
@@ -524,7 +524,7 @@ test('preparation shows product photos, zooms originals and opens saved labels f
   expect(extension.unexpectedRequests).toEqual([])
 })
 
-test('advanced tools stay collapsed and field hints explain codes without extra buttons or editable size notes', async ({
+test('code options stay visible while grouping tools stay collapsed and hints explain codes without extra buttons', async ({
   extension,
 }) => {
   const { page } = await openWorkspace(extension)
@@ -537,7 +537,6 @@ test('advanced tools stay collapsed and field hints explain codes without extra 
     dialog.locator('.order-tools'),
     first.locator('.group-tools'),
     first.locator('.original-product-name'),
-    variant.locator('.variant-code-options'),
   ])
     await expect(details).toHaveJSProperty('open', false)
   await expect(
@@ -554,7 +553,11 @@ test('advanced tools stay collapsed and field hints explain codes without extra 
   await expect(
     variant.getByLabel('Product variant', { exact: true })
   ).toHaveValue('颜色: 透明')
-  await openDetails(variant.locator('.variant-code-options'))
+  await expect(variant.locator('.variant-code-options')).toBeVisible()
+  await expect(
+    variant.getByRole('group', { name: 'Code options' })
+  ).toBeVisible()
+  await expect(variant.locator('.variant-code-options summary')).toHaveCount(0)
   await expect(
     variant.getByRole('textbox', { name: /^Size code / })
   ).toHaveValue('S')
@@ -563,7 +566,7 @@ test('advanced tools stay collapsed and field hints explain codes without extra 
   const codePanel = dialog.getByRole('tooltip')
   await expect(codePanel).toBeVisible()
   await expect(codePanel).toHaveText(
-    'Added to the barcode: S for small, L for large. Leave blank if not needed.'
+    'Identifies the size: S, M, L. Leave blank when not needed.'
   )
   await page.keyboard.press('Escape')
   await expect(codePanel).not.toBeVisible()
@@ -1022,7 +1025,15 @@ test('label editor saves repeated text edits and copies barcode and carton image
   const firstRow = page.locator('#sheet-body tr').first()
   await firstRow.getByRole('button', { name: 'Barcode', exact: true }).click()
   const label = page.getByRole('dialog', { name: 'Label editor', exact: true })
-  const code = label.getByRole('textbox', { name: 'Barcode code', exact: true })
+  const code = label.getByLabel('Barcode code', { exact: true })
+  const variantCode = label.getByRole('textbox', {
+    name: 'Variant code',
+    exact: true,
+  })
+  const sizeCode = label.getByRole('textbox', {
+    name: 'Size code',
+    exact: true,
+  })
   const spanish = label.getByRole('textbox', {
     name: 'Spanish product name',
     exact: true,
@@ -1031,7 +1042,9 @@ test('label editor saves repeated text edits and copies barcode and carton image
   await expect(
     label.getByRole('heading', { name: 'Barcode label' })
   ).toBeVisible()
-  await expect(code).toHaveValue(`${baseCode}S`)
+  await expect(code).toHaveText(`${baseCode}S`)
+  await expect(variantCode).toHaveValue('')
+  await expect(sizeCode).toHaveValue('S')
   await expect(spanish).toHaveValue('FRASCO DE VIDRIO')
   await expect(label.getByAltText('Printable label preview')).toBeVisible()
   await expect(copy).toBeEnabled({ timeout: 20_000 })
@@ -1040,10 +1053,11 @@ test('label editor saves repeated text edits and copies barcode and carton image
   await spanish.press('Enter')
   await expect(copy).toBeEnabled({ timeout: 20_000 })
   await expect(spanish).toHaveValue('FRASCO TRANSPARENTE')
-  await code.fill(`${baseCode}as`.toLowerCase())
-  await code.press('Enter')
+  await variantCode.fill('a')
+  await variantCode.press('Enter')
   await expect(copy).toBeEnabled({ timeout: 20_000 })
-  await expect(code).toHaveValue(`${baseCode}AS`)
+  await expect(code).toHaveText(`${baseCode}AS`)
+  await expect(variantCode).toHaveValue('A')
   await spanish.fill('discarded edit')
   await spanish.press('Escape')
   await expect(spanish).toHaveValue('FRASCO TRANSPARENTE')
@@ -1069,7 +1083,7 @@ test('label editor saves repeated text edits and copies barcode and carton image
 
   await page.reload()
   await firstRow.getByRole('button', { name: 'Barcode', exact: true }).click()
-  await expect(code).toHaveValue(`${baseCode}AS`)
+  await expect(code).toHaveText(`${baseCode}AS`)
   await expect(spanish).toHaveValue('FRASCO TRANSPARENTE')
   await label
     .getByRole('button', { name: 'Close label editor', exact: true })
@@ -1129,7 +1143,7 @@ test('label editor saves repeated text edits and copies barcode and carton image
     .getByRole('button', { name: 'Close label editor', exact: true })
     .click()
   await firstRow.getByRole('button', { name: 'Barcode', exact: true }).click()
-  await expect(code).toHaveValue(`${updatedBaseCode}AS`)
+  await expect(code).toHaveText(`${updatedBaseCode}AS`)
   await expect(spanish).toHaveValue('FRASCO TRANSPARENTE')
   const library = await extension.inspector.evaluate(() =>
     chrome.runtime.sendMessage({ type: 'LIBRARY_QUERY' })
@@ -1146,6 +1160,91 @@ async function packingBackup(extension) {
   expect(response.ok, response.error).toBe(true)
   return response.data
 }
+
+test('barcode image segments persist separately, reject collisions and leave source rows unchanged', async ({
+  extension,
+}) => {
+  const { page, record } = await openWorkspace(extension)
+  const preparation = await prepare(page)
+  const group = preparation.locator('.preparation-group').first()
+  const baseCode = await group
+    .getByLabel('Product code', { exact: true })
+    .inputValue()
+  const firstVariant = group.locator('.variants tbody tr').first()
+  await firstVariant
+    .getByRole('button', { name: 'Edit barcode', exact: true })
+    .click()
+  const label = page.getByRole('dialog', { name: 'Label editor', exact: true })
+  const variant = label.getByRole('textbox', {
+    name: 'Variant code',
+    exact: true,
+  })
+  const size = label.getByRole('textbox', { name: 'Size code', exact: true })
+  const copy = label.getByRole('button', { name: 'Copy label', exact: true })
+  await expect(copy).toBeEnabled({ timeout: 20_000 })
+  const original = await packingBackup(extension)
+  // Both fields live on the barcode image, and the shared base is not editable here.
+  await expect(
+    label
+      .locator('.label-editor-preview')
+      .getByLabel('Variant code', { exact: true })
+  ).toBeVisible()
+  await expect(
+    label
+      .locator('.label-editor-preview')
+      .getByLabel('Size code', { exact: true })
+  ).toBeVisible()
+  await expect(
+    label.getByRole('textbox', { name: 'Barcode code', exact: true })
+  ).toHaveCount(0)
+  await expect(label.locator('.label-code-base')).toHaveText(baseCode)
+  await size.fill('L')
+  await size.press('Enter')
+  await expect(label.locator('.label-editor-status')).toContainText(
+    /duplicate|already|conflict|unique/i
+  )
+  await expect(copy).toBeDisabled()
+  expect((await packingBackup(extension)).preparations).toEqual(
+    original.preparations
+  )
+  await size.press('Escape')
+  await expect(size).toHaveValue('S')
+  await expect(copy).toBeEnabled({ timeout: 20_000 })
+  await variant.fill('aa')
+  await variant.press('Enter')
+  await expect(copy).toBeEnabled({ timeout: 20_000 })
+  await size.fill('xs')
+  await size.press('Enter')
+  await expect(copy).toBeEnabled({ timeout: 20_000 })
+  await expect(label.getByLabel('Barcode code', { exact: true })).toHaveText(
+    `${baseCode}AAXS`
+  )
+  const saved = await packingBackup(extension)
+  expect(saved.preparations[0].groups[0].variants[0]).toMatchObject({
+    variantSuffix: 'AA',
+    sizeSuffix: 'XS',
+    needsSizeMapping: false,
+  })
+  expect(saved.orders[0].snapshot).toEqual(record.snapshot)
+  await label
+    .getByRole('button', { name: 'Close label editor', exact: true })
+    .click()
+  await expect(
+    firstVariant.getByRole('textbox', { name: /^Variant code / })
+  ).toHaveValue('AA')
+  await expect(
+    firstVariant.getByRole('textbox', { name: /^Size code / })
+  ).toHaveValue('XS')
+  await firstVariant
+    .getByRole('button', { name: 'Edit barcode', exact: true })
+    .click()
+  await expect(variant).toHaveValue('AA')
+  await expect(size).toHaveValue('XS')
+  await expect(label.getByLabel('Barcode code', { exact: true })).toHaveText(
+    `${baseCode}AAXS`
+  )
+  expect(extension.unexpectedRequests).toEqual([])
+})
 
 async function savePreparationAndRead(extension, dialog) {
   await waitForAutosave(dialog)
@@ -1192,9 +1291,9 @@ test('combining, separating, splitting and merging preserve source rows and save
       name: 'Label editor',
       exact: true,
     })
-    await expect(
-      label.getByRole('textbox', { name: 'Barcode code', exact: true })
-    ).toHaveValue(sharedBarcode)
+    await expect(label.getByLabel('Barcode code', { exact: true })).toHaveText(
+      sharedBarcode
+    )
     await label
       .getByRole('button', { name: 'Close label editor', exact: true })
       .click()

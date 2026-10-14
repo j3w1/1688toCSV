@@ -455,7 +455,7 @@ test('unsupported totals promptly retain bounded financial evidence, continue ot
   await library.getByRole('button', { name: /^Activity/ }).click()
   // A known unsupported label is terminal; it must not spend 45 seconds in hydration retries.
   await expect(library.locator('#jobs')).toContainText(
-    'completed with errors',
+    'Finished · some orders need attention',
     { timeout: 12000 }
   )
   await expect(library.locator('#order-count')).toHaveText('1')
@@ -644,6 +644,144 @@ test('delayed rendering and labelled discount summaries import complete products
     .getByRole('button', { name: 'Import 2 selected orders', exact: true })
     .click()
   await assertImported(extension, library)
+})
+
+test('reader and Activity show durable collection progress while hydration waits without replacing focused actions', async ({
+  extension,
+}) => {
+  test.setTimeout(80_000)
+  const { list, library } = await setup(extension, {
+    delay: { [ids[1]]: 25_000 },
+  })
+  await list
+    .getByRole('button', { name: 'Import selected', exact: true })
+    .click()
+  const readerCreated = extension.context.waitForEvent('page')
+  await list
+    .getByRole('button', { name: 'Import 2 selected orders', exact: true })
+    .click()
+  const reader = await readerCreated
+  await reader.waitForURL(`${detailUrl(ids[1])}#*`)
+  await reader.setViewportSize({ width: 260, height: 500 })
+  const panel = reader.locator('aside[aria-label="1688toCSV"]')
+  await library.getByRole('button', { name: /^Activity/ }).click()
+  const activity = library.locator('#jobs .import-progress')
+  const readerProgress = panel.locator('.import-progress')
+  for (const progress of [activity, readerProgress]) {
+    await expect(progress).toBeVisible()
+    await expect(progress.locator('.import-meter')).toHaveText(
+      '1 / 2 processed · 50%'
+    )
+    await expect(progress.locator('.import-counts')).toHaveText(
+      '1 saved · 0 need attention · 1 pending'
+    )
+    await expect(progress.locator('.import-rows')).toHaveText(
+      '2 product rows saved'
+    )
+    await expect(progress.locator('.import-current')).toContainText(
+      '…00000002 · Reading products and checking totals · attempt 1/3'
+    )
+    await expect(progress.locator('.import-latest')).toContainText(
+      'Last saved: …00000001 · 2 product rows · 示例工厂 · CNY 68.00'
+    )
+    const bar = progress.getByRole('progressbar', {
+      name: 'Orders processed',
+      exact: true,
+    })
+    await expect(bar).toHaveAttribute('value', '1')
+    await expect(bar).toHaveAttribute('max', '2')
+    await expect(bar).toHaveAttribute('aria-valuetext', '1 / 2 processed · 50%')
+  }
+  const readJob = async () =>
+    (
+      await extension.inspector.evaluate(() =>
+        chrome.runtime.sendMessage({ type: 'JOBS_QUERY' })
+      )
+    ).data.jobs[0]
+  const checkpoint = await readJob()
+  expect(checkpoint.completed).toBe(1)
+  expect(checkpoint.orders.map(({ state }) => state)).toEqual([
+    'done',
+    'pending',
+  ])
+  expect(checkpoint.orders[0].savedRows).toBe(2)
+  expect(checkpoint.latestResult).toMatchObject({
+    orderId: ids[0],
+    outcome: 'saved',
+    rows: 2,
+    sellerName: '示例工厂',
+    payable: '68.00',
+  })
+  const pause = library
+    .locator('#jobs')
+    .getByRole('button', { name: 'Pause', exact: true })
+  await pause.focus()
+  const pauseNode = await pause.elementHandle()
+  const initialElapsed = Number(
+    (await activity.locator('.import-current').textContent()).match(
+      / · (\d+)s on this order/
+    )[1]
+  )
+  await expect
+    .poll(
+      async () =>
+        Number(
+          (await activity.locator('.import-current').textContent()).match(
+            / · (\d+)s on this order/
+          )?.[1]
+        ),
+      { timeout: 7_000, intervals: [500] }
+    )
+    .toBeGreaterThanOrEqual(initialElapsed + 3)
+  await expect(pause).toBeFocused()
+  expect(
+    await pause.evaluate((node, previous) => node === previous, pauseNode)
+  ).toBe(true)
+  await pauseNode.dispose()
+  expect(await readJob()).toEqual(checkpoint)
+  for (const progress of [activity, readerProgress])
+    await expect(progress.locator('.import-meter')).toHaveText(
+      '1 / 2 processed · 50%'
+    )
+  const bounds = await panel.evaluate((element) => {
+    const rect = element.getBoundingClientRect()
+    return {
+      left: rect.left,
+      top: rect.top,
+      right: rect.right,
+      bottom: rect.bottom,
+      scrollWidth: element.scrollWidth,
+      clientWidth: element.clientWidth,
+    }
+  })
+  expect(bounds.left).toBeGreaterThanOrEqual(0)
+  expect(bounds.top).toBeGreaterThanOrEqual(0)
+  expect(bounds.right).toBeLessThanOrEqual(260)
+  expect(bounds.bottom).toBeLessThanOrEqual(500)
+  expect(bounds.scrollWidth).toBeLessThanOrEqual(bounds.clientWidth)
+
+  // The same order opened manually must not inherit another tab's import UI.
+  const manual = await extension.context.newPage()
+  await manual.goto(detailUrl(ids[1]))
+  const manualPanel = manual.locator('aside[aria-label="1688toCSV"]')
+  await expect(manualPanel).toBeVisible()
+  await expect(manualPanel.locator('.import-progress')).not.toBeVisible()
+  await expect(
+    manualPanel.getByRole('button', { name: 'Pause import' })
+  ).not.toBeVisible()
+  await expect(library.locator('#order-count')).toHaveText('1')
+  await manual.close()
+  await library
+    .getByRole('button', { name: 'Close activity', exact: true })
+    .click()
+  await assertImported(extension, library)
+  await library.getByRole('button', { name: /^Activity/ }).click()
+  await expect(library.locator('#jobs .import-meter')).toHaveText(
+    '2 / 2 processed · 100%'
+  )
+  await expect(library.locator('#jobs .import-rows')).toHaveText(
+    '4 product rows saved'
+  )
 })
 
 test('library retry resumes a persisted failed queue and fills the spreadsheet', async ({

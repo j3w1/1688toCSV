@@ -1,3 +1,5 @@
+import { createProgressView, importProgressStyles } from './import-progress.js'
+
 const controlKey = Symbol.for('1688tocsv.pageDownloadCleanup')
 
 // Keep the native download link in the order document. Generate the current
@@ -37,6 +39,11 @@ export function mountPageDownload(document, prepareFile, actions = {}) {
       border: 1px solid #d9dfd2; border-radius: 6px; background: white; color: #52634b; font-size: 11px; }
     button:hover { background: #e9eee2; }
     button:focus-visible { outline: 3px solid #456fba; outline-offset: 3px; }
+    [hidden] { display: none !important; }
+    aside[data-importing] { width: 300px; max-height: calc(100dvh - 32px); overflow-y: auto; }
+    .import-section { border-top: 1px solid #d9dfd2; margin-top: 10px; padding-top: 10px; }
+    .import-section button { width: 100%; margin-top: 6px; }
+    ${importProgressStyles}
   `
   )
   const control = element('aside')
@@ -72,6 +79,39 @@ export function mountPageDownload(document, prepareFile, actions = {}) {
       })
     }
   }
+  const collection = element('div', '', control)
+  collection.className = 'import-section'
+  collection.hidden = true
+  const progressView = createProgressView(document)
+  collection.append(progressView.element)
+  let currentJob
+  if (actions.pauseImport) {
+    const pause = element('button', 'Pause import', collection)
+    pause.addEventListener('click', async () => {
+      if (!currentJob) return
+      pause.disabled = true
+      pause.textContent = 'Pausing…'
+      try {
+        await actions.pauseImport(currentJob.id)
+        status.textContent =
+          'Import paused. Resume from Activity or the order list.'
+        status.dataset.tone = 'notice'
+        updateProgress(null)
+      } catch (error) {
+        status.textContent = error.message
+        status.dataset.tone = 'error'
+      } finally {
+        pause.disabled = false
+        pause.textContent = 'Pause import'
+      }
+    })
+  }
+  function updateProgress(job) {
+    currentJob = job
+    collection.hidden = !job
+    control.toggleAttribute('data-importing', Boolean(job))
+    if (job) progressView.update(job)
+  }
   function releaseFile() {
     if (url) view.URL.revokeObjectURL(url)
     url = undefined
@@ -98,12 +138,24 @@ export function mountPageDownload(document, prepareFile, actions = {}) {
     }
   })
   function cleanup() {
-    view.removeEventListener('pagehide', releaseFile)
+    view.removeEventListener('pagehide', pageHidden)
+    view.removeEventListener('pageshow', pageShown)
+    actions.dispose?.()
     releaseFile()
     host.remove()
     if (view[controlKey] === cleanup) delete view[controlKey]
   }
+  function pageHidden(event) {
+    if (!event.persisted) return cleanup()
+    releaseFile()
+    actions.suspend?.()
+  }
+  function pageShown(event) {
+    if (event.persisted) actions.resume?.()
+  }
   view[controlKey] = cleanup
-  view.addEventListener('pagehide', releaseFile)
+  view.addEventListener('pagehide', pageHidden)
+  view.addEventListener('pageshow', pageShown)
   document.body.appendChild(host)
+  return { updateProgress, dispose: cleanup }
 }

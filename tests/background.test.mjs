@@ -6,6 +6,7 @@ import { createImportController } from '../src/import-controller.js'
 import { detailUrl, isListUrl } from '../src/order-list.js'
 import { createImportReport, importJobView } from '../src/import-report.js'
 import { financialDiagnostics } from '../src/import-diagnostics.js'
+import { importProgress } from '../src/import-progress.js'
 
 const sourceCode = (
   await readFile(new URL('../src/background.js', import.meta.url), 'utf8')
@@ -160,6 +161,7 @@ function setup({ orderIds = ['10001'] } = {}) {
     importJobView,
     createImportReport,
     financialDiagnostics,
+    importProgress,
     loadThumbnail: async () => '',
     URL,
     console,
@@ -174,6 +176,64 @@ const settle = async () => {
   for (let i = 0; i < 20; i++)
     await new Promise((resolve) => setImmediate(resolve))
 }
+
+test('reader progress is compact, tab/frame/order scoped, read-only and available during a blocked read', async () => {
+  const s = setup()
+  const reader = {
+    id: 'synthetic',
+    tab: { id: 11 },
+    frameId: 0,
+    url: `${url('10001')}#1688tocsv-import=job`,
+  }
+  const job = {
+    id: 'job',
+    workerTabId: 11,
+    currentOrderId: '10001',
+    state: 'running',
+    phase: 'details',
+    total: 2,
+    detailStage: 'reading',
+    detailStartedAt: 1000,
+    detailAttempts: 1,
+    orders: [
+      { orderId: '10001', state: 'pending' },
+      { orderId: '10002', state: 'done', savedRows: 7 },
+    ],
+  }
+  s.jobs.set('job', structuredClone(job))
+  let release
+  const held = new Promise((resolve) => {
+    release = resolve
+  })
+  const original = s.chrome.tabs.create
+  s.chrome.tabs.create = async (options) => {
+    await held
+    return original(options)
+  }
+  const mutation = s.send({ type: 'OPEN_LIBRARY' }) // Holds the serial lock.
+  await settle()
+  const reply = await s.send({ type: 'READER_STATUS' }, reader)
+  assert.equal(reply.ok, true)
+  assert.equal(reply.data.collectedRows, 7)
+  assert.equal(reply.data.detailStage, 'reading')
+  assert.equal(reply.data.orders, undefined)
+  for (const wrong of [
+    { ...reader, tab: { id: 12 } },
+    { ...reader, frameId: 1 },
+    { ...reader, url: url('10001') },
+    { ...reader, url: `${url('10003')}#1688tocsv-import=job` },
+    { ...reader, url: `${url('10001')}#1688tocsv-import=other` },
+  ])
+    assert.equal((await s.send({ type: 'READER_STATUS' }, wrong)).data, null)
+  assert.equal((await s.send({ type: 'READER_STATUS' }, sender)).ok, false)
+  assert.deepEqual(s.jobs.get('job'), job)
+  assert.equal(
+    s.calls.some(([type]) => ['content', 'schedule'].includes(type)),
+    false
+  )
+  release()
+  await mutation
+})
 
 test('progress responses omit failure evidence without erasing saved diagnostics', async () => {
   const s = setup()

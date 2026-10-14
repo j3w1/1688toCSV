@@ -274,8 +274,20 @@ test('barcode code bands hug the fitted text with small balanced padding', async
 test('shipping marks export one landscape image with blank operational fields', async (t) => {
   const page = await pageFor(t)
   const result = await page.evaluate(async () => {
-    const calls = []
+    const calls = [],
+      lines = []
     const original = CanvasRenderingContext2D.prototype.fillText
+    const originalMove = CanvasRenderingContext2D.prototype.moveTo
+    const originalLine = CanvasRenderingContext2D.prototype.lineTo
+    let lineStart
+    CanvasRenderingContext2D.prototype.moveTo = function (x, y) {
+      lineStart = { x, y }
+      return originalMove.call(this, x, y)
+    }
+    CanvasRenderingContext2D.prototype.lineTo = function (x, y) {
+      lines.push({ start: lineStart, end: { x, y } })
+      return originalLine.call(this, x, y)
+    }
     CanvasRenderingContext2D.prototype.fillText = function (text, ...args) {
       const measured = this.measureText(text)
       calls.push({
@@ -303,37 +315,36 @@ test('shipping marks export one landscape image with blank operational fields', 
         bytes: Array.from(new Uint8Array(await label.blob.arrayBuffer())),
         fields: Labels.LABEL_FIELDS.mark,
         calls,
+        lines,
       }
     } finally {
       CanvasRenderingContext2D.prototype.fillText = original
+      CanvasRenderingContext2D.prototype.moveTo = originalMove
+      CanvasRenderingContext2D.prototype.lineTo = originalLine
     }
   })
   assert.deepEqual([result.width, result.height], [1754, 1240])
   assert.equal(result.type, 'image/png')
   assert.deepEqual(
     result.calls.map((call) => call.text),
-    [
-      'CE',
-      '货号：',
-      'CE26100002',
-      '数量：',
-      '重量：',
-      'KG',
-      '体积：',
-      'CBM',
-      '工艺品',
-    ]
+    ['CE', 'CE26100002', '数量：', '重量：', 'KG', '体积：', 'CBM', '工艺品']
   )
   const physical = chunks(result.bytes).find((chunk) => chunk.type === 'pHYs')
   assert.equal(physical.data.readUInt32BE(0), Math.round(300 / 0.0254))
   const ce = result.calls.find((call) => call.text === 'CE')
   const code = result.calls.find((call) => call.text === 'CE26100002')
   const category = result.calls.find((call) => call.text === '工艺品')
-  assert.ok(ce.size >= result.height * 0.43)
-  assert.ok(code.size >= result.height * 0.135)
-  assert.ok(category.size >= result.height * 0.145)
+  assert.ok(ce.size >= result.height * 0.68)
+  assert.ok(ce.bottom - ce.top >= result.height * 0.49)
+  assert.ok(code.size >= result.height * 0.19)
+  assert.ok(code.right - code.left >= result.width * 0.79)
+  assert.ok(category.size >= result.height * 0.19)
   assert.ok(ce.bottom < code.top)
+  assert.ok(code.top - ce.bottom < result.height * 0.06)
   assert.ok(code.bottom < category.top)
+  assert.ok(ce.top >= result.height * 0.01)
+  assert.ok(ce.left >= result.width * 0.03)
+  assert.ok(ce.right <= result.width * 0.97)
   for (const [key, text] of [
     ['code', code],
     ['category', category],
@@ -350,6 +361,82 @@ test('shipping marks export one landscape image with blank operational fields', 
   assert.ok(blanks.every((call) => call.size < result.height * 0.045))
   assert.ok(blanks[0].top > code.bottom)
   assert.ok(blanks.at(-1).bottom - blanks[0].top < result.height * 0.2)
+  assert.equal(result.lines.length, 3)
+  for (let index = 0; index < result.lines.length; index++) {
+    const line = result.lines[index]
+    assert.ok(line.start.x > blanks[index].right)
+    assert.equal(line.start.y, line.end.y)
+    assert.ok(line.end.x < category.left)
+    assert.ok(line.end.y < result.height * 0.97)
+    assert.ok(((line.end.x - line.start.x) / result.width) * 148.5 >= 27)
+  }
+})
+
+test('carton mark layout keeps enlarged identifiers and writable fields within adjusted print sizes', async (t) => {
+  const page = await pageFor(t)
+  for (const settings of [
+    { dpi: 150, mark: { widthMm: 148.5, heightMm: 105, textScale: 0.75 } },
+    { dpi: 300, mark: { widthMm: 200, heightMm: 140, textScale: 1.25 } },
+    { dpi: 600, mark: { widthMm: 148.5, heightMm: 105, textScale: 1.25 } },
+  ]) {
+    const result = await page.evaluate(async (settings) => {
+      const calls = []
+      const original = CanvasRenderingContext2D.prototype.fillText
+      CanvasRenderingContext2D.prototype.fillText = function (text, x, y) {
+        const bounds = this.measureText(text)
+        calls.push({
+          text,
+          left: x - bounds.actualBoundingBoxLeft,
+          right: x + bounds.actualBoundingBoxRight,
+          top: y - bounds.actualBoundingBoxAscent,
+          bottom: y + bounds.actualBoundingBoxDescent,
+        })
+        return original.call(this, text, x, y)
+      }
+      try {
+        const label = await Labels.renderLabel({
+          kind: 'mark',
+          code: 'CE26100003',
+          category: '玻璃制品',
+          settings,
+        })
+        return {
+          width: label.width,
+          height: label.height,
+          fields: Labels.LABEL_FIELDS.mark,
+          calls,
+        }
+      } finally {
+        CanvasRenderingContext2D.prototype.fillText = original
+      }
+    }, settings)
+    assert.equal(
+      result.width,
+      Math.round((settings.mark.widthMm * settings.dpi) / 25.4)
+    )
+    assert.equal(
+      result.height,
+      Math.round((settings.mark.heightMm * settings.dpi) / 25.4)
+    )
+    for (const text of result.calls) {
+      assert.ok(text.left >= 0, text.text)
+      assert.ok(text.top >= 0, text.text)
+      assert.ok(text.right <= result.width, text.text)
+      assert.ok(text.bottom <= result.height, text.text)
+    }
+    const ce = result.calls.find((call) => call.text === 'CE')
+    const code = result.calls.find((call) => call.text === 'CE26100003')
+    assert.ok(ce.bottom < code.top)
+    const [x, y, width, height] = result.fields.code
+    assert.ok(code.left >= x * result.width)
+    assert.ok(code.right <= (x + width) * result.width)
+    assert.ok(code.top >= y * result.height)
+    assert.ok(code.bottom <= (y + height) * result.height)
+    for (const text of result.calls.filter(
+      (call) => !['CE', 'CE26100003'].includes(call.text)
+    ))
+      assert.ok(text.top > code.bottom)
+  }
 })
 
 test('label text still wraps within its region or rejects overflow without clipping', async (t) => {

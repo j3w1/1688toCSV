@@ -245,30 +245,35 @@ select {
 }
 .preparation-group {
   border: 1px solid var(--border);
-  border-radius: 10px;
+  border-radius: 14px;
   padding: 16px;
   margin: 14px 0;
+  background: var(--surface);
+  box-shadow: 0 4px 20px #0000000a;
 }
 .preparation-group h3 {
+  display: flex;
+  align-items: center;
   margin: 0;
-  font-size: 14px;
+  gap: 4px;
+  font-size: 16px;
   line-height: 1.5;
   overflow-wrap: anywhere;
 }
 .group-fields {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: 12px;
+  gap: 10px 14px;
 }
 .group-fields label {
-  margin: 10px 0;
+  margin: 0;
 }
 .group-fields input {
   width: 100%;
   margin: 6px 0 0 !important;
 }
 .variants {
-  min-width: 560px;
+  min-width: 620px;
   font-size: 12px;
 }
 .variant-scroll {
@@ -276,7 +281,7 @@ select {
 }
 .variants th,
 .variants td {
-  padding: 9px 7px;
+  padding: 12px 8px;
 }
 .variants input {
   width: 100%;
@@ -288,8 +293,8 @@ select {
   overflow-wrap: anywhere;
 }
 .variants button {
-  padding: 5px 8px;
-  font-size: 11px;
+  padding: 7px 10px;
+  font-size: 12px;
 }
 .preparation-group .dialog-actions {
   margin-top: 10px;
@@ -317,6 +322,10 @@ select {
   font-size: 12px;
   color: var(--muted);
   max-width: 640px;
+  background: var(--field);
+  border: 1px solid var(--border);
+  border-radius: 20px;
+  padding: 6px 12px;
 }
 .preparation-save-status.packing-error {
   color: var(--error);
@@ -348,21 +357,21 @@ select {
   margin: 6px 8px 6px 0;
 }
 .original-product-name {
-  margin: 4px 0 14px;
+  margin: 0 0 12px 48px;
 }
 .original-product-name p {
   overflow-wrap: anywhere;
 }
 .product-overview {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) 210px;
-  gap: 24px;
+  grid-template-columns: minmax(0, 1fr) 220px;
+  gap: 18px;
   align-items: center;
-  margin-bottom: 18px;
+  margin-bottom: 12px;
 }
 .group-fields label:first-child {
   grid-column: 1 / -1;
-  max-width: 260px;
+  max-width: none;
 }
 .carton-preview > strong {
   display: block;
@@ -419,9 +428,10 @@ select {
 }
 .variants .variant-select,
 .preparation-group .group-select {
-  width: 16px;
-  min-width: 16px;
-  margin: 0 9px 0 0;
+  width: 22px;
+  height: 22px;
+  min-width: 22px;
+  margin: 0;
 }
 .variants td {
   vertical-align: middle;
@@ -433,22 +443,111 @@ select {
   font-size: 13px;
 }
 .variants .variant-option label {
-  margin: 6px 0;
-  font-size: 11px;
+  margin: 0;
+  font-size: 12px;
 }
 .variants .variant-option label > input {
   margin: 4px 0 0;
 }
 .variant-code-options {
-  margin-top: 10px;
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px;
+  min-width: 0;
+  margin: 10px 0 0;
+  padding: 0;
+  border: 0;
 }
-.variant-code-options label {
-  display: inline-block;
-  width: calc(50% - 6px);
-  margin-right: 6px !important;
+.variant-code-options legend {
+  float: left;
+  width: 100%;
+  margin-bottom: 5px;
+  padding: 0;
+  color: var(--muted);
+  font-size: 11px;
 }
-.variant-code-options label:last-of-type {
-  margin-right: 0 !important;
+.variants .variant-code-options .preparation-inline-field {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  width: auto;
+  padding: 4px 7px;
+  border: 1px solid var(--border);
+  border-radius: 7px;
+  background: var(--field);
+  text-decoration: none;
+}
+.variants .variant-code-options input {
+  width: 6ch;
+  min-width: 0;
+  margin: 0 !important;
+  padding: 4px;
+  font-weight: 700;
+  text-align: center;
+  text-transform: uppercase;
+}
+.variants .variant-code-options .code-part-variantSuffix {
+  border-inline-start: 3px solid #28a4c4;
+}
+.variants .variant-code-options .code-part-sizeSuffix {
+  border-inline-start: 3px solid #9a78d4;
+}
+.variant-code-readout {
+  display: block;
+  max-width: 100%;
+  font:
+    600 11px ui-monospace,
+    monospace;
+  overflow-wrap: anywhere;
+  color: var(--muted);
+}
+.preparation-inline-field {
+  color: var(--muted);
+  font-size: 12px;
+}
+.preparation-inline-field input,
+.group-fields .preparation-inline-field input,
+.variants .preparation-inline-field input {
+  min-height: 34px;
+  padding: 7px 3px;
+  border-color: transparent;
+  border-bottom-color: var(--border);
+  border-radius: 3px;
+  background: transparent;
+  color: var(--text);
+  box-shadow: none;
+  font-size: 14px;
+}
+.preparation-inline-field input:hover {
+  background: var(--field);
+}
+.preparation-inline-field input:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+  background: var(--field);
+}
+.preparation-inline-field input::placeholder {
+  color: var(--muted);
+  font-weight: 400;
+}
+.group-fields .preparation-inline-field:first-child {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+.group-fields .preparation-inline-field:first-child input {
+  width: 16ch;
+  margin: 0 !important;
+  font:
+    600 16px ui-monospace,
+    monospace;
+}
+@media (pointer: coarse) {
+  .preparation-inline-field input,
+  .variants .preparation-inline-field input {
+    min-height: 48px;
+  }
 }
 .group-tools {
   border-top: 1px solid var(--border);

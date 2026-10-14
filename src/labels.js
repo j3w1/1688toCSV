@@ -16,8 +16,8 @@ export const LABEL_FIELDS = Object.freeze({
     spanishName: [0.39, 0.715, 0.575, 0.23],
   }),
   mark: Object.freeze({
-    code: [0.23, 0.54, 0.725, 0.17],
-    category: [0.495, 0.735, 0.46, 0.22],
+    code: [0.035, 0.555, 0.93, 0.17],
+    category: [0.51, 0.755, 0.455, 0.22],
   }),
 })
 
@@ -112,6 +112,7 @@ function textBox(
     padding = 0,
     align = 'center',
     wrap = false,
+    fitInk = false,
   } = {}
 ) {
   const [x, y, width, height] = box
@@ -120,6 +121,7 @@ function textBox(
   context.textBaseline = 'middle'
   let lines = [value]
   let fontSize = Math.floor(size)
+  let ink
   for (; fontSize >= Math.ceil(minSize); fontSize--) {
     context.font = `700 ${fontSize}px Arial, "Microsoft YaHei", sans-serif`
     lines = [value]
@@ -136,9 +138,26 @@ function textBox(
         else lines[lines.length - 1] = candidate
       }
     }
+    if (fitInk) {
+      const bounds = lines.map((line, index) => {
+        const measured = context.measureText(line)
+        const offset = (index - (lines.length - 1) / 2) * fontSize * 1.1
+        return {
+          top: offset - measured.actualBoundingBoxAscent,
+          bottom: offset + measured.actualBoundingBoxDescent,
+        }
+      })
+      ink = {
+        top: Math.min(...bounds.map((line) => line.top)),
+        bottom: Math.max(...bounds.map((line) => line.bottom)),
+      }
+    }
+    const fittedHeight = fitInk
+      ? ink.bottom - ink.top
+      : lines.length * fontSize * 1.1
     if (
       lines.length <= 2 &&
-      lines.length * fontSize * 1.1 <= height &&
+      fittedHeight <= height &&
       lines.every((line) => context.measureText(line).width <= textWidth)
     )
       break
@@ -167,13 +186,18 @@ function textBox(
     context.fillRect(backgroundLeft, y, backgroundWidth, height)
   }
   context.fillStyle = color
-  lines.forEach((line, index) =>
+  lines.forEach((line, index) => {
+    // Large carton identifiers fit their printed glyphs, not unused font leading.
+    const inkOffset = fitInk ? -(ink.top + ink.bottom) / 2 : 0
     context.fillText(
       line,
       left,
-      y + height / 2 + (index - (lines.length - 1) / 2) * fontSize * 1.1
+      y +
+        height / 2 +
+        inkOffset +
+        (index - (lines.length - 1) / 2) * fontSize * 1.1
     )
-  )
+  })
 }
 
 /** Integer bars with ten-module quiet zones, never resized after drawing. */
@@ -274,51 +298,50 @@ function drawMark(context, model, settings, width, height) {
   textBox(
     context,
     'CE',
-    [width * 0.1, height * 0.01, width * 0.8, height * 0.515],
-    { size: height * 0.55 * factor }
-  )
-  textBox(
-    context,
-    '货号：',
-    [width * 0.045, height * 0.54, width * 0.165, height * 0.17],
-    { size: height * 0.065 * factor, align: 'left' }
+    [width * 0.035, height * 0.015, width * 0.93, height * 0.52],
+    { size: height * 0.72 * factor, fitInk: true }
   )
   textBox(
     context,
     model.code,
     scaleBox(LABEL_FIELDS.mark.code, width, height),
-    { size: height * 0.15 * factor }
+    { size: height * 0.2 * factor, fitInk: true }
   )
   for (const [caption, unit, top] of [
-    ['数量：', '', 0.75],
-    ['重量：', 'KG', 0.825],
-    ['体积：', 'CBM', 0.9],
+    ['数量：', '', 0.765],
+    ['重量：', 'KG', 0.835],
+    ['体积：', 'CBM', 0.905],
   ]) {
     textBox(
       context,
       caption,
-      [width * 0.045, height * top, width * 0.135, height * 0.055],
-      { size: height * 0.037 * factor, align: 'left' }
+      [width * 0.035, height * top, width * 0.135, height * 0.06],
+      { size: height * 0.04 * factor, align: 'left' }
     )
     context.strokeStyle = '#000'
     context.lineWidth = Math.max(1, Math.round(width / 1500))
     context.beginPath()
-    context.moveTo(width * 0.19, height * (top + 0.045))
-    context.lineTo(width * (unit ? 0.355 : 0.44), height * (top + 0.045))
+    context.moveTo(width * 0.18, height * (top + 0.05))
+    context.lineTo(width * (unit ? 0.365 : 0.465), height * (top + 0.05))
     context.stroke()
     if (unit)
       textBox(
         context,
         unit,
-        [width * 0.365, height * top, width * 0.075, height * 0.055],
-        { size: height * 0.034 * factor, align: 'left' }
+        [width * 0.375, height * top, width * 0.09, height * 0.06],
+        { size: height * 0.037 * factor, align: 'left' }
       )
   }
   textBox(
     context,
     model.category,
     scaleBox(LABEL_FIELDS.mark.category, width, height),
-    { size: height * 0.17 * factor, minSize: height * 0.066, wrap: true }
+    {
+      size: height * 0.2 * factor,
+      minSize: height * 0.066,
+      wrap: true,
+      fitInk: true,
+    }
   )
 }
 

@@ -8,6 +8,13 @@ import { openDatabase } from './database.js'
 import { confirmScope, yieldUI, enableLightDismiss } from './ui.js'
 import { startPackingWorkspace } from './packing-workspace.js'
 import { createImportReport, importJobView } from './import-report.js'
+import {
+  createProgressView,
+  importProgressStyles,
+  progressPresentation,
+} from './import-progress.js'
+import { createPhotoViewer } from './photo-viewer.js'
+import { presentOrderStatus } from './order-presentation.js'
 
 const $ = (id) => document.getElementById(id)
 const keyFor = (row) => `${row.orderId}/${row.entryId}`
@@ -46,6 +53,24 @@ function node(tag, text, className) {
   if (text !== undefined) element.textContent = text
   if (className) element.className = className
   return element
+}
+function statusBadge(status) {
+  const display = presentOrderStatus(status)
+  const badge = node('span', display.label, 'order-status')
+  badge.dataset.tone = display.tone
+  badge.title = status
+  return badge
+}
+function dateBadge(order) {
+  const date = node('time', purchaseLabel(order), 'purchase-date')
+  if (purchaseDay(order)) date.dateTime = purchaseDay(order)
+  date.title = 'Purchase date'
+  return date
+}
+function selectionTarget(check) {
+  const label = node('label', undefined, 'selection-hit')
+  label.append(check)
+  return label
 }
 
 function downloadJson(value, filename) {
@@ -109,6 +134,8 @@ export async function startLibrary(
   transport = (message) => chrome.runtime.sendMessage(message),
   repository = null
 ) {
+  const progressStyle = node('style', importProgressStyles)
+  document.head.append(progressStyle)
   for (const dialog of document.querySelectorAll('dialog'))
     enableLightDismiss(dialog)
   let records = [],
@@ -120,6 +147,10 @@ export async function startLibrary(
     showDismissed = false,
     orderPage = 0
   let packing
+  const photos = createPhotoViewer(async (url) => {
+    const data = await send('IMAGE_GET', { url })
+    return typeof data === 'string' ? data : data.dataUrl
+  })
   const selectedOrders = new Set(),
     selectedRows = new Set(),
     preparedImages = new Map(),
@@ -159,6 +190,8 @@ export async function startLibrary(
       $('include-headers').checked = event.newValue === 'true'
   })
   let jobTimer, searchTimer, orderSearchTimer
+  let jobStructure = ''
+  const jobViews = new Map()
   async function send(type, data = {}) {
     // Extension pages share IndexedDB with the worker. Large libraries and
     // image backups must not cross Chrome's runtime message size limit.
@@ -407,8 +440,9 @@ export async function startLibrary(
           `…${order.orderId.slice(-8)} · ${order.items.length} products`
         )
       )
-      button.append(node('small', order.status))
-      button.append(node('small', purchaseLabel(order), 'purchase-date'))
+      const meta = node('span', undefined, 'order-card-meta')
+      meta.append(statusBadge(order.status), dateBadge(order))
+      button.append(meta)
       button.addEventListener('click', () =>
         openDetails(record).catch((error) => feedback(error.message, true))
       )
@@ -417,7 +451,7 @@ export async function startLibrary(
         record.revision > 1 ? 'Updated' : 'Saved',
         `badge${record.revision > 1 ? ' changed' : ''}`
       )
-      card.append(check, button, badge)
+      card.append(selectionTarget(check), button, badge)
       list.append(card)
     }
     $('refresh-orders').textContent = selectedOrders.size
@@ -455,7 +489,7 @@ export async function startLibrary(
         else selectedRows.delete(keyFor(row))
         updateSelection()
       })
-      selection.append(check)
+      selection.append(selectionTarget(check))
       const thumb = node('td', undefined, 'thumb-cell')
       const image = node('img')
       image.width = 54
@@ -476,14 +510,26 @@ export async function startLibrary(
           )
         })
       )
-      thumb.append(image, imageButton)
+      const zoom = node('button', undefined, 'product-photo-button')
+      zoom.type = 'button'
+      zoom.setAttribute('aria-label', `Zoom product photo ${row.entryId}`)
+      zoom.title = 'Enlarge product photo'
+      zoom.disabled = !row.thumbnail
+      zoom.append(image)
+      zoom.addEventListener('click', () => void photos.open(row))
+      thumb.append(zoom, imageButton)
       const description = node('td', undefined, 'description-cell')
+      const metadata = node('div', undefined, 'row-meta')
+      metadata.append(
+        node('span', row.sellerName, 'meta-seller'),
+        node('span', `…${row.orderId.slice(-8)}`, 'meta-order'),
+        dateBadge(row.record.snapshot),
+        statusBadge(row.record.snapshot.status)
+      )
+      if (changed) metadata.append(node('span', 'Updated', 'badge changed'))
       description.append(
         node('div', row.description, 'product-title'),
-        node(
-          'small',
-          `${row.sellerName} · …${row.orderId.slice(-8)} · ${purchaseLabel(row.record.snapshot)}${changed ? ' · Changed since previous version' : ''}`
-        )
+        metadata
       )
       packing?.decorateRow(description, row)
       const amount = (value) =>
@@ -527,7 +573,6 @@ export async function startLibrary(
     $('refresh-orders').disabled = !selectedOrders.size || running
     $('refresh-all').disabled = !records.length || running
     $('refresh-filtered').disabled = !matchingOrders().length || running
-    $('jobs').replaceChildren()
     const sorted = [...jobs].sort((a, b) =>
       (b.updatedAt || '').localeCompare(a.updatedAt || '')
     )
@@ -543,9 +588,38 @@ export async function startLibrary(
         ? '!'
         : ''
     $('active-job').hidden = !active
-    if (active)
+    if (active) {
+      const display = progressPresentation(active)
       $('active-job-text').textContent =
-        `Reading orders · ${active.done ?? active.orders?.filter((order) => order.state === 'done').length ?? 0} saved / ${active.total || active.discovered || active.orders?.length || 0} orders`
+        `${display.title} · ${display.meter} · ${display.counts}`
+      const bar = $('active-job-progress')
+      bar.max = display.max || 1
+      if (display.max) bar.value = display.value
+      else bar.removeAttribute('value')
+      bar.setAttribute('aria-label', display.label)
+    }
+    clearTimeout(jobTimer)
+    if (running)
+      jobTimer = setTimeout(async () => {
+        try {
+          ;({ jobs } = await send('JOBS_QUERY'))
+          renderJobs()
+        } catch (error) {
+          feedback(error.message, true)
+        }
+      }, 2000)
+    // Keep action buttons and keyboard focus intact during read/clock updates.
+    const structure = JSON.stringify([
+      showDismissed,
+      sorted.map((job) => [job.id, job.state, job.dismissedAt]),
+    ])
+    if (structure === jobStructure) {
+      for (const job of visible) updateJobView(job)
+      return
+    }
+    jobStructure = structure
+    jobViews.clear()
+    $('jobs').replaceChildren()
     const heading = node('div', undefined, 'jobs-heading')
     heading.append(node('h2', 'Imports'))
     const controls = node('div', undefined, 'job-actions')
@@ -601,40 +675,11 @@ export async function startLibrary(
           `job${job.dismissedAt ? ' dismissed-job' : ''}`
         ),
         details = node('div')
-      const done =
-        job.done ??
-        job.orders?.filter((order) => order.state === 'done').length ??
-        0
-      const failed =
-        job.failed ??
-        job.orders?.filter((order) => order.state === 'failed').length ??
-        0
-      details.append(
-        node(
-          'strong',
-          job.state === 'running'
-            ? job.phase === 'scan'
-              ? 'Finding your orders…'
-              : 'Collecting product details…'
-            : job.state.replaceAll('-', ' ')
-        )
-      )
-      details.append(
-        node(
-          'p',
-          `${done} saved · ${job.discovered ?? job.orders?.length ?? 0} discovered${failed ? ` · ${failed} need attention` : ''}${job.page ? ` · list page ${job.page}` : ''}`
-        )
-      )
-      if (job.error) details.append(node('p', job.error))
-      for (const item of (job.orders || [])
-        .filter((item) => item.state === 'failed')
-        .slice(0, 3))
-        details.append(
-          node(
-            'p',
-            `…${item.orderId.slice(-8)}: ${item.error || 'Could not read order'}`
-          )
-        )
+      const view = createProgressView(document)
+      const errors = node('div')
+      details.append(view.element, errors)
+      jobViews.set(job.id, { view, errors })
+      updateJobView(job)
       container.append(details)
       const actions = node('div', undefined, 'job-actions')
       const report = node('button', 'Save import report', 'text-button')
@@ -716,16 +761,20 @@ export async function startLibrary(
       container.append(actions)
       $('jobs').append(container)
     }
-    clearTimeout(jobTimer)
-    if (jobs.some((job) => job.state === 'running'))
-      jobTimer = setTimeout(async () => {
-        try {
-          ;({ jobs } = await send('JOBS_QUERY'))
-          renderJobs()
-        } catch (error) {
-          feedback(error.message, true)
-        }
-      }, 2000)
+  }
+  function updateJobView(job) {
+    const entry = jobViews.get(job.id)
+    if (!entry) return
+    entry.view.update(job)
+    const errors = (job.orders || [])
+      .filter((item) => item.state === 'failed')
+      .slice(0, 3)
+      .map(
+        (item) =>
+          `…${item.orderId.slice(-8)}: ${item.error || 'Could not read order'}`
+      )
+    if (entry.errors.textContent !== errors.join(''))
+      entry.errors.replaceChildren(...errors.map((error) => node('p', error)))
   }
   function render() {
     $('order-count').textContent = records.length.toLocaleString()
@@ -779,7 +828,7 @@ export async function startLibrary(
         new Option('All statuses', ''),
         ...[...new Set(records.map((record) => record.snapshot.status))]
           .sort()
-          .map((value) => new Option(value, value))
+          .map((value) => new Option(presentOrderStatus(value).label, value))
       )
       $('status-filter').value = oldStatus
       render()
@@ -794,13 +843,19 @@ export async function startLibrary(
   async function openDetails(record) {
     const order = record.snapshot,
       content = $('details-content')
+    const metadata = node('div', undefined, 'row-meta')
+    metadata.append(
+      statusBadge(order.status),
+      dateBadge(order),
+      node(
+        'span',
+        `Version ${record.revision} · Checked ${dateLabel(record.lastCheckedAt)}`
+      )
+    )
     content.replaceChildren(
       node('p', `ORDER ${order.orderId}`, 'eyebrow'),
       node('h2', order.sellerName),
-      node(
-        'p',
-        `${order.status} · Purchased ${purchaseLabel(order)} · Version ${record.revision} · Checked ${dateLabel(record.lastCheckedAt)}`
-      )
+      metadata
     )
     const link = node('a', 'Open original order ↗')
     link.href = order.sourceUrl

@@ -7,6 +7,11 @@ import { collectFinancialDiagnostics } from './import-diagnostics.js'
 const controllerKey = Symbol.for('1688tocsv.detailController')
 globalThis[controllerKey]?.()
 let disposed = false
+let suspended = false
+let progressTimer,
+  progressQuery = false,
+  missingProgress = 0
+const importReader = location.hash.startsWith('#1688tocsv-import=')
 async function send(type, data = {}) {
   const response = await chrome.runtime.sendMessage({ type, ...data })
   if (!response?.ok)
@@ -34,7 +39,7 @@ async function readReadyOrder() {
     retryable: !disposed,
   })
 }
-mountPageDownload(
+const panel = mountPageDownload(
   document,
   () => prepareCsv(extractOrder(document, location.href)),
   {
@@ -47,8 +52,42 @@ mountPageDownload(
       await send('OPEN_LIBRARY')
       return 'Spreadsheet opened.'
     },
+    pauseImport: (jobId) => send('IMPORT_PAUSE', { jobId }),
+    suspend: () => {
+      suspended = true
+      clearTimeout(progressTimer)
+    },
+    resume: () => {
+      suspended = false
+      missingProgress = 0
+      void refreshProgress()
+    },
+    dispose: () => {
+      disposed = true
+      clearTimeout(progressTimer)
+    },
   }
 )
+async function refreshProgress() {
+  if (disposed || suspended || progressQuery || !importReader) return
+  progressQuery = true
+  clearTimeout(progressTimer)
+  try {
+    const job = await send('READER_STATUS')
+    if (disposed || suspended) return
+    missingProgress = job ? 0 : missingProgress + 1
+    panel.updateProgress(job)
+  } catch {
+    // A disconnected extension must not leave a frozen progress claim on screen.
+    panel.updateProgress(null)
+    missingProgress += 1
+  } finally {
+    progressQuery = false
+    if (!disposed && !suspended && missingProgress < 3)
+      progressTimer = setTimeout(refreshProgress, 1500)
+  }
+}
+void refreshProgress()
 function listener(message, sender, respond) {
   if (message.type !== 'DETAIL_READ') return
   ;(async () => {
@@ -75,12 +114,15 @@ function listener(message, sender, respond) {
 chrome.runtime.onMessage.addListener(listener)
 globalThis[controllerKey] = () => {
   disposed = true
+  clearTimeout(progressTimer)
+  panel.dispose()
   chrome.runtime.onMessage.removeListener(listener)
 }
 // Merely opening an unsaved order does not add it. Existing orders refresh.
 ;(async () => {
   try {
     await send('CONTENT_READY')
+    if (importReader) return // The queue owns collection and saving for this tab.
     const snapshot = await readReadyOrder()
     await send('SNAPSHOT_READY', { snapshot })
   } catch {

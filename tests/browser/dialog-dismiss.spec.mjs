@@ -155,11 +155,11 @@ test('label backdrop saves a valid blurred edit, preserves Escape restore, and k
   await expect(label).not.toBeVisible({ timeout: 20000 })
   await open.click()
   await expect(spanish).toHaveValue('FRASCO GUARDADO AL CERRAR')
-  const code = label.getByRole('textbox', { name: 'Barcode code', exact: true })
-  await code.fill('INVALID')
+  const code = label.getByRole('textbox', { name: 'Variant code', exact: true })
+  await code.fill('INVALID!')
   await backdrop(page, label)
   await expect(label.locator('.label-editor-status')).toContainText(
-    'Enter a CE code',
+    'Variant code uses letters only',
     { timeout: 20000 }
   )
   await expect(label).toBeVisible()

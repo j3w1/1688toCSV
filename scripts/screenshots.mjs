@@ -48,6 +48,11 @@ try {
   await page
     .locator('#label-dialog')
     .screenshot({ path: 'screenshots/label-editor.png' })
+  await page.goto(`${preview.url}/?state=import`)
+  await page.locator('.import-latest').waitFor()
+  await page
+    .locator('aside[aria-label="1688toCSV"]')
+    .screenshot({ path: 'screenshots/import-progress.png' })
   console.log('README screenshots refreshed from synthetic preview data')
 } finally {
   await browser.close()

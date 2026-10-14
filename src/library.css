@@ -1,87 +1,102 @@
 /* Semantic colors work in Chrome 120 without light-dark(). */
 :root {
-  --page: #f6f7f5;
+  --page: #f4f6fa;
   --surface: #ffffff;
-  --text: #242a29;
-  --muted: #64705f;
-  --border: #dbe0d9;
-  --divider: #e8ebe5;
-  --hover: #edf1eb;
-  --field: #f8f9f6;
-  --accent: #dd4d23;
-  --accent-hover: #c83e16;
+  --text: #182337;
+  --muted: #58677f;
+  --border: #d7dfeb;
+  --divider: #e7edf5;
+  --hover: #eef3fa;
+  --field: #f7f9fc;
+  --accent: #c74335;
+  --accent-hover: #ab342b;
   --on-accent: #ffffff;
-  --accent-text: #ad4826;
-  --selected: #faf2e9;
-  --success: #e9f1e5;
-  --success-text: #567b4a;
-  --warning: #fff8eb;
-  --warning-text: #806a48;
-  --warning-border: #e9d9bd;
+  --accent-text: #136b99;
+  --control-accent: #246dc5;
+  --selected: #e9f2ff;
+  --success: #e7f5ef;
+  --success-text: #22684d;
+  --warning: #fff4db;
+  --warning-text: #805a16;
+  --warning-border: #e9d4a5;
+  --info: #e7f2fc;
+  --info-text: #226593;
+  --danger: #fdebef;
+  --danger-text: #a32e42;
   --changed: #fffaf0;
-  --thumb: #f5f5ee;
-  --focus: #426ee0;
-  --feedback: #253b32;
+  --thumb: #edf2f8;
+  --focus: #1675d8;
+  --feedback: #1d334d;
   --on-feedback: #ffffff;
-  --error: #963e2f;
+  --error: #b5363e;
   --on-error: #ffffff;
 }
 @media (prefers-color-scheme: dark) {
   :root:not(:has(> head > meta[name='color-scheme'][content='light'])) {
-    --page: #151b18;
-    --surface: #202823;
-    --text: #edf2ec;
-    --muted: #acb8a8;
-    --border: #414c42;
-    --divider: #323d34;
-    --hover: #303c32;
-    --field: #19221c;
-    --accent: #f17b51;
-    --accent-hover: #ff9069;
-    --on-accent: #21120c;
-    --accent-text: #ffa780;
-    --selected: #382d23;
-    --success: #293e2b;
-    --success-text: #b3d5a5;
-    --warning: #342c1d;
-    --warning-text: #e4c799;
-    --warning-border: #615138;
-    --changed: #302b1f;
-    --thumb: #303a31;
-    --focus: #9bbaff;
-    --feedback: #c7ddce;
-    --on-feedback: #192b20;
-    --error: #eeb5aa;
-    --on-error: #38150e;
+    --page: #0c1322;
+    --surface: #151f31;
+    --text: #edf3fc;
+    --muted: #a9b8cf;
+    --border: #34455e;
+    --divider: #27364e;
+    --hover: #20304a;
+    --field: #101a2b;
+    --accent: #fb8b79;
+    --accent-hover: #ff9d8d;
+    --on-accent: #291714;
+    --accent-text: #8ac9f5;
+    --control-accent: #7ac4ff;
+    --selected: #1b3351;
+    --success: #163c36;
+    --success-text: #8eddbd;
+    --warning: #3d311e;
+    --warning-text: #f1ce86;
+    --warning-border: #6f5630;
+    --info: #19364e;
+    --info-text: #a0d9fc;
+    --danger: #47242f;
+    --danger-text: #ffb5c5;
+    --changed: #302b24;
+    --thumb: #223149;
+    --focus: #7ec8ff;
+    --feedback: #244865;
+    --on-feedback: #edf5ff;
+    --error: #f5a0a6;
+    --on-error: #39151e;
   }
 }
 :root:has(> head > meta[name='color-scheme'][content='dark']) {
   color-scheme: dark;
-  --page: #151b18;
-  --surface: #202823;
-  --text: #edf2ec;
-  --muted: #acb8a8;
-  --border: #414c42;
-  --divider: #323d34;
-  --hover: #303c32;
-  --field: #19221c;
-  --accent: #f17b51;
-  --accent-hover: #ff9069;
-  --on-accent: #21120c;
-  --accent-text: #ffa780;
-  --selected: #382d23;
-  --success: #293e2b;
-  --success-text: #b3d5a5;
-  --warning: #342c1d;
-  --warning-text: #e4c799;
-  --warning-border: #615138;
-  --changed: #302b1f;
-  --thumb: #303a31;
-  --focus: #9bbaff;
-  --feedback: #c7ddce;
-  --on-feedback: #192b20;
-  --error: #eeb5aa;
-  --on-error: #38150e;
+  --page: #0c1322;
+  --surface: #151f31;
+  --text: #edf3fc;
+  --muted: #a9b8cf;
+  --border: #34455e;
+  --divider: #27364e;
+  --hover: #20304a;
+  --field: #101a2b;
+  --accent: #fb8b79;
+  --accent-hover: #ff9d8d;
+  --on-accent: #291714;
+  --accent-text: #8ac9f5;
+  --control-accent: #7ac4ff;
+  --selected: #1b3351;
+  --success: #163c36;
+  --success-text: #8eddbd;
+  --warning: #3d311e;
+  --warning-text: #f1ce86;
+  --warning-border: #6f5630;
+  --info: #19364e;
+  --info-text: #a0d9fc;
+  --danger: #47242f;
+  --danger-text: #ffb5c5;
+  --changed: #302b24;
+  --thumb: #223149;
+  --focus: #7ec8ff;
+  --feedback: #244865;
+  --on-feedback: #edf5ff;
+  --error: #f5a0a6;
+  --on-error: #39151e;
 }
 :root:has(> head > meta[name='color-scheme'][content='light']) {
   color-scheme: light;
@@ -114,30 +129,31 @@ textarea {
 button,
 .button {
   border: 1px solid var(--border);
-  border-radius: 7px;
-  padding: 9px 13px;
+  border-radius: 8px;
+  padding: 8px 13px;
+  min-height: 36px;
   background: var(--surface);
   color: var(--text);
   cursor: pointer;
-  font-weight: 550;
+  font-weight: 600;
   text-decoration: none;
   white-space: nowrap;
 }
-button:hover,
+button:not(:disabled):hover,
 .button:hover {
   background: var(--hover);
-  border-color: var(--border);
+  border-color: var(--muted);
 }
 button:disabled {
-  opacity: 0.45;
-  cursor: default;
+  opacity: 0.5;
+  cursor: not-allowed;
 }
 .primary {
   background: var(--accent) !important;
   color: var(--on-accent) !important;
   border-color: var(--accent) !important;
 }
-.primary:hover {
+.primary:not(:disabled):hover {
   background: var(--accent-hover) !important;
 }
 :focus-visible {
@@ -266,7 +282,7 @@ h1 {
 }
 .workspace {
   display: grid;
-  grid-template-columns: 240px minmax(0, 1fr);
+  grid-template-columns: 260px minmax(0, 1fr);
   gap: 20px;
 }
 .orders-pane,
@@ -297,16 +313,19 @@ h2 {
 }
 .order-card {
   display: grid;
-  grid-template-columns: auto 1fr auto;
-  gap: 9px;
-  padding: 15px;
+  grid-template-columns: 28px minmax(0, 1fr) auto;
+  gap: 8px;
+  padding: 14px 12px;
   border-top: 1px solid var(--divider);
   align-items: start;
 }
 .order-card.active {
   background: var(--selected);
-  border-inline-start: 3px solid var(--accent);
-  padding-inline-start: 12px;
+  border-inline-start: 3px solid var(--control-accent);
+  padding-inline-start: 9px;
+}
+.order-card > .selection-hit {
+  margin: -7px 0 0 -8px;
 }
 .order-card button {
   background: transparent;
@@ -314,26 +333,40 @@ h2 {
   text-align: left;
   white-space: normal;
   padding: 0;
-  font-size: 12px;
+  font-size: 13px;
+  line-height: 1.45;
   min-width: 0;
+  overflow-wrap: anywhere;
 }
 .order-card small {
   display: block;
-  font-size: 10px;
+  font-size: 11px;
   color: var(--muted);
   margin-top: 5px;
   overflow-wrap: anywhere;
 }
 .order-card .badge {
-  font-size: 9px;
+  font-size: 10px;
+  font-weight: 600;
   background: var(--success);
   padding: 3px 5px;
-  border-radius: 4px;
+  border-radius: 5px;
   color: var(--success-text);
 }
 .order-card .changed {
   background: var(--warning);
   color: var(--warning-text);
+}
+.order-card-meta {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-top: 7px;
+}
+.order-card-meta .purchase-date,
+.order-card-meta .order-status {
+  margin: 0;
 }
 .pane-footer {
   padding: 15px;
@@ -403,15 +436,48 @@ h2 {
 .check {
   display: flex;
   align-items: center;
-  gap: 5px;
-  font-size: 11px;
+  gap: 8px;
+  font-size: 12px;
   color: var(--muted);
   white-space: nowrap;
 }
-input[type='checkbox'] {
-  accent-color: var(--accent);
-  margin: 2px;
+:root input[type='checkbox'] {
+  appearance: auto;
+  accent-color: var(--control-accent);
+  width: 1.5rem;
+  height: 1.5rem;
+  min-width: 1.5rem;
+  max-width: 1.5rem;
+  flex: 0 0 1.5rem;
+  margin: 0;
+  vertical-align: middle;
   cursor: pointer;
+}
+:root input[type='checkbox']:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+label:has(> input[type='checkbox']) {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  min-height: 44px;
+  cursor: pointer;
+}
+label.selection-hit {
+  width: 44px;
+  min-width: 44px;
+  height: 44px;
+  justify-content: center;
+  padding: 0;
+  margin: 0;
+  border-radius: 8px;
+}
+label:has(> input[type='checkbox']:disabled) {
+  cursor: not-allowed;
+}
+label.selection-hit:has(> input:not(:disabled)):hover {
+  background: var(--hover);
 }
 .table-scroll {
   max-height: 660px;
@@ -452,12 +518,12 @@ tbody tr.changed-row {
   background: var(--changed);
 }
 .select-col {
-  width: 28px;
-  padding-inline: 15px 0;
+  width: 52px;
+  padding-inline: 8px 0;
 }
 td.select-col {
   vertical-align: top;
-  padding-top: 28px;
+  padding-top: 17px;
 }
 .numeric {
   text-align: right;
@@ -482,6 +548,26 @@ td.select-col {
   color: var(--muted);
   font-size: 9px;
   padding: 5px 0 0;
+}
+.thumb-cell .product-photo-button {
+  display: grid;
+  place-items: center;
+  width: 64px;
+  height: 64px;
+  padding: 4px;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: var(--thumb);
+  cursor: zoom-in;
+}
+.thumb-cell .product-photo-button:not(:disabled):hover {
+  background: var(--selected);
+  border-color: var(--control-accent);
+}
+.product-photo-button img {
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
 }
 .description-cell {
   min-width: 260px;
@@ -580,6 +666,12 @@ td.select-col {
 .job button {
   font-size: 11px;
 }
+#active-job-progress {
+  width: 90px;
+  min-width: 60px;
+  height: 8px;
+  accent-color: var(--control-accent);
+}
 #feedback {
   position: sticky;
   bottom: 15px;
@@ -587,7 +679,7 @@ td.select-col {
   background: var(--feedback);
   color: var(--on-feedback);
   border-radius: 8px;
-  box-shadow: 0 4px 18px #172b2520;
+  box-shadow: 0 8px 28px #080f2026;
   font-size: 12px;
   max-width: 900px;
   margin: 20px auto 0;
@@ -609,7 +701,7 @@ dialog {
   color: var(--text);
 }
 dialog::backdrop {
-  background: #182d2955;
+  background: #060d1b9e;
 }
 .dialog-close {
   float: right;
@@ -672,7 +764,7 @@ dialog summary {
 }
 @media (max-width: 1100px) {
   .workspace {
-    grid-template-columns: 195px minmax(0, 1fr);
+    grid-template-columns: 225px minmax(0, 1fr);
     gap: 12px;
   }
   main {
@@ -774,6 +866,25 @@ textarea {
   color: var(--text);
   background: var(--field);
 }
+input:not([type='checkbox']):not([type='radio']),
+select,
+textarea {
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 8px 10px;
+  min-height: 36px;
+}
+input:not([type='checkbox']):not([type='radio']):hover,
+select:hover,
+textarea:hover {
+  border-color: var(--muted);
+}
+input:disabled,
+select:disabled,
+textarea:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+}
 input::placeholder {
   color: var(--muted);
   opacity: 1;
@@ -858,14 +969,86 @@ dialog a {
 }
 .order-month {
   margin: 0;
-  padding: 10px 15px;
+  padding: 11px 14px 9px;
   background: var(--field);
-  color: var(--muted);
+  color: var(--accent-text);
+  font-size: 12px;
+  font-weight: 650;
+  border-top: 1px solid var(--border);
+}
+.purchase-date,
+.order-card .purchase-date {
+  display: inline-flex;
+  align-items: center;
+  width: fit-content;
+  padding: 3px 6px;
+  border-radius: 5px;
+  background: var(--info);
+  color: var(--info-text);
   font-size: 11px;
   font-weight: 600;
-}
-.purchase-date {
+  line-height: 1.35;
   font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+.order-status,
+.order-card .order-status {
+  display: inline-flex;
+  align-items: center;
+  width: fit-content;
+  padding: 3px 7px;
+  border-radius: 5px;
+  background: var(--hover);
+  color: var(--muted);
+  font-size: 10px;
+  font-weight: 600;
+  line-height: 1.4;
+}
+.order-status[data-tone='success'] {
+  background: var(--success);
+  color: var(--success-text);
+}
+.order-status[data-tone='warning'] {
+  background: var(--warning);
+  color: var(--warning-text);
+}
+.order-status[data-tone='info'] {
+  background: var(--info);
+  color: var(--info-text);
+}
+.order-status[data-tone='danger'] {
+  background: var(--danger);
+  color: var(--danger-text);
+}
+.row-meta,
+.description-cell .row-meta {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 6px 9px;
+  margin-top: 9px;
+  font-size: 11px;
+  line-height: 1.4;
+  color: var(--muted);
+}
+.row-meta .badge {
+  padding: 3px 7px;
+  border-radius: 5px;
+  background: var(--warning);
+  color: var(--warning-text);
+  font-size: 10px;
+  font-weight: 600;
+}
+.row-meta .meta-seller {
+  color: var(--text);
+  font-weight: 600;
+}
+.row-meta .meta-order {
+  font-variant-numeric: tabular-nums;
+}
+.row-meta .purchase-date,
+.row-meta .order-status {
+  margin: 0;
 }
 tr.order-boundary td {
   border-top: 3px solid var(--border);

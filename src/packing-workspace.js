@@ -47,10 +47,24 @@ function field(title, value, change, type = 'text') {
   const label = el('label', title),
     input = el('input')
   input.type = type
+  input.id = `packing-${crypto.randomUUID()}`
+  label.htmlFor = input.id
   input.value = value ?? ''
   input.addEventListener('input', () => change(input.value))
   label.append(input)
   return label
+}
+function inlineField(title, value, change, placeholder = '') {
+  const label = field(title, value, change)
+  label.className = 'preparation-inline-field'
+  const input = label.querySelector('input')
+  input.placeholder = placeholder
+  return label
+}
+function selection(check) {
+  const target = el('label', undefined, 'selection-hit')
+  target.append(check)
+  return target
 }
 function button(text, handler, className) {
   const result = el('button', text, className)
@@ -361,7 +375,7 @@ export async function startPackingWorkspace({
     channel?.postMessage('changed')
     return result
   }
-  function outputModel(prep, group, variant, kind) {
+  function outputModel(prep, group, variant, kind, editing = false) {
     const record = getRecords().find(
       (record) => record.snapshot.orderId === prep.orderId
     )
@@ -376,9 +390,23 @@ export async function startPackingWorkspace({
       throw new Error('This product is no longer present in the current order.')
     return {
       kind,
-      code: kind === 'mark' ? group.baseCode : barcodeValue(group, variant),
+      code:
+        kind === 'mark'
+          ? group.baseCode
+          : barcodeValue(
+              group,
+              editing ? { ...variant, needsSizeMapping: false } : variant
+            ),
       spanishName: variant?.spanishName || group.spanishName,
       category: group.category,
+      ...(kind === 'barcode'
+        ? {
+            baseCode: group.baseCode,
+            variantSuffix: variant.variantSuffix,
+            sizeSuffix: variant.sizeSuffix,
+            needsSizeMapping: variant.needsSizeMapping,
+          }
+        : {}),
     }
   }
   async function openLabel(orderId, groupId, variantId, kind) {
@@ -386,7 +414,7 @@ export async function startPackingWorkspace({
     if (!prep) throw new Error('Save the preparation first.')
     const group = prep.groups.find((group) => group.id === groupId),
       variant = group.variants.find((variant) => variant.id === variantId)
-    const model = outputModel(prep, group, variant, kind)
+    const model = outputModel(prep, group, variant, kind, true)
     editor?.destroy()
     const host = $('label-content')
     host.replaceChildren(
@@ -406,19 +434,16 @@ export async function startPackingWorkspace({
           group.baseCode = next.code
           group.category = next.category
         } else {
-          if (!next.code.startsWith(group.baseCode))
+          if (
+            next.baseCode !== group.baseCode ||
+            next.code !== group.baseCode + next.variantSuffix + next.sizeSuffix
+          )
             throw new Error(
               'Edit the product code on its carton mark to change the shared base. The barcode must retain that base.'
             )
-          const suffix = next.code.slice(group.baseCode.length)
-          if (variant.sizeSuffix && suffix.endsWith(variant.sizeSuffix))
-            variant.variantSuffix = suffix.slice(0, -variant.sizeSuffix.length)
-          else {
-            const parts = /^([A-Z]*)(.*)$/.exec(suffix)
-            variant.variantSuffix = parts[1]
-            variant.sizeSuffix = parts[2]
-          }
-          variant.needsSizeMapping = false
+          variant.variantSuffix = next.variantSuffix
+          variant.sizeSuffix = next.sizeSuffix
+          variant.needsSizeMapping = next.needsSizeMapping
           variant.spanishName = next.spanishName.toUpperCase()
         }
         prep = await saved(draft)
@@ -427,7 +452,8 @@ export async function startPackingWorkspace({
           prep,
           savedGroup,
           savedGroup.variants.find((item) => item.id === variantId),
-          kind
+          kind,
+          true
         )
       },
       onCopy: async (result) => labelClipboard([result]),
@@ -537,6 +563,7 @@ export async function startPackingWorkspace({
         const input = codeFields.get(group.id)
         if (input && input !== document.activeElement)
           input.value = group.baseCode
+        input?.dispatchEvent(new Event('change'))
       }
       updateHistoryButtons()
       media.refresh()
@@ -730,7 +757,7 @@ export async function startPackingWorkspace({
       check.className = 'group-select'
       check.value = group.id
       check.setAttribute('aria-label', `Select group ${group.title}`)
-      title.prepend(check)
+      title.prepend(selection(check))
       const originalTitle = disclosure(
         'Original product name',
         'original-product-name'
@@ -739,7 +766,7 @@ export async function startPackingWorkspace({
       card.append(title, originalTitle)
       const fields = el('div', undefined, 'group-fields')
       const productCode = preparationHelp(
-        field(
+        inlineField(
           'Product code',
           group.baseCode,
           (v) => (group.baseCode = v.toUpperCase())
@@ -747,21 +774,27 @@ export async function startPackingWorkspace({
         'Shared by all variants of this product. Printed on its carton mark.'
       )
       codeFields.set(group.id, productCode.querySelector('input'))
+      const productInput = productCode.querySelector('input')
+      productInput.autocomplete = 'off'
+      productInput.setAttribute('autocorrect', 'off')
+      productInput.spellcheck = false
       fields.append(
         productCode,
         preparationHelp(
-          field(
+          inlineField(
             'Spanish short name',
             group.spanishName,
-            (v) => (group.spanishName = v.toUpperCase())
+            (v) => (group.spanishName = v.toUpperCase()),
+            'Add a short name'
           ),
           'Printed on barcode labels in uppercase.'
         ),
         preparationHelp(
-          field(
+          inlineField(
             'Chinese category',
             group.category,
-            (v) => (group.category = v)
+            (v) => (group.category = v),
+            'Add a category'
           ),
           'Printed on the carton mark, for example 玻璃 for glass.'
         )
@@ -817,7 +850,7 @@ export async function startPackingWorkspace({
           `Select variant ${variant.variant || variant.size || variant.id}`
         )
         const td = el('td')
-        td.append(choose)
+        td.append(selection(choose))
         if (variant.entryIds.length > 1)
           td.append(el('small', `${variant.entryIds.length} source rows`))
         row.append(td)
@@ -871,9 +904,16 @@ export async function startPackingWorkspace({
         const option = el('td', undefined, 'variant-option')
         option.append(
           preparationHelp(
-            field('Product variant', variant.variant, (value) => {
-              variant.variant = value
-            }),
+            inlineField(
+              'Product variant',
+              variant.variant,
+              (value) => {
+                variant.variant = value
+              },
+              group.variants.length === 1
+                ? 'Single variant'
+                : 'Add a variant note'
+            ),
             'Describe what differs, such as color or scent. This note is not printed.'
           )
         )
@@ -884,28 +924,47 @@ export async function startPackingWorkspace({
               'From the order. Helps you choose a size code; this measurement is not printed.'
             )
           )
-        const codeOptions = disclosure('Code options', 'variant-code-options')
-        codeOptions.open = Boolean(variant.needsSizeMapping)
+        const codeOptions = el('fieldset', undefined, 'variant-code-options')
+        codeOptions.append(el('legend', 'Code options'))
+        const codeReadout = el('output', undefined, 'variant-code-readout')
+        codeReadout.setAttribute('aria-label', 'Full barcode')
+        const updateCodeReadout = () => {
+          codeReadout.textContent = `${group.baseCode || 'Product code'}${variant.variantSuffix}${variant.sizeSuffix}`
+        }
+        updateCodeReadout()
+        productInput.addEventListener('input', updateCodeReadout)
+        productInput.addEventListener('change', updateCodeReadout)
         for (const [key, label] of [
           ['variantSuffix', 'Variant code'],
           ['sizeSuffix', 'Size code'],
         ]) {
-          const labelField = field(label, variant[key], (value) => {
-            variant[key] = value.toUpperCase()
-            if (key === 'sizeSuffix') variant.needsSizeMapping = false
-          })
-          labelField
-            .querySelector('input')
-            .setAttribute('aria-label', `${label} ${variant.id}`)
+          const labelField = inlineField(
+            label,
+            variant[key],
+            (value) => {
+              variant[key] = value.toUpperCase()
+              if (key === 'sizeSuffix') variant.needsSizeMapping = false
+              updateCodeReadout()
+            },
+            'None'
+          )
+          labelField.classList.add(`code-part-${key}`)
+          const codeInput = labelField.querySelector('input')
+          codeInput.setAttribute('aria-label', `${label} ${variant.id}`)
+          codeInput.autocomplete = 'off'
+          codeInput.setAttribute('autocorrect', 'off')
+          codeInput.spellcheck = false
+          codeInput.maxLength = 30
           codeOptions.append(
             preparationHelp(
               labelField,
               key === 'variantSuffix'
-                ? 'Added to the product code: A for black, B for pink. Leave blank if not needed.'
-                : 'Added to the barcode: S for small, L for large. Leave blank if not needed.'
+                ? 'Identifies the color or style: A, B, C. Leave blank when not needed.'
+                : 'Identifies the size: S, M, L. Leave blank when not needed.'
             )
           )
         }
+        codeOptions.append(codeReadout)
         if (variant.needsSizeMapping)
           codeOptions.append(
             el('small', 'Choose a size code', 'needs-preparation')

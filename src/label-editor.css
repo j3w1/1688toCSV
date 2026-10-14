@@ -13,6 +13,7 @@
   background: #fff;
   color: #000;
   border: 1px solid #a5a5a5;
+  border-radius: 8px;
 }
 
 .label-editor-image {
@@ -26,7 +27,7 @@
   display: none;
 }
 
-.label-editor .label-editor-field {
+.label-editor input.label-editor-field {
   position: absolute;
   box-sizing: border-box;
   min-width: 0;
@@ -50,10 +51,132 @@
   outline-offset: -2px;
 }
 
-.label-editor .label-editor-field:focus,
-.label-editor .label-editor-field:disabled {
+.label-editor input.label-editor-field:focus,
+.label-editor input.label-editor-field:disabled,
+.label-editor-preview:not([data-ready='true']) .label-editor-field {
   background: #fff;
   color: #000;
+}
+
+.label-editor input.label-editor-field::placeholder {
+  color: #60656e;
+  font-weight: 500;
+}
+
+.label-editor-code-parts {
+  position: absolute;
+  display: flex;
+  align-items: stretch;
+  justify-content: center;
+  background: #fff;
+  font-family: Arial, sans-serif;
+  font-weight: 700;
+  line-height: 1;
+}
+
+.label-code-strip {
+  display: inline-flex;
+  align-items: stretch;
+  max-width: 100%;
+  padding: 0;
+  background: transparent;
+  color: #fff;
+}
+
+.label-code-base {
+  display: inline-flex;
+  align-items: center;
+  white-space: nowrap;
+  padding-inline: 0.12em;
+  background: #000;
+}
+
+.label-editor input.label-code-part {
+  appearance: none;
+  box-sizing: border-box;
+  height: 100%;
+  min-width: 0;
+  min-height: 0;
+  margin: 0;
+  padding: 0.04em 0;
+  border: 0;
+  border-bottom: 2px solid;
+  border-radius: 0;
+  box-shadow: none;
+  font: inherit;
+  line-height: 1.15;
+  color: #fff;
+  caret-color: #fff;
+  background: #000;
+  text-align: center;
+  text-transform: uppercase;
+}
+
+.label-editor input.label-code-variantSuffix,
+.label-editor input.label-code-variantSuffix:hover {
+  border-color: #66d9ef;
+}
+
+.label-editor input.label-code-sizeSuffix,
+.label-editor input.label-code-sizeSuffix:hover {
+  border-color: #c6a4ff;
+}
+
+.label-editor input.label-code-part:placeholder-shown {
+  background: #fff;
+  color: #000;
+  caret-color: #000;
+}
+
+.label-editor input.label-code-part::placeholder {
+  color: #596575;
+}
+
+.label-editor input.label-code-part:focus-visible {
+  outline: 2px solid #fff;
+  outline-offset: 1px;
+}
+
+.label-editor input.label-code-part:placeholder-shown:focus-visible {
+  outline-color: #2676d9;
+}
+
+.label-code-guide {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-block: 2px;
+  font-size: 12px;
+}
+
+.label-code-guide > span,
+.label-code-guide > label {
+  display: inline-block;
+  margin: 0;
+  padding: 5px 9px;
+  border: 1px solid var(--border, #c4c8d0);
+  border-radius: 6px;
+}
+
+.label-code-guide > label {
+  cursor: text;
+}
+
+.label-code-guide .label-code-key-variantSuffix {
+  border-bottom: 3px solid #28a4c4;
+}
+
+.label-code-guide .label-code-key-sizeSuffix {
+  border-bottom: 3px solid #9a78d4;
+}
+
+.label-composed-code {
+  margin-inline-start: auto;
+  font:
+    600 13px ui-monospace,
+    monospace;
+  overflow-wrap: anywhere;
 }
 
 .label-editor-preview[data-kind='barcode'] .label-editor-code:focus {

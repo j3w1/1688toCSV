@@ -29,7 +29,7 @@ Open **Extensions → Developer mode → Load unpacked** and select **dist**. In
 
 Resolve any **Choose a size code** prompt before copying labels. Names and codes remain editable after saving.
 
-Click a photo to zoom in. Open **Code options** or **Grouping tools** when needed. Hover over a field or action for a short hint.
+Click any product photo to zoom in. **Code options** stays visible beside each variant; use **Grouping tools** when needed. Hover over a field or action for a short hint.
 
 **Undo** and **Redo** restore pending edits until autosave completes. Invalid entries stay in the form with an explanation; closing waits for a successful save.
 
@@ -39,7 +39,7 @@ Orders marked **Seller unavailable** keep their products and totals. Enter the s
 
 ## Edit labels and copy to Excel
 
-Click a label preview, **Barcode** or **Carton mark** to edit it. **Enter** or leaving the field saves; **Escape** cancels the edit. Click **Copy label**, then paste into Excel. Click the dimmed background to close an overlay. **Settings** controls dimensions, resolution, logo and vocabulary.
+Click a label preview, **Barcode** or **Carton mark** to edit it. In a barcode, edit the **Variant** and **Size** endings on the black code band. **Enter** or leaving the field saves; **Escape** cancels the edit. Click **Copy label**, then paste into Excel. Click the dimmed background to close an overlay. **Settings** controls dimensions, resolution, logo and vocabulary.
 
 <a href="screenshots/label-editor.png"><img src="screenshots/label-editor.png" alt="Editable barcode label with synthetic CE code and Spanish product name" width="480" /></a>
 
@@ -53,6 +53,12 @@ Click a label preview, **Barcode** or **Carton mark** to edit it. **Enter** or l
 Select rows to limit a copy; otherwise all filtered rows are used. **Headers** starts off and remembers your choice. Batch actions ask for confirmation. Pictures paste as floating images; successful buttons show **Copied**.
 
 Search orders by seller or order number and filter by purchase month or date range, then use **Refresh matching orders**. You can also refresh selected orders or all orders. Use **Activity** to pause, retry or dismiss imports. **Save import report** is available in Activity and beside Pause/Resume on the order page. Retry keeps successful saves and revisits failures. The sun/moon button changes the default dark appearance.
+
+During collection, the reader panel and Activity show progress, saved products, the latest result and time on the current order. Failed orders are counted separately.
+
+<details><summary>Import progress</summary>
+<a href="screenshots/import-progress.png"><img src="screenshots/import-progress.png" alt="Synthetic collection progress with saved products, current order and latest result" width="300" /></a>
+</details>
 
 ## Keep your data
 

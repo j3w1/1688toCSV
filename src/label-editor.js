@@ -28,6 +28,8 @@ export function mountLabelEditor(container, options) {
   let pendingCommit = null
   let destroyed = false
   let ready = false
+  let codeParts = null
+  let composedCode = null
   const inputs = new Map()
   const dialog = container.closest('dialog')
   const dismiss = async (event) => {
@@ -48,7 +50,7 @@ export function mountLabelEditor(container, options) {
   const hint = element(
     'p',
     'label-editor-hint',
-    'Click the code or description to edit. Enter saves; Escape restores the saved text.'
+    'Click a label field to edit. Enter saves; Escape cancels.'
   )
   const status = element('p', 'label-editor-status')
   status.setAttribute('role', 'status')
@@ -72,7 +74,52 @@ export function mountLabelEditor(container, options) {
   }
 
   function dirty() {
-    return [...inputs.keys()].some((key) => model[key] !== committed[key])
+    return (
+      [...inputs.keys()].some((key) => model[key] !== committed[key]) ||
+      model.needsSizeMapping !== committed.needsSizeMapping
+    )
+  }
+
+  function structuredCode() {
+    return model.kind === 'barcode' && typeof model.baseCode === 'string'
+  }
+
+  function printableModel() {
+    if (structuredCode()) {
+      if (model.needsSizeMapping)
+        throw new Error('Choose a size code before copying this label.')
+      if (!/^[A-Z]*$/.test(model.variantSuffix))
+        throw new Error('Variant code uses letters only, such as A or AB.')
+      if (!/^[A-Z0-9]*$/.test(model.sizeSuffix))
+        throw new Error('Size code uses letters or numbers, such as S or 300.')
+    }
+    return normalizeLabel(model)
+  }
+
+  function updateCodeParts() {
+    if (!codeParts) return
+    model.code = `${model.baseCode}${model.variantSuffix}${model.sizeSuffix}`
+    composedCode.value = model.code
+    // Fit the editing strip to the same fixed code area without distorting the
+    // printable barcode. Empty endings retain a visible, keyboard-focusable slot.
+    const canvas = document.createElement('canvas')
+    const context = canvas.getContext('2d')
+    context.font = '700 100px Arial'
+    let units = context.measureText(model.baseCode).width / 100
+    for (const key of ['variantSuffix', 'sizeSuffix']) {
+      const input = inputs.get(key)
+      const width = Math.max(
+        1.2,
+        context.measureText(model[key] || '+').width / 100 + 0.25
+      )
+      input.style.width = `${width}em`
+      units += width
+    }
+    const normalized = normalizeLabelSettings(settings).barcode
+    const maximum =
+      ((12 * normalized.heightMm) / normalized.widthMm) * normalized.textScale
+    codeParts.style.fontSize = `${Math.min(maximum, 52 / (units + 0.6))}cqw`
+    canvas.width = canvas.height = 0
   }
 
   function controls(disabled) {
@@ -89,7 +136,7 @@ export function mountLabelEditor(container, options) {
     copy.disabled = true
     message(`Preparing label…${dirty() ? ' · Unsaved text' : ''}`)
     try {
-      const normalized = normalizeLabel(model)
+      const normalized = printableModel()
       const result = await renderLabel({
         ...normalized,
         settings,
@@ -100,6 +147,7 @@ export function mountLabelEditor(container, options) {
       const nextUrl = URL.createObjectURL(result.blob)
       image.src = nextUrl
       image.hidden = false
+      preview.dataset.ready = 'true'
       if (previewUrl) URL.revokeObjectURL(previewUrl)
       previewUrl = nextUrl
       latest = { result, model: { ...model, ...normalized } }
@@ -136,6 +184,7 @@ export function mountLabelEditor(container, options) {
 
   function syncValues() {
     for (const [key, input] of inputs) input.value = model[key] ?? ''
+    updateCodeParts()
   }
 
   async function commit() {
@@ -143,7 +192,7 @@ export function mountLabelEditor(container, options) {
     if (!dirty()) return true
     const epoch = ++revision
     try {
-      const next = { ...model, ...normalizeLabel(model) }
+      const next = { ...model, ...printableModel() }
       const operation = async () => {
         // Set pendingCommit before disabling the focused input can trigger blur.
         await Promise.resolve()
@@ -205,6 +254,10 @@ export function mountLabelEditor(container, options) {
   function buildFields() {
     for (const input of inputs.values()) input.remove()
     inputs.clear()
+    codeParts?.remove()
+    composedCode?.closest('.label-code-guide')?.remove()
+    codeParts = null
+    composedCode = null
     const kind = model.kind
     const fields = LABEL_FIELDS[kind]
     if (!fields) throw new Error('Choose a barcode or shipping mark')
@@ -212,10 +265,15 @@ export function mountLabelEditor(container, options) {
     const normalizedSettings = normalizeLabelSettings(settings)
     preview.style.aspectRatio = `${normalizedSettings[kind].widthMm} / ${normalizedSettings[kind].heightMm}`
     for (const [key, box] of Object.entries(fields)) {
+      if (key === 'code' && structuredCode()) {
+        buildCodeParts(box)
+        continue
+      }
       const input = element('input', `label-editor-field label-editor-${key}`)
       input.type = 'text'
       input.autocomplete = 'off'
       input.spellcheck = false
+      input.setAttribute('autocorrect', 'off')
       input.setAttribute(
         'aria-label',
         key === 'code'
@@ -227,6 +285,7 @@ export function mountLabelEditor(container, options) {
             : 'Spanish product name'
       )
       input.title = `${input.getAttribute('aria-label')} — Enter saves, Escape restores`
+      input.placeholder = input.getAttribute('aria-label')
       input.style.left = `${box[0] * 100}%`
       input.style.top = `${box[1] * 100}%`
       input.style.width = `${box[2] * 100}%`
@@ -255,6 +314,78 @@ export function mountLabelEditor(container, options) {
       preview.append(input)
     }
     syncValues()
+  }
+
+  function buildCodeParts(box) {
+    codeParts = element('div', 'label-editor-code-parts')
+    codeParts.style.left = `${box[0] * 100}%`
+    codeParts.style.top = `${box[1] * 100}%`
+    codeParts.style.width = `${box[2] * 100}%`
+    codeParts.style.height = `${box[3] * 100}%`
+    const strip = element('div', 'label-code-strip')
+    const base = element('span', 'label-code-base', model.baseCode)
+    base.title = 'Product code · edit on the carton mark'
+    strip.append(base)
+    for (const [key, title] of [
+      ['variantSuffix', 'Variant code'],
+      ['sizeSuffix', 'Size code'],
+    ]) {
+      const input = element('input', `label-code-part label-code-${key}`)
+      input.type = 'text'
+      input.setAttribute('aria-label', title)
+      input.title = `${title} · leave empty if not needed · Enter saves`
+      input.autocomplete = 'off'
+      input.setAttribute('autocorrect', 'off')
+      input.spellcheck = false
+      input.maxLength = 30
+      input.placeholder = '+'
+      input.addEventListener('input', () => {
+        model[key] = input.value.toUpperCase()
+        if (key === 'sizeSuffix') model.needsSizeMapping = false
+        updateCodeParts()
+        revision++
+        queuePreview()
+      })
+      input.addEventListener('keydown', (event) => {
+        if (event.isComposing) return
+        if (event.key === 'Enter') {
+          event.preventDefault()
+          void commit()
+        } else if (event.key === 'Escape') {
+          event.preventDefault()
+          event.stopPropagation()
+          resetDraft()
+          input.blur()
+        }
+      })
+      input.addEventListener('blur', () => void commit())
+      inputs.set(key, input)
+      strip.append(input)
+    }
+    codeParts.append(strip)
+    preview.append(codeParts)
+    const guide = element('div', 'label-code-guide')
+    guide.append(element('span', 'label-code-base-key', 'Product code'))
+    for (const [key, title] of [
+      ['variantSuffix', 'Variant'],
+      ['sizeSuffix', 'Size'],
+    ]) {
+      const label = element(
+        'label',
+        `label-code-key label-code-key-${key}`,
+        title
+      )
+      const input = inputs.get(key)
+      input.id = `label-${key}-${crypto.randomUUID()}`
+      label.htmlFor = input.id
+      guide.append(label)
+    }
+    composedCode = element('output', 'label-composed-code')
+    composedCode.setAttribute('aria-label', 'Barcode code')
+    guide.append(composedCode)
+    hint.before(guide)
+    hint.textContent =
+      'Edit Variant or Size on the black band. Leave + empty when not needed. Enter saves; Escape cancels.'
   }
 
   copy.addEventListener('pointerdown', (event) => {

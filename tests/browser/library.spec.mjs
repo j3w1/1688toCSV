@@ -39,6 +39,38 @@ async function confirmOperation(page, name) {
   await expect(dialog).not.toBeVisible()
 }
 
+test('table photos open the shared original-image viewer; dates and statuses are readable chips', async ({
+  extension,
+}) => {
+  await seed(extension)
+  const page = await openLibrary(extension)
+  const row = page.locator('#sheet-body tr').first()
+  await expect(row.locator('time.purchase-date')).toHaveAttribute(
+    'datetime',
+    /2026-\d{2}-\d{2}/
+  )
+  await expect(row.locator('.order-status')).toHaveText('Awaiting shipment')
+  await expect(row.locator('.order-status')).toHaveAttribute('title', '待发货')
+  await row.getByRole('button', { name: /^Zoom product photo/ }).click()
+  const photo = page.getByRole('dialog', { name: 'Product photo', exact: true })
+  await expect(photo).toBeVisible()
+  await expect(photo.locator('img')).toHaveJSProperty('complete', true)
+  await expect(photo.locator('img')).toHaveJSProperty('naturalWidth', 96)
+  await photo.getByRole('button', { name: 'Zoom in', exact: true }).click()
+  await expect(photo.locator('.photo-zoom-actions')).toContainText('150%')
+  await page.keyboard.press('Escape')
+  await expect(photo).toHaveCount(0)
+  await expect(
+    row.getByRole('button', { name: /^Zoom product photo/ })
+  ).toBeFocused()
+  // Display translations do not replace the raw source values used by filters.
+  await page.locator('#status-filter').selectOption({ label: 'Completed' })
+  await expect(page.locator('#status-filter')).toHaveValue('交易成功')
+  await expect(
+    page.locator('#sheet-body .order-status').first()
+  ).toHaveAttribute('data-tone', 'success')
+})
+
 test('Activity exports every bulk-import failure without resuming work or changing saved orders', async ({
   extension,
 }) => {
@@ -393,7 +425,7 @@ test('purchase dates group orders by month while separators stay out of copied v
     'October 2026',
     'September 2026',
   ])
-  await expect(page.locator('.purchase-date')).toHaveText([
+  await expect(page.locator('.order-card .purchase-date')).toHaveText([
     '12 Oct 2026',
     '8 Oct 2026',
     '25 Sept 2026',
@@ -402,9 +434,15 @@ test('purchase dates group orders by month while separators stay out of copied v
     '12 Oct 2026'
   )
   await page.getByRole('button', { name: /Habitat Studio/ }).click()
-  await expect(page.locator('#order-details')).toContainText(
-    'Purchased 12 Oct 2026'
+  await expect(page.locator('#order-details time.purchase-date')).toHaveText(
+    '12 Oct 2026'
   )
+  await expect(
+    page.locator('#order-details time.purchase-date')
+  ).toHaveAttribute('datetime', '2026-10-12')
+  await expect(
+    page.locator('#order-details time.purchase-date')
+  ).toHaveAttribute('title', 'Purchase date')
   await page.getByRole('button', { name: 'Close order details' }).click()
   await expect(page.locator('tr.order-boundary')).toHaveCount(2)
   await page
@@ -698,7 +736,11 @@ test('large libraries bound order and product DOM while progress updates avoid r
       .sendMessage({ type: 'IMPORT_PROGRESS' })
       .catch(() => {})
   })
-  await expect(page.locator('.job')).toContainText('2 saved · 750 discovered')
+  await expect(page.locator('.job')).toContainText(
+    '2 saved · 0 need attention · 748 pending'
+  )
+  await expect(page.locator('.job progress')).toHaveAttribute('value', '2')
+  await expect(page.locator('.job progress')).toHaveAttribute('max', '750')
   const progress = await page.evaluate(() => ({
     messages: window.libraryProgressProbe.messages,
     orderReads: window.libraryProgressProbe.orderReads,
@@ -761,7 +803,9 @@ test('purchase date refresh scopes are inclusive, cancellable and inert when emp
   await page.getByLabel('Through', { exact: true }).fill('2026-10-08')
   await expect(page.locator('.order-card')).toHaveCount(1)
   await expect(page.locator('#sheet-body tr')).toHaveCount(3)
-  await expect(page.locator('.purchase-date')).toHaveText('8 Oct 2026')
+  await expect(page.locator('.order-card .purchase-date')).toHaveText(
+    '8 Oct 2026'
+  )
   await page.locator('.order-card input[type=checkbox]').check()
   await expect(page.locator('#refresh-orders')).toHaveText('Refresh 1')
   await page.getByLabel('From', { exact: true }).fill('2026-10-20')

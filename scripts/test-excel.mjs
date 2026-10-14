@@ -124,7 +124,6 @@ try {
     .first()
     .getByLabel('Product code', { exact: true })
   await expect(baseField).toHaveValue(/^CE2610\d{4}$/)
-  const originalBase = await baseField.inputValue()
   const otherBase = await preparation
     .locator('.preparation-group')
     .nth(1)
@@ -149,7 +148,7 @@ try {
     exact: true,
   })
   const barcodeCode = label.getByRole('textbox', {
-    name: 'Barcode code',
+    name: 'Variant code',
     exact: true,
   })
   await labelReady()
@@ -157,7 +156,7 @@ try {
   await name.press('Enter')
   await expect(name).toHaveValue('FRASCO TRANSPARENTE')
   await labelReady()
-  await barcodeCode.fill(`${originalBase}AS`)
+  await barcodeCode.fill('A')
   await barcodeCode.press('Enter')
   await labelReady()
   await name.fill('discarded text')
@@ -187,7 +186,15 @@ try {
   await markCode.fill(updatedBase)
   await markCode.press('Enter')
   await labelReady()
-  const markModel = { kind: 'mark', code: updatedBase, category: '玻璃制品' }
+  // Match the complete authored model used by the preview. An omitted field
+  // causes a separate canvas render whose font antialiasing can differ by a
+  // pixel shade even when that field is not printed on this label kind.
+  const markModel = {
+    kind: 'mark',
+    code: updatedBase,
+    category: '玻璃制品',
+    spanishName: 'FRASCO DE VIDRIO',
+  }
   const mark = await page.evaluate(
     (model) => excelAcceptance.expectedLabel(model),
     markModel
@@ -206,13 +213,17 @@ try {
     .click()
 
   await firstRow.getByRole('button', { name: 'Barcode', exact: true }).click()
-  await expect(barcodeCode).toHaveValue(`${updatedBase}AS`)
+  await expect(barcodeCode).toHaveValue('A')
+  await expect(label.getByLabel('Barcode code', { exact: true })).toHaveText(
+    `${updatedBase}AS`
+  )
   await expect(name).toHaveValue('FRASCO TRANSPARENTE')
   await labelReady()
   const barcodeModel = {
     kind: 'barcode',
     code: `${updatedBase}AS`,
     spanishName: 'FRASCO TRANSPARENTE',
+    category: '玻璃制品',
   }
   const barcode = await page.evaluate(
     (model) => excelAcceptance.expectedLabel(model),
