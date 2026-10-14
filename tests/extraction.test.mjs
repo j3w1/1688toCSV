@@ -336,6 +336,64 @@ test('explicit no-discount placeholders remain zero', () => {
   }
 })
 
+test('a compact free-shipping badge is not a product discount amount', () => {
+  for (const value of ['包邮', '\n 包邮\n', ' 包\t邮 ']) {
+    const document = createOrderFixture({
+      rows: [simpleRow({ discounts: [value] })],
+    })
+    assert.equal(extractOrder(document, orderUrl).dataRows[0].discount, '0.00')
+
+    const fixture = buildOrderFixture(document, { rows: [simpleRow()] })
+    fixture.cells[0].discount.host.parentNode.textContent = value
+    assert.equal(extractOrder(document, orderUrl).dataRows[0].discount, '0.00')
+  }
+})
+
+test('free-shipping badges preserve adjacent monetary discounts and authoritative summaries', () => {
+  const result = extractOrder(
+    createOrderFixture({
+      rows: [
+        simpleRow({ discounts: ['省0.10元', '\n 包邮\n', '减0.20元'] }),
+        simpleRow({
+          discounts: ['包邮', '省40.00元', '减7.20元'],
+          discountSummary: '优惠共47.20元',
+        }),
+        simpleRow({ discounts: ['包邮', '省0.015元'] }),
+      ],
+    }),
+    orderUrl
+  )
+  assert.deepEqual(
+    result.dataRows.map((row) => row.discount),
+    ['0.30', '47.20', '0.02']
+  )
+})
+
+test('the free-shipping exception does not ignore other text or invalid discounts', () => {
+  for (const value of [
+    '包邮优惠',
+    '包邮未知元',
+    '省未知元',
+    '-1.00',
+    '−1.00',
+  ]) {
+    assert.throws(
+      () =>
+        extractOrder(
+          createOrderFixture({
+            rows: [simpleRow({ discounts: ['包邮', value] })],
+          }),
+          orderUrl
+        ),
+      /Row 1:.*discount/i
+    )
+  }
+  const document = createOrderFixture()
+  const fixture = buildOrderFixture(document, { rows: [simpleRow()] })
+  fixture.cells[0].discount.host.parentNode.textContent = '包邮 优惠未知'
+  assert.throws(() => extractOrder(document, orderUrl), /Row 1:.*discount/i)
+})
+
 test('fails clearly when the order application, table, or rows have not loaded', async (t) => {
   await t.test('missing application', () => {
     const document = createOrderFixture()

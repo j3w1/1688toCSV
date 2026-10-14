@@ -217,6 +217,73 @@ test('invalid customization service rejects snapshots and entire backups before 
   expect(result.orders[0].snapshot.totals).toEqual(snapshot().totals)
 })
 
+test('customization inside original gross survives backups and rejects unexplained or partial gross differences', async ({
+  extension,
+}) => {
+  const page = await openTestDatabase(extension)
+  const result = await page.evaluate(async (first) => {
+    const valid = {
+      ...first,
+      totals: {
+        ...first.totals,
+        goodsGross: '30.00',
+        customizationService: '5.00',
+        grossIncludedCustomization: '5.00',
+        payable: '31.00',
+      },
+    }
+    await library.saveSnapshot(valid)
+    const backup = await library.exportBackup()
+    const restored = await openOrderDatabase({
+      name: `${databaseName}-included-customization`,
+    })
+    await restored.restoreBackup(backup)
+    const record = await restored.getOrder(first.orderId)
+    const rejected = []
+    for (const change of [
+      { grossIncludedCustomization: '-1.00' },
+      { grossIncludedCustomization: '4.99', goodsGross: '29.99' },
+      { grossIncludedCustomization: '5.01', goodsGross: '30.01' },
+      { customizationService: '0.00', payable: '26.00' },
+      { goodsGross: '30.01' },
+      { payable: '36.00' },
+      { grossIncludedCustomization: '0.001' },
+    ]) {
+      const invalid = {
+        ...valid,
+        observedAt: '2026-01-02T12:00:00.000Z',
+        totals: { ...valid.totals, ...change },
+      }
+      for (const operation of [
+        () => restored.saveSnapshot(invalid),
+        () =>
+          restored.restoreBackup({
+            ...backup,
+            orders: [{ ...backup.orders[0], snapshot: invalid }],
+          }),
+      ]) {
+        try {
+          await operation()
+        } catch (error) {
+          rejected.push(error.message)
+        }
+      }
+    }
+    const after = await restored.getOrder(first.orderId)
+    restored.close()
+    return { record, after, rejected }
+  }, snapshot())
+  expect(result.record.snapshot.totals).toMatchObject({
+    goodsGross: '30.00',
+    customizationService: '5.00',
+    grossIncludedCustomization: '5.00',
+    payable: '31.00',
+  })
+  expect(result.record.snapshot.items).toEqual(snapshot().items)
+  expect(result.rejected).toHaveLength(14)
+  expect(result.after).toEqual(result.record)
+})
+
 test('red packets stay separate through changes, old backups and combined customization charges', async ({
   extension,
 }) => {

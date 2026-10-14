@@ -47,7 +47,7 @@ function sumDiscounts(amounts) {
 // textContent does not cross shadow boundaries. Follow the rendered component
 // tree, including assigned slot content, without reading product copy or prices
 // as if they were row discounts.
-function discountText(node) {
+export function discountText(node) {
   if (node.nodeType === 3) return node.textContent
   if (
     [
@@ -104,6 +104,7 @@ function rowDiscount(row, discount, rowNumber) {
       '.order-table-discount-item-price'
     )) {
       const value = discountText(item)
+      if (value.replace(/\s+/g, '') === '包邮') continue
       try {
         amounts.push(requiredNumber(value, 'discount', rowNumber))
       } catch (error) {
@@ -119,7 +120,7 @@ function rowDiscount(row, discount, rowNumber) {
     if (
       !amounts.length &&
       advertised &&
-      !/^(?:[-—–]+|无|无优惠|暂无优惠|无折扣|0(?:\.0+)?(?:元)?)$/.test(
+      !/^(?:[-—–]+|无|无优惠|暂无优惠|无折扣|包邮|0(?:\.0+)?(?:元)?)$/.test(
         advertised
       )
     ) {

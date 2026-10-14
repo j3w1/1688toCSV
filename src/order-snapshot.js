@@ -130,7 +130,7 @@ function readTotals(appQuery) {
   const query = deepQuery(host.shadowRoot)
   const fields = query.all('.detail-price dl')
   const totals = { sourceDiscount: 0n, orderAdjustment: 0n }
-  let shopDiscount = 0n
+  let orderEligibleDiscount = 0n
   let wholesaleDiscount = 0n
   let foreignCurrencyFeeUnspecified = false
   const labels = new Set()
@@ -166,11 +166,12 @@ function readTotals(appQuery) {
       totals.redPacketDiscount = discount
     } else if (label === '商品改价')
       totals.orderAdjustment = readAmount(value, label, { signed: true })
-    else if (label.includes('优惠')) {
+    else if (label.includes('优惠') || label === '元宝') {
       const discount = readAmount(value, label, { signed: true })
       if (discount < 0n) throw new Error(`${label} is not a reduction.`)
       totals.sourceDiscount += discount
-      if (label === '店铺优惠') shopDiscount += discount
+      if (['店铺优惠', '活动优惠'].includes(label))
+        orderEligibleDiscount += discount
       if (label === '批发优惠') wholesaleDiscount += discount
     } else
       throw Object.assign(new Error(`Unsupported order total: ${label}.`), {
@@ -227,7 +228,7 @@ function readTotals(appQuery) {
   totals.payable = moneyToCents(match[1].replaceAll(',', ''))
   return {
     totals,
-    shopDiscount,
+    orderEligibleDiscount,
     wholesaleDiscount,
     foreignCurrencyFeeUnspecified,
   }
@@ -309,7 +310,7 @@ export function extractOrderSnapshot(
   }))
   const {
     totals,
-    shopDiscount,
+    orderEligibleDiscount,
     wholesaleDiscount,
     foreignCurrencyFeeUnspecified,
   } = readTotals(appQuery)
@@ -321,63 +322,95 @@ export function extractOrderSnapshot(
     (sum, item) => sum + moneyToCents(item.sourceDiscount),
     0n
   )
-  // Wholesale prices can already include the explicitly displayed wholesale
-  // reduction. Accept only the whole evidenced amount, never an arbitrary gap.
-  const priceIncludedDiscount = totals.goodsGross - actualGross
-  if (
-    priceIncludedDiscount !== 0n &&
-    priceIncludedDiscount !== wholesaleDiscount
-  )
+  // The original footer can include customization, while row prices can already
+  // include wholesale reductions. Accept only whole, explicitly named amounts.
+  const grossCandidates = [
+    0n,
+    ...(totals.customizationService > 0n ? [totals.customizationService] : []),
+  ]
+    .map((grossIncludedCustomization) => ({
+      grossIncludedCustomization,
+      priceIncludedDiscount:
+        totals.goodsGross - actualGross - grossIncludedCustomization,
+    }))
+    .filter(
+      ({ priceIncludedDiscount }) =>
+        priceIncludedDiscount === 0n ||
+        priceIncludedDiscount === wholesaleDiscount
+    )
+  if (!grossCandidates.length)
     throw new Error(
       'Product rows do not reconcile with the order totals. The order may be incomplete.'
     )
-  // Some row summaries include the entire price adjustment too. Reconcile both
-  // supported presentations against the breakdown, not the payable difference.
-  // A shop coupon's remaining part stays order-only. Ambiguous mappings fail.
-  const candidates = [
+  // Consider only explicitly evidenced whole amounts. The discount breakdown
+  // and payable must identify one complete interpretation, including when a
+  // customization charge happens to equal the wholesale reduction.
+  const includedAdjustments = [
     0n,
     ...(totals.orderAdjustment > 0n ? [totals.orderAdjustment] : []),
   ]
-    .map((rowIncludedAdjustment) => ({
-      rowIncludedAdjustment,
-      orderDiscount:
-        totals.sourceDiscount -
-        priceIncludedDiscount +
-        rowIncludedAdjustment -
-        actualDiscount,
-    }))
-    .filter(
-      ({ orderDiscount }) =>
-        orderDiscount >= 0n && orderDiscount <= shopDiscount
-    )
-  if (candidates.length !== 1)
+  const candidates = grossCandidates.flatMap((gross) =>
+    includedAdjustments
+      .map((rowIncludedAdjustment) => {
+        const orderDiscount =
+          totals.sourceDiscount -
+          gross.priceIncludedDiscount +
+          rowIncludedAdjustment -
+          actualDiscount
+        return {
+          ...gross,
+          rowIncludedAdjustment,
+          orderDiscount,
+          goodsNet:
+            actualGross -
+            actualDiscount -
+            (totals.orderAdjustment - rowIncludedAdjustment) -
+            orderDiscount,
+        }
+      })
+      .filter(
+        ({ orderDiscount }) =>
+          orderDiscount >= 0n && orderDiscount <= orderEligibleDiscount
+      )
+  )
+  if (!candidates.length)
     throw new Error(
       'Product rows do not reconcile unambiguously with the order totals. The order may be incomplete.'
     )
-  const { rowIncludedAdjustment, orderDiscount } = candidates[0]
+  const reconciled = candidates.filter(
+    ({ goodsNet }) =>
+      goodsNet >= 0n &&
+      totals.payable >= 0n &&
+      goodsNet +
+        totals.shipping +
+        (totals.customizationService ?? 0n) -
+        (totals.redPacketDiscount ?? 0n) ===
+        totals.payable
+  )
+  if (!reconciled.length)
+    throw new Error(
+      'The payable amount does not reconcile with the order totals.'
+    )
+  if (reconciled.length !== 1)
+    throw new Error(
+      'Product rows do not reconcile unambiguously with the order totals. The order may be incomplete.'
+    )
+  const {
+    grossIncludedCustomization,
+    priceIncludedDiscount,
+    rowIncludedAdjustment,
+    orderDiscount,
+    goodsNet,
+  } = reconciled[0]
   totals.sourceDiscount = actualDiscount
+  if (grossIncludedCustomization > 0n)
+    totals.grossIncludedCustomization = grossIncludedCustomization
   if (priceIncludedDiscount > 0n)
     totals.priceIncludedDiscount = priceIncludedDiscount
   if (rowIncludedAdjustment > 0n)
     totals.rowIncludedAdjustment = rowIncludedAdjustment
   if (orderDiscount > 0n) totals.orderDiscount = orderDiscount
-  totals.goodsNet =
-    actualGross -
-    actualDiscount -
-    (totals.orderAdjustment - rowIncludedAdjustment) -
-    orderDiscount
-  if (
-    totals.goodsNet < 0n ||
-    totals.payable < 0n ||
-    totals.goodsNet +
-      totals.shipping +
-      (totals.customizationService ?? 0n) -
-      (totals.redPacketDiscount ?? 0n) !==
-      totals.payable
-  )
-    throw new Error(
-      'The payable amount does not reconcile with the order totals.'
-    )
+  totals.goodsNet = goodsNet
   const allocations = allocateOrderAdjustment(
     items,
     centsToMoney(totals.orderAdjustment - rowIncludedAdjustment)

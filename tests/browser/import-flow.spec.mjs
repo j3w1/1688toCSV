@@ -19,6 +19,9 @@ function completeOrder(
     customization = false,
     redPacket = false,
     shopDiscount = false,
+    promotionDiscount = false,
+    includedCustomization = false,
+    freeShippingBadge = false,
     foreignFee = false,
     includedDiscounts = false,
     missingSeller = false,
@@ -29,6 +32,14 @@ function completeOrder(
     document,
     missingSeller ? { sellerName: null } : {}
   )
+  if (freeShippingBadge) {
+    for (const cell of built.cells) {
+      const badge = document.createElement('span')
+      badge.className = 'order-table-discount-item-price'
+      badge.textContent = ' 包邮 '
+      cell.discount.root.append(badge)
+    }
+  }
   const app = built.appRoot.shadowRoot
   const field = document.createElement('div')
   field.className = 'order-info-receipt-content-item'
@@ -49,20 +60,21 @@ function completeOrder(
     (6800 +
       (customization ? 1250 : 0) -
       (redPacket ? 125 : 0) -
-      (shopDiscount ? 160 : 0)) /
+      (shopDiscount || promotionDiscount ? 160 : 0)) /
     100
   )
     .toFixed(2)
     .split('.')
   totals.attachShadow({ mode: 'open' }).innerHTML = `
     <div class="detail-price">
-      <dl><dt>原价总计</dt><dd>¥${includedDiscounts ? '86.00' : '66.00'}</dd></dl>
+      <dl><dt>原价总计</dt><dd>¥${includedCustomization ? '78.50' : includedDiscounts ? '86.00' : '66.00'}</dd></dl>
       <dl><dt>运费</dt><dd>¥4.40</dd></dl>
       <dl><dt>商品优惠</dt><dd>减 ¥${includedDiscounts ? '1.00' : '2.40'}</dd></dl>
       ${includedDiscounts ? '<dl><dt>批发优惠</dt><dd>减 ¥20.00</dd></dl><dl><dt>商品改价</dt><dd>减 ¥1.40</dd></dl>' : ''}
       ${customization ? '<dl><dt>定制服务</dt><dd>¥12.50</dd></dl>' : ''}
       ${redPacket ? '<dl><dt>红包</dt><dd>减 ¥1.25</dd></dl>' : ''}
       ${shopDiscount ? '<dl><dt>店铺优惠</dt><dd>减 ¥1.60</dd></dl>' : ''}
+      ${promotionDiscount ? '<dl><dt>活动优惠</dt><dd>减 ¥1.60</dd></dl>' : ''}
       ${foreignFee ? '<dl><dt>外币支付手续费</dt><dd>（≈）</dd></dl>' : ''}
       ${unsupported ? '<dl><dt>未知费用</dt><dd>¥1.11</dd></dl>' : ''}
     </div><div class="total-discount">2.40</div>
@@ -79,6 +91,9 @@ async function setup(
     customization = false,
     redPacket = false,
     shopDiscount = false,
+    promotionDiscount = false,
+    includedCustomization = false,
+    freeShippingBadge = false,
     foreignFee = false,
     includedDiscounts = false,
     missingSeller = false,
@@ -106,7 +121,7 @@ async function setup(
       body = `<script>
         ${buildOrderFixture.toString()}
         ${completeOrder.toString()}
-        setTimeout(() => completeOrder(document, ${JSON.stringify(id)}, ${JSON.stringify({ summary, customization, redPacket, shopDiscount, foreignFee, includedDiscounts, missingSeller, unsupported: unsupportedIds.includes(id) })}), ${typeof delay === 'object' ? delay[id] || 0 : delay});
+        setTimeout(() => completeOrder(document, ${JSON.stringify(id)}, ${JSON.stringify({ summary, customization, redPacket, shopDiscount, promotionDiscount, includedCustomization, freeShippingBadge, foreignFee, includedDiscounts, missingSeller, unsupported: unsupportedIds.includes(id) })}), ${typeof delay === 'object' ? delay[id] || 0 : delay});
       </script>`
     }
     await route.fulfill({
@@ -298,6 +313,54 @@ test('wholesale prices and embedded adjustments import without double deductions
   )
 })
 
+test('legacy promotions, free-shipping badges and included customization import with unchanged product copies', async ({
+  extension,
+}) => {
+  const { list, library } = await setup(extension, {
+    promotionDiscount: true,
+    customization: true,
+    includedCustomization: true,
+    freeShippingBadge: true,
+    summary: '4.00',
+  })
+  await list
+    .getByRole('button', { name: 'Import selected', exact: true })
+    .click()
+  await list
+    .getByRole('button', { name: 'Import 2 selected orders', exact: true })
+    .click()
+  await assertImported(extension, library)
+  const { data } = await extension.inspector.evaluate(() =>
+    chrome.runtime.sendMessage({ type: 'LIBRARY_QUERY' })
+  )
+  for (const { snapshot } of data.orders) {
+    expect(snapshot.totals).toMatchObject({
+      goodsGross: '78.50',
+      grossIncludedCustomization: '12.50',
+      customizationService: '12.50',
+      sourceDiscount: '2.40',
+      orderDiscount: '1.60',
+      goodsNet: '62.00',
+      payable: '78.90',
+    })
+    expect(snapshot.items.map((item) => item.discount)).toEqual([
+      '2.10',
+      '0.30',
+    ])
+    expect(snapshot.items.map((item) => item.allocatedDiscount)).toEqual([
+      '0.00',
+      '0.00',
+    ])
+  }
+  await library.locator('.order-card button').first().click()
+  await expect(library.locator('#order-details')).toContainText(
+    'Original total (includes customization)'
+  )
+  await expect(library.locator('#order-details')).toContainText(
+    'Order-only discount'
+  )
+})
+
 test('order-only shop discounts and unspecified foreign fees import without changing copied product discounts', async ({
   extension,
 }) => {
@@ -335,7 +398,7 @@ test('order-only shop discounts and unspecified foreign fees import without chan
   }
   await library.locator('.order-card button').first().click()
   await expect(library.locator('#order-details')).toContainText(
-    'Shop discount (order only)'
+    'Order-only discount'
   )
   await expect(library.locator('#order-details')).toContainText('¥ −1.60')
   await expect(library.locator('#order-details')).toContainText(

@@ -17,6 +17,7 @@ const totalFields = [
 ]
 const optionalTotalFields = [
   'customizationService',
+  'grossIncludedCustomization',
   'redPacketDiscount',
   'orderDiscount',
   'priceIncludedDiscount',
@@ -125,9 +126,11 @@ function validateAmounts(items, totals) {
   const rowIncludedAdjustment = amounts.rowIncludedAdjustment ?? 0n
   const goodsNet = goodsGross - sourceDiscount - orderAdjustment - orderDiscount
   const customizationService = amounts.customizationService ?? 0n
+  const grossIncludedCustomization = amounts.grossIncludedCustomization ?? 0n
   const redPacketDiscount = amounts.redPacketDiscount ?? 0n
   if (
-    goodsGross + priceIncludedDiscount !== amounts.goodsGross ||
+    goodsGross + priceIncludedDiscount + grossIncludedCustomization !==
+      amounts.goodsGross ||
     sourceDiscount !== amounts.sourceDiscount ||
     orderAdjustment + rowIncludedAdjustment !== amounts.orderAdjustment ||
     priceIncludedDiscount < 0n ||
@@ -140,6 +143,9 @@ function validateAmounts(items, totals) {
     orderDiscount < 0n ||
     amounts.shipping < 0n ||
     customizationService < 0n ||
+    grossIncludedCustomization < 0n ||
+    (grossIncludedCustomization !== 0n &&
+      grossIncludedCustomization !== customizationService) ||
     redPacketDiscount < 0n ||
     amounts.payable < 0n ||
     goodsNet + amounts.shipping + customizationService - redPacketDiscount !==

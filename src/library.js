@@ -817,7 +817,12 @@ export async function startLibrary(
       )
     const totals = node('dl')
     for (const [label, value] of [
-      ['Original goods', order.totals.goodsGross],
+      [
+        Number(order.totals.grossIncludedCustomization) > 0
+          ? 'Original total (includes customization)'
+          : 'Original goods',
+        order.totals.goodsGross,
+      ],
       ...(order.totals.priceIncludedDiscount !== undefined
         ? [
             [
@@ -834,7 +839,7 @@ export async function startLibrary(
         order.totals.orderAdjustment,
       ],
       ...(order.totals.orderDiscount !== undefined
-        ? [['Shop discount (order only)', `−${order.totals.orderDiscount}`]]
+        ? [['Order-only discount', `−${order.totals.orderDiscount}`]]
         : []),
       ['Goods after discounts', order.totals.goodsNet],
       ['Shipping', order.totals.shipping],
@@ -856,7 +861,7 @@ export async function startLibrary(
       totals,
       node(
         'p',
-        'Price changes not already included in product discounts are allocated in proportion to each product’s value after its own discounts. Wholesale reductions already in prices are counted once. Order-only shop discounts, shipping, customization services and red-packet payment reductions stay separate. Discounts are totals per row.'
+        'Price changes not already included in product discounts are allocated in proportion to each product’s value after its own discounts. Wholesale reductions already in prices are counted once. Order-only shop and promotion discounts, shipping, customization services and red-packet payment reductions stay separate. Discounts are totals per row.'
       )
     )
     if (order.foreignCurrencyFeeUnspecified)

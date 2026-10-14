@@ -269,6 +269,9 @@ test('unexplained gross gaps, partial or ambiguous adjustments and bad payable s
   const ambiguous = discounted()
   ambiguous.field('店铺优惠', '减 ¥10.00')
   ambiguous.totalDiscount.textContent = '40.00'
+  // Both row mappings must fit the payable too, leaving a genuine ambiguity.
+  ambiguous.payable.innerHTML =
+    '<span class="sum-pay-label">实付款</span>¥75.00'
   assert.throws(() => snapshot(ambiguous), /unambiguously/)
   const payable = discounted()
   payable.payable.querySelector('.sub-ammount').textContent = '01'
@@ -363,6 +366,153 @@ test('a shop coupon cannot hide missing non-shop discounts, excess row discounts
   noShop.fields['商品优惠'].textContent = '减 ¥4.00'
   noShop.totalDiscount.textContent = '4.00'
   assert.throws(() => snapshot(noShop), /Product rows do not reconcile/)
+})
+
+test('promotion discounts retain the exact row values and only separate the evidenced remainder', () => {
+  for (const [rowDiscount, orderOnly] of [
+    ['0.00', '4.00'],
+    ['2.50', '1.50'],
+    ['4.00', undefined],
+  ]) {
+    const source = fixture({
+      rows: [{ price: '10.00', quantity: '5', sourceDiscount: rowDiscount }],
+      totals: {
+        goodsGross: '50.00',
+        shipping: '3.00',
+        sourceDiscount: '0.00',
+        payable: '49.00',
+      },
+    })
+    source.field('活动优惠', '减 ¥4.00')
+    source.totalDiscount.textContent = '4.00'
+    const result = snapshot(source)
+    assert.equal(result.items[0].discount, rowDiscount)
+    assert.equal(result.items[0].allocatedDiscount, '0.00')
+    assert.equal(result.totals.orderDiscount, orderOnly)
+    assert.equal(result.totals.goodsNet, '46.00')
+  }
+})
+
+test('promotion adjustments require one interpretation and exact cent reconciliation', () => {
+  function source(
+    rowDiscount,
+    adjustment,
+    promotion = '2.00',
+    payable = '48.00'
+  ) {
+    const result = fixture({
+      rows: [{ price: '10.00', quantity: '5', sourceDiscount: rowDiscount }],
+      totals: {
+        goodsGross: '50.00',
+        shipping: '3.00',
+        sourceDiscount: '0.00',
+        orderAdjustment: `减 ¥${adjustment}`,
+        payable,
+      },
+    })
+    result.field('活动优惠', `减 ¥${promotion}`)
+    result.totalDiscount.textContent = promotion
+    return result
+  }
+  const included = snapshot(source('3.00', '3.00'))
+  assert.equal(included.totals.rowIncludedAdjustment, '3.00')
+  assert.equal(included.totals.orderDiscount, '2.00')
+  assert.equal(included.items[0].discount, '3.00')
+  const allocated = snapshot(source('0.00', '3.00'))
+  assert.equal(allocated.items[0].allocatedDiscount, '3.00')
+  for (const row of ['5.01', '5.24', '8.00'])
+    assert.throws(() => snapshot(source(row, '3.00')), /unambiguously/)
+  assert.throws(
+    () => snapshot(source('1.00', '1.00', '2.00', '50.00')),
+    /unambiguously/
+  )
+  assert.throws(
+    () => snapshot(source('3.00', '3.00', '2.00', '48.01')),
+    /payable amount/
+  )
+})
+
+test('yuanbao reductions already displayed in rows reconcile without subtracting them twice', () => {
+  const source = fixture({
+    rows: [{ price: '12.00', quantity: '1', sourceDiscount: '0.40' }],
+    totals: {
+      goodsGross: '12.00',
+      shipping: '0.00',
+      sourceDiscount: '0.00',
+      payable: '10.60',
+    },
+  })
+  source.field('店铺优惠', '减 ¥1.00')
+  source.field('元宝', '减 ¥0.40')
+  source.totalDiscount.textContent = '1.40'
+  const result = snapshot(source)
+  assert.equal(result.items[0].discount, '0.40')
+  assert.equal(result.totals.orderDiscount, '1.00')
+  assert.equal(result.totals.payable, '10.60')
+  for (const value of ['¥0.40', '加 ¥0.40', '未知', '减 ¥0.401']) {
+    source.fields['元宝'].textContent = value
+    assert.throws(() => snapshot(source), /sign|reduction|invalid|decimal/)
+  }
+})
+
+test('customization included in the original total stays separate and is charged once', () => {
+  for (const wholesale of ['0.00', '10.00']) {
+    const source = fixture({
+      rows: [{ price: '10.00', quantity: '5', sourceDiscount: '2.00' }],
+      totals: {
+        goodsGross: wholesale === '0.00' ? '55.00' : '65.00',
+        shipping: '3.00',
+        customizationService: '¥5.00',
+        sourceDiscount: '2.00',
+        payable: '56.00',
+      },
+    })
+    if (wholesale !== '0.00') {
+      source.field('批发优惠', `减 ¥${wholesale}`)
+      source.totalDiscount.textContent = '12.00'
+    }
+    const result = snapshot(source)
+    assert.equal(result.totals.grossIncludedCustomization, '5.00')
+    assert.equal(result.totals.customizationService, '5.00')
+    assert.equal(result.totals.goodsNet, '48.00')
+    assert.equal(result.totals.payable, '56.00')
+    assert.equal(result.items[0].discount, '2.00')
+    source.fields['定制服务'].textContent = '¥4.99'
+    assert.throws(() => snapshot(source), /Product rows do not reconcile/)
+    source.fields['定制服务'].textContent = '¥5.00'
+    source.payable.querySelector('.sub-ammount').textContent = '01'
+    assert.throws(() => snapshot(source), /payable amount/)
+  }
+})
+
+test('equal customization and wholesale amounts use the full breakdown to identify the presentation', () => {
+  for (const [rowDiscount, payable, included] of [
+    ['2.00', '61.00', false],
+    ['12.00', '51.00', true],
+  ]) {
+    const source = fixture({
+      rows: [{ price: '10.00', quantity: '5', sourceDiscount: rowDiscount }],
+      totals: {
+        goodsGross: '60.00',
+        shipping: '3.00',
+        customizationService: '¥10.00',
+        sourceDiscount: '2.00',
+        payable,
+      },
+    })
+    source.field('批发优惠', '减 ¥10.00')
+    source.totalDiscount.textContent = '12.00'
+    const result = snapshot(source)
+    assert.equal(
+      result.totals.grossIncludedCustomization,
+      included ? '10.00' : undefined
+    )
+    assert.equal(
+      result.totals.priceIncludedDiscount,
+      included ? undefined : '10.00'
+    )
+    assert.equal(result.items[0].discount, rowDiscount)
+  }
 })
 
 test('a foreign-currency fee placeholder is preserved as unspecified only when CNY independently reconciles', () => {
