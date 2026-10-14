@@ -91,7 +91,9 @@ async function waitForAutosave(dialog) {
 
 async function pauseAutosave(page) {
   const now = new Date()
-  await page.clock.install({ time: now })
+  // Installation starts a running clock. Leave headroom before the pause target
+  // so time spent between these two protocol calls cannot put it in the past.
+  await page.clock.install({ time: new Date(now.getTime() - 60_000) })
   await page.clock.pauseAt(now)
 }
 
@@ -243,6 +245,128 @@ test('structured products prepare, preserve edits and copy exact headerless sour
   )
   expect(library.ok, library.error).toBe(true)
   expect(library.data.orders[0].snapshot).toEqual(record.snapshot)
+  expect(extension.unexpectedRequests).toEqual([])
+})
+
+test('Copy Excel image freezes selected rows and includes Chinese headings, photos and prepared values', async ({
+  extension,
+}, testInfo) => {
+  const { page, record } = await openWorkspace(extension)
+  const dialog = await prepare(page)
+  const group = dialog.locator('.preparation-group').first()
+  const base = await group
+    .getByLabel('Product code', { exact: true })
+    .inputValue()
+  await group
+    .getByLabel('Spanish short name', { exact: true })
+    .fill('FRASCO DE PRUEBA')
+  await group.getByLabel('Chinese category', { exact: true }).fill('玻璃制品')
+  await waitForAutosave(dialog)
+  await dialog
+    .getByRole('button', { name: 'Close preparation', exact: true })
+    .click()
+  const original = await packingBackup(extension)
+  const rows = page.locator('#sheet-body tr')
+  await rows.nth(0).locator('.product-title').click()
+  await rows
+    .nth(1)
+    .locator('.product-title')
+    .click({ modifiers: ['Shift'] })
+  await extension.context.grantPermissions([
+    'clipboard-read',
+    'clipboard-write',
+  ])
+  await page.evaluate(async () => {
+    await navigator.clipboard.writeText('clipboard-before-image')
+    globalThis.tableImageDrawing = { text: [], images: 0 }
+    const fillText = CanvasRenderingContext2D.prototype.fillText
+    CanvasRenderingContext2D.prototype.fillText = function (text, ...args) {
+      globalThis.tableImageDrawing.text.push(String(text))
+      return fillText.call(this, text, ...args)
+    }
+    const drawImage = CanvasRenderingContext2D.prototype.drawImage
+    CanvasRenderingContext2D.prototype.drawImage = function (...args) {
+      globalThis.tableImageDrawing.images++
+      return drawImage.apply(this, args)
+    }
+  })
+  const copy = page.locator('#copy-excel-image')
+  await copy.click()
+  const confirmation = page.getByRole('dialog', {
+    name: 'Confirm operation',
+    exact: true,
+  })
+  await confirmation
+    .getByRole('button', { name: 'Cancel', exact: true })
+    .click()
+  await expect(copy).toHaveText('Copy Excel image')
+  expect(await page.evaluate(() => navigator.clipboard.readText())).toBe(
+    'clipboard-before-image'
+  )
+  expect(await page.evaluate(() => tableImageDrawing)).toEqual({
+    text: [],
+    images: 0,
+  })
+
+  await copy.click()
+  // An asynchronous filter update after confirmation opens must not change its scope.
+  await page.evaluate(() => {
+    const search = document.getElementById('search')
+    search.value = 'TEST-BOX'
+    search.dispatchEvent(new Event('input', { bubbles: true }))
+  })
+  await confirmation
+    .getByRole('button', { name: 'Copy 2 product rows', exact: true })
+    .click()
+  await expect(copy).toHaveText('Copied')
+  await expect(copy).toHaveClass(/copied/)
+  await expect(page.locator('#feedback')).toBeEmpty()
+  const drawing = await page.evaluate(() => tableImageDrawing)
+  expect(drawing.text.slice(0, 10)).toEqual([
+    '序号',
+    '图片',
+    '产品描述',
+    '产品编码',
+    '条码编号',
+    '西班牙语品名',
+    '中文品类',
+    '单价（元）',
+    '数量',
+    '优惠（元）',
+  ])
+  expect(drawing.text.filter((value) => value === base)).toHaveLength(1)
+  expect(drawing.text).toContain(`${base}S`)
+  expect(drawing.text).toContain(`${base}L`)
+  expect(drawing.text).toContain('FRASCO DE PRUEBA')
+  expect(drawing.text).toContain('玻璃制品')
+  expect(drawing.text.join('')).toContain('300ml')
+  expect(drawing.text.join('')).toContain('500ml')
+  expect(drawing.text.join('')).not.toContain('TEST-BOX')
+  for (const item of record.snapshot.items.slice(0, 2))
+    for (const field of ['price', 'quantity', 'discount'])
+      expect(drawing.text).toContain(item[field])
+  expect(drawing.images).toBeGreaterThanOrEqual(2)
+  const image = await page.evaluate(async () => {
+    const clipboard = await navigator.clipboard.read()
+    const blob = await clipboard[0].getType('image/png')
+    const bitmap = await createImageBitmap(blob)
+    const dimensions = { width: bitmap.width, height: bitmap.height }
+    bitmap.close()
+    return {
+      ...dimensions,
+      bytes: [...new Uint8Array(await blob.arrayBuffer())],
+    }
+  })
+  expect(image.width).toBeGreaterThan(1500)
+  expect(image.height).toBeGreaterThan(200)
+  expect(image.width * image.height).toBeLessThanOrEqual(16_000_000)
+  await testInfo.attach('Selected rows with Chinese headings', {
+    body: Buffer.from(image.bytes),
+    contentType: 'image/png',
+  })
+  expect((await packingBackup(extension)).preparations).toEqual(
+    original.preparations
+  )
   expect(extension.unexpectedRequests).toEqual([])
 })
 
@@ -621,6 +745,69 @@ test('preparation has no collapsibles and keeps categories, names, grouping and 
       .getByLabel('Spanish short name', { exact: true })
       .evaluate((node) => node.getBoundingClientRect().width)
   ).toBeGreaterThanOrEqual(180)
+  expect(extension.unexpectedRequests).toEqual([])
+})
+
+test('compact preparation fits two product groups without hiding fields or clipping narrow layouts', async ({
+  extension,
+}) => {
+  const { page } = await openWorkspace(extension)
+  await page.setViewportSize({ width: 1280, height: 960 })
+  const dialog = await prepare(page)
+  const groups = dialog.locator('.preparation-group')
+  const first = groups.first()
+  // Wait for real raster readiness, as in the media test; autosave is independent
+  // of Windows' asynchronous canvas encoding and the bounded preview queue.
+  await expect(first.getByAltText('Carton mark preview')).toBeVisible({
+    timeout: 20_000,
+  })
+  await expect(first.getByAltText('Barcode preview').first()).toBeVisible({
+    timeout: 20_000,
+  })
+  await dialog.evaluate((node) => {
+    node.scrollTop = 0
+  })
+  const bounds = await dialog.boundingBox()
+  const firstBounds = await first.boundingBox()
+  const lastBounds = await groups.last().boundingBox()
+  expect(firstBounds.y - bounds.y).toBeLessThanOrEqual(190)
+  expect(lastBounds.height).toBeLessThanOrEqual(330)
+  expect(lastBounds.y + lastBounds.height).toBeLessThanOrEqual(
+    bounds.y + bounds.height
+  )
+  const summary = await first.locator('.product-summary').boundingBox()
+  const mark = await first.locator('.carton-preview').boundingBox()
+  expect(summary.x + summary.width).toBeLessThanOrEqual(mark.x)
+  expect(Math.abs(summary.y - mark.y)).toBeLessThanOrEqual(2)
+  for (const group of await groups.all()) {
+    await expect(
+      group.getByLabel('Chinese category', { exact: true })
+    ).toBeVisible()
+    await expect(group.locator('.original-product-name')).toBeVisible()
+    await expect(group.locator('.group-tools')).toBeVisible()
+    await expect(
+      group.getByText('Single variant', { exact: true })
+    ).toHaveCount(0)
+    const note = group.getByLabel('Product variant', { exact: true }).first()
+    await expect(note).toBeVisible()
+    // The table heading names this column once; each field retains its accessible name.
+    expect(
+      (await group.locator('.variant-note > span').first().boundingBox()).width
+    ).toBeLessThanOrEqual(1)
+  }
+  for (const width of [1024, 700, 390]) {
+    await page.setViewportSize({ width, height: 960 })
+    expect(
+      await dialog.evaluate((node) => node.scrollWidth <= node.clientWidth + 1)
+    ).toBe(true)
+    const fields = first.locator('.group-fields')
+    expect(
+      await fields.evaluate((node) => node.scrollWidth <= node.clientWidth + 1)
+    ).toBe(true)
+    await expect(
+      first.getByRole('group', { name: 'Code options' }).first()
+    ).toBeVisible()
+  }
   expect(extension.unexpectedRequests).toEqual([])
 })
 

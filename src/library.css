@@ -583,7 +583,7 @@ tbody tr.changed-row {
 }
 .thumb-cell .photo-copy-button {
   display: block;
-  width: 72px;
+  width: 64px;
   min-height: 26px;
   height: 26px;
   margin-top: 5px;
@@ -993,7 +993,6 @@ dialog a {
   background: var(--field);
 }
 @media (pointer: coarse) {
-  .thumb-cell .photo-copy-button,
   .job-actions button {
     min-height: 44px;
     height: auto;

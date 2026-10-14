@@ -39,6 +39,125 @@ async function confirmOperation(page, name) {
   await expect(dialog).not.toBeVisible()
 }
 
+test('image copy stays compact with touch input and copied feedback', async ({
+  extension,
+}) => {
+  await seed(extension)
+  const page = await openLibrary(extension)
+  const row = page.locator('#sheet-body tr').first()
+  const copy = row.locator('.photo-copy-button')
+  await expect(copy).toBeVisible()
+  const session = await extension.context.newCDPSession(page)
+  for (const emulateTouch of [false, true]) {
+    if (emulateTouch) {
+      await session.send('Emulation.setTouchEmulationEnabled', {
+        enabled: true,
+      })
+      await expect
+        .poll(() =>
+          page.evaluate(() => matchMedia('(pointer: coarse)').matches)
+        )
+        .toBe(true)
+    }
+    const copyBounds = await copy.boundingBox()
+    const photoBounds = await row.locator('.product-photo-button').boundingBox()
+    expect(copyBounds.height).toBeGreaterThanOrEqual(24)
+    expect(copyBounds.height).toBeLessThanOrEqual(30)
+    expect(copyBounds.width).toBeLessThanOrEqual(photoBounds.width)
+    expect(copyBounds.y).toBeGreaterThanOrEqual(
+      photoBounds.y + photoBounds.height
+    )
+    expect(
+      await copy.evaluate((node) => node.scrollWidth <= node.clientWidth)
+    ).toBe(true)
+  }
+  await extension.context.grantPermissions([
+    'clipboard-read',
+    'clipboard-write',
+  ])
+  await copy.click()
+  await expect(copy).toHaveText('Copied')
+  expect((await copy.boundingBox()).height).toBeLessThanOrEqual(30)
+  await session.detach()
+})
+
+test('Excel table image batches keep every selected row across product pages', async ({
+  extension,
+}) => {
+  const [template] = await extension.inspector.evaluate(
+    `(${createDemoRecords.toString()})(document)`
+  )
+  const orders = Array.from({ length: 25 }, (_, index) => {
+    const record = structuredClone(template)
+    record.snapshot.orderId = String(90000000 + index)
+    record.snapshot.sourceUrl = `https://air.1688.com/app/ctf-page/trade-order-detail/index.html?orderId=${record.snapshot.orderId}`
+    for (const [position, item] of record.snapshot.items.entries())
+      item.description = `BATCH-${index}-${position}`
+    return record
+  })
+  const result = await extension.inspector.evaluate(
+    async (orders) =>
+      chrome.runtime.sendMessage({
+        type: 'BACKUP_RESTORE',
+        backup: {
+          format: '1688-order-library',
+          version: 1,
+          exportedAt: new Date().toISOString(),
+          orders,
+          history: [],
+          images: [],
+        },
+      }),
+    orders
+  )
+  expect(result.ok, result.error).toBe(true)
+  const page = await openLibrary(extension)
+  await page
+    .getByRole('button', { name: 'Select all rows', exact: true })
+    .click()
+  await expect(page.locator('#selection-summary')).toContainText('75 selected')
+  await extension.context.grantPermissions([
+    'clipboard-read',
+    'clipboard-write',
+  ])
+  await page.evaluate(() => navigator.clipboard.writeText('before-batch'))
+  const copy = page.locator('#copy-excel-image')
+  await copy.click()
+  await confirmOperation(page, 'Copy 75 product rows')
+  const batches = page.getByRole('dialog', { name: 'Choose Excel image batch' })
+  await expect(batches).toBeVisible()
+  await batches.getByRole('button', { name: 'Cancel', exact: true }).click()
+  await expect(copy).toHaveText('Copy Excel image')
+  expect(await page.evaluate(() => navigator.clipboard.readText())).toBe(
+    'before-batch'
+  )
+  await copy.click()
+  await confirmOperation(page, 'Copy 75 product rows')
+  await batches.getByLabel('Image batch number').fill('2')
+  const summary = await batches.getByText(/^Batch 2 of/).textContent()
+  const [, first, last] = summary.match(/rows (\d+)–(\d+)/)
+  await page.evaluate(() => {
+    globalThis.drawnBatchRows = []
+    const original = CanvasRenderingContext2D.prototype.fillText
+    CanvasRenderingContext2D.prototype.fillText = function (value, ...args) {
+      if (String(value).startsWith('BATCH-')) drawnBatchRows.push(String(value))
+      return original.call(this, value, ...args)
+    }
+  })
+  await batches
+    .getByRole('button', { name: 'Copy this batch', exact: true })
+    .click()
+  await expect(copy).toHaveText('Copied')
+  const ordered = orders
+    .toReversed()
+    .flatMap((record) => record.snapshot.items.map((item) => item.description))
+  expect(await page.evaluate(() => drawnBatchRows)).toEqual(
+    ordered.slice(Number(first) - 1, Number(last))
+  )
+  await expect(page.locator('#selection-summary')).toContainText('75 selected')
+  expect(extension.unexpectedRequests).toEqual([])
+})
+
 test('table photos open the shared original-image viewer; dates and statuses are readable chips', async ({
   extension,
 }) => {

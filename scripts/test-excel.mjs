@@ -281,8 +281,41 @@ try {
       ]),
     ],
   })
+  await columns.getByRole('button', { name: 'Close', exact: true }).click()
+
+  // Use the actual row-selection gestures and copy control. The expected pixels
+  // come independently from fixture source rows plus their saved preparation.
+  const selectedRows = page.locator('#sheet-body tr')
+  await selectedRows.nth(0).locator('.row-number').click()
+  await selectedRows
+    .nth(1)
+    .locator('.row-number')
+    .click({ modifiers: ['Shift'] })
+  await expect(page.locator('#selection-summary')).toContainText('2 selected')
+  const tableImage = await page.evaluate(() =>
+    excelAcceptance.expectedExcelImage([0, 1])
+  )
+  await page.locator('#copy-excel-image').click()
+  await page
+    .getByRole('dialog', { name: 'Confirm operation', exact: true })
+    .getByRole('button', { name: 'Copy 2 product rows', exact: true })
+    .click()
+  await expect(page.locator('#copy-excel-image')).toHaveText('Copied', {
+    timeout: 20_000,
+  })
+  const clipboardTypes = await page.evaluate(
+    async () => (await navigator.clipboard.read())[0].types
+  )
+  assert.deepEqual(clipboardTypes, ['image/png'])
+  await probe({
+    name: 'Two selected prepared products as one exact table picture',
+    format: 'PNG',
+    png: tableImage,
+    images: [{ row: 1, column: 1 }],
+    cells: [textCell('K1', 'Disposable template: preserve this cell')],
+  })
   console.log(
-    'Windows Excel acceptance passed for product tables, current label images, physical sizes and prepared values.'
+    'Windows Excel acceptance passed for product tables, current label images, physical sizes, prepared values and a selected-row table picture.'
   )
 } catch (error) {
   if (page && !page.isClosed())

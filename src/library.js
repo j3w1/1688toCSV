@@ -16,6 +16,7 @@ import {
 import { createPhotoViewer } from './photo-viewer.js'
 import { presentOrderStatus } from './order-presentation.js'
 import { createRowSelection } from './row-selection.js'
+import { copyExcelImage } from './excel-image-copy.js'
 
 const $ = (id) => document.getElementById(id)
 const keyFor = (row) => `${row.orderId}/${row.entryId}`
@@ -380,7 +381,12 @@ export async function startLibrary(
       `${rows.length.toLocaleString()} rows${selected.length ? ` · ${selected.length.toLocaleString()} selected` : ' · all filtered rows will copy'}`
     $('select-rows').disabled = !rows.length || selected.length === rows.length
     $('clear-rows').disabled = !selectedRows.size
-    for (const id of ['copy-excel', 'copy-values', 'copy-images'])
+    for (const id of [
+      'copy-excel',
+      'copy-values',
+      'copy-images',
+      'copy-excel-image',
+    ])
       $(id).disabled = !rows.length || copyBusy
   }
   async function imageData(url) {
@@ -1096,6 +1102,37 @@ export async function startLibrary(
     $(id).addEventListener('click', () =>
       copyAction($(id), (progress) => copy(mode, progress))
     )
+  $('copy-excel-image').addEventListener('click', () =>
+    copyAction($('copy-excel-image'), async (progress) => {
+      if (copyBusy) return false
+      const rows = packing.preparedRows(copyRows())
+      if (!rows.length) return false
+      copyBusy = true
+      updateSelection()
+      const abort = new AbortController()
+      const cancel = node('button', 'Cancel image')
+      cancel.hidden = true
+      cancel.onclick = () => abort.abort()
+      $('copy-excel-image').after(cancel)
+      try {
+        return await copyExcelImage(rows, {
+          loadImage: async (url) => {
+            const image = await send('IMAGE_GET', { url })
+            return typeof image === 'string' ? image : image.dataUrl
+          },
+          onProgress: (message) => {
+            cancel.hidden = false
+            progress(message)
+          },
+          signal: abort.signal,
+        })
+      } finally {
+        cancel.remove()
+        copyBusy = false
+        updateSelection()
+      }
+    })
+  )
   action('all-orders', () => {
     clearTimeout(orderSearchTimer)
     orderSelection.reset()

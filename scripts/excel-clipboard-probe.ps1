@@ -4,9 +4,76 @@ $ErrorActionPreference = 'Stop'
 [Console]::OutputEncoding = New-Object System.Text.UTF8Encoding($false)
 Add-Type -AssemblyName System.Windows.Forms
 $request = [Text.Encoding]::UTF8.GetString([Convert]::FromBase64String($RequestBase64)) | ConvertFrom-Json
-[Console]::Error.WriteLine('Excel probe: reading the native HTML clipboard.')
-$html = [System.Windows.Forms.Clipboard]::GetData('HTML Format')
-if (!$html) { throw 'The browser HTML clipboard was not delivered to Windows.' }
+$pngPaste = $request.format -eq 'PNG'
+$pngEvidence = $null
+$workbookImageEvidence = $null
+$disposablePath = $null
+if ($pngPaste) {
+  Add-Type -AssemblyName System.Drawing
+  Add-Type -AssemblyName System.IO.Compression
+  Add-Type -AssemblyName System.IO.Compression.FileSystem
+  Add-Type -ReferencedAssemblies System.Drawing -TypeDefinition @'
+using System;
+using System.Drawing;
+using System.Drawing.Imaging;
+using System.IO;
+using System.Runtime.InteropServices;
+using System.Security.Cryptography;
+public static class ExcelPngProbe {
+  public static string[] Read(byte[] bytes) {
+    using (var stream = new MemoryStream(bytes))
+    using (var bitmap = new Bitmap(stream))
+    using (var sha = SHA256.Create()) {
+      var pixels = new byte[checked(bitmap.Width * bitmap.Height * 4)];
+      var bounds = new Rectangle(0, 0, bitmap.Width, bitmap.Height);
+      var data = bitmap.LockBits(bounds, ImageLockMode.ReadOnly, PixelFormat.Format32bppArgb);
+      try {
+        var row = new byte[bitmap.Width * 4];
+        for (int y = 0; y < bitmap.Height; y++) {
+          Marshal.Copy(IntPtr.Add(data.Scan0, y * data.Stride), row, 0, row.Length);
+          for (int x = 0; x < bitmap.Width; x++) {
+            int source = x * 4, target = (y * bitmap.Width + x) * 4;
+            pixels[target] = row[source + 2];
+            pixels[target + 1] = row[source + 1];
+            pixels[target + 2] = row[source];
+            pixels[target + 3] = row[source + 3];
+          }
+        }
+      } finally { bitmap.UnlockBits(data); }
+      return new[] {
+        bitmap.Width.ToString(), bitmap.Height.ToString(),
+        BitConverter.ToString(sha.ComputeHash(bytes)).Replace("-", "").ToLowerInvariant(),
+        BitConverter.ToString(sha.ComputeHash(pixels)).Replace("-", "").ToLowerInvariant()
+      };
+    }
+  }
+}
+'@
+  function Get-PngEvidence([byte[]]$Bytes) {
+    $result = [ExcelPngProbe]::Read($Bytes)
+    return @{ width = [int]$result[0]; height = [int]$result[1]; sha256 = $result[2]; pixelSha256 = $result[3] }
+  }
+  function Assert-PngEvidence($Actual) {
+    if ($Actual.width -ne $request.png.width -or $Actual.height -ne $request.png.height) {
+      throw 'The pasted table picture has the wrong pixel dimensions.'
+    }
+    if ($Actual.pixelSha256 -cne $request.png.pixelSha256) {
+      throw 'The pasted table picture pixels differ from the current selected products and saved preparation.'
+    }
+  }
+  [Console]::Error.WriteLine('Excel probe: reading the native PNG clipboard.')
+  $pngData = [System.Windows.Forms.Clipboard]::GetDataObject().GetData('PNG', $false)
+  if ($pngData -is [IO.MemoryStream]) { $pngBytes = $pngData.ToArray() }
+  elseif ($pngData -is [byte[]]) { $pngBytes = $pngData }
+  else { throw 'The browser PNG clipboard was not delivered to Windows.' }
+  $pngEvidence = Get-PngEvidence $pngBytes
+  Assert-PngEvidence $pngEvidence
+  $html = ''
+} else {
+  [Console]::Error.WriteLine('Excel probe: reading the native HTML clipboard.')
+  $html = [System.Windows.Forms.Clipboard]::GetData('HTML Format')
+  if (!$html) { throw 'The browser HTML clipboard was not delivered to Windows.' }
+}
 
 $imageMatches = [regex]::Matches([string]$html, 'data:image/png;base64,([A-Za-z0-9+/=]+)')
 $clipboardImageHashes = @()
@@ -39,6 +106,17 @@ try {
   $book = $books.Add()
   $sheets = $book.Worksheets
   $sheet = $sheets.Item(1)
+  if ($pngPaste) {
+    $destination = $sheet.Range('A1:I8')
+    try {
+      $destination.NumberFormat = '@'
+      $destination.RowHeight = 18
+      $destination.ColumnWidth = 16
+    } finally { [void][Runtime.InteropServices.Marshal]::ReleaseComObject($destination) }
+    $sentinel = $sheet.Range('K1')
+    try { $sentinel.Value2 = 'Disposable template: preserve this cell' }
+    finally { [void][Runtime.InteropServices.Marshal]::ReleaseComObject($sentinel) }
+  }
   # Exercise a prepared destination range, without touching a real template.
   foreach ($expected in $request.cells) {
     $cell = $sheet.Range($expected.address)
@@ -50,8 +128,13 @@ try {
   }
   $target = $sheet.Range('A1')
   try { $target.Select() | Out-Null } finally { [void][Runtime.InteropServices.Marshal]::ReleaseComObject($target) }
-  [Console]::Error.WriteLine('Excel probe: pasting browser clipboard HTML.')
-  $sheet.PasteSpecial('HTML')
+  if ($pngPaste) {
+    [Console]::Error.WriteLine('Excel probe: pasting the browser PNG as a picture.')
+    $sheet.Paste()
+  } else {
+    [Console]::Error.WriteLine('Excel probe: pasting browser clipboard HTML.')
+    $sheet.PasteSpecial('HTML')
+  }
   $used = $sheet.UsedRange
   $usedRows = $used.Rows
   $usedColumns = $used.Columns
@@ -102,7 +185,32 @@ try {
       [void][Runtime.InteropServices.Marshal]::ReleaseComObject($shape)
     }
   }
-  $evidence = @{ case = $request.name; rows = $rows; columns = $columns; cells = $checkedCells; images = $checkedImages; clipboardImageHashes = $clipboardImageHashes; version = $excel.Version; pasteFormat = 'HTML' }
+  if ($pngPaste) {
+    # Read the actual embedded image, not a screenshot of an Excel rendering.
+    # The only file written is this new synthetic workbook in the temp folder.
+    $disposablePath = Join-Path ([IO.Path]::GetTempPath()) ('1688tocsv-excel-probe-' + [guid]::NewGuid().ToString('N') + '.xlsx')
+    $book.SaveAs($disposablePath, 51)
+    # Excel still owns the saved workbook; permit its existing write handle
+    # while inspecting the archive through a read-only stream.
+    $fileStream = [IO.File]::Open($disposablePath, [IO.FileMode]::Open, [IO.FileAccess]::Read, [IO.FileShare]::ReadWrite)
+    $archive = $null
+    try {
+      $archive = New-Object IO.Compression.ZipArchive($fileStream, [IO.Compression.ZipArchiveMode]::Read)
+      $media = @($archive.Entries | Where-Object { $_.FullName -like 'xl/media/*' -and $_.Length -gt 0 })
+      if ($media.Count -ne 1) { throw 'Excel did not store exactly one table picture.' }
+      $stream = $media[0].Open()
+      $buffer = New-Object IO.MemoryStream
+      try {
+        $stream.CopyTo($buffer)
+        $workbookImageEvidence = Get-PngEvidence $buffer.ToArray()
+        Assert-PngEvidence $workbookImageEvidence
+      } finally { $buffer.Dispose(); $stream.Dispose() }
+    } finally {
+      if ($archive) { $archive.Dispose() }
+      $fileStream.Dispose()
+    }
+  }
+  $evidence = @{ case = $request.name; rows = $rows; columns = $columns; cells = $checkedCells; images = $checkedImages; clipboardImageHashes = $clipboardImageHashes; clipboardPng = $pngEvidence; workbookImage = $workbookImageEvidence; version = $excel.Version; pasteFormat = $(if ($pngPaste) { 'PNG (default paste)' } else { 'HTML' }) }
 } finally {
   try {
     try {
@@ -131,6 +239,9 @@ try {
         if ($excel) { [void][Runtime.InteropServices.Marshal]::FinalReleaseComObject($excel); $excel = $null }
       }
       [Console]::Error.WriteLine('Excel probe: cleanup complete.')
+      if ($disposablePath -and (Test-Path -LiteralPath $disposablePath)) {
+        Remove-Item -LiteralPath $disposablePath
+      }
     }
   }
 }

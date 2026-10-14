@@ -628,7 +628,9 @@ export async function startPackingWorkspace({
       draft = drafts[current]
     const selection = preparationSelection(draft)
     activeSelection = selection
-    host.replaceChildren(el('h2', 'Prepare products & labels'))
+    const header = el('header', undefined, 'preparation-header')
+    header.append(el('h2', 'Prepare products & labels'))
+    host.replaceChildren(header)
     const heading = el('div', undefined, 'preparation-heading'),
       select = el('select')
     select.setAttribute('aria-label', 'Preparation order')
@@ -663,14 +665,7 @@ export async function startPackingWorkspace({
         'packing-help'
       )
     )
-    host.append(
-      heading,
-      el(
-        'p',
-        'Click rows to select · Shift selects a range · Ctrl selects separate rows. Changes save automatically.',
-        'packing-help'
-      )
-    )
+    host.append(heading)
     const source = getRecords().find(
       ({ snapshot }) => snapshot.orderId === draft.orderId
     )?.snapshot
@@ -799,7 +794,15 @@ export async function startPackingWorkspace({
         'Give selected products one product code and carton mark. Variants keep separate barcodes.'
       )
     )
-    host.append(actions, orderTools)
+    header.append(actions)
+    host.append(
+      orderTools,
+      el(
+        'p',
+        'Click to select · Shift for a range · Ctrl/⌘ for separate rows.',
+        'packing-help preparation-selection-help'
+      )
+    )
     updateHistoryButtons()
     groupPage = Math.min(
       groupPage,
@@ -839,7 +842,8 @@ export async function startPackingWorkspace({
         el('span', 'Original product name'),
         el('p', group.title)
       )
-      card.append(title, originalTitle)
+      const summary = el('div', undefined, 'product-summary')
+      summary.append(title, originalTitle)
       const fields = el('div', undefined, 'group-fields')
       const productCode = preparationHelp(
         inlineField(
@@ -889,7 +893,8 @@ export async function startPackingWorkspace({
           'mark'
         )
       )
-      overview.append(fields, carton)
+      summary.append(fields)
+      overview.append(summary, carton)
       card.append(overview)
       const scroll = el('div', undefined, 'variant-scroll'),
         table = el('table', undefined, 'variants'),
@@ -980,24 +985,29 @@ export async function startPackingWorkspace({
           showPhotos()
           photoCell.append(otherPhotos)
         }
-        const option = el('td', undefined, 'variant-option')
-        option.append(
+        const option = el('td', undefined, 'variant-option'),
+          details = el('div', undefined, 'variant-details'),
+          description = el('div', undefined, 'variant-description'),
+          note = inlineField(
+            'Product variant',
+            variant.variant,
+            (value) => {
+              variant.variant = value
+            },
+            'Optional note'
+          )
+        note.classList.add('variant-note')
+        note.firstChild.replaceWith(
+          el('span', 'Product variant', 'visually-hidden')
+        )
+        description.append(
           preparationHelp(
-            inlineField(
-              'Product variant',
-              variant.variant,
-              (value) => {
-                variant.variant = value
-              },
-              group.variants.length === 1
-                ? 'Single variant'
-                : 'Add a variant note'
-            ),
+            note,
             'Describe what differs, such as color or scent. This note is not printed.'
           )
         )
         if (variant.size)
-          option.append(
+          description.append(
             preparationHelp(
               el('small', `Order size: ${variant.size}`, 'source-size'),
               'From the order. Helps you choose a size code; this measurement is not printed.'
@@ -1048,7 +1058,8 @@ export async function startPackingWorkspace({
           codeOptions.append(
             el('small', 'Choose a size code', 'needs-preparation')
           )
-        option.append(codeOptions)
+        details.append(description, codeOptions)
+        option.append(details)
         row.append(photoCell, option)
         const output = el('td')
         if (!variant.entryIds.some((id) => live.has(id)))
@@ -1362,8 +1373,8 @@ export async function startPackingWorkspace({
       if (!abort.signal.aborted) status.textContent = error.message
     }
   }
-  function preparedRows() {
-    return getRows().map((row) => {
+  function preparedRows(rows = getRows()) {
+    return rows.map((row) => {
       const match = membership.get(`${row.orderId}/${row.entryId}`)
       if (!match)
         return {
@@ -1371,6 +1382,7 @@ export async function startPackingWorkspace({
           baseCode: '',
           barcode: '',
           spanishName: '',
+          chineseCategory: '',
           groupId: row.entryId,
         }
       let code = ''
@@ -1382,6 +1394,7 @@ export async function startPackingWorkspace({
         baseCode: match.group.baseCode,
         barcode: code,
         spanishName: match.variant.spanishName || match.group.spanishName,
+        chineseCategory: match.group.category,
         groupId: match.group.id,
       }
     })
@@ -1593,6 +1606,7 @@ export async function startPackingWorkspace({
   return {
     reload,
     chooseImageBatch,
+    preparedRows,
     searchText(orderId, entryId) {
       const match = membership.get(`${orderId}/${entryId}`)
       if (!match) return ''

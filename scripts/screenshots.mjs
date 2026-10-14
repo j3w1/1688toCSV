@@ -32,6 +32,11 @@ try {
   await group.locator('h3').click()
   await group.getByAltText('Carton mark preview').waitFor()
   await group.getByAltText('Barcode preview').first().waitFor()
+  await page.locator('#preparation-dialog h2').click()
+  await page.mouse.move(0, 0)
+  await page
+    .locator('.preparation-help-popover:visible')
+    .waitFor({ state: 'hidden' })
   await page.locator('#preparation-dialog').evaluate((dialog) => {
     dialog.scrollTop = 0
   })

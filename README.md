@@ -47,10 +47,13 @@ Click a label preview, **Barcode** or **Carton mark** to edit it. In a barcode, 
 | ----------------------------------- | ------------------------------------------------------------------------------------------------------------------------------- |
 | **Copy values**                     | Thumbnail placeholder, description, displayed unit price, quantity and discount                                                 |
 | **Copy images** / **Copy to Excel** | Separate product pictures, or the five source columns with pictures                                                             |
+| **Copy Excel image**                | One resizable table picture with Chinese headings, thumbnails, source values and saved preparation values                       |
 | **Copy preparation columns**        | Your chosen code, barcode, description, Spanish description and financial columns; the base code appears once per product group |
 | **Copy group codes**                | One base code per group                                                                                                         |
 
 Click a row to select it, **Shift-click** for a range, or **Ctrl-click** to add or remove individual rows. The same controls work for orders and preparation. Buttons and photos act independently. With no product rows selected, copying includes all filtered rows. **Headers** starts off and remembers your choice. Batch actions ask for confirmation. Pictures paste as floating images; successful buttons show **Copied**.
+
+**Copy Excel image** always includes Chinese headings. It includes product codes, barcode numbers, Spanish names and Chinese categories; printed barcode and carton-mark pictures stay separate. Large tables offer numbered image batches.
 
 Double-click an order card, or press **Enter**, to open details. Search orders by seller or order number and filter by purchase month or date range, then use **Refresh matching orders**. You can also refresh selected orders or all orders. Use **Activity** to pause, retry or dismiss imports. **Save import report** is available in Activity and beside Pause/Resume on the order page. Retry keeps successful saves and revisits failures. The sun/moon button changes the default dark appearance.
 

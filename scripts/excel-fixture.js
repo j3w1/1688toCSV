@@ -2,6 +2,7 @@
 import { startLibrary } from '../src/library.js'
 import { openDatabase } from '../src/database.js'
 import { renderLabel } from '../src/labels.js'
+import { planExcelImage, renderExcelImage } from '../src/excel-image.js'
 import { createDemoRecords } from '../preview/library-fixture.js'
 
 const structured = new URL(location.href).searchParams.has('labels')
@@ -51,6 +52,59 @@ await repository.restoreBackup({
 })
 globalThis.excelAcceptance = {
   records,
+  async expectedExcelImage(indices) {
+    const preparation = (await repository.listPreparations())[0]
+    const rows = indices.map((index) => {
+      const item = records[0].snapshot.items[index]
+      const group = preparation.groups.find((group) =>
+        group.variants.some((variant) =>
+          variant.entryIds.includes(item.entryId)
+        )
+      )
+      const variant = group.variants.find((variant) =>
+        variant.entryIds.includes(item.entryId)
+      )
+      return {
+        ...item,
+        orderId: records[0].snapshot.orderId,
+        groupId: group.id,
+        baseCode: group.baseCode,
+        barcode: group.baseCode + variant.variantSuffix + variant.sizeSuffix,
+        spanishName: variant.spanishName || group.spanishName,
+        chineseCategory: group.category,
+      }
+    })
+    await document.fonts.ready
+    const plans = planExcelImage(rows)
+    if (plans.length !== 1)
+      throw new Error('Synthetic Excel fixture should fit one image.')
+    const result = await renderExcelImage(plans[0], {
+      loadImage: async (url) => url,
+    })
+    const bitmap = await createImageBitmap(result.blob)
+    const canvas = document.createElement('canvas')
+    canvas.width = bitmap.width
+    canvas.height = bitmap.height
+    try {
+      const context = canvas.getContext('2d')
+      context.drawImage(bitmap, 0, 0)
+      const digest = async (bytes) =>
+        [...new Uint8Array(await crypto.subtle.digest('SHA-256', bytes))]
+          .map((byte) => byte.toString(16).padStart(2, '0'))
+          .join('')
+      return {
+        width: bitmap.width,
+        height: bitmap.height,
+        sha256: await digest(await result.blob.arrayBuffer()),
+        pixelSha256: await digest(
+          context.getImageData(0, 0, bitmap.width, bitmap.height).data
+        ),
+      }
+    } finally {
+      bitmap.close()
+      canvas.width = canvas.height = 0
+    }
+  },
   async expectedLabel(model) {
     const preferences = await repository.getPackingPreferences()
     const result = await renderLabel({
