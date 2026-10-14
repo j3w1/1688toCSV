@@ -305,6 +305,12 @@ export function extractOrderSnapshot(
     accountId: 'local',
     ...identity,
     sellerName: order.sellerName,
+    ...(order.sellerMemberLogin
+      ? { sellerMemberLogin: order.sellerMemberLogin }
+      : {}),
+    ...(order.sellerShopOrigin
+      ? { sellerShopOrigin: order.sellerShopOrigin }
+      : {}),
     status,
     observedAt: new Date(observedAt).toISOString(),
     ...(purchasedAt ? { purchasedAt } : {}),

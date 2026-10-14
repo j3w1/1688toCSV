@@ -1,11 +1,11 @@
 # 1688toCSV
 
-Collect your 1688 orders in a local spreadsheet, keep them up to date, and copy products and pictures into Excel.
+Prepare your 1688 purchases for packing: keep orders together, assign CE product codes, edit labels, and copy the results into Excel.
 
-<a href="screenshots/order-library.png"><img src="screenshots/order-library.png" alt="Order library with synthetic products and Excel copy controls" width="640" /></a>
+<a href="screenshots/order-library-dark.png"><img src="screenshots/order-library-dark.png" alt="Preparation workspace with synthetic products, codes and Excel copy controls" width="640" /></a>
 
-<details><summary>Dark appearance</summary>
-<a href="screenshots/order-library-dark.png"><img src="screenshots/order-library-dark.png" alt="Dark order library with synthetic products" width="640" /></a>
+<details><summary>Light appearance</summary>
+<a href="screenshots/order-library.png"><img src="screenshots/order-library.png" alt="Preparation workspace in light appearance" width="640" /></a>
 </details>
 
 ## Install or update
@@ -20,23 +20,36 @@ npm run verify
 
 Open **Extensions → Developer mode → Load unpacked** and select **dist**. In Codex, find extensions under **Settings → Browser → Extensions**. After an update, reload the extension and refresh your 1688 tabs.
 
-## Use it
+## Import and prepare
 
-1. Open your [1688 orders](https://work.1688.com/home/buyer.htm), tick the orders you want, and click **Import selected**. Keep the list open; a reader tab opens each order automatically.
-2. Click **Spreadsheet ↗**. If the browser blocks the new tab, choose **Open spreadsheet here** after the import finishes.
-3. Select orders or product rows, then click **Copy to Excel** and paste into a blank Excel range. With no row selection, all filtered rows are copied.
-4. Use **Refresh all** to check every saved order, or **Refresh selected** for selected orders. Your previous data stays available if a refresh fails.
+1. Open your [1688 orders](https://work.1688.com/home/buyer.htm), tick the orders you want, and choose **Import selected**. Confirm the count when asked and keep the list open while the reader tab works.
+2. Open **Spreadsheet ↗**. If a new tab is blocked, use **Open spreadsheet here** after the import finishes.
+3. Choose the orders to prepare, select a **Packing month**, and click **Prepare labels**. This month controls the CE codes; it does not change the purchase date.
+4. Review the suggested product groups, variants and sizes. Set a short Spanish name and Chinese category, then **Save preparation** to assign codes. Merge or split groups when the suggestions need correction.
 
-The columns are **Thumbnail · Description · Price · Quantity · Discount**. **Copy values** leaves the picture column blank; **Copy images** copies pictures separately. Each row's **Copy image** copies the original-size picture. Bulk pictures remain compact for Excel rows. Successful copy buttons turn green and say **Copied**.
+Resolve any **Choose a size code** prompt before copying labels. Names and codes remain editable after saving.
 
-Keep **Headers** checked for a heading row, or uncheck it when appending. The choice is remembered. Dividers between orders are visual only and are never copied.
+## Edit labels and copy to Excel
 
-Orders are grouped by purchase month with individual purchase dates. The sun/moon button switches light and dark appearance. Use **Dismiss all** to hide old import notices without removing saved orders; **Show dismissed** brings the history back. Bulk import is under **More import options** and requires confirmation.
+Click **Barcode** or **Carton mark** and edit the preview. **Enter** or leaving the field saves; **Escape** cancels the edit. Click **Copy label**, then paste into Excel. **Settings** controls dimensions, resolution, logo and vocabulary.
+
+<a href="screenshots/label-editor.png"><img src="screenshots/label-editor.png" alt="Editable barcode label with synthetic CE code and Spanish product name" width="480" /></a>
+
+| Copy action                         | What to paste                                                                                                                   |
+| ----------------------------------- | ------------------------------------------------------------------------------------------------------------------------------- |
+| **Copy values**                     | Thumbnail placeholder, description, original unit price, quantity and discount                                                  |
+| **Copy images** / **Copy to Excel** | Separate product pictures, or the five source columns with pictures                                                             |
+| **Copy preparation columns**        | Your chosen code, barcode, description, Spanish description and financial columns; the base code appears once per product group |
+| **Copy group codes**                | One base code per group                                                                                                         |
+
+Select rows to limit a copy; otherwise all filtered rows are used. **Headers** starts off and remembers your choice. Batch actions ask for confirmation. Pictures paste as floating images; successful buttons show **Copied**.
+
+Filter orders by purchase month or date range, then use **Refresh matching orders**. You can also refresh selected orders or all orders. Use **Activity** to pause, retry or dismiss imports. The sun/moon button changes the default dark appearance.
 
 ## Keep your data
 
-Orders, history, notes and cached pictures stay in this browser. Use **Back up** before uninstalling or clearing its profile, and **Restore** to bring a backup back. Use one buyer account per library.
+Data stays in this browser. Use **Data → Back up** before uninstalling, clearing its profile or moving computers; **Restore** brings it back with your reserved codes. Refreshes preserve your preparation edits. Use one buyer account per library.
 
 Discounts include each product's reduction and its share of order-wide price changes; shipping stays separate. The detail-page **Download CSV** also remains available, with product discounts only.
 
-For development commands, calculations and test coverage, see [development notes](docs/development.md). [Store preparation](CHROMEWEBSTORE.md) records permissions, privacy and publication status.
+For development commands, code allocation, backups and test coverage, see [development notes](docs/development.md). [Store preparation](CHROMEWEBSTORE.md) records permissions, privacy and publication status.

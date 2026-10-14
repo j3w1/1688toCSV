@@ -1,7 +1,10 @@
 import { startLibrary } from '../src/library.js'
 import { createDemoRecords } from './library-fixture.js'
+import { openDatabase } from '../src/database.js'
 
 const records = createDemoRecords(document)
+const repository = await openDatabase()
+for (const record of records) await repository.saveSnapshot(record.snapshot)
 document.querySelector('.local-label').textContent = 'Demo · synthetic orders'
 await startLibrary(async (message) => {
   let data
@@ -23,4 +26,4 @@ await startLibrary(async (message) => {
         'This is a synthetic preview. Use the installed extension for this action.',
     }
   return { ok: true, data }
-})
+}, repository)

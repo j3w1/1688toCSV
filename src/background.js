@@ -23,13 +23,15 @@ function serial(task) {
   })()
 }
 
-async function changed() {
+async function broadcast(type) {
   try {
-    await chrome.runtime.sendMessage({ type: 'LIBRARY_CHANGED' })
+    await chrome.runtime.sendMessage({ type })
   } catch {
     /* The library may be closed. */
   }
 }
+const changed = () => broadcast('LIBRARY_CHANGED')
+const progress = () => broadcast('IMPORT_PROGRESS')
 const marker = (id) => `#1688tocsv-import=${encodeURIComponent(id)}`
 const blankUrl = (url) => !url || url === 'about:blank'
 const detailTabUrl = (tab) =>
@@ -146,6 +148,7 @@ const browser = {
     await chrome.alarms.clear(alarmName)
   },
   changed,
+  progress,
 }
 
 async function usingRepository(task) {
@@ -171,11 +174,7 @@ async function pump() {
     do {
       wakeAgain = false
       const result = await serial(() =>
-        usingRepository(async (repository, controller) => {
-          const state = await controller.tick()
-          await changed()
-          return state
-        })
+        usingRepository((repository, controller) => controller.tick())
       )
       if (result === 'continue') wakeAgain = true
     } while (wakeAgain)
@@ -216,12 +215,14 @@ function sameSource(job, sender) {
   )
 }
 function jobStatus(job) {
-  const { id, state, phase, kind, page, total, updatedAt } = job
+  const { id, state, phase, kind, scope, page, total, updatedAt } = job
+  const completed = job.orders.filter((order) => order.state === 'done').length
   return {
     id,
     state,
     phase,
     kind,
+    scope,
     page,
     total,
     updatedAt,
@@ -229,7 +230,8 @@ function jobStatus(job) {
       job.error ||
       job.orders.find((order) => order.state === 'failed')?.error ||
       '',
-    completed: job.orders.filter((order) => order.state === 'done').length,
+    completed,
+    remaining: Math.max(0, Math.max(total || 0, job.orders.length) - completed),
     failed: job.orders.filter((order) => order.state === 'failed').length,
     discovered: job.orders.length,
   }
@@ -371,7 +373,7 @@ async function dispatch(message, sender, repository, controller) {
 
 // Register listeners synchronously so events can wake a terminated worker.
 chrome.runtime.onMessage.addListener((message, sender, respond) => {
-  if (message?.type === 'LIBRARY_CHANGED') return
+  if (['LIBRARY_CHANGED', 'IMPORT_PROGRESS'].includes(message?.type)) return
   ;(async () => {
     try {
       const run = () =>
@@ -417,18 +419,12 @@ chrome.tabs.onUpdated.addListener((tabId, change) => {
 })
 chrome.tabs.onRemoved.addListener((tabId) => {
   void serial(() =>
-    usingRepository(async (repository, controller) => {
-      await controller.removedTab(tabId)
-      await changed()
-    })
+    usingRepository((repository, controller) => controller.removedTab(tabId))
   ).catch((error) => console.error(error.message))
 })
 function startup() {
   void serial(() =>
-    usingRepository(async (repository, controller) => {
-      await controller.startup()
-      await changed()
-    })
+    usingRepository((repository, controller) => controller.startup())
   ).catch((error) => console.error(error.message))
 }
 chrome.runtime.onStartup.addListener(startup)

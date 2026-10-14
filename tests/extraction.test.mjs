@@ -1,6 +1,7 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
 import { extractOrder } from '../src/extract.js'
+import { deepQuery } from '../src/dom.js'
 import {
   buildOrderFixture,
   createOrderFixture,
@@ -34,11 +35,15 @@ test('extracts products, seller, and exact order suffix through nested open shad
   })
   assert.deepEqual(extractOrder(document, orderUrl), {
     sellerName: '示例工厂',
+    sellerMemberLogin: '示例工厂',
     orderSuffix: '6789',
     dataRows: [
       {
         thumbnail: 'https://example.invalid/product.jpg',
         description: '测试香薰蜡烛\n颜色：暖白\n货号：DEMO-001',
+        title: '测试香薰蜡烛',
+        skuProperties: [{ label: '颜色', value: '暖白', raw: '颜色：暖白' }],
+        productNumber: 'DEMO-001',
         price: '12.50',
         quantity: '4',
         discount: '2.10',
@@ -71,11 +76,68 @@ test('single prices, absent optional images/SKU/discounts, and missing seller wo
     {
       thumbnail: '',
       description: 'Synthetic product',
+      title: 'Synthetic product',
       price: '0.01',
       quantity: '1',
       discount: '0.00',
     },
   ])
+})
+
+test('retains every variant field without changing the source description', () => {
+  const document = createOrderFixture({
+    rows: [simpleRow({ sku: '颜色：深蓝', productNumber: '货号：A-17' })],
+  })
+  const app = document.querySelector('app-root').shadowRoot
+  const sku = deepQuery(app).one('.sku')
+  for (const raw of ['尺码: XL', '比例：1:2', '定制款']) {
+    const property = document.createElement('c-t')
+    property.textContent = raw
+    sku.append(property)
+  }
+  const row = extractOrder(document, orderUrl).dataRows[0]
+  assert.deepEqual(row.skuProperties, [
+    { label: '颜色', value: '深蓝', raw: '颜色：深蓝' },
+    { label: '尺码', value: 'XL', raw: '尺码: XL' },
+    { label: '比例', value: '1:2', raw: '比例：1:2' },
+    { label: '', value: '定制款', raw: '定制款' },
+  ])
+  assert.equal(
+    row.description,
+    'Synthetic product\n颜色：深蓝\n尺码: XL\n比例：1:2\n定制款\n货号：A-17'
+  )
+  assert.equal(row.productNumber, 'A-17')
+})
+
+test('supplier shop identity is optional, canonical and taken only from the supplier field', () => {
+  const document = createOrderFixture()
+  const built = buildOrderFixture(document)
+  const supplier = document.createElement('div')
+  supplier.className = 'order-info-user-content-item'
+  supplier.innerHTML =
+    '<span class="field-name">供应商：</span><a class="link" href="http://synthetic-supplier.1688.com/page/offerlist.htm?tracking=1">Synthetic supplier</a>'
+  built.orderInfo.shadowRoot.append(supplier)
+  let order = extractOrder(document, orderUrl)
+  assert.equal(order.sellerShopOrigin, 'https://synthetic-supplier.1688.com')
+  assert.equal(order.sellerMemberLogin, order.sellerName)
+  const link = supplier.querySelector('a')
+  for (const invalid of [
+    'https://example.com/shop',
+    'https://synthetic-supplier.1688.com.evil.test/',
+    'https://trade.1688.com/',
+    'https://user:pass@synthetic-supplier.1688.com/',
+  ]) {
+    link.href = invalid
+    assert.equal(extractOrder(document, orderUrl).sellerShopOrigin, undefined)
+  }
+  link.href = 'https://synthetic-supplier.1688.com/'
+  const second = link.cloneNode(true)
+  second.href = 'https://another-supplier.1688.com/'
+  supplier.append(second)
+  assert.equal(extractOrder(document, orderUrl).sellerShopOrigin, undefined)
+  supplier.querySelector('.field-name').textContent = '买家：'
+  second.remove()
+  assert.equal(extractOrder(document, orderUrl).sellerShopOrigin, undefined)
 })
 
 test('supports grouped prices and quantities without truncating the number', () => {

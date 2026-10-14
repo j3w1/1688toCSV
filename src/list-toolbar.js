@@ -61,11 +61,18 @@ export function mountListToolbar(document, { readList, send }) {
     confirmation.hidden = true
     confirmAction = undefined
   }
-  function showConfirmation(title, text, label, action) {
+  function showConfirmation(
+    title,
+    text,
+    label,
+    action,
+    accessibleLabel = 'Confirm bulk import'
+  ) {
     confirmationTitle.textContent = title
     confirmationText.textContent = text
     confirmButton.textContent = label
     confirmAction = action
+    confirmation.setAttribute('aria-label', accessibleLabel)
     confirmation.hidden = false
     cancelButton.focus()
   }
@@ -80,7 +87,7 @@ export function mountListToolbar(document, { readList, send }) {
   )
   const cancelButton = button(confirmationActions, 'Cancel', async () => {
     hideConfirmation()
-    report('Bulk import cancelled.')
+    report('Import cancelled.')
     selected.focus()
   })
   confirmation.addEventListener('keydown', (event) => {
@@ -101,14 +108,44 @@ export function mountListToolbar(document, { readList, send }) {
         .map((order) => order.orderId)
       if (!ids.length)
         throw new Error('Select order checkboxes on this page first.')
-      latestJob = await send('IMPORT_START', {
-        scope: 'selected',
-        orderIds: ids,
-      })
-      report(
-        `Starting ${ids.length} selected orders. A visible detail tab will open to read them.`
-      )
-      await refresh()
+      const startSelected = async () => {
+        const current = readList()
+        const currentIds = current.orders
+          .filter((order) => order.selected)
+          .map((order) => order.orderId)
+        if (
+          current.filterKey !== list.filterKey ||
+          current.total !== list.total ||
+          current.pageSize !== list.pageSize ||
+          currentIds.length !== ids.length ||
+          currentIds.some((id) => !ids.includes(id))
+        )
+          throw new Error(
+            'The filters or selected orders changed. Review the selection again.'
+          )
+        latestJob = await send('IMPORT_START', {
+          scope: 'selected',
+          orderIds: ids,
+          expectedScope: {
+            filterKey: list.filterKey,
+            total: list.total,
+            pageSize: list.pageSize,
+          },
+        })
+        report(
+          `Starting ${ids.length} selected orders. A visible detail tab will open to read them.`
+        )
+        await refresh()
+      }
+      if (ids.length > 1)
+        showConfirmation(
+          `Import ${ids.length.toLocaleString()} selected orders?`,
+          'Only these selected orders will be read, one at a time in a visible detail tab.',
+          `Import ${ids.length.toLocaleString()} selected orders`,
+          startSelected,
+          'Confirm selected import'
+        )
+      else await startSelected()
     },
     'primary'
   )
@@ -191,6 +228,17 @@ export function mountListToolbar(document, { readList, send }) {
   const pause = button(progress, 'Pause import', async () => {
     if (!latestJob) return
     const job = latestJob
+    const total = Math.max(
+      job.total || 0,
+      job.discovered || job.orders?.length || 0
+    )
+    const completed =
+      job.completed ??
+      job.orders?.filter((order) => order.state === 'done').length ??
+      0
+    const remaining = job.remaining ?? Math.max(0, total - completed)
+    const bulk =
+      job.scope === 'all' || job.phase === 'scan' || job.page > 0 || total > 10
     const resume = async () => {
       report('Resuming import…')
       await send('IMPORT_RESUME', { jobId: job.id })
@@ -200,16 +248,13 @@ export function mountListToolbar(document, { readList, send }) {
       await send('IMPORT_PAUSE', { jobId: job.id })
       report('Import paused. Saved orders are kept.')
       await refresh()
-    } else if (
-      job.page > 1 ||
-      Math.max(job.total || 0, job.discovered || job.orders?.length || 0) > 10
-    ) {
-      const count = job.total || job.discovered || job.orders?.length
+    } else if (bulk || remaining > 1) {
       showConfirmation(
-        'Resume the bulk import?',
-        `This job covers ${count} orders. Resume only if you want to continue that collection.`,
-        `Resume ${count} orders`,
-        resume
+        bulk ? 'Resume the bulk import?' : 'Resume the selected import?',
+        `This job covers ${total.toLocaleString()} orders. ${completed.toLocaleString()} saved; ${remaining.toLocaleString()} remaining. Resume only if you want to continue that collection.`,
+        `Resume ${remaining.toLocaleString()} remaining orders`,
+        resume,
+        bulk ? 'Confirm bulk import' : 'Confirm selected import'
       )
     } else await resume()
   })
@@ -235,13 +280,16 @@ export function mountListToolbar(document, { readList, send }) {
       if (latestJob) {
         const job = latestJob,
           count = job.discovered ?? job.orders?.length ?? 0
+        const remaining =
+          job.remaining ??
+          Math.max(0, Math.max(job.total || 0, count) - (job.completed || 0))
         const phase =
           job.state === 'running'
             ? job.phase === 'scan'
               ? `Finding orders · list page ${job.page || 1}`
               : 'Reading full order details'
             : job.state.replaceAll('-', ' ')
-        progressText.textContent = `${phase} · ${job.completed || 0} saved / ${count} discovered${job.failed ? ` · ${job.failed} failed` : ''}${job.error ? ` — ${job.error}` : ''}`
+        progressText.textContent = `${phase} · ${job.completed || 0} saved / ${count} discovered · ${remaining} remaining${job.failed ? ` · ${job.failed} failed` : ''}${job.error ? ` — ${job.error}` : ''}`
         progressText.className =
           job.state === 'paused' || job.failed ? 'error' : ''
         pause.hidden = job.state === 'completed'

@@ -84,6 +84,9 @@ function setup(pages = [[row('10001'), row('10002')]]) {
     async changed() {
       calls.push(['changed'])
     },
+    async progress() {
+      calls.push(['progress'])
+    },
   }
   const controller = createImportController({
     repository,
@@ -365,9 +368,66 @@ test('dismiss hides idle job history without removing saved orders or restarting
   assert.equal(dismissed.state, 'paused')
   assert.deepEqual(dismissed.orders, before.orders)
   assert.equal(s.saved.size, 1)
-  assert.deepEqual(s.calls.slice(callCount), [['changed']])
+  assert.deepEqual(s.calls.slice(callCount), [['progress']])
   await s.controller.resume(job.id)
   assert.equal(s.jobs.get(job.id).dismissedAt, undefined)
   assert.equal(s.jobs.get(job.id).state, 'running')
   await assert.rejects(s.controller.dismiss('missing'), /no longer exists/)
+})
+
+test('an empty explicit refresh selection never becomes refresh all', async () => {
+  const s = setup()
+  s.saved.set('10001', snapshot('10001'))
+  await assert.rejects(s.controller.refresh([]), /Choose saved orders/)
+  assert.equal(s.jobs.size, 0)
+  assert.equal(s.calls.length, 0)
+  const job = await s.controller.refresh()
+  assert.deepEqual(
+    job.orders.map((order) => order.orderId),
+    ['10001']
+  )
+})
+
+test('remaining counts include undiscovered bulk orders and exclude already saved orders', async () => {
+  const s = setup([[row('10001'), row('10002')], [row('10003')]])
+  const job = await s.controller.start({ scope: 'all', source })
+  await s.controller.pause(job.id)
+  assert.equal(s.jobs.get(job.id).scope, 'all')
+  assert.equal(s.jobs.get(job.id).discovered, 0)
+  assert.equal(s.jobs.get(job.id).remaining, 3)
+  await s.controller.resume(job.id)
+  await s.controller.tick()
+  await s.controller.tick()
+  await s.controller.tick()
+  await s.controller.tick()
+  await s.controller.pause(job.id)
+  assert.equal(s.jobs.get(job.id).completed, 1)
+  assert.equal(s.jobs.get(job.id).remaining, 2)
+  await s.controller.resume(job.id)
+  assert.equal(s.jobs.get(job.id).orders[0].state, 'done')
+})
+
+test('job progress does not report library changes before a successful save', async () => {
+  const s = setup([[row('10001')]])
+  const job = await s.controller.start({
+    scope: 'selected',
+    source,
+    orderIds: ['10001'],
+  })
+  await s.controller.tick()
+  assert.ok(s.calls.some(([type]) => type === 'progress'))
+  assert.equal(s.calls.filter(([type]) => type === 'changed').length, 0)
+  s.browser.readDetail = async () => {
+    throw new Error('Invalid product total')
+  }
+  await s.controller.tick()
+  await s.controller.tick()
+  assert.equal(s.jobs.get(job.id).state, 'completed-with-errors')
+  assert.equal(s.calls.filter(([type]) => type === 'changed').length, 0)
+  s.browser.readDetail = async () => snapshot('10001')
+  await s.controller.resume(job.id)
+  await s.controller.tick()
+  await s.controller.tick()
+  await s.controller.tick()
+  assert.equal(s.calls.filter(([type]) => type === 'changed').length, 1)
 })

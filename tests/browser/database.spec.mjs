@@ -566,7 +566,7 @@ test('invalid backup rows and image data reject the whole restore before writing
         orders: [nextRecord, original.orders[0]],
       }
       const invalid = [
-        { ...candidate, version: 2 },
+        { ...candidate, version: 3 },
         {
           ...candidate,
           orders: [nextRecord, { ...original.orders[0], revision: 0 }],
@@ -652,4 +652,495 @@ test('queued jobs survive reopened connections and accounts cannot overwrite eac
   expect(result.afterDelete).toEqual([])
   expect(result.local).toEqual([])
   expect(result.other.snapshot.sellerName).toBe('Other seller')
+})
+
+test('v1 databases upgrade in place with orders, history, images and jobs preserved', async ({
+  extension,
+}) => {
+  const page = await openTestDatabase(extension)
+  const result = await page.evaluate(
+    async ({ first, image }) => {
+      await library.saveSnapshot(first)
+      const record = await library.getOrder(first.orderId)
+      const name = `${databaseName}-legacy`
+      await new Promise((resolve, reject) => {
+        const request = indexedDB.open(name, 1)
+        request.onupgradeneeded = () => {
+          const db = request.result
+          const orders = db.createObjectStore('orders', {
+            keyPath: ['snapshot.accountId', 'snapshot.orderId'],
+          })
+          orders.createIndex('account', 'snapshot.accountId')
+          const history = db.createObjectStore('history', {
+            keyPath: [
+              'snapshot.accountId',
+              'snapshot.orderId',
+              'snapshot.observedAt',
+            ],
+          })
+          history.createIndex('order', [
+            'snapshot.accountId',
+            'snapshot.orderId',
+          ])
+          db.createObjectStore('jobs', { keyPath: 'id' })
+          db.createObjectStore('images', { keyPath: 'url' })
+        }
+        request.onerror = () => reject(request.error)
+        request.onsuccess = () => {
+          const db = request.result
+          const tx = db.transaction(['orders', 'jobs', 'images'], 'readwrite')
+          tx.objectStore('orders').put(record)
+          tx.objectStore('jobs').put({ id: 'keep-job', status: 'paused' })
+          tx.objectStore('images').put(image)
+          tx.oncomplete = () => {
+            db.close()
+            resolve()
+          }
+          tx.onabort = () => reject(tx.error)
+        }
+      })
+      const upgraded = await openOrderDatabase({ name })
+      const output = {
+        order: await upgraded.getOrder(first.orderId),
+        job: await upgraded.getJob('keep-job'),
+        image: await upgraded.getImage(image.url),
+        preparations: await upgraded.listPreparations(),
+        backup: await upgraded.exportBackup(),
+      }
+      upgraded.close()
+      return output
+    },
+    { first: snapshot(), image }
+  )
+  expect(result.order.snapshot).toEqual(snapshot())
+  expect(result.job.status).toBe('paused')
+  expect(result.image).toEqual(image)
+  expect(result.preparations).toEqual([])
+  expect(result.backup.version).toBe(2)
+  expect(result.backup.issuedCodes).toEqual([])
+})
+
+test('structured source fields survive snapshot and backup validation', async ({
+  extension,
+}) => {
+  const page = await openTestDatabase(extension)
+  const result = await page.evaluate(async (first) => {
+    first.sellerMemberLogin = 'seller-member'
+    first.sellerShopOrigin =
+      'https://seller-example.1688.com/shop?tracking=removed'
+    first.items[0].title = 'Synthetic cup'
+    first.items[0].productNumber = 'ART-01'
+    first.items[0].skuProperties = [
+      { label: '颜色', value: 'red', raw: '颜色: red' },
+      { label: '', value: 'unlabeled detail', raw: 'unlabeled detail' },
+    ]
+    await library.saveSnapshot(first)
+    const backup = await library.exportBackup()
+    const restored = await openOrderDatabase({
+      name: `${databaseName}-structured`,
+    })
+    await restored.restoreBackup(backup)
+    const output = await restored.getOrder(first.orderId)
+    restored.close()
+    let rejected = false
+    try {
+      await library.saveSnapshot({
+        ...first,
+        items: [
+          { ...first.items[0], skuProperties: [{ label: '颜色', value: 12 }] },
+          first.items[1],
+        ],
+      })
+    } catch {
+      rejected = true
+    }
+    return { output, rejected }
+  }, snapshot())
+  expect(result.output.snapshot.sellerMemberLogin).toBe('seller-member')
+  expect(result.output.snapshot.sellerShopOrigin).toBe(
+    'https://seller-example.1688.com'
+  )
+  expect(result.output.snapshot.items[0]).toMatchObject({
+    title: 'Synthetic cup',
+    productNumber: 'ART-01',
+    skuProperties: [
+      { label: '颜色', value: 'red', raw: '颜色: red' },
+      { label: '', value: 'unlabeled detail', raw: 'unlabeled detail' },
+    ],
+  })
+  expect(result.rejected).toBe(true)
+})
+
+test('concurrent database connections allocate unique codes and reject stale preparation edits', async ({
+  extension,
+}) => {
+  const page = await openTestDatabase(extension)
+  const result = await page.evaluate(async (first) => {
+    const { createPreparation } = await import('/src/packing-model.js')
+    const second = {
+      ...first,
+      orderId: '9999999999999999999',
+      sourceUrl: first.sourceUrl.replace(first.orderId, '9999999999999999999'),
+    }
+    await library.saveSnapshot(first)
+    await library.saveSnapshot(second)
+    const other = await openOrderDatabase({ name: databaseName })
+    const saved = await Promise.all([
+      library.savePreparation(createPreparation(first, '2026-06')),
+      other.savePreparation(createPreparation(second, '2026-06')),
+    ])
+    const editA = structuredClone(saved[0])
+    editA.groups[0].spanishName = 'TAZA'
+    const editB = structuredClone(saved[0])
+    editB.groups[0].spanishName = 'BOL'
+    const edits = await Promise.allSettled([
+      library.savePreparation(editA),
+      other.savePreparation(editB),
+    ])
+    const output = {
+      saved,
+      statuses: edits.map((entry) => entry.status),
+      errors: edits
+        .filter((entry) => entry.status === 'rejected')
+        .map((entry) => entry.reason.message),
+      current: await library.getPreparation(first.orderId),
+      backup: await library.exportBackup(),
+    }
+    other.close()
+    return output
+  }, snapshot())
+  expect(
+    result.saved.flatMap((entry) => entry.groups.map((group) => group.baseCode))
+  ).toEqual(['CE26060101', 'CE26060102', 'CE26060103', 'CE26060104'])
+  expect(result.statuses.sort()).toEqual(['fulfilled', 'rejected'])
+  expect(result.errors[0]).toContain('another tab')
+  expect(result.current.revision).toBe(2)
+  expect(result.backup.issuedCodes).toHaveLength(8)
+})
+
+test('refresh preserves authoring and removed memberships while new entries remain unassigned', async ({
+  extension,
+}) => {
+  const page = await openTestDatabase(extension)
+  const result = await page.evaluate(async (first) => {
+    const { createPreparation, activeGroups } =
+      await import('/src/packing-model.js')
+    await library.saveSnapshot(first)
+    const draft = createPreparation(first, '2026-06')
+    draft.groups[0].spanishName = 'TAZA'
+    const saved = await library.savePreparation(draft)
+    const refreshed = {
+      ...first,
+      observedAt: '2026-01-02T12:00:00.000Z',
+      items: [
+        first.items[0],
+        { ...first.items[1], entryId: '3234567890123456790' },
+      ],
+    }
+    await library.saveSnapshot(refreshed)
+    const retained = await library.getPreparation(first.orderId)
+    const edited = await library.savePreparation({
+      ...retained,
+      groups: retained.groups.map((group) => ({ ...group, category: '餐具' })),
+    })
+    const bad = structuredClone(edited)
+    bad.groups[0].variants[0].entryIds.push('999')
+    let error
+    try {
+      await library.savePreparation(bad)
+    } catch (failure) {
+      error = failure.message
+    }
+    const restored = await openOrderDatabase({
+      name: `${databaseName}-removed-members`,
+    })
+    await restored.restoreBackup(await library.exportBackup())
+    const restoredPreparation = await restored.getPreparation(first.orderId)
+    restored.close()
+    return {
+      saved,
+      retained,
+      edited,
+      active: activeGroups(retained, refreshed),
+      error,
+      restoredPreparation,
+      source: await library.getOrder(first.orderId),
+    }
+  }, snapshot())
+  expect(result.retained).toEqual(result.saved)
+  expect(result.active).toHaveLength(1)
+  expect(result.edited.groups[1].variants[0].entryIds).toEqual([
+    '2234567890123456790',
+  ])
+  expect(result.error).toContain('entry missing')
+  expect(result.source.snapshot.totals).toEqual(snapshot().totals)
+  expect(result.source.snapshot.items).toHaveLength(2)
+  expect(result.restoredPreparation).toEqual(result.edited)
+})
+
+test('manual base edits update variant codes and deletions never recycle reservations', async ({
+  extension,
+}) => {
+  const page = await openTestDatabase(extension)
+  const result = await page.evaluate(async (first) => {
+    const { createPreparation, barcodeValue } =
+      await import('/src/packing-model.js')
+    await library.saveSnapshot(first)
+    const saved = await library.savePreparation(
+      createPreparation(first, '2026-06')
+    )
+    saved.groups[0].baseCode = 'CE26060107'
+    const edited = await library.savePreparation(saved)
+    const code = barcodeValue(edited.groups[0], edited.groups[0].variants[0])
+    await library.removeOrders([first.orderId])
+    const afterDelete = await library.exportBackup()
+    await library.saveSnapshot(first)
+    const regenerated = await library.savePreparation(
+      createPreparation(first, '2026-06')
+    )
+    const collided = structuredClone(regenerated)
+    collided.groups[0].baseCode = 'CE26060101'
+    let error
+    try {
+      await library.savePreparation(collided)
+    } catch (failure) {
+      error = failure.message
+    }
+    return {
+      code,
+      afterDelete,
+      regenerated,
+      error,
+      current: await library.getPreparation(first.orderId),
+    }
+  }, snapshot())
+  expect(result.code).toBe('CE26060107')
+  expect(result.afterDelete.orders).toEqual([])
+  expect(result.afterDelete.preparations).toEqual([])
+  expect(result.afterDelete.issuedCodes).toHaveLength(6)
+  expect(result.regenerated.groups.map((group) => group.baseCode)).toEqual([
+    'CE26060108',
+    'CE26060109',
+  ])
+  expect(result.error).toContain('Code conflict')
+  expect(result.current).toEqual(result.regenerated)
+})
+
+test('reserved barcode lookup includes retired suffixes and isolates the base and account', async ({
+  extension,
+}) => {
+  const page = await openTestDatabase(extension)
+  const result = await page.evaluate(async (first) => {
+    const { createPreparation } = await import('/src/packing-model.js')
+    await library.saveSnapshot(first)
+    const draft = createPreparation(first, '2026-06')
+    draft.groups[0].variants[0].variantSuffix = 'A'
+    const saved = await library.savePreparation(draft)
+    const baseCode = saved.groups[0].baseCode
+    saved.groups[0].variants[0].variantSuffix = 'B'
+    await library.savePreparation(saved)
+
+    const otherAccount = { ...first, accountId: 'other' }
+    await library.saveSnapshot(otherAccount)
+    const otherDraft = createPreparation(otherAccount, '2026-06')
+    otherDraft.groups[0].variants[0].variantSuffix = 'C'
+    await library.savePreparation(otherDraft)
+
+    const before = await library.exportBackup()
+    const reserved = await library.getReservedBarcodes(baseCode)
+    const otherReserved = await library.getReservedBarcodes(baseCode, {
+      accountId: 'other',
+    })
+    const absent = await library.getReservedBarcodes('CE26069999')
+    const after = await library.exportBackup()
+    await library.removeOrders([first.orderId])
+    return {
+      reserved,
+      otherReserved,
+      absent,
+      afterDelete: await library.getReservedBarcodes(baseCode),
+      before: { ...before, exportedAt: '' },
+      after: { ...after, exportedAt: '' },
+    }
+  }, snapshot())
+  expect(result.reserved).toEqual(['CE26060101A', 'CE26060101B'])
+  expect(result.otherReserved).toEqual(['CE26060101C'])
+  expect(result.absent).toEqual([])
+  expect(result.afterDelete).toEqual(result.reserved)
+  expect(result.after).toEqual(result.before)
+})
+
+test('v2 backups preserve independent authoring, preference timestamps and all issued reservations', async ({
+  extension,
+}) => {
+  const page = await openTestDatabase(extension)
+  const result = await page.evaluate(
+    async ({ first, image }) => {
+      const { createPreparation } = await import('/src/packing-model.js')
+      await library.saveSnapshot(first)
+      const saved = await library.savePreparation(
+        createPreparation(first, '2026-06')
+      )
+      await library.savePackingPreferences({
+        settings: { fontSize: 12 },
+        vocabulary: [{ match: 'box', spanishName: 'caja', category: '盒子' }],
+        logoDataUrl: image.dataUrl,
+      })
+      const older = await library.exportBackup()
+      saved.groups[0].baseCode = 'CE26060110'
+      saved.groups[0].spanishName = 'CAJA'
+      const newerPreparation = await library.savePreparation(saved)
+      const newer = await library.exportBackup()
+      const restored = await openOrderDatabase({
+        name: `${databaseName}-packing-restored`,
+      })
+      await restored.restoreBackup(newer)
+      await restored.restoreBackup(older)
+      await restored.restoreBackup({
+        format: older.format,
+        version: 1,
+        exportedAt: older.exportedAt,
+        orders: older.orders,
+        history: older.history,
+        images: older.images,
+      })
+      const beforeUpdate = await restored.getPreparation(first.orderId)
+      await restored.saveSnapshot({
+        ...first,
+        observedAt: '2026-02-02T00:00:00.000Z',
+        status: 'Refunded',
+      })
+      await restored.restoreBackup(newer)
+      const output = {
+        newerPreparation,
+        beforeUpdate,
+        preparation: await restored.getPreparation(first.orderId),
+        preferences: await restored.getPackingPreferences(),
+        backup: await restored.exportBackup(),
+        source: await restored.getOrder(first.orderId),
+      }
+      restored.close()
+      return output
+    },
+    { first: snapshot(), image }
+  )
+  expect(result.beforeUpdate).toEqual(result.newerPreparation)
+  expect(result.preparation).toEqual(result.newerPreparation)
+  expect(result.source.snapshot.status).toBe('Refunded')
+  expect(result.backup.issuedCodes).toHaveLength(6)
+  expect(result.preferences).toEqual({
+    settings: { fontSize: 12 },
+    vocabulary: [{ match: 'box', spanishName: 'CAJA', category: '盒子' }],
+    logoDataUrl: image.dataUrl,
+  })
+})
+
+test('cross-library code conflicts and malformed packing backups roll back the entire restore', async ({
+  extension,
+}) => {
+  const page = await openTestDatabase(extension)
+  const result = await page.evaluate(async (first) => {
+    const { createPreparation } = await import('/src/packing-model.js')
+    await library.saveSnapshot(first)
+    await library.savePreparation(createPreparation(first, '2026-06'))
+    const original = await library.exportBackup()
+    const incoming = await openOrderDatabase({
+      name: `${databaseName}-conflicting`,
+    })
+    const second = {
+      ...first,
+      orderId: '9999999999999999999',
+      sourceUrl: first.sourceUrl.replace(first.orderId, '9999999999999999999'),
+    }
+    await incoming.saveSnapshot(second)
+    await incoming.savePreparation(createPreparation(second, '2026-06'))
+    const conflicting = await incoming.exportBackup()
+    incoming.close()
+    const malformed = structuredClone(original)
+    malformed.issuedCodes = []
+    const repeated = structuredClone(original)
+    repeated.preparations.push(repeated.preparations[0])
+    const tiedEdit = structuredClone(original)
+    tiedEdit.preparations[0].groups[0].spanishName = 'CONFLICT'
+    tiedEdit.allocations[0].groups[0].nextItem = 80
+    const unknownMember = structuredClone(original)
+    unknownMember.preparations[0].groups[0].variants[0].entryIds.push('777')
+    const errors = []
+    for (const backup of [
+      conflicting,
+      malformed,
+      repeated,
+      tiedEdit,
+      unknownMember,
+    ]) {
+      try {
+        await library.restoreBackup(backup)
+      } catch (error) {
+        errors.push(error.message)
+      }
+    }
+    const after = await library.exportBackup()
+    return {
+      errors,
+      original: { ...original, exportedAt: '' },
+      after: { ...after, exportedAt: '' },
+    }
+  }, snapshot())
+  expect(result.errors).toHaveLength(5)
+  expect(result.errors[0]).toContain('Code conflict')
+  expect(result.after).toEqual(result.original)
+})
+
+test('restore rolls back authoring whose members disappear in tied source or history merges', async ({
+  extension,
+}) => {
+  const page = await openTestDatabase(extension)
+  const results = await page.evaluate(async (first) => {
+    const { createPreparation } = await import('/src/packing-model.js')
+    await library.saveSnapshot(first)
+    const output = []
+    for (const kind of ['source', 'history']) {
+      if (kind === 'history')
+        await library.saveSnapshot({
+          ...first,
+          observedAt: '2026-01-03T12:00:00.000Z',
+          status: 'Refunded',
+        })
+      const before = await library.exportBackup()
+      const incoming = await openOrderDatabase({
+        name: `${databaseName}-tied-${kind}`,
+      })
+      const distinct = {
+        ...first,
+        items: [{ ...first.items[0], entryId: '777' }, first.items[1]],
+      }
+      await incoming.saveSnapshot(distinct)
+      await incoming.savePreparation(createPreparation(distinct, '2026-06'))
+      if (kind === 'history')
+        await incoming.saveSnapshot({
+          ...first,
+          observedAt: '2026-01-02T12:00:00.000Z',
+        })
+      const backup = await incoming.exportBackup()
+      incoming.close()
+      let error
+      try {
+        await library.restoreBackup(backup)
+      } catch (failure) {
+        error = failure.message
+      }
+      const after = await library.exportBackup()
+      output.push({
+        kind,
+        error,
+        before: { ...before, exportedAt: '' },
+        after: { ...after, exportedAt: '' },
+      })
+    }
+    return output
+  }, snapshot())
+  for (const result of results) {
+    expect(result.error).toContain('entry missing from its order and history')
+    expect(result.after).toEqual(result.before)
+  }
 })

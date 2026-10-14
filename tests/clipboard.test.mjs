@@ -89,6 +89,7 @@ test('image conversion and single-image copying retain original pixels and aspec
         },
         toDataURL(type) {
           assert.equal(type, 'image/png')
+          canvas.encodedSize = [canvas.width, canvas.height]
           return png
         },
       }
@@ -114,8 +115,9 @@ test('image conversion and single-image copying retain original pixels and aspec
   assert.equal(await pngImage('data:image/jpeg;base64,AQID'), png)
   await copySingleImage('data:image/jpeg;base64,AQID')
   for (const canvas of canvases) {
-    assert.equal(canvas.width, 1200)
-    assert.equal(canvas.height, 900)
+    assert.deepEqual(canvas.encodedSize, [1200, 900])
+    assert.equal(canvas.width, 0)
+    assert.equal(canvas.height, 0)
     assert.deepEqual(canvas.draw.slice(1), [0, 0])
   }
   assert.equal(clipboard[0].data['image/png'].type, 'image/png')

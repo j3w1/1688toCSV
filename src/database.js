@@ -138,6 +138,15 @@ function validateSnapshot(input) {
       entryId: identifier(item.entryId, 'entryId'),
       thumbnail: string(item.thumbnail, 'thumbnail'),
       description: string(item.description, 'description', { empty: false }),
+      ...(item.title !== undefined
+        ? { title: string(item.title, 'Product title') }
+        : {}),
+      ...(item.productNumber !== undefined
+        ? { productNumber: string(item.productNumber, 'Product number') }
+        : {}),
+      ...(item.skuProperties !== undefined
+        ? { skuProperties: validateSkuProperties(item.skuProperties) }
+        : {}),
       ...decimals(item, decimalFields, 'Product row'),
     }
   })
@@ -155,12 +164,57 @@ function validateSnapshot(input) {
     orderId,
     sourceUrl: detailUrl(input.sourceUrl, orderId),
     sellerName: string(input.sellerName, 'sellerName', { empty: false }),
+    ...(input.sellerMemberLogin !== undefined
+      ? {
+          sellerMemberLogin: string(
+            input.sellerMemberLogin,
+            'sellerMemberLogin'
+          ),
+        }
+      : {}),
+    ...(input.sellerShopOrigin !== undefined
+      ? { sellerShopOrigin: sellerShopOrigin(input.sellerShopOrigin) }
+      : {}),
     status: string(input.status, 'status', { empty: false }),
     observedAt: date(input.observedAt, 'observedAt'),
     ...(purchasedAt ? { purchasedAt } : {}),
     items,
     totals,
   }
+}
+
+function validateSkuProperties(input) {
+  if (!Array.isArray(input)) throw new Error('SKU properties must be an array')
+  return input.map((property) => {
+    object(property, 'SKU property')
+    return {
+      label: string(property.label, 'SKU label'),
+      value: string(property.value, 'SKU value', { empty: false }),
+      ...(property.raw !== undefined
+        ? { raw: string(property.raw, 'Raw SKU property') }
+        : {}),
+    }
+  })
+}
+
+function sellerShopOrigin(value) {
+  string(value, 'sellerShopOrigin')
+  if (!value) return value
+  let url
+  try {
+    url = new URL(value)
+  } catch {
+    throw new Error('Seller shop origin is invalid')
+  }
+  if (
+    url.protocol !== 'https:' ||
+    !url.hostname.endsWith('.1688.com') ||
+    url.username ||
+    url.password ||
+    url.port
+  )
+    throw new Error('Seller shop origin must be an HTTPS 1688 shop')
+  return url.origin
 }
 
 function validateRecord(input) {
@@ -329,7 +383,7 @@ async function transaction(database, stores, mode, run) {
 
 function validateBackup(input) {
   object(input, 'Backup')
-  if (input.format !== BACKUP_FORMAT || input.version !== 1)
+  if (input.format !== BACKUP_FORMAT || ![1, 2].includes(input.version))
     throw new Error('Unsupported order-library backup')
   date(input.exportedAt, 'exportedAt')
   if (!Array.isArray(input.orders) || !Array.isArray(input.history))
@@ -360,30 +414,116 @@ function validateBackup(input) {
       throw new Error('Backup contains duplicate history entries')
     historyKeys.add(key)
   }
-  return { orders, history, images }
+  if (input.version === 1)
+    return {
+      orders,
+      history,
+      images,
+      preparations: [],
+      allocations: [],
+      issuedCodes: [],
+    }
+  for (const field of ['preparations', 'allocations', 'issuedCodes'])
+    if (!Array.isArray(input[field]))
+      throw new Error(`Backup ${field} must be an array`)
+  const preparations = input.preparations.map(validatePreparation)
+  const allocations = input.allocations.map(validateAllocation)
+  const issuedCodes = input.issuedCodes.map(validateIssuedCode)
+  for (const [records, key, label] of [
+    [preparations, (entry) => [entry.accountId, entry.orderId], 'preparations'],
+    [allocations, (entry) => [entry.accountId, entry.month], 'allocations'],
+    [
+      issuedCodes,
+      (entry) => [entry.accountId, entry.kind, entry.code],
+      'issued codes',
+    ],
+  ])
+    if (
+      new Set(records.map((entry) => JSON.stringify(key(entry)))).size !==
+      records.length
+    )
+      throw new Error(`Backup contains duplicate ${label}`)
+  const state = mergePackingState(allocations, issuedCodes)
+  for (const preparation of preparations) {
+    const key = JSON.stringify([preparation.accountId, preparation.orderId])
+    const owner = current.get(key)
+    validatePreparationMembership(
+      preparation,
+      owner,
+      history.filter(
+        (record) => JSON.stringify(keyFor(record.snapshot)) === key
+      )
+    )
+    validatePreparationReservations(preparation, state)
+  }
+  const packingPreferences =
+    input.packingPreferences == null
+      ? undefined
+      : {
+          value: validatePackingPreferences(input.packingPreferences.value),
+          updatedAt: date(
+            input.packingPreferences.updatedAt,
+            'Packing preferences updatedAt'
+          ),
+        }
+  return { orders, history, images, preparations, ...state, packingPreferences }
+}
+
+function validatePreparationMembership(preparation, order, history) {
+  if (!order) throw new Error('Preparation is missing its saved order')
+  const knownIds = new Set(
+    [order, ...history].flatMap((record) =>
+      record.snapshot.items.map((item) => item.entryId)
+    )
+  )
+  if (
+    preparation.groups.some((group) =>
+      group.variants.some((variant) =>
+        variant.entryIds.some((entryId) => !knownIds.has(entryId))
+      )
+    )
+  )
+    throw new Error(
+      'Preparation contains an entry missing from its order and history'
+    )
 }
 
 /** Extension-origin IndexedDB is the only durable store for orders and import jobs. */
 export async function openDatabase({ name = '1688-order-library' } = {}) {
   const database = await new Promise((resolve, reject) => {
-    const request = globalThis.indexedDB.open(name, 1)
+    const request = globalThis.indexedDB.open(name, 2)
     let blocked = false
-    request.onupgradeneeded = () => {
+    request.onupgradeneeded = (event) => {
       const db = request.result
-      const orders = db.createObjectStore('orders', {
-        keyPath: ['snapshot.accountId', 'snapshot.orderId'],
-      })
-      orders.createIndex('account', 'snapshot.accountId')
-      const history = db.createObjectStore('history', {
-        keyPath: [
-          'snapshot.accountId',
-          'snapshot.orderId',
-          'snapshot.observedAt',
-        ],
-      })
-      history.createIndex('order', ['snapshot.accountId', 'snapshot.orderId'])
-      db.createObjectStore('jobs', { keyPath: 'id' })
-      db.createObjectStore('images', { keyPath: 'url' })
+      if (event.oldVersion < 1) {
+        const orders = db.createObjectStore('orders', {
+          keyPath: ['snapshot.accountId', 'snapshot.orderId'],
+        })
+        orders.createIndex('account', 'snapshot.accountId')
+        const history = db.createObjectStore('history', {
+          keyPath: [
+            'snapshot.accountId',
+            'snapshot.orderId',
+            'snapshot.observedAt',
+          ],
+        })
+        history.createIndex('order', ['snapshot.accountId', 'snapshot.orderId'])
+        db.createObjectStore('jobs', { keyPath: 'id' })
+        db.createObjectStore('images', { keyPath: 'url' })
+      }
+      if (event.oldVersion < 2) {
+        const preparations = db.createObjectStore('preparations', {
+          keyPath: ['accountId', 'orderId'],
+        })
+        preparations.createIndex('account', 'accountId')
+        db.createObjectStore('packingAllocations', {
+          keyPath: ['accountId', 'month'],
+        })
+        db.createObjectStore('issuedCodes', {
+          keyPath: ['accountId', 'kind', 'code'],
+        })
+        db.createObjectStore('packingPreferences', { keyPath: 'id' })
+      }
     }
     request.onsuccess = () => {
       if (blocked) request.result.close()
@@ -457,9 +597,10 @@ export async function openDatabase({ name = '1688-order-library' } = {}) {
 
     async removeOrders(orderIds, { accountId = 'local' } = {}) {
       const ids = strings(orderIds, 'orderIds')
-      return write(['orders', 'history'], async (tx) => {
+      return write(['orders', 'history', 'preparations'], async (tx) => {
         for (const id of ids) {
           tx.objectStore('orders').delete([accountId, id])
+          tx.objectStore('preparations').delete([accountId, id])
           const keys = await requested(
             tx.objectStore('history').index('order').getAllKeys([accountId, id])
           )
@@ -469,65 +610,269 @@ export async function openDatabase({ name = '1688-order-library' } = {}) {
     },
 
     async exportBackup() {
-      return read(['orders', 'history', 'images'], async (tx) => {
-        const orders = await requested(tx.objectStore('orders').getAll())
-        const history = await requested(tx.objectStore('history').getAll())
-        const images = await requested(tx.objectStore('images').getAll())
-        return {
-          format: BACKUP_FORMAT,
-          version: 1,
-          exportedAt: new Date().toISOString(),
-          orders,
-          history,
-          images,
+      return read(
+        [
+          'orders',
+          'history',
+          'images',
+          'preparations',
+          'packingAllocations',
+          'issuedCodes',
+          'packingPreferences',
+        ],
+        async (tx) => {
+          const orders = await requested(tx.objectStore('orders').getAll())
+          const history = await requested(tx.objectStore('history').getAll())
+          const images = await requested(tx.objectStore('images').getAll())
+          const preparations = await requested(
+            tx.objectStore('preparations').getAll()
+          )
+          const allocations = await requested(
+            tx.objectStore('packingAllocations').getAll()
+          )
+          const issuedCodes = await requested(
+            tx.objectStore('issuedCodes').getAll()
+          )
+          const preferences = await requested(
+            tx.objectStore('packingPreferences').get('packing')
+          )
+          return {
+            format: BACKUP_FORMAT,
+            version: 2,
+            exportedAt: new Date().toISOString(),
+            orders,
+            history,
+            images,
+            preparations,
+            allocations,
+            issuedCodes,
+            packingPreferences: preferences
+              ? { value: preferences.value, updatedAt: preferences.updatedAt }
+              : null,
+          }
         }
-      })
+      )
     },
 
     async restoreBackup(input) {
       // Validate every record before opening a write transaction. A malformed
       // trailing record must never leave a partially restored library.
       const backup = validateBackup(input)
-      return write(['orders', 'history', 'images'], async (tx) => {
-        const orders = tx.objectStore('orders')
-        const history = tx.objectStore('history')
-        let imported = 0
-        let updated = 0
-        for (const incoming of backup.orders) {
-          const key = keyFor(incoming.snapshot)
-          const previous = await requested(orders.get(key))
-          if (!previous) {
-            orders.put(incoming)
-            imported += 1
-          } else {
-            const result = reconcile(incoming.snapshot, previous)
-            if (!result.ignored) {
-              if (result.changed) {
-                history.put(previous)
-                updated += 1
-              }
-              orders.put(result.order)
-            }
-            // An older backup's current version is still useful history.
-            if (incoming.snapshot.observedAt < previous.snapshot.observedAt) {
-              const historyKey = [...key, incoming.snapshot.observedAt]
-              if (!(await requested(history.getKey(historyKey))))
-                history.put(incoming)
+      return write(
+        [
+          'orders',
+          'history',
+          'images',
+          'preparations',
+          'packingAllocations',
+          'issuedCodes',
+          'packingPreferences',
+        ],
+        async (tx) => {
+          const orders = tx.objectStore('orders')
+          const history = tx.objectStore('history')
+          const allocations = await requested(
+            tx.objectStore('packingAllocations').getAll()
+          )
+          const issuedCodes = await requested(
+            tx.objectStore('issuedCodes').getAll()
+          )
+          const state = mergePackingState(
+            [...allocations, ...backup.allocations],
+            [...issuedCodes, ...backup.issuedCodes]
+          )
+          for (const allocation of state.allocations)
+            tx.objectStore('packingAllocations').put(allocation)
+          for (const issued of state.issuedCodes)
+            tx.objectStore('issuedCodes').put(issued)
+          for (const incoming of backup.preparations) {
+            const store = tx.objectStore('preparations')
+            const previous = await requested(
+              store.get([incoming.accountId, incoming.orderId])
+            )
+            if (!previous) store.put(incoming)
+            else if (incoming.updatedAt > previous.updatedAt)
+              store.put({
+                ...incoming,
+                revision: Math.max(incoming.revision, previous.revision) + 1,
+              })
+            else if (incoming.updatedAt === previous.updatedAt) {
+              const { revision: incomingRevision, ...incomingContent } =
+                incoming
+              const { revision: previousRevision, ...previousContent } =
+                previous
+              if (
+                JSON.stringify(incomingContent) !==
+                JSON.stringify(previousContent)
+              )
+                throw new Error(
+                  'Backup conflict: preparation edits have the same timestamp'
+                )
             }
           }
+          if (backup.packingPreferences) {
+            const store = tx.objectStore('packingPreferences')
+            const previous = await requested(store.get('packing'))
+            if (
+              !previous ||
+              previous.updatedAt < backup.packingPreferences.updatedAt
+            )
+              store.put({ id: 'packing', ...backup.packingPreferences })
+          }
+          let imported = 0
+          let updated = 0
+          for (const incoming of backup.orders) {
+            const key = keyFor(incoming.snapshot)
+            const previous = await requested(orders.get(key))
+            if (!previous) {
+              orders.put(incoming)
+              imported += 1
+            } else {
+              const result = reconcile(incoming.snapshot, previous)
+              if (!result.ignored) {
+                if (result.changed) {
+                  history.put(previous)
+                  updated += 1
+                }
+                orders.put(result.order)
+              }
+              // An older backup's current version is still useful history.
+              if (incoming.snapshot.observedAt < previous.snapshot.observedAt) {
+                const historyKey = [...key, incoming.snapshot.observedAt]
+                if (!(await requested(history.getKey(historyKey))))
+                  history.put(incoming)
+              }
+            }
+          }
+          for (const record of backup.history) {
+            const key = [...keyFor(record.snapshot), record.snapshot.observedAt]
+            if (!(await requested(history.getKey(key)))) history.put(record)
+          }
+          for (const image of backup.images) {
+            const existing = await requested(
+              tx.objectStore('images').get(image.url)
+            )
+            if (!existing || existing.storedAt < image.storedAt)
+              tx.objectStore('images').put(image)
+          }
+          // A tied source/history observation can be retained from the local
+          // library instead of the incoming backup. Verify the actual merged
+          // records before committing authoring that depends on their entries.
+          for (const preparation of await requested(
+            tx.objectStore('preparations').getAll()
+          )) {
+            const key = [preparation.accountId, preparation.orderId]
+            validatePreparationMembership(
+              preparation,
+              await requested(orders.get(key)),
+              await requested(history.index('order').getAll(key))
+            )
+          }
+          return { imported, updated }
         }
-        for (const record of backup.history) {
-          const key = [...keyFor(record.snapshot), record.snapshot.observedAt]
-          if (!(await requested(history.getKey(key)))) history.put(record)
-        }
-        for (const image of backup.images) {
-          const existing = await requested(
-            tx.objectStore('images').get(image.url)
+      )
+    },
+
+    async getPreparation(orderId, { accountId = 'local' } = {}) {
+      return read(['preparations'], (tx) =>
+        requested(tx.objectStore('preparations').get([accountId, orderId]))
+      )
+    },
+
+    async listPreparations({ accountId = 'local' } = {}) {
+      return read(['preparations'], (tx) =>
+        requested(
+          tx.objectStore('preparations').index('account').getAll(accountId)
+        )
+      )
+    },
+
+    async getReservedBarcodes(baseCode, { accountId = 'local' } = {}) {
+      string(baseCode, 'Base code', { empty: false })
+      const range = globalThis.IDBKeyRange.bound(
+        [accountId, 'barcode', baseCode],
+        [accountId, 'barcode', `${baseCode}\uffff`]
+      )
+      const keys = await read(['issuedCodes'], (tx) =>
+        requested(tx.objectStore('issuedCodes').getAllKeys(range))
+      )
+      return keys.map((key) => key[2])
+    },
+
+    async savePreparation(input, { expectedRevision = input.revision } = {}) {
+      const draft = validatePreparation(input)
+      if (!Number.isSafeInteger(expectedRevision) || expectedRevision < 0)
+        throw new Error(
+          'Expected preparation revision must be a non-negative integer'
+        )
+      return write(
+        ['orders', 'preparations', 'packingAllocations', 'issuedCodes'],
+        async (tx) => {
+          const store = tx.objectStore('preparations')
+          const key = [draft.accountId, draft.orderId]
+          const previous = await requested(store.get(key))
+          if ((previous?.revision ?? 0) !== expectedRevision)
+            throw new Error(
+              'Preparation changed in another tab. Reload it before saving your edits.'
+            )
+          const order = await requested(tx.objectStore('orders').get(key))
+          if (!order)
+            throw new Error('Save the source order before preparing labels')
+          const knownIds = new Set([
+            ...order.snapshot.items.map((item) => item.entryId),
+            ...(previous?.groups.flatMap((group) =>
+              group.variants.flatMap((variant) => variant.entryIds)
+            ) ?? []),
+          ])
+          for (const group of draft.groups)
+            for (const variant of group.variants)
+              if (variant.entryIds.some((entryId) => !knownIds.has(entryId)))
+                throw new Error(
+                  'Preparation contains an entry missing from this order'
+                )
+          const allocations = await requested(
+            tx.objectStore('packingAllocations').getAll()
           )
-          if (!existing || existing.storedAt < image.storedAt)
-            tx.objectStore('images').put(image)
+          const issuedCodes = await requested(
+            tx.objectStore('issuedCodes').getAll()
+          )
+          const result = allocatePreparation(draft, allocations, issuedCodes)
+          const preparation = {
+            ...result.preparation,
+            revision: expectedRevision + 1,
+            updatedAt: new Date(
+              Math.max(Date.now(), Date.parse(previous?.updatedAt || 0) + 1)
+            ).toISOString(),
+          }
+          for (const allocation of result.allocations)
+            tx.objectStore('packingAllocations').put(allocation)
+          for (const issued of result.issuedCodes)
+            tx.objectStore('issuedCodes').put(issued)
+          store.put(preparation)
+          return preparation
         }
-        return { imported, updated }
+      )
+    },
+
+    async getPackingPreferences() {
+      return read(['packingPreferences'], async (tx) => {
+        const preferences = await requested(
+          tx.objectStore('packingPreferences').get('packing')
+        )
+        return preferences?.value ?? validatePackingPreferences()
+      })
+    },
+
+    async savePackingPreferences(input) {
+      const value = validatePackingPreferences(input)
+      return write(['packingPreferences'], async (tx) => {
+        const store = tx.objectStore('packingPreferences')
+        const previous = await requested(store.get('packing'))
+        const updatedAt = new Date(
+          Math.max(Date.now(), Date.parse(previous?.updatedAt || 0) + 1)
+        ).toISOString()
+        store.put({ id: 'packing', value, updatedAt })
+        return value
       })
     },
 
@@ -576,3 +921,12 @@ export async function openDatabase({ name = '1688-order-library' } = {}) {
 }
 import { lineGrossCents, moneyToCents } from './money.js'
 import { purchaseTimestamp } from './order-date.js'
+import {
+  allocatePreparation,
+  mergePackingState,
+  validateAllocation,
+  validateIssuedCode,
+  validatePackingPreferences,
+  validatePreparation,
+  validatePreparationReservations,
+} from './packing-model.js'

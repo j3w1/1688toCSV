@@ -79,6 +79,9 @@ test('a bulk scan paused before discovery still confirms the complete requested 
   await expect(
     page.getByText('This job covers 667 orders.', { exact: false })
   ).toBeVisible()
+  await expect(
+    page.getByText('0 saved; 667 remaining.', { exact: false })
+  ).toBeVisible()
   expect(await mutations(page)).toEqual([])
 })
 
@@ -142,10 +145,22 @@ test('selected import shows progress, errors and working pause/resume on the lis
   await page
     .getByRole('button', { name: 'Import selected', exact: true })
     .click()
+  expect(await mutations(page)).toEqual([])
+  await page
+    .getByRole('button', { name: 'Import 2 selected orders', exact: true })
+    .click()
   expect(await mutations(page)).toEqual([
     {
       type: 'IMPORT_START',
-      data: { scope: 'selected', orderIds: ['10001', '10002'] },
+      data: {
+        scope: 'selected',
+        orderIds: ['10001', '10002'],
+        expectedScope: {
+          filterKey: 'synthetic-filter',
+          total: 667,
+          pageSize: 10,
+        },
+      },
     },
   ])
   await expect(page.getByText(/0 saved \/ 2 discovered/)).toBeVisible()
@@ -161,6 +176,9 @@ test('selected import shows progress, errors and working pause/resume on the lis
   await expect(page.getByText(/Synthetic page failure/)).toBeVisible()
   await page
     .getByRole('button', { name: 'Resume / retry', exact: true })
+    .click()
+  await page
+    .getByRole('button', { name: 'Resume 2 remaining orders', exact: true })
     .click()
   await expect(
     page.getByRole('button', { name: 'Pause import', exact: true })
@@ -199,7 +217,9 @@ test('blocked spreadsheet creation keeps completed import visible and offers cur
   )
   await expect(page.getByRole('status')).toContainText('saved orders are kept')
   await expect(
-    page.getByText('completed · 1 saved / 1 discovered', { exact: true })
+    page.getByText('completed · 1 saved / 1 discovered · 0 remaining', {
+      exact: true,
+    })
   ).toBeVisible()
   await expect(
     page.getByRole('textbox', { name: 'Spreadsheet address' })
@@ -260,9 +280,59 @@ test('an old bulk job also requires confirmation before resume and controls fit 
     .getByRole('button', { name: 'Resume / retry', exact: true })
     .click()
   await page
-    .getByRole('button', { name: 'Resume 667 orders', exact: true })
+    .getByRole('button', { name: 'Resume 667 remaining orders', exact: true })
     .click()
   expect(await mutations(page)).toEqual([
     { type: 'IMPORT_RESUME', data: { jobId: 'legacy-bulk' } },
   ])
+})
+
+test('selected-order confirmation rejects a changed selection and single orders start directly', async ({
+  extension,
+}) => {
+  const page = await setup(extension)
+  await page
+    .getByRole('button', { name: 'Import selected', exact: true })
+    .click()
+  await page.evaluate(() => {
+    toolbarTest.list.orders[1].selected = false
+  })
+  await page
+    .getByRole('button', { name: 'Import 2 selected orders', exact: true })
+    .click()
+  await expect(page.getByRole('status')).toContainText(
+    'selected orders changed'
+  )
+  expect(await mutations(page)).toEqual([])
+  await page
+    .getByRole('button', { name: 'Import selected', exact: true })
+    .click()
+  expect((await mutations(page))[0].data.orderIds).toEqual(['10001'])
+})
+
+test('resuming a partial import confirms only its unsaved remainder', async ({
+  extension,
+}) => {
+  const page = await setup(extension, [
+    {
+      id: 'part-done',
+      state: 'paused',
+      phase: 'details',
+      scope: 'all',
+      total: 67,
+      discovered: 67,
+      completed: 60,
+      failed: 2,
+    },
+  ])
+  await page
+    .getByRole('button', { name: 'Resume / retry', exact: true })
+    .click()
+  await expect(
+    page.getByText('60 saved; 7 remaining.', { exact: false })
+  ).toBeVisible()
+  await expect(
+    page.getByRole('button', { name: 'Resume 7 remaining orders', exact: true })
+  ).toBeVisible()
+  expect(await mutations(page)).toEqual([])
 })

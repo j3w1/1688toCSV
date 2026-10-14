@@ -193,6 +193,7 @@ test('reads a complete canonical snapshot with full string identities and isolat
       orderId,
       sourceUrl: orderUrl,
       sellerName: '示例工厂',
+      sellerMemberLogin: '示例工厂',
       status: '交易已成功',
       observedAt,
     }
@@ -206,6 +207,11 @@ test('reads a complete canonical snapshot with full string identities and isolat
     payable: '68.00',
   })
   assert.equal(result.items[0].entryId, '9991000000000000001')
+  assert.equal(result.items[0].title, 'Synthetic product 1')
+  assert.deepEqual(result.items[0].skuProperties, [
+    { label: '颜色', value: '橙色', raw: '颜色：橙色' },
+  ])
+  assert.equal(result.items[0].productNumber, 'DEMO-1')
   assert.equal(result.items[0].price, '12.50')
   assert.equal(result.items[0].quantity, '4')
   assert.equal(result.items[0].sourceDiscount, '2.10')

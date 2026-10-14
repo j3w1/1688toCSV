@@ -81,13 +81,25 @@ async function assertImported(extension, library) {
     timeout: 65_000,
   })
   await expect(library.locator('#sheet-body tr')).toHaveCount(4)
+  await library.getByRole('button', { name: /^Activity/ }).click()
   await expect(library.locator('#jobs')).toContainText('completed')
+  await library
+    .getByRole('button', { name: 'Close activity', exact: true })
+    .click()
+  await expect(
+    library.getByRole('checkbox', { name: 'Headers', exact: true })
+  ).not.toBeChecked()
+  await library.getByRole('checkbox', { name: 'Headers', exact: true }).check()
   await extension.context.grantPermissions([
     'clipboard-read',
     'clipboard-write',
   ])
   await library
     .getByRole('button', { name: 'Copy values', exact: true })
+    .click()
+  await library
+    .getByRole('dialog', { name: 'Confirm operation', exact: true })
+    .getByRole('button', { name: 'Copy 4 product rows', exact: true })
     .click()
   await expect(library.locator('#copy-values')).toHaveText('Copied')
   const copied = await library.evaluate(() => navigator.clipboard.readText())
@@ -104,6 +116,9 @@ test('selected import reaches persistent spreadsheet and clipboard through real 
   const { list, library, visited } = await setup(extension)
   await list
     .getByRole('button', { name: 'Import selected', exact: true })
+    .click()
+  await list
+    .getByRole('button', { name: 'Import 2 selected orders', exact: true })
     .click()
   await assertImported(extension, library)
   expect(visited).toEqual(ids)
@@ -123,6 +138,15 @@ test('selected import reaches persistent spreadsheet and clipboard through real 
   await list.getByRole('searchbox').fill('no matching synthetic product')
   await expect(list.locator('#sheet-body tr')).toHaveCount(0)
   await list.getByRole('button', { name: 'Refresh all', exact: true }).click()
+  const refresh = list.getByRole('dialog', {
+    name: 'Confirm operation',
+    exact: true,
+  })
+  await expect(refresh).toContainText('2 orders')
+  expect(visited).toHaveLength(2)
+  await refresh
+    .getByRole('button', { name: 'Refresh 2 orders', exact: true })
+    .click()
   await expect.poll(() => visited.length, { timeout: 40_000 }).toBe(4)
   await expect(list.locator('#refresh-all')).toBeEnabled({ timeout: 20_000 })
   expect(visited.slice(2).sort()).toEqual([...ids].sort())
@@ -142,6 +166,9 @@ test('delayed rendering and labelled discount summaries import complete products
   })
   await list
     .getByRole('button', { name: 'Import selected', exact: true })
+    .click()
+  await list
+    .getByRole('button', { name: 'Import 2 selected orders', exact: true })
     .click()
   await assertImported(extension, library)
 })
@@ -193,11 +220,19 @@ test('library retry resumes a persisted failed queue and fills the spreadsheet',
     }))
   )
   await library.reload()
+  await library.getByRole('button', { name: /^Activity/ }).click()
   await expect(library.locator('#jobs')).toContainText(
     'Discount total is missing or invalid.'
   )
   await library
     .getByRole('button', { name: 'Resume / retry', exact: true })
+    .click()
+  await library
+    .getByRole('dialog', { name: 'Confirm bulk import', exact: true })
+    .getByRole('button', { name: 'Resume 2 orders', exact: true })
+    .click()
+  await library
+    .getByRole('button', { name: 'Close activity', exact: true })
     .click()
   await assertImported(extension, library)
   expect(visited).toEqual(ids)
@@ -212,6 +247,9 @@ test('detail hydration beyond 15 seconds uses the bounded import retry', async (
   })
   await list
     .getByRole('button', { name: 'Import selected', exact: true })
+    .click()
+  await list
+    .getByRole('button', { name: 'Import 2 selected orders', exact: true })
     .click()
   await assertImported(extension, library)
 })

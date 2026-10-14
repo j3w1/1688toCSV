@@ -22,33 +22,60 @@ async function expectDark(page) {
   )
 }
 
-test('system theme responds to device changes and includes native controls and dialogs', async ({
+test('dark is the default and a stored system preference still follows the device', async ({
   extension,
 }) => {
-  const page = await openLibrary(extension, 'dark')
+  const page = await openLibrary(extension, 'light')
   await expectDark(page)
-  await expect(page.locator('html')).toHaveCSS('color-scheme', 'light dark')
+  await expect(page.locator('html')).toHaveCSS('color-scheme', 'dark')
+  await expect(page.locator('meta[name="color-scheme"]')).toHaveAttribute(
+    'content',
+    'dark'
+  )
   await page.locator('#order-details').evaluate((dialog) => dialog.showModal())
   await expect(page.locator('#order-details')).toHaveCSS(
     'background-color',
     'rgb(32, 40, 35)'
   )
   await page.locator('#order-details').evaluate((dialog) => dialog.close())
+  await page.emulateMedia({ colorScheme: 'dark' })
   await page.emulateMedia({ colorScheme: 'light' })
+  await expectDark(page)
+  expect(
+    await page.evaluate((key) => localStorage.getItem(key), key)
+  ).toBeNull()
+  await page.evaluate((key) => localStorage.setItem(key, 'system'), key)
+  await page.reload()
   await expect(page.locator('html')).toHaveCSS(
     'background-color',
     'rgb(246, 247, 245)'
   )
-  expect(
-    await page.evaluate((key) => localStorage.getItem(key), key)
-  ).toBeNull()
+  await expect(page.locator('html')).toHaveCSS('color-scheme', 'light dark')
+  await page.emulateMedia({ colorScheme: 'dark' })
+  await expectDark(page)
+  expect(await page.evaluate((key) => localStorage.getItem(key), key)).toBe(
+    'system'
+  )
 })
 
-test('explicit themes persist, synchronize tabs and return to system without losing overrides on OS changes', async ({
+test('explicit light and dark themes persist and synchronize without losing overrides on OS changes', async ({
   extension,
 }) => {
   const page = await openLibrary(extension)
   const second = await openLibrary(extension)
+  await expectDark(page)
+  await expectDark(second)
+  await page.getByRole('button', { name: 'Switch to light theme' }).click()
+  for (const current of [page, second]) {
+    await expect(current.locator('html')).toHaveCSS(
+      'background-color',
+      'rgb(246, 247, 245)'
+    )
+    await expect(current.locator('meta[name="color-scheme"]')).toHaveAttribute(
+      'content',
+      'light'
+    )
+  }
   await page.getByRole('button', { name: 'Switch to dark theme' }).click()
   await expectDark(page)
   await expectDark(second)
@@ -74,11 +101,11 @@ test('explicit themes persist, synchronize tabs and return to system without los
   await expectDark(page)
   await expect(second.locator('meta[name="color-scheme"]')).toHaveAttribute(
     'content',
-    'light dark'
+    'dark'
   )
-  expect(
-    await page.evaluate((key) => localStorage.getItem(key), key)
-  ).toBeNull()
+  expect(await page.evaluate((key) => localStorage.getItem(key), key)).toBe(
+    'dark'
+  )
 })
 
 test('theme controls fit a narrow viewport and remain usable when preference storage is unavailable', async ({
@@ -97,6 +124,12 @@ test('theme controls fit a narrow viewport and remain usable when preference sto
   const errors = []
   page.on('pageerror', (error) => errors.push(error.message))
   await page.goto(`${extension.extensionBaseUrl}/library.html`)
+  await expectDark(page)
+  await page.getByRole('button', { name: 'Switch to light theme' }).click()
+  await expect(page.locator('html')).toHaveCSS(
+    'background-color',
+    'rgb(246, 247, 245)'
+  )
   await page.getByRole('button', { name: 'Switch to dark theme' }).click()
   await expectDark(page)
   const bounds = await page.locator('#theme-toggle').boundingBox()

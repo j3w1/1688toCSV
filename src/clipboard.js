@@ -77,11 +77,23 @@ export async function pngImage(dataUrl) {
   const image = new Image()
   image.src = dataUrl
   await image.decode()
+  if (image.naturalWidth * image.naturalHeight > 16_000_000) {
+    image.src = ''
+    throw new Error(
+      'This photo exceeds the image memory budget. Copy its values separately or use a smaller source photo.'
+    )
+  }
   const canvas = document.createElement('canvas')
   canvas.width = image.naturalWidth
   canvas.height = image.naturalHeight
-  canvas.getContext('2d').drawImage(image, 0, 0)
-  return canvas.toDataURL('image/png')
+  try {
+    canvas.getContext('2d').drawImage(image, 0, 0)
+    return canvas.toDataURL('image/png')
+  } finally {
+    canvas.width = 0
+    canvas.height = 0
+    image.src = ''
+  }
 }
 
 export async function copyTable(items, options) {

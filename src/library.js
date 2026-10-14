@@ -5,6 +5,8 @@ import {
   pngImage,
 } from './clipboard.js'
 import { openDatabase } from './database.js'
+import { confirmScope, yieldUI } from './ui.js'
+import { startPackingWorkspace } from './packing-workspace.js'
 
 const $ = (id) => document.getElementById(id)
 const keyFor = (row) => `${row.orderId}/${row.entryId}`
@@ -45,8 +47,14 @@ function node(tag, text, className) {
 }
 
 async function confirmBulkResume(job) {
-  const count = job.total || job.discovered || job.orders?.length || 0
-  if (job.page <= 1 && count <= 10) return true
+  const done =
+    job.orders?.filter((order) => order.state === 'done').length ||
+    job.done ||
+    0
+  const count =
+    job.remaining ??
+    Math.max(0, (job.total || job.discovered || job.orders?.length || 0) - done)
+  if (count <= 1) return true
   const dialog = node('dialog')
   dialog.setAttribute('aria-label', 'Confirm bulk import')
   dialog.append(
@@ -94,7 +102,9 @@ export async function startLibrary(
     loading = false,
     refreshPending = false,
     copyBusy = false,
-    showDismissed = false
+    showDismissed = false,
+    orderPage = 0
+  let packing
   const selectedOrders = new Set(),
     selectedRows = new Set(),
     preparedImages = new Map(),
@@ -119,7 +129,7 @@ export async function startLibrary(
     const stored = localStorage.getItem(headerPreference)
     if (stored !== null) $('include-headers').checked = stored === 'true'
   } catch {
-    /* Keep the checked default when preferences are unavailable. */
+    /* Keep the unchecked default when preferences are unavailable. */
   }
   $('include-headers').addEventListener('change', () => {
     try {
@@ -131,7 +141,7 @@ export async function startLibrary(
   })
   addEventListener('storage', (event) => {
     if (event.key === headerPreference || event.key === null)
-      $('include-headers').checked = event.newValue !== 'false'
+      $('include-headers').checked = event.newValue === 'true'
   })
   let jobTimer, searchTimer
   async function send(type, data = {}) {
@@ -183,9 +193,21 @@ export async function startLibrary(
       )
     return reply.data
   }
+  let feedbackTimer
   function feedback(message, error = false) {
-    $('feedback').textContent = message
+    clearTimeout(feedbackTimer)
+    const close = node('button', '×')
+    close.setAttribute('aria-label', 'Dismiss notification')
+    close.onclick = () => {
+      clearTimeout(feedbackTimer)
+      $('feedback').replaceChildren()
+    }
+    $('feedback').replaceChildren(node('span', message), close)
     $('feedback').className = error ? 'error' : ''
+    feedbackTimer = setTimeout(
+      () => $('feedback').replaceChildren(),
+      error ? 8000 : 4000
+    )
   }
   function action(id, handler) {
     $(id).addEventListener('click', async () => {
@@ -208,9 +230,13 @@ export async function startLibrary(
     button.setAttribute('aria-live', 'polite')
     button.setAttribute('aria-busy', 'true')
     try {
-      await handler((message) => {
+      const completed = await handler((message) => {
         button.textContent = message
       })
+      if (completed === false) {
+        button.textContent = label
+        return
+      }
       button.textContent = 'Copied'
       button.classList.add('copied')
     } catch (error) {
@@ -234,9 +260,15 @@ export async function startLibrary(
   }
   function ordersInMonth() {
     const month = $('month-filter').value
-    return records.filter(
-      (record) => !month || purchaseMonth(record.snapshot) === month
-    )
+    const from = $('date-from').value,
+      to = $('date-to').value
+    return records.filter((record) => {
+      const day = purchaseDay(record.snapshot)
+      return (
+        (!month || purchaseMonth(record.snapshot) === month) &&
+        (!(from || to) || (day && (!from || day >= from) && (!to || day <= to)))
+      )
+    })
   }
   function filteredRows() {
     const search = $('search').value.trim().toLocaleLowerCase()
@@ -252,7 +284,7 @@ export async function startLibrary(
             return false
           return (
             !search ||
-            `${item.description} ${order.sellerName} ${order.orderId} ${record.notes} ${record.tags.join(' ')}`
+            `${item.description} ${order.sellerName} ${order.orderId} ${record.notes} ${record.tags.join(' ')} ${packing?.searchText(order.orderId, item.entryId) || ''}`
               .toLocaleLowerCase()
               .includes(search)
           )
@@ -271,6 +303,7 @@ export async function startLibrary(
     return selected.length ? selected : rows
   }
   function updateSelection() {
+    packing?.updateActions()
     const rows = filteredRows(),
       selected = rows.filter((row) => selectedRows.has(keyFor(row)))
     $('selection-summary').textContent =
@@ -297,6 +330,8 @@ export async function startLibrary(
               typeof data === 'string' ? data : data.dataUrl
             )
             preparedImages.set(url, result)
+            while (preparedImages.size > 200)
+              preparedImages.delete(preparedImages.keys().next().value)
             return result
           } finally {
             loadingImages.delete(url)
@@ -309,7 +344,16 @@ export async function startLibrary(
     const list = $('order-list')
     list.replaceChildren()
     let lastMonth
-    for (const record of ordersInMonth()) {
+    const matching = ordersInMonth()
+    orderPage = Math.min(
+      orderPage,
+      Math.max(0, Math.ceil(matching.length / 50) - 1)
+    )
+    $('orders-page').textContent =
+      `${orderPage + 1} / ${Math.max(1, Math.ceil(matching.length / 50))}`
+    $('orders-prev').disabled = orderPage === 0
+    $('orders-next').disabled = (orderPage + 1) * 50 >= matching.length
+    for (const record of matching.slice(orderPage * 50, (orderPage + 1) * 50)) {
       const order = record.snapshot
       const month = purchaseMonth(order)
       if (month !== lastMonth)
@@ -357,6 +401,9 @@ export async function startLibrary(
     const running = jobs.some((job) => job.state === 'running')
     $('refresh-orders').disabled = !selectedOrders.size || running
     $('refresh-all').disabled = !records.length || running
+    $('refresh-filtered').disabled = !matching.length || running
+    $('refresh-filtered').textContent =
+      `Refresh ${matching.length} matching orders`
     $('remove-orders').disabled = !selectedOrders.size
   }
   function renderRows() {
@@ -413,7 +460,13 @@ export async function startLibrary(
           `${row.sellerName} · …${row.orderId.slice(-8)} · ${purchaseLabel(row.record.snapshot)}${changed ? ' · Changed since previous version' : ''}`
         )
       )
-      const discount = node('td', row.discount, 'numeric discount-cell')
+      packing?.decorateRow(description, row)
+      const amount = (value) =>
+        Number(value).toLocaleString('en-US', {
+          minimumFractionDigits: 2,
+          maximumFractionDigits: 4,
+        })
+      const discount = node('td', amount(row.discount), 'numeric discount-cell')
       if (Number(row.allocatedDiscount))
         discount.append(
           node('small', `incl. ${row.allocatedDiscount} allocated`)
@@ -422,8 +475,14 @@ export async function startLibrary(
         selection,
         thumb,
         description,
-        node('td', row.price, 'numeric'),
-        node('td', row.quantity, 'numeric'),
+        node('td', amount(row.price), 'numeric'),
+        node(
+          'td',
+          Number(row.quantity).toLocaleString('en-US', {
+            maximumFractionDigits: 4,
+          }),
+          'numeric'
+        ),
         discount
       )
       body.append(tr)
@@ -439,6 +498,10 @@ export async function startLibrary(
     updateSelection()
   }
   function renderJobs() {
+    const running = jobs.some((job) => job.state === 'running')
+    $('refresh-orders').disabled = !selectedOrders.size || running
+    $('refresh-all').disabled = !records.length || running
+    $('refresh-filtered').disabled = !ordersInMonth().length || running
     $('jobs').replaceChildren()
     const sorted = [...jobs].sort((a, b) =>
       (b.updatedAt || '').localeCompare(a.updatedAt || '')
@@ -447,6 +510,17 @@ export async function startLibrary(
       (job) => !job.dismissedAt || job.state === 'running' || showDismissed
     )
     $('jobs').hidden = !jobs.length
+    $('activity-empty').hidden = !!jobs.length
+    const active = jobs.find((job) => job.state === 'running')
+    $('activity-count').textContent = active
+      ? '●'
+      : jobs.some((job) => job.state !== 'completed' && !job.dismissedAt)
+        ? '!'
+        : ''
+    $('active-job').hidden = !active
+    if (active)
+      $('active-job-text').textContent =
+        `Reading orders · ${active.done ?? active.orders?.filter((order) => order.state === 'done').length ?? 0} saved / ${active.total || active.discovered || active.orders?.length || 0} orders`
     const heading = node('div', undefined, 'jobs-heading')
     heading.append(node('h2', 'Imports'))
     const controls = node('div', undefined, 'job-actions')
@@ -455,11 +529,21 @@ export async function startLibrary(
       dismissAll.title =
         'Hide finished and paused import messages. Saved orders stay in your library.'
       dismissAll.addEventListener('click', async () => {
+        const targets = jobs.filter(
+          (job) => !job.dismissedAt && job.state !== 'running'
+        )
+        if (
+          !(await confirmScope({
+            action: 'Dismiss',
+            count: targets.length,
+            unit: 'activities',
+            detail: 'Saved orders and labels will stay in the library.',
+          }))
+        )
+          return
         dismissAll.disabled = true
         try {
-          for (const job of jobs.filter(
-            (job) => !job.dismissedAt && job.state !== 'running'
-          ))
+          for (const job of targets)
             await send('IMPORT_DISMISS', { jobId: job.id })
           await refresh()
         } catch (error) {
@@ -493,9 +577,13 @@ export async function startLibrary(
         ),
         details = node('div')
       const done =
-        job.orders?.filter((order) => order.state === 'done').length || 0
+        job.done ??
+        job.orders?.filter((order) => order.state === 'done').length ??
+        0
       const failed =
-        job.orders?.filter((order) => order.state === 'failed').length || 0
+        job.failed ??
+        job.orders?.filter((order) => order.state === 'failed').length ??
+        0
       details.append(
         node(
           'strong',
@@ -509,7 +597,7 @@ export async function startLibrary(
       details.append(
         node(
           'p',
-          `${done} saved · ${job.orders?.length || 0} discovered${failed ? ` · ${failed} need attention` : ''}${job.page ? ` · list page ${job.page}` : ''}`
+          `${done} saved · ${job.discovered ?? job.orders?.length ?? 0} discovered${failed ? ` · ${failed} need attention` : ''}${job.page ? ` · list page ${job.page}` : ''}`
         )
       )
       if (job.error) details.append(node('p', job.error))
@@ -581,7 +669,6 @@ export async function startLibrary(
         try {
           ;({ jobs } = await send('JOBS_QUERY'))
           renderJobs()
-          renderOrders()
         } catch (error) {
           feedback(error.message, true)
         }
@@ -615,6 +702,7 @@ export async function startLibrary(
       const data = await send('LIBRARY_QUERY')
       records = data.orders
       jobs = data.jobs
+      await packing?.reload()
       const present = new Set(records.map((record) => record.snapshot.orderId))
       for (const id of selectedOrders)
         if (!present.has(id)) selectedOrders.delete(id)
@@ -758,25 +846,72 @@ export async function startLibrary(
   }
   async function copy(mode, progress) {
     if (copyBusy) return
-    const rows = copyRows()
+    let rows = copyRows()
+    if (!rows.length) return false
+    const count = new Set(rows.map((row) => row.orderId)).size
+    if (
+      rows.length > 1 &&
+      !(await confirmScope({
+        action: 'Copy',
+        count: rows.length,
+        unit: mode === 'values' ? 'product rows' : 'product images',
+        detail: `From ${count} orders. ${mode === 'values' ? '' : 'Original images will be prepared for Excel.'}`,
+      }))
+    )
+      return false
+    if (mode !== 'values' && rows.length > 20) {
+      const chosen = await packing.chooseImageBatch(rows)
+      if (!chosen) return false
+      rows = chosen
+    }
     copyBusy = true
     updateSelection()
     try {
       const images = []
+      const originals = new Map()
       if (mode !== 'values') {
+        let imageBytes = 0
         for (let index = 0; index < rows.length; index++) {
           if (index % 10 === 0)
             progress(
               `Preparing images ${index + 1}–${Math.min(rows.length, index + 10)} of ${rows.length}…`
             )
-          const original = await send('IMAGE_GET', {
-            url: rows[index].thumbnail,
-          })
-          images.push(
-            await pngImage(
-              typeof original === 'string' ? original : original.dataUrl
+          const url = rows[index].thumbnail
+          if (!originals.has(url)) {
+            const original = await send('IMAGE_GET', { url })
+            originals.set(
+              url,
+              await pngImage(
+                typeof original === 'string' ? original : original.dataUrl
+              )
             )
-          )
+          }
+          // Every row embeds the PNG again in clipboard HTML, even when its
+          // conversion is shared with another variant of the same product.
+          imageBytes += originals.get(url).length * 2
+          if (imageBytes > 32 * 1024 * 1024) {
+            const batchSize = Math.max(
+              1,
+              Math.floor(((index + 1) * 32 * 1024 * 1024) / imageBytes)
+            )
+            originals.clear()
+            images.length = 0
+            if (rows.length === 1)
+              throw new Error(
+                'This photo exceeds the clipboard memory budget. Copy its values separately.'
+              )
+            const batch = await packing.chooseImageBatch(
+              rows,
+              Math.min(rows.length - 1, batchSize)
+            )
+            if (!batch) return false
+            rows = batch
+            index = -1
+            imageBytes = 0
+            continue
+          }
+          images.push(originals.get(url))
+          await yieldUI()
         }
       }
       await copyTable(rows, {
@@ -801,6 +936,9 @@ export async function startLibrary(
     selectedOrders.clear()
     selectedRows.clear()
     $('month-filter').value = ''
+    $('date-from').value = ''
+    $('date-to').value = ''
+    orderPage = 0
     page = 0
     render()
   })
@@ -813,16 +951,46 @@ export async function startLibrary(
     renderRows()
   })
   async function refreshOrders(orderIds) {
+    if (!orderIds.length) return
+    const frozen = [...orderIds]
+    if (
+      frozen.length > 1 &&
+      !(await confirmScope({
+        action: 'Refresh',
+        count: frozen.length,
+        detail:
+          'Each order detail page will be read in turn. You can pause from Activity.',
+      }))
+    )
+      return
     await send('REFRESH_ORDERS', {
-      orderIds,
+      orderIds: frozen,
     })
     await refresh()
-    feedback('Refresh started. You can pause it from the progress bar.')
+    feedback('Refresh started. Pause from Activity or the progress bar.')
   }
   action('refresh-orders', () => refreshOrders([...selectedOrders]))
   action('refresh-all', () =>
     refreshOrders(records.map((record) => record.snapshot.orderId))
   )
+  action('refresh-filtered', () =>
+    refreshOrders(ordersInMonth().map((record) => record.snapshot.orderId))
+  )
+  action('activity-open', () => $('activity-drawer').showModal())
+  action('pause-active', async () => {
+    const active = jobs.find((job) => job.state === 'running')
+    if (active) await send('IMPORT_PAUSE', { jobId: active.id })
+    ;({ jobs } = await send('JOBS_QUERY'))
+    renderJobs()
+  })
+  action('orders-prev', () => {
+    orderPage--
+    renderOrders()
+  })
+  action('orders-next', () => {
+    orderPage++
+    renderOrders()
+  })
   action('remove-orders', async () => {
     if (
       !selectedOrders.size ||
@@ -881,20 +1049,44 @@ export async function startLibrary(
       page = 0
       renderRows()
     })
-  $('month-filter').addEventListener('change', () => {
-    selectedOrders.clear()
-    selectedRows.clear()
-    page = 0
-    render()
-  })
+  for (const id of ['month-filter', 'date-from', 'date-to'])
+    $(id).addEventListener('change', () => {
+      selectedOrders.clear()
+      selectedRows.clear()
+      page = 0
+      orderPage = 0
+      render()
+    })
   globalThis.chrome?.runtime?.onMessage?.addListener((message) => {
-    if (message.type === 'LIBRARY_CHANGED')
-      refresh().catch((error) => feedback(error.message, true))
+    // This observer never answers worker requests; an async listener would
+    // race the worker by responding with undefined to unrelated messages.
+    if (!['LIBRARY_CHANGED', 'IMPORT_PROGRESS'].includes(message.type)) return
+    void (async () => {
+      try {
+        if (message.type === 'LIBRARY_CHANGED') await refresh()
+        else {
+          ;({ jobs } = await send('JOBS_QUERY'))
+          renderJobs()
+        }
+      } catch (error) {
+        feedback(error.message, true)
+      }
+    })()
   })
   addEventListener('focus', () =>
     refresh().catch((error) => feedback(error.message, true))
   )
   try {
+    packing = await startPackingWorkspace({
+      repository: repository || (await openDatabase()),
+      getRecords: () => records,
+      getRows: copyRows,
+      headers: () => $('include-headers').checked,
+      changed: () => {
+        renderRows()
+      },
+      feedback,
+    })
     await refresh()
   } catch (error) {
     feedback(error.message, true)

@@ -1,0 +1,98 @@
+.label-editor {
+  display: grid;
+  gap: 0.6rem;
+  max-width: 48rem;
+  margin-inline: auto;
+}
+
+.label-editor-preview {
+  position: relative;
+  container-type: inline-size;
+  overflow: hidden;
+  width: 100%;
+  background: #fff;
+  color: #000;
+  border: 1px solid #a5a5a5;
+}
+
+.label-editor-image {
+  display: block;
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+}
+
+.label-editor-image[hidden] {
+  display: none;
+}
+
+.label-editor .label-editor-field {
+  position: absolute;
+  box-sizing: border-box;
+  min-width: 0;
+  min-height: 0;
+  margin: 0;
+  padding: 0.2em;
+  border: 1px dashed #777;
+  border-radius: 0;
+  background: transparent;
+  color: transparent;
+  caret-color: #000;
+  font:
+    700 clamp(12px, 3.8cqw, 32px) / 1.1 Arial,
+    sans-serif;
+  text-align: center;
+  box-shadow: none;
+}
+
+.label-editor-field:focus {
+  outline: 2px solid #2676d9;
+  outline-offset: -2px;
+}
+
+.label-editor .label-editor-field:focus,
+.label-editor .label-editor-field:disabled {
+  background: #fff;
+  color: #000;
+}
+
+.label-editor-preview[data-kind='barcode'] .label-editor-code:focus {
+  background: #000;
+  color: #fff;
+  caret-color: #fff;
+}
+
+.label-editor-spanishName {
+  text-transform: uppercase;
+}
+
+.label-editor-hint,
+.label-editor-status {
+  margin: 0;
+  font-size: 0.875rem;
+}
+
+.label-editor-status {
+  min-height: 1.3em;
+}
+
+.label-editor-error {
+  color: #b3261e;
+}
+
+.label-editor-copy {
+  justify-self: start;
+}
+
+.label-editor-copy.copied,
+.label-editor-copy.copied:hover {
+  background: var(--success, #e9f1e5);
+  color: var(--success-text, #567b4a);
+  border-color: var(--success-text, #567b4a);
+}
+
+@media (prefers-color-scheme: dark) {
+  .label-editor-error {
+    color: #ff9990;
+  }
+}

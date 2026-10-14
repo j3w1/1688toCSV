@@ -13,9 +13,25 @@ try {
   })
   await page.goto(`${preview.url}/library.html`)
   await page.locator('#sheet-body tr').nth(7).waitFor()
-  await page.screenshot({ path: 'screenshots/order-library.png' })
-  await page.emulateMedia({ colorScheme: 'dark' })
+  await page.locator('#packing-month').fill('2026-10')
   await page.screenshot({ path: 'screenshots/order-library-dark.png' })
+  await page.getByRole('button', { name: 'Switch to light theme' }).click()
+  await page.screenshot({ path: 'screenshots/order-library.png' })
+  await page.getByRole('button', { name: 'Switch to dark theme' }).click()
+  await page.locator('#prepare-orders').click()
+  const group = page.locator('.preparation-group').first()
+  await group
+    .getByLabel('Spanish short name', { exact: true })
+    .fill('VELA AROMATICA')
+  await group.getByLabel('Chinese category', { exact: true }).fill('工艺品')
+  await group.getByRole('button', { name: 'Edit barcode', exact: true }).click()
+  await page.getByAltText('Printable label preview').waitFor()
+  await page
+    .getByAltText('Printable label preview')
+    .evaluate((image) => image.decode())
+  await page
+    .locator('#label-dialog')
+    .screenshot({ path: 'screenshots/label-editor.png' })
   console.log('README screenshots refreshed from synthetic preview data')
 } finally {
   await browser.close()

@@ -2,36 +2,38 @@
 
 > Last Updated: 2026-10-14
 >
-> Draft for development version 2.1.0. No store submission or publication. Automated verification and live browser observations are recorded separately below.
+> Version 2.2.0 has passed local and isolated browser verification; Windows Excel acceptance is recorded below. No store submission or publication. Earlier verification and live browser observations are recorded separately.
 
 ## Store Listing
 
 **Extension Name** [REQUIRED]: 1688toCSV
 
-**Short Description** [REQUIRED]: Keep a local 1688 order spreadsheet, reconcile changes, and copy products and images to Excel.
+**Short Description** [REQUIRED]: Prepare 1688 orders with CE product codes, barcode and carton labels, and copy products and images into Excel.
 
 **Detailed Description** [REQUIRED — draft]
 
 ```text
-Turn 1688 purchases into a local, copyable order spreadsheet.
+Prepare 1688 purchases for packing and copying into Excel.
 
-Collect selected orders or deliberately import all matching orders. Browse purchases by month and date, with visual dividers between orders. See thumbnails, descriptions and variants, original unit prices, quantities and discounts together. Copy five columns into Excel, values alone, or separate product pictures. Individual image copies retain the original image size. The Headers choice is remembered, and copy buttons confirm success directly.
+Collect selected orders, browse purchases by month or date range, and review original product descriptions, variants, prices, quantities and discounts. Choose a packing month, review suggested product groups, and save CE product codes. Add uppercase Spanish short names and Chinese categories using an editable local vocabulary. Review variant and size suffixes before preparing labels.
 
-Refresh every saved order, or just selected orders. Changed products are highlighted, previous versions remain available, and your notes and tags stay separate. Dismiss old import notices without deleting records. Switch light and dark appearance with one button. Whole-order price adjustments are distributed across products while original amounts remain visible. Shipping stays separate.
+Edit barcode and carton-mark text directly in a label preview. Copy printable label images, chosen preparation columns, source values or separate product pictures into Excel. Product codes appear once per group in preparation columns. Headers start off and remember your choice. Settings control label dimensions, resolution, logo and vocabulary. The workspace starts dark and remembers your light/dark choice.
+
+Refresh all saved orders, selected orders or those in the purchase-date filter. Multiple-item actions show their scope for confirmation. Activity holds progress, pause/retry controls and old notices. Source changes retain previous versions and preserve your notes and preparation edits. Whole-order price adjustments are distributed across products; shipping stays separate.
 
 HOW TO USE
-Select order checkboxes on your 1688 order list and choose Import selected. Keep the list open while the extension reads each order in a visible tab. Open the spreadsheet, select products, and choose Copy to Excel. Paste into a blank Excel range; bulk pictures are compact to match standard rows. Uncheck Headers when appending. Bulk import stays under More import options and requires confirmation. The single-order CSV button remains available.
+Select order checkboxes on your 1688 order list and choose Import selected. Confirm the scope and keep the list open while the reader tab works. Open the spreadsheet, choose orders and a Packing month, then select Prepare labels. Review the suggestions and save preparation. Open a product's Barcode or Carton mark to edit and copy its label. Paste the chosen values or images into Excel. The single-order CSV button remains available.
 
 PRIVACY
-Orders, versions, notes and cached pictures stay in your browser. Back up and restore using a local file. No developer service receives your orders and no analytics are used. The extension does not read passwords/authentication cookies or submit, pay for, or alter orders. Importing opens 1688 pages using your existing session; displaying/copying thumbnails may request Alibaba CDN images.
+Orders, versions, notes, preparation edits, issued codes, label settings, vocabulary, selected logos and cached pictures stay in your browser. Back up and restore using a local file. Labels and vocabulary suggestions are generated locally; no online translation or developer service receives your orders, and no analytics are used. The extension does not read passwords/authentication cookies or submit, pay for, or alter orders. Importing opens 1688 pages using your existing session; product pictures may be requested from Alibaba CDN.
 
 SCOPE
-One buyer account per library and the observed supported page layouts. Imports are user-requested; opening a saved order refreshes it. Incomplete pages, login screens and totals that do not reconcile preserve the previous good version. Keep backups before uninstalling or clearing your profile.
+One buyer account per library and the observed supported page layouts. Imports are user-requested; opening a saved order refreshes it. Incomplete pages, login screens and totals that do not reconcile preserve the previous good version. Keep backups, including issued-code reservations, before moving computers, uninstalling or clearing your profile. Excel receives pasted values and floating pictures; direct workbook writing is not included.
 ```
 
 **Category** [REQUIRED]: Shopping — proposed; confirm in Dashboard.
 
-**Single Purpose** [REQUIRED]: Maintain a local spreadsheet of 1688 purchase orders for reconciliation and copying into Excel.
+**Single Purpose** [REQUIRED]: Prepare locally stored 1688 purchase orders, product codes and packing labels for copying into Excel.
 
 **Primary Language** [REQUIRED]: English UI; original product languages retained.
 
@@ -42,22 +44,23 @@ One buyer account per library and the observed supported page layouts. Imports a
 | Store icon             | 128 × 128 PNG                        | Present; artwork rights and store suitability unfinished: [icon](icons/icon128.png) |
 | Screenshot 1           | Store target 1280 × 800 or 640 × 400 | README only: [library](screenshots/order-library.png)                               |
 | Screenshot 2           | Store target 1280 × 800 or 640 × 400 | README only: [dark library](screenshots/order-library-dark.png)                     |
+| Screenshot 3           | Store target 1280 × 800 or 640 × 400 | README only: [label editor](screenshots/label-editor.png)                           |
 | Small promotional tile | 440 × 280                            | Not created                                                                         |
 | Optional marquee       | 1400 × 560                           | Not created                                                                         |
 
-All screenshots use synthetic orders and need separate store-sized composition. Existing icons include 1688/Alibaba and spreadsheet branding; rights were not established in this task. Confirm permission or replace with original artwork before submission. Do not imply affiliation.
+Workspace and label-editor screenshots use synthetic orders and were regenerated for version 2.2.0; store submission needs separate store-sized composition. Existing icons include 1688/Alibaba and spreadsheet branding; rights were not established in this task. The bundled Casa Elida label logo and any user-selected replacement also need appropriate rights for their intended use. Confirm permission or replace artwork before submission. Do not imply affiliation.
 
 ## Permissions Justification
 
 The production [manifest](manifest.json) requests no downloads, scripting, activeTab, cookies, history or clipboard-read permission.
 
-| Permission                 | Type | Purpose                                                                                                       |
-| -------------------------- | ---- | ------------------------------------------------------------------------------------------------------------- |
-| tabs                       | API  | Identify/manage tabs for explicit imports; detect interrupted navigation and close only importer-created tabs |
-| alarms                     | API  | Continue checkpointed steps while a requested import is active; no scheduled account crawler                  |
-| clipboardWrite             | API  | Copy product values and pictures after a user copy action                                                     |
-| unlimitedStorage           | API  | Retain orders, earlier versions and pictures beyond small default limits; disk errors still report failures   |
-| https://cbu01.alicdn.com/* | Host | Fetch and cache public product images, including original-size copies, without credentials                    |
+| Permission                 | Type | Purpose                                                                                                                       |
+| -------------------------- | ---- | ----------------------------------------------------------------------------------------------------------------------------- |
+| tabs                       | API  | Identify/manage tabs for explicit imports; detect interrupted navigation and close only importer-created tabs                 |
+| alarms                     | API  | Continue checkpointed steps while a requested import is active; no scheduled account crawler                                  |
+| clipboardWrite             | API  | Copy product/preparation values, product pictures and generated labels after a user copy action                               |
+| unlimitedStorage           | API  | Retain orders, earlier versions, preparation data and pictures beyond small default limits; disk errors still report failures |
+| https://cbu01.alicdn.com/* | Host | Fetch and cache public product images, including original-size copies, without credentials                                    |
 
 Packaged content scripts match these pages:
 
@@ -74,20 +77,22 @@ List scripts run in matching frames because the workbench hosts a separate list 
 
 **Does the extension handle user data? Yes, locally.**
 
-| Data type                                                    | Handling                                               | Off-device use                                                           |
-| ------------------------------------------------------------ | ------------------------------------------------------ | ------------------------------------------------------------------------ |
-| Seller names, purchase dates and order/product-entry IDs     | Retained for identity, grouping and reconciliation     | No developer upload                                                      |
-| Prices, quantities, discounts, shipping, totals              | Validated, retained with history and copied on request | No developer upload                                                      |
-| Product text, variants, pictures                             | Local database/cache                                   | Image requests reach Alibaba CDN; imports make normal 1688 page requests |
-| User notes/tags                                              | Stored locally and included in backups                 | No developer upload                                                      |
-| Supported URLs/filters                                       | Explicit import and retained checkpoints               | Requests to 1688 to load those pages                                     |
-| Authentication information                                   | No password/token/cookie extraction                    | Normal navigation uses the signed-in browser session                     |
-| Recipient addresses, private communications, general history | Not intentionally extracted or logged                  | None                                                                     |
-| Analytics, advertising, creditworthiness                     | Not collected for these purposes                       | None                                                                     |
+| Data type                                                                              | Handling                                                              | Off-device use                                                           |
+| -------------------------------------------------------------------------------------- | --------------------------------------------------------------------- | ------------------------------------------------------------------------ |
+| Seller names, member/shop identifiers, purchase dates and order/product-entry IDs      | Retained for identity, grouping and reconciliation                    | No developer upload                                                      |
+| Prices, quantities, discounts, shipping, totals                                        | Validated, retained with history and copied on request                | No developer upload                                                      |
+| Product text, variants, pictures                                                       | Local database/cache                                                  | Image requests reach Alibaba CDN; imports make normal 1688 page requests |
+| User notes/tags                                                                        | Stored locally and included in backups                                | No developer upload                                                      |
+| Product groups, packing months, CE codes and variant/size mappings                     | Stored separately from source orders; included in backups             | No developer upload                                                      |
+| Spanish names, Chinese categories, local vocabulary, label settings and selected logos | Stored locally; used to generate label images and included in backups | No translation service or developer upload                               |
+| Supported URLs/filters                                                                 | Explicit import and retained checkpoints                              | Requests to 1688 to load those pages                                     |
+| Authentication information                                                             | No password/token/cookie extraction                                   | Normal navigation uses the signed-in browser session                     |
+| Recipient addresses, private communications, general history                           | Not intentionally extracted or logged                                 | None                                                                     |
+| Analytics, advertising, creditworthiness                                               | Not collected for these purposes                                      | None                                                                     |
 
-Orders, purchase dates, histories, notes, jobs and images persist in IndexedDB. Cached images are deduplicated by URL. Removing an order removes its versions; shared images may remain cached. Dismissing a job hides its notice while retaining the record. Backups include orders/history/notes/cached images, not active jobs. Local theme and Headers preferences are remembered in the browser; the initial theme follows the device. Uninstalling or deleting the profile can delete the library. Clipboard data and saved files are subsequently controlled by the operating system and user.
+Orders, purchase dates, histories, notes, jobs, images and preparation data persist locally. Cached images are deduplicated by URL. Removing an order removes its versions and preparation; issued codes stay reserved and shared images may remain cached. Dismissing a job hides its notice while retaining the record. Version 2 backups include orders/history/notes/cached images, preparations, allocation counters, issued-code reservations and packing preferences, not active jobs. Version 1 backups remain supported. Theme and Headers preferences are remembered separately in the browser; their defaults are dark and unchecked. Uninstalling or deleting the profile can delete the library. Clipboard data and saved files are subsequently controlled by the operating system and user.
 
-Implementation: [database](src/database.js), [snapshots](src/order-snapshot.js), [import controller](src/import-controller.js), [background](src/background.js), [images](src/images.js), [clipboard](src/clipboard.js).
+Implementation: [database](src/database.js), [snapshots](src/order-snapshot.js), [import controller](src/import-controller.js), [background](src/background.js), [images](src/images.js), [clipboard](src/clipboard.js), [packing model](src/packing-model.js), [label renderer](src/labels.js), [preparation clipboard](src/preparation-clipboard.js).
 
 ### Data Use Certification
 
@@ -101,7 +106,7 @@ Publisher confirmation and Dashboard submission remain outstanding:
 
 **Privacy Policy URL** [REQUIRED]: Not supplied or published.
 
-Draft substance: records, history, notes and pictures remain locally stored. No developer-operated uploads or analytics. Import/refresh access 1688 in the existing session; pictures may be requested from Alibaba CDN. No credential extraction or order transactions. Users control copying, backups, restore and removal. Add publisher identity, effective date and contact information before publication.
+Draft substance: records, history, notes, pictures, preparation edits, reserved codes, label settings, vocabulary and selected logos remain locally stored. No developer-operated uploads, online translation or analytics. Import/refresh access 1688 in the existing session; pictures may be requested from Alibaba CDN. No credential extraction or order transactions. Users control copying, backups, restore and removal; removing an order preserves its issued-code reservations. Add publisher identity, effective date and contact information before publication.
 
 ## Distribution
 
@@ -119,6 +124,7 @@ Draft substance: records, history, notes and pictures remain locally stored. No 
 
 | Version | Date       | Changes                                                                                                                                                                         | Status                                                                                                                 |
 | ------- | ---------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------- |
+| 2.2.0   | 2026-10-14 | Packing workspace, persistent CE numbering, editable barcode/carton labels, local vocabulary, preparation columns, version 2 backups, date-scoped refresh and quieter Activity  | Local, Chromium, Edge and Windows Excel checks passed; synthetic screenshots regenerated; no store submission          |
 | 2.1.0   | 2026-10-14 | Original-size image copies, inline copy feedback, remembered headers, purchase-date grouping, visual order dividers, Refresh all, dismissible import history and a theme toggle | Local Chromium, Edge and Windows Excel checks passed; live embedded build unverified; no store submission              |
 | 2.0.4   | 2026-10-14 | Separate spreadsheet-opening errors from import progress; offer current-tab library navigation with saved data retained                                                         | User screenshot reports one order saved; current-tab navigation regression tested locally, embedded acceptance pending |
 | 2.0.3   | 2026-10-14 | Exclude framework comment nodes from payable text; cover split currency and decimals in packaged imports                                                                        | Local unit and browser regression verification; live embedded-browser acceptance remains unverified                    |
@@ -131,6 +137,8 @@ Draft substance: records, history, notes and pictures remain locally stored. No 
 
 ### Development verification
 
+- Version 2.2.0 passed source/documentation checks, 172 unit checks, the production rebuild, 66 packaged Chromium tests and 36 focused Edge tests. Coverage includes allocation and backup invariants, independently decoded CODE 128 PNGs, editable labels, large-library pagination, lightweight progress and confirmation/date scopes. Review corrections for repeated-copy feedback and repeated-image memory accounting passed regression checks. README screenshots use synthetic data. Earlier evidence below applies to the named earlier releases.
+- Version 2.2.0 Windows Excel acceptance passed four real browser-clipboard cases in disposable, preformatted workbooks: five source columns with eight separate pictures; latest carton-mark and barcode PNGs verified by hash; and seven headerless preparation columns with numeric values and one base code per group. Excel measured the default barcode at 40.040 × 19.932 mm and carton mark at 148.519 × 104.775 mm (0.4 mm tolerance). The check restored the clipboard and closed its automation instances; supplied workbooks were untouched. The native harness keeps the fixture server responsive and releases owned COM references before shutdown.
 - Version 2.1.0 passed 140 unit checks, 47 packaged Chromium tests, 13 focused Edge tests, the Windows Excel check, documentation checks and screenshot generation. Independent review findings about stable purchase dates and copy-button availability were corrected and regression tested. The test boundaries are documented in [development notes](docs/development.md).
 - Earlier packaged Chromium/Edge tests cover extraction, totals, database/backup transactions, import recovery and copying. An Edge replay of three inert private detail captures imported 66 product rows and preserved the explicit 47.20 item discount. Captures and browser profiles are not committed.
 - Windows Excel acceptance was rerun for the 2.1.0 clipboard implementation: five columns, eight separate pictures aligned with their rows and numeric price/quantity cells in an unsaved workbook; the clipboard was restored.
@@ -142,6 +150,9 @@ Draft substance: records, history, notes and pictures remain locally stored. No 
 - Unsupported layouts, installment totals, unknown adjustments and inconsistent totals report errors and preserve good saved data.
 - Bulk images use standard-height Excel rows and are floating pictures. Custom row heights, other spreadsheet apps and native in-cell conversion need separate verification.
 - Cached images work offline; unfetched images still need a connection. Large uncached copies can take time.
+- Packing suggestions need review, especially missing structured SKU data or ambiguous sizes. Vocabulary suggestions do not provide general translation.
+- Issued-code reservations belong to the local library and its backups; independent libraries do not coordinate numbering. Manual conflicts fail rather than silently renumbering saved labels.
+- Version 2.2.0 label pasting and Excel picture dimensions were verified; physical printing and hardware scanner use remain unverified. Direct workbook population is not implemented.
 - Legacy CSV preserves item discounts; library copying also allocates order adjustments.
 - Publisher details, public privacy policy, rights-cleared artwork, store screenshots and Dashboard settings remain unfinished. No store package or submission was created.
 

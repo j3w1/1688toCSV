@@ -5,8 +5,8 @@
   const meta = document.querySelector('meta[name="color-scheme"]')
   const system = matchMedia('(prefers-color-scheme: dark)')
   const normalize = (value) =>
-    ['light', 'dark'].includes(value) ? value : 'system'
-  let preference = 'system'
+    ['light', 'dark', 'system'].includes(value) ? value : 'dark'
+  let preference = 'dark'
   try {
     preference = normalize(localStorage.getItem(key))
   } catch {}
@@ -23,7 +23,7 @@
         const systemScheme = system.matches ? 'dark' : 'light'
         const rendered = preference === 'system' ? systemScheme : preference
         const target = rendered === 'dark' ? 'light' : 'dark'
-        apply(target === systemScheme ? 'system' : target)
+        apply(target)
         try {
           if (preference === 'system') localStorage.removeItem(key)
           else localStorage.setItem(key, preference)

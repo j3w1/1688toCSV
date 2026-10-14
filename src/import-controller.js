@@ -11,6 +11,10 @@ function summarize(job) {
   job.completed = job.orders.filter((order) => order.state === 'done').length
   job.failed = job.orders.filter((order) => order.state === 'failed').length
   job.discovered = job.orders.length
+  job.remaining = Math.max(
+    0,
+    Math.max(job.total || 0, job.discovered) - job.completed
+  )
   return job
 }
 
@@ -23,6 +27,7 @@ export function createImportController({
   async function write(job) {
     job.updatedAt = new Date(now()).toISOString()
     await repository.putJob(summarize(job))
+    await browser.progress()
     return job
   }
 
@@ -106,6 +111,7 @@ export function createImportController({
     const job = baseJob('import')
     Object.assign(job, {
       source,
+      scope,
       filterKey: list.filterKey,
       total: list.total,
       pageSize: list.pageSize,
@@ -149,9 +155,10 @@ export function createImportController({
         orderIds.some((id) => typeof id !== 'string'))
     )
       throw new Error('Invalid order selection.')
-    const ids = orderIds?.length
-      ? new Set(orderIds)
-      : new Set(records.map((record) => record.snapshot.orderId))
+    const ids =
+      orderIds === undefined
+        ? new Set(records.map((record) => record.snapshot.orderId))
+        : new Set(orderIds)
     const orders = records.filter((record) => ids.has(record.snapshot.orderId))
     if (!orders.length || orders.length !== ids.size)
       throw new Error('Choose saved orders to refresh.')
@@ -195,7 +202,6 @@ export function createImportController({
     if (active(job)) throw new Error('Pause the import before dismissing it.')
     job.dismissedAt = new Date(now()).toISOString()
     await write(job)
-    await browser.changed()
     return job
   }
 
@@ -307,7 +313,8 @@ export function createImportController({
       )
     job.detailAttempts += 1
     await write(job)
-    let snapshot
+    let snapshot,
+      saved = false
     try {
       snapshot = await browser.readDetail(job.workerTabId, order.orderId)
       if (
@@ -323,6 +330,7 @@ export function createImportController({
         ...snapshot,
         ...(order.purchasedAt ? { purchasedAt: order.purchasedAt } : {}),
       })
+      saved = true
       order.state = 'done'
       order.error = ''
     } catch (error) {
@@ -336,7 +344,7 @@ export function createImportController({
       order.error = errorText(error)
     }
     await write(job)
-    await browser.changed()
+    if (saved) await browser.changed()
     return 'continue'
   }
 
@@ -350,7 +358,6 @@ export function createImportController({
       return job.phase === 'scan' ? await scan(job) : await details(job)
     } catch (error) {
       await pause(job.id, errorText(error))
-      await browser.changed()
       return 'finished'
     }
   }

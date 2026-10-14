@@ -133,6 +133,10 @@ test('bulk picture copying preserves full pixels in separate compact Excel cells
   for (const id of ['copy-images', 'copy-excel']) {
     const button = page.locator(`#${id}`)
     await button.click()
+    await page
+      .getByRole('dialog', { name: 'Confirm operation', exact: true })
+      .getByRole('button', { name: /^Copy .* product images$/ })
+      .click()
     await expect(button).toHaveText('Copied')
     await expect(button).toHaveClass(/copied/)
     const pictures = await page.evaluate(async () => {
@@ -185,6 +189,10 @@ test('clipboard failures stay next to the copy control and can be retried', asyn
   const page = await openLibrary(extension)
   const button = page.locator('#copy-values')
   await button.click()
+  await page
+    .getByRole('dialog', { name: 'Confirm operation', exact: true })
+    .getByRole('button', { name: /^Copy .* product rows$/ })
+    .click()
   await expect(button).toHaveText('Try again')
   await expect(button).toHaveClass(/copy-failed/)
   await expect(page.locator('.copy-error')).toHaveText(
@@ -192,9 +200,76 @@ test('clipboard failures stay next to the copy control and can be retried', asyn
   )
   await expect(page.locator('#feedback')).toBeEmpty()
   await button.click()
+  await page
+    .getByRole('dialog', { name: 'Confirm operation', exact: true })
+    .getByRole('button', { name: /^Copy .* product rows$/ })
+    .click()
   await expect(button).toHaveText('Copied')
   await expect(button).toHaveClass(/copied/)
   await expect(page.locator('.copy-error')).toHaveCount(0)
   await expect(page.locator('#feedback')).toBeEmpty()
+  expect(extension.unexpectedRequests).toEqual([])
+})
+
+test('repeated original photos count per row toward the clipboard batch budget', async ({
+  extension,
+}) => {
+  const records = await extension.inspector.evaluate(
+    `(${createDemoRecords.toString()})(document)`
+  )
+  const seeded = await extension.inspector.evaluate(async (record) => {
+    const canvas = document.createElement('canvas')
+    canvas.width = canvas.height = 1400
+    const context = canvas.getContext('2d')
+    const pixels = context.createImageData(1400, 1400)
+    // Non-compressible synthetic pixels exercise the actual full PNG payload.
+    for (let offset = 0; offset < pixels.data.length; offset += 65536)
+      crypto.getRandomValues(pixels.data.subarray(offset, offset + 65536))
+    for (let offset = 3; offset < pixels.data.length; offset += 4)
+      pixels.data[offset] = 255
+    context.putImageData(pixels, 0, 0)
+    const bytesPerRow = canvas.toDataURL('image/png').length * 2
+    // The accepted compressed source expands when copied losslessly to PNG.
+    const image = canvas.toDataURL('image/jpeg', 0.4)
+    canvas.width = canvas.height = 0
+    for (const row of record.snapshot.items) row.thumbnail = image
+    const response = await chrome.runtime.sendMessage({
+      type: 'BACKUP_RESTORE',
+      backup: {
+        format: '1688-order-library',
+        version: 1,
+        exportedAt: new Date().toISOString(),
+        orders: [record],
+        history: [],
+        images: [],
+      },
+    })
+    return { response, bytesPerRow, sourceBytes: image.length }
+  }, records[0])
+  expect(seeded.response.ok, seeded.response.error).toBe(true)
+  expect(seeded.sourceBytes).toBeLessThan(2_000_000)
+  expect(seeded.bytesPerRow).toBeLessThan(32 * 1024 * 1024)
+  expect(seeded.bytesPerRow * 3).toBeGreaterThan(32 * 1024 * 1024)
+  await extension.context.addInitScript(() => {
+    window.clipboardWrites = 0
+    navigator.clipboard.write = async () => {
+      window.clipboardWrites++
+    }
+  })
+  const page = await openLibrary(extension)
+  const button = page.locator('#copy-images')
+  await button.click()
+  await page
+    .getByRole('dialog', { name: 'Confirm operation', exact: true })
+    .getByRole('button', { name: 'Copy 3 product images', exact: true })
+    .click()
+  const batches = page.getByRole('dialog', {
+    name: 'Choose image batch',
+    exact: true,
+  })
+  await expect(batches).toBeVisible()
+  await batches.getByRole('button', { name: 'Cancel', exact: true }).click()
+  await expect(button).toHaveText('Copy images')
+  expect(await page.evaluate(() => window.clipboardWrites)).toBe(0)
   expect(extension.unexpectedRequests).toEqual([])
 })

@@ -38,7 +38,16 @@ await build({
 await cp(path.join(root, 'icons'), path.join(output, 'icons'), {
   recursive: true,
 })
-for (const resource of ['library.html', 'library.css', 'theme.js'])
+await cp(path.join(root, 'src/assets'), path.join(output, 'assets'), {
+  recursive: true,
+})
+for (const resource of [
+  'library.html',
+  'library.css',
+  'packing.css',
+  'label-editor.css',
+  'theme.js',
+])
   await cp(path.join(root, 'src', resource), path.join(output, resource))
 await writeFile(
   path.join(output, 'manifest.json'),
@@ -52,6 +61,9 @@ const resources = [
   'library.css',
   'library.js',
   'theme.js',
+  'packing.css',
+  'label-editor.css',
+  'assets/casa-elida.png',
 ]
 for (const resource of resources) await readFile(path.join(output, resource))
 console.log(

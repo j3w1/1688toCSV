@@ -77,6 +77,15 @@ export async function startPreview({ port = 0 } = {}) {
       ],
     ],
   ])
+  for (const css of ['packing.css', 'label-editor.css'])
+    assets.set(`/${css}`, [
+      'text/css',
+      await readFile(path.join(root, 'src', css)),
+    ])
+  assets.set('/assets/casa-elida.png', [
+    'image/png',
+    await readFile(path.join(root, 'src/assets/casa-elida.png')),
+  ])
   const server = createServer((request, response) => {
     const asset = assets.get(new URL(request.url, 'http://127.0.0.1').pathname)
     if (!asset || request.method !== 'GET') {

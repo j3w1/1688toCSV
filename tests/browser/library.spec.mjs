@@ -29,6 +29,15 @@ async function openLibrary(extension) {
   await page.goto(`${extension.extensionBaseUrl}/library.html`)
   return page
 }
+async function confirmOperation(page, name) {
+  const dialog = page.getByRole('dialog', {
+    name: 'Confirm operation',
+    exact: true,
+  })
+  await expect(dialog).toBeVisible()
+  await dialog.getByRole('button', { name, exact: true }).click()
+  await expect(dialog).not.toBeVisible()
+}
 
 test('resuming an old bulk import requires a visible scope confirmation', async ({
   extension,
@@ -65,6 +74,7 @@ test('resuming an old bulk import requires a visible scope confirmation', async 
       })
   )
   const page = await openLibrary(extension)
+  await page.getByRole('button', { name: /^Activity/ }).click()
   await page
     .getByRole('button', { name: 'Resume / retry', exact: true })
     .click()
@@ -83,11 +93,16 @@ test('library restores complete orders and copies five columns with separate ima
   const page = await openLibrary(extension)
   await expect(page.locator('#sheet-body tr')).toHaveCount(8)
   await expect(page.locator('#order-count')).toHaveText('3')
+  await expect(
+    page.getByRole('checkbox', { name: 'Headers', exact: true })
+  ).not.toBeChecked()
+  await page.getByRole('checkbox', { name: 'Headers', exact: true }).check()
   await extension.context.grantPermissions([
     'clipboard-read',
     'clipboard-write',
   ])
   await page.getByRole('button', { name: 'Copy to Excel', exact: true }).click()
+  await confirmOperation(page, 'Copy 8 product images')
   await expect(page.locator('#copy-excel')).toHaveText('Copied')
   await expect(page.locator('#copy-excel')).toHaveClass(/copied/)
   await expect(page.locator('#feedback')).toBeEmpty()
@@ -217,6 +232,7 @@ test('copy images only produces one picture per selected row', async ({
     'clipboard-write',
   ])
   await page.getByRole('button', { name: 'Copy images', exact: true }).click()
+  await confirmOperation(page, 'Copy 3 product images')
   await expect(page.locator('#copy-images')).toHaveText('Copied')
   await expect(page.locator('#feedback')).toBeEmpty()
   const html = await page.evaluate(
@@ -266,6 +282,7 @@ test('large image backups restore and export without runtime message limits', as
   })
   await expect(page.locator('#sheet-body tr')).toHaveCount(8)
   const saved = page.waitForEvent('download')
+  await page.locator('.data-menu > summary').click()
   await page.getByRole('button', { name: 'Back up', exact: true }).click()
   const download = await saved
   expect(await download.failure()).toBeNull()
@@ -320,6 +337,7 @@ test('purchase dates group orders by month while separators stay out of copied v
     'clipboard-write',
   ])
   await page.locator('#copy-values').click()
+  await confirmOperation(page, 'Copy 8 product rows')
   await expect(page.locator('#copy-values')).toHaveText('Copied')
   const copied = await page.evaluate(async () => {
     const item = (await navigator.clipboard.read())[0]
@@ -374,6 +392,7 @@ test('old import messages can be dismissed persistently without losing orders or
       })
   )
   const page = await openLibrary(extension)
+  await page.getByRole('button', { name: /^Activity/ }).click()
   await expect(page.locator('.job').first()).toContainText(
     'Recent stopped import'
   )
@@ -383,8 +402,10 @@ test('old import messages can be dismissed persistently without losing orders or
     .click()
   await expect(page.locator('.job')).toHaveCount(1)
   await page.getByRole('button', { name: 'Dismiss all', exact: true }).click()
+  await confirmOperation(page, 'Dismiss 1 activities')
   await expect(page.locator('.job')).toHaveCount(0)
   await page.reload()
+  await page.getByRole('button', { name: /^Activity/ }).click()
   await expect(page.locator('.job')).toHaveCount(0)
   await expect(page.locator('#order-count')).toHaveText('3')
   await expect(page.locator('#sheet-body tr')).toHaveCount(8)
@@ -425,6 +446,7 @@ test('copy completion keeps controls disabled when the filter changes to no prod
     }
   })
   await page.locator('#copy-values').click()
+  await confirmOperation(page, 'Copy 8 product rows')
   await expect(page.locator('#copy-values')).toHaveAttribute(
     'aria-busy',
     'true'
@@ -436,4 +458,236 @@ test('copy completion keeps controls disabled when the filter changes to no prod
   for (const id of ['copy-values', 'copy-images', 'copy-excel'])
     await expect(page.locator(`#${id}`)).toBeDisabled()
   await expect(page.locator('#feedback')).toBeEmpty()
+})
+
+test('large libraries bound order and product DOM while progress updates avoid rereading orders', async ({
+  extension,
+}) => {
+  const [template] = await extension.inspector.evaluate(
+    `(${createDemoRecords.toString()})(document)`
+  )
+  const orders = Array.from({ length: 750 }, (_, index) => {
+    const record = structuredClone(template)
+    const number = String(index).padStart(4, '0')
+    const orderId = (920000000000000000n + BigInt(index)).toString()
+    record.snapshot.orderId = orderId
+    record.snapshot.sourceUrl = `https://air.1688.com/app/ctf-page/trade-order-detail/index.html?orderId=${orderId}`
+    record.snapshot.sellerName = `Synthetic load supplier ${number}`
+    record.snapshot.items.forEach((item, itemIndex) => {
+      item.entryId = `${orderId}${itemIndex}`
+      item.description = `Load-test product ${number}/${itemIndex}`
+    })
+    record.revision = 1
+    record.changedEntryIds = []
+    return record
+  })
+  const restored = await extension.inspector.evaluate(
+    async (orders) =>
+      chrome.runtime.sendMessage({
+        type: 'BACKUP_RESTORE',
+        backup: {
+          format: '1688-order-library',
+          version: 1,
+          exportedAt: new Date().toISOString(),
+          orders,
+          history: [],
+          images: [],
+        },
+      }),
+    orders
+  )
+  expect(restored.ok, restored.error).toBe(true)
+  const page = await openLibrary(extension)
+  await expect(page.locator('#product-count')).toHaveText('2,250')
+  await expect(page.locator('#order-count')).toHaveText('750')
+  await expect(page.locator('#sheet-body tr')).toHaveCount(100)
+  await expect(page.locator('.order-card')).toHaveCount(50)
+  await expect(page.locator('#page-label')).toHaveText('1 / 23')
+  await expect(page.locator('#orders-page')).toHaveText('1 / 15')
+  const initialProducts = await page.locator('#sheet-body tr').allTextContents()
+  const initialOrders = await page.locator('.order-card').allTextContents()
+  await page
+    .getByRole('button', { name: 'Next product page', exact: true })
+    .click()
+  await expect(page.locator('#page-label')).toHaveText('2 / 23')
+  await expect(page.locator('#sheet-body tr')).toHaveCount(100)
+  expect(await page.locator('#sheet-body tr').allTextContents()).not.toEqual(
+    initialProducts
+  )
+  await page
+    .getByRole('button', { name: 'Next order page', exact: true })
+    .click()
+  await expect(page.locator('#orders-page')).toHaveText('2 / 15')
+  await expect(page.locator('.order-card')).toHaveCount(50)
+  expect(await page.locator('.order-card').allTextContents()).not.toEqual(
+    initialOrders
+  )
+  await page.getByRole('searchbox').fill('Load-test product 0749/0')
+  await expect(page.locator('#sheet-body tr')).toHaveCount(1)
+  await expect(page.locator('#sheet-body')).toContainText(
+    'Load-test product 0749/0'
+  )
+  await expect(page.locator('#page-label')).toHaveText('1 / 1')
+  await page.getByRole('searchbox').clear()
+  await expect(page.locator('#sheet-body tr')).toHaveCount(100)
+  await expect(page.locator('#selection-summary')).toContainText('2,250 rows')
+  await page.getByRole('button', { name: /^Activity/ }).click()
+
+  // Pass through real messages/IndexedDB reads; observe that progress does not
+  // fetch or rebuild the complete library when no saved order changed.
+  await page.evaluate(() => {
+    window.libraryProgressProbe = {
+      messages: [],
+      orderReads: 0,
+      firstRow: document.querySelector('#sheet-body tr'),
+      firstOrder: document.querySelector('.order-card'),
+    }
+    const send = chrome.runtime.sendMessage.bind(chrome.runtime)
+    chrome.runtime.sendMessage = (...args) => {
+      window.libraryProgressProbe.messages.push(args[0]?.type)
+      return send(...args)
+    }
+    for (const prototype of [IDBIndex.prototype, IDBObjectStore.prototype]) {
+      const getAll = prototype.getAll
+      prototype.getAll = function (...args) {
+        if ((this.objectStore?.name || this.name) === 'orders')
+          window.libraryProgressProbe.orderReads++
+        return getAll.apply(this, args)
+      }
+    }
+  })
+  await extension.inspector.evaluate(async () => {
+    await new Promise((resolve, reject) => {
+      const request = indexedDB.open('1688-order-library')
+      request.onerror = () => reject(request.error)
+      request.onsuccess = () => {
+        const db = request.result
+        const transaction = db.transaction('jobs', 'readwrite')
+        transaction.objectStore('jobs').put({
+          id: 'synthetic-load-progress',
+          state: 'paused',
+          phase: 'details',
+          kind: 'import',
+          done: 2,
+          total: 750,
+          discovered: 750,
+          remaining: 748,
+          orders: [],
+          updatedAt: new Date().toISOString(),
+        })
+        transaction.oncomplete = () => {
+          db.close()
+          resolve()
+        }
+        transaction.onerror = () => {
+          db.close()
+          reject(transaction.error)
+        }
+      }
+    })
+    // Broadcasts have no reply; the rendered progress below proves delivery.
+    await chrome.runtime
+      .sendMessage({ type: 'IMPORT_PROGRESS' })
+      .catch(() => {})
+  })
+  await expect(page.locator('.job')).toContainText('2 saved · 750 discovered')
+  const progress = await page.evaluate(() => ({
+    messages: window.libraryProgressProbe.messages,
+    orderReads: window.libraryProgressProbe.orderReads,
+    sameRow:
+      window.libraryProgressProbe.firstRow ===
+      document.querySelector('#sheet-body tr'),
+    sameOrder:
+      window.libraryProgressProbe.firstOrder ===
+      document.querySelector('.order-card'),
+  }))
+  expect(progress.messages).toContain('JOBS_QUERY')
+  expect(progress.messages).not.toContain('LIBRARY_QUERY')
+  expect(progress.orderReads).toBe(0)
+  expect(progress.sameRow).toBe(true)
+  expect(progress.sameOrder).toBe(true)
+  await expect(page.locator('#sheet-body tr')).toHaveCount(100)
+  await expect(page.locator('.order-card')).toHaveCount(50)
+  expect(extension.unexpectedRequests).toEqual([])
+})
+
+test('purchase date refresh scopes are inclusive, cancellable and inert when empty', async ({
+  extension,
+}) => {
+  await seed(extension)
+  const page = await openLibrary(extension)
+  await expect(page.locator('#sheet-body tr')).toHaveCount(8)
+  await page.evaluate(() => {
+    window.refreshScopeMessages = []
+    const send = chrome.runtime.sendMessage.bind(chrome.runtime)
+    chrome.runtime.sendMessage = (...args) => {
+      if (args[0]?.type === 'REFRESH_ORDERS')
+        window.refreshScopeMessages.push(args[0])
+      return send(...args)
+    }
+  })
+  const initialTabs = await extension.inspector.evaluate(() =>
+    chrome.tabs.query({})
+  )
+  await page.locator('.date-range > summary').click()
+  await page.getByLabel('From', { exact: true }).fill('2026-10-08')
+  await page.getByLabel('Through', { exact: true }).fill('2026-10-12')
+  await expect(page.locator('.order-card')).toHaveCount(2)
+  await expect(page.locator('#sheet-body tr')).toHaveCount(6)
+  await page
+    .getByRole('button', { name: 'Refresh 2 matching orders', exact: true })
+    .click()
+  const confirmation = page.getByRole('dialog', {
+    name: 'Confirm operation',
+    exact: true,
+  })
+  await expect(
+    confirmation.getByRole('button', { name: 'Refresh 2 orders', exact: true })
+  ).toBeVisible()
+  expect(await page.evaluate(() => window.refreshScopeMessages)).toEqual([])
+  await confirmation
+    .getByRole('button', { name: 'Cancel', exact: true })
+    .click()
+  await expect(confirmation).not.toBeVisible()
+
+  await page.getByLabel('Through', { exact: true }).fill('2026-10-08')
+  await expect(page.locator('.order-card')).toHaveCount(1)
+  await expect(page.locator('#sheet-body tr')).toHaveCount(3)
+  await expect(page.locator('.purchase-date')).toHaveText('8 Oct 2026')
+  await page.locator('.order-card input[type=checkbox]').check()
+  await expect(page.locator('#refresh-orders')).toHaveText('Refresh 1')
+  await page.getByLabel('From', { exact: true }).fill('2026-10-20')
+  await page.getByLabel('Through', { exact: true }).fill('2026-10-21')
+  await expect(page.locator('.order-card')).toHaveCount(0)
+  await expect(page.locator('#sheet-body tr')).toHaveCount(0)
+  await expect(page.locator('#refresh-filtered')).toHaveText(
+    'Refresh 0 matching orders'
+  )
+  await expect(page.locator('#refresh-filtered')).toBeDisabled()
+  await expect(page.locator('#refresh-orders')).toBeDisabled()
+  // Exercise the empty-scope guard even if an event is dispatched programmatically.
+  await page.locator('#refresh-filtered').dispatchEvent('click')
+  await expect(confirmation).not.toBeVisible()
+
+  await page.getByRole('button', { name: 'Refresh all', exact: true }).click()
+  await expect(
+    confirmation.getByRole('button', { name: 'Refresh 3 orders', exact: true })
+  ).toBeVisible()
+  await confirmation
+    .getByRole('button', { name: 'Cancel', exact: true })
+    .click()
+  await expect(confirmation).not.toBeVisible()
+  expect(await page.evaluate(() => window.refreshScopeMessages)).toEqual([])
+  const jobs = await extension.inspector.evaluate(() =>
+    chrome.runtime.sendMessage({ type: 'JOBS_QUERY' })
+  )
+  expect(jobs.ok, jobs.error).toBe(true)
+  expect(jobs.data.jobs).toEqual([])
+  const finalTabs = await extension.inspector.evaluate(() =>
+    chrome.tabs.query({})
+  )
+  expect(finalTabs.map((tab) => tab.id).sort()).toEqual(
+    initialTabs.map((tab) => tab.id).sort()
+  )
+  expect(extension.unexpectedRequests).toEqual([])
 })

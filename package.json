@@ -1,11 +1,12 @@
 {
   "devDependencies": {
     "@playwright/test": "1.64.0",
+    "@zxing/library": "0.23.0",
     "esbuild": "0.28.2",
     "linkedom": "0.18.13",
     "prettier": "3.8.1"
   },
-  "version": "2.1.0",
+  "version": "2.2.0",
   "private": true,
   "type": "module",
   "engines": {
@@ -27,5 +28,8 @@
     "screenshots": "node scripts/screenshots.mjs",
     "format": "prettier --write .",
     "format:check": "prettier --check ."
+  },
+  "dependencies": {
+    "jsbarcode": "3.12.3"
   }
 }

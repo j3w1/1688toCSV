@@ -137,10 +137,24 @@ function extractRow(row, index) {
   const title = text(goodsQuery.one('.goods-info a.oneline'))
   if (!title)
     throw new Error(`Row ${rowNumber}: product description is missing.`)
+  const skuProperties = goodsQuery
+    .all('.sku c-t')
+    .map(text)
+    .filter(Boolean)
+    .map((raw) => {
+      const separator = raw.search(/[:：]/)
+      return {
+        label: separator < 0 ? '' : raw.slice(0, separator).trim(),
+        value: separator < 0 ? raw : raw.slice(separator + 1).trim(),
+        raw,
+      }
+    })
+  const productNumberText = text(goodsQuery.one('.sku .product-number'))
+  const productNumber = productNumberText.replace(/^货号\s*[:：]\s*/, '').trim()
   const description = [
     title,
-    ...goodsQuery.all('.sku c-t').map(text),
-    text(goodsQuery.one('.sku .product-number')),
+    ...skuProperties.map((property) => property.raw),
+    productNumberText,
   ]
     .filter(Boolean)
     .join('\n')
@@ -171,6 +185,9 @@ function extractRow(row, index) {
   return {
     thumbnail,
     description,
+    title,
+    ...(skuProperties.length ? { skuProperties } : {}),
+    ...(productNumber ? { productNumber } : {}),
     price,
     quantity,
     discount: rowDiscount(row, discount, rowNumber),
@@ -191,18 +208,43 @@ export function extractOrder(document, url) {
   const info = deepQuery(document.querySelector('app-root').shadowRoot).one(
     'order-info'
   )?.shadowRoot
-  let sellerName = 'Unknown Seller'
+  let sellerMemberLogin = ''
+  const shopOrigins = new Set()
   if (info) {
     for (const item of deepQuery(info).all('.order-info-user-content-item')) {
-      if (text(item.querySelector('.field-name')).includes('会员登录名')) {
-        sellerName = text(item.querySelectorAll('span')[1]) || sellerName
-        break
+      const label = text(item.querySelector('.field-name'))
+      if (label.includes('会员登录名')) {
+        sellerMemberLogin ||= text(item.querySelectorAll('span')[1])
+      }
+      if (label.replace(/[\s：:]/g, '') === '供应商') {
+        for (const anchor of deepQuery(item).all('a.link[href]')) {
+          try {
+            const shop = new URL(anchor.getAttribute('href'), url)
+            if (
+              ['http:', 'https:'].includes(shop.protocol) &&
+              !shop.username &&
+              !shop.password &&
+              !shop.port &&
+              /^[a-z0-9][a-z0-9-]*\.1688\.com$/.test(shop.hostname) &&
+              !['www', 'air', 'trade', 'work', 'login'].includes(
+                shop.hostname.split('.')[0]
+              )
+            )
+              shopOrigins.add(`https://${shop.hostname}`)
+          } catch {
+            // An optional supplier link does not invalidate the order itself.
+          }
+        }
       }
     }
   }
   const orderId = orderIdFromUrl(url)
   return {
-    sellerName,
+    sellerName: sellerMemberLogin || 'Unknown Seller',
+    ...(sellerMemberLogin ? { sellerMemberLogin } : {}),
+    ...(shopOrigins.size === 1
+      ? { sellerShopOrigin: [...shopOrigins][0] }
+      : {}),
     orderSuffix: /^\d+$/.test(orderId) ? orderId.slice(-4) : 'XXXX',
     dataRows: rows.map(extractRow),
   }

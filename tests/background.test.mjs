@@ -251,12 +251,25 @@ test('overlapping import messages serialize into one job and target the source f
   assert.equal(s.jobs.size, 1)
   assert.equal(s.calls.filter((x) => x[0] === 'create').length, 1)
   assert.equal(s.calls.find((x) => x[0] === 'content')[3], 2)
+  assert.equal(
+    s.calls.filter((x) => x[0] === 'broadcast' && x[1] === 'LIBRARY_CHANGED')
+      .length,
+    0
+  )
+  assert.ok(
+    s.calls.some((x) => x[0] === 'broadcast' && x[1] === 'IMPORT_PROGRESS')
+  )
   const job = [...s.jobs.values()][0]
   s.tabs.get(job.workerTabId).status = 'complete'
   s.chrome.tabs.onUpdated.emit(job.workerTabId, { status: 'complete' })
   await settle()
   assert.equal(s.saved.size, 1)
   assert.equal(s.jobs.get(job.id).state, 'completed')
+  assert.equal(
+    s.calls.filter((x) => x[0] === 'broadcast' && x[1] === 'LIBRARY_CHANGED')
+      .length,
+    1
+  )
 })
 test('marker recovers a tab created before checkpoint and never closes navigated user tabs', async () => {
   const s = setup()
@@ -514,6 +527,8 @@ test('list progress and pause/resume are limited to the original source tab and 
   const status = await s.send({ type: 'IMPORT_STATUS' }, sender)
   assert.equal(status.data.jobs[0].id, jobId)
   assert.equal(status.data.jobs[0].discovered, 1)
+  assert.equal(status.data.jobs[0].scope, 'selected')
+  assert.equal(status.data.jobs[0].remaining, 1)
   assert.equal('orders' in status.data.jobs[0], false)
   for (const other of [
     { ...sender, frameId: 0 },
