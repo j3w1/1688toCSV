@@ -478,15 +478,28 @@ test('preparation shows product photos, zooms originals and opens saved labels f
   await categoryField.fill('玻璃')
   await barcode.click()
   const label = page.getByRole('dialog', { name: 'Label editor', exact: true })
+  async function closeEditor() {
+    // The native close event is queued. Wait for its preparation rebuild before
+    // resolving a preview to scroll; scrolling does not retry a detached target.
+    const previous = await mark.elementHandle()
+    try {
+      await label
+        .getByRole('button', { name: 'Close label editor', exact: true })
+        .click()
+      await expect
+        .poll(() => previous.evaluate((node) => node.isConnected))
+        .toBe(false)
+    } finally {
+      await previous.dispose()
+    }
+  }
   await expect(label.getByLabel('Barcode code', { exact: true })).toHaveValue(
     `${baseCode}S`
   )
   await expect(
     label.getByRole('button', { name: 'Copy label', exact: true })
   ).toBeEnabled({ timeout: 20_000 })
-  await label
-    .getByRole('button', { name: 'Close label editor', exact: true })
-    .click()
+  await closeEditor()
   await mark.click()
   await expect(label.getByLabel('Base CE code', { exact: true })).toHaveValue(
     baseCode
@@ -494,9 +507,7 @@ test('preparation shows product photos, zooms originals and opens saved labels f
   await expect(
     label.getByLabel('Chinese category', { exact: true })
   ).toHaveValue('玻璃')
-  await label
-    .getByRole('button', { name: 'Close label editor', exact: true })
-    .click()
+  await closeEditor()
   await mark.scrollIntoViewIfNeeded()
   await expect(mark.getByAltText('Carton mark preview')).toBeVisible({
     timeout: 20_000,
