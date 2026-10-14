@@ -129,6 +129,131 @@ function snapshot(source) {
   })
 }
 
+test('wholesale prices and adjustments already in row discounts are not subtracted twice', () => {
+  for (const includedAdjustment of [false, true]) {
+    const rowDiscount = includedAdjustment ? '15.00' : '10.00'
+    const source = fixture({
+      rows: [{ price: '2.00', quantity: '50', sourceDiscount: rowDiscount }],
+      totals: {
+        goodsGross: '120.00',
+        shipping: '4.00',
+        sourceDiscount: '10.00',
+        orderAdjustment: '减 ¥5.00',
+        payable: '89.00',
+      },
+    })
+    source.field('批发优惠', '减 ¥20.00')
+    source.totalDiscount.textContent = '30.00'
+    const result = snapshot(source)
+    assert.equal(result.totals.goodsGross, '120.00')
+    assert.equal(result.totals.priceIncludedDiscount, '20.00')
+    assert.equal(
+      result.totals.rowIncludedAdjustment,
+      includedAdjustment ? '5.00' : undefined
+    )
+    assert.equal(result.totals.orderAdjustment, '5.00')
+    assert.equal(result.totals.goodsNet, '85.00')
+    assert.equal(result.items[0].price, '2.00')
+    assert.equal(result.items[0].sourceDiscount, rowDiscount)
+    assert.equal(
+      result.items[0].allocatedDiscount,
+      includedAdjustment ? '0.00' : '5.00'
+    )
+    assert.equal(result.items[0].discount, '15.00')
+  }
+})
+
+test('wholesale prices coexist with order-only shop coupons and red packets', () => {
+  const source = fixture({
+    rows: [{ price: '2.00', quantity: '50', sourceDiscount: '10.00' }],
+    totals: {
+      goodsGross: '120.00',
+      shipping: '4.00',
+      sourceDiscount: '10.00',
+      redPacketDiscount: '减 ¥2.00',
+      payable: '89.00',
+    },
+  })
+  source.field('批发优惠', '减 ¥20.00')
+  source.field('店铺优惠', '减 ¥3.00')
+  source.totalDiscount.textContent = '33.00'
+  const result = snapshot(source)
+  assert.equal(result.totals.orderDiscount, '3.00')
+  assert.equal(result.totals.goodsNet, '87.00')
+  assert.equal(result.totals.payable, '89.00')
+  assert.equal(result.items[0].discount, '10.00')
+  assert.equal(result.items[0].allocatedDiscount, '0.00')
+})
+
+test('wholesale reductions can instead be in row discounts; embedded adjustment needs no wholesale field', () => {
+  for (const wholesale of [false, true]) {
+    const source = fixture({
+      rows: [
+        {
+          price: '2.40',
+          quantity: '50',
+          sourceDiscount: wholesale ? '35.00' : '15.00',
+        },
+      ],
+      totals: {
+        goodsGross: '120.00',
+        shipping: '0.00',
+        sourceDiscount: '10.00',
+        orderAdjustment: '减 ¥5.00',
+        payable: wholesale ? '85.00' : '105.00',
+      },
+    })
+    if (wholesale) {
+      source.field('批发优惠', '减 ¥20.00')
+      source.totalDiscount.textContent = '30.00'
+    }
+    const result = snapshot(source)
+    assert.equal(result.totals.priceIncludedDiscount, undefined)
+    assert.equal(result.totals.rowIncludedAdjustment, '5.00')
+    assert.equal(result.items[0].allocatedDiscount, '0.00')
+  }
+})
+
+test('unexplained gross gaps, partial or ambiguous adjustments and bad payable still fail', () => {
+  function discounted() {
+    const source = fixture({
+      rows: [{ price: '2.00', quantity: '50', sourceDiscount: '15.00' }],
+      totals: {
+        goodsGross: '120.00',
+        shipping: '0.00',
+        sourceDiscount: '10.00',
+        orderAdjustment: '减 ¥5.00',
+        payable: '85.00',
+      },
+    })
+    source.field('批发优惠', '减 ¥20.00')
+    source.totalDiscount.textContent = '30.00'
+    return source
+  }
+  for (const gross of ['119.99', '100.01', '99.99']) {
+    const source = discounted()
+    source.fields['原价总计'].textContent = `¥${gross}`
+    assert.throws(() => snapshot(source), /Product rows do not reconcile/)
+  }
+  const partial = discounted()
+  partial.fields['商品改价'].textContent = '减 ¥6.00'
+  assert.throws(() => snapshot(partial), /Product rows do not reconcile/)
+  const ambiguous = discounted()
+  ambiguous.field('店铺优惠', '减 ¥10.00')
+  ambiguous.totalDiscount.textContent = '40.00'
+  assert.throws(() => snapshot(ambiguous), /unambiguously/)
+  const payable = discounted()
+  payable.payable.querySelector('.sub-ammount').textContent = '01'
+  assert.throws(() => snapshot(payable), /payable amount does not reconcile/)
+  const missingWholesale = discounted()
+  missingWholesale.fields['批发优惠'].parentNode.remove()
+  missingWholesale.totalDiscount.textContent = '10.00'
+  assert.throws(
+    () => snapshot(missingWholesale),
+    /Product rows do not reconcile/
+  )
+})
+
 test('shop discounts stay separate only to the extent not already present in product rows', () => {
   // The footer reports 2.40 product discounts plus a 1.60 shop coupon.
   for (const [rowDiscount, orderDiscount] of [

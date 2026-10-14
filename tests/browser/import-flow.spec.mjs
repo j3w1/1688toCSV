@@ -20,6 +20,7 @@ function completeOrder(
     redPacket = false,
     shopDiscount = false,
     foreignFee = false,
+    includedDiscounts = false,
     unsupported = false,
   } = {}
 ) {
@@ -51,9 +52,10 @@ function completeOrder(
     .split('.')
   totals.attachShadow({ mode: 'open' }).innerHTML = `
     <div class="detail-price">
-      <dl><dt>原价总计</dt><dd>¥66.00</dd></dl>
+      <dl><dt>原价总计</dt><dd>¥${includedDiscounts ? '86.00' : '66.00'}</dd></dl>
       <dl><dt>运费</dt><dd>¥4.40</dd></dl>
-      <dl><dt>商品优惠</dt><dd>减 ¥2.40</dd></dl>
+      <dl><dt>商品优惠</dt><dd>减 ¥${includedDiscounts ? '1.00' : '2.40'}</dd></dl>
+      ${includedDiscounts ? '<dl><dt>批发优惠</dt><dd>减 ¥20.00</dd></dl><dl><dt>商品改价</dt><dd>减 ¥1.40</dd></dl>' : ''}
       ${customization ? '<dl><dt>定制服务</dt><dd>¥12.50</dd></dl>' : ''}
       ${redPacket ? '<dl><dt>红包</dt><dd>减 ¥1.25</dd></dl>' : ''}
       ${shopDiscount ? '<dl><dt>店铺优惠</dt><dd>减 ¥1.60</dd></dl>' : ''}
@@ -74,6 +76,7 @@ async function setup(
     redPacket = false,
     shopDiscount = false,
     foreignFee = false,
+    includedDiscounts = false,
     unsupportedIds = [],
   } = {}
 ) {
@@ -98,7 +101,7 @@ async function setup(
       body = `<script>
         ${buildOrderFixture.toString()}
         ${completeOrder.toString()}
-        setTimeout(() => completeOrder(document, ${JSON.stringify(id)}, ${JSON.stringify({ summary, customization, redPacket, shopDiscount, foreignFee, unsupported: unsupportedIds.includes(id) })}), ${typeof delay === 'object' ? delay[id] || 0 : delay});
+        setTimeout(() => completeOrder(document, ${JSON.stringify(id)}, ${JSON.stringify({ summary, customization, redPacket, shopDiscount, foreignFee, includedDiscounts, unsupported: unsupportedIds.includes(id) })}), ${typeof delay === 'object' ? delay[id] || 0 : delay});
       </script>`
     }
     await route.fulfill({
@@ -145,6 +148,51 @@ async function assertImported(extension, library) {
   expect(copied).toContain('0.30')
   expect(extension.unexpectedRequests).toEqual([])
 }
+
+test('wholesale prices and embedded adjustments import without double deductions in Excel copying', async ({
+  extension,
+}) => {
+  const { list, library } = await setup(extension, {
+    includedDiscounts: true,
+    summary: '21.00',
+  })
+  await list
+    .getByRole('button', { name: 'Import selected', exact: true })
+    .click()
+  await list
+    .getByRole('button', { name: 'Import 2 selected orders', exact: true })
+    .click()
+  await assertImported(extension, library)
+  const { data } = await extension.inspector.evaluate(() =>
+    chrome.runtime.sendMessage({ type: 'LIBRARY_QUERY' })
+  )
+  for (const { snapshot } of data.orders) {
+    expect(snapshot.totals).toMatchObject({
+      goodsGross: '86.00',
+      priceIncludedDiscount: '20.00',
+      sourceDiscount: '2.40',
+      orderAdjustment: '1.40',
+      rowIncludedAdjustment: '1.40',
+      goodsNet: '63.60',
+      payable: '68.00',
+    })
+    expect(snapshot.items.map((item) => item.allocatedDiscount)).toEqual([
+      '0.00',
+      '0.00',
+    ])
+    expect(snapshot.items.map((item) => item.discount)).toEqual([
+      '2.10',
+      '0.30',
+    ])
+  }
+  await library.locator('.order-card button').first().click()
+  await expect(library.locator('#order-details')).toContainText(
+    'Wholesale discount (already in prices)'
+  )
+  await expect(library.locator('#order-details')).toContainText(
+    'Order adjustment (already in product discounts)'
+  )
+})
 
 test('order-only shop discounts and unspecified foreign fees import without changing copied product discounts', async ({
   extension,
@@ -367,7 +415,9 @@ test('selected import reaches persistent spreadsheet and clipboard through real 
   await list
     .getByRole('checkbox', { name: `Select order ${ids[0]}`, exact: true })
     .check()
-  await list.getByRole('searchbox').fill('no matching synthetic product')
+  await list
+    .getByRole('searchbox', { name: 'Search products and orders', exact: true })
+    .fill('no matching synthetic product')
   await expect(list.locator('#sheet-body tr')).toHaveCount(0)
   await list.getByRole('button', { name: 'Refresh all', exact: true }).click()
   const refresh = list.getByRole('dialog', {
@@ -382,7 +432,9 @@ test('selected import reaches persistent spreadsheet and clipboard through real 
   await expect.poll(() => visited.length, { timeout: 40_000 }).toBe(4)
   await expect(list.locator('#refresh-all')).toBeEnabled({ timeout: 20_000 })
   expect(visited.slice(2).sort()).toEqual([...ids].sort())
-  await list.getByRole('searchbox').clear()
+  await list
+    .getByRole('searchbox', { name: 'Search products and orders', exact: true })
+    .clear()
   await list.getByRole('button', { name: 'Show all', exact: true }).click()
   await expect(list.locator('#sheet-body tr')).toHaveCount(4)
   expect(extension.unexpectedRequests).toEqual([])

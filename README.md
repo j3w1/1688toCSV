@@ -37,19 +37,19 @@ Click **Barcode** or **Carton mark** and edit the preview. **Enter** or leaving 
 
 | Copy action                         | What to paste                                                                                                                   |
 | ----------------------------------- | ------------------------------------------------------------------------------------------------------------------------------- |
-| **Copy values**                     | Thumbnail placeholder, description, original unit price, quantity and discount                                                  |
+| **Copy values**                     | Thumbnail placeholder, description, displayed unit price, quantity and discount                                                  |
 | **Copy images** / **Copy to Excel** | Separate product pictures, or the five source columns with pictures                                                             |
 | **Copy preparation columns**        | Your chosen code, barcode, description, Spanish description and financial columns; the base code appears once per product group |
 | **Copy group codes**                | One base code per group                                                                                                         |
 
 Select rows to limit a copy; otherwise all filtered rows are used. **Headers** starts off and remembers your choice. Batch actions ask for confirmation. Pictures paste as floating images; successful buttons show **Copied**.
 
-Filter orders by purchase month or date range, then use **Refresh matching orders**. You can also refresh selected orders or all orders. Use **Activity** to pause, retry or dismiss imports, or **Save import report** to inspect every result. Retry keeps successful saves and revisits failures. The sun/moon button changes the default dark appearance.
+Search orders by seller or order number and filter by purchase month or date range, then use **Refresh matching orders**. You can also refresh selected orders or all orders. Use **Activity** to pause, retry or dismiss imports, or **Save import report** to inspect every result. Retry keeps successful saves and revisits failures. The sun/moon button changes the default dark appearance.
 
 ## Keep your data
 
 Data stays in this browser. Use **Data → Back up** before uninstalling, clearing its profile or moving computers; **Restore** brings it back with your reserved codes. Refreshes preserve your preparation edits. Use one buyer account per library.
 
-Discounts include each product's reduction and its share of order-wide price changes. Order-only shop discounts, shipping, customization charges and red-packet reductions (红包) stay separate in order totals. The detail-page **Download CSV** also remains available, with product discounts only.
+Discounts include each product's reduction and its share of order-wide price changes. Reductions already reflected in prices or discounts are counted once. Order-only shop discounts, shipping, customization charges and red-packet reductions (红包) stay separate in order totals. The detail-page **Download CSV** also remains available, with product discounts only.
 
 For development commands, code allocation, backups and test coverage, see [development notes](docs/development.md). [Store preparation](CHROMEWEBSTORE.md) records permissions, privacy and publication status.

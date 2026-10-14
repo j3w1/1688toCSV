@@ -501,6 +501,56 @@ test('order-only discounts and unspecified foreign fees preserve product rows an
     expect(record.snapshot.items).toEqual(snapshot().items)
 })
 
+test('included discounts survive refresh and backup while preserving source rows and original totals', async ({
+  extension,
+}) => {
+  const page = await openTestDatabase(extension)
+  const result = await page.evaluate(async (first) => {
+    await library.saveSnapshot(first)
+    const oldBackup = await library.exportBackup()
+    const next = {
+      ...first,
+      observedAt: '2026-01-02T12:00:00.000Z',
+      totals: {
+        ...first.totals,
+        goodsGross: '30.00',
+        priceIncludedDiscount: '5.00',
+        orderAdjustment: '0.50',
+        rowIncludedAdjustment: '0.50',
+      },
+    }
+    const saved = await library.saveSnapshot(next)
+    const unchanged = await library.saveSnapshot({
+      ...next,
+      observedAt: '2026-01-03T12:00:00.000Z',
+    })
+    const backup = await library.exportBackup()
+    const restored = await openOrderDatabase({
+      name: `${databaseName}-included`,
+    })
+    await restored.restoreBackup(oldBackup)
+    const old = await restored.getOrder(first.orderId)
+    await restored.restoreBackup(backup)
+    const current = await restored.getOrder(first.orderId)
+    const history = await restored.getHistory(first.orderId)
+    restored.close()
+    return { saved, unchanged, old, current, history }
+  }, snapshot())
+  expect(result.saved.changed).toBe(true)
+  expect(result.saved.order.changedEntryIds).toEqual([])
+  expect(result.unchanged.changed).toBe(false)
+  expect(result.old.snapshot.totals).toEqual(snapshot().totals)
+  expect(result.current.snapshot.totals).toEqual({
+    ...snapshot().totals,
+    goodsGross: '30.00',
+    priceIncludedDiscount: '5.00',
+    orderAdjustment: '0.50',
+    rowIncludedAdjustment: '0.50',
+  })
+  expect(result.current.snapshot.items).toEqual(snapshot().items)
+  expect(result.history).toHaveLength(1)
+})
+
 test('invalid order-only discounts or foreign-fee flags reject snapshots and entire backups atomically', async ({
   extension,
 }) => {
@@ -515,6 +565,13 @@ test('invalid order-only discounts or foreign-fee flags reject snapshots and ent
       next.snapshot.orderId
     )
     const invalidTotals = [
+      { priceIncludedDiscount: '-1.00', goodsGross: '24.00' },
+      { priceIncludedDiscount: '1.00' },
+      { priceIncludedDiscount: '0.001' },
+      { rowIncludedAdjustment: '-1.00', orderAdjustment: '-1.00' },
+      { rowIncludedAdjustment: '0.50' },
+      { rowIncludedAdjustment: '5.00', orderAdjustment: '5.00' },
+      { rowIncludedAdjustment: '0.001' },
       { orderDiscount: '-1.00', goodsNet: '25.00', payable: '27.00' },
       { orderDiscount: '0.001' },
       { orderDiscount: '25.00', goodsNet: '-1.00', payable: '1.00' },

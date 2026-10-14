@@ -605,4 +605,15 @@ test('list progress and pause/resume are limited to the original source tab and 
     (await s.send({ type: 'IMPORT_STATUS' }, sender)).data.jobs[0].error,
     /Expected 40/
   )
+  job.state = 'running'
+  const continuing = (await s.send({ type: 'IMPORT_STATUS' }, sender)).data
+    .jobs[0]
+  assert.equal(continuing.error, '')
+  assert.equal(continuing.failed, 1)
+  assert.equal(job.orders[0].error, 'Expected 40 product rows but read 3.')
+  job.error = 'A job-level problem'
+  assert.equal(
+    (await s.send({ type: 'IMPORT_STATUS' }, sender)).data.jobs[0].error,
+    'A job-level problem'
+  )
 })

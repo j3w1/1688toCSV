@@ -131,6 +131,7 @@ function readTotals(appQuery) {
   const fields = query.all('.detail-price dl')
   const totals = { sourceDiscount: 0n, orderAdjustment: 0n }
   let shopDiscount = 0n
+  let wholesaleDiscount = 0n
   let foreignCurrencyFeeUnspecified = false
   const labels = new Set()
   for (const field of fields) {
@@ -170,6 +171,7 @@ function readTotals(appQuery) {
       if (discount < 0n) throw new Error(`${label} is not a reduction.`)
       totals.sourceDiscount += discount
       if (label === '店铺优惠') shopDiscount += discount
+      if (label === '批发优惠') wholesaleDiscount += discount
     } else
       throw Object.assign(new Error(`Unsupported order total: ${label}.`), {
         retryable: false,
@@ -223,7 +225,12 @@ function readTotals(appQuery) {
   )
   if (!match) throw new Error('The CNY payable amount is missing or ambiguous.')
   totals.payable = moneyToCents(match[1].replaceAll(',', ''))
-  return { totals, shopDiscount, foreignCurrencyFeeUnspecified }
+  return {
+    totals,
+    shopDiscount,
+    wholesaleDiscount,
+    foreignCurrencyFeeUnspecified,
+  }
 }
 
 /** Allocate a signed reduction in exact cents, preserving source item order. */
@@ -300,8 +307,12 @@ export function extractOrderSnapshot(
     price: normalizePrice(row.price),
     sourceDiscount: discount,
   }))
-  const { totals, shopDiscount, foreignCurrencyFeeUnspecified } =
-    readTotals(appQuery)
+  const {
+    totals,
+    shopDiscount,
+    wholesaleDiscount,
+    foreignCurrencyFeeUnspecified,
+  } = readTotals(appQuery)
   const actualGross = items.reduce(
     (sum, item) => sum + lineGrossCents(item.price, item.quantity),
     0n
@@ -310,21 +321,51 @@ export function extractOrderSnapshot(
     (sum, item) => sum + moneyToCents(item.sourceDiscount),
     0n
   )
-  // A shop coupon may appear only in the order breakdown, partly on rows,
-  // or entirely on rows. Only its evidenced remainder stays order-only.
-  const orderDiscount = totals.sourceDiscount - actualDiscount
+  // Wholesale prices can already include the explicitly displayed wholesale
+  // reduction. Accept only the whole evidenced amount, never an arbitrary gap.
+  const priceIncludedDiscount = totals.goodsGross - actualGross
   if (
-    actualGross !== totals.goodsGross ||
-    orderDiscount < 0n ||
-    orderDiscount > shopDiscount
+    priceIncludedDiscount !== 0n &&
+    priceIncludedDiscount !== wholesaleDiscount
   )
     throw new Error(
       'Product rows do not reconcile with the order totals. The order may be incomplete.'
     )
+  // Some row summaries include the entire price adjustment too. Reconcile both
+  // supported presentations against the breakdown, not the payable difference.
+  // A shop coupon's remaining part stays order-only. Ambiguous mappings fail.
+  const candidates = [
+    0n,
+    ...(totals.orderAdjustment > 0n ? [totals.orderAdjustment] : []),
+  ]
+    .map((rowIncludedAdjustment) => ({
+      rowIncludedAdjustment,
+      orderDiscount:
+        totals.sourceDiscount -
+        priceIncludedDiscount +
+        rowIncludedAdjustment -
+        actualDiscount,
+    }))
+    .filter(
+      ({ orderDiscount }) =>
+        orderDiscount >= 0n && orderDiscount <= shopDiscount
+    )
+  if (candidates.length !== 1)
+    throw new Error(
+      'Product rows do not reconcile unambiguously with the order totals. The order may be incomplete.'
+    )
+  const { rowIncludedAdjustment, orderDiscount } = candidates[0]
   totals.sourceDiscount = actualDiscount
+  if (priceIncludedDiscount > 0n)
+    totals.priceIncludedDiscount = priceIncludedDiscount
+  if (rowIncludedAdjustment > 0n)
+    totals.rowIncludedAdjustment = rowIncludedAdjustment
   if (orderDiscount > 0n) totals.orderDiscount = orderDiscount
   totals.goodsNet =
-    totals.goodsGross - actualDiscount - totals.orderAdjustment - orderDiscount
+    actualGross -
+    actualDiscount -
+    (totals.orderAdjustment - rowIncludedAdjustment) -
+    orderDiscount
   if (
     totals.goodsNet < 0n ||
     totals.payable < 0n ||
@@ -339,7 +380,7 @@ export function extractOrderSnapshot(
     )
   const allocations = allocateOrderAdjustment(
     items,
-    centsToMoney(totals.orderAdjustment)
+    centsToMoney(totals.orderAdjustment - rowIncludedAdjustment)
   )
   const purchasedAt = readPurchaseDate(appQuery)
   return {

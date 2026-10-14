@@ -289,9 +289,13 @@ export function mountListToolbar(document, { readList, send }) {
               ? `Finding orders · list page ${job.page || 1}`
               : 'Reading full order details'
             : job.state.replaceAll('-', ' ')
-        progressText.textContent = `${phase} · ${job.completed || 0} saved / ${count} discovered · ${remaining} remaining${job.failed ? ` · ${job.failed} failed` : ''}${job.error ? ` — ${job.error}` : ''}`
+        progressText.textContent = `${phase} · ${job.completed || 0} saved / ${count} discovered · ${remaining} remaining${job.failed ? ` · ${job.failed} failed${job.state === 'running' && !job.error ? '; continuing' : ''}` : ''}${job.error ? ` — ${job.error}` : ''}`
         progressText.className =
-          job.state === 'paused' || job.failed ? 'error' : ''
+          job.state === 'paused' ||
+          job.error ||
+          (job.failed && job.state !== 'running')
+            ? 'error'
+            : ''
         pause.hidden = job.state === 'completed'
         pause.textContent =
           job.state === 'running' ? 'Pause import' : 'Resume / retry'

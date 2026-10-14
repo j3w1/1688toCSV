@@ -167,6 +167,13 @@ test('selected import shows progress, errors and working pause/resume on the lis
   await expect(
     page.getByRole('button', { name: 'Import selected', exact: true })
   ).toBeDisabled()
+  await page.evaluate(async () => {
+    toolbarTest.jobs[0].failed = 1
+    await toolbar.refresh()
+  })
+  const continuing = page.getByText(/1 failed; continuing/)
+  await expect(continuing).toBeVisible()
+  await expect(continuing).not.toHaveClass('error')
   await page.getByRole('button', { name: 'Pause import', exact: true }).click()
   await expect(page.getByRole('status')).toContainText('Import paused')
   await page.evaluate(async () => {

@@ -231,7 +231,8 @@ function jobStatus(job) {
     updatedAt,
     error:
       job.error ||
-      job.orders.find((order) => order.state === 'failed')?.error ||
+      (state !== 'running' &&
+        job.orders.find((order) => order.state === 'failed')?.error) ||
       '',
     completed,
     remaining: Math.max(0, Math.max(total || 0, job.orders.length) - completed),

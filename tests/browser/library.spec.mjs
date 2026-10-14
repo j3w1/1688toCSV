@@ -210,7 +210,9 @@ test('filters and explicit product selections determine copy scope', async ({
 }) => {
   await seed(extension)
   const page = await openLibrary(extension)
-  await page.getByRole('searchbox').fill('candle')
+  await page
+    .getByRole('searchbox', { name: 'Search products and orders', exact: true })
+    .fill('candle')
   await expect(page.locator('#sheet-body tr')).toHaveCount(2)
   await page.locator('#sheet-body input[type=checkbox]').first().check()
   await page.getByRole('checkbox', { name: 'Headers', exact: true }).uncheck()
@@ -225,7 +227,9 @@ test('filters and explicit product selections determine copy scope', async ({
   expect(text).not.toContain('Thumbnail')
   expect(text.split('\t')).toHaveLength(5)
   expect(text).toContain('warm amber')
-  await page.getByRole('searchbox').clear()
+  await page
+    .getByRole('searchbox', { name: 'Search products and orders', exact: true })
+    .clear()
   await page
     .getByRole('checkbox', { name: 'Changed only', exact: true })
     .check()
@@ -535,7 +539,9 @@ test('copy completion keeps controls disabled when the filter changes to no prod
     'aria-busy',
     'true'
   )
-  await page.getByRole('searchbox').fill('no matching synthetic products')
+  await page
+    .getByRole('searchbox', { name: 'Search products and orders', exact: true })
+    .fill('no matching synthetic products')
   await expect(page.locator('#sheet-body tr')).toHaveCount(0)
   await page.evaluate(() => window.finishSyntheticCopy())
   await expect(page.locator('#copy-values')).toHaveText('Copied')
@@ -606,13 +612,31 @@ test('large libraries bound order and product DOM while progress updates avoid r
   expect(await page.locator('.order-card').allTextContents()).not.toEqual(
     initialOrders
   )
-  await page.getByRole('searchbox').fill('Load-test product 0749/0')
+  await page
+    .getByRole('searchbox', { name: 'Search orders', exact: true })
+    .fill('SUPPLIER 0749')
+  await expect(page.locator('.order-card')).toHaveCount(1)
+  await expect(page.locator('.order-card')).toContainText(
+    'Synthetic load supplier 0749'
+  )
+  await expect(page.locator('#orders-page')).toHaveText('1 / 1')
+  await expect(page.locator('#sheet-body tr')).toHaveCount(3)
+  await page
+    .getByRole('searchbox', { name: 'Search orders', exact: true })
+    .clear()
+  await expect(page.locator('.order-card')).toHaveCount(50)
+  await expect(page.locator('#orders-page')).toHaveText('1 / 15')
+  await page
+    .getByRole('searchbox', { name: 'Search products and orders', exact: true })
+    .fill('Load-test product 0749/0')
   await expect(page.locator('#sheet-body tr')).toHaveCount(1)
   await expect(page.locator('#sheet-body')).toContainText(
     'Load-test product 0749/0'
   )
   await expect(page.locator('#page-label')).toHaveText('1 / 1')
-  await page.getByRole('searchbox').clear()
+  await page
+    .getByRole('searchbox', { name: 'Search products and orders', exact: true })
+    .clear()
   await expect(page.locator('#sheet-body tr')).toHaveCount(100)
   await expect(page.locator('#selection-summary')).toContainText('2,250 rows')
   await page.getByRole('button', { name: /^Activity/ }).click()

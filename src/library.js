@@ -158,7 +158,7 @@ export async function startLibrary(
     if (event.key === headerPreference || event.key === null)
       $('include-headers').checked = event.newValue === 'true'
   })
-  let jobTimer, searchTimer
+  let jobTimer, searchTimer, orderSearchTimer
   async function send(type, data = {}) {
     // Extension pages share IndexedDB with the worker. Large libraries and
     // image backups must not cross Chrome's runtime message size limit.
@@ -273,14 +273,20 @@ export async function startLibrary(
       )
     }
   }
-  function ordersInMonth() {
+  function matchingOrders() {
     const month = $('month-filter').value
+    const search = $('order-search').value.trim().toLocaleLowerCase()
     const from = $('date-from').value,
       to = $('date-to').value
     return records.filter((record) => {
-      const day = purchaseDay(record.snapshot)
+      const order = record.snapshot
+      const day = purchaseDay(order)
       return (
-        (!month || purchaseMonth(record.snapshot) === month) &&
+        (!search ||
+          [order.sellerName, order.sellerMemberLogin, order.orderId].some(
+            (value) => value?.toLocaleLowerCase().includes(search)
+          )) &&
+        (!month || purchaseMonth(order) === month) &&
         (!(from || to) || (day && (!from || day >= from) && (!to || day <= to)))
       )
     })
@@ -289,7 +295,7 @@ export async function startLibrary(
     const search = $('search').value.trim().toLocaleLowerCase()
     const status = $('status-filter').value
     const changedOnly = $('changes-only').checked
-    return ordersInMonth().flatMap((record) => {
+    return matchingOrders().flatMap((record) => {
       const order = record.snapshot
       if (selectedOrders.size && !selectedOrders.has(order.orderId)) return []
       if (status && order.status !== status) return []
@@ -359,7 +365,7 @@ export async function startLibrary(
     const list = $('order-list')
     list.replaceChildren()
     let lastMonth
-    const matching = ordersInMonth()
+    const matching = matchingOrders()
     orderPage = Math.min(
       orderPage,
       Math.max(0, Math.ceil(matching.length / 50) - 1)
@@ -368,6 +374,10 @@ export async function startLibrary(
       `${orderPage + 1} / ${Math.max(1, Math.ceil(matching.length / 50))}`
     $('orders-prev').disabled = orderPage === 0
     $('orders-next').disabled = (orderPage + 1) * 50 >= matching.length
+    if (!matching.length)
+      list.append(
+        node('p', 'No orders match these filters.', 'order-search-empty')
+      )
     for (const record of matching.slice(orderPage * 50, (orderPage + 1) * 50)) {
       const order = record.snapshot
       const month = purchaseMonth(order)
@@ -516,7 +526,7 @@ export async function startLibrary(
     const running = jobs.some((job) => job.state === 'running')
     $('refresh-orders').disabled = !selectedOrders.size || running
     $('refresh-all').disabled = !records.length || running
-    $('refresh-filtered').disabled = !ordersInMonth().length || running
+    $('refresh-filtered').disabled = !matchingOrders().length || running
     $('jobs').replaceChildren()
     const sorted = [...jobs].sort((a, b) =>
       (b.updatedAt || '').localeCompare(a.updatedAt || '')
@@ -800,8 +810,21 @@ export async function startLibrary(
     const totals = node('dl')
     for (const [label, value] of [
       ['Original goods', order.totals.goodsGross],
+      ...(order.totals.priceIncludedDiscount !== undefined
+        ? [
+            [
+              'Wholesale discount (already in prices)',
+              `−${order.totals.priceIncludedDiscount}`,
+            ],
+          ]
+        : []),
       ['Product discounts', order.totals.sourceDiscount],
-      ['Order adjustment (allocated)', order.totals.orderAdjustment],
+      [
+        Number(order.totals.rowIncludedAdjustment) > 0
+          ? 'Order adjustment (already in product discounts)'
+          : 'Order adjustment (allocated)',
+        order.totals.orderAdjustment,
+      ],
       ...(order.totals.orderDiscount !== undefined
         ? [['Shop discount (order only)', `−${order.totals.orderDiscount}`]]
         : []),
@@ -825,7 +848,7 @@ export async function startLibrary(
       totals,
       node(
         'p',
-        'Order-wide price changes are allocated in proportion to each product’s value after its own discounts. Order-only shop discounts, shipping, customization services and red-packet payment reductions stay separate. Discounts are totals per row.'
+        'Price changes not already included in product discounts are allocated in proportion to each product’s value after its own discounts. Wholesale reductions already in prices are counted once. Order-only shop discounts, shipping, customization services and red-packet payment reductions stay separate. Discounts are totals per row.'
       )
     )
     if (order.foreignCurrencyFeeUnspecified)
@@ -997,9 +1020,11 @@ export async function startLibrary(
       copyAction($(id), (progress) => copy(mode, progress))
     )
   action('all-orders', () => {
+    clearTimeout(orderSearchTimer)
     selectedOrders.clear()
     selectedRows.clear()
     $('month-filter').value = ''
+    $('order-search').value = ''
     $('date-from').value = ''
     $('date-to').value = ''
     orderPage = 0
@@ -1038,7 +1063,7 @@ export async function startLibrary(
     refreshOrders(records.map((record) => record.snapshot.orderId))
   )
   action('refresh-filtered', () =>
-    refreshOrders(ordersInMonth().map((record) => record.snapshot.orderId))
+    refreshOrders(matchingOrders().map((record) => record.snapshot.orderId))
   )
   action('activity-open', () => $('activity-drawer').showModal())
   action('pause-active', async () => {
@@ -1103,6 +1128,14 @@ export async function startLibrary(
       page = 0
       renderRows()
     }, 150)
+  })
+  $('order-search').addEventListener('input', () => {
+    clearTimeout(orderSearchTimer)
+    selectedOrders.clear()
+    selectedRows.clear()
+    page = 0
+    orderPage = 0
+    orderSearchTimer = setTimeout(render, 150)
   })
   for (const id of ['status-filter', 'changes-only'])
     $(id).addEventListener('change', () => {

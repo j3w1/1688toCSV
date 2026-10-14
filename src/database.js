@@ -19,6 +19,8 @@ const optionalTotalFields = [
   'customizationService',
   'redPacketDiscount',
   'orderDiscount',
+  'priceIncludedDiscount',
+  'rowIncludedAdjustment',
 ]
 
 function object(value, label) {
@@ -119,13 +121,20 @@ function validateAmounts(items, totals) {
     Object.entries(totals).map(([field, value]) => [field, moneyToCents(value)])
   )
   const orderDiscount = amounts.orderDiscount ?? 0n
+  const priceIncludedDiscount = amounts.priceIncludedDiscount ?? 0n
+  const rowIncludedAdjustment = amounts.rowIncludedAdjustment ?? 0n
   const goodsNet = goodsGross - sourceDiscount - orderAdjustment - orderDiscount
   const customizationService = amounts.customizationService ?? 0n
   const redPacketDiscount = amounts.redPacketDiscount ?? 0n
   if (
-    goodsGross !== amounts.goodsGross ||
+    goodsGross + priceIncludedDiscount !== amounts.goodsGross ||
     sourceDiscount !== amounts.sourceDiscount ||
-    orderAdjustment !== amounts.orderAdjustment ||
+    orderAdjustment + rowIncludedAdjustment !== amounts.orderAdjustment ||
+    priceIncludedDiscount < 0n ||
+    rowIncludedAdjustment < 0n ||
+    rowIncludedAdjustment > sourceDiscount ||
+    (rowIncludedAdjustment !== 0n &&
+      rowIncludedAdjustment !== amounts.orderAdjustment) ||
     goodsNet !== amounts.goodsNet ||
     goodsNet < 0n ||
     orderDiscount < 0n ||
