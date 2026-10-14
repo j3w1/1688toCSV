@@ -64,6 +64,98 @@ async function openTestDatabase(extension) {
   return page
 }
 
+test('purchase dates enrich old records, survive refresh and roundtrip without inventing dates', async ({
+  extension,
+}) => {
+  const page = await openTestDatabase(extension)
+  const result = await page.evaluate(async (first) => {
+    await library.saveSnapshot(first)
+    const oldBackup = await library.exportBackup()
+    const enriched = await library.saveSnapshot({
+      ...first,
+      purchasedAt: '2025-12-01T00:10:11+08:00',
+      observedAt: '2026-01-02T12:00:00.000Z',
+    })
+    const refreshed = await library.saveSnapshot({
+      ...first,
+      observedAt: '2026-01-03T12:00:00.000Z',
+    })
+    const alternateSource = await library.saveSnapshot({
+      ...first,
+      purchasedAt: '2025-11-30T23:59:59+08:00',
+      observedAt: '2026-01-04T12:00:00.000Z',
+    })
+    const backup = await library.exportBackup()
+    const restored = await openOrderDatabase({ name: `${databaseName}-dates` })
+    await restored.restoreBackup(oldBackup)
+    const oldRecord = await restored.getOrder(first.orderId)
+    await restored.restoreBackup(backup)
+    const record = await restored.getOrder(first.orderId)
+    const history = await restored.getHistory(first.orderId)
+    restored.close()
+    return { enriched, refreshed, alternateSource, oldRecord, record, history }
+  }, snapshot())
+  expect(result.enriched.order.changedEntryIds).toEqual([])
+  expect(result.refreshed.changed).toBe(false)
+  expect(result.refreshed.order.revision).toBe(2)
+  expect(result.alternateSource.changed).toBe(false)
+  expect(result.alternateSource.order.revision).toBe(2)
+  expect(result.alternateSource.order.snapshot.purchasedAt).toBe(
+    '2025-12-01T00:10:11+08:00'
+  )
+  expect(result.refreshed.order.snapshot.purchasedAt).toBe(
+    '2025-12-01T00:10:11+08:00'
+  )
+  expect(result.oldRecord.snapshot).not.toHaveProperty('purchasedAt')
+  expect(result.record.snapshot.purchasedAt).toBe('2025-12-01T00:10:11+08:00')
+  expect(result.history[0].snapshot).not.toHaveProperty('purchasedAt')
+})
+
+test('invalid optional purchase dates reject backup atomically', async ({
+  extension,
+}) => {
+  const page = await openTestDatabase(extension)
+  const result = await page.evaluate(async (first) => {
+    await library.saveSnapshot(first)
+    const original = await library.exportBackup()
+    const next = structuredClone(original.orders[0])
+    next.snapshot.orderId = '9999999999999999999'
+    next.snapshot.sourceUrl = first.sourceUrl.replace(
+      first.orderId,
+      next.snapshot.orderId
+    )
+    const rejected = []
+    for (const purchasedAt of [
+      '2026-02-30T00:00:00+08:00',
+      '2026-01-01',
+      'invalid',
+      42,
+    ]) {
+      try {
+        await library.restoreBackup({
+          ...original,
+          orders: [
+            next,
+            {
+              ...original.orders[0],
+              snapshot: { ...first, purchasedAt },
+            },
+          ],
+        })
+      } catch (error) {
+        rejected.push(error.message)
+      }
+    }
+    return { rejected, orders: await library.listOrders() }
+  }, snapshot())
+  expect(result.rejected).toHaveLength(4)
+  expect(result.rejected.every((error) => error.includes('purchasedAt'))).toBe(
+    true
+  )
+  expect(result.orders).toHaveLength(1)
+  expect(result.orders[0].snapshot).toEqual(snapshot())
+})
+
 test('order identity stays exact and repeat reads or row reordering create no revision', async ({
   extension,
 }) => {

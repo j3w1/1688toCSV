@@ -54,6 +54,7 @@ export function createImportController({
     return {
       orderId: order.orderId,
       sourceUrl,
+      ...(order.purchasedAt ? { purchasedAt: order.purchasedAt } : {}),
       expectedRows: order.expectedRows,
       state: 'pending',
       error: '',
@@ -181,9 +182,20 @@ export function createImportController({
       if (order.state === 'failed')
         Object.assign(order, { state: 'pending', error: '' })
     job.state = 'running'
+    delete job.dismissedAt
     job.error = ''
     await write(job)
     await browser.schedule()
+    return job
+  }
+
+  async function dismiss(jobId) {
+    const job = await repository.getJob(jobId)
+    if (!job) throw new Error('That import no longer exists.')
+    if (active(job)) throw new Error('Pause the import before dismissing it.')
+    job.dismissedAt = new Date(now()).toISOString()
+    await write(job)
+    await browser.changed()
     return job
   }
 
@@ -307,7 +319,10 @@ export function createImportController({
         throw new Error(
           `Expected ${order.expectedRows} product rows but read ${snapshot.items.length}. No saved data was replaced.`
         )
-      await repository.saveSnapshot(snapshot)
+      await repository.saveSnapshot({
+        ...snapshot,
+        ...(order.purchasedAt ? { purchasedAt: order.purchasedAt } : {}),
+      })
       order.state = 'done'
       order.error = ''
     } catch (error) {
@@ -364,5 +379,5 @@ export function createImportController({
     }
   }
 
-  return { start, refresh, pause, resume, tick, startup, removedTab }
+  return { start, refresh, pause, resume, dismiss, tick, startup, removedTab }
 }

@@ -135,6 +135,11 @@ export function createDemoRecords(document) {
           ][index],
           status: index === 0 ? '待发货' : '交易成功',
           observedAt,
+          purchasedAt: [
+            '2026-10-12T10:15:00+08:00',
+            '2026-10-08T14:20:00+08:00',
+            '2026-09-25T09:30:00+08:00',
+          ][index],
           items,
           totals: {
             goodsGross: (gross / 100).toFixed(2),

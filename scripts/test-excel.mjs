@@ -41,10 +41,7 @@ try {
   await page.goto(`${preview.url}/library.html`)
   await page.locator('#sheet-body tr').nth(7).waitFor()
   await page.getByRole('button', { name: 'Copy to Excel', exact: true }).click()
-  await page
-    .getByRole('status')
-    .filter({ hasText: '8 product rows copied' })
-    .waitFor()
+  await page.locator('#copy-excel.copied').waitFor()
   const result = spawnSync(
     'powershell.exe',
     [

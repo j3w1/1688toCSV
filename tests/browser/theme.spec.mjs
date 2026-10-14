@@ -7,12 +7,6 @@ async function openLibrary(extension, scheme = 'light') {
   await page.goto(`${extension.extensionBaseUrl}/library.html`)
   return page
 }
-async function choose(page, preference) {
-  await page.locator('.settings').evaluate((element) => {
-    element.open = true
-  })
-  await page.getByLabel('Appearance', { exact: true }).selectOption(preference)
-}
 async function expectDark(page) {
   await expect(page.locator('html')).toHaveCSS(
     'background-color',
@@ -55,10 +49,12 @@ test('explicit themes persist, synchronize tabs and return to system without los
 }) => {
   const page = await openLibrary(extension)
   const second = await openLibrary(extension)
-  await choose(page, 'dark')
+  await page.getByRole('button', { name: 'Switch to dark theme' }).click()
   await expectDark(page)
   await expectDark(second)
-  await expect(second.locator('#theme-preference')).toHaveValue('dark')
+  await expect(
+    second.getByRole('button', { name: 'Switch to light theme' })
+  ).toBeVisible()
   await page.reload()
   await expectDark(page)
   await page.emulateMedia({ colorScheme: 'dark' })
@@ -68,15 +64,18 @@ test('explicit themes persist, synchronize tabs and return to system without los
     'dark'
   )
   await page.emulateMedia({ colorScheme: 'dark' })
-  await choose(page, 'light')
+  await page.getByRole('button', { name: 'Switch to light theme' }).click()
   await expect(page.locator('html')).toHaveCSS(
     'background-color',
     'rgb(246, 247, 245)'
   )
   await expect(page.locator('html')).toHaveCSS('color-scheme', 'light')
-  await choose(page, 'system')
+  await page.getByRole('button', { name: 'Switch to dark theme' }).click()
   await expectDark(page)
-  await expect(second.locator('#theme-preference')).toHaveValue('system')
+  await expect(second.locator('meta[name="color-scheme"]')).toHaveAttribute(
+    'content',
+    'light dark'
+  )
   expect(
     await page.evaluate((key) => localStorage.getItem(key), key)
   ).toBeNull()
@@ -98,10 +97,9 @@ test('theme controls fit a narrow viewport and remain usable when preference sto
   const errors = []
   page.on('pageerror', (error) => errors.push(error.message))
   await page.goto(`${extension.extensionBaseUrl}/library.html`)
-  await page.getByText('Settings', { exact: true }).click()
-  await page.getByLabel('Appearance', { exact: true }).selectOption('dark')
+  await page.getByRole('button', { name: 'Switch to dark theme' }).click()
   await expectDark(page)
-  const bounds = await page.locator('.settings-panel').boundingBox()
+  const bounds = await page.locator('#theme-toggle').boundingBox()
   expect(bounds.x).toBeGreaterThanOrEqual(0)
   expect(bounds.x + bounds.width).toBeLessThanOrEqual(320)
   expect(

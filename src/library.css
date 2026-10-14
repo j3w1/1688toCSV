@@ -555,8 +555,8 @@ td.select-col {
   display: none !important;
 }
 .jobs {
-  background: var(--warning);
-  border: 1px solid var(--warning-border);
+  background: var(--surface);
+  border: 1px solid var(--border);
   border-radius: 10px;
   padding: 15px 20px;
   margin-bottom: 20px;
@@ -574,7 +574,7 @@ td.select-col {
 }
 .job p {
   margin: 4px 0;
-  color: var(--warning-text);
+  color: var(--muted);
   font-size: 11px;
 }
 .job button {
@@ -740,17 +740,11 @@ dialog summary {
   .workspace {
     grid-template-columns: 1fr;
   }
-  .orders-pane {
-    max-height: 235px;
-    overflow: auto;
-  }
   #order-list {
-    display: flex;
-    max-height: none;
+    max-height: 230px;
   }
   .order-card {
-    min-width: 220px;
-    border-inline-end: 1px solid var(--divider);
+    min-width: 0;
   }
   .pane-footer {
     display: flex;
@@ -787,63 +781,111 @@ input::placeholder {
 dialog a {
   color: var(--accent-text);
 }
-.settings {
-  position: relative;
+.theme-toggle {
+  min-width: 40px;
+  font-size: 20px;
+  line-height: 1;
 }
-.settings > summary {
-  border: 1px solid var(--border);
-  border-radius: 7px;
-  padding: 9px 13px;
-  cursor: pointer;
-  background: var(--surface);
-  color: var(--text);
-  font-weight: 550;
+.to-light {
+  display: none;
 }
-.settings > summary:hover {
-  background: var(--hover);
+@media (prefers-color-scheme: dark) {
+  :root:not(:has(> head > meta[name='color-scheme'][content='light']))
+    .to-light {
+    display: inline;
+  }
+  :root:not(:has(> head > meta[name='color-scheme'][content='light']))
+    .to-dark {
+    display: none;
+  }
 }
-.settings-panel {
-  position: absolute;
-  inset-inline-end: 0;
-  top: calc(100% + 8px);
-  z-index: 5;
-  width: 230px;
-  max-width: calc(100vw - 24px);
-  background: var(--surface);
-  color: var(--text);
-  padding: 16px;
-  border: 1px solid var(--border);
-  border-radius: 10px;
-  box-shadow: 0 8px 24px #0003;
+:root:has(> head > meta[name='color-scheme'][content='dark']) .to-light {
+  display: inline;
 }
-.settings-panel label {
+:root:has(> head > meta[name='color-scheme'][content='dark']) .to-dark {
+  display: none;
+}
+.library-actions,
+.jobs-heading,
+.job-actions {
+  display: flex;
+  gap: 10px;
+  align-items: center;
+  flex-wrap: wrap;
+}
+.jobs-heading {
+  justify-content: space-between;
+}
+.job {
+  padding-block: 12px;
+}
+.job > div:first-child {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+.job-actions {
+  flex-shrink: 0;
+}
+.dismissed-job {
+  opacity: 0.75;
+}
+.month-filter {
   display: block;
-  margin-bottom: 8px;
-  font-weight: 600;
+  padding: 0 15px 12px;
 }
-.settings-panel select {
+.month-filter select {
   width: 100%;
   padding: 8px;
   border: 1px solid var(--border);
   border-radius: 6px;
+  font-size: 11px;
 }
-.settings-panel p {
-  margin: 10px 0 0;
-  font-size: 12px;
-  line-height: 1.5;
+.order-month {
+  margin: 0;
+  padding: 10px 15px;
+  background: var(--field);
   color: var(--muted);
+  font-size: 11px;
+  font-weight: 600;
+}
+.purchase-date {
+  font-variant-numeric: tabular-nums;
+}
+tr.order-boundary td {
+  border-top: 3px solid var(--border);
+}
+button.copied,
+button.copied:hover {
+  background: var(--success) !important;
+  color: var(--success-text) !important;
+  border-color: var(--success-text) !important;
+}
+button.copy-failed {
+  color: var(--error);
+}
+.copy-error {
+  display: block;
+  font-size: 11px;
+  color: var(--error);
+  max-width: 240px;
+  white-space: normal;
+  overflow-wrap: anywhere;
+}
+.copy-actions {
+  flex-wrap: wrap;
+}
+.copy-actions button {
+  min-width: 94px;
+}
+.thumb-cell button {
+  min-width: 64px;
 }
 @media (max-width: 760px) {
-  .settings > summary {
-    font-size: 11px;
-    padding: 7px;
+  .job {
+    align-items: start;
+    flex-direction: column;
   }
-}
-@media (max-width: 760px) {
-  .top-actions {
-    position: relative;
-  }
-  .settings {
-    position: static;
+  .library-actions {
+    gap: 8px;
   }
 }

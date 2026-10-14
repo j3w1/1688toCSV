@@ -1,5 +1,6 @@
 import { deepQuery } from './dom.js'
 import { extractOrder, findOrderTable } from './extract.js'
+import { purchaseTimestamp } from './order-date.js'
 import {
   centsToMoney,
   lineGrossCents,
@@ -103,6 +104,22 @@ function entryIdentity(row, index) {
       `Row ${index + 1}: product entry ID is missing or ambiguous.`
     )
   return [...ids][0]
+}
+
+function readPurchaseDate(appQuery) {
+  // The first timeline event is order creation, before buyer payment. Never
+  // substitute subsequent payment/shipping dates or this import's timestamp.
+  const steps = appQuery.all(
+    'q-step.order-stage-step-item[order="1"][title="等待买家付款"]'
+  )
+  const dates = new Set(
+    steps.map((step) =>
+      purchaseTimestamp(
+        text(step.querySelector('.order-stage-step-item-content'))
+      )
+    )
+  )
+  return dates.size === 1 ? [...dates][0] : undefined
 }
 
 function readTotals(appQuery) {
@@ -282,6 +299,7 @@ export function extractOrderSnapshot(
     items,
     centsToMoney(totals.orderAdjustment)
   )
+  const purchasedAt = readPurchaseDate(appQuery)
   return {
     schemaVersion: 1,
     accountId: 'local',
@@ -289,6 +307,7 @@ export function extractOrderSnapshot(
     sellerName: order.sellerName,
     status,
     observedAt: new Date(observedAt).toISOString(),
+    ...(purchasedAt ? { purchasedAt } : {}),
     items: items.map((item, index) => ({
       ...item,
       allocatedDiscount: allocations[index],

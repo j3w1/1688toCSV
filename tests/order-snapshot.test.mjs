@@ -125,6 +125,30 @@ function snapshot(source) {
   })
 }
 
+test('purchase date uses the first creation step, never payment or import time', () => {
+  const source = fixture()
+  const addStep = (order, title, date) => {
+    const step = source.document.createElement('q-step')
+    step.className = 'order-stage-step-item'
+    step.setAttribute('order', order)
+    step.setAttribute('title', title)
+    step.innerHTML = `<div class="order-stage-step-item-content">${date}</div>`
+    source.appRoot.shadowRoot.append(step)
+    return step
+  }
+  const first = addStep('1', '等待买家付款', '2026-03-01 00:10:11')
+  addStep('2', '等待卖家发货', '2026-03-03 14:45:59')
+  assert.equal(snapshot(source).purchasedAt, '2026-03-01T00:10:11+08:00')
+  first.remove()
+  assert.equal(snapshot(source).purchasedAt, undefined)
+  const invalid = addStep('1', '等待买家付款', '2026-02-30 12:00:00')
+  assert.equal(snapshot(source).purchasedAt, undefined)
+  invalid.remove()
+  addStep('1', '等待买家付款', '2026-03-01 00:10:11')
+  addStep('1', '等待买家付款', '2026-03-02 00:10:11')
+  assert.equal(snapshot(source).purchasedAt, undefined)
+})
+
 test('optional discount summaries allow labels and empty presentation states', () => {
   for (const summary of [
     '优惠共 ¥ 2.40 元',

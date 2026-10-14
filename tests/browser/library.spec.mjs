@@ -88,7 +88,9 @@ test('library restores complete orders and copies five columns with separate ima
     'clipboard-write',
   ])
   await page.getByRole('button', { name: 'Copy to Excel', exact: true }).click()
-  await expect(page.getByRole('status')).toContainText('8 product rows copied')
+  await expect(page.locator('#copy-excel')).toHaveText('Copied')
+  await expect(page.locator('#copy-excel')).toHaveClass(/copied/)
+  await expect(page.locator('#feedback')).toBeEmpty()
   const copied = await page.evaluate(async () => {
     const item = (await navigator.clipboard.read())[0]
     return {
@@ -118,7 +120,8 @@ test('filters and explicit product selections determine copy scope', async ({
     'clipboard-write',
   ])
   await page.getByRole('button', { name: 'Copy values', exact: true }).click()
-  await expect(page.getByRole('status')).toContainText('1 product rows copied')
+  await expect(page.locator('#copy-values')).toHaveText('Copied')
+  await expect(page.locator('#feedback')).toBeEmpty()
   const text = await page.evaluate(() => navigator.clipboard.readText())
   expect(text).not.toContain('Thumbnail')
   expect(text.split('\t')).toHaveLength(5)
@@ -214,9 +217,8 @@ test('copy images only produces one picture per selected row', async ({
     'clipboard-write',
   ])
   await page.getByRole('button', { name: 'Copy images', exact: true }).click()
-  await expect(page.getByRole('status')).toContainText(
-    '3 separate pictures copied'
-  )
+  await expect(page.locator('#copy-images')).toHaveText('Copied')
+  await expect(page.locator('#feedback')).toBeEmpty()
   const html = await page.evaluate(
     async () =>
       await (
@@ -275,4 +277,163 @@ test('large image backups restore and export without runtime message limits', as
   expect((await stat(downloads[0].filename)).size).toBeGreaterThan(
     64 * 1024 * 1024
   )
+})
+
+test('purchase dates group orders by month while separators stay out of copied values', async ({
+  extension,
+}) => {
+  await seed(extension)
+  const page = await openLibrary(extension)
+  await expect(page.locator('.order-month')).toHaveText([
+    'October 2026',
+    'September 2026',
+  ])
+  await expect(page.locator('.purchase-date')).toHaveText([
+    '12 Oct 2026',
+    '8 Oct 2026',
+    '25 Sept 2026',
+  ])
+  await expect(page.locator('#sheet-body tr').first()).toContainText(
+    '12 Oct 2026'
+  )
+  await page.getByRole('button', { name: /Habitat Studio/ }).click()
+  await expect(page.locator('#order-details')).toContainText(
+    'Purchased 12 Oct 2026'
+  )
+  await page.getByRole('button', { name: 'Close order details' }).click()
+  await expect(page.locator('tr.order-boundary')).toHaveCount(2)
+  await page
+    .getByLabel('Purchase month', { exact: true })
+    .selectOption('2026-09')
+  await expect(page.locator('.order-card')).toHaveCount(1)
+  await expect(page.locator('#sheet-body tr')).toHaveCount(2)
+  await expect(page.locator('tr.order-boundary')).toHaveCount(0)
+  await page.getByRole('button', { name: 'Show all', exact: true }).click()
+  await expect(page.locator('#sheet-body tr')).toHaveCount(8)
+  await page.getByRole('checkbox', { name: 'Headers', exact: true }).uncheck()
+  await page.reload()
+  await expect(
+    page.getByRole('checkbox', { name: 'Headers', exact: true })
+  ).not.toBeChecked()
+  await extension.context.grantPermissions([
+    'clipboard-read',
+    'clipboard-write',
+  ])
+  await page.locator('#copy-values').click()
+  await expect(page.locator('#copy-values')).toHaveText('Copied')
+  const copied = await page.evaluate(async () => {
+    const item = (await navigator.clipboard.read())[0]
+    return {
+      text: await (await item.getType('text/plain')).text(),
+      html: await (await item.getType('text/html')).text(),
+    }
+  })
+  expect(copied.text.split('\r\n')).toHaveLength(8)
+  expect(copied.text).not.toContain('Thumbnail')
+  expect(copied.html.match(/<tr\b/g)).toHaveLength(8)
+  expect(copied.html).not.toContain('order-boundary')
+  expect(copied.html).not.toContain('October')
+  await expect(page.locator('#feedback')).toBeEmpty()
+})
+
+test('old import messages can be dismissed persistently without losing orders or queues', async ({
+  extension,
+}) => {
+  await seed(extension)
+  await extension.inspector.evaluate(
+    () =>
+      new Promise((resolve, reject) => {
+        const request = indexedDB.open('1688-order-library')
+        request.onerror = () => reject(request.error)
+        request.onsuccess = () => {
+          const db = request.result
+          const tx = db.transaction('jobs', 'readwrite')
+          for (const [id, updatedAt, error] of [
+            ['z-old', '2026-10-01T00:00:00Z', 'Old stopped import'],
+            ['a-new', '2026-10-14T00:00:00Z', 'Recent stopped import'],
+          ]) {
+            tx.objectStore('jobs').put({
+              id,
+              state: 'paused',
+              phase: 'details',
+              kind: 'import',
+              updatedAt,
+              orders: [],
+              error,
+            })
+          }
+          tx.oncomplete = () => {
+            db.close()
+            resolve()
+          }
+          tx.onerror = () => {
+            db.close()
+            reject(tx.error)
+          }
+        }
+      })
+  )
+  const page = await openLibrary(extension)
+  await expect(page.locator('.job').first()).toContainText(
+    'Recent stopped import'
+  )
+  await page
+    .getByRole('button', { name: 'Dismiss', exact: true })
+    .first()
+    .click()
+  await expect(page.locator('.job')).toHaveCount(1)
+  await page.getByRole('button', { name: 'Dismiss all', exact: true }).click()
+  await expect(page.locator('.job')).toHaveCount(0)
+  await page.reload()
+  await expect(page.locator('.job')).toHaveCount(0)
+  await expect(page.locator('#order-count')).toHaveText('3')
+  await expect(page.locator('#sheet-body tr')).toHaveCount(8)
+  await page
+    .getByRole('button', { name: 'Show dismissed', exact: true })
+    .click()
+  await expect(page.locator('.job')).toHaveCount(2)
+  await expect(
+    page.getByRole('button', { name: 'Resume / retry', exact: true })
+  ).toHaveCount(2)
+  const result = await extension.inspector.evaluate(() =>
+    chrome.runtime.sendMessage({ type: 'JOBS_QUERY' })
+  )
+  expect(result.ok).toBe(true)
+  expect(result.data.jobs).toHaveLength(2)
+  expect(
+    result.data.jobs.every((job) => job.state === 'paused' && job.dismissedAt)
+  ).toBe(true)
+  expect(extension.unexpectedRequests).toEqual([])
+})
+
+test('copy completion keeps controls disabled when the filter changes to no products', async ({
+  extension,
+}) => {
+  await seed(extension)
+  const page = await openLibrary(extension)
+  await extension.context.grantPermissions([
+    'clipboard-read',
+    'clipboard-write',
+  ])
+  await page.evaluate(() => {
+    const write = navigator.clipboard.write.bind(navigator.clipboard)
+    navigator.clipboard.write = async (items) => {
+      await new Promise((resolve) => {
+        window.finishSyntheticCopy = resolve
+      })
+      return write(items)
+    }
+  })
+  await page.locator('#copy-values').click()
+  await expect(page.locator('#copy-values')).toHaveAttribute(
+    'aria-busy',
+    'true'
+  )
+  await page.getByRole('searchbox').fill('no matching synthetic products')
+  await expect(page.locator('#sheet-body tr')).toHaveCount(0)
+  await page.evaluate(() => window.finishSyntheticCopy())
+  await expect(page.locator('#copy-values')).toHaveText('Copied')
+  for (const id of ['copy-values', 'copy-images', 'copy-excel'])
+    await expect(page.locator(`#${id}`)).toBeDisabled()
+  await expect(page.locator('#feedback')).toBeEmpty()
 })

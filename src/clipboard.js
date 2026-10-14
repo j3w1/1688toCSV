@@ -73,6 +73,17 @@ export async function pngThumbnail(dataUrl, { size = 64 } = {}) {
   return canvas.toDataURL('image/png')
 }
 
+export async function pngImage(dataUrl) {
+  const image = new Image()
+  image.src = dataUrl
+  await image.decode()
+  const canvas = document.createElement('canvas')
+  canvas.width = image.naturalWidth
+  canvas.height = image.naturalHeight
+  canvas.getContext('2d').drawImage(image, 0, 0)
+  return canvas.toDataURL('image/png')
+}
+
 export async function copyTable(items, options) {
   const { plain, html } = clipboardTable(items, options)
   await navigator.clipboard.write([
@@ -84,7 +95,7 @@ export async function copyTable(items, options) {
 }
 
 export async function copySingleImage(dataUrl) {
-  const png = await pngThumbnail(dataUrl, { size: 256 })
+  const png = await pngImage(dataUrl)
   const bytes = Uint8Array.from(atob(png.split(',')[1]), (char) =>
     char.charCodeAt(0)
   )

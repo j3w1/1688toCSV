@@ -16,18 +16,16 @@
         ><span>Order library<small>Your purchasing workspace</small></span></a
       ><span class="local-label"><i></i> Stored in this browser</span>
       <div class="top-actions">
-        <details class="settings">
-          <summary>Settings</summary>
-          <div class="settings-panel">
-            <label for="theme-preference">Appearance</label>
-            <select id="theme-preference">
-              <option value="system">System</option>
-              <option value="light">Light</option>
-              <option value="dark">Dark</option>
-            </select>
-            <p>Choose a theme for this browser. System follows your device.</p>
-          </div>
-        </details>
+        <button id="theme-toggle" class="theme-toggle" type="button">
+          <span class="to-dark"
+            ><span aria-hidden="true">☾</span
+            ><span class="sr-only">Switch to dark theme</span></span
+          >
+          <span class="to-light"
+            ><span aria-hidden="true">☀</span
+            ><span class="sr-only">Switch to light theme</span></span
+          >
+        </button>
         <button id="backup">Back up</button><button id="restore">Restore</button
         ><input
           id="backup-file"
@@ -47,13 +45,21 @@
             need.
           </p>
         </div>
-        <a
-          class="button primary"
-          href="https://air.1688.com/app/ctf-page/trade-order-list/buyer-order-list.html?page=1&amp;pageSize=10"
-          target="_blank"
-          rel="noreferrer"
-          >Open 1688 orders <span aria-hidden="true">↗</span></a
-        >
+        <div class="library-actions">
+          <button
+            id="refresh-all"
+            title="Refresh every saved order, regardless of selection or filters"
+          >
+            Refresh all
+          </button>
+          <a
+            class="button primary"
+            href="https://air.1688.com/app/ctf-page/trade-order-list/buyer-order-list.html?page=1&amp;pageSize=10"
+            target="_blank"
+            rel="noreferrer"
+            >Open 1688 orders <span aria-hidden="true">↗</span></a
+          >
+        </div>
       </section>
       <section class="stats" aria-label="Library overview">
         <div><span id="order-count">0</span><small>Saved orders</small></div>
@@ -75,9 +81,15 @@
             <h2>Orders</h2>
             <button id="all-orders" class="text-button">Show all</button>
           </div>
+          <div class="month-filter">
+            <label class="sr-only" for="month-filter">Purchase month</label>
+            <select id="month-filter">
+              <option value="">All purchase months</option>
+            </select>
+          </div>
           <div id="order-list"></div>
           <div class="pane-footer">
-            <button id="refresh-orders">Refresh all</button
+            <button id="refresh-orders">Refresh selected</button
             ><button id="remove-orders">Remove selected</button>
           </div>
         </aside>

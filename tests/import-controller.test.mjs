@@ -321,3 +321,53 @@ test('refresh does not use old row counts as proof of current completeness', asy
   await s.controller.tick()
   assert.equal(s.saved.get('10001').items.length, 3)
 })
+
+test('import carries the list purchase time and refresh preserves it', async () => {
+  const purchasedAt = '2026-03-01T00:10:11+08:00'
+  const s = setup([[row('10001', { purchasedAt })]])
+  const job = await s.controller.start({
+    scope: 'selected',
+    source,
+    orderIds: ['10001'],
+  })
+  s.browser.readDetail = async () => ({
+    ...snapshot('10001'),
+    purchasedAt: '2026-03-01T00:10:12+08:00',
+  })
+  await s.controller.tick()
+  await s.controller.tick()
+  await s.controller.tick()
+  assert.equal(s.jobs.get(job.id).state, 'completed')
+  assert.equal(s.saved.get('10001').purchasedAt, purchasedAt)
+  const refresh = await s.controller.refresh()
+  assert.equal(refresh.orders[0].purchasedAt, purchasedAt)
+  await s.controller.tick()
+  await s.controller.tick()
+  assert.equal(s.saved.get('10001').purchasedAt, purchasedAt)
+})
+
+test('dismiss hides idle job history without removing saved orders or restarting work', async () => {
+  const s = setup()
+  s.saved.set('10001', snapshot('10001'))
+  const job = await s.controller.start({
+    scope: 'selected',
+    source,
+    orderIds: ['10001'],
+  })
+  await assert.rejects(s.controller.dismiss(job.id), /Pause the import/)
+  assert.equal(s.jobs.get(job.id).dismissedAt, undefined)
+  await s.controller.pause(job.id)
+  const before = structuredClone(s.jobs.get(job.id))
+  const callCount = s.calls.length
+  s.advance(1000)
+  const dismissed = await s.controller.dismiss(job.id)
+  assert.equal(dismissed.dismissedAt, '1970-01-01T00:00:02.000Z')
+  assert.equal(dismissed.state, 'paused')
+  assert.deepEqual(dismissed.orders, before.orders)
+  assert.equal(s.saved.size, 1)
+  assert.deepEqual(s.calls.slice(callCount), [['changed']])
+  await s.controller.resume(job.id)
+  assert.equal(s.jobs.get(job.id).dismissedAt, undefined)
+  assert.equal(s.jobs.get(job.id).state, 'running')
+  await assert.rejects(s.controller.dismiss('missing'), /no longer exists/)
+})

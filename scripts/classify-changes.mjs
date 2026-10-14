@@ -5,6 +5,7 @@ import { pathToFileURL } from 'node:url'
 const rootDocuments = new Set([
   'README.md',
   'AGENTS.md',
+  'CLAUDE.md',
   'CONTRIBUTING.md',
   'CHANGELOG.md',
   'CHROMEWEBSTORE.md',

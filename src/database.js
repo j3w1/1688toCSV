@@ -146,6 +146,9 @@ function validateSnapshot(input) {
   const orderId = identifier(input.orderId, 'orderId')
   const totals = decimals(input.totals, totalFields, 'Order totals')
   validateAmounts(items, totals)
+  const purchasedAt = purchaseTimestamp(input.purchasedAt)
+  if (input.purchasedAt !== undefined && !purchasedAt)
+    throw new Error('purchasedAt must be a valid purchase timestamp')
   return {
     schemaVersion: SNAPSHOT_VERSION,
     accountId: string(input.accountId, 'accountId', { empty: false }),
@@ -154,6 +157,7 @@ function validateSnapshot(input) {
     sellerName: string(input.sellerName, 'sellerName', { empty: false }),
     status: string(input.status, 'status', { empty: false }),
     observedAt: date(input.observedAt, 'observedAt'),
+    ...(purchasedAt ? { purchasedAt } : {}),
     items,
     totals,
   }
@@ -230,9 +234,10 @@ function keyFor(snapshot) {
 }
 
 function comparable(snapshot) {
-  const { observedAt, sourceUrl, ...data } = snapshot
+  const { observedAt, sourceUrl, purchasedAt, ...data } = snapshot
   return JSON.stringify({
     ...data,
+    purchasedAt,
     items: [...data.items].sort((a, b) =>
       a.entryId < b.entryId ? -1 : a.entryId > b.entryId ? 1 : 0
     ),
@@ -240,6 +245,10 @@ function comparable(snapshot) {
 }
 
 function reconcile(snapshot, previous) {
+  // Purchase time is immutable. The detail timeline can differ slightly from
+  // the list's creation time; later reads must not move an order between dates.
+  if (previous?.snapshot.purchasedAt)
+    snapshot = { ...snapshot, purchasedAt: previous.snapshot.purchasedAt }
   if (previous && snapshot.observedAt < previous.snapshot.observedAt)
     return { changed: false, order: previous, ignored: true }
   const changed =
@@ -566,3 +575,4 @@ export async function openDatabase({ name = '1688-order-library' } = {}) {
   }
 }
 import { lineGrossCents, moneyToCents } from './money.js'
+import { purchaseTimestamp } from './order-date.js'

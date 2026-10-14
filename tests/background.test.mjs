@@ -168,6 +168,45 @@ const settle = async () => {
   for (let i = 0; i < 20; i++)
     await new Promise((resolve) => setImmediate(resolve))
 }
+
+test('dismissal is library-only, refuses running jobs and preserves saved data', async () => {
+  const s = setup()
+  const job = {
+    id: 'old-job',
+    state: 'paused',
+    source: { tabId: sender.tab.id, frameId: sender.frameId },
+    orders: [],
+    error: 'Old warning',
+    updatedAt: '2026-01-01T00:00:00.000Z',
+  }
+  s.jobs.set(job.id, job)
+  s.saved.set('10001', { snapshot: { orderId: '10001' } })
+  assert.equal(
+    (await s.send({ type: 'IMPORT_DISMISS', jobId: job.id }, sender)).ok,
+    false
+  )
+  assert.equal(
+    (await s.send({ type: 'IMPORT_DISMISS', jobId: job.id })).ok,
+    true
+  )
+  assert.ok(s.jobs.get(job.id).dismissedAt)
+  assert.equal(s.jobs.get(job.id).state, 'paused')
+  assert.equal(s.jobs.get(job.id).error, 'Old warning')
+  const status = await s.send({ type: 'IMPORT_STATUS' }, sender)
+  assert.equal(status.ok, true)
+  assert.equal(status.data.jobs.length, 0)
+  assert.equal(s.saved.size, 1)
+  assert.equal(
+    s.calls.some(([type]) => ['create', 'schedule', 'remove'].includes(type)),
+    false
+  )
+  s.jobs.set('running', { id: 'running', state: 'running', orders: [] })
+  assert.equal(
+    (await s.send({ type: 'IMPORT_DISMISS', jobId: 'running' })).ok,
+    false
+  )
+  assert.equal(s.jobs.get('running').dismissedAt, undefined)
+})
 test('worker accepts own pages and validates content senders before mutations', async () => {
   const s = setup()
   assert.equal((await s.send({ type: 'BACKUP_RESTORE', backup: {} })).ok, true)

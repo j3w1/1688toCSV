@@ -1,3 +1,5 @@
+import { purchaseTimestamp } from './order-date.js'
+
 // A read-only adapter for the rendered buyer list. No private website APIs.
 export function queryOrderTree(root) {
   const roots = [root]
@@ -161,6 +163,7 @@ export function readOrderList(document, url) {
     return {
       orderId: trackerId,
       sourceUrl: urls[0],
+      purchasedAt: purchaseTimestamp(text(item.one('.order-time'))),
       expectedRows,
       sellerName:
         text(item.one('.seller-info-company')) ||

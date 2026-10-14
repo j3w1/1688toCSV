@@ -22,11 +22,12 @@ test('recognized documentation routes to lightweight checks', () => {
     classifyPaths([
       'README.md',
       'CHROMEWEBSTORE.md',
+      'CLAUDE.md',
       'docs/development.md',
       'screenshots/popup.png',
       'README.md',
     ]),
-    { category: 'docs', docs: true, code: false, count: 4 }
+    { category: 'docs', docs: true, code: false, count: 5 }
   )
 })
 

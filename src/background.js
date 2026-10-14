@@ -303,7 +303,7 @@ async function dispatch(message, sender, repository, controller) {
       requireContent(sender, 'list')
       return {
         jobs: (await repository.listJobs())
-          .filter((job) => sameSource(job, sender))
+          .filter((job) => !job.dismissedAt && sameSource(job, sender))
           .sort((a, b) => b.updatedAt.localeCompare(a.updatedAt))
           .map(jobStatus),
       }
@@ -341,6 +341,8 @@ async function dispatch(message, sender, repository, controller) {
       return repository.exportBackup()
     case 'REFRESH_ORDERS':
       return controller.refresh(message.orderIds)
+    case 'IMPORT_DISMISS':
+      return controller.dismiss(message.jobId)
     case 'LIBRARY_NOTES': {
       const result = await repository.setNotes(message.orderId, {
         notes: message.notes,

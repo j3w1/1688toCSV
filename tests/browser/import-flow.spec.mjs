@@ -89,9 +89,7 @@ async function assertImported(extension, library) {
   await library
     .getByRole('button', { name: 'Copy values', exact: true })
     .click()
-  await expect(library.getByRole('status')).toContainText(
-    '4 product rows copied'
-  )
+  await expect(library.locator('#copy-values')).toHaveText('Copied')
   const copied = await library.evaluate(() => navigator.clipboard.readText())
   expect(copied.split('\r\n')).toHaveLength(5)
   expect(copied).toContain('2.10')
@@ -118,6 +116,20 @@ test('selected import reaches persistent spreadsheet and clipboard through real 
   await expect(list).toHaveURL(`${extension.extensionBaseUrl}/library.html`)
   await expect(list.locator('#order-count')).toHaveText('2')
   await expect(list.locator('#sheet-body tr')).toHaveCount(4)
+  // Refresh all remains explicit even with one selected order and a text filter.
+  await list
+    .getByRole('checkbox', { name: `Select order ${ids[0]}`, exact: true })
+    .check()
+  await list.getByRole('searchbox').fill('no matching synthetic product')
+  await expect(list.locator('#sheet-body tr')).toHaveCount(0)
+  await list.getByRole('button', { name: 'Refresh all', exact: true }).click()
+  await expect.poll(() => visited.length, { timeout: 40_000 }).toBe(4)
+  await expect(list.locator('#refresh-all')).toBeEnabled({ timeout: 20_000 })
+  expect(visited.slice(2).sort()).toEqual([...ids].sort())
+  await list.getByRole('searchbox').clear()
+  await list.getByRole('button', { name: 'Show all', exact: true }).click()
+  await expect(list.locator('#sheet-body tr')).toHaveCount(4)
+  expect(extension.unexpectedRequests).toEqual([])
 })
 
 test('delayed rendering and labelled discount summaries import complete products', async ({

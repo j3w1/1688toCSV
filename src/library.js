@@ -1,8 +1,33 @@
-import { copyTable, copySingleImage, pngThumbnail } from './clipboard.js'
+import {
+  copyTable,
+  copySingleImage,
+  pngThumbnail,
+  pngImage,
+} from './clipboard.js'
 import { openDatabase } from './database.js'
 
 const $ = (id) => document.getElementById(id)
 const keyFor = (row) => `${row.orderId}/${row.entryId}`
+const headerPreference = '1688-library-include-headers'
+const purchaseDay = (order) => order.purchasedAt?.slice(0, 10) || ''
+const purchaseMonth = (order) => purchaseDay(order).slice(0, 7) || 'unknown'
+const monthLabel = (month) =>
+  month === 'unknown'
+    ? 'Date unavailable'
+    : new Date(`${month}-01T12:00:00Z`).toLocaleDateString('en-GB', {
+        month: 'long',
+        year: 'numeric',
+        timeZone: 'UTC',
+      })
+const purchaseLabel = (order) =>
+  purchaseDay(order)
+    ? new Date(`${purchaseDay(order)}T12:00:00Z`).toLocaleDateString('en-GB', {
+        day: 'numeric',
+        month: 'short',
+        year: 'numeric',
+        timeZone: 'UTC',
+      })
+    : 'Date unavailable'
 const dateLabel = (value) =>
   value
     ? new Date(value).toLocaleString(undefined, {
@@ -68,7 +93,8 @@ export async function startLibrary(
     page = 0,
     loading = false,
     refreshPending = false,
-    copyBusy = false
+    copyBusy = false,
+    showDismissed = false
   const selectedOrders = new Set(),
     selectedRows = new Set(),
     preparedImages = new Map(),
@@ -88,6 +114,25 @@ export async function startLibrary(
     { rootMargin: '150px' }
   )
   const pageSize = 100
+  const copyTimers = new WeakMap()
+  try {
+    const stored = localStorage.getItem(headerPreference)
+    if (stored !== null) $('include-headers').checked = stored === 'true'
+  } catch {
+    /* Keep the checked default when preferences are unavailable. */
+  }
+  $('include-headers').addEventListener('change', () => {
+    try {
+      localStorage.setItem(
+        headerPreference,
+        String($('include-headers').checked)
+      )
+    } catch {}
+  })
+  addEventListener('storage', (event) => {
+    if (event.key === headerPreference || event.key === null)
+      $('include-headers').checked = event.newValue !== 'false'
+  })
   let jobTimer, searchTimer
   async function send(type, data = {}) {
     // Extension pages share IndexedDB with the worker. Large libraries and
@@ -151,11 +196,53 @@ export async function startLibrary(
       }
     })
   }
+  async function copyAction(button, handler) {
+    if (button.disabled) return
+    const label = (button.dataset.copyLabel ||= button.textContent)
+    clearTimeout(copyTimers.get(button))
+    button.nextElementSibling?.matches('.copy-error') &&
+      button.nextElementSibling.remove()
+    button.disabled = true
+    button.classList.remove('copied', 'copy-failed')
+    button.textContent = 'Copying…'
+    button.setAttribute('aria-live', 'polite')
+    button.setAttribute('aria-busy', 'true')
+    try {
+      await handler((message) => {
+        button.textContent = message
+      })
+      button.textContent = 'Copied'
+      button.classList.add('copied')
+    } catch (error) {
+      button.textContent = 'Try again'
+      button.classList.add('copy-failed')
+      const message = node('span', error.message, 'copy-error')
+      message.setAttribute('role', 'alert')
+      button.after(message)
+    } finally {
+      button.disabled = false
+      button.removeAttribute('aria-busy')
+      if (button.closest('.copy-actions')) updateSelection()
+      copyTimers.set(
+        button,
+        setTimeout(() => {
+          button.textContent = label
+          button.classList.remove('copied', 'copy-failed')
+        }, 3000)
+      )
+    }
+  }
+  function ordersInMonth() {
+    const month = $('month-filter').value
+    return records.filter(
+      (record) => !month || purchaseMonth(record.snapshot) === month
+    )
+  }
   function filteredRows() {
     const search = $('search').value.trim().toLocaleLowerCase()
     const status = $('status-filter').value
     const changedOnly = $('changes-only').checked
-    return records.flatMap((record) => {
+    return ordersInMonth().flatMap((record) => {
       const order = record.snapshot
       if (selectedOrders.size && !selectedOrders.has(order.orderId)) return []
       if (status && order.status !== status) return []
@@ -221,8 +308,13 @@ export async function startLibrary(
   function renderOrders() {
     const list = $('order-list')
     list.replaceChildren()
-    for (const record of records) {
+    let lastMonth
+    for (const record of ordersInMonth()) {
       const order = record.snapshot
+      const month = purchaseMonth(order)
+      if (month !== lastMonth)
+        list.append(node('h3', monthLabel(month), 'order-month'))
+      lastMonth = month
       const card = node(
         'div',
         undefined,
@@ -247,6 +339,7 @@ export async function startLibrary(
         )
       )
       button.append(node('small', order.status))
+      button.append(node('small', purchaseLabel(order), 'purchase-date'))
       button.addEventListener('click', () =>
         openDetails(record).catch((error) => feedback(error.message, true))
       )
@@ -260,8 +353,10 @@ export async function startLibrary(
     }
     $('refresh-orders').textContent = selectedOrders.size
       ? `Refresh ${selectedOrders.size}`
-      : 'Refresh all'
-    $('refresh-orders').disabled = !records.length
+      : 'Refresh selected'
+    const running = jobs.some((job) => job.state === 'running')
+    $('refresh-orders').disabled = !selectedOrders.size || running
+    $('refresh-all').disabled = !records.length || running
     $('remove-orders').disabled = !selectedOrders.size
   }
   function renderRows() {
@@ -271,9 +366,13 @@ export async function startLibrary(
     imageObserver.disconnect()
     const body = $('sheet-body')
     body.replaceChildren()
+    let previousOrder
     for (const row of rows.slice(page * pageSize, (page + 1) * pageSize)) {
       const changed = row.record.changedEntryIds.includes(row.entryId)
       const tr = node('tr', undefined, changed ? 'changed-row' : '')
+      if (previousOrder && previousOrder !== row.orderId)
+        tr.classList.add('order-boundary')
+      previousOrder = row.orderId
       const selection = node('td', undefined, 'select-col')
       const check = node('input')
       check.type = 'checkbox'
@@ -297,24 +396,21 @@ export async function startLibrary(
         image.src = preparedImages.get(row.thumbnail)
       else imageObserver.observe(image)
       const imageButton = node('button', 'Copy image')
-      imageButton.addEventListener('click', async () => {
-        try {
+      imageButton.addEventListener('click', () =>
+        copyAction(imageButton, async () => {
           const original = await send('IMAGE_GET', { url: row.thumbnail })
           await copySingleImage(
             typeof original === 'string' ? original : original.dataUrl
           )
-          feedback('Image copied. Paste it into Excel.')
-        } catch (error) {
-          feedback(error.message, true)
-        }
-      })
+        })
+      )
       thumb.append(image, imageButton)
       const description = node('td', undefined, 'description-cell')
       description.append(
         node('div', row.description, 'product-title'),
         node(
           'small',
-          `${row.sellerName} · …${row.orderId.slice(-8)}${changed ? ' · Changed since previous version' : ''}`
+          `${row.sellerName} · …${row.orderId.slice(-8)} · ${purchaseLabel(row.record.snapshot)}${changed ? ' · Changed since previous version' : ''}`
         )
       )
       const discount = node('td', row.discount, 'numeric discount-cell')
@@ -344,10 +440,57 @@ export async function startLibrary(
   }
   function renderJobs() {
     $('jobs').replaceChildren()
-    const visible = jobs.slice(-5).reverse()
-    $('jobs').hidden = !visible.length
+    const sorted = [...jobs].sort((a, b) =>
+      (b.updatedAt || '').localeCompare(a.updatedAt || '')
+    )
+    const visible = sorted.filter(
+      (job) => !job.dismissedAt || job.state === 'running' || showDismissed
+    )
+    $('jobs').hidden = !jobs.length
+    const heading = node('div', undefined, 'jobs-heading')
+    heading.append(node('h2', 'Imports'))
+    const controls = node('div', undefined, 'job-actions')
+    if (jobs.some((job) => !job.dismissedAt && job.state !== 'running')) {
+      const dismissAll = node('button', 'Dismiss all', 'text-button')
+      dismissAll.title =
+        'Hide finished and paused import messages. Saved orders stay in your library.'
+      dismissAll.addEventListener('click', async () => {
+        dismissAll.disabled = true
+        try {
+          for (const job of jobs.filter(
+            (job) => !job.dismissedAt && job.state !== 'running'
+          ))
+            await send('IMPORT_DISMISS', { jobId: job.id })
+          await refresh()
+        } catch (error) {
+          feedback(error.message, true)
+        } finally {
+          dismissAll.disabled = false
+        }
+      })
+      controls.append(dismissAll)
+    }
+    if (jobs.some((job) => job.dismissedAt)) {
+      const history = node(
+        'button',
+        showDismissed ? 'Hide dismissed' : 'Show dismissed',
+        'text-button'
+      )
+      history.setAttribute('aria-expanded', String(showDismissed))
+      history.addEventListener('click', () => {
+        showDismissed = !showDismissed
+        renderJobs()
+      })
+      controls.append(history)
+    }
+    heading.append(controls)
+    $('jobs').append(heading)
     for (const job of visible) {
-      const container = node('div', undefined, 'job'),
+      const container = node(
+          'div',
+          undefined,
+          `job${job.dismissedAt ? ' dismissed-job' : ''}`
+        ),
         details = node('div')
       const done =
         job.orders?.filter((order) => order.state === 'done').length || 0
@@ -380,6 +523,7 @@ export async function startLibrary(
           )
         )
       container.append(details)
+      const actions = node('div', undefined, 'job-actions')
       if (job.state !== 'completed') {
         const button = node(
           'button',
@@ -410,8 +554,25 @@ export async function startLibrary(
               job.state === 'running' ? 'Pause' : 'Resume / retry'
           }
         })
-        container.append(button)
+        actions.append(button)
       }
+      if (job.state !== 'running' && !job.dismissedAt) {
+        const dismiss = node('button', 'Dismiss', 'text-button')
+        dismiss.title =
+          'Hide this message without removing saved orders. Find it later under Show dismissed.'
+        dismiss.addEventListener('click', async () => {
+          dismiss.disabled = true
+          try {
+            await send('IMPORT_DISMISS', { jobId: job.id })
+            await refresh()
+          } catch (error) {
+            feedback(error.message, true)
+            dismiss.disabled = false
+          }
+        })
+        actions.append(dismiss)
+      }
+      container.append(actions)
       $('jobs').append(container)
     }
     clearTimeout(jobTimer)
@@ -420,6 +581,7 @@ export async function startLibrary(
         try {
           ;({ jobs } = await send('JOBS_QUERY'))
           renderJobs()
+          renderOrders()
         } catch (error) {
           feedback(error.message, true)
         }
@@ -456,9 +618,21 @@ export async function startLibrary(
       const present = new Set(records.map((record) => record.snapshot.orderId))
       for (const id of selectedOrders)
         if (!present.has(id)) selectedOrders.delete(id)
-      records.sort((a, b) =>
-        b.snapshot.orderId.localeCompare(a.snapshot.orderId)
+      records.sort(
+        (a, b) =>
+          (b.snapshot.purchasedAt || '').localeCompare(
+            a.snapshot.purchasedAt || ''
+          ) || b.snapshot.orderId.localeCompare(a.snapshot.orderId)
       )
+      const oldMonth = $('month-filter').value
+      const months = [
+        ...new Set(records.map((record) => purchaseMonth(record.snapshot))),
+      ]
+      $('month-filter').replaceChildren(
+        new Option('All purchase months', ''),
+        ...months.map((month) => new Option(monthLabel(month), month))
+      )
+      $('month-filter').value = months.includes(oldMonth) ? oldMonth : ''
       const oldStatus = $('status-filter').value
       $('status-filter').replaceChildren(
         new Option('All statuses', ''),
@@ -484,7 +658,7 @@ export async function startLibrary(
       node('h2', order.sellerName),
       node(
         'p',
-        `${order.status} · Version ${record.revision} · Checked ${dateLabel(record.lastCheckedAt)}`
+        `${order.status} · Purchased ${purchaseLabel(order)} · Version ${record.revision} · Checked ${dateLabel(record.lastCheckedAt)}`
       )
     )
     const link = node('a', 'Open original order ↗')
@@ -582,7 +756,7 @@ export async function startLibrary(
       history.append(item)
     }
   }
-  async function copy(mode) {
+  async function copy(mode, progress) {
     if (copyBusy) return
     const rows = copyRows()
     copyBusy = true
@@ -592,10 +766,17 @@ export async function startLibrary(
       if (mode !== 'values') {
         for (let index = 0; index < rows.length; index++) {
           if (index % 10 === 0)
-            feedback(
+            progress(
               `Preparing images ${index + 1}–${Math.min(rows.length, index + 10)} of ${rows.length}…`
             )
-          images.push(await imageData(rows[index].thumbnail))
+          const original = await send('IMAGE_GET', {
+            url: rows[index].thumbnail,
+          })
+          images.push(
+            await pngImage(
+              typeof original === 'string' ? original : original.dataUrl
+            )
+          )
         }
       }
       await copyTable(rows, {
@@ -603,20 +784,23 @@ export async function startLibrary(
         imagesOnly: mode === 'images',
         headers: $('include-headers').checked,
       })
-      feedback(
-        `${rows.length} ${mode === 'images' ? 'separate pictures' : 'product rows'} copied. Paste into Excel${mode === 'values' ? ' (the Thumbnail column is left blank)' : ''}.`
-      )
     } finally {
       copyBusy = false
       updateSelection()
     }
   }
-  action('copy-excel', () => copy('all'))
-  action('copy-values', () => copy('values'))
-  action('copy-images', () => copy('images'))
+  for (const [id, mode] of [
+    ['copy-excel', 'all'],
+    ['copy-values', 'values'],
+    ['copy-images', 'images'],
+  ])
+    $(id).addEventListener('click', () =>
+      copyAction($(id), (progress) => copy(mode, progress))
+    )
   action('all-orders', () => {
     selectedOrders.clear()
     selectedRows.clear()
+    $('month-filter').value = ''
     page = 0
     render()
   })
@@ -628,15 +812,17 @@ export async function startLibrary(
     page++
     renderRows()
   })
-  action('refresh-orders', async () => {
+  async function refreshOrders(orderIds) {
     await send('REFRESH_ORDERS', {
-      orderIds: selectedOrders.size
-        ? [...selectedOrders]
-        : records.map((record) => record.snapshot.orderId),
+      orderIds,
     })
     await refresh()
     feedback('Refresh started. You can pause it from the progress bar.')
-  })
+  }
+  action('refresh-orders', () => refreshOrders([...selectedOrders]))
+  action('refresh-all', () =>
+    refreshOrders(records.map((record) => record.snapshot.orderId))
+  )
   action('remove-orders', async () => {
     if (
       !selectedOrders.size ||
@@ -695,6 +881,12 @@ export async function startLibrary(
       page = 0
       renderRows()
     })
+  $('month-filter').addEventListener('change', () => {
+    selectedOrders.clear()
+    selectedRows.clear()
+    page = 0
+    render()
+  })
   globalThis.chrome?.runtime?.onMessage?.addListener((message) => {
     if (message.type === 'LIBRARY_CHANGED')
       refresh().catch((error) => feedback(error.message, true))

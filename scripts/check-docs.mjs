@@ -125,7 +125,7 @@ for (const [name, command] of Object.entries(scripts)) {
   }
 }
 
-for (const filename of ['1688toCSV-download.png', 'csv-file-screenshot.png']) {
+for (const filename of ['order-library.png', 'order-library-dark.png']) {
   const path = join(root, 'screenshots', filename)
   if (!existsSync(path)) {
     problems.push(`Missing required screenshot: screenshots/${filename}`)

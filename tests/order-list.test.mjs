@@ -62,6 +62,34 @@ test('pagination and tracking URL parameters do not change filter identity', () 
   s.root.querySelector('input').value = 'different'
   assert.notEqual(readOrderList(s.document, listUrl).filterKey, before)
 })
+
+test('list purchase timestamps are explicit, calendar-valid China dates', () => {
+  const s = fixture()
+  const root = s.root.querySelector('order-item').shadowRoot
+  const date = s.document.createElement('span')
+  date.className = 'order-time'
+  date.textContent = '2026-02-28 23:59:58'
+  root.append(date)
+  assert.equal(
+    readOrderList(s.document, listUrl).orders[0].purchasedAt,
+    '2026-02-28T23:59:58+08:00'
+  )
+  date.textContent = '2026-02-30 23:59:58'
+  assert.equal(
+    readOrderList(s.document, listUrl).orders[0].purchasedAt,
+    undefined
+  )
+  date.textContent = '2026-03-01 24:00:00'
+  assert.equal(
+    readOrderList(s.document, listUrl).orders[0].purchasedAt,
+    undefined
+  )
+  date.remove()
+  assert.equal(
+    readOrderList(s.document, listUrl).orders[0].purchasedAt,
+    undefined
+  )
+})
 test('rejects mismatching identities, incomplete pages and duplicate order IDs', () => {
   const s = fixture()
   s.rows(['10001', '10001'])

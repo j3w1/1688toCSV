@@ -13,29 +13,24 @@
   function apply(value) {
     preference = normalize(value)
     meta.content = preference === 'system' ? 'light dark' : preference
-    const control = document.querySelector('#theme-preference')
-    if (control) {
-      control.value = preference
-      control.querySelector('[value="system"]').textContent =
-        `System (currently ${system.matches ? 'dark' : 'light'})`
-    }
   }
   apply(preference)
   document.addEventListener(
     'DOMContentLoaded',
     () => {
       apply(preference)
-      document
-        .querySelector('#theme-preference')
-        .addEventListener('change', (event) => {
-          apply(event.target.value)
-          try {
-            if (preference === 'system') localStorage.removeItem(key)
-            else localStorage.setItem(key, preference)
-          } catch {
-            /* The selected scheme still applies when storage is unavailable. */
-          }
-        })
+      document.querySelector('#theme-toggle').addEventListener('click', () => {
+        const systemScheme = system.matches ? 'dark' : 'light'
+        const rendered = preference === 'system' ? systemScheme : preference
+        const target = rendered === 'dark' ? 'light' : 'dark'
+        apply(target === systemScheme ? 'system' : target)
+        try {
+          if (preference === 'system') localStorage.removeItem(key)
+          else localStorage.setItem(key, preference)
+        } catch {
+          /* The selected scheme still applies when storage is unavailable. */
+        }
+      })
     },
     { once: true }
   )
