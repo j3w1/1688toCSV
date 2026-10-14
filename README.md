@@ -25,21 +25,27 @@ Open **Extensions → Developer mode → Load unpacked** and select **dist**. In
 1. Open your [1688 orders](https://work.1688.com/home/buyer.htm), tick the orders you want, and choose **Import selected**. Confirm the count when asked and keep the list open while the reader tab works.
 2. Open **Spreadsheet ↗**. If a new tab is blocked, use **Open spreadsheet here** after the import finishes.
 3. Choose the orders to prepare, check the **Packing month** (the current month by default), and click **Prepare labels**. This month controls new CE codes; saved preparation keeps its assigned month.
-4. Review the suggested product groups, variants and sizes. Set a short Spanish name and Chinese category, then **Save preparation** to assign codes. Merge or split groups when the suggestions need correction.
+4. Check the product photos, options and sizes. Set a short Spanish name and Chinese category, then **Save preparation** to assign codes. Carton and barcode previews show the labels beside their products.
 
 Resolve any **Choose a size code** prompt before copying labels. Names and codes remain editable after saving.
+
+Click a photo to zoom in. Open **Code options** or **Grouping tools** when needed; their **?** buttons explain each action.
+
+**Undo** and **Redo** restore unsaved text and grouping changes. Saving clears the history for that order; issued codes remain reserved.
+
+<a href="screenshots/preparation.png"><img src="screenshots/preparation.png" alt="Preparation form with synthetic product photos, carton and barcode previews, and Undo and Redo controls" width="640" /></a>
 
 Orders marked **Seller unavailable** keep their products and totals. Enter the seller's member login in **Prepare labels** before assigning codes.
 
 ## Edit labels and copy to Excel
 
-Click **Barcode** or **Carton mark** and edit the preview. **Enter** or leaving the field saves; **Escape** cancels the edit. Click **Copy label**, then paste into Excel. Click the dimmed background to close an overlay. **Settings** controls dimensions, resolution, logo and vocabulary.
+Click a label preview, **Barcode** or **Carton mark** to edit it. **Enter** or leaving the field saves; **Escape** cancels the edit. Click **Copy label**, then paste into Excel. Click the dimmed background to close an overlay. **Settings** controls dimensions, resolution, logo and vocabulary.
 
 <a href="screenshots/label-editor.png"><img src="screenshots/label-editor.png" alt="Editable barcode label with synthetic CE code and Spanish product name" width="480" /></a>
 
 | Copy action                         | What to paste                                                                                                                   |
 | ----------------------------------- | ------------------------------------------------------------------------------------------------------------------------------- |
-| **Copy values**                     | Thumbnail placeholder, description, displayed unit price, quantity and discount                                                  |
+| **Copy values**                     | Thumbnail placeholder, description, displayed unit price, quantity and discount                                                 |
 | **Copy images** / **Copy to Excel** | Separate product pictures, or the five source columns with pictures                                                             |
 | **Copy preparation columns**        | Your chosen code, barcode, description, Spanish description and financial columns; the base code appears once per product group |
 | **Copy group codes**                | One base code per group                                                                                                         |

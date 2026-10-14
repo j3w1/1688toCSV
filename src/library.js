@@ -1187,6 +1187,10 @@ export async function startLibrary(
         renderRows()
       },
       feedback,
+      loadImage: async (url) => {
+        const result = await send('IMAGE_GET', { url })
+        return typeof result === 'string' ? result : result.dataUrl
+      },
     })
     await refresh()
   } catch (error) {

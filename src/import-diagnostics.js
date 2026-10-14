@@ -16,6 +16,7 @@ export function financialDiagnostics(input) {
   const samples = Array.isArray(input.products?.sample)
     ? input.products.sample
     : []
+  const invalidDiscount = input.products?.invalidDiscount
   return {
     version: 1,
     extensionVersion: short(input.extensionVersion, 32),
@@ -41,6 +42,15 @@ export function financialDiagnostics(input) {
       omittedRows:
         count(input.products?.omittedRows) + Math.max(0, samples.length - 25),
       error: short(input.products?.error),
+      ...(count(invalidDiscount?.row) > 0 &&
+      typeof invalidDiscount?.value === 'string'
+        ? {
+            invalidDiscount: {
+              row: invalidDiscount.row,
+              value: short(invalidDiscount.value),
+            },
+          }
+        : {}),
     },
   }
 }
@@ -87,7 +97,9 @@ export function collectFinancialDiagnostics(document, url, extensionVersion) {
         omittedRows: Math.max(0, dataRows.length - 25),
       }
     } catch (error) {
+      // An aborted extraction leaves count and aggregates unavailable.
       input.products.error = error.message
+      input.products.invalidDiscount = error.invalidDiscount
     }
   } catch (error) {
     input.products.error = error.message

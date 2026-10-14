@@ -24,7 +24,21 @@ try {
     .getByLabel('Spanish short name', { exact: true })
     .fill('VELA AROMATICA')
   await group.getByLabel('Chinese category', { exact: true }).fill('工艺品')
-  await group.getByRole('button', { name: 'Edit barcode', exact: true }).click()
+  await page
+    .getByRole('button', { name: 'Save preparation', exact: true })
+    .click()
+  await group.getByAltText('Carton mark preview').waitFor()
+  await group.getByAltText('Barcode preview').first().waitFor()
+  await page.locator('#preparation-dialog').evaluate((dialog) => {
+    dialog.scrollTop = 0
+  })
+  await page
+    .locator('#preparation-dialog')
+    .screenshot({ path: 'screenshots/preparation.png' })
+  await group
+    .getByRole('button', { name: 'Edit barcode', exact: true })
+    .first()
+    .click()
   await page.getByAltText('Printable label preview').waitFor()
   await page
     .getByAltText('Printable label preview')

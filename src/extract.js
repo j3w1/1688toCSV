@@ -103,7 +103,17 @@ function rowDiscount(row, discount, rowNumber) {
     for (const item of deepQuery(discountArea).all(
       '.order-table-discount-item-price'
     )) {
-      amounts.push(requiredNumber(discountText(item), 'discount', rowNumber))
+      const value = discountText(item)
+      try {
+        amounts.push(requiredNumber(value, 'discount', rowNumber))
+      } catch (error) {
+        throw Object.assign(error, {
+          invalidDiscount: {
+            row: rowNumber,
+            value: value.length > 160 ? `${value.slice(0, 159)}…` : value,
+          },
+        })
+      }
     }
     const advertised = discountText(discountArea).replace(/\s+/g, '')
     if (

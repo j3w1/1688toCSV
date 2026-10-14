@@ -40,6 +40,7 @@ test('failed-read evidence captures financial breakdown and aggregates, excludin
   assert.equal(result.products.discount, '0.00')
   assert.equal(result.products.sample.length, 25)
   assert.equal(result.products.omittedRows, 10)
+  assert.equal(result.products.invalidDiscount, undefined)
   assert.doesNotMatch(
     JSON.stringify(result),
     /Private|not-diagnostic-data|thumbnail|<html/
@@ -58,6 +59,11 @@ test('diagnostics stay bounded and allowlisted through persistence and incomplet
     })),
     products: {
       count: 1000,
+      invalidDiscount: {
+        row: 2,
+        value: 'z'.repeat(1000),
+        html: 'not diagnostic',
+      },
       sample: Array.from({ length: 1000 }, () => ({
         price: '1'.repeat(1000),
         quantity: '1',
@@ -72,6 +78,10 @@ test('diagnostics stay bounded and allowlisted through persistence and incomplet
   assert.equal(safe.fields[0].value.at(-1), '…')
   assert.equal(safe.products.sample.length, 25)
   assert.equal(safe.products.omittedRows, 975)
+  assert.deepEqual(safe.products.invalidDiscount, {
+    row: 2,
+    value: `${'z'.repeat(159)}…`,
+  })
   assert.ok(JSON.stringify(safe).length < 20000)
   assert.doesNotMatch(
     JSON.stringify(safe),
@@ -87,4 +97,54 @@ test('diagnostics stay bounded and allowlisted through persistence and incomplet
   assert.equal(missing.totalSections, 0)
   assert.ok(missing.products.error)
   assert.equal(financialDiagnostics(null), undefined)
+})
+
+test('invalid row discounts retain only the bounded amount text without accepting the failed extraction', () => {
+  for (const value of [
+    '',
+    '—',
+    '-1.00',
+    '省1.00元 减2.00元',
+    '?'.repeat(1000),
+  ]) {
+    const { document } = parseHTML(
+      '<html><body><div>Private recipient address</div></body></html>'
+    )
+    buildOrderFixture(document, {
+      rows: [
+        {
+          title: 'Private product title',
+          price: '10',
+          quantity: '1',
+          discounts: [],
+        },
+        {
+          title: 'Private product title',
+          sku: 'Private attributes',
+          price: '10',
+          quantity: '1',
+          discounts: [value],
+        },
+      ],
+    })
+    const result = collectFinancialDiagnostics(
+      document,
+      'https://air.1688.com/app/ctf-page/trade-order-detail/index.html?orderId=10001',
+      'synthetic-version'
+    )
+    assert.match(
+      result.products.error,
+      /^Row 2: discount is missing or invalid\./
+    )
+    assert.equal(result.products.count, 0)
+    assert.equal(result.products.gross, '')
+    assert.equal(result.products.discount, '')
+    assert.deepEqual(result.products.sample, [])
+    assert.deepEqual(result.products.invalidDiscount, {
+      row: 2,
+      value: value.length > 160 ? `${value.slice(0, 159)}…` : value,
+    })
+    assert.deepEqual(financialDiagnostics(result), result)
+    assert.doesNotMatch(JSON.stringify(result), /Private|thumbnail|<html/)
+  }
 })
