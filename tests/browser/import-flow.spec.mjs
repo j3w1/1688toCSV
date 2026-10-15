@@ -132,6 +132,9 @@ async function setup(
   const list = await extension.context.newPage()
   await list.goto(listUrl)
   const library = await extension.context.newPage()
+  await library.addInitScript(() =>
+    localStorage.setItem('1688-library-purchase-months', '[]')
+  )
   await library.goto(`${extension.extensionBaseUrl}/library.html`)
   return { list, library, visited }
 }
@@ -148,7 +151,9 @@ async function assertImported(extension, library) {
   await expect(library.locator('#order-count')).toHaveText('2', {
     timeout: 65_000,
   })
-  await expect(library.locator('#sheet-body tr')).toHaveCount(4)
+  await expect(
+    library.locator('#sheet-body tr[data-selection-key]')
+  ).toHaveCount(4)
   await expandOrderMonths(library)
   await library.getByRole('button', { name: /^Activity/ }).click()
   await expect(library.locator('#jobs')).toContainText('completed')
@@ -165,10 +170,6 @@ async function assertImported(extension, library) {
   ])
   await library
     .getByRole('button', { name: 'Copy values', exact: true })
-    .click()
-  await library
-    .getByRole('dialog', { name: 'Confirm operation', exact: true })
-    .getByRole('button', { name: 'Copy 4 product rows', exact: true })
     .click()
   await expect(library.locator('#copy-values')).toHaveText('Copied')
   const copied = await library.evaluate(() => navigator.clipboard.readText())
@@ -206,13 +207,10 @@ test('missing sellers import products but require identification before label pr
     .getByRole('button', { name: 'Close order details', exact: true })
     .click()
   await library.getByRole('button', { name: 'Show all', exact: true }).click()
-  await library
-    .getByRole('button', { name: 'Prepare packing list', exact: true })
-    .click()
-  const dialog = library.getByRole('dialog', {
-    name: 'Prepare packing list',
-    exact: true,
-  })
+  await library.locator('.order-card').first().click()
+  await library.locator('#select-rows').click()
+  await library.locator('#prepare-orders').click()
+  const dialog = library.locator('#packing-view')
   const seller = dialog.getByLabel('Seller member login (required)', {
     exact: true,
   })
@@ -221,9 +219,7 @@ test('missing sellers import products but require identification before label pr
     .getByLabel('Spanish short name', { exact: true })
     .first()
     .fill('PRODUCTO')
-  await dialog
-    .getByRole('button', { name: 'Close packing list', exact: true })
-    .click()
+  await dialog.getByRole('button', { name: 'Orders', exact: true }).click()
   await expect(seller).toBeFocused()
   await expect(dialog.locator('.preparation-save-status')).toContainText(
     'Enter the seller member login'
@@ -231,31 +227,15 @@ test('missing sellers import products but require identification before label pr
   await expect(
     dialog.getByLabel('Product code', { exact: true }).first()
   ).toHaveValue('')
-  // A missing seller must not trap the user after a new, unallocated draft fails.
   await dialog
     .getByRole('button', { name: 'Discard pending edits', exact: true })
     .click()
-  const discard = library.getByRole('dialog', {
-    name: 'Confirm operation',
-    exact: true,
-  })
-  await discard.getByRole('button', { name: 'Cancel', exact: true }).click()
   await expect(
-    dialog.getByLabel('Spanish short name', { exact: true }).first()
-  ).toHaveValue('PRODUCTO')
-  await dialog
-    .getByRole('button', { name: 'Discard pending edits', exact: true })
-    .click()
-  await discard
-    .getByRole('button', { name: 'Discard 1 preparation', exact: true })
-    .click()
-  await dialog
-    .getByRole('button', { name: 'Close packing list', exact: true })
-    .click()
+    library.getByRole('dialog', { name: 'Confirm operation', exact: true })
+  ).not.toBeVisible()
+  await dialog.getByRole('button', { name: 'Orders', exact: true }).click()
   await expect(dialog).not.toBeVisible()
-  await library
-    .getByRole('button', { name: 'Prepare packing list', exact: true })
-    .click()
+  await library.locator('#prepare-orders').click()
   await seller.fill('identified-synthetic-shop')
   await expect(dialog.locator('.preparation-save-status')).toHaveText(
     'Saved automatically'
@@ -267,11 +247,14 @@ test('missing sellers import products but require identification before label pr
     /packing-error/
   )
   await library.reload()
-  await library
-    .getByRole('button', { name: 'Prepare packing list', exact: true })
-    .click()
+  await library.locator('#prepare-orders').click()
   await expect(seller).toHaveValue('identified-synthetic-shop')
-  await dialog.getByLabel('Preparation order').selectOption('1')
+  await dialog.getByRole('button', { name: 'Orders', exact: true }).click()
+  await library.getByRole('button', { name: 'Show all', exact: true }).click()
+  await expandOrderMonths(library)
+  await library.locator('.order-card').nth(1).click()
+  await library.locator('#select-rows').click()
+  await library.locator('#prepare-orders').click()
   await expect(seller).toHaveValue('')
   await expect(
     dialog.getByLabel('Product code', { exact: true }).first()
@@ -603,13 +586,17 @@ test('selected import reaches persistent spreadsheet and clipboard through real 
   expect(visited).toEqual(ids)
   await library.reload()
   await expect(library.locator('#order-count')).toHaveText('2')
-  await list.getByRole('button', { name: 'Spreadsheet ↗', exact: true }).click()
   await list
-    .getByRole('button', { name: 'Open spreadsheet here', exact: true })
+    .getByRole('button', { name: 'Open Workspace', exact: true })
+    .click()
+  await list
+    .getByRole('button', { name: 'Open Workspace here', exact: true })
     .click()
   await expect(list).toHaveURL(`${extension.extensionBaseUrl}/library.html`)
   await expect(list.locator('#order-count')).toHaveText('2')
-  await expect(list.locator('#sheet-body tr')).toHaveCount(4)
+  await expect(list.locator('#sheet-body tr[data-selection-key]')).toHaveCount(
+    4
+  )
   // Refresh all remains explicit even with one selected order and a text filter.
   await expandOrderMonths(list)
   await list
@@ -618,7 +605,9 @@ test('selected import reaches persistent spreadsheet and clipboard through real 
   await list
     .getByRole('searchbox', { name: 'Search products and orders', exact: true })
     .fill('no matching synthetic product')
-  await expect(list.locator('#sheet-body tr')).toHaveCount(0)
+  await expect(list.locator('#sheet-body tr[data-selection-key]')).toHaveCount(
+    0
+  )
   await list.getByRole('button', { name: 'Settings', exact: true }).click()
   await list.getByRole('tab', { name: 'Data', exact: true }).click()
   await list
@@ -636,12 +625,16 @@ test('selected import reaches persistent spreadsheet and clipboard through real 
   await expect.poll(() => visited.length, { timeout: 40_000 }).toBe(4)
   await expect(list.locator('#refresh-all')).toBeEnabled({ timeout: 20_000 })
   expect(visited.slice(2).sort()).toEqual([...ids].sort())
-  await list.getByRole('button', { name: 'Close settings', exact: true }).click()
+  await list
+    .getByRole('button', { name: 'Close settings', exact: true })
+    .click()
   await list
     .getByRole('searchbox', { name: 'Search products and orders', exact: true })
     .clear()
   await list.getByRole('button', { name: 'Show all', exact: true }).click()
-  await expect(list.locator('#sheet-body tr')).toHaveCount(4)
+  await expect(list.locator('#sheet-body tr[data-selection-key]')).toHaveCount(
+    4
+  )
   expect(extension.unexpectedRequests).toEqual([])
 })
 

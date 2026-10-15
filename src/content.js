@@ -50,7 +50,7 @@ const panel = mountPageDownload(
     },
     openLibrary: async () => {
       await send('OPEN_LIBRARY')
-      return 'Spreadsheet opened.'
+      return 'Workspace opened.'
     },
     pauseImport: (jobId) => send('IMPORT_PAUSE', { jobId }),
     suspend: () => {

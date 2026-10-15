@@ -27,8 +27,12 @@ test('saving a naming rule updates unprepared products and searches immediately'
   expect(restored.ok, restored.error).toBe(true)
   const { page, dialog } = await openSettings(extension)
   await dialog.getByRole('tab', { name: 'Product names', exact: true }).click()
-  await dialog.getByRole('button', { name: 'Add rule', exact: true }).click()
-  const row = dialog.locator('.vocabulary-table tbody tr').first()
+  const names = dialog.getByRole('tabpanel', {
+    name: 'Product names',
+    exact: true,
+  })
+  await names.getByRole('button', { name: 'Add rule', exact: true }).click()
+  const row = names.locator('.vocabulary-table tbody tr').first()
   await row
     .getByLabel('Title includes', { exact: true })
     .fill('Synthetic unique naming title')
@@ -45,7 +49,9 @@ test('saving a naming rule updates unprepared products and searches immediately'
     page.locator('#sheet-body .row-preparation').first()
   ).toContainText('测试品')
   await page.locator('#search').fill('NOMBRE INMEDIATO')
-  await expect(page.locator('#sheet-body tr')).toHaveCount(3)
+  await expect(page.locator('#sheet-body tr[data-selection-key]')).toHaveCount(
+    3
+  )
 })
 
 async function openSettings(extension) {
@@ -66,10 +72,17 @@ test('Settings sections support the keyboard, preserve edits across searches and
   await dialog.getByLabel('Website', { exact: true }).fill('labels.example')
   await dialog.getByRole('tab', { name: 'Labels', exact: true }).focus()
   await page.keyboard.press('ArrowRight')
-  const names = dialog.getByRole('tab', { name: 'Product names', exact: true })
-  await expect(names).toBeFocused()
-  await expect(names).toHaveAttribute('aria-selected', 'true')
-  const rows = dialog.locator('.vocabulary-table tbody tr')
+  const namesTab = dialog.getByRole('tab', {
+    name: 'Product names',
+    exact: true,
+  })
+  await expect(namesTab).toBeFocused()
+  await expect(namesTab).toHaveAttribute('aria-selected', 'true')
+  const names = dialog.getByRole('tabpanel', {
+    name: 'Product names',
+    exact: true,
+  })
+  const rows = names.locator('.vocabulary-table tbody tr')
   await expect(rows).toHaveCount(12)
   const firstMatch = await rows
     .first()
@@ -79,17 +92,17 @@ test('Settings sections support the keyboard, preserve edits across searches and
     .first()
     .getByLabel('Spanish name', { exact: true })
     .fill('NOMBRE DE PRUEBA')
-  await dialog.getByRole('button', { name: 'Next rules', exact: true }).click()
+  await names.getByRole('button', { name: 'Next rules', exact: true }).click()
   await expect(
-    dialog.locator('.vocabulary-navigation [role=status]')
+    names.locator('.vocabulary-navigation [role=status]')
   ).toContainText('13–24 of')
-  await dialog
+  await names
     .getByRole('button', { name: 'Previous rules', exact: true })
     .click()
   await expect(
     rows.first().getByLabel('Spanish name', { exact: true })
   ).toHaveValue('NOMBRE DE PRUEBA')
-  const search = dialog.getByRole('searchbox', {
+  const search = names.getByRole('searchbox', {
     name: 'Search naming rules',
     exact: true,
   })
@@ -100,7 +113,7 @@ test('Settings sections support the keyboard, preserve edits across searches and
   ).toHaveValue(firstMatch)
   await search.fill('nonexistent-naming-rule')
   await expect(rows).toHaveText('No matching rules.')
-  await dialog.getByRole('button', { name: 'Add rule', exact: true }).click()
+  await names.getByRole('button', { name: 'Add rule', exact: true }).click()
   await expect(search).toHaveValue('')
   await rows
     .first()
@@ -195,18 +208,22 @@ test('Settings stays within a narrow screen and keeps the naming table in its ow
     await dialog.evaluate((node) => node.scrollWidth <= node.clientWidth + 1)
   ).toBe(true)
   await dialog.getByRole('tab', { name: 'Product names', exact: true }).click()
-  await expect(dialog.locator('.vocabulary-table tbody tr')).toHaveCount(12)
+  const names = dialog.getByRole('tabpanel', {
+    name: 'Product names',
+    exact: true,
+  })
+  await expect(names.locator('.vocabulary-table tbody tr')).toHaveCount(12)
   expect(
     await dialog.evaluate((node) => node.scrollWidth <= node.clientWidth + 1)
   ).toBe(true)
   expect(
-    (await dialog.locator('.vocabulary-scroll').boundingBox()).height
+    (await names.locator('.vocabulary-scroll').boundingBox()).height
   ).toBeLessThanOrEqual(420)
-  await dialog
+  await names
     .getByRole('searchbox', { name: 'Search naming rules', exact: true })
     .fill('香薰')
   await expect(
-    dialog
+    names
       .locator('.vocabulary-table tbody tr')
       .first()
       .getByLabel('Chinese category', { exact: true })

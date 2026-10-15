@@ -7,6 +7,8 @@ const paths = {
   barcode: 'M3 4v16M6 4v16M10 4v16M12 4v16M16 4v16M18 4v16M21 4v16',
   carton: 'M12 2 23 22H1zM10.2 12a3 3 0 1 0 0 6M17 12h-4v6h4M13 15h3',
   table: 'M3 3h18v18H3zM3 9h18M9 9v12',
+  store:
+    'M3 10v11h18V10M2 6l2-4h16l2 4v4a3 3 0 0 1-5 2 3 3 0 0 1-5 0 3 3 0 0 1-5 0 3 3 0 0 1-5-2V6zM9 21v-6h6v6',
   packing: 'M3 7l9-5 9 5v11l-9 4-9-4zM3 7l9 5 9-5M12 12v10M7 5l10 5',
   refresh: 'M20 7a9 9 0 1 0 1 8M20 2v5h-5',
   trash: 'M3 6h18M8 6V3h8v3M5 6l1 15h12l1-15M10 10v7m4-7v7',

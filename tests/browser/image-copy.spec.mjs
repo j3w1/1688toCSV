@@ -54,6 +54,10 @@ async function openLibrary(extension) {
     'clipboard-write',
   ])
   const page = await extension.context.newPage()
+  await page.addInitScript(() => {
+    if (localStorage.getItem('1688-library-purchase-months') === null)
+      localStorage.setItem('1688-library-purchase-months', '[]')
+  })
   await page.goto(`${extension.extensionBaseUrl}/library.html`)
   return page
 }
@@ -97,7 +101,7 @@ test('single picture copies original non-square pixels with inline success', asy
 }) => {
   await seedPictures(extension)
   const page = await openLibrary(extension)
-  const row = page.locator('#sheet-body tr').first()
+  const row = page.locator('#sheet-body tr[data-selection-key]').first()
   const preview = row.locator('img')
   await expect
     .poll(() => preview.evaluate((image) => image.naturalWidth))
@@ -143,10 +147,6 @@ test('bulk picture copying preserves full pixels in separate compact Excel cells
   for (const id of ['copy-images', 'copy-excel']) {
     const button = page.locator(`#${id}`)
     await button.click()
-    await page
-      .getByRole('dialog', { name: 'Confirm operation', exact: true })
-      .getByRole('button', { name: /^Copy .* product images$/ })
-      .click()
     await expect(button).toHaveText('Copied')
     await expect(button).toHaveClass(/copied/)
     const pictures = await page.evaluate(async () => {
@@ -199,10 +199,6 @@ test('clipboard failures stay next to the copy control and can be retried', asyn
   const page = await openLibrary(extension)
   const button = page.locator('#copy-values')
   await button.click()
-  await page
-    .getByRole('dialog', { name: 'Confirm operation', exact: true })
-    .getByRole('button', { name: /^Copy .* product rows$/ })
-    .click()
   await expect(button).toHaveText('Try again')
   await expect(button).toHaveClass(/copy-failed/)
   await expect(page.locator('.copy-error')).toHaveText(
@@ -210,10 +206,6 @@ test('clipboard failures stay next to the copy control and can be retried', asyn
   )
   await expect(page.locator('#feedback')).toBeEmpty()
   await button.click()
-  await page
-    .getByRole('dialog', { name: 'Confirm operation', exact: true })
-    .getByRole('button', { name: /^Copy .* product rows$/ })
-    .click()
   await expect(button).toHaveText('Copied')
   await expect(button).toHaveClass(/copied/)
   await expect(page.locator('.copy-error')).toHaveCount(0)
@@ -269,10 +261,6 @@ test('repeated original photos count per row toward the clipboard batch budget',
   const page = await openLibrary(extension)
   const button = page.locator('#copy-images')
   await button.click()
-  await page
-    .getByRole('dialog', { name: 'Confirm operation', exact: true })
-    .getByRole('button', { name: 'Copy 3 product images', exact: true })
-    .click()
   const batches = page.getByRole('dialog', {
     name: 'Choose image batch',
     exact: true,

@@ -222,6 +222,93 @@ function scaleBox(box, width, height) {
   return box.map((value, index) => value * (index % 2 ? height : width))
 }
 
+async function logoArtworkBounds(image, signal) {
+  const width = image.naturalWidth
+  const height = image.naturalHeight
+  const canvas = document.createElement('canvas')
+  // Inspect original pixels in small tiles so thin or pale artwork survives.
+  canvas.width = Math.min(width, 512)
+  canvas.height = Math.min(height, 512)
+  let left = width,
+    top = height,
+    right = -1,
+    bottom = -1
+  try {
+    const context = canvas.getContext('2d', { willReadFrequently: true })
+    if (!context) return [0, 0, width, height]
+    for (let y = 0; y < height; y += canvas.height) {
+      for (let x = 0; x < width; x += canvas.width) {
+        aborted(signal)
+        const tileWidth = Math.min(canvas.width, width - x)
+        const tileHeight = Math.min(canvas.height, height - y)
+        context.clearRect(0, 0, canvas.width, canvas.height)
+        context.drawImage(
+          image,
+          x,
+          y,
+          tileWidth,
+          tileHeight,
+          0,
+          0,
+          tileWidth,
+          tileHeight
+        )
+        const { data } = context.getImageData(0, 0, tileWidth, tileHeight)
+        for (let index = 0; index < data.length; index += 4) {
+          // The final label is white. Only effectively white/transparent pixels
+          // are margins; internal white spaces remain part of the drawn image.
+          const darkness =
+            255 - Math.min(data[index], data[index + 1], data[index + 2])
+          if (darkness * data[index + 3] <= 255) continue
+          const pixel = index / 4
+          const pixelX = x + (pixel % tileWidth)
+          const pixelY = y + Math.floor(pixel / tileWidth)
+          left = Math.min(left, pixelX)
+          right = Math.max(right, pixelX)
+          top = Math.min(top, pixelY)
+          bottom = Math.max(bottom, pixelY)
+        }
+      }
+      await yieldToBrowser()
+    }
+    if (right < left) return [0, 0, width, height]
+    // Retain a small source-pixel margin for antialiased edges.
+    left = Math.max(0, left - 2)
+    top = Math.max(0, top - 2)
+    right = Math.min(width - 1, right + 2)
+    bottom = Math.min(height - 1, bottom + 2)
+    return [left, top, right - left + 1, bottom - top + 1]
+  } finally {
+    canvas.width = 0
+    canvas.height = 0
+  }
+}
+
+function createLogoBoundsCache() {
+  let last
+  return {
+    async get(image, signal) {
+      const source = image.currentSrc || image.src
+      const width = image.naturalWidth
+      const height = image.naturalHeight
+      if (
+        last?.source === source &&
+        last.width === width &&
+        last.height === height
+      )
+        return last.bounds
+      const bounds = await logoArtworkBounds(image, signal)
+      aborted(signal)
+      // Retain only bounds for the current logo, never decoded pixels/canvases.
+      last = { source, width, height, bounds }
+      return bounds
+    },
+    clear() {
+      last = null
+    },
+  }
+}
+
 async function drawBarcode(
   context,
   model,
@@ -229,7 +316,8 @@ async function drawBarcode(
   width,
   height,
   logoUrl,
-  signal
+  signal,
+  logoBounds
 ) {
   const factor = settings.barcode.textScale
   textBox(
@@ -276,15 +364,15 @@ async function drawBarcode(
     image.src = logoUrl
     await image.decode()
     aborted(signal)
-    const box = [width * 0.035, height * 0.705, width * 0.315, height * 0.255]
-    const ratio = Math.min(
-      box[2] / image.naturalWidth,
-      box[3] / image.naturalHeight
-    )
-    const imageWidth = image.naturalWidth * ratio
-    const imageHeight = image.naturalHeight * ratio
+    const crop = await logoBounds.get(image, signal)
+    aborted(signal)
+    const box = [width * 0.03, height * 0.65, width * 0.335, height * 0.31]
+    const ratio = Math.min(box[2] / crop[2], box[3] / crop[3])
+    const imageWidth = crop[2] * ratio
+    const imageHeight = crop[3] * ratio
     context.drawImage(
       image,
+      ...crop,
       box[0] + (box[2] - imageWidth) / 2,
       box[1] + (box[3] - imageHeight) / 2,
       imageWidth,
@@ -346,7 +434,7 @@ function drawMark(context, model, settings, width, height) {
 }
 
 async function drawLabel(request) {
-  const { model, settings, logoUrl, signal } = request
+  const { model, settings, logoUrl, signal, logoBounds } = request
   aborted(signal)
   const { widthMm, heightMm } = settings[model.kind]
   const width = Math.round((widthMm * settings.dpi) / 25.4)
@@ -374,7 +462,8 @@ async function drawLabel(request) {
         width,
         height,
         logoUrl,
-        signal
+        signal,
+        logoBounds
       )
     else drawMark(context, model, settings, width, height)
     aborted(signal)
@@ -416,6 +505,7 @@ export function createLabelRenderer({
   const cache = new Map()
   const queue = []
   const activeTasks = new Set()
+  const logoBounds = createLogoBoundsCache()
   let bytes = 0
   let disposed = false
 
@@ -495,7 +585,13 @@ export function createLabelRenderer({
             resolve,
             reject,
             controller,
-            request: { model, settings, logoUrl, signal: controller.signal },
+            request: {
+              model,
+              settings,
+              logoUrl,
+              signal: controller.signal,
+              logoBounds,
+            },
             cleanup: () => request.signal?.removeEventListener('abort', abort),
           }
           request.signal?.addEventListener('abort', abort, { once: true })
@@ -520,6 +616,7 @@ export function createLabelRenderer({
       }
       for (const task of activeTasks) task.controller.abort()
       cache.clear()
+      logoBounds.clear()
       bytes = 0
     },
   }

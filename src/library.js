@@ -5,7 +5,7 @@ import {
   pngImage,
 } from './clipboard.js'
 import { openDatabase } from './database.js'
-import { confirmScope, yieldUI, enableLightDismiss } from './ui.js'
+import { confirmScope, copied, yieldUI, enableLightDismiss } from './ui.js'
 import { startPackingWorkspace } from './packing-workspace.js'
 import { createImportReport, importJobView } from './import-report.js'
 import {
@@ -18,12 +18,13 @@ import { presentOrderStatus } from './order-presentation.js'
 import { createRowSelection } from './row-selection.js'
 import { copyExcelImage } from './excel-image-copy.js'
 import { summarizeOrders } from './order-summary.js'
-import { decorateIcon } from './icons.js'
+import { decorateIcon, icon } from './icons.js'
 import { preparationHelp } from './preparation-help.js'
 
 const $ = (id) => document.getElementById(id)
 const keyFor = (row) => `${row.orderId}/${row.entryId}`
 const headerPreference = '1688-library-include-headers'
+const monthPreference = '1688-library-purchase-months'
 const purchaseDay = (order) => order.purchasedAt?.slice(0, 10) || ''
 const purchaseMonth = (order) => purchaseDay(order).slice(0, 7) || 'unknown'
 const monthLabel = (month) =>
@@ -158,10 +159,17 @@ export async function startLibrary(
     showDismissed = false,
     orderPage = 0
   let packing
-  const selectedMonths = new Set()
-  const expandedMonths = new Set([
-    `${new Date().getFullYear()}-${String(new Date().getMonth() + 1).padStart(2, '0')}`,
-  ])
+  const currentMonth = `${new Date().getFullYear()}-${String(new Date().getMonth() + 1).padStart(2, '0')}`
+  let savedMonths = [currentMonth]
+  try {
+    const stored = JSON.parse(localStorage.getItem(monthPreference))
+    if (Array.isArray(stored))
+      savedMonths = stored.filter((month) =>
+        /^(?:20\d{2}-(?:0[1-9]|1[0-2])|unknown)$/.test(month)
+      )
+  } catch {}
+  const selectedMonths = new Set(savedMonths)
+  const expandedMonths = new Set([currentMonth, ...savedMonths])
   let monthAnchor = null
   const photos = createPhotoViewer(async (url) => {
     const data = await send('IMAGE_GET', { url })
@@ -176,6 +184,21 @@ export async function startLibrary(
     getKeys: () => filteredRows().map(keyFor),
     onChange: updateSelection,
   })
+  document.querySelector('.table-scroll').addEventListener(
+    'keydown',
+    (event) => {
+      if (
+        !(event.ctrlKey || event.metaKey) ||
+        event.key.toLowerCase() !== 'a' ||
+        event.target.closest('input, textarea, select, [contenteditable]')
+      )
+        return
+      event.preventDefault()
+      event.stopPropagation()
+      productSelection.selectAll()
+    },
+    true
+  )
   const orderSelection = createRowSelection({
     selected: selectedOrders,
     getKeys: () =>
@@ -243,7 +266,7 @@ export async function startLibrary(
     ['order-search', 'Find a seller, member login or full order number.'],
     [
       'month-filter-label',
-      'Choose several purchase months. Shift-click selects a range.',
+      'Filter by purchase month. Shift-click filters a range. Starts with the current month, then remembers your filter.',
     ],
     ['date-from', 'Include orders purchased on or after this date.'],
     ['date-to', 'Include orders purchased through this date.'],
@@ -264,11 +287,11 @@ export async function startLibrary(
     ['changes-only', 'Show product rows changed by a recent refresh.'],
     [
       'packing-month',
-      'Sets the month in new CE codes. Existing codes keep their month.',
+      'The month you are packing for, independent of purchase dates. Selected products receive this month’s CE codes after you confirm any changes. With no products selected, reopen products already assigned to this packing month.',
     ],
     [
       'prepare-orders',
-      'Prepare the selected or matching orders, with photos, editable codes and labels.',
+      'Prepare exactly the selected products. Ctrl+A in the product table selects all filtered products. Review the scope shown beside this button.',
     ],
     [
       'copy-values',
@@ -314,7 +337,6 @@ export async function startLibrary(
     ],
   ])
     preparationHelp($(id), hint)
-  const copyTimers = new WeakMap()
   try {
     const stored = localStorage.getItem(headerPreference)
     if (stored !== null) $('include-headers').checked = stored === 'true'
@@ -411,49 +433,10 @@ export async function startLibrary(
     })
   }
   async function copyAction(button, handler) {
-    if (button.disabled) return
-    const photoButton = button.matches('.photo-copy-button')
-    if (photoButton)
-      button.style.width = `${button.getBoundingClientRect().width}px`
-    const label = (button.dataset.copyLabel ||= button.textContent)
-    clearTimeout(copyTimers.get(button))
-    button.nextElementSibling?.matches('.copy-error') &&
-      button.nextElementSibling.remove()
-    button.disabled = true
-    button.classList.remove('copied', 'copy-failed')
-    button.textContent = 'Copying…'
-    button.setAttribute('aria-live', 'polite')
-    button.setAttribute('aria-busy', 'true')
     try {
-      const completed = await handler((message) => {
-        button.textContent = message
-      })
-      if (completed === false) {
-        button.textContent = label
-        if (button.dataset.icon) decorateIcon(button, button.dataset.icon)
-        return
-      }
-      button.textContent = 'Copied'
-      button.classList.add('copied')
-    } catch (error) {
-      button.textContent = 'Try again'
-      button.classList.add('copy-failed')
-      const message = node('span', error.message, 'copy-error')
-      message.setAttribute('role', 'alert')
-      button.after(message)
+      return await copied(button, handler)
     } finally {
-      button.disabled = false
-      button.removeAttribute('aria-busy')
       if (button.closest('.copy-actions')) updateSelection()
-      copyTimers.set(
-        button,
-        setTimeout(() => {
-          button.textContent = label
-          if (button.dataset.icon) decorateIcon(button, button.dataset.icon)
-          if (photoButton) button.style.removeProperty('width')
-          button.classList.remove('copied', 'copy-failed')
-        }, 3000)
-      )
     }
   }
   function matchingOrders() {
@@ -477,7 +460,7 @@ export async function startLibrary(
     const search = $('search').value.trim().toLocaleLowerCase()
     const status = $('status-filter').value
     const changedOnly = $('changes-only').checked
-    return matchingOrders().flatMap((record) => {
+    const rows = matchingOrders().flatMap((record) => {
       const order = record.snapshot
       if (selectedOrders.size && !selectedOrders.has(order.orderId)) return []
       if (status && order.status !== status) return []
@@ -499,6 +482,7 @@ export async function startLibrary(
           record,
         }))
     })
+    return packing ? packing.orderRows(rows) : rows
   }
   function copyRows() {
     const rows = filteredRows()
@@ -586,7 +570,8 @@ export async function startLibrary(
       'copy-images',
       'copy-excel-image',
     ])
-      $(id).disabled = !rows.length || copyBusy
+      $(id).disabled =
+        !rows.length || copyBusy || $(id).getAttribute('aria-busy') === 'true'
   }
   async function imageData(url) {
     if (!url)
@@ -733,14 +718,50 @@ export async function startLibrary(
     imageObserver.disconnect()
     const body = $('sheet-body')
     body.replaceChildren()
+    const orderCounts = new Map()
+    for (const row of rows)
+      orderCounts.set(row.orderId, (orderCounts.get(row.orderId) || 0) + 1)
+    const orderPositions = new Map(
+      [...orderCounts.keys()].map((id, index) => [id, index])
+    )
     let previousOrder
+    let sectionId
     for (const [index, row] of rows
       .slice(page * pageSize, (page + 1) * pageSize)
       .entries()) {
       const changed = row.record.changedEntryIds.includes(row.entryId)
       const tr = node('tr', undefined, changed ? 'changed-row' : '')
-      if (previousOrder && previousOrder !== row.orderId)
-        tr.classList.add('order-boundary')
+      const tone =
+        orderPositions.get(row.orderId) % 2
+          ? 'order-tone-olive'
+          : 'order-tone-clay'
+      tr.classList.add(tone)
+      if (previousOrder !== row.orderId) {
+        const heading = node('tr', undefined, `order-section-heading ${tone}`)
+        const cell = node('th')
+        cell.colSpan = 6
+        sectionId = `order-section-${row.orderId}`
+        cell.id = sectionId
+        const band = node('div', undefined, 'order-section-band')
+        const shop = node('span', undefined, 'order-section-store')
+        shop.append(icon('store'), node('strong', row.sellerName))
+        const count = orderCounts.get(row.orderId)
+        const continued =
+          rows[page * pageSize + index - 1]?.orderId === row.orderId
+        band.append(
+          shop,
+          node('span', `Order ${row.orderId}`, 'order-section-number'),
+          node(
+            'span',
+            `${count.toLocaleString()} matching product${count === 1 ? '' : 's'}${continued ? ' · continued' : ''}`,
+            'order-section-count'
+          )
+        )
+        cell.append(band)
+        heading.append(cell)
+        body.append(heading)
+      }
+      tr.setAttribute('aria-describedby', sectionId)
       previousOrder = row.orderId
       const selection = node(
         'td',
@@ -1066,6 +1087,9 @@ export async function startLibrary(
     renderJobs()
   }
   function updateMonthFilter() {
+    try {
+      localStorage.setItem(monthPreference, JSON.stringify([...selectedMonths]))
+    } catch {}
     $('month-filter-label').textContent = !selectedMonths.size
       ? 'All purchase months'
       : selectedMonths.size === 1
@@ -1079,10 +1103,14 @@ export async function startLibrary(
   }
   function renderMonthOptions() {
     const months = [
-      ...new Set(records.map(({ snapshot }) => purchaseMonth(snapshot))),
+      ...new Set([
+        currentMonth,
+        ...selectedMonths,
+        ...records.map(({ snapshot }) => purchaseMonth(snapshot)),
+      ]),
     ]
-    for (const month of selectedMonths)
-      if (!months.includes(month)) selectedMonths.delete(month)
+      .sort()
+      .reverse()
     $('month-options').replaceChildren(
       ...months.map((month) => {
         const button = node('button', monthLabel(month), 'month-choice')
@@ -1163,11 +1191,18 @@ export async function startLibrary(
         `Version ${record.revision} · Checked ${dateLabel(record.lastCheckedAt)}`
       )
     )
-    content.replaceChildren(
-      node('p', `ORDER ${order.orderId}`, 'eyebrow'),
-      node('h2', order.sellerName),
-      metadata
-    )
+    const identity = node('div', undefined, 'order-detail-identity'),
+      copyNumber = node('button', 'Copy order number')
+    decorateIcon(copyNumber, 'copy', { iconOnly: true })
+    copyNumber.type = 'button'
+    preparationHelp(copyNumber, 'Copy the complete order number.')
+    copyNumber.addEventListener('click', () => {
+      void copyAction(copyNumber, () =>
+        navigator.clipboard.writeText(order.orderId)
+      )
+    })
+    identity.append(node('p', `ORDER ${order.orderId}`, 'eyebrow'), copyNumber)
+    content.replaceChildren(identity, node('h2', order.sellerName), metadata)
     const link = node('a', 'Open original order ↗')
     link.href = order.sourceUrl
     link.target = '_blank'
@@ -1314,17 +1349,6 @@ export async function startLibrary(
     if (copyBusy) return
     let rows = copyRows()
     if (!rows.length) return false
-    const count = new Set(rows.map((row) => row.orderId)).size
-    if (
-      rows.length > 1 &&
-      !(await confirmScope({
-        action: 'Copy',
-        count: rows.length,
-        unit: mode === 'values' ? 'product rows' : 'product images',
-        detail: `From ${count} orders. ${mode === 'values' ? '' : 'Original images will be prepared for Excel.'}`,
-      }))
-    )
-      return false
     if (mode !== 'values' && rows.length > 20) {
       const chosen = await packing.chooseImageBatch(rows)
       if (!chosen) return false
@@ -1406,7 +1430,7 @@ export async function startLibrary(
       copyBusy = true
       updateSelection()
       const abort = new AbortController()
-      const cancel = node('button', 'Cancel image')
+      const cancel = node('button', 'Cancel image', 'copy-cancel')
       cancel.hidden = true
       cancel.onclick = () => abort.abort()
       $('copy-excel-image').after(cancel)
@@ -1418,7 +1442,7 @@ export async function startLibrary(
           },
           onProgress: (message) => {
             cancel.hidden = false
-            progress(message)
+            progress(message, { cancel })
           },
           signal: abort.signal,
         })
@@ -1601,6 +1625,8 @@ export async function startLibrary(
       repository: repository || (await openDatabase()),
       getRecords: () => records,
       getRows: copyRows,
+      getSelectedRows: () =>
+        filteredRows().filter((row) => selectedRows.has(keyFor(row))),
       headers: () => $('include-headers').checked,
       changed: ({ reload = false } = {}) => (reload ? refresh() : renderRows()),
       feedback,

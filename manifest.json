@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "1688toCSV",
-  "version": "2.3.0",
+  "version": "2.4.0",
   "description": "Keep a local 1688 order spreadsheet, reconcile changes, and copy products and images to Excel.",
   "permissions": ["alarms", "clipboardWrite", "unlimitedStorage", "tabs"],
   "host_permissions": ["https://cbu01.alicdn.com/*"],
@@ -9,7 +9,7 @@
     "service_worker": "background.js"
   },
   "action": {
-    "default_title": "Open order spreadsheet"
+    "default_title": "Open Workspace"
   },
   "content_security_policy": {
     "extension_pages": "script-src 'self'; object-src 'self'"

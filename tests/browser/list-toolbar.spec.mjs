@@ -357,9 +357,11 @@ test('selected import shows progress, errors and working pause/resume on the lis
     'IMPORT_PAUSE',
     'IMPORT_RESUME',
   ])
-  await page.getByRole('button', { name: 'Spreadsheet ↗', exact: true }).click()
+  await page
+    .getByRole('button', { name: 'Open Workspace', exact: true })
+    .click()
   await expect(page.getByRole('status')).toContainText(
-    'Spreadsheet tab requested'
+    'Workspace tab requested'
   )
 })
 
@@ -380,9 +382,11 @@ test('blocked spreadsheet creation keeps completed import visible and offers cur
   await page.evaluate(() => {
     toolbarTest.blockLibrary = true
   })
-  await page.getByRole('button', { name: 'Spreadsheet ↗', exact: true }).click()
+  await page
+    .getByRole('button', { name: 'Open Workspace', exact: true })
+    .click()
   await expect(page.getByRole('status')).toContainText(
-    'spreadsheet could not open in a new tab'
+    'workspace could not open in a new tab'
   )
   await expect(page.getByRole('status')).toContainText('saved orders are kept')
   await expect(
@@ -391,7 +395,7 @@ test('blocked spreadsheet creation keeps completed import visible and offers cur
     })
   ).toBeVisible()
   await expect(
-    page.getByRole('textbox', { name: 'Spreadsheet address' })
+    page.getByRole('textbox', { name: 'Workspace address' })
   ).toBeVisible()
   await page.setViewportSize({ width: 320, height: 800 })
   expect(
@@ -400,7 +404,7 @@ test('blocked spreadsheet creation keeps completed import visible and offers cur
     )
   ).toBe(true)
   await page
-    .getByRole('button', { name: 'Open spreadsheet here', exact: true })
+    .getByRole('button', { name: 'Open Workspace here', exact: true })
     .click()
   expect((await mutations(page)).map((call) => call.type)).toEqual([
     'OPEN_LIBRARY',
@@ -411,7 +415,7 @@ test('blocked spreadsheet creation keeps completed import visible and offers cur
     await toolbar.refresh()
   })
   await expect(
-    page.getByRole('button', { name: 'Open spreadsheet here', exact: true })
+    page.getByRole('button', { name: 'Open Workspace here', exact: true })
   ).toBeDisabled()
 })
 

@@ -543,11 +543,20 @@ function validatePreparationMembership(preparation, order, history) {
     )
   )
   if (
-    preparation.groups.some((group) =>
-      group.variants.some((variant) =>
-        variant.entryIds.some((entryId) => !knownIds.has(entryId))
+    [
+      preparation,
+      preparation.defaultPacking,
+      preparation.previousPacking,
+      preparation.previousPacking?.defaults,
+    ]
+      .filter(Boolean)
+      .some((entry) =>
+        entry.groups.some((group) =>
+          group.variants.some((variant) =>
+            variant.entryIds.some((entryId) => !knownIds.has(entryId))
+          )
+        )
       )
-    )
   )
     throw new Error(
       'Preparation contains an entry missing from its order and history'
@@ -613,7 +622,11 @@ export async function openDatabase({ name = '1688-order-library' } = {}) {
     const store = tx.objectStore('packingPreferences')
     const previous = await requested(store.get('packing'))
     const value = initializeVocabulary(
-      previous?.value ?? validatePackingPreferences()
+      previous?.value
+        ? previous.value.sizeVocabulary === undefined
+          ? validatePackingPreferences(previous.value)
+          : previous.value
+        : validatePackingPreferences()
     )
     if (!previous || value !== previous.value)
       store.put({
@@ -659,6 +672,161 @@ export async function openDatabase({ name = '1688-order-library' } = {}) {
     ))
       if (refreshPreparedNames(tx, preparation, suggest)) preparations += 1
     return { orders, preparations }
+  }
+
+  async function savePreparations(
+    inputs,
+    {
+      expectedRevisions = inputs.map((entry) => entry.revision),
+      capturePrevious = false,
+      resetDefaults = false,
+      preview = false,
+      preserveNaming = false,
+    } = {}
+  ) {
+    if (!Array.isArray(inputs) || !inputs.length)
+      throw new Error('Choose at least one order to prepare')
+    const drafts = inputs.map(validatePreparation)
+    if (
+      !Array.isArray(expectedRevisions) ||
+      expectedRevisions.length !== drafts.length ||
+      expectedRevisions.some(
+        (value) => !Number.isSafeInteger(value) || value < 0
+      )
+    )
+      throw new Error(
+        'Expected preparation revisions must be non-negative integers'
+      )
+    const keys = drafts.map((draft) =>
+      JSON.stringify([draft.accountId, draft.orderId])
+    )
+    if (new Set(keys).size !== keys.length)
+      throw new Error('Save each order preparation only once in a batch')
+    const selectedOrderIds = new Set(drafts.map((draft) => draft.orderId))
+    function checkpointScope(value, label) {
+      if (typeof value === 'boolean')
+        return value ? selectedOrderIds : new Set()
+      const orderIds = strings(value, label)
+      if (orderIds.some((orderId) => !selectedOrderIds.has(orderId)))
+        throw new Error(
+          `${label} contains an order outside this preparation batch`
+        )
+      return new Set(orderIds)
+    }
+    const previousOrderIds = checkpointScope(capturePrevious, 'capturePrevious')
+    const defaultOrderIds = checkpointScope(resetDefaults, 'resetDefaults')
+    return (preview ? read : write)(
+      ['orders', 'preparations', 'packingAllocations', 'issuedCodes'],
+      async (tx) => {
+        const store = tx.objectStore('preparations')
+        let allocations = await requested(
+          tx.objectStore('packingAllocations').getAll()
+        )
+        let issuedCodes = await requested(
+          tx.objectStore('issuedCodes').getAll()
+        )
+        const results = []
+        for (let index = 0; index < drafts.length; index += 1) {
+          const draft = drafts[index]
+          const resetOrderDefaults = defaultOrderIds.has(draft.orderId)
+          const expectedRevision = expectedRevisions[index]
+          const key = [draft.accountId, draft.orderId]
+          const previous = await requested(store.get(key))
+          if ((previous?.revision ?? 0) !== expectedRevision)
+            throw new Error(
+              'Preparation changed in another tab. Reload it before saving your edits.'
+            )
+          const order = await requested(tx.objectStore('orders').get(key))
+          if (!order)
+            throw new Error('Save the source order before preparing labels')
+          const knownIds = new Set([
+            ...order.snapshot.items.map((item) => item.entryId),
+            ...(previous?.groups.flatMap((group) =>
+              group.variants.flatMap((variant) => variant.entryIds)
+            ) ?? []),
+            ...[
+              previous?.defaultPacking,
+              previous?.previousPacking,
+              previous?.previousPacking?.defaults,
+            ]
+              .filter(Boolean)
+              .flatMap((checkpoint) =>
+                checkpoint.groups.flatMap((group) =>
+                  group.variants.flatMap((variant) => variant.entryIds)
+                )
+              ),
+          ])
+          for (const group of draft.groups)
+            for (const variant of group.variants)
+              if (variant.entryIds.some((entryId) => !knownIds.has(entryId)))
+                throw new Error(
+                  'Preparation contains an entry missing from this order'
+                )
+          const result = allocatePreparation(
+            preserveNaming ? draft : recordNamingEdits(draft, previous),
+            allocations,
+            issuedCodes,
+            { snapshot: order.snapshot }
+          )
+          const preparation = {
+            ...result.preparation,
+            revision: expectedRevision + (preview ? 0 : 1),
+            updatedAt: new Date(
+              Math.max(Date.now(), Date.parse(previous?.updatedAt || 0) + 1)
+            ).toISOString(),
+          }
+          if (previousOrderIds.has(draft.orderId) && previous)
+            preparation.previousPacking = packingCheckpoint(previous, {
+              includeDefaults: true,
+            })
+          if (resetOrderDefaults || !preparation.defaultPacking)
+            preparation.defaultPacking = packingCheckpoint(
+              resetPreparationOrder(preparation, order.snapshot)
+            )
+          else {
+            const previousDefaults = preparation.defaultPacking
+            preparation.defaultPacking = extendDefaultPacking(
+              preparation,
+              order.snapshot
+            )
+            if (
+              JSON.stringify(previousDefaults) !==
+              JSON.stringify(preparation.defaultPacking)
+            ) {
+              const defaults = allocatePreparation(
+                {
+                  ...preparation,
+                  ...preparation.defaultPacking,
+                  defaultPacking: undefined,
+                  previousPacking: undefined,
+                },
+                result.allocations,
+                result.issuedCodes,
+                { snapshot: order.snapshot }
+              )
+              result.allocations = defaults.allocations
+              result.issuedCodes = defaults.issuedCodes
+            }
+          }
+          validatePreparationReservations(
+            { ...preparation, revision: 1 },
+            result
+          )
+          allocations = result.allocations
+          issuedCodes = result.issuedCodes
+          results.push(preparation)
+        }
+        // No writes occur until every draft and reservation has been checked.
+        if (!preview) {
+          for (const allocation of allocations)
+            tx.objectStore('packingAllocations').put(allocation)
+          for (const issued of issuedCodes)
+            tx.objectStore('issuedCodes').put(issued)
+          for (const preparation of results) store.put(preparation)
+        }
+        return results
+      }
+    )
   }
 
   return {
@@ -743,7 +911,15 @@ export async function openDatabase({ name = '1688-order-library' } = {}) {
       })
     },
 
-    async exportBackup() {
+    async exportBackup({ orderIds, accountId = 'local' } = {}) {
+      const includedIds =
+        orderIds === undefined
+          ? null
+          : new Set(
+              strings(orderIds, 'Backup order IDs').map((id) =>
+                identifier(id, 'Backup order ID')
+              )
+            )
       return read(
         [
           'orders',
@@ -755,10 +931,10 @@ export async function openDatabase({ name = '1688-order-library' } = {}) {
           'packingPreferences',
         ],
         async (tx) => {
-          const orders = await requested(tx.objectStore('orders').getAll())
-          const history = await requested(tx.objectStore('history').getAll())
-          const images = await requested(tx.objectStore('images').getAll())
-          const preparations = await requested(
+          let orders = await requested(tx.objectStore('orders').getAll())
+          let history = await requested(tx.objectStore('history').getAll())
+          let images = await requested(tx.objectStore('images').getAll())
+          let preparations = await requested(
             tx.objectStore('preparations').getAll()
           )
           const allocations = await requested(
@@ -770,6 +946,29 @@ export async function openDatabase({ name = '1688-order-library' } = {}) {
           const preferences = await requested(
             tx.objectStore('packingPreferences').get('packing')
           )
+          if (includedIds) {
+            const included = (entry) =>
+              entry.accountId === accountId && includedIds.has(entry.orderId)
+            orders = orders.filter((entry) => included(entry.snapshot))
+            const includedKeys = new Set(
+              orders.map((entry) => JSON.stringify(keyFor(entry.snapshot)))
+            )
+            history = history.filter((entry) =>
+              includedKeys.has(JSON.stringify(keyFor(entry.snapshot)))
+            )
+            preparations = preparations.filter((entry) =>
+              includedKeys.has(JSON.stringify([entry.accountId, entry.orderId]))
+            )
+            const photoUrls = new Set([
+              ...[...orders, ...history].flatMap((entry) =>
+                entry.snapshot.items.map((item) => item.thumbnail)
+              ),
+              ...issuedCodes
+                .filter(included)
+                .flatMap((entry) => entry.ownerSnapshot?.photos || []),
+            ])
+            images = images.filter((entry) => photoUrls.has(entry.url))
+          }
           return {
             format: BACKUP_FORMAT,
             version: 2,
@@ -930,63 +1129,138 @@ export async function openDatabase({ name = '1688-order-library' } = {}) {
       return keys.map((key) => key[2])
     },
 
-    async savePreparation(input, { expectedRevision = input.revision } = {}) {
-      const draft = validatePreparation(input)
-      if (!Number.isSafeInteger(expectedRevision) || expectedRevision < 0)
-        throw new Error(
-          'Expected preparation revision must be a non-negative integer'
-        )
-      return write(
-        ['orders', 'preparations', 'packingAllocations', 'issuedCodes'],
+    async queryCodeOwnership(code, { accountId = 'local' } = {}) {
+      string(code, 'Code', { empty: false })
+      return read(
+        ['issuedCodes', 'preparations', 'orders', 'history'],
         async (tx) => {
-          const store = tx.objectStore('preparations')
-          const key = [draft.accountId, draft.orderId]
-          const previous = await requested(store.get(key))
-          if ((previous?.revision ?? 0) !== expectedRevision)
-            throw new Error(
-              'Preparation changed in another tab. Reload it before saving your edits.'
+          const owners = []
+          for (const kind of ['base', 'barcode']) {
+            const reservation = await requested(
+              tx.objectStore('issuedCodes').get([accountId, kind, code])
             )
-          const order = await requested(tx.objectStore('orders').get(key))
-          if (!order)
-            throw new Error('Save the source order before preparing labels')
-          const knownIds = new Set([
-            ...order.snapshot.items.map((item) => item.entryId),
-            ...(previous?.groups.flatMap((group) =>
-              group.variants.flatMap((variant) => variant.entryIds)
-            ) ?? []),
-          ])
-          for (const group of draft.groups)
-            for (const variant of group.variants)
-              if (variant.entryIds.some((entryId) => !knownIds.has(entryId)))
-                throw new Error(
-                  'Preparation contains an entry missing from this order'
-                )
-          const allocations = await requested(
-            tx.objectStore('packingAllocations').getAll()
-          )
-          const issuedCodes = await requested(
-            tx.objectStore('issuedCodes').getAll()
-          )
-          const result = allocatePreparation(
-            recordNamingEdits(draft, previous),
-            allocations,
-            issuedCodes
-          )
-          const preparation = {
-            ...result.preparation,
-            revision: expectedRevision + 1,
-            updatedAt: new Date(
-              Math.max(Date.now(), Date.parse(previous?.updatedAt || 0) + 1)
-            ).toISOString(),
+            if (!reservation) continue
+            const key = [accountId, reservation.orderId]
+            const preparation = await requested(
+              tx.objectStore('preparations').get(key)
+            )
+            const order = await requested(tx.objectStore('orders').get(key))
+            const group = preparation?.groups.find(
+              (entry) => entry.id === reservation.groupId
+            )
+            const evidenceGroup =
+              group ||
+              [
+                preparation?.defaultPacking,
+                preparation?.previousPacking,
+                preparation?.previousPacking?.defaults,
+              ]
+                .filter(Boolean)
+                .flatMap((entry) => entry.groups)
+                .find((entry) => entry.id === reservation.groupId)
+            const variant =
+              kind === 'barcode'
+                ? group?.variants.find(
+                    (entry) => entry.id === reservation.variantId
+                  )
+                : undefined
+            const evidenceVariant =
+              kind === 'barcode'
+                ? evidenceGroup?.variants.find(
+                    (entry) => entry.id === reservation.variantId
+                  )
+                : undefined
+            const snapshot = reservation.ownerSnapshot
+            const entryIds =
+              snapshot?.entryIds ??
+              (evidenceVariant?.entryIds ||
+                evidenceGroup?.variants.flatMap((entry) => entry.entryIds) ||
+                [])
+            const members = new Set(entryIds)
+            let photos = snapshot?.photos || []
+            if (!photos.length && order) {
+              const records = [
+                order,
+                ...(await requested(
+                  tx.objectStore('history').index('order').getAll(key)
+                )),
+              ]
+              photos = [
+                ...new Set(
+                  records.flatMap((record) =>
+                    record.snapshot.items
+                      .filter((item) => members.has(item.entryId))
+                      .map((item) => item.thumbnail)
+                      .filter(Boolean)
+                  )
+                ),
+              ].slice(0, 6)
+            }
+            const activeEntries = new Set(
+              order?.snapshot.items.map((entry) => entry.entryId) || []
+            )
+            const currentCode =
+              kind === 'base'
+                ? group?.baseCode
+                : group && variant && !variant.needsSizeMapping
+                  ? barcodeValue(group, variant)
+                  : ''
+            const currentMembership =
+              variant?.entryIds ||
+              group?.variants.flatMap((entry) => entry.entryIds) ||
+              []
+            owners.push({
+              kind,
+              accountId,
+              orderId: reservation.orderId,
+              groupId: reservation.groupId,
+              ...(reservation.variantId
+                ? { variantId: reservation.variantId }
+                : {}),
+              month: reservation.month,
+              sellerId: reservation.sellerId,
+              status:
+                currentCode === code &&
+                currentMembership.some((entryId) => activeEntries.has(entryId))
+                  ? 'active'
+                  : 'historical',
+              orderExists: Boolean(order),
+              groupExists: Boolean(group),
+              sellerName:
+                snapshot?.sellerName ||
+                order?.snapshot.sellerName ||
+                reservation.sellerId,
+              groupTitle: snapshot?.groupTitle || evidenceGroup?.title || '',
+              spanishName:
+                snapshot?.spanishName || evidenceGroup?.spanishName || '',
+              category: snapshot?.category || evidenceGroup?.category || '',
+              variant: snapshot?.variant || evidenceVariant?.variant || '',
+              entryIds,
+              photos,
+              currentBaseCode: group?.baseCode || '',
+            })
           }
-          for (const allocation of result.allocations)
-            tx.objectStore('packingAllocations').put(allocation)
-          for (const issued of result.issuedCodes)
-            tx.objectStore('issuedCodes').put(issued)
-          store.put(preparation)
-          return preparation
+          return { code, owners }
         }
       )
+    },
+
+    async savePreparation(
+      input,
+      { expectedRevision = input.revision, ...options } = {}
+    ) {
+      return (
+        await savePreparations([input], {
+          ...options,
+          expectedRevisions: [expectedRevision],
+        })
+      )[0]
+    },
+
+    savePreparations,
+
+    async previewPreparations(inputs, options = {}) {
+      return savePreparations(inputs, { ...options, preview: true })
     },
 
     async getPackingPreferences() {
@@ -1076,7 +1350,11 @@ import {
 } from './product-vocabulary.js'
 import {
   allocatePreparation,
+  barcodeValue,
+  extendDefaultPacking,
   mergePackingState,
+  packingCheckpoint,
+  resetPreparationOrder,
   validateAllocation,
   validateIssuedCode,
   validatePackingPreferences,

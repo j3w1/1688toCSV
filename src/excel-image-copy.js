@@ -1,5 +1,5 @@
 import { planExcelImage, renderExcelImage } from './excel-image.js'
-import { confirmScope, element } from './ui.js'
+import { element } from './ui.js'
 
 function choosePlan(plans, count) {
   if (plans.length === 1) return Promise.resolve(plans[0])
@@ -65,6 +65,7 @@ export async function copyExcelImage(rows, { loadImage, onProgress, signal }) {
         'productNumber',
         'variantDescription',
         'sourceSize',
+        'manualReordered',
         'baseCode',
         'barcode',
         'chineseCategory',
@@ -82,17 +83,6 @@ export async function copyExcelImage(rows, { loadImage, onProgress, signal }) {
     }))
   })
   if (!frozen.length) return false
-  if (
-    frozen.length > 1 &&
-    !(await confirmScope({
-      action: 'Copy',
-      count: frozen.length,
-      unit: 'product rows',
-      detail:
-        'Generate a table picture with Chinese headings, thumbnails and saved preparation values. Large selections use numbered images.',
-    }))
-  )
-    return false
   try {
     signal?.throwIfAborted()
     await document.fonts.ready

@@ -61,7 +61,7 @@ export function mountPageDownload(document, prepareFile, actions = {}) {
     buttons.className = 'library-actions'
     for (const [label, handler] of [
       ['Save order', actions.saveOrder],
-      ['Spreadsheet ↗', actions.openLibrary],
+      ['Open Workspace', actions.openLibrary],
     ]) {
       if (!handler) continue
       const button = element('button', label, buttons)

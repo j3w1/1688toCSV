@@ -45,7 +45,7 @@ async function helpFixture(extension, { fallback = false } = {}) {
   return page
 }
 
-test('field hints open on hover, remain readable under the pointer, and dismiss without closing the dialog', async ({
+test('field hints leave immediately with the pointer and preserve keyboard descriptions and Escape', async ({
   extension,
 }) => {
   const page = await helpFixture(extension)
@@ -53,11 +53,22 @@ test('field hints open on hover, remain readable under the pointer, and dismiss 
   await page.locator('#field').hover()
   const tooltip = page.getByRole('tooltip')
   await expect(tooltip).toHaveText(/Letters added to the product code/)
-  await tooltip.hover()
+  const afterLeave = await page.locator('#field').evaluate((field) => {
+    field.dispatchEvent(
+      new PointerEvent('pointerout', {
+        bubbles: true,
+        relatedTarget: field.closest('dialog'),
+      })
+    )
+    return document.querySelectorAll('[role=tooltip]').length
+  })
+  expect(afterLeave).toBe(0)
+  await page.locator('#field input').focus()
   await expect(tooltip).toBeVisible()
   await page.keyboard.press('Escape')
   await expect(tooltip).toHaveCount(0)
   await expect(page.locator('dialog')).toHaveJSProperty('open', true)
+  await page.locator('#action').focus()
   await page.locator('#field input').focus()
   await expect(page.getByRole('tooltip')).toBeVisible()
   await expect(page.getByRole('textbox')).toHaveAccessibleDescription(
@@ -71,6 +82,32 @@ test('field hints open on hover, remain readable under the pointer, and dismiss 
   await expect(page.getByRole('textbox')).toBeFocused()
   await page.close()
 })
+
+for (const fallback of [false, true]) {
+  test(`${fallback ? 'fallback' : 'native'} helper cannot be pinned by clicking or refocusing a replaced group`, async ({
+    extension,
+  }) => {
+    const page = await helpFixture(extension, { fallback })
+    await page.locator('#action').click()
+    await page.locator('#action').evaluate((button) => {
+      const replacement = button.cloneNode(true)
+      button.replaceWith(replacement)
+      preparationHelp(replacement, 'Use one barcode for the selected variants.')
+      replacement.focus()
+    })
+    await page.mouse.move(5, 5)
+    await expect(page.getByRole('tooltip')).toHaveCount(0)
+    await page.locator('#action').hover()
+    await expect(page.getByRole('tooltip')).toBeVisible()
+    await page.mouse.move(5, 5)
+    await expect(page.getByRole('tooltip')).toHaveCount(0)
+    await expect(page.locator('#action')).toBeFocused()
+    await page.keyboard.press('Shift+Tab')
+    await expect(page.getByRole('textbox')).toBeFocused()
+    await expect(page.getByRole('tooltip')).toHaveText(/Letters added/)
+    await page.close()
+  })
+}
 
 test('hints replace each other and close when a field is removed or its dialog closes', async ({
   extension,

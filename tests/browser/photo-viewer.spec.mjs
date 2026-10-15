@@ -38,7 +38,7 @@ async function openPhoto(extension) {
   await page.setViewportSize({ width: 1280, height: 900 })
   await page.goto(`${extension.extensionBaseUrl}/library.html`)
   const trigger = page
-    .locator('#sheet-body tr')
+    .locator('#sheet-body tr[data-selection-key]')
     .first()
     .getByRole('button', { name: /^Zoom product photo/ })
   await trigger.click()
@@ -256,7 +256,7 @@ test('photo fullscreen uses a real fullscreen frame and remains usable when unav
     .poll(() => page.evaluate(() => document.fullscreenElement === null))
     .toBe(true)
   await page
-    .locator('#sheet-body tr')
+    .locator('#sheet-body tr[data-selection-key]')
     .first()
     .getByRole('button', { name: /^Zoom product photo/ })
     .click()

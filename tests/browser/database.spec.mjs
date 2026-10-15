@@ -1,4 +1,5 @@
 import { test, expect } from './extension-fixture.mjs'
+import { DEFAULT_SIZE_VOCABULARY } from '../../src/size-vocabulary.js'
 
 const orderId = '1234567890123456789'
 const thumbnail = 'https://cbu01.alicdn.com/synthetic-order.png'
@@ -2017,6 +2018,7 @@ test('v2 backups preserve independent authoring, preference timestamps and all i
   expect(result.source.snapshot.status).toBe('Refunded')
   expect(result.backup.issuedCodes).toHaveLength(6)
   expect(result.preferences).toEqual({
+    sizeVocabulary: DEFAULT_SIZE_VOCABULARY,
     settings: {
       fontSize: 12,
       vocabularyInitialized: true,

@@ -20,7 +20,7 @@ import {
 import { pngWithDpi } from '../src/png-resolution.js'
 
 const repository = fileURLToPath(new URL('../', import.meta.url))
-let browser, bundle, editorBundle, css
+let browser, bundle, editorBundle, css, logoDataUrl
 before(async () => {
   const options = {
     absWorkingDir: repository,
@@ -47,6 +47,9 @@ before(async () => {
     new URL('../src/label-editor.css', import.meta.url),
     'utf8'
   )
+  logoDataUrl = `data:image/png;base64,${(
+    await readFile(new URL('../src/assets/casa-elida.png', import.meta.url))
+  ).toString('base64')}`
   browser = await chromium.launch({
     channel: process.env.EXTENSION_TEST_CHANNEL || 'chromium',
     headless: true,
@@ -159,27 +162,35 @@ test('final PNGs decode with an independent Code 128 reader at default and adjus
       expected: [1181, 591],
     },
   ]) {
-    const result = await page.evaluate(async (input) => {
-      const label = await Labels.renderLabel({ kind: 'barcode', ...input })
-      const bitmap = await createImageBitmap(label.blob)
-      const canvas = document.createElement('canvas')
-      canvas.width = bitmap.width
-      canvas.height = bitmap.height
-      const context = canvas.getContext('2d')
-      context.drawImage(bitmap, 0, 0)
-      const rgba = context.getImageData(0, 0, bitmap.width, bitmap.height).data
-      const luminance = Array.from(
-        { length: bitmap.width * bitmap.height },
-        (_, index) => rgba[index * 4]
-      )
-      bitmap.close()
-      return {
-        width: label.width,
-        height: label.height,
-        bytes: Array.from(new Uint8Array(await label.blob.arrayBuffer())),
-        luminance,
-      }
-    }, item)
+    const result = await page.evaluate(
+      async (input) => {
+        const label = await Labels.renderLabel({ kind: 'barcode', ...input })
+        const bitmap = await createImageBitmap(label.blob)
+        const canvas = document.createElement('canvas')
+        canvas.width = bitmap.width
+        canvas.height = bitmap.height
+        const context = canvas.getContext('2d')
+        context.drawImage(bitmap, 0, 0)
+        const rgba = context.getImageData(
+          0,
+          0,
+          bitmap.width,
+          bitmap.height
+        ).data
+        const luminance = Array.from(
+          { length: bitmap.width * bitmap.height },
+          (_, index) => rgba[index * 4]
+        )
+        bitmap.close()
+        return {
+          width: label.width,
+          height: label.height,
+          bytes: Array.from(new Uint8Array(await label.blob.arrayBuffer())),
+          luminance,
+        }
+      },
+      { ...item, logoUrl: logoDataUrl }
+    )
     assert.deepEqual([result.width, result.height], item.expected)
     const physical = chunks(result.bytes).find((chunk) => chunk.type === 'pHYs')
     assert.equal(
@@ -197,6 +208,124 @@ test('final PNGs decode with an independent Code 128 reader at default and adjus
     )
     assert.equal(decoded.getText(), item.code)
   }
+})
+
+test('barcode logo artwork fills a larger bounded region without entering bars or text', async (t) => {
+  const page = await pageFor(t)
+  const result = await page.evaluate(async (logoUrl) => {
+    const draws = []
+    const original = CanvasRenderingContext2D.prototype.drawImage
+    CanvasRenderingContext2D.prototype.drawImage = function (image, ...values) {
+      if (this.canvas.width === 472 && this.canvas.height === 236)
+        draws.push({
+          values,
+          naturalWidth: image.naturalWidth,
+          naturalHeight: image.naturalHeight,
+        })
+      return original.call(this, image, ...values)
+    }
+    try {
+      const label = await Labels.renderLabel({
+        kind: 'barcode',
+        code: 'CE26100001',
+        spanishName: 'ALFOMBRA',
+        logoUrl,
+      })
+      return { width: label.width, height: label.height, draws }
+    } finally {
+      CanvasRenderingContext2D.prototype.drawImage = original
+    }
+  }, logoDataUrl)
+  assert.equal(result.draws.length, 1)
+  const drawing = result.draws[0]
+  const [sourceX, sourceY, sourceWidth, sourceHeight, x, y, width, height] =
+    drawing.values
+  assert.ok(sourceX > 0 && sourceY > 0)
+  assert.ok(sourceWidth < drawing.naturalWidth)
+  assert.ok(sourceHeight < drawing.naturalHeight)
+  const oldWidth =
+    drawing.naturalWidth *
+    Math.min(
+      (result.width * 0.315) / drawing.naturalWidth,
+      (result.height * 0.255) / drawing.naturalHeight
+    )
+  assert.ok(width > oldWidth * 1.2)
+  assert.ok(x >= result.width * 0.03)
+  assert.ok(y >= result.height * 0.65)
+  assert.ok(x + width < result.width * 0.39)
+  assert.ok(y + height <= result.height * 0.96 + 0.01)
+  assert.ok(Math.abs(width / height - sourceWidth / sourceHeight) < 0.001)
+})
+
+test('logo cropping retains pale edges and internal white spaces on transparent and white backgrounds', async (t) => {
+  const page = await pageFor(t)
+  const result = await page.evaluate(async () => {
+    const makeLogo = (background) => {
+      const canvas = document.createElement('canvas')
+      canvas.width = 200
+      canvas.height = 100
+      const context = canvas.getContext('2d')
+      if (background) {
+        context.fillStyle = '#fff'
+        context.fillRect(0, 0, 200, 100)
+      }
+      context.fillStyle = '#000'
+      context.fillRect(60, 35, 80, 30)
+      context.fillStyle = '#fff'
+      context.fillRect(70, 40, 50, 20)
+      context.fillStyle = '#f0f0f0'
+      context.fillRect(30, 25, 1, 1)
+      context.fillRect(169, 74, 1, 1)
+      return canvas.toDataURL()
+    }
+    const renderer = Labels.createLabelRenderer({ maxBytes: 0 })
+    const originalDraw = CanvasRenderingContext2D.prototype.drawImage
+    const originalRead = CanvasRenderingContext2D.prototype.getImageData
+    const crops = []
+    const scratch = []
+    CanvasRenderingContext2D.prototype.drawImage = function (image, ...values) {
+      if (this.canvas.width === 472 && this.canvas.height === 236)
+        crops.push(values.slice(0, 4))
+      return originalDraw.call(this, image, ...values)
+    }
+    CanvasRenderingContext2D.prototype.getImageData = function (...args) {
+      scratch.push(this.canvas)
+      if (this.canvas.width > 512 || this.canvas.height > 512)
+        throw new Error('Logo inspection exceeded its tile budget')
+      return originalRead.call(this, ...args)
+    }
+    try {
+      const transparent = makeLogo(false)
+      const white = makeLogo(true)
+      const reads = []
+      for (const logoUrl of [transparent, transparent, white, transparent]) {
+        await renderer.render({
+          kind: 'barcode',
+          code: 'CE26100001',
+          spanishName: 'TAZA',
+          logoUrl,
+        })
+        reads.push(scratch.length)
+      }
+      return {
+        crops,
+        reads,
+        scratchReleased: scratch.every(
+          (canvas) => canvas.width === 0 && canvas.height === 0
+        ),
+      }
+    } finally {
+      renderer.dispose()
+      CanvasRenderingContext2D.prototype.drawImage = originalDraw
+      CanvasRenderingContext2D.prototype.getImageData = originalRead
+    }
+  })
+  assert.deepEqual(
+    result.crops,
+    Array.from({ length: 4 }, () => [28, 23, 144, 54])
+  )
+  assert.deepEqual(result.reads, [1, 1, 2, 3])
+  assert.equal(result.scratchReleased, true)
 })
 
 test('barcode code bands hug the fitted text with small balanced padding', async (t) => {

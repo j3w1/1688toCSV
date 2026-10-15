@@ -1,5 +1,30 @@
 let activeHint = null
 const hints = new WeakMap()
+const interactionModes = new WeakMap()
+
+function interactionMode(doc) {
+  if (interactionModes.has(doc)) return interactionModes.get(doc)
+  const mode = { keyboard: true, pointerVersion: 0 }
+  doc.addEventListener(
+    'pointerdown',
+    () => {
+      mode.keyboard = false
+      mode.pointerVersion++
+      activeHint?.()
+    },
+    true
+  )
+  doc.addEventListener(
+    'keydown',
+    (event) => {
+      if (!['Alt', 'Control', 'Meta', 'Shift'].includes(event.key))
+        mode.keyboard = true
+    },
+    true
+  )
+  interactionModes.set(doc, mode)
+  return mode
+}
 
 /** Add help to an existing field or action, without another button or tab stop. */
 export function preparationHelp(target, text) {
@@ -8,6 +33,7 @@ export function preparationHelp(target, text) {
     return target
   }
   const doc = target.ownerDocument,
+    mode = interactionMode(doc),
     panel = doc.createElement('div'),
     nativePopover = 'popover' in panel
   panel.id = `help-${crypto.randomUUID()}`
@@ -20,8 +46,9 @@ export function preparationHelp(target, text) {
   else panel.hidden = true
   target.classList.add('preparation-hint')
   let hovered = false,
-    panelHovered = false,
     focused = false,
+    keyboardFocused = false,
+    focusPointerVersion = mode.pointerVersion,
     dismissed = false,
     timer,
     listeners,
@@ -33,6 +60,11 @@ export function preparationHelp(target, text) {
   }
   function ownsHint(node) {
     return node?.closest?.('.preparation-hint') === target
+  }
+  function keyboardFocus() {
+    return (
+      focused && keyboardFocused && focusPointerVersion === mode.pointerVersion
+    )
   }
 
   function position() {
@@ -52,7 +84,6 @@ export function preparationHelp(target, text) {
     clearTimeout(timer)
     listeners?.abort()
     observer?.disconnect()
-    panelHovered = false
     if (nativePopover && panel.matches(':popover-open')) panel.hidePopover()
     panel.hidden = !nativePopover
     panel.remove()
@@ -71,6 +102,7 @@ export function preparationHelp(target, text) {
     clearTimeout(timer)
     if (
       dismissed ||
+      (!hovered && !keyboardFocus()) ||
       !target.isConnected ||
       !target.getClientRects().length ||
       target.querySelector('.preparation-hint:hover') ||
@@ -112,7 +144,7 @@ export function preparationHelp(target, text) {
         if (!ownsDialog(event.target)) return close()
         event.preventDefault()
         event.stopPropagation()
-        dismissed = hovered || focused
+        dismissed = hovered || keyboardFocus()
         close()
       },
       options
@@ -134,10 +166,13 @@ export function preparationHelp(target, text) {
   }
   function leave() {
     clearTimeout(timer)
-    if (!hovered && !focused) dismissed = false
-    if (!hovered && !focused && !panelHovered) timer = setTimeout(close, 150)
+    if (!hovered && !keyboardFocus()) {
+      dismissed = false
+      close()
+    }
   }
   target.addEventListener('pointerover', (event) => {
+    if (event.pointerType === 'touch') return
     if (!ownsHint(event.target) || ownsHint(event.relatedTarget)) return
     hovered = true
     clearTimeout(timer)
@@ -156,7 +191,11 @@ export function preparationHelp(target, text) {
       return
     }
     focused = true
-    show()
+    // Row clicks can rerender and focus a fresh element. Remember the document's
+    // input mode so that newly mounted helper cannot turn the click into a pin.
+    keyboardFocused = mode.keyboard
+    focusPointerVersion = mode.pointerVersion
+    if (keyboardFocus()) show()
   })
   target.addEventListener('focusout', (event) => {
     focused = ownsHint(event.relatedTarget)
@@ -164,16 +203,8 @@ export function preparationHelp(target, text) {
   })
   for (const name of ['pointerdown', 'input'])
     target.addEventListener(name, () => {
-      dismissed = hovered || focused
+      dismissed = hovered || keyboardFocus()
       close()
     })
-  panel.addEventListener('pointerenter', () => {
-    panelHovered = true
-    clearTimeout(timer)
-  })
-  panel.addEventListener('pointerleave', () => {
-    panelHovered = false
-    leave()
-  })
   return target
 }

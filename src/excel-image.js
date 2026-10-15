@@ -7,24 +7,28 @@ const MAX_EDGE = 8192
 const CACHE_BYTES = 4 * 1024 * 1024
 const PADDING = 10
 const LINE_HEIGHT = 20
-const PHOTO_SIZE = 76
+const PHOTO_SIZE = 88
+const PHOTO_PADDING = 6
 const FONT_FAMILY =
   '"Segoe UI", "Microsoft YaHei", "Noto Sans CJK SC", sans-serif'
-const BODY_FONT = `14px ${FONT_FAMILY}`
-const HEADER_FONT = `700 13px ${FONT_FAMILY}`
-const NUMBER_FONT = `15px ${FONT_FAMILY}`
-const QUANTITY_FONT = `700 16px ${FONT_FAMILY}`
-const TITLE_FONT = `600 14px ${FONT_FAMILY}`
-const DETAIL_FONT = `13px ${FONT_FAMILY}`
-const DETAIL_LABEL_FONT = `600 12px ${FONT_FAMILY}`
+const BODY_FONT = `16px ${FONT_FAMILY}`
+const HEADER_FONT = `700 14px ${FONT_FAMILY}`
+const NUMBER_FONT = `18px ${FONT_FAMILY}`
+const QUANTITY_FONT = `700 19px ${FONT_FAMILY}`
+const CODE_FONT = `17px ${FONT_FAMILY}`
+const CODE_SUFFIX_FONT = `700 17px ${FONT_FAMILY}`
+const TITLE_FONT = `600 15px ${FONT_FAMILY}`
+const DETAIL_FONT = `14px ${FONT_FAMILY}`
+const DETAIL_LABEL_FONT = `600 13px ${FONT_FAMILY}`
+const REORDERED_CODE_COLOR = '#1d4ed8'
 
 export const excelImageColumns = Object.freeze(
   [
     { key: 'number', label: '序号', width: 50, numeric: true },
     { key: 'thumbnail', label: '图片', width: 100 },
     { key: 'description', label: '产品描述', width: 330 },
-    { key: 'baseCode', label: '唛头编码', width: 126 },
-    { key: 'barcode', label: '条码编号', width: 142 },
+    { key: 'baseCode', label: '唛头货号', width: 126 },
+    { key: 'barcode', label: '条码货号', width: 142 },
     { key: 'chineseCategory', label: '中文品类', width: 100 },
     { key: 'price', label: '单价（元）', width: 94, numeric: true },
     { key: 'quantity', label: '数量', width: 78, numeric: true },
@@ -108,6 +112,7 @@ function snapshot(row, index) {
     ...excelImageColumns.map((column) => column.key),
   ])
     values[key] = key === 'number' ? String(index + 1) : String(row[key] ?? '')
+  values.manualReordered = row.manualReordered === true
   values.skuProperties = Object.freeze(
     (Array.isArray(row.skuProperties) ? row.skuProperties : []).map(
       (property) =>
@@ -171,7 +176,7 @@ function descriptionCell(context, source, width) {
     .filter((section) => section.value)
     .map((section, index) => {
       const font = section.title ? TITLE_FONT : DETAIL_FONT
-      const lineHeight = section.title ? LINE_HEIGHT : 18
+      const lineHeight = section.title ? 22 : LINE_HEIGHT
       const label = section.label ? `${section.label}：` : ''
       context.font = DETAIL_LABEL_FONT
       let labelWidth = context.measureText(label).width
@@ -211,6 +216,56 @@ function descriptionCell(context, source, width) {
       ])
     ),
     height,
+  })
+}
+
+/** Measure each style while wrapping, so bold code endings cannot overflow. */
+function codeCell(context, value, width, reordered) {
+  const boundary = /^CE\d{8}/.test(value) ? 10 : value.length
+  const lines = []
+  let runs = []
+  let offset = 0
+  for (const { segment } of graphemes.segment(value)) {
+    const font = offset < boundary ? CODE_FONT : CODE_SUFFIX_FONT
+    const color =
+      reordered && offset < boundary ? REORDERED_CODE_COLOR : '#24211c'
+    context.font = font
+    const last = runs.at(-1)
+    const sameStyle = last?.font === font && last.color === color
+    const candidate = sameStyle ? last.text + segment : segment
+    const measured = context.measureText(candidate).width
+    const previousWidth = runs.reduce((sum, run) => sum + run.width, 0)
+    if (previousWidth - (sameStyle ? last.width : 0) + measured > width) {
+      if (!runs.length)
+        throw new Error('A product character cannot fit in the Excel image.')
+      lines.push(runs)
+      runs = []
+    }
+    const current = runs.at(-1)
+    if (current?.font === font && current.color === color) {
+      current.text += segment
+      current.width = context.measureText(current.text).width
+    } else
+      runs.push({
+        text: segment,
+        font,
+        color,
+        width: context.measureText(segment).width,
+      })
+    offset += segment.length
+  }
+  if (runs.length || !lines.length) lines.push(runs)
+  return Object.freeze({
+    text: value,
+    font: CODE_FONT,
+    richLines: Object.freeze(
+      lines.map((line) => Object.freeze(line.map(Object.freeze)))
+    ),
+    lines: Object.freeze(
+      lines.map((line) => line.map((run) => run.text).join(''))
+    ),
+    lineHeight: 24,
+    height: lines.length * 24,
   })
 }
 
@@ -267,11 +322,19 @@ export function planExcelImage(rows) {
       const cells = excelImageColumns.map((column) => {
         if (column.key === 'description')
           return descriptionCell(context, source, column.width - PADDING * 2)
-        const text =
+        let text =
           column.key === 'thumbnail' ||
           (column.key === 'baseCode' && seen.has(groupKey))
             ? ''
             : source[column.key]
+        if (column.key === 'baseCode' || column.key === 'barcode')
+          return codeCell(
+            context,
+            text,
+            column.width - PADDING * 2,
+            source.manualReordered
+          )
+        if (column.key === 'price' && text.trim()) text = `¥ ${text}`
         const font =
           column.key === 'quantity'
             ? QUANTITY_FONT
@@ -286,11 +349,12 @@ export function planExcelImage(rows) {
           text,
           font,
           lines,
-          height: lines.length * LINE_HEIGHT,
+          lineHeight: column.numeric ? 24 : 22,
+          height: lines.length * (column.numeric ? 24 : 22),
         })
       })
       const height = Math.max(
-        96,
+        PHOTO_SIZE + PHOTO_PADDING * 2,
         ...cells.map((cell) => cell.height + PADDING * 2)
       )
       return Object.freeze({
@@ -426,37 +490,63 @@ export async function renderExcelImage(
       )
     }
   }
-  function text(lines, x, y, column, font) {
-    context.font = font
-    context.fillStyle = '#24211c'
-    context.textAlign = column.numeric ? 'right' : 'left'
-    context.textBaseline = 'top'
-    const left = column.numeric ? x + column.width - PADDING : x + PADDING
-    for (const [index, line] of lines.entries())
-      context.fillText(line, left, y + PADDING + index * LINE_HEIGHT)
-  }
-  function description(cell, x, y) {
+  function line(runs, center, top, lineHeight) {
     context.textAlign = 'left'
-    context.textBaseline = 'top'
-    let top = y + PADDING
+    context.textBaseline = 'alphabetic'
+    let width = 0,
+      ascent = 0,
+      descent = 0
+    const measured = runs.map((run) => {
+      context.font = run.font
+      const bounds = context.measureText(run.text)
+      const size = Number(run.font.match(/([\d.]+)px/)[1])
+      width += bounds.width
+      ascent = Math.max(ascent, bounds.actualBoundingBoxAscent ?? size * 0.8)
+      descent = Math.max(descent, bounds.actualBoundingBoxDescent ?? size * 0.2)
+      return { ...run, width: bounds.width }
+    })
+    const baseline = top + (lineHeight - ascent - descent) / 2 + ascent
+    let left = center - width / 2
+    for (const run of measured) {
+      context.font = run.font
+      context.fillStyle = run.color || '#24211c'
+      context.fillText(run.text, left, baseline)
+      left += run.width
+    }
+  }
+  function text(cell, x, y, column, rowHeight) {
+    const top = y + (rowHeight - cell.height) / 2
+    for (const [index, value] of cell.lines.entries())
+      line(
+        cell.richLines?.[index] || [{ text: value, font: cell.font }],
+        x + column.width / 2,
+        top + index * cell.lineHeight,
+        cell.lineHeight
+      )
+  }
+  function description(cell, x, y, column, rowHeight) {
+    let top = y + (rowHeight - cell.height) / 2
+    const center = x + column.width / 2
     for (const block of cell.blocks) {
       top += block.gapBefore
-      context.font = DETAIL_LABEL_FONT
-      context.fillStyle = '#746757'
       for (const label of block.labelLines) {
-        context.fillText(label, x + PADDING, top)
+        line(
+          [{ text: label, font: DETAIL_LABEL_FONT, color: '#746757' }],
+          center,
+          top,
+          block.lineHeight
+        )
         top += block.lineHeight
       }
-      if (block.label && !block.labelLines.length)
-        context.fillText(block.label, x + PADDING, top + 1)
-      context.font = block.font
-      context.fillStyle = block.color
-      for (const [index, line] of block.lines.entries()) {
-        context.fillText(
-          line,
-          x + PADDING + (index === 0 ? block.labelWidth : 0),
-          top
-        )
+      for (const [index, value] of block.lines.entries()) {
+        const runs = [{ text: value, font: block.font, color: block.color }]
+        if (!index && block.label && !block.labelLines.length)
+          runs.unshift({
+            text: block.label,
+            font: DETAIL_LABEL_FONT,
+            color: '#746757',
+          })
+        line(runs, center, top, block.lineHeight)
         top += block.lineHeight
       }
     }
@@ -473,16 +563,15 @@ export async function renderExcelImage(
     context.fillRect(1, 1, plan.cssWidth - 2, plan.headerHeight)
     let x = 1
     for (const [index, column] of excelImageColumns.entries()) {
-      context.font = HEADER_FONT
-      context.fillStyle = '#fffaf2'
-      context.textBaseline = 'top'
-      context.textAlign = column.key === 'description' ? 'left' : 'center'
-      const left =
-        column.key === 'description' ? x + PADDING : x + column.width / 2
       const top =
         1 + (plan.headerHeight - plan.headers[index].length * LINE_HEIGHT) / 2
-      for (const [lineIndex, line] of plan.headers[index].entries())
-        context.fillText(line, left, top + lineIndex * LINE_HEIGHT)
+      for (const [lineIndex, value] of plan.headers[index].entries())
+        line(
+          [{ text: value, font: HEADER_FONT, color: '#fffaf2' }],
+          x + column.width / 2,
+          top + lineIndex * LINE_HEIGHT,
+          LINE_HEIGHT
+        )
       x += column.width
     }
     onProgress?.({ completed: 0, total: plan.rowCount })
@@ -500,8 +589,8 @@ export async function renderExcelImage(
       for (const [cellIndex, column] of excelImageColumns.entries()) {
         if (column.key === 'thumbnail') {
           const ratio = Math.min(
-            PHOTO_SIZE / bitmap.width,
-            PHOTO_SIZE / bitmap.height
+            (column.width - PHOTO_PADDING * 2) / bitmap.width,
+            (row.height - PHOTO_PADDING * 2) / bitmap.height
           )
           const width = bitmap.width * ratio
           const height = bitmap.height * ratio
@@ -513,15 +602,8 @@ export async function renderExcelImage(
             height
           )
         } else if (column.key === 'description')
-          description(row.cells[cellIndex], x, y)
-        else
-          text(
-            row.cells[cellIndex].lines,
-            x,
-            y,
-            column,
-            row.cells[cellIndex].font
-          )
+          description(row.cells[cellIndex], x, y, column, row.height)
+        else text(row.cells[cellIndex], x, y, column, row.height)
         x += column.width
       }
       context.beginPath()

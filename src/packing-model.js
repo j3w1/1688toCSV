@@ -4,50 +4,11 @@ import {
   DEFAULT_VOCABULARY,
   vocabularyEntryMetadata,
 } from './product-vocabulary.js'
-
-const sizeLabel = /^(?:尺寸|尺码|大小|规格(?:[（(].*[）)])?|size)$/i
-const namedSize = /^(?:XXXS|XXS|XS|S|M|L|XL|XXL|XXXL|[2-6]XL)$/
-const sizeSuggestions = {
-  2: ['S', 'L'],
-  3: ['S', 'M', 'L'],
-  5: ['XS', 'S', 'M', 'L', 'XL'],
-}
-
-function scalarSize(value) {
-  const match =
-    /^(\d+(?:\.\d+)?)\s*(mm|cm|m|ml|l|毫米|厘米|米|毫升|升)?$/i.exec(
-      value.trim()
-    )
-  if (!match) return null
-  const unit = (match[2] || '').toLowerCase()
-  const units = {
-    mm: ['length', 1],
-    毫米: ['length', 1],
-    cm: ['length', 10],
-    厘米: ['length', 10],
-    m: ['length', 1000],
-    米: ['length', 1000],
-    ml: ['capacity', 1],
-    毫升: ['capacity', 1],
-    l: ['capacity', 1000],
-    升: ['capacity', 1000],
-    '': ['number', 1],
-  }
-  const [kind, factor] = units[unit]
-  return { kind, magnitude: Number(match[1]) * factor }
-}
-
-function isSizeProperty(property) {
-  const label = property.label.trim()
-  if (!sizeLabel.test(label)) return false
-  if (!label.startsWith('规格')) return true
-  const value = property.value.trim()
-  return (
-    namedSize.test(value.toUpperCase()) ||
-    Boolean(scalarSize(value)) ||
-    /^\d+(?:\.\d+)?\s*[x×*]\s*\d/i.test(value)
-  )
-}
+import {
+  createSizeClassifier,
+  DEFAULT_SIZE_VOCABULARY,
+  validateSizeVocabulary,
+} from './size-vocabulary.js'
 
 function text(value, label, empty = true) {
   if (typeof value !== 'string' || (!empty && !value.trim()))
@@ -77,6 +38,33 @@ export function codePrefix(month) {
   return `CE${packingMonth(month).slice(2).replace('-', '')}`
 }
 
+export function groupPackingMonth(preparation, group) {
+  return packingMonth(group.month ?? preparation.month)
+}
+
+function reordered(value, label) {
+  if (value !== undefined && typeof value !== 'boolean')
+    throw new Error(`${label} must be true or false`)
+  return value === undefined ? {} : { manualReordered: value }
+}
+
+/** Code reservations survive edits and deletion; a conflict identifies its owner. */
+export class CodeConflictError extends Error {
+  constructor(existing, requested) {
+    super(
+      `Code conflict: ${requested.code} is already reserved for ${existing.sellerId !== requested.sellerId ? 'another seller' : 'another product or variant'}`
+    )
+    this.name = 'CodeConflictError'
+    this.code = 'PACKING_CODE_CONFLICT'
+    this.conflict = {
+      code: requested.code,
+      kind: requested.kind,
+      owner: structuredClone(existing),
+      requestedOwner: structuredClone(requested),
+    }
+  }
+}
+
 function letters(index) {
   let result = ''
   do {
@@ -90,10 +78,12 @@ function letters(index) {
 export function createPreparation(
   snapshot,
   month,
-  vocabulary = DEFAULT_VOCABULARY
+  vocabulary = DEFAULT_VOCABULARY,
+  sizeVocabulary = DEFAULT_SIZE_VOCABULARY
 ) {
   packingMonth(month)
   const suggest = createNameSuggester(vocabulary)
+  const sizeClassifier = createSizeClassifier(sizeVocabulary)
   const groups = new Map()
   const candidates = new Map()
   const variantKeys = new Map()
@@ -113,24 +103,12 @@ export function createPreparation(
       }
       groups.set(title, group)
     }
-    const properties = item.skuProperties || []
-    const sizes = properties.filter(isSizeProperty)
-    const size = sizes.map((property) => property.value.trim()).join(' / ')
-    const variantProperties = properties.filter(
-      (property) => !isSizeProperty(property)
-    )
-    const variant = variantProperties
-      .map((property) =>
-        property.label.trim()
-          ? `${property.label.trim()}: ${property.value.trim()}`
-          : property.value.trim()
-      )
-      .join(' / ')
+    const { size, variantProperties, variant } = sizeClassifier.extract(item)
     // Only identical complete attribute sets suggest a shared variant. No source
     // row or amount is combined; entry IDs remain individually addressable.
     const attributes = (entries) =>
       entries.map((property) => [property.label.trim(), property.value.trim()])
-    const key = JSON.stringify([title, attributes(properties)])
+    const key = JSON.stringify([title, attributes(variantProperties), size])
     const existing = candidates.get(key)
     if (existing) existing.entryIds.push(item.entryId)
     else {
@@ -155,40 +133,17 @@ export function createPreparation(
     const variants = [
       ...new Set(group.variants.map((variant) => variantKeys.get(variant.id))),
     ]
-    const sizes = [
-      ...new Set(group.variants.map((variant) => variant.size).filter(Boolean)),
-    ]
-    const explicit = new Map(
-      sizes
-        .filter((size) => namedSize.test(size.toUpperCase()))
-        .map((size) => [size, size.toUpperCase()])
+    const sizeSuggestions = sizeClassifier.suggest(
+      group.variants.map((variant) => variant.size),
+      group.variants.map((variant) => variantKeys.get(variant.id))
     )
-    // Compare scalar measurements in common units. Multidimensional, mixed
-    // quantity and tied values cannot establish an unambiguous size ordering.
-    const dimensions = sizes.map((size) => ({ size, ...scalarSize(size) }))
-    const measurable =
-      dimensions.every((entry) => Number.isFinite(entry.magnitude)) &&
-      new Set(dimensions.map((entry) => entry.kind)).size === 1 &&
-      new Set(dimensions.map((entry) => entry.magnitude)).size === sizes.length
-    const suggested = new Map()
-    if (!explicit.size && measurable && sizeSuggestions[sizes.length])
-      dimensions
-        .sort((a, b) => a.magnitude - b.magnitude)
-        .forEach((entry, index) =>
-          suggested.set(entry.size, sizeSuggestions[sizes.length][index])
-        )
-    for (const variant of group.variants) {
+    for (const [index, variant] of group.variants.entries()) {
       variant.variantSuffix =
         variants.length > 1
           ? letters(variants.indexOf(variantKeys.get(variant.id)))
           : ''
-      variant.sizeSuffix =
-        sizes.length > 1
-          ? explicit.get(variant.size) || suggested.get(variant.size) || ''
-          : ''
-      variant.needsSizeMapping = Boolean(
-        sizes.length > 1 && variant.size && !variant.sizeSuffix
-      )
+      variant.sizeSuffix = sizeSuggestions[index].sizeSuffix
+      variant.needsSizeMapping = sizeSuggestions[index].needsSizeMapping
     }
   }
   return {
@@ -237,6 +192,377 @@ export function activeGroups(preparation, snapshot) {
     .filter((group) => group.variants.length)
 }
 
+function orderedEntries(entries, orderedIds, label) {
+  if (
+    !Array.isArray(orderedIds) ||
+    orderedIds.length !== entries.length ||
+    new Set(orderedIds).size !== entries.length
+  )
+    throw new Error(`${label} must include each existing item exactly once`)
+  const byId = new Map(entries.map((entry) => [entry.id, entry]))
+  return orderedIds.map((entryId, index) => {
+    const entry = byId.get(entryId)
+    if (!entry)
+      throw new Error(`${label} cannot move items from another order or group`)
+    return {
+      ...entry,
+      ...(entries[index].id !== entryId ? { manualReordered: true } : {}),
+    }
+  })
+}
+
+/** Arrays are the authored export order. Reordering never changes a label code. */
+export function reorderPreparationGroups(preparation, orderedGroupIds) {
+  const draft = structuredClone(preparation)
+  draft.groups = orderedEntries(draft.groups, orderedGroupIds, 'Group order')
+  return draft
+}
+
+export function reorderPreparationVariants(
+  preparation,
+  groupId,
+  orderedVariantIds
+) {
+  const draft = structuredClone(preparation)
+  const group = draft.groups.find((entry) => entry.id === groupId)
+  if (!group)
+    throw new Error('The product group no longer exists in this order')
+  group.variants = orderedEntries(
+    group.variants,
+    orderedVariantIds,
+    'Product order'
+  )
+  return draft
+}
+
+export function resetPreparationOrder(preparation, snapshot) {
+  if (
+    preparation.orderId !== snapshot.orderId ||
+    preparation.accountId !== (snapshot.accountId || 'local')
+  )
+    throw new Error('The source order does not match this preparation')
+  const positions = new Map(
+    snapshot.items.map((item, index) => [item.entryId, index])
+  )
+  const firstPosition = (entryIds) =>
+    Math.min(...entryIds.map((entryId) => positions.get(entryId) ?? Infinity))
+  const draft = structuredClone(preparation)
+  for (const group of draft.groups) {
+    delete group.manualReordered
+    group.variants.sort(
+      (a, b) => firstPosition(a.entryIds) - firstPosition(b.entryIds)
+    )
+    for (const variant of group.variants) delete variant.manualReordered
+  }
+  draft.groups.sort(
+    (a, b) =>
+      firstPosition(a.variants.flatMap((variant) => variant.entryIds)) -
+      firstPosition(b.variants.flatMap((variant) => variant.entryIds))
+  )
+  return draft
+}
+
+/** Saving this draft allocates a fresh unused code; old reservations remain. */
+export function regeneratePreparationCode(preparation, groupId) {
+  const draft = structuredClone(preparation)
+  const group = draft.groups.find((entry) => entry.id === groupId)
+  if (!group)
+    throw new Error('The product group no longer exists in this order')
+  group.baseCode = ''
+  return draft
+}
+
+export function packingCheckpoint(
+  preparation,
+  { includeDefaults = false } = {}
+) {
+  const checkpoint = {
+    month: preparation.month,
+    sellerId: preparation.sellerId,
+    updatedAt: preparation.updatedAt,
+    groups: structuredClone(preparation.groups),
+  }
+  if (includeDefaults && preparation.defaultPacking)
+    checkpoint.defaults = packingCheckpoint(preparation.defaultPacking)
+  return checkpoint
+}
+
+/** Extend defaults only for newly prepared source rows, never a manual split or merge. */
+export function extendDefaultPacking(preparation, snapshot) {
+  if (!preparation.defaultPacking)
+    return packingCheckpoint(resetPreparationOrder(preparation, snapshot))
+  const baseline = {
+    ...preparation,
+    ...structuredClone(preparation.defaultPacking),
+  }
+  const knownIds = new Set(
+    baseline.groups.flatMap((group) =>
+      group.variants.flatMap((variant) => variant.entryIds)
+    )
+  )
+  const byGroup = new Map(baseline.groups.map((group) => [group.id, group]))
+  const byVariant = new Map(
+    baseline.groups.flatMap((group) =>
+      group.variants.map((variant) => [variant.id, variant])
+    )
+  )
+  let changed = false
+  for (const group of preparation.groups) {
+    for (const variant of group.variants) {
+      const additions = variant.entryIds.filter(
+        (entryId) => !knownIds.has(entryId)
+      )
+      if (!additions.length) continue
+      changed = true
+      for (const entryId of additions) knownIds.add(entryId)
+      const oldVariant = byVariant.get(variant.id)
+      if (oldVariant) {
+        oldVariant.entryIds.push(...additions)
+        continue
+      }
+      let target = byGroup.get(group.id)
+      if (!target) {
+        target = {
+          ...structuredClone(group),
+          month: groupPackingMonth(preparation, group),
+          variants: [],
+        }
+        delete target.manualReordered
+        baseline.groups.push(target)
+        byGroup.set(target.id, target)
+      }
+      const added = { ...structuredClone(variant), entryIds: additions }
+      delete added.manualReordered
+      target.variants.push(added)
+      byVariant.set(added.id, added)
+    }
+  }
+  if (!changed) return structuredClone(preparation.defaultPacking)
+  baseline.updatedAt = preparation.updatedAt
+  return packingCheckpoint(resetPreparationOrder(baseline, snapshot))
+}
+
+/** Returns a previewable draft. The caller confirms before saving its revision. */
+export function restoreDefaultPacking(preparation) {
+  if (!preparation.defaultPacking)
+    throw new Error('This order has no saved default layout yet')
+  const draft = structuredClone(preparation)
+  const currentGroups = new Map(draft.groups.map((group) => [group.id, group]))
+  const currentVariants = new Map(
+    draft.groups.flatMap((group) =>
+      group.variants.map((variant) => [variant.id, variant])
+    )
+  )
+  Object.assign(draft, structuredClone(preparation.defaultPacking))
+  draft.updatedAt = preparation.updatedAt
+  for (const group of draft.groups) {
+    const current = currentGroups.get(group.id)
+    if (current) {
+      for (const field of ['spanishName', 'category', 'naming'])
+        if (Object.hasOwn(current, field))
+          group[field] = structuredClone(current[field])
+    }
+    delete group.manualReordered
+    for (const variant of group.variants) {
+      const currentVariant = currentVariants.get(variant.id)
+      if (currentVariant) {
+        variant.variant = currentVariant.variant
+        if (Object.hasOwn(currentVariant, 'spanishName'))
+          variant.spanishName = currentVariant.spanishName
+      }
+      delete variant.manualReordered
+    }
+  }
+  return draft
+}
+
+export function restorePreviousPacking(preparation) {
+  if (!preparation.previousPacking)
+    throw new Error('This order has no previous packing to restore')
+  const previous = preparation.previousPacking
+  return {
+    ...structuredClone(preparation),
+    ...packingCheckpoint(previous),
+    updatedAt: preparation.updatedAt,
+    previousPacking: packingCheckpoint(preparation, { includeDefaults: true }),
+    defaultPacking: packingCheckpoint(previous.defaults || previous),
+  }
+}
+
+/** Freeze source rows before planning. Allocation happens only in the database transaction. */
+export function planSelectedPreparations(
+  selections,
+  month,
+  { vocabulary = DEFAULT_VOCABULARY, sizeVocabulary } = {}
+) {
+  packingMonth(month)
+  if (!Array.isArray(selections))
+    throw new Error('Packing selection must be an array')
+  const preparations = []
+  const scope = []
+  const changes = []
+  const orders = new Set()
+  for (const selection of selections) {
+    const { snapshot, preparation: previous } = selection
+    if (!snapshot || !Array.isArray(selection.entryIds))
+      throw new Error(
+        'Each packing selection needs its source order and selected entry IDs'
+      )
+    const key = JSON.stringify([
+      snapshot.accountId || 'local',
+      snapshot.orderId,
+    ])
+    if (orders.has(key)) throw new Error('Select each order only once')
+    orders.add(key)
+    const currentIds = new Set(snapshot.items.map((item) => item.entryId))
+    const selected = new Set(selection.entryIds)
+    if ([...selected].some((entryId) => !currentIds.has(entryId)))
+      throw new Error(
+        'The selected products changed. Refresh the selection before preparing.'
+      )
+    if (!selected.size) continue
+    if (
+      previous &&
+      (previous.orderId !== snapshot.orderId ||
+        previous.accountId !== (snapshot.accountId || 'local'))
+    )
+      throw new Error('Selected source order does not match its preparation')
+    const draft = previous
+      ? structuredClone(previous)
+      : createPreparation(
+          { ...snapshot, items: [] },
+          month,
+          vocabulary,
+          sizeVocabulary
+        )
+    // Materialize legacy group months before changing the order's latest month.
+    for (const group of draft.groups)
+      group.month = groupPackingMonth(draft, group)
+    draft.month = month
+    const knownIds = new Set(
+      draft.groups.flatMap((group) =>
+        group.variants.flatMap((variant) => variant.entryIds)
+      )
+    )
+    const missing = snapshot.items.filter(
+      (item) => selected.has(item.entryId) && !knownIds.has(item.entryId)
+    )
+    if (missing.length) {
+      const added = createPreparation(
+        { ...snapshot, items: missing },
+        month,
+        vocabulary,
+        sizeVocabulary
+      )
+      for (const group of added.groups) {
+        group.month = month
+        draft.groups.push(group)
+        changes.push({
+          orderId: draft.orderId,
+          groupId: group.id,
+          oldCode: '',
+          oldMonth: '',
+          newMonth: month,
+          split: false,
+          added: true,
+          entryIds: group.variants.flatMap((variant) => variant.entryIds),
+        })
+      }
+    }
+    const selectedGroupIds = []
+    const selectedVariantIds = []
+    const nextGroups = []
+    for (const group of draft.groups) {
+      const memberIds = group.variants.flatMap((variant) => variant.entryIds)
+      const selectedMembers = memberIds.filter((entryId) =>
+        selected.has(entryId)
+      )
+      if (!selectedMembers.length) {
+        nextGroups.push(group)
+        continue
+      }
+      let target = group
+      if (group.month !== month) {
+        const originalCode = group.baseCode
+        const oldMonth = group.month
+        const partial = selectedMembers.length !== memberIds.length
+        if (partial) {
+          target = {
+            ...structuredClone(group),
+            id: crypto.randomUUID(),
+            month,
+            baseCode: '',
+            variants: group.variants
+              .filter((variant) =>
+                variant.entryIds.some((entryId) => selected.has(entryId))
+              )
+              .map((variant) => ({
+                ...structuredClone(variant),
+                id: crypto.randomUUID(),
+                entryIds: variant.entryIds.filter((entryId) =>
+                  selected.has(entryId)
+                ),
+              })),
+          }
+          delete target.manualReordered
+          for (const variant of target.variants) delete variant.manualReordered
+          group.variants = group.variants
+            .map((variant) => ({
+              ...variant,
+              entryIds: variant.entryIds.filter(
+                (entryId) => !selected.has(entryId)
+              ),
+            }))
+            .filter((variant) => variant.entryIds.length)
+          nextGroups.push(group)
+        } else {
+          group.month = month
+          group.baseCode = ''
+        }
+        changes.push({
+          orderId: draft.orderId,
+          groupId: target.id,
+          previousGroupId: group.id,
+          oldCode: originalCode,
+          oldMonth,
+          newMonth: month,
+          split: partial,
+          added: false,
+          entryIds: selectedMembers,
+        })
+      }
+      nextGroups.push(target)
+      selectedGroupIds.push(target.id)
+      selectedVariantIds.push(
+        ...target.variants
+          .filter((variant) =>
+            variant.entryIds.some((entryId) => selected.has(entryId))
+          )
+          .map((variant) => variant.id)
+      )
+    }
+    draft.groups = nextGroups
+    preparations.push(draft)
+    scope.push({
+      accountId: draft.accountId,
+      orderId: draft.orderId,
+      entryIds: [...selected],
+      groupIds: selectedGroupIds,
+      variantIds: selectedVariantIds,
+    })
+  }
+  return {
+    month,
+    preparations,
+    scope,
+    changes,
+    orderCount: preparations.length,
+    rowCount: scope.reduce((sum, entry) => sum + entry.entryIds.length, 0),
+    changedCodeCount: changes.filter((change) => change.oldCode).length,
+    splitGroupCount: changes.filter((change) => change.split).length,
+  }
+}
+
 export function validatePreparation(input) {
   record(input, 'Preparation')
   const month = packingMonth(input.month)
@@ -252,31 +578,43 @@ export function validatePreparation(input) {
   const groupIds = new Set()
   const variantIds = new Set()
   const members = new Set()
-  const codes = new Set()
-  const barcodes = new Set()
+  const codes = new Map()
+  const barcodes = new Map()
   const groups = input.groups.map((inputGroup) => {
     record(inputGroup, 'Product group')
     const groupId = id(inputGroup.id, 'Group ID')
     if (groupIds.has(groupId)) throw new Error('Duplicate product group ID')
     groupIds.add(groupId)
+    const groupMonth = groupPackingMonth(input, inputGroup)
     const baseCode = text(inputGroup.baseCode, 'Base code')
     if (
       baseCode &&
-      (!baseCode.startsWith(codePrefix(month)) ||
+      (!baseCode.startsWith(codePrefix(groupMonth)) ||
         !/^CE\d{4}(?:0[1-9]|[1-9]\d)(?:0[1-9]|[1-9]\d)$/.test(baseCode))
     )
       throw new Error(
         'Base code must use the chosen month and group/item numbers 01–99'
       )
+    const owner = {
+      accountId: input.accountId,
+      orderId: input.orderId,
+      sellerId: input.sellerId,
+      month: groupMonth,
+      groupId,
+      kind: 'base',
+      code: baseCode,
+    }
     if (baseCode && codes.has(baseCode))
-      throw new Error('Product groups need distinct base codes')
-    if (baseCode) codes.add(baseCode)
+      throw new CodeConflictError(codes.get(baseCode), owner)
+    if (baseCode) codes.set(baseCode, owner)
     if (!Array.isArray(inputGroup.variants))
       throw new Error('Product variants must be an array')
     const group = {
       id: groupId,
       title: text(inputGroup.title, 'Product title'),
       baseCode,
+      ...(inputGroup.month !== undefined ? { month: groupMonth } : {}),
+      ...reordered(inputGroup.manualReordered, 'Group manual ordering'),
       spanishName: text(
         inputGroup.spanishName ?? '',
         'Spanish name'
@@ -321,6 +659,7 @@ export function validatePreparation(input) {
         variantSuffix,
         sizeSuffix,
         needsSizeMapping: inputVariant.needsSizeMapping ?? false,
+        ...reordered(inputVariant.manualReordered, 'Variant manual ordering'),
         ...(inputVariant.spanishName !== undefined
           ? {
               spanishName: text(
@@ -332,9 +671,15 @@ export function validatePreparation(input) {
       }
       if (baseCode && !variant.needsSizeMapping) {
         const value = barcodeValue(group, variant)
+        const variantOwner = {
+          ...owner,
+          kind: 'barcode',
+          code: value,
+          variantId,
+        }
         if (barcodes.has(value))
-          throw new Error('Distinct variants need unique barcode values')
-        barcodes.add(value)
+          throw new CodeConflictError(barcodes.get(value), variantOwner)
+        barcodes.set(value, variantOwner)
       }
       return variant
     })
@@ -348,7 +693,7 @@ export function validatePreparation(input) {
     throw new Error(
       'Identify the seller before saving preparation or assigning label codes.'
     )
-  return {
+  const result = {
     accountId: text(input.accountId, 'Preparation account', false),
     orderId,
     sellerId,
@@ -357,6 +702,46 @@ export function validatePreparation(input) {
     updatedAt: new Date(input.updatedAt).toISOString(),
     groups,
   }
+  for (const field of ['defaultPacking', 'previousPacking']) {
+    if (input[field] === undefined) continue
+    const checkpoint = record(input[field], 'Packing checkpoint')
+    if (
+      checkpoint.defaultPacking !== undefined ||
+      checkpoint.previousPacking !== undefined ||
+      (field === 'defaultPacking' && checkpoint.defaults !== undefined)
+    )
+      throw new Error('Packing checkpoints cannot contain nested history')
+    const validated = validatePreparation({
+      accountId: result.accountId,
+      orderId: result.orderId,
+      revision: 0,
+      sellerId: checkpoint.sellerId,
+      month: checkpoint.month,
+      updatedAt: checkpoint.updatedAt,
+      groups: checkpoint.groups,
+    })
+    result[field] = packingCheckpoint(validated)
+    if (checkpoint.defaults !== undefined) {
+      const defaults = record(checkpoint.defaults, 'Previous packing defaults')
+      if (
+        defaults.defaults !== undefined ||
+        defaults.previousPacking !== undefined ||
+        defaults.defaultPacking !== undefined
+      )
+        throw new Error('Packing checkpoints cannot contain nested history')
+      const validatedDefaults = validatePreparation({
+        accountId: result.accountId,
+        orderId: result.orderId,
+        revision: 0,
+        sellerId: defaults.sellerId,
+        month: defaults.month,
+        updatedAt: defaults.updatedAt,
+        groups: defaults.groups,
+      })
+      result[field].defaults = packingCheckpoint(validatedDefaults)
+    }
+  }
+  return result
 }
 
 function validateNaming(input) {
@@ -407,6 +792,9 @@ export function validatePackingPreferences(input = {}) {
   const result = {
     settings: structuredClone(input.settings ?? {}),
     vocabulary,
+    sizeVocabulary: validateSizeVocabulary(
+      input.sizeVocabulary ?? DEFAULT_SIZE_VOCABULARY
+    ),
     logoDataUrl,
   }
   if (JSON.stringify(result).length > 3 * 1024 * 1024)
@@ -474,6 +862,24 @@ export function validateIssuedCode(input) {
     ).test(result.code)
   )
     throw new Error('Issued code is invalid')
+  if (input.ownerSnapshot !== undefined) {
+    const snapshot = record(input.ownerSnapshot, 'Code owner snapshot')
+    if (!Array.isArray(snapshot.entryIds) || !Array.isArray(snapshot.photos))
+      throw new Error('Code owner snapshot must contain entry IDs and photos')
+    result.ownerSnapshot = {
+      sellerName: text(snapshot.sellerName ?? '', 'Code owner seller name'),
+      groupTitle: text(snapshot.groupTitle ?? '', 'Code owner product title'),
+      spanishName: text(snapshot.spanishName ?? '', 'Code owner Spanish name'),
+      category: text(snapshot.category ?? '', 'Code owner category'),
+      variant: text(snapshot.variant ?? '', 'Code owner variant'),
+      entryIds: snapshot.entryIds.map((entryId) => {
+        if (typeof entryId !== 'string' || !/^[1-9]\d*$/.test(entryId))
+          throw new Error('Code owner entry ID must be a decimal ID')
+        return entryId
+      }),
+      photos: snapshot.photos.map((photo) => text(photo, 'Code owner photo')),
+    }
+  }
   return result
 }
 
@@ -519,10 +925,9 @@ export function mergePackingState(allocations, issuedCodes) {
     ])
     const existing = issued.get(key)
     if (existing && !sameOwner(existing, reservation))
-      throw new Error(
-        `Code conflict: ${reservation.code} is already reserved for another product or variant`
-      )
-    issued.set(key, reservation)
+      throw new CodeConflictError(existing, reservation)
+    // Keep the first captured owner evidence even if that product is renamed.
+    issued.set(key, existing?.ownerSnapshot ? existing : reservation)
     const allocation = months.get(
       JSON.stringify([reservation.accountId, reservation.month])
     )
@@ -560,35 +965,66 @@ export function mergePackingState(allocations, issuedCodes) {
 }
 
 /** Call inside one readwrite transaction with the complete existing reservation set. */
-export function allocatePreparation(input, allocations, issuedCodes) {
+export function allocatePreparation(
+  input,
+  allocations,
+  issuedCodes,
+  { snapshot } = {}
+) {
   const preparation = validatePreparation(input)
   const state = mergePackingState(allocations, issuedCodes)
-  let allocation = state.allocations.find(
-    (entry) =>
-      entry.accountId === preparation.accountId &&
-      entry.month === preparation.month
+  const issuedByCode = new Map(
+    state.issuedCodes.map((entry) => [
+      JSON.stringify([entry.accountId, entry.kind, entry.code]),
+      entry,
+    ])
   )
-  if (!allocation) {
-    allocation = {
-      accountId: preparation.accountId,
-      month: preparation.month,
-      groups: [],
-    }
-    state.allocations.push(allocation)
-  }
-  const reserve = (code, groupId, variantId) => {
-    state.issuedCodes.push({
+  const reserve = (code, group, variant) => {
+    const entryIds =
+      variant?.entryIds ?? group.variants.flatMap((entry) => entry.entryIds)
+    const members = new Set(entryIds)
+    const reservation = {
       accountId: preparation.accountId,
       code,
-      kind: variantId ? 'barcode' : 'base',
+      kind: variant ? 'barcode' : 'base',
       orderId: preparation.orderId,
-      groupId,
-      ...(variantId ? { variantId } : {}),
+      groupId: group.id,
+      ...(variant ? { variantId: variant.id } : {}),
       sellerId: preparation.sellerId,
-      month: preparation.month,
-    })
+      month: groupPackingMonth(preparation, group),
+      ...(snapshot
+        ? {
+            ownerSnapshot: {
+              sellerName: snapshot.sellerName || '',
+              groupTitle: group.title,
+              spanishName: group.spanishName,
+              category: group.category,
+              variant: variant?.variant || '',
+              entryIds: [...entryIds],
+              photos: [
+                ...new Set(
+                  snapshot.items
+                    .filter((item) => members.has(item.entryId))
+                    .map((item) => item.thumbnail)
+                    .filter(Boolean)
+                ),
+              ].slice(0, 6),
+            },
+          }
+        : {}),
+    }
+    const key = JSON.stringify([
+      reservation.accountId,
+      reservation.kind,
+      reservation.code,
+    ])
+    const existing = issuedByCode.get(key)
+    if (existing && !sameOwner(existing, reservation))
+      throw new CodeConflictError(existing, reservation)
+    issuedByCode.set(key, existing || reservation)
+    state.issuedCodes.push(reservation)
   }
-  const claimGroup = (number) => {
+  const claimGroup = (allocation, number) => {
     let group = allocation.groups.find((entry) => entry.number === number)
     if (group && group.sellerId !== preparation.sellerId)
       throw new Error('This monthly group belongs to another seller')
@@ -599,6 +1035,15 @@ export function allocatePreparation(input, allocations, issuedCodes) {
     return group
   }
   for (const group of preparation.groups) {
+    const month = groupPackingMonth(preparation, group)
+    let allocation = state.allocations.find(
+      (entry) =>
+        entry.accountId === preparation.accountId && entry.month === month
+    )
+    if (!allocation) {
+      allocation = { accountId: preparation.accountId, month, groups: [] }
+      state.allocations.push(allocation)
+    }
     if (!group.baseCode) {
       let slot = [...allocation.groups]
         .reverse()
@@ -614,19 +1059,19 @@ export function allocatePreparation(input, allocations, issuedCodes) {
           throw new Error(
             'All 99 seller groups for this packing month are exhausted'
           )
-        slot = claimGroup(number)
+        slot = claimGroup(allocation, number)
       }
-      group.baseCode = `${codePrefix(preparation.month)}${String(slot.number).padStart(2, '0')}${String(slot.nextItem).padStart(2, '0')}`
+      group.baseCode = `${codePrefix(month)}${String(slot.number).padStart(2, '0')}${String(slot.nextItem).padStart(2, '0')}`
     }
-    const slot = claimGroup(Number(group.baseCode.slice(6, 8)))
+    reserve(group.baseCode, group)
+    const slot = claimGroup(allocation, Number(group.baseCode.slice(6, 8)))
     slot.nextItem = Math.max(
       slot.nextItem,
       Number(group.baseCode.slice(8, 10)) + 1
     )
-    reserve(group.baseCode, group.id)
     for (const variant of group.variants)
       if (!variant.needsSizeMapping)
-        reserve(barcodeValue(group, variant), group.id, variant.id)
+        reserve(barcodeValue(group, variant), group, variant)
   }
   const validated = mergePackingState(state.allocations, state.issuedCodes)
   return { preparation: validatePreparation(preparation), ...validated }
@@ -648,4 +1093,18 @@ export function validatePreparationReservations(preparation, state) {
     JSON.stringify(allocated.allocations) !== JSON.stringify(state.allocations)
   )
     throw new Error('Preparation is missing issued code reservations')
+  for (const checkpoint of [
+    preparation.defaultPacking,
+    preparation.previousPacking,
+    preparation.previousPacking?.defaults,
+  ].filter(Boolean))
+    validatePreparationReservations(
+      {
+        ...preparation,
+        ...checkpoint,
+        defaultPacking: undefined,
+        previousPacking: undefined,
+      },
+      state
+    )
 }

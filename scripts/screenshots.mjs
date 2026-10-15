@@ -11,34 +11,36 @@ try {
     deviceScaleFactor: 1,
     colorScheme: 'light',
   })
+  await page.addInitScript(() =>
+    localStorage.setItem('1688-library-purchase-months', '[]')
+  )
   await page.goto(`${preview.url}/library.html`)
-  await page.locator('#sheet-body tr').nth(7).waitFor()
+  await page.locator('#sheet-body tr[data-selection-key]').nth(7).waitFor()
   await page.locator('#packing-month').fill('2026-10')
   await page.locator('#packing-month').blur()
   await page.screenshot({ path: 'screenshots/order-library-dark.png' })
   await page.getByRole('button', { name: 'Switch to light theme' }).click()
   await page.screenshot({ path: 'screenshots/order-library.png' })
   await page.getByRole('button', { name: 'Switch to dark theme' }).click()
+  await page.locator('#select-rows').click()
   await page.locator('#prepare-orders').click()
+  await page
+    .getByRole('button', { name: 'Assign codes and prepare', exact: true })
+    .click()
   const group = page.locator('.preparation-group').first()
   await page
     .locator('.preparation-save-status')
     .filter({ hasText: 'Saved automatically' })
     .waitFor()
-  await group.locator('h3').click()
   await group.getByAltText('Carton mark preview').waitFor()
   await group.getByAltText('Barcode preview').first().waitFor()
-  await page.locator('#preparation-dialog h2').click()
+  await page.locator('#packing-view h1').click()
   await page.mouse.move(0, 0)
   await page
     .locator('.preparation-help-popover:visible')
     .waitFor({ state: 'hidden' })
-  await page.locator('#preparation-dialog').evaluate((dialog) => {
-    dialog.scrollTop = 0
-  })
-  await page
-    .locator('#preparation-dialog')
-    .screenshot({ path: 'screenshots/preparation.png' })
+  await page.evaluate(() => window.scrollTo(0, 0))
+  await page.screenshot({ path: 'screenshots/preparation.png' })
   await group
     .getByRole('button', { name: 'Edit barcode', exact: true })
     .first()
@@ -53,9 +55,7 @@ try {
   await page
     .getByRole('button', { name: 'Close label editor', exact: true })
     .click()
-  await page
-    .getByRole('button', { name: 'Close packing list', exact: true })
-    .click()
+  await page.getByRole('button', { name: 'Orders', exact: true }).click()
   await page.getByRole('button', { name: 'Settings', exact: true }).click()
   await page.locator('#settings-dialog h2').click()
   await page.mouse.move(0, 0)

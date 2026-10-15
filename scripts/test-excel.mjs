@@ -76,14 +76,15 @@ try {
     })
   )
   page = await context.newPage()
+  await page.addInitScript(() =>
+    localStorage.setItem('1688-library-purchase-months', '[]')
+  )
   await page.goto(`${preview.url}/library.html`)
-  await expect(page.locator('#sheet-body tr')).toHaveCount(8)
+  await expect(page.locator('#sheet-body tr[data-selection-key]')).toHaveCount(
+    8
+  )
   await page.getByRole('checkbox', { name: 'Headers', exact: true }).check()
   await page.getByRole('button', { name: 'Copy to Excel', exact: true }).click()
-  await page
-    .getByRole('dialog', { name: 'Confirm operation', exact: true })
-    .getByRole('button', { name: 'Copy 8 product images', exact: true })
-    .click()
   await expect(page.locator('#copy-excel')).toHaveText('Copied')
   const products = await page.evaluate(() =>
     excelAcceptance.records.flatMap((record) => record.snapshot.items)
@@ -105,16 +106,19 @@ try {
   })
 
   await page.goto(`${preview.url}/library.html?labels=1`)
-  await expect(page.locator('#sheet-body tr')).toHaveCount(3)
+  await expect(page.locator('#sheet-body tr[data-selection-key]')).toHaveCount(
+    3
+  )
   await page.getByRole('checkbox', { name: 'Headers', exact: true }).uncheck()
   await page.getByLabel('Packing month', { exact: true }).fill('2026-10')
+  await page.locator('#select-rows').click()
   await page
     .getByRole('button', { name: 'Prepare packing list', exact: true })
     .click()
-  const preparation = page.getByRole('dialog', {
-    name: 'Prepare packing list',
-    exact: true,
-  })
+  await page
+    .getByRole('button', { name: 'Assign codes and prepare', exact: true })
+    .click()
+  const preparation = page.locator('#packing-view')
   await expect(preparation.locator('.preparation-group')).toHaveCount(2)
   await expect(preparation.locator('.preparation-save-status')).toHaveText(
     'Saved automatically'
@@ -129,11 +133,9 @@ try {
     .nth(1)
     .getByLabel('Product code', { exact: true })
     .inputValue()
-  await preparation
-    .getByRole('button', { name: 'Close packing list', exact: true })
-    .click()
+  await preparation.getByRole('button', { name: 'Orders', exact: true }).click()
 
-  const firstRow = page.locator('#sheet-body tr').first()
+  const firstRow = page.locator('#sheet-body tr[data-selection-key]').first()
   const label = page.getByRole('dialog', { name: 'Label editor', exact: true })
   const copyLabel = label.getByRole('button', {
     name: 'Copy label',
@@ -285,7 +287,7 @@ try {
 
   // Use the actual row-selection gestures and copy control. The expected pixels
   // come independently from fixture source rows plus their saved preparation.
-  const selectedRows = page.locator('#sheet-body tr')
+  const selectedRows = page.locator('#sheet-body tr[data-selection-key]')
   await selectedRows.nth(0).locator('.row-number').click()
   await selectedRows
     .nth(1)
@@ -296,10 +298,6 @@ try {
     excelAcceptance.expectedExcelImage([0, 1])
   )
   await page.locator('#copy-excel-image').click()
-  await page
-    .getByRole('dialog', { name: 'Confirm operation', exact: true })
-    .getByRole('button', { name: 'Copy 2 product rows', exact: true })
-    .click()
   await expect(page.locator('#copy-excel-image')).toHaveText('Copied', {
     timeout: 20_000,
   })

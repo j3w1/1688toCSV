@@ -35,7 +35,9 @@ async function openLibrary(extension, fallback = false) {
       delete HTMLDialogElement.prototype.requestClose
     })
   await page.goto(`${extension.extensionBaseUrl}/library.html`)
-  await expect(page.locator('#sheet-body tr')).toHaveCount(3)
+  await expect(page.locator('#sheet-body tr[data-selection-key]')).toHaveCount(
+    3
+  )
   return page
 }
 async function backdrop(page, dialog) {
@@ -78,7 +80,7 @@ for (const fallback of [false, true]) {
   })
 }
 
-test('backdrop cancels a confirmation without copying or starting the operation', async ({
+test('ordinary copying starts directly without a confirmation overlay', async ({
   extension,
 }) => {
   const page = await openLibrary(extension)
@@ -96,14 +98,14 @@ test('backdrop cancels a confirmation without copying or starting the operation'
     name: 'Confirm operation',
     exact: true,
   })
-  await expect(dialog).toBeVisible()
-  await backdrop(page, dialog)
   await expect(dialog).not.toBeVisible()
   await expect(
     page.getByRole('button', { name: 'Copy values', exact: true })
   ).toBeEnabled()
-  expect(await page.evaluate(() => window.clipboardWrites)).toBe(0)
-  await expect(page.locator('#sheet-body tr')).toHaveCount(3)
+  await expect.poll(() => page.evaluate(() => window.clipboardWrites)).toBe(1)
+  await expect(page.locator('#sheet-body tr[data-selection-key]')).toHaveCount(
+    3
+  )
 })
 
 test('label backdrop saves a valid blurred edit, preserves Escape restore, and keeps invalid edits open', async ({
@@ -111,23 +113,21 @@ test('label backdrop saves a valid blurred edit, preserves Escape restore, and k
 }) => {
   const page = await openLibrary(extension)
   await page.getByLabel('Packing month', { exact: true }).fill('2026-10')
+  await page.locator('#select-rows').click()
   await page
     .getByRole('button', { name: 'Prepare packing list', exact: true })
     .click()
-  const preparation = page.getByRole('dialog', {
-    name: 'Prepare packing list',
-    exact: true,
-  })
+  const preparation = page.locator('#packing-view')
   await expect(preparation.locator('.preparation-save-status')).toHaveText(
     'Saved automatically'
   )
   await expect(
     preparation.getByLabel('Product code', { exact: true }).first()
   ).toHaveValue(/^CE2610\d{4}$/)
-  await backdrop(page, preparation)
+  await preparation.getByRole('button', { name: 'Orders', exact: true }).click()
   await expect(preparation).not.toBeVisible()
   const open = page
-    .locator('#sheet-body tr')
+    .locator('#sheet-body tr[data-selection-key]')
     .first()
     .getByRole('button', { name: 'Barcode', exact: true })
   await open.click()

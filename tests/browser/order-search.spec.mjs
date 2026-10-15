@@ -25,6 +25,10 @@ test('order search combines seller, member login and order IDs with purchase fil
   )
   expect(restored.ok, restored.error).toBe(true)
   const page = await extension.context.newPage()
+  await page.addInitScript(() => {
+    if (localStorage.getItem('1688-library-purchase-months') === null)
+      localStorage.setItem('1688-library-purchase-months', '[]')
+  })
   await page.goto(`${extension.extensionBaseUrl}/library.html`)
   await expect(page.locator('#orders-page')).toHaveText(/^1 \/ /)
   for (const toggle of await page
@@ -53,7 +57,9 @@ test('order search combines seller, member login and order IDs with purchase fil
   await search.fill('  HABITAT  ')
   await expect(page.locator('.order-card')).toHaveCount(1)
   await expect(page.locator('.order-card')).toContainText('Habitat Studio')
-  await expect(page.locator('#sheet-body tr')).toHaveCount(3)
+  await expect(page.locator('#sheet-body tr[data-selection-key]')).toHaveCount(
+    3
+  )
   await page.locator('#month-filter > summary').click()
   await page.locator('[data-month="2026-09"]').click()
   await expect(page.locator('.order-card')).toHaveCount(0)
@@ -63,7 +69,9 @@ test('order search combines seller, member login and order IDs with purchase fil
   await expect(page.locator('#refresh-orders')).toHaveText('Refresh 0 orders')
   await expect(page.locator('#refresh-orders')).toBeDisabled()
   await page.locator('#refresh-orders').dispatchEvent('click')
-  await expect(page.locator('#sheet-body tr')).toHaveCount(0)
+  await expect(page.locator('#sheet-body tr[data-selection-key]')).toHaveCount(
+    0
+  )
   expect(await page.evaluate(() => window.refreshScopeMessages)).toEqual([])
 
   // Clearing text keeps the independent purchase filter in place.

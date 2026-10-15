@@ -9,6 +9,7 @@ import {
   validatePackingPreferences,
   validatePreparation,
 } from '../src/packing-model.js'
+import { DEFAULT_SIZE_VOCABULARY } from '../src/size-vocabulary.js'
 
 function source(items, extra = {}) {
   return {
@@ -135,6 +136,10 @@ test('dimension suggestions order 2, 3 and 5 sizes and leave ambiguous sets unre
       ['10cm', '20cm', '30cm', '40cm', '50cm'],
       ['XS', 'S', 'M', 'L', 'XL'],
     ],
+    [
+      ['10x20cm', '10x30cm'],
+      ['S', 'L'],
+    ],
   ]) {
     const draft = createPreparation(
       source(dimensions.map((size) => ({ skuProperties: sku('red', size) }))),
@@ -148,7 +153,7 @@ test('dimension suggestions order 2, 3 and 5 sizes and leave ambiguous sets unre
   for (const dimensions of [
     ['10cm', '20cm', '30cm', '40cm'],
     ['short', 'long'],
-    ['10x20cm', '10x30cm'],
+    ['10x30cm', '20x20cm'],
   ]) {
     const draft = createPreparation(
       source(dimensions.map((size) => ({ skuProperties: sku('red', size) }))),
@@ -204,7 +209,7 @@ test('barcodes omit non-distinguishing dimensions including a single measured si
   )
 })
 
-test('size suggestions normalize capacity and length units and require explicit multidimensional mappings', () => {
+test('size suggestions normalize units and rank measurements only when dimensions agree', () => {
   for (const [sizes, expected] of [
     [
       ['2cm', '10mm'],
@@ -217,6 +222,10 @@ test('size suggestions normalize capacity and length units and require explicit 
     [
       ['1米', '20厘米', '50毫米'],
       ['L', 'M', 'S'],
+    ],
+    [
+      ['10x20cm', '20x30cm'],
+      ['S', 'L'],
     ],
   ]) {
     const draft = createPreparation(
@@ -231,7 +240,7 @@ test('size suggestions normalize capacity and length units and require explicit 
   for (const sizes of [
     ['1cm', '10mm'],
     ['10ml', '20cm'],
-    ['10x20cm', '20x30cm'],
+    ['10x40cm', '20x30cm'],
   ]) {
     const draft = createPreparation(
       source(sizes.map((size) => ({ skuProperties: sku('red', size) }))),
@@ -491,6 +500,7 @@ test('preferences retain local vocabulary and reject executable logo formats', (
       vocabulary: [{ match: '杯', spanishName: 'TAZA', category: '杯子' }],
       settings: { labelFontSize: 12 },
       logoDataUrl: '',
+      sizeVocabulary: DEFAULT_SIZE_VOCABULARY,
     }
   )
   assert.throws(

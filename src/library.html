@@ -72,7 +72,7 @@
         <span id="active-job-text"></span
         ><button id="pause-active">Pause</button>
       </div>
-      <div class="workspace">
+      <div id="orders-view" class="workspace">
         <aside class="orders-pane" aria-label="Saved orders">
           <div class="pane-heading">
             <h2 id="orders-heading" tabindex="0">Orders</h2>
@@ -95,7 +95,7 @@
             <summary id="month-filter-label">All purchase months</summary>
             <div class="month-picker">
               <button id="clear-months" class="text-button">All months</button>
-              <p>Click months to toggle. Shift-click for a range.</p>
+              <p>Filter months. Shift-click for a range.</p>
               <div id="month-options" aria-label="Purchase months"></div>
             </div>
           </details>
@@ -138,6 +138,7 @@
               ><button id="prepare-orders" class="primary" disabled>
                 Prepare packing list
               </button>
+              <p id="packing-scope" role="status"></p>
             </div>
           </div>
           <div class="filterbar">
@@ -156,12 +157,6 @@
               ><input id="changes-only" type="checkbox" />Changed only</label
             >
           </div>
-          <section
-            id="order-totals"
-            class="order-totals"
-            aria-label="Matching order totals"
-            aria-live="polite"
-          ></section>
           <div class="export-toolbar">
             <div class="copy-actions" aria-label="Copy selected product rows">
               <span class="toolbar-caption">Products</span
@@ -205,7 +200,7 @@
               <thead>
                 <tr>
                   <th class="row-number" scope="col">#</th>
-                  <th>Thumbnail</th>
+                  <th>Photo</th>
                   <th>Description & labels</th>
                   <th class="numeric">Price</th>
                   <th class="numeric">Quantity</th>
@@ -227,8 +222,22 @@
               ><button id="next-page" aria-label="Next product page">→</button>
             </div>
           </div>
+          <section
+            id="order-totals"
+            class="order-totals"
+            aria-label="Matching order totals"
+            aria-live="polite"
+          ></section>
         </section>
       </div>
+      <section
+        id="packing-view"
+        class="preparation-workspace"
+        aria-label="Prepare packing list"
+        hidden
+      >
+        <fieldset id="preparation-content"></fieldset>
+      </section>
       <p id="feedback" role="status" aria-live="polite"></p>
     </main>
     <dialog id="activity-drawer" class="side-drawer" aria-label="Activity">
@@ -243,16 +252,6 @@
         hidden
       ></section>
       <p id="activity-empty">No imports yet.</p>
-    </dialog>
-    <dialog
-      id="preparation-dialog"
-      class="preparation-dialog"
-      aria-label="Prepare packing list"
-    >
-      <form method="dialog">
-        <button class="dialog-close" aria-label="Close packing list">×</button>
-      </form>
-      <fieldset id="preparation-content"></fieldset>
     </dialog>
     <dialog id="label-dialog" class="label-dialog" aria-label="Label editor">
       <form method="dialog">

@@ -153,17 +153,17 @@ export function mountListToolbar(document, { readList, send }) {
     },
     'primary'
   )
-  button(nav, 'Spreadsheet ↗', async () => {
+  button(nav, 'Open Workspace', async () => {
     address.hidden = false
     openHere.hidden = false
     try {
       await send('OPEN_LIBRARY')
       report(
-        'Spreadsheet tab requested. If it is not visible, choose Open spreadsheet here or use the address below.'
+        'Workspace tab requested. If it is not visible, choose Open Workspace here or use the address below.'
       )
     } catch (error) {
       report(
-        `The spreadsheet could not open in a new tab. Your saved orders are kept. Choose Open spreadsheet here or use the address below. ${error.message}`,
+        `The workspace could not open in a new tab. Your saved orders are kept. Choose Open Workspace here or use the address below. ${error.message}`,
         true
       )
     }
@@ -172,7 +172,7 @@ export function mountListToolbar(document, { readList, send }) {
   address.type = 'text'
   address.readOnly = true
   address.hidden = true
-  address.setAttribute('aria-label', 'Spreadsheet address')
+  address.setAttribute('aria-label', 'Workspace address')
   address.style.cssText =
     'box-sizing:border-box;width:100%;margin-top:8px;font:11px system-ui;padding:8px'
   // The caller owns the extension URL; no page-provided URL is used here.
@@ -180,14 +180,10 @@ export function mountListToolbar(document, { readList, send }) {
   address.addEventListener('click', () => address.select())
   const fallbackActions = make('div')
   fallbackActions.className = 'actions'
-  const openHere = button(
-    fallbackActions,
-    'Open spreadsheet here',
-    async () => {
-      await send('OPEN_LIBRARY_HERE')
-      report('Opening the spreadsheet in this tab…')
-    }
-  )
+  const openHere = button(fallbackActions, 'Open Workspace here', async () => {
+    await send('OPEN_LIBRARY_HERE')
+    report('Opening the spreadsheet in this tab…')
+  })
   openHere.hidden = true
   const all = button(
     options,

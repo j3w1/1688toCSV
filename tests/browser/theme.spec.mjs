@@ -226,7 +226,10 @@ test('preference checkboxes keep generous labels and native keyboard focus witho
   )
   expect(result.ok, result.error).toBe(true)
   const page = await openLibrary(extension)
-  await expect(page.locator('#sheet-body tr')).toHaveCount(8)
+  await page.getByRole('button', { name: 'Show all', exact: true }).click()
+  await expect(page.locator('#sheet-body tr[data-selection-key]')).toHaveCount(
+    8
+  )
   await expect(
     page.locator(
       '#sheet-body input[type=checkbox], .order-card input[type=checkbox]'

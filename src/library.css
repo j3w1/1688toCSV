@@ -550,6 +550,63 @@ tbody tr.changed-row {
   color: var(--accent-text);
   box-shadow: inset 3px 0 var(--control-accent);
 }
+#sheet-body .order-tone-clay {
+  --order-marker: #b98b68;
+}
+#sheet-body .order-tone-olive {
+  --order-marker: #8b9465;
+}
+#sheet-body .order-section-heading {
+  background: transparent;
+  cursor: default;
+}
+#sheet-body .order-section-heading > th {
+  padding: 10px 0 0;
+  border: 0;
+  font-size: 12px;
+}
+#sheet-body .order-section-heading:first-child > th {
+  padding-top: 0;
+}
+.order-section-band {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 5px 14px;
+  min-height: 42px;
+  padding: 9px 12px;
+  border-block: 1px solid var(--border);
+  border-inline-start: 4px solid var(--order-marker);
+  background: var(--hover);
+  color: var(--text);
+}
+.order-section-store {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  min-width: 0;
+  overflow-wrap: anywhere;
+  font-size: 13px;
+}
+.order-section-store .ui-icon {
+  flex: 0 0 17px;
+  color: var(--muted);
+}
+.order-section-number {
+  font-variant-numeric: tabular-nums;
+  overflow-wrap: anywhere;
+  color: var(--muted);
+  font-weight: 400;
+}
+.order-section-count {
+  margin-inline-start: auto;
+  color: var(--muted);
+  font-size: 11px;
+  font-weight: 400;
+}
+#sheet-body .selectable-row > .row-number {
+  border-inline-start: 4px solid var(--order-marker);
+}
 .selection-help {
   margin: 0;
   padding: 6px 12px 10px;
@@ -572,12 +629,12 @@ tbody tr.changed-row {
   white-space: nowrap;
 }
 .thumb-cell {
-  width: 86px;
+  width: 106px;
 }
 .thumb-cell img {
   display: block;
-  width: 54px;
-  height: 54px;
+  width: 78px;
+  height: 78px;
   object-fit: contain;
   background: var(--thumb);
   border: 1px solid var(--border);
@@ -609,13 +666,26 @@ tbody tr.changed-row {
 .thumb-cell .product-photo-button {
   display: grid;
   place-items: center;
-  width: 64px;
-  height: 64px;
+  width: 88px;
+  height: 88px;
   padding: 4px;
   border: 1px solid var(--border);
   border-radius: 10px;
   background: var(--thumb);
   cursor: zoom-in;
+}
+.order-detail-identity {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+}
+.order-detail-identity .eyebrow {
+  margin: 0;
+  overflow-wrap: anywhere;
+}
+.packing-active .intro {
+  display: none;
 }
 .thumb-cell .product-photo-button:not(:disabled):hover {
   background: var(--selected);
@@ -1134,9 +1204,6 @@ dialog a {
 .row-meta .order-status {
   margin: 0;
 }
-tr.order-boundary td {
-  border-top: 3px solid var(--border);
-}
 button.copied,
 button.copied:hover {
   background: var(--success) !important;
@@ -1146,13 +1213,50 @@ button.copied:hover {
 button.copy-failed {
   color: var(--error);
 }
-.copy-error {
+button.copy-active {
+  flex: none;
+  max-inline-size: 100%;
+}
+.copy-error,
+.copy-progress {
+  position: fixed;
+  inset: auto;
+  z-index: 100;
   display: block;
+  inline-size: max-content;
+  max-inline-size: min(280px, calc(100vw - 16px));
+  max-block-size: calc(100dvh - 16px);
+  overflow: auto;
+  margin: 0;
+  padding: 7px 9px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--surface);
+  box-shadow: 0 3px 12px #0002;
   font-size: 11px;
-  color: var(--error);
-  max-width: 240px;
+  line-height: 1.4;
+  color: var(--muted);
+  text-align: start;
   white-space: normal;
   overflow-wrap: anywhere;
+}
+.copy-error {
+  color: var(--error);
+  border-color: var(--error);
+}
+.copy-progress {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.copy-detail-text {
+  min-inline-size: 0;
+}
+.copy-progress .copy-cancel {
+  flex: none;
+  min-block-size: 28px;
+  padding: 4px 6px;
+  font-size: 11px;
 }
 .copy-actions {
   flex-wrap: wrap;
@@ -1332,27 +1436,33 @@ main > .stats {
 .export-toolbar {
   display: flex;
   flex-wrap: wrap;
-  gap: 8px 20px;
-  padding: 10px 14px;
+  align-items: center;
+  gap: 6px 16px;
+  padding: 8px 14px;
   background: var(--field);
   border-block: 1px solid var(--divider);
 }
 .export-toolbar .copy-actions {
   align-items: center;
-  gap: 5px;
+  gap: 4px;
+  min-inline-size: 0;
+  margin: 0;
 }
 .export-toolbar button {
   min-width: 0;
-  min-height: 29px;
+  min-height: 30px;
   padding: 5px 7px;
   font-size: 11px;
+  border-radius: 5px;
+  flex: none;
 }
 .toolbar-caption {
   font-size: 10px;
   color: var(--muted);
   text-transform: uppercase;
   letter-spacing: 0.06em;
-  margin-right: 3px;
+  margin-inline-end: 2px;
+  flex: none;
 }
 .export-toolbar .check {
   font-size: 11px;
