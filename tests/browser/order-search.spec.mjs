@@ -26,6 +26,11 @@ test('order search combines seller, member login and order IDs with purchase fil
   expect(restored.ok, restored.error).toBe(true)
   const page = await extension.context.newPage()
   await page.goto(`${extension.extensionBaseUrl}/library.html`)
+  await expect(page.locator('#orders-page')).toHaveText(/^1 \/ /)
+  for (const toggle of await page
+    .locator('.month-toggle[aria-expanded=false]')
+    .all())
+    await toggle.click()
   await expect(page.locator('.order-card')).toHaveCount(3)
   const search = page.getByRole('searchbox', {
     name: 'Search orders',
@@ -49,18 +54,15 @@ test('order search combines seller, member login and order IDs with purchase fil
   await expect(page.locator('.order-card')).toHaveCount(1)
   await expect(page.locator('.order-card')).toContainText('Habitat Studio')
   await expect(page.locator('#sheet-body tr')).toHaveCount(3)
-  await page
-    .getByLabel('Purchase month', { exact: true })
-    .selectOption('2026-09')
+  await page.locator('#month-filter > summary').click()
+  await page.locator('[data-month="2026-09"]').click()
   await expect(page.locator('.order-card')).toHaveCount(0)
   await expect(page.locator('.order-search-empty')).toHaveText(
     'No orders match these filters.'
   )
-  await expect(page.locator('#refresh-filtered')).toHaveText(
-    'Refresh 0 matching orders'
-  )
-  await expect(page.locator('#refresh-filtered')).toBeDisabled()
-  await page.locator('#refresh-filtered').dispatchEvent('click')
+  await expect(page.locator('#refresh-orders')).toHaveText('Refresh 0 orders')
+  await expect(page.locator('#refresh-orders')).toBeDisabled()
+  await page.locator('#refresh-orders').dispatchEvent('click')
   await expect(page.locator('#sheet-body tr')).toHaveCount(0)
   expect(await page.evaluate(() => window.refreshScopeMessages)).toEqual([])
 
@@ -79,20 +81,18 @@ test('order search combines seller, member login and order IDs with purchase fil
   await search.fill('DEMO_FACTORY')
   await expect(page.locator('.order-card')).toHaveCount(1)
   await expect(page.locator('.order-card')).toContainText('Greenfield')
-  await page
-    .getByLabel('Purchase month', { exact: true })
-    .selectOption('2026-10')
+  await page.locator('[data-month="2026-10"]').click()
   await page.locator('.date-range > summary').click()
   await page.getByLabel('From', { exact: true }).fill('2026-10-08')
   await page.getByLabel('Through', { exact: true }).fill('2026-10-08')
   await expect(page.locator('.order-card')).toHaveCount(1)
   await page.locator('.order-card').click()
-  await expect(page.locator('#refresh-orders')).toHaveText('Refresh 1')
+  await expect(page.locator('#refresh-orders')).toHaveText('Refresh 1 order')
   await search.fill('unknown seller')
   await expect(page.locator('.order-card')).toHaveCount(0)
   await expect(page.locator('#refresh-orders')).toBeDisabled()
-  await expect(page.locator('#refresh-filtered')).toBeDisabled()
-  await page.locator('#refresh-filtered').dispatchEvent('click')
+  await expect(page.locator('#refresh-orders')).toBeDisabled()
+  await page.locator('#refresh-orders').dispatchEvent('click')
   expect(await page.evaluate(() => window.refreshScopeMessages)).toEqual([])
 
   await search.clear()
@@ -100,7 +100,7 @@ test('order search combines seller, member login and order IDs with purchase fil
   await page.getByLabel('Through', { exact: true }).fill('2026-10-12')
   await expect(page.locator('.order-card')).toHaveCount(2)
   await page
-    .getByRole('button', { name: 'Refresh 2 matching orders', exact: true })
+    .getByRole('button', { name: 'Refresh 2 orders', exact: true })
     .click()
   const confirmation = page.getByRole('dialog', {
     name: 'Confirm operation',
@@ -113,7 +113,7 @@ test('order search combines seller, member login and order IDs with purchase fil
   expect(await page.evaluate(() => window.refreshScopeMessages)).toEqual([])
 
   await page
-    .getByRole('button', { name: 'Refresh 2 matching orders', exact: true })
+    .getByRole('button', { name: 'Refresh 2 orders', exact: true })
     .click()
   await expect(confirmation).toBeVisible()
   // A scope change while the modal is open cannot replace its frozen IDs.

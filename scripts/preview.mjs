@@ -24,6 +24,10 @@ export async function startPreview({ port = 0 } = {}) {
   })
   const assets = new Map([
     [
+      '/icons/icon48.png',
+      ['image/png', await readFile(path.join(root, 'icons/icon48.png'))],
+    ],
+    [
       '/theme.js',
       ['text/javascript', await readFile(path.join(root, 'src/theme.js'))],
     ],

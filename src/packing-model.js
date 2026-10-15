@@ -1,3 +1,10 @@
+import {
+  automaticNaming,
+  createNameSuggester,
+  DEFAULT_VOCABULARY,
+  vocabularyEntryMetadata,
+} from './product-vocabulary.js'
+
 const sizeLabel = /^(?:尺寸|尺码|大小|规格(?:[（(].*[）)])?|size)$/i
 const namedSize = /^(?:XXXS|XXS|XS|S|M|L|XL|XXL|XXXL|[2-6]XL)$/
 const sizeSuggestions = {
@@ -79,14 +86,14 @@ function letters(index) {
   return result
 }
 
-function uniqueSuggestion(values) {
-  const suggestions = [...new Set(values.filter(Boolean))]
-  return suggestions.length === 1 ? suggestions[0] : ''
-}
-
 /** Suggestions are drafts. Saving confirms their editable product/variant membership. */
-export function createPreparation(snapshot, month, vocabulary = []) {
+export function createPreparation(
+  snapshot,
+  month,
+  vocabulary = DEFAULT_VOCABULARY
+) {
   packingMonth(month)
+  const suggest = createNameSuggester(vocabulary)
   const groups = new Map()
   const candidates = new Map()
   const variantKeys = new Map()
@@ -94,19 +101,14 @@ export function createPreparation(snapshot, month, vocabulary = []) {
     const title = (item.title || item.description).trim()
     let group = groups.get(title)
     if (!group) {
-      const suggestions = vocabulary.filter(
-        (entry) => entry.match && title.includes(entry.match)
-      )
+      const suggestion = suggest(title)
       group = {
         id: crypto.randomUUID(),
         title,
         baseCode: '',
-        spanishName: uniqueSuggestion(
-          suggestions.map((entry) => entry.spanishName?.trim().toUpperCase())
-        ),
-        category: uniqueSuggestion(
-          suggestions.map((entry) => entry.category?.trim())
-        ),
+        spanishName: suggestion.spanishName,
+        category: suggestion.category,
+        naming: automaticNaming(suggestion),
         variants: [],
       }
       groups.set(title, group)
@@ -280,6 +282,9 @@ export function validatePreparation(input) {
         'Spanish name'
       ).toUpperCase(),
       category: text(inputGroup.category ?? '', 'Category'),
+      ...(inputGroup.naming !== undefined
+        ? { naming: validateNaming(inputGroup.naming) }
+        : {}),
       variants: [],
     }
     group.variants = inputGroup.variants.map((inputVariant) => {
@@ -354,6 +359,23 @@ export function validatePreparation(input) {
   }
 }
 
+function validateNaming(input) {
+  record(input, 'Name provenance')
+  const result = {}
+  for (const field of ['spanishName', 'category']) {
+    if (input[field] === undefined) continue
+    const entry = record(input[field], 'Name provenance field')
+    if (!['automatic', 'manual'].includes(entry.source))
+      throw new Error('Name provenance source must be automatic or manual')
+    const value = text(entry.value, 'Name provenance value')
+    result[field] = {
+      source: entry.source,
+      value: field === 'spanishName' ? value.toUpperCase() : value,
+    }
+  }
+  return result
+}
+
 export function validatePackingPreferences(input = {}) {
   record(input, 'Packing preferences')
   record(input.settings ?? {}, 'Packing settings')
@@ -361,14 +383,18 @@ export function validatePackingPreferences(input = {}) {
     throw new Error('Vocabulary must be an array')
   const vocabulary = (input.vocabulary ?? []).map((entry) => {
     record(entry, 'Vocabulary entry')
-    return {
+    const result = {
       match: text(entry.match, 'Vocabulary match', false),
       spanishName: text(
         entry.spanishName ?? '',
         'Vocabulary Spanish name'
       ).toUpperCase(),
       category: text(entry.category ?? '', 'Vocabulary category'),
+      ...(entry.exclude !== undefined
+        ? { exclude: text(entry.exclude, 'Vocabulary exclusions') }
+        : {}),
     }
+    return { ...result, ...vocabularyEntryMetadata({ ...entry, ...result }) }
   })
   const logoDataUrl = text(input.logoDataUrl ?? '', 'Logo image')
   if (

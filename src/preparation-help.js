@@ -1,13 +1,20 @@
 let activeHint = null
+const hints = new WeakMap()
 
 /** Add help to an existing field or action, without another button or tab stop. */
 export function preparationHelp(target, text) {
+  if (hints.has(target)) {
+    hints.get(target).textContent = text
+    return target
+  }
   const doc = target.ownerDocument,
     panel = doc.createElement('div'),
     nativePopover = 'popover' in panel
   panel.id = `help-${crypto.randomUUID()}`
   panel.className = 'preparation-help-popover'
   panel.textContent = text
+  hints.set(target, panel)
+  target.removeAttribute('title')
   panel.setAttribute('role', 'tooltip')
   if (nativePopover) panel.setAttribute('popover', 'manual')
   else panel.hidden = true
@@ -23,6 +30,9 @@ export function preparationHelp(target, text) {
 
   function ownsDialog(node) {
     return (node?.closest?.('dialog') ?? null) === target.closest('dialog')
+  }
+  function ownsHint(node) {
+    return node?.closest?.('.preparation-hint') === target
   }
 
   function position() {
@@ -63,6 +73,7 @@ export function preparationHelp(target, text) {
       dismissed ||
       !target.isConnected ||
       !target.getClientRects().length ||
+      target.querySelector('.preparation-hint:hover') ||
       !ownsDialog(doc.activeElement)
     )
       return
@@ -74,13 +85,15 @@ export function preparationHelp(target, text) {
     host.append(panel)
     if (nativePopover) panel.showPopover()
     else panel.hidden = false
-    controls = target.matches('input, select, textarea, button, summary, a')
+    controls = target.matches(
+      'input, select, textarea, button, summary, a, [tabindex]'
+    )
       ? [target]
       : [
           ...target.querySelectorAll(
-            'input, select, textarea, button, summary, a'
+            'input, select, textarea, button, summary, a, [tabindex]'
           ),
-        ]
+        ].filter(ownsHint)
     for (const control of controls) {
       const previous = control.getAttribute('aria-describedby')
       control.setAttribute(
@@ -124,23 +137,36 @@ export function preparationHelp(target, text) {
     if (!hovered && !focused) dismissed = false
     if (!hovered && !focused && !panelHovered) timer = setTimeout(close, 150)
   }
-  target.addEventListener('pointerenter', () => {
+  target.addEventListener('pointerover', (event) => {
+    if (!ownsHint(event.target) || ownsHint(event.relatedTarget)) return
     hovered = true
     clearTimeout(timer)
-    if (!dismissed) timer = setTimeout(show, 350)
+    if (!dismissed) timer = setTimeout(show, 500)
   })
-  target.addEventListener('pointerleave', () => {
+  target.addEventListener('pointerout', (event) => {
+    if (ownsHint(event.relatedTarget)) return
     hovered = false
     leave()
   })
-  target.addEventListener('focusin', () => {
+  target.addEventListener('focusin', (event) => {
+    if (!ownsHint(event.target)) {
+      focused = false
+      clearTimeout(timer)
+      if (activeHint === close) close()
+      return
+    }
     focused = true
     show()
   })
   target.addEventListener('focusout', (event) => {
-    focused = target.contains(event.relatedTarget)
+    focused = ownsHint(event.relatedTarget)
     leave()
   })
+  for (const name of ['pointerdown', 'input'])
+    target.addEventListener(name, () => {
+      dismissed = hovered || focused
+      close()
+    })
   panel.addEventListener('pointerenter', () => {
     panelHovered = true
     clearTimeout(timer)

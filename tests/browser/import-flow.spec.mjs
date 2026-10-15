@@ -136,11 +136,20 @@ async function setup(
   return { list, library, visited }
 }
 
+async function expandOrderMonths(library) {
+  // Undated and historical imports start collapsed; open them before details.
+  for (const month of await library
+    .locator('.month-toggle[aria-expanded=false]')
+    .all())
+    await month.click()
+}
+
 async function assertImported(extension, library) {
   await expect(library.locator('#order-count')).toHaveText('2', {
     timeout: 65_000,
   })
   await expect(library.locator('#sheet-body tr')).toHaveCount(4)
+  await expandOrderMonths(library)
   await library.getByRole('button', { name: /^Activity/ }).click()
   await expect(library.locator('#jobs')).toContainText('completed')
   await library
@@ -196,11 +205,12 @@ test('missing sellers import products but require identification before label pr
   await library
     .getByRole('button', { name: 'Close order details', exact: true })
     .click()
+  await library.getByRole('button', { name: 'Show all', exact: true }).click()
   await library
-    .getByRole('button', { name: 'Prepare labels', exact: true })
+    .getByRole('button', { name: 'Prepare packing list', exact: true })
     .click()
   const dialog = library.getByRole('dialog', {
-    name: 'Preparation',
+    name: 'Prepare packing list',
     exact: true,
   })
   const seller = dialog.getByLabel('Seller member login (required)', {
@@ -212,7 +222,7 @@ test('missing sellers import products but require identification before label pr
     .first()
     .fill('PRODUCTO')
   await dialog
-    .getByRole('button', { name: 'Close preparation', exact: true })
+    .getByRole('button', { name: 'Close packing list', exact: true })
     .click()
   await expect(seller).toBeFocused()
   await expect(dialog.locator('.preparation-save-status')).toContainText(
@@ -240,11 +250,11 @@ test('missing sellers import products but require identification before label pr
     .getByRole('button', { name: 'Discard 1 preparation', exact: true })
     .click()
   await dialog
-    .getByRole('button', { name: 'Close preparation', exact: true })
+    .getByRole('button', { name: 'Close packing list', exact: true })
     .click()
   await expect(dialog).not.toBeVisible()
   await library
-    .getByRole('button', { name: 'Prepare labels', exact: true })
+    .getByRole('button', { name: 'Prepare packing list', exact: true })
     .click()
   await seller.fill('identified-synthetic-shop')
   await expect(dialog.locator('.preparation-save-status')).toHaveText(
@@ -258,7 +268,7 @@ test('missing sellers import products but require identification before label pr
   )
   await library.reload()
   await library
-    .getByRole('button', { name: 'Prepare labels', exact: true })
+    .getByRole('button', { name: 'Prepare packing list', exact: true })
     .click()
   await expect(seller).toHaveValue('identified-synthetic-shop')
   await dialog.getByLabel('Preparation order').selectOption('1')
@@ -601,6 +611,7 @@ test('selected import reaches persistent spreadsheet and clipboard through real 
   await expect(list.locator('#order-count')).toHaveText('2')
   await expect(list.locator('#sheet-body tr')).toHaveCount(4)
   // Refresh all remains explicit even with one selected order and a text filter.
+  await expandOrderMonths(list)
   await list
     .getByRole('option', { name: `Order ${ids[0]}`, exact: true })
     .click()
@@ -608,7 +619,11 @@ test('selected import reaches persistent spreadsheet and clipboard through real 
     .getByRole('searchbox', { name: 'Search products and orders', exact: true })
     .fill('no matching synthetic product')
   await expect(list.locator('#sheet-body tr')).toHaveCount(0)
-  await list.getByRole('button', { name: 'Refresh all', exact: true }).click()
+  await list.getByRole('button', { name: 'Settings', exact: true }).click()
+  await list.getByRole('tab', { name: 'Data', exact: true }).click()
+  await list
+    .getByRole('button', { name: 'Refresh all orders', exact: true })
+    .click()
   const refresh = list.getByRole('dialog', {
     name: 'Confirm operation',
     exact: true,
@@ -621,6 +636,7 @@ test('selected import reaches persistent spreadsheet and clipboard through real 
   await expect.poll(() => visited.length, { timeout: 40_000 }).toBe(4)
   await expect(list.locator('#refresh-all')).toBeEnabled({ timeout: 20_000 })
   expect(visited.slice(2).sort()).toEqual([...ids].sort())
+  await list.getByRole('button', { name: 'Close settings', exact: true }).click()
   await list
     .getByRole('searchbox', { name: 'Search products and orders', exact: true })
     .clear()

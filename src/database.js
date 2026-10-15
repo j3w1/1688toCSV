@@ -348,6 +348,11 @@ function keyFor(snapshot) {
   return [snapshot.accountId, snapshot.orderId]
 }
 
+function historicalRecord(record) {
+  const { namingSuggestions, ...source } = record
+  return source
+}
+
 function comparable(snapshot) {
   const { observedAt, sourceUrl, purchasedAt, ...data } = snapshot
   return JSON.stringify({
@@ -604,20 +609,88 @@ export async function openDatabase({ name = '1688-order-library' } = {}) {
   const read = (stores, run) => transaction(database, stores, 'readonly', run)
   const write = (stores, run) => transaction(database, stores, 'readwrite', run)
 
+  async function packingPreferencesFor(tx) {
+    const store = tx.objectStore('packingPreferences')
+    const previous = await requested(store.get('packing'))
+    const value = initializeVocabulary(
+      previous?.value ?? validatePackingPreferences()
+    )
+    if (!previous || value !== previous.value)
+      store.put({
+        id: 'packing',
+        value,
+        // Seeding is not an authored preference edit and must not outrank a
+        // user's older backup when restoring into a freshly opened library.
+        updatedAt: previous?.updatedAt ?? '1970-01-01T00:00:00.000Z',
+      })
+    return value
+  }
+
+  function refreshPreparedNames(tx, preparation, suggest) {
+    if (!preparation) return false
+    const refreshed = refreshPreparationNames(preparation, suggest)
+    if (refreshed === preparation) return false
+    // Invalidate open drafts without promoting derived names over newer
+    // authoring in a backup. updatedAt remains the user's edit timestamp.
+    tx.objectStore('preparations').put({
+      ...refreshed,
+      revision: preparation.revision + 1,
+    })
+    return true
+  }
+
+  async function refreshNames(tx, preferences) {
+    const suggest = createNameSuggester(preferences.vocabulary)
+    let orders = 0
+    let preparations = 0
+    const store = tx.objectStore('orders')
+    for (const order of await requested(store.getAll())) {
+      const namingSuggestions = orderNamingSuggestions(order.snapshot, suggest)
+      if (
+        JSON.stringify(order.namingSuggestions) !==
+        JSON.stringify(namingSuggestions)
+      ) {
+        store.put({ ...order, namingSuggestions })
+        orders += 1
+      }
+    }
+    for (const preparation of await requested(
+      tx.objectStore('preparations').getAll()
+    ))
+      if (refreshPreparedNames(tx, preparation, suggest)) preparations += 1
+    return { orders, preparations }
+  }
+
   return {
     async saveSnapshot(input) {
       const snapshot = validateSnapshot(input)
-      return write(['orders', 'history'], async (tx) => {
-        const orders = tx.objectStore('orders')
-        const previous = await requested(orders.get(keyFor(snapshot)))
-        const result = reconcile(snapshot, previous)
-        if (!result.ignored) {
-          if (result.changed && previous)
-            tx.objectStore('history').put(previous)
-          orders.put(result.order)
+      return write(
+        ['orders', 'history', 'preparations', 'packingPreferences'],
+        async (tx) => {
+          const orders = tx.objectStore('orders')
+          const previous = await requested(orders.get(keyFor(snapshot)))
+          const result = reconcile(snapshot, previous)
+          if (!result.ignored) {
+            const preferences = await packingPreferencesFor(tx)
+            const suggest = createNameSuggester(preferences.vocabulary)
+            if (result.changed && previous)
+              tx.objectStore('history').put(historicalRecord(previous))
+            result.order.namingSuggestions = orderNamingSuggestions(
+              result.order.snapshot,
+              suggest
+            )
+            orders.put(result.order)
+            refreshPreparedNames(
+              tx,
+              await requested(
+                tx.objectStore('preparations').get(keyFor(snapshot))
+              ),
+              suggest
+            )
+          }
+          return { changed: result.changed, order: result.order }
         }
-        return { changed: result.changed, order: result.order }
-      })
+      )
     },
 
     async listOrders({ accountId = 'local' } = {}) {
@@ -758,13 +831,9 @@ export async function openDatabase({ name = '1688-order-library' } = {}) {
                 revision: Math.max(incoming.revision, previous.revision) + 1,
               })
             else if (incoming.updatedAt === previous.updatedAt) {
-              const { revision: incomingRevision, ...incomingContent } =
-                incoming
-              const { revision: previousRevision, ...previousContent } =
-                previous
               if (
-                JSON.stringify(incomingContent) !==
-                JSON.stringify(previousContent)
+                JSON.stringify(preparationAuthoring(incoming)) !==
+                JSON.stringify(preparationAuthoring(previous))
               )
                 throw new Error(
                   'Backup conflict: preparation edits have the same timestamp'
@@ -792,7 +861,7 @@ export async function openDatabase({ name = '1688-order-library' } = {}) {
               const result = reconcile(incoming.snapshot, previous)
               if (!result.ignored) {
                 if (result.changed) {
-                  history.put(previous)
+                  history.put(historicalRecord(previous))
                   updated += 1
                 }
                 orders.put(result.order)
@@ -829,6 +898,7 @@ export async function openDatabase({ name = '1688-order-library' } = {}) {
               await requested(history.index('order').getAll(key))
             )
           }
+          await refreshNames(tx, await packingPreferencesFor(tx))
           return { imported, updated }
         }
       )
@@ -897,7 +967,11 @@ export async function openDatabase({ name = '1688-order-library' } = {}) {
           const issuedCodes = await requested(
             tx.objectStore('issuedCodes').getAll()
           )
-          const result = allocatePreparation(draft, allocations, issuedCodes)
+          const result = allocatePreparation(
+            recordNamingEdits(draft, previous),
+            allocations,
+            issuedCodes
+          )
           const preparation = {
             ...result.preparation,
             revision: expectedRevision + 1,
@@ -916,25 +990,35 @@ export async function openDatabase({ name = '1688-order-library' } = {}) {
     },
 
     async getPackingPreferences() {
-      return read(['packingPreferences'], async (tx) => {
-        const preferences = await requested(
-          tx.objectStore('packingPreferences').get('packing')
-        )
-        return preferences?.value ?? validatePackingPreferences()
-      })
+      return write(['packingPreferences'], packingPreferencesFor)
     },
 
     async savePackingPreferences(input) {
-      const value = validatePackingPreferences(input)
-      return write(['packingPreferences'], async (tx) => {
-        const store = tx.objectStore('packingPreferences')
-        const previous = await requested(store.get('packing'))
-        const updatedAt = new Date(
-          Math.max(Date.now(), Date.parse(previous?.updatedAt || 0) + 1)
-        ).toISOString()
-        store.put({ id: 'packing', value, updatedAt })
-        return value
+      const validated = validatePackingPreferences(input)
+      const value = initializeVocabulary({
+        ...validated,
+        settings: { ...validated.settings, vocabularyInitialized: true },
       })
+      return write(
+        ['packingPreferences', 'orders', 'preparations'],
+        async (tx) => {
+          const store = tx.objectStore('packingPreferences')
+          const previous = await requested(store.get('packing'))
+          const updatedAt = new Date(
+            Math.max(Date.now(), Date.parse(previous?.updatedAt || 0) + 1)
+          ).toISOString()
+          store.put({ id: 'packing', value, updatedAt })
+          await refreshNames(tx, value)
+          return value
+        }
+      )
+    },
+
+    async refreshNamingSuggestions() {
+      return write(
+        ['orders', 'preparations', 'packingPreferences'],
+        async (tx) => refreshNames(tx, await packingPreferencesFor(tx))
+      )
     },
 
     async getImage(url) {
@@ -982,6 +1066,14 @@ export async function openDatabase({ name = '1688-order-library' } = {}) {
 }
 import { lineGrossCents, moneyToCents } from './money.js'
 import { purchaseTimestamp } from './order-date.js'
+import {
+  createNameSuggester,
+  initializeVocabulary,
+  orderNamingSuggestions,
+  preparationAuthoring,
+  recordNamingEdits,
+  refreshPreparationNames,
+} from './product-vocabulary.js'
 import {
   allocatePreparation,
   mergePackingState,

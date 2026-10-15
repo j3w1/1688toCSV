@@ -1,11 +1,11 @@
 # 1688toCSV
 
-Prepare your 1688 purchases for packing: keep orders together, assign CE product codes, edit labels, and copy the results into Excel.
+Keep your purchases in the **1688 Packing workspace**, prepare product codes and labels, and copy what you need into Excel.
 
-<a href="screenshots/order-library-dark.png"><img src="screenshots/order-library-dark.png" alt="Preparation workspace with synthetic products, codes and Excel copy controls" width="640" /></a>
+<a href="screenshots/order-library-dark.png"><img src="screenshots/order-library-dark.png" alt="1688 Packing workspace with synthetic products, order totals and Excel copy controls" width="640" /></a>
 
 <details><summary>Light appearance</summary>
-<a href="screenshots/order-library.png"><img src="screenshots/order-library.png" alt="Preparation workspace in light appearance" width="640" /></a>
+<a href="screenshots/order-library.png"><img src="screenshots/order-library.png" alt="1688 Packing workspace in light appearance" width="640" /></a>
 </details>
 
 ## Install or update
@@ -22,51 +22,55 @@ Open **Extensions → Developer mode → Load unpacked** and select **dist**. In
 
 ## Import and prepare
 
-1. Open your [1688 orders](https://work.1688.com/home/buyer.htm), tick the orders you want, and choose **Import selected**. Confirm the count when asked and keep the list open while the reader tab works.
+1. Open your [1688 orders](https://work.1688.com/home/buyer.htm), tick the orders you want, and choose **Import selected**. Confirm the count and keep the list open while the reader tab works.
 2. Open **Spreadsheet ↗**. If a new tab is blocked, use **Open spreadsheet here** after the import finishes.
-3. Choose the orders to prepare, check the **Packing month** (the current month by default), and click **Prepare labels**. This month controls new CE codes; saved preparation keeps its assigned month.
-4. Check the product photos and variants. Set a short Spanish name and Chinese category. **Changes save automatically**; label previews appear beside their products.
+3. Choose your orders, check the **Packing month** and click **Prepare packing list**. New preparation starts with the current month; existing codes keep their saved month.
+4. Review the photos, names and codes. Known products receive Spanish names and Chinese categories automatically. Unknown products stay unnamed. The **product code heads each group**, with its editable Spanish name and Chinese category below. **Changes save automatically**.
 
-Resolve any **Choose a size code** prompt before copying labels. Names and codes remain editable after saving.
+<a href="screenshots/preparation.png"><img src="screenshots/preparation.png" alt="Prepare packing list with synthetic photos, editable product names and label previews" width="640" /></a>
 
-Click a product photo, scroll to zoom and drag to inspect it. Use **Fit**, **100%** or fullscreen. Categories, original names, **Code options** and **Grouping tools** stay visible. Hover over a field or action for a short hint.
+Click photos to zoom and drag. Edit labels from their previews, including variant and size code endings. Resolve any size-code prompt before copying. **Undo** and **Redo** cover pending edits until autosave completes. Invalid entries stay visible; closing waits for a successful save.
 
-**Undo** and **Redo** restore pending edits until autosave completes. Invalid entries stay in the form with an explanation; closing waits for a successful save.
+Use **Open selected order** beside the order chooser to open that order on 1688; it reuses one tab. Orders marked **Seller unavailable** need a seller member login before label codes can be assigned.
 
-<a href="screenshots/preparation.png"><img src="screenshots/preparation.png" alt="Preparation form with synthetic product photos, carton and barcode previews, and Undo and Redo controls" width="640" /></a>
+**Settings → Product names** lets you search and edit local naming rules, 12 at a time. Your manually edited names remain unchanged. **Labels** holds shared text, dimensions, text size, image quality and logo; click **Save settings** to apply changes.
 
-Orders marked **Seller unavailable** keep their products and totals. Enter the seller's member login in **Prepare labels** before assigning codes.
+<details><summary>Label settings</summary>
+<a href="screenshots/settings.png"><img src="screenshots/settings.png" alt="Compact label settings with shared text, dimensions, text-size controls and logo" width="640" /></a>
+</details>
 
-## Edit labels and copy to Excel
+## Select, review and refresh
 
-Click a label preview, **Barcode** or **Carton mark** to edit it. In a barcode, edit the **Variant** and **Size** endings on the black code band. **Enter** or leaving the field saves; **Escape** cancels the edit. Click **Copy label**, then paste into Excel. Click the dimmed background to close an overlay. **Settings** controls dimensions, resolution, logo and vocabulary.
+Click a row to select it; click it again to deselect. **Shift-click** selects a range, and **Ctrl-click** adds or removes individual rows. Buttons and photos work independently. Double-click an order, or press **Enter**, to open its details.
 
-<a href="screenshots/label-editor.png"><img src="screenshots/label-editor.png" alt="Editable barcode label with synthetic CE code and Spanish product name" width="480" /></a>
+Choose one or more purchase months; **Shift-click** selects a month range. Click a month heading to collapse its orders. The current month starts expanded. Seller/order search, product search, status and date filters update the summary: it counts each complete matching order once, including its shipping and order discounts.
 
-| Copy action                         | What to paste                                                                                                                   |
-| ----------------------------------- | ------------------------------------------------------------------------------------------------------------------------------- |
-| **Copy values**                     | Thumbnail placeholder, description, displayed unit price, quantity and discount                                                 |
-| **Copy images** / **Copy to Excel** | Separate product pictures, or the five source columns with pictures                                                             |
-| **Copy Excel image**                | One resizable table picture with Chinese headings, thumbnails, source values and saved preparation values                       |
-| **Copy preparation columns**        | Your chosen code, barcode, description, Spanish description and financial columns; the base code appears once per product group |
-| **Copy group codes**                | One base code per group                                                                                                         |
-
-Click a row to select it, **Shift-click** for a range, or **Ctrl-click** to add or remove individual rows. The same controls work for orders and preparation. Buttons and photos act independently. With no product rows selected, copying includes all filtered rows. **Headers** starts off and remembers your choice. Batch actions ask for confirmation. Pictures paste as floating images; successful buttons show **Copied**.
-
-**Copy Excel image** always includes Chinese headings. It includes product codes, barcode numbers, Spanish names and Chinese categories; printed barcode and carton-mark pictures stay separate. Large tables offer numbered image batches.
-
-Double-click an order card, or press **Enter**, to open details. Search orders by seller or order number and filter by purchase month or date range, then use **Refresh matching orders**. You can also refresh selected orders or all orders. Use **Activity** to pause, retry or dismiss imports. **Save import report** is available in Activity and beside Pause/Resume on the order page. Retry keeps successful saves and revisits failures. The sun/moon button changes the default dark appearance.
-
-During collection, the reader panel and Activity show progress, saved products, the latest result and time on the current order. Failed orders are counted separately.
+Use the contextual **Refresh** action for selected orders or the current filters. Full-library refresh is in **Settings → Data**. Bulk actions show their scope before starting. **Activity** holds progress, Pause/Resume and **Save import report**; the report button is also on the 1688 order page. Retry preserves successful saves.
 
 <details><summary>Import progress</summary>
-<a href="screenshots/import-progress.png"><img src="screenshots/import-progress.png" alt="Synthetic collection progress with saved products, current order and latest result" width="300" /></a>
+<a href="screenshots/import-progress.png"><img src="screenshots/import-progress.png" alt="Synthetic collection progress showing saved products and the latest result" width="300" /></a>
 </details>
+
+## Copy into Excel
+
+| Action                              | Result                                                                                |
+| ----------------------------------- | ------------------------------------------------------------------------------------- |
+| **Copy values**                     | Five source columns: thumbnail placeholder, description, price, quantity and discount |
+| **Copy images** / **Copy to Excel** | Separate pictures, or the source columns with pictures                                |
+| **Copy Excel image**                | One table picture with Chinese headings, thumbnails and saved packing values          |
+| **Copy preparation columns**        | Your chosen packing and source columns; one base code per product group               |
+| **Copy group codes**                | One base code per group                                                               |
+
+Workspace copy actions use selected product rows, or all filtered rows when none are selected. Inside **Prepare packing list**, copy actions use the current order's selected groups or variants, or all its rows when none are selected. **Headers** starts off and remembers your choice. Successful buttons show **Copied**. Pictures paste as floating images.
+
+**Copy Excel image** is also available inside **Prepare packing list**. It always includes Chinese headings for row number, picture, description, carton code, barcode number, Chinese category, price and quantity. Large tables offer numbered batches. Barcode and carton-mark pictures have their own copy actions.
+
+<a href="screenshots/label-editor.png"><img src="screenshots/label-editor.png" alt="Editable barcode with a synthetic CE code and Spanish name" width="480" /></a>
 
 ## Keep your data
 
-Data stays in this browser. Use **Data → Back up** before uninstalling, clearing its profile or moving computers; **Restore** brings it back with your reserved codes. Refreshes preserve your preparation edits. Use one buyer account per library.
+Use **Settings → Data → Back up** before uninstalling, clearing the browser profile or moving computers. **Restore** brings back your orders, preparation and reserved codes. Refreshes preserve edits. Use one buyer account per library.
 
-Discounts include each product's reduction and its share of order-wide price changes. Reductions already reflected in prices or discounts are counted once. Order-only shop and promotion discounts, shipping, customization charges and red-packet reductions (红包) stay separate in order totals. The detail-page **Download CSV** also remains available, with product discounts only.
+Data and naming rules stay local; there is no online translation service. The sun/moon button switches between dark and light appearance. The detail-page **Download CSV** remains available.
 
-For development commands, code allocation, backups and test coverage, see [development notes](docs/development.md). [Store preparation](CHROMEWEBSTORE.md) records permissions, privacy and publication status.
+See [development notes](docs/development.md) for calculations, code allocation and testing, and [store preparation](CHROMEWEBSTORE.md) for permissions and publication status.

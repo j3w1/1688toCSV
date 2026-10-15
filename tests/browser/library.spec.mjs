@@ -27,6 +27,11 @@ async function seed(extension) {
 async function openLibrary(extension) {
   const page = await extension.context.newPage()
   await page.goto(`${extension.extensionBaseUrl}/library.html`)
+  await expect(page.locator('#orders-page')).toHaveText(/^1 \/ /)
+  for (const toggle of await page
+    .locator('.month-toggle[aria-expanded=false]')
+    .all())
+    await toggle.click()
   return page
 }
 async function confirmOperation(page, name) {
@@ -63,12 +68,12 @@ test('image copy stays compact with touch input and copied feedback', async ({
     const photoBounds = await row.locator('.product-photo-button').boundingBox()
     expect(copyBounds.height).toBeGreaterThanOrEqual(24)
     expect(copyBounds.height).toBeLessThanOrEqual(30)
-    expect(copyBounds.width).toBeLessThanOrEqual(photoBounds.width)
+    expect(copyBounds.width).toBeLessThanOrEqual(100)
     expect(copyBounds.y).toBeGreaterThanOrEqual(
       photoBounds.y + photoBounds.height
     )
     // Wider fallback fonts must fit without making the photo action taller.
-    // Two short lines still fit in its 26px target when a platform needs them.
+    // The icon and complete label stay on one line, including fallback fonts.
     for (const family of ['', 'Verdana']) {
       await copy.evaluate((node, font) => {
         node.style.fontFamily = font
@@ -532,6 +537,9 @@ test('product rows support ranges and toggles while image and copy actions prese
   await rows.nth(3).press('Control+ArrowDown')
   await expect(rows.nth(4)).toBeFocused()
   await expect(selected).toHaveCount(1)
+  // Move away from the last clicked action so its hover hint does not own Escape.
+  await page.mouse.move(0, 0)
+  await expect(page.locator('.preparation-help-popover:visible')).toHaveCount(0)
   await rows.nth(4).press('Escape')
   await expect(selected).toHaveCount(0)
   await rows.nth(4).press('Control+a')
@@ -698,7 +706,8 @@ test('large image backups restore and export without runtime message limits', as
   })
   await expect(page.locator('#sheet-body tr')).toHaveCount(8)
   const saved = page.waitForEvent('download')
-  await page.locator('.data-menu > summary').click()
+  await page.getByRole('button', { name: 'Settings', exact: true }).click()
+  await page.getByRole('tab', { name: 'Data', exact: true }).click()
   await page.getByRole('button', { name: 'Back up', exact: true }).click()
   const download = await saved
   expect(await download.failure()).toBeNull()
@@ -717,7 +726,7 @@ test('purchase dates group orders by month while separators stay out of copied v
 }) => {
   await seed(extension)
   const page = await openLibrary(extension)
-  await expect(page.locator('.order-month')).toHaveText([
+  await expect(page.locator('.month-toggle > span')).toHaveText([
     'October 2026',
     'September 2026',
   ])
@@ -745,9 +754,8 @@ test('purchase dates group orders by month while separators stay out of copied v
   await page.getByRole('button', { name: 'Close order details' }).click()
   await page.getByRole('button', { name: 'Show all', exact: true }).click()
   await expect(page.locator('tr.order-boundary')).toHaveCount(2)
-  await page
-    .getByLabel('Purchase month', { exact: true })
-    .selectOption('2026-09')
+  await page.locator('#month-filter > summary').click()
+  await page.locator('[data-month="2026-09"]').click()
   await expect(page.locator('.order-card')).toHaveCount(1)
   await expect(page.locator('#sheet-body tr')).toHaveCount(2)
   await expect(page.locator('tr.order-boundary')).toHaveCount(0)
@@ -987,7 +995,7 @@ test('large libraries bound order and product DOM while progress updates avoid r
     .locator('.order-card')
     .nth(1)
     .click({ modifiers: ['Shift'] })
-  await expect(page.locator('#refresh-orders')).toHaveText('Refresh 3')
+  await expect(page.locator('#refresh-orders')).toHaveText('Refresh 3 orders')
   await expect(page.locator('.order-card[aria-selected=true]')).toHaveCount(2)
   await expect(page.locator('#sheet-body tr')).toHaveCount(9)
   await page
@@ -1000,7 +1008,7 @@ test('large libraries bound order and product DOM while progress updates avoid r
   await expect(page.locator('#orders-page')).toHaveText('1 / 1')
   await expect(page.locator('#sheet-body tr')).toHaveCount(3)
   await page.locator('.order-card').click({ modifiers: ['Shift'] })
-  await expect(page.locator('#refresh-orders')).toHaveText('Refresh 1')
+  await expect(page.locator('#refresh-orders')).toHaveText('Refresh 1 order')
   await page
     .getByRole('searchbox', { name: 'Search orders', exact: true })
     .clear()
@@ -1135,7 +1143,7 @@ test('purchase date refresh scopes are inclusive, cancellable and inert when emp
   await expect(page.locator('.order-card')).toHaveCount(2)
   await expect(page.locator('#sheet-body tr')).toHaveCount(6)
   await page
-    .getByRole('button', { name: 'Refresh 2 matching orders', exact: true })
+    .getByRole('button', { name: 'Refresh 2 orders', exact: true })
     .click()
   const confirmation = page.getByRole('dialog', {
     name: 'Confirm operation',
@@ -1157,21 +1165,23 @@ test('purchase date refresh scopes are inclusive, cancellable and inert when emp
     '8 Oct 2026'
   )
   await page.locator('.order-card').click()
-  await expect(page.locator('#refresh-orders')).toHaveText('Refresh 1')
+  await expect(page.locator('#refresh-orders')).toHaveText('Refresh 1 order')
   await page.getByLabel('From', { exact: true }).fill('2026-10-20')
   await page.getByLabel('Through', { exact: true }).fill('2026-10-21')
   await expect(page.locator('.order-card')).toHaveCount(0)
   await expect(page.locator('#sheet-body tr')).toHaveCount(0)
-  await expect(page.locator('#refresh-filtered')).toHaveText(
-    'Refresh 0 matching orders'
-  )
-  await expect(page.locator('#refresh-filtered')).toBeDisabled()
+  await expect(page.locator('#refresh-orders')).toHaveText('Refresh 0 orders')
+  await expect(page.locator('#refresh-orders')).toBeDisabled()
   await expect(page.locator('#refresh-orders')).toBeDisabled()
   // Exercise the empty-scope guard even if an event is dispatched programmatically.
-  await page.locator('#refresh-filtered').dispatchEvent('click')
+  await page.locator('#refresh-orders').dispatchEvent('click')
   await expect(confirmation).not.toBeVisible()
 
-  await page.getByRole('button', { name: 'Refresh all', exact: true }).click()
+  await page.getByRole('button', { name: 'Settings', exact: true }).click()
+  await page.getByRole('tab', { name: 'Data', exact: true }).click()
+  await page
+    .getByRole('button', { name: 'Refresh all orders', exact: true })
+    .click()
   await expect(
     confirmation.getByRole('button', { name: 'Refresh 3 orders', exact: true })
   ).toBeVisible()

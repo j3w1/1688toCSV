@@ -61,16 +61,26 @@ export async function copyExcelImage(rows, { loadImage, onProgress, signal }) {
         'groupId',
         'thumbnail',
         'description',
+        'title',
+        'productNumber',
+        'variantDescription',
+        'sourceSize',
         'baseCode',
         'barcode',
-        'spanishName',
         'chineseCategory',
         'price',
         'quantity',
-        'discount',
       ].map((key) => [key, row[key] ?? ''])
     )
   )
+  frozen.forEach((row, index) => {
+    row.skuProperties = (
+      Array.isArray(rows[index].skuProperties) ? rows[index].skuProperties : []
+    ).map(({ label, value }) => ({
+      label: String(label ?? ''),
+      value: String(value ?? ''),
+    }))
+  })
   if (!frozen.length) return false
   if (
     frozen.length > 1 &&
@@ -94,7 +104,7 @@ export async function copyExcelImage(rows, { loadImage, onProgress, signal }) {
       loadImage,
       signal,
       onProgress: ({ completed, total }) =>
-        onProgress(`Creating image ${completed}/${total}…`),
+        onProgress?.(`Creating image ${completed}/${total}…`),
     })
     signal?.throwIfAborted()
     await navigator.clipboard.write([new ClipboardItem({ 'image/png': blob })])

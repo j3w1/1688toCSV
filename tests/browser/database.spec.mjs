@@ -155,6 +155,183 @@ test('customization service survives refresh, change detection and backup withou
   ).toEqual(['12.50', '15.00', undefined])
 })
 
+test('import and startup persist automatic names without preparing or allocating codes', async ({
+  extension,
+}) => {
+  const page = await openTestDatabase(extension)
+  const first = snapshot()
+  first.items[0].title = '测试 藤条扩香 香氛精油'
+  first.items[1].title = '未命名测试样品'
+  const result = await page.evaluate(async (input) => {
+    await library.saveSnapshot(input)
+    const imported = await library.getOrder(input.orderId)
+    const saved = await library.exportBackup()
+    const raw = await new Promise((resolve, reject) => {
+      const request = indexedDB.open(databaseName)
+      request.onsuccess = () => resolve(request.result)
+      request.onerror = () => reject(request.error)
+    })
+    await new Promise((resolve, reject) => {
+      const tx = raw.transaction('orders', 'readwrite')
+      const old = structuredClone(imported)
+      delete old.namingSuggestions
+      tx.objectStore('orders').put(old)
+      tx.oncomplete = resolve
+      tx.onabort = () => reject(tx.error)
+    })
+    raw.close()
+    const backfill = await library.refreshNamingSuggestions()
+    const current = await library.getOrder(input.orderId)
+    const second = await library.refreshNamingSuggestions()
+    const backup = await library.exportBackup()
+    return { imported, saved, backfill, current, second, backup }
+  }, first)
+  expect(
+    result.imported.namingSuggestions.groups.map(
+      ({ spanishName, category, status }) => [spanishName, category, status]
+    )
+  ).toEqual([
+    ['DIFUSOR', '香薰', 'matched'],
+    ['', '', 'unknown'],
+  ])
+  expect(result.current.snapshot).toEqual(result.imported.snapshot)
+  expect(result.current.revision).toBe(result.imported.revision)
+  expect(result.backfill).toEqual({ orders: 1, preparations: 0 })
+  expect(result.second).toEqual({ orders: 0, preparations: 0 })
+  for (const backup of [result.saved, result.backup]) {
+    expect(backup.preparations).toEqual([])
+    expect(backup.allocations).toEqual([])
+    expect(backup.issuedCodes).toEqual([])
+  }
+})
+
+test('automatic naming changes preserve manual fields, explicit clears, codes and backup overrides', async ({
+  extension,
+}) => {
+  const page = await openTestDatabase(extension)
+  const first = snapshot()
+  first.items[0].title = '测试 蜡烛'
+  first.items[1].title = '未命名测试样品'
+  const result = await page.evaluate(async (input) => {
+    const { createPreparation } = await import('/src/packing-model.js')
+    await library.saveSnapshot(input)
+    const original = await library.savePreparation(
+      createPreparation(input, '2026-10')
+    )
+    const manual = structuredClone(original)
+    manual.groups[0].spanishName = ''
+    const edited = await library.savePreparation(manual)
+    const preferences = await library.getPackingPreferences()
+    preferences.vocabulary.push({
+      match: '蜡烛',
+      spanishName: 'VELA NUEVA',
+      category: '香薰蜡烛',
+    })
+    await library.savePackingPreferences(preferences)
+    const renamed = await library.getPreparation(input.orderId)
+    await library.saveSnapshot({
+      ...input,
+      observedAt: '2026-02-01T00:00:00.000Z',
+    })
+    const current = await library.getPreparation(input.orderId)
+    const backup = await library.exportBackup()
+    const restored = await openOrderDatabase({
+      name: `${databaseName}-names-restored`,
+    })
+    // Opening Settings in an empty library must not make the bundled defaults
+    // newer than the user's saved vocabulary when the backup is restored.
+    await restored.getPackingPreferences()
+    await restored.restoreBackup(backup)
+    const restoredBackup = await restored.exportBackup()
+    restored.close()
+    return { original, edited, renamed, current, backup, restoredBackup }
+  }, first)
+  expect(result.original.groups[0].spanishName).toBe('VELA')
+  expect(result.edited.groups[0].naming.spanishName.source).toBe('manual')
+  expect(result.renamed.groups[0].spanishName).toBe('')
+  expect(result.renamed.groups[0].category).toBe('香薰蜡烛')
+  expect(result.renamed.groups[0].naming.category.source).toBe('automatic')
+  expect(result.current).toEqual(result.renamed)
+  expect(result.renamed.groups.map((group) => group.baseCode)).toEqual(
+    result.original.groups.map((group) => group.baseCode)
+  )
+  expect(result.restoredBackup.preparations).toEqual(result.backup.preparations)
+  expect(result.restoredBackup.issuedCodes).toEqual(result.backup.issuedCodes)
+  expect(result.restoredBackup.packingPreferences).toEqual(
+    result.backup.packingPreferences
+  )
+  expect(
+    result.restoredBackup.orders[0].namingSuggestions.groups[0].spanishName
+  ).toBe('VELA NUEVA')
+})
+
+test('derived names preserve authoring time so newer manual backups restore and repeated legacy restores are idempotent', async ({
+  extension,
+}) => {
+  const page = await openTestDatabase(extension)
+  const first = snapshot()
+  first.items[0].title = '测试 蜡烛'
+  const result = await page.evaluate(async (input) => {
+    const { createPreparation } = await import('/src/packing-model.js')
+    await library.saveSnapshot(input)
+    await library.savePreparation(createPreparation(input, '2026-10'))
+    const legacy = await library.exportBackup()
+    legacy.packingPreferences = null
+    legacy.preparations[0].updatedAt = '2026-10-01T00:00:00.000Z'
+    for (const group of legacy.preparations[0].groups) {
+      delete group.naming
+      group.category = ''
+      group.spanishName = ''
+    }
+    legacy.preparations[0].groups[0].spanishName = 'EDITADO OCT1'
+    const restored = await openOrderDatabase({
+      name: `${databaseName}-authored-dates`,
+    })
+    await restored.restoreBackup(legacy)
+    const backfilled = await restored.getPreparation(input.orderId)
+    await restored.restoreBackup(legacy)
+    const repeatedLegacy = await restored.getPreparation(input.orderId)
+    const newer = structuredClone(legacy)
+    newer.preparations[0].updatedAt = '2026-10-02T00:00:00.000Z'
+    newer.preparations[0].groups[0].spanishName = 'EDITADO OCT2'
+    newer.preparations[0].groups[0].category = '香薰蜡烛'
+    await restored.restoreBackup(newer)
+    const edited = await restored.getPreparation(input.orderId)
+    await restored.restoreBackup(legacy)
+    await restored.restoreBackup(newer)
+    const repeated = await restored.getPreparation(input.orderId)
+    const conflict = structuredClone(newer)
+    conflict.preparations[0].groups[0].spanishName = 'CONFLICTO'
+    let error
+    try {
+      await restored.restoreBackup(conflict)
+    } catch (failure) {
+      error = failure.message
+    }
+    const afterConflict = await restored.getPreparation(input.orderId)
+    restored.close()
+    return {
+      backfilled,
+      repeatedLegacy,
+      edited,
+      repeated,
+      afterConflict,
+      error,
+    }
+  }, first)
+  expect(result.backfilled.updatedAt).toBe('2026-10-01T00:00:00.000Z')
+  expect(result.backfilled.groups[0].spanishName).toBe('EDITADO OCT1')
+  expect(result.backfilled.groups[0].category).toBe('蜡烛')
+  expect(result.backfilled.revision).toBeGreaterThan(1)
+  expect(result.repeatedLegacy).toEqual(result.backfilled)
+  expect(result.edited.updatedAt).toBe('2026-10-02T00:00:00.000Z')
+  expect(result.edited.groups[0].spanishName).toBe('EDITADO OCT2')
+  expect(result.edited.groups[0].category).toBe('香薰蜡烛')
+  expect(result.repeated).toEqual(result.edited)
+  expect(result.error).toContain('same timestamp')
+  expect(result.afterConflict).toEqual(result.edited)
+})
+
 test('invalid customization service rejects snapshots and entire backups before writing', async ({
   extension,
 }) => {
@@ -1788,7 +1965,7 @@ test('v2 backups preserve independent authoring, preference timestamps and all i
     async ({ first, image }) => {
       const { createPreparation } = await import('/src/packing-model.js')
       await library.saveSnapshot(first)
-      const saved = await library.savePreparation(
+      let saved = await library.savePreparation(
         createPreparation(first, '2026-06')
       )
       await library.savePackingPreferences({
@@ -1796,6 +1973,7 @@ test('v2 backups preserve independent authoring, preference timestamps and all i
         vocabulary: [{ match: 'box', spanishName: 'caja', category: '盒子' }],
         logoDataUrl: image.dataUrl,
       })
+      saved = await library.getPreparation(first.orderId)
       const older = await library.exportBackup()
       saved.groups[0].baseCode = 'CE26060110'
       saved.groups[0].spanishName = 'CAJA'
@@ -1839,7 +2017,11 @@ test('v2 backups preserve independent authoring, preference timestamps and all i
   expect(result.source.snapshot.status).toBe('Refunded')
   expect(result.backup.issuedCodes).toHaveLength(6)
   expect(result.preferences).toEqual({
-    settings: { fontSize: 12 },
+    settings: {
+      fontSize: 12,
+      vocabularyInitialized: true,
+      vocabularyVersion: 1,
+    },
     vocabulary: [{ match: 'box', spanishName: 'CAJA', category: '盒子' }],
     logoDataUrl: image.dataUrl,
   })

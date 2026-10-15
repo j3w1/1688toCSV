@@ -5,27 +5,29 @@ const DPI = 192
 const MAX_PIXELS = 16_000_000
 const MAX_EDGE = 8192
 const CACHE_BYTES = 4 * 1024 * 1024
-const PADDING = 8
+const PADDING = 10
 const LINE_HEIGHT = 20
 const PHOTO_SIZE = 76
 const FONT_FAMILY =
   '"Segoe UI", "Microsoft YaHei", "Noto Sans CJK SC", sans-serif'
 const BODY_FONT = `14px ${FONT_FAMILY}`
-const HEADER_FONT = `600 13px ${FONT_FAMILY}`
+const HEADER_FONT = `700 13px ${FONT_FAMILY}`
 const NUMBER_FONT = `15px ${FONT_FAMILY}`
+const QUANTITY_FONT = `700 16px ${FONT_FAMILY}`
+const TITLE_FONT = `600 14px ${FONT_FAMILY}`
+const DETAIL_FONT = `13px ${FONT_FAMILY}`
+const DETAIL_LABEL_FONT = `600 12px ${FONT_FAMILY}`
 
 export const excelImageColumns = Object.freeze(
   [
-    { key: 'number', label: '序号', width: 46, numeric: true },
-    { key: 'thumbnail', label: '图片', width: 92 },
-    { key: 'description', label: '产品描述', width: 280 },
-    { key: 'baseCode', label: '产品编码', width: 118 },
-    { key: 'barcode', label: '条码编号', width: 145 },
-    { key: 'spanishName', label: '西班牙语品名', width: 180 },
-    { key: 'chineseCategory', label: '中文品类', width: 112 },
-    { key: 'price', label: '单价（元）', width: 86, numeric: true },
-    { key: 'quantity', label: '数量', width: 72, numeric: true },
-    { key: 'discount', label: '优惠（元）', width: 86, numeric: true },
+    { key: 'number', label: '序号', width: 50, numeric: true },
+    { key: 'thumbnail', label: '图片', width: 100 },
+    { key: 'description', label: '产品描述', width: 330 },
+    { key: 'baseCode', label: '唛头编码', width: 126 },
+    { key: 'barcode', label: '条码编号', width: 142 },
+    { key: 'chineseCategory', label: '中文品类', width: 100 },
+    { key: 'price', label: '单价（元）', width: 94, numeric: true },
+    { key: 'quantity', label: '数量', width: 78, numeric: true },
   ].map(Object.freeze)
 )
 
@@ -39,8 +41,9 @@ function canvasContext() {
 const graphemes = new Intl.Segmenter(undefined, { granularity: 'grapheme' })
 
 /** Keep words together where possible; long codes and CJK wrap without truncation. */
-function wrap(context, value, width) {
+function wrap(context, value, width, firstWidth = width) {
   const lines = []
+  const available = () => (lines.length ? width : firstWidth)
   for (const paragraph of String(value)
     .replaceAll('\r\n', '\n')
     .split(/[\r\n]/)) {
@@ -50,13 +53,13 @@ function wrap(context, value, width) {
     }
     let line = ''
     for (const token of paragraph.match(/\s+|\S+/gu) || []) {
-      if (context.measureText(line + token).width <= width) {
+      if (context.measureText(line + token).width <= available()) {
         line += token
         continue
       }
       if (line.trim()) lines.push(line.trimEnd())
       line = token.trimStart()
-      if (context.measureText(line).width <= width) continue
+      if (context.measureText(line).width <= available()) continue
       const parts = [...graphemes.segment(line)].map((entry) => entry.segment)
       let start = 0
       while (start < parts.length) {
@@ -66,14 +69,14 @@ function wrap(context, value, width) {
         while (
           high < remaining &&
           context.measureText(parts.slice(start, start + high).join(''))
-            .width <= width
+            .width <= available()
         )
           high = Math.min(remaining, high * 2)
         let fits = 0
         while (low <= high) {
           const length = Math.floor((low + high) / 2)
           const candidate = parts.slice(start, start + length).join('')
-          if (context.measureText(candidate).width <= width) {
+          if (context.measureText(candidate).width <= available()) {
             fits = length
             low = length + 1
           } else high = length - 1
@@ -98,14 +101,117 @@ function snapshot(row, index) {
   for (const key of [
     'orderId',
     'groupId',
+    'title',
+    'productNumber',
+    'variantDescription',
+    'sourceSize',
     ...excelImageColumns.map((column) => column.key),
   ])
     values[key] = key === 'number' ? String(index + 1) : String(row[key] ?? '')
+  values.skuProperties = Object.freeze(
+    (Array.isArray(row.skuProperties) ? row.skuProperties : []).map(
+      (property) =>
+        Object.freeze({
+          label: String(property?.label ?? ''),
+          value: String(property?.value ?? ''),
+        })
+    )
+  )
   if (!values.thumbnail.trim())
     throw new Error(
       `Product row ${index + 1} has no photo. Add or refresh its photo before copying.`
     )
   return Object.freeze(values)
+}
+
+const normalized = (value) => String(value).replace(/[\s:：·]/g, '')
+
+function descriptionCell(context, source, width) {
+  const paragraphs = source.description
+    .replaceAll('\r\n', '\n')
+    .split(/[\r\n]/)
+    .map((value) => value.trim())
+    .filter(Boolean)
+  const title = source.title.trim() || paragraphs[0] || ''
+  if (paragraphs[0] === title) paragraphs.shift()
+  else if (source.description.trim().startsWith(title) && title)
+    paragraphs.splice(
+      0,
+      paragraphs.length,
+      source.description.trim().slice(title.length).trim()
+    )
+  const sections = [{ value: title, title: true }]
+  for (let index = 0; index < paragraphs.length; index++) {
+    let value = paragraphs[index]
+    if (/^[^:：]{1,24}[:：]$/.test(value) && paragraphs[index + 1])
+      value += paragraphs[++index]
+    const match = value.match(/^([^:：]{1,24})[:：]\s*(.+)$/s)
+    if (match) sections.push({ label: match[1], value: match[2] })
+    else if (value) sections.push({ value })
+  }
+  function append(label, value) {
+    if (!value.trim()) return
+    const existing = normalized(
+      sections
+        .map((section) => `${section.label || ''}${section.value}`)
+        .join('')
+    )
+    const parts = value.split(/\s+·\s+|[\r\n]+/).filter((part) => part.trim())
+    if (!parts.every((part) => existing.includes(normalized(part))))
+      sections.push({ label, value })
+  }
+  for (const property of source.skuProperties)
+    append(property.label, property.value)
+  append('货号', source.productNumber)
+  append('产品规格', source.variantDescription)
+  append('尺寸', source.sourceSize)
+
+  let height = 0
+  const blocks = sections
+    .filter((section) => section.value)
+    .map((section, index) => {
+      const font = section.title ? TITLE_FONT : DETAIL_FONT
+      const lineHeight = section.title ? LINE_HEIGHT : 18
+      const label = section.label ? `${section.label}：` : ''
+      context.font = DETAIL_LABEL_FONT
+      let labelWidth = context.measureText(label).width
+      // Very long imported attribute labels get their own fully wrapped block.
+      const ownLabel = labelWidth > width / 2
+      const labelLines = ownLabel ? wrap(context, label, width) : []
+      if (ownLabel) labelWidth = 0
+      context.font = font
+      const lines = wrap(context, section.value, width, width - labelWidth)
+      const gapBefore = index ? (index === 1 ? 6 : 3) : 0
+      const blockHeight = (lines.length + labelLines.length) * lineHeight
+      height += gapBefore + blockHeight
+      return Object.freeze({
+        label,
+        labelWidth,
+        labelLines: Object.freeze(labelLines),
+        lines: Object.freeze(lines),
+        font,
+        lineHeight,
+        color: section.title ? '#25221d' : '#514a40',
+        gapBefore,
+        height: blockHeight,
+      })
+    })
+  return Object.freeze({
+    text: sections
+      .map(({ label, value }) => `${label ? `${label}：` : ''}${value}`)
+      .join('\n'),
+    font: BODY_FONT,
+    blocks: Object.freeze(blocks),
+    lines: Object.freeze(
+      blocks.flatMap((block) => [
+        ...block.labelLines,
+        ...block.lines.map((line, index) =>
+          index === 0 && !block.labelLines.length ? block.label + line : line
+        ),
+      ])
+    ),
+    height,
+  })
 }
 
 /** Plan every selected row before choosing a numbered batch; does not load photos. */
@@ -127,7 +233,7 @@ export function planExcelImage(rows) {
       Object.freeze(wrap(context, column.label, column.width - PADDING * 2))
     )
     const headerHeight = Math.max(
-      36,
+      44,
       ...headers.map((lines) => lines.length * LINE_HEIGHT + PADDING * 2)
     )
     const plans = []
@@ -159,22 +265,33 @@ export function planExcelImage(rows) {
     }
     function prepare(source, groupKey) {
       const cells = excelImageColumns.map((column) => {
+        if (column.key === 'description')
+          return descriptionCell(context, source, column.width - PADDING * 2)
         const text =
           column.key === 'thumbnail' ||
           (column.key === 'baseCode' && seen.has(groupKey))
             ? ''
             : source[column.key]
-        const font = column.numeric ? NUMBER_FONT : BODY_FONT
+        const font =
+          column.key === 'quantity'
+            ? QUANTITY_FONT
+            : column.numeric
+              ? NUMBER_FONT
+              : BODY_FONT
         context.font = font
+        const lines = Object.freeze(
+          wrap(context, text, column.width - PADDING * 2)
+        )
         return Object.freeze({
           text,
           font,
-          lines: Object.freeze(wrap(context, text, column.width - PADDING * 2)),
+          lines,
+          height: lines.length * LINE_HEIGHT,
         })
       })
       const height = Math.max(
         96,
-        ...cells.map((cell) => cell.lines.length * LINE_HEIGHT + PADDING * 2)
+        ...cells.map((cell) => cell.height + PADDING * 2)
       )
       return Object.freeze({
         source,
@@ -309,14 +426,40 @@ export async function renderExcelImage(
       )
     }
   }
-  function text(lines, x, y, column, font, header = false) {
+  function text(lines, x, y, column, font) {
     context.font = font
-    context.fillStyle = header ? '#39342b' : '#24211c'
+    context.fillStyle = '#24211c'
     context.textAlign = column.numeric ? 'right' : 'left'
     context.textBaseline = 'top'
     const left = column.numeric ? x + column.width - PADDING : x + PADDING
     for (const [index, line] of lines.entries())
       context.fillText(line, left, y + PADDING + index * LINE_HEIGHT)
+  }
+  function description(cell, x, y) {
+    context.textAlign = 'left'
+    context.textBaseline = 'top'
+    let top = y + PADDING
+    for (const block of cell.blocks) {
+      top += block.gapBefore
+      context.font = DETAIL_LABEL_FONT
+      context.fillStyle = '#746757'
+      for (const label of block.labelLines) {
+        context.fillText(label, x + PADDING, top)
+        top += block.lineHeight
+      }
+      if (block.label && !block.labelLines.length)
+        context.fillText(block.label, x + PADDING, top + 1)
+      context.font = block.font
+      context.fillStyle = block.color
+      for (const [index, line] of block.lines.entries()) {
+        context.fillText(
+          line,
+          x + PADDING + (index === 0 ? block.labelWidth : 0),
+          top
+        )
+        top += block.lineHeight
+      }
+    }
   }
   try {
     canvas.width = plan.width
@@ -326,11 +469,20 @@ export async function renderExcelImage(
     context.imageSmoothingQuality = 'high'
     context.fillStyle = '#fff'
     context.fillRect(0, 0, plan.cssWidth, plan.cssHeight)
-    context.fillStyle = '#eeeae3'
+    context.fillStyle = '#383128'
     context.fillRect(1, 1, plan.cssWidth - 2, plan.headerHeight)
     let x = 1
     for (const [index, column] of excelImageColumns.entries()) {
-      text(plan.headers[index], x, 1, column, HEADER_FONT, true)
+      context.font = HEADER_FONT
+      context.fillStyle = '#fffaf2'
+      context.textBaseline = 'top'
+      context.textAlign = column.key === 'description' ? 'left' : 'center'
+      const left =
+        column.key === 'description' ? x + PADDING : x + column.width / 2
+      const top =
+        1 + (plan.headerHeight - plan.headers[index].length * LINE_HEIGHT) / 2
+      for (const [lineIndex, line] of plan.headers[index].entries())
+        context.fillText(line, left, top + lineIndex * LINE_HEIGHT)
       x += column.width
     }
     onProgress?.({ completed: 0, total: plan.rowCount })
@@ -360,7 +512,9 @@ export async function renderExcelImage(
             width,
             height
           )
-        } else
+        } else if (column.key === 'description')
+          description(row.cells[cellIndex], x, y)
+        else
           text(
             row.cells[cellIndex].lines,
             x,

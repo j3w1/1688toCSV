@@ -1,6 +1,7 @@
 import { createPhotoViewer } from './photo-viewer.js'
 import { createLabelRenderer } from './labels.js'
 import { element as el } from './ui.js'
+import { icon } from './icons.js'
 export { preparationHelp } from './preparation-help.js'
 
 async function smallImage(blob, width = 360) {
@@ -83,6 +84,8 @@ export function createPreparationMedia({
     tile.url = null
     tile.image.removeAttribute('src')
     tile.image.hidden = true
+    if (tile.placeholder) tile.placeholder.hidden = true
+    tile.root.classList.remove('label-unfinished')
   }
   function labelRequest(tile) {
     try {
@@ -95,6 +98,12 @@ export function createPreparationMedia({
           : { spanishName: model.spanishName }),
         settings: settings(),
         logoUrl: logoUrl(),
+        incomplete:
+          model.kind === 'barcode' && !model.spanishName?.trim()
+            ? 'name'
+            : model.kind === 'mark' && !model.category?.trim()
+              ? 'category'
+              : '',
       }
     } catch (error) {
       return { error: error.message }
@@ -112,6 +121,17 @@ export function createPreparationMedia({
         const request = labelRequest(tile)
         tile.signature = JSON.stringify(request)
         if (request.error) throw new Error(request.error)
+        if (request.incomplete) {
+          tile.root.classList.add('label-unfinished')
+          tile.root.title =
+            request.incomplete === 'name'
+              ? 'Name this product to preview its barcode'
+              : 'Add a Chinese category to preview its carton mark'
+          tile.placeholder.hidden = false
+          tile.status.textContent = ''
+          return
+        }
+        tile.root.title = 'Click the preview to edit or copy this label'
         if (!request.code)
           throw new Error(
             'Assigning a product code… Enter the seller login if requested.'
@@ -191,7 +211,10 @@ export function createPreparationMedia({
     label(model, onEdit, kind) {
       const root = el('button', undefined, `preparation-label-preview ${kind}`),
         image = el('img'),
-        status = el('span')
+        status = el('span'),
+        placeholder = el('span', undefined, 'label-placeholder')
+      placeholder.append(icon(kind === 'mark' ? 'carton' : 'barcode'))
+      placeholder.hidden = true
       root.type = 'button'
       root.setAttribute(
         'aria-label',
@@ -200,7 +223,7 @@ export function createPreparationMedia({
       root.title = 'Click the preview to edit or copy this label'
       image.alt = kind === 'mark' ? 'Carton mark preview' : 'Barcode preview'
       image.hidden = true
-      root.append(image, status)
+      root.append(image, placeholder, status)
       root.addEventListener('click', async () => {
         try {
           await onEdit()
@@ -208,7 +231,7 @@ export function createPreparationMedia({
           status.textContent = error.message
         }
       })
-      observe(root, image, status, { model })
+      observe(root, image, status, { model, placeholder })
       return root
     },
     refresh() {

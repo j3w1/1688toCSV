@@ -72,6 +72,8 @@ globalThis.excelAcceptance = {
         barcode: group.baseCode + variant.variantSuffix + variant.sizeSuffix,
         spanishName: variant.spanishName || group.spanishName,
         chineseCategory: group.category,
+        variantDescription: variant.variant,
+        sourceSize: variant.size,
       }
     })
     await document.fonts.ready

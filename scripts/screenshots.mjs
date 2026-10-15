@@ -21,10 +21,6 @@ try {
   await page.getByRole('button', { name: 'Switch to dark theme' }).click()
   await page.locator('#prepare-orders').click()
   const group = page.locator('.preparation-group').first()
-  await group
-    .getByLabel('Spanish short name', { exact: true })
-    .fill('VELA AROMATICA')
-  await group.getByLabel('Chinese category', { exact: true }).fill('工艺品')
   await page
     .locator('.preparation-save-status')
     .filter({ hasText: 'Saved automatically' })
@@ -54,6 +50,21 @@ try {
   await page
     .locator('#label-dialog')
     .screenshot({ path: 'screenshots/label-editor.png' })
+  await page
+    .getByRole('button', { name: 'Close label editor', exact: true })
+    .click()
+  await page
+    .getByRole('button', { name: 'Close packing list', exact: true })
+    .click()
+  await page.getByRole('button', { name: 'Settings', exact: true }).click()
+  await page.locator('#settings-dialog h2').click()
+  await page.mouse.move(0, 0)
+  await page
+    .locator('.preparation-help-popover:visible')
+    .waitFor({ state: 'hidden' })
+  await page
+    .locator('#settings-dialog')
+    .screenshot({ path: 'screenshots/settings.png' })
   await page.goto(`${preview.url}/?state=import`)
   await page.locator('.import-latest').waitFor()
   await page

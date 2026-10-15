@@ -10,6 +10,15 @@ export function acknowledgePreparation(draft, submitted, saved) {
           const next = value.find((entry) => entry.id === item.id)
           if (old && next) merge(item, old, next)
         }
+      } else if (
+        value &&
+        typeof value === 'object' &&
+        target[key] &&
+        before[key]
+      ) {
+        // Provenance is nested data too. A structured-clone submission never
+        // shares its object identity with the live draft.
+        merge(target[key], before[key], value)
       } else if (target[key] === before[key]) target[key] = value
     }
   }

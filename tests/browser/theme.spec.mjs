@@ -192,7 +192,7 @@ test('both palettes keep readable text, semantic badges and primary controls', a
         ratio,
         `${scheme}: ${foreground} on ${background}`
       ).toBeGreaterThanOrEqual(4.5)
-    await expect(page.locator('#copy-excel')).toHaveCSS(
+    await expect(page.locator('#prepare-orders')).toHaveCSS(
       'background-color',
       scheme === 'dark' ? 'rgb(251, 139, 121)' : 'rgb(199, 67, 53)'
     )

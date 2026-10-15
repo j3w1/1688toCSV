@@ -17,6 +17,9 @@ import { createPhotoViewer } from './photo-viewer.js'
 import { presentOrderStatus } from './order-presentation.js'
 import { createRowSelection } from './row-selection.js'
 import { copyExcelImage } from './excel-image-copy.js'
+import { summarizeOrders } from './order-summary.js'
+import { decorateIcon } from './icons.js'
+import { preparationHelp } from './preparation-help.js'
 
 const $ = (id) => document.getElementById(id)
 const keyFor = (row) => `${row.orderId}/${row.entryId}`
@@ -54,6 +57,18 @@ function node(tag, text, className) {
   if (tag === 'dialog') enableLightDismiss(element)
   if (text !== undefined) element.textContent = text
   if (className) element.className = className
+  if (tag === 'button') {
+    const name = /copy/i.test(text)
+      ? 'copy'
+      : /refresh|retry/i.test(text)
+        ? 'refresh'
+        : /save|back up/i.test(text)
+          ? 'download'
+          : /remove|dismiss/i.test(text)
+            ? 'trash'
+            : null
+    if (name) decorateIcon(element, name)
+  }
   return element
 }
 function statusBadge(status) {
@@ -143,6 +158,11 @@ export async function startLibrary(
     showDismissed = false,
     orderPage = 0
   let packing
+  const selectedMonths = new Set()
+  const expandedMonths = new Set([
+    `${new Date().getFullYear()}-${String(new Date().getMonth() + 1).padStart(2, '0')}`,
+  ])
+  let monthAnchor = null
   const photos = createPhotoViewer(async (url) => {
     const data = await send('IMAGE_GET', { url })
     return typeof data === 'string' ? data : data.dataUrl
@@ -158,7 +178,10 @@ export async function startLibrary(
   })
   const orderSelection = createRowSelection({
     selected: selectedOrders,
-    getKeys: () => matchingOrders().map(({ snapshot }) => snapshot.orderId),
+    getKeys: () =>
+      matchingOrders()
+        .filter(({ snapshot }) => expandedMonths.has(purchaseMonth(snapshot)))
+        .map(({ snapshot }) => snapshot.orderId),
     onChange: () => {
       productSelection.reset()
       page = 0
@@ -187,6 +210,110 @@ export async function startLibrary(
     { rootMargin: '150px' }
   )
   const pageSize = 100
+  for (const [id, name, iconOnly] of [
+    ['packing-settings', 'settings', true],
+    ['activity-open', 'activity', false],
+    ['copy-values', 'copy'],
+    ['copy-images', 'image'],
+    ['copy-excel', 'table'],
+    ['copy-excel-image', 'image'],
+    ['prepare-orders', 'packing'],
+    ['copy-preparation', 'copy'],
+    ['copy-group-codes', 'copy'],
+    ['refresh-all', 'refresh'],
+    ['refresh-orders', 'refresh'],
+    ['remove-orders', 'trash', true],
+    ['backup', 'download'],
+    ['restore', 'upload'],
+  ])
+    decorateIcon($(id), name, { iconOnly })
+  decorateIcon(document.querySelector('.open-orders'), 'external')
+  preparationHelp(
+    $('orders-heading'),
+    'Click to select or deselect. Shift-click for a range; Ctrl-click adds orders. Double-click or Enter opens details. Click a month heading to expand or collapse it.'
+  )
+  preparationHelp(
+    $('select-rows'),
+    'Click a product row to select or deselect it. Shift-click selects a range; Ctrl-click adds rows. Buttons and photos work independently.'
+  )
+  for (const [id, hint] of [
+    ['activity-open', 'Import progress, paused jobs and reports.'],
+    ['packing-settings', 'Label layout, naming rules, backup and restore.'],
+    ['theme-toggle', 'Switch between dark and light appearance.'],
+    ['order-search', 'Find a seller, member login or full order number.'],
+    [
+      'month-filter-label',
+      'Choose several purchase months. Shift-click selects a range.',
+    ],
+    ['date-from', 'Include orders purchased on or after this date.'],
+    ['date-to', 'Include orders purchased through this date.'],
+    [
+      'refresh-orders',
+      'Refresh only the orders in the current selection and filters.',
+    ],
+    [
+      'refresh-all',
+      'Read every saved order again. Review the count before starting.',
+    ],
+    [
+      'all-orders',
+      'Clear the order selection, order search and purchase-date filters.',
+    ],
+    ['search', 'Search product text, sellers and prepared names or codes.'],
+    ['status-filter', 'Show orders with this purchase status.'],
+    ['changes-only', 'Show product rows changed by a recent refresh.'],
+    [
+      'packing-month',
+      'Sets the month in new CE codes. Existing codes keep their month.',
+    ],
+    [
+      'prepare-orders',
+      'Prepare the selected or matching orders, with photos, editable codes and labels.',
+    ],
+    [
+      'copy-values',
+      'Copy the five source columns. Uses selected rows, or all filtered rows.',
+    ],
+    [
+      'copy-images',
+      'Copy separate product pictures for the selected or filtered rows.',
+    ],
+    [
+      'copy-excel',
+      'Copy source values and product pictures together into Excel.',
+    ],
+    [
+      'copy-excel-image',
+      'Copy the chosen rows as one table picture with Chinese headings and packing values.',
+    ],
+    ['copy-preparation', 'Choose which packing and source columns to copy.'],
+    ['copy-group-codes', 'Copy one CE code per product group.'],
+    [
+      'include-headers',
+      'Include column headings in copied values. Table pictures always have Chinese headings.',
+    ],
+    [
+      'clear-rows',
+      'Clear the row selection; copying will use all filtered rows.',
+    ],
+    [
+      'remove-orders',
+      'Remove the selected orders from this browser. Issued CE codes stay reserved.',
+    ],
+    [
+      'backup',
+      'Save orders, packing edits, naming rules and reserved codes to a local file.',
+    ],
+    [
+      'restore',
+      'Merge a saved backup into this library, preserving newer edits and reserved codes.',
+    ],
+    [
+      'pause-active',
+      'Pause collection after the current operation. Saved orders stay available.',
+    ],
+  ])
+    preparationHelp($(id), hint)
   const copyTimers = new WeakMap()
   try {
     const stored = localStorage.getItem(headerPreference)
@@ -285,6 +412,9 @@ export async function startLibrary(
   }
   async function copyAction(button, handler) {
     if (button.disabled) return
+    const photoButton = button.matches('.photo-copy-button')
+    if (photoButton)
+      button.style.width = `${button.getBoundingClientRect().width}px`
     const label = (button.dataset.copyLabel ||= button.textContent)
     clearTimeout(copyTimers.get(button))
     button.nextElementSibling?.matches('.copy-error') &&
@@ -300,6 +430,7 @@ export async function startLibrary(
       })
       if (completed === false) {
         button.textContent = label
+        if (button.dataset.icon) decorateIcon(button, button.dataset.icon)
         return
       }
       button.textContent = 'Copied'
@@ -318,13 +449,14 @@ export async function startLibrary(
         button,
         setTimeout(() => {
           button.textContent = label
+          if (button.dataset.icon) decorateIcon(button, button.dataset.icon)
+          if (photoButton) button.style.removeProperty('width')
           button.classList.remove('copied', 'copy-failed')
         }, 3000)
       )
     }
   }
   function matchingOrders() {
-    const month = $('month-filter').value
     const search = $('order-search').value.trim().toLocaleLowerCase()
     const from = $('date-from').value,
       to = $('date-to').value
@@ -336,7 +468,7 @@ export async function startLibrary(
           [order.sellerName, order.sellerMemberLogin, order.orderId].some(
             (value) => value?.toLocaleLowerCase().includes(search)
           )) &&
-        (!month || purchaseMonth(order) === month) &&
+        (!selectedMonths.size || selectedMonths.has(purchaseMonth(order))) &&
         (!(from || to) || (day && (!from || day >= from) && (!to || day <= to)))
       )
     })
@@ -372,6 +504,73 @@ export async function startLibrary(
     const rows = filteredRows()
     const selected = rows.filter((row) => selectedRows.has(keyFor(row)))
     return selected.length ? selected : rows
+  }
+  function scopedOrders(rows = filteredRows()) {
+    const ids = new Set(rows.map((row) => row.orderId))
+    return records.filter(({ snapshot }) => ids.has(snapshot.orderId))
+  }
+  function renderTotals(rows) {
+    const totals = summarizeOrders(scopedOrders(rows))
+    const host = $('order-totals')
+    const heading = node(
+      'p',
+      `Whole-order totals · ${totals.orderCount.toLocaleString()} matching order${totals.orderCount === 1 ? '' : 's'}`,
+      'totals-scope'
+    )
+    heading.title =
+      'Each matching order is counted once, including all its products, shipping and order discounts. Product searches do not split order charges.'
+    preparationHelp(heading, heading.title)
+    heading.removeAttribute('title')
+    const amounts = node('dl', undefined, 'totals-grid')
+    for (const [key, label, reduction] of [
+      ['originalTotal', 'Original amount'],
+      ['shipping', 'Shipping'],
+      ['sellerAdjustment', 'Seller price changes', true],
+      ['productDiscount', 'Product discounts', true],
+      ['orderDiscount', 'Order discounts', true],
+      ['redPacketDiscount', 'Red packets', true],
+      ['customizationService', 'Extra services'],
+      ['payable', 'Total payable'],
+    ]) {
+      const value = totals.amounts[key]
+      if (
+        ['customizationService', 'redPacketDiscount'].includes(key) &&
+        value === '0.00'
+      )
+        continue
+      const pair = node(
+        'div',
+        undefined,
+        key === 'payable' ? 'totals-payable' : ''
+      )
+      const formatted =
+        value === null
+          ? 'Unavailable'
+          : `${reduction && Number(value) !== 0 ? (Number(value) > 0 ? '−' : '+') : ''}¥ ${(reduction ? Math.abs(Number(value)) : Number(value)).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`
+      pair.append(
+        node('dt', label),
+        node('dd', formatted, reduction ? 'total-reduction' : '')
+      )
+      amounts.append(pair)
+    }
+    host.replaceChildren(heading, amounts)
+    if (totals.missingOrderCount || totals.inconsistentOrderCount)
+      host.append(
+        node(
+          'p',
+          'Some saved totals are incomplete or inconsistent. Refresh the affected orders; unavailable amounts are not treated as zero.',
+          'totals-warning'
+        )
+      )
+    if (totals.foreignCurrencyFeeUnknownCount)
+      host.append(
+        node(
+          'p',
+          `${totals.foreignCurrencyFeeUnknownCount} orders report an unspecified foreign-payment fee. It is not included in these CNY totals.`,
+          'totals-warning'
+        )
+      )
+    host.hidden = !records.length
   }
   function updateSelection() {
     packing?.updateActions()
@@ -418,50 +617,94 @@ export async function startLibrary(
   function renderOrders() {
     const list = $('order-list')
     list.replaceChildren()
-    let lastMonth
+    orderSelection.detach()
     const matching = matchingOrders()
+    const expanded = matching.filter(({ snapshot }) =>
+      expandedMonths.has(purchaseMonth(snapshot))
+    )
     orderPage = Math.min(
       orderPage,
-      Math.max(0, Math.ceil(matching.length / 50) - 1)
+      Math.max(0, Math.ceil(expanded.length / 50) - 1)
     )
     $('orders-page').textContent =
-      `${orderPage + 1} / ${Math.max(1, Math.ceil(matching.length / 50))}`
+      `${orderPage + 1} / ${Math.max(1, Math.ceil(expanded.length / 50))}`
     $('orders-prev').disabled = orderPage === 0
-    $('orders-next').disabled = (orderPage + 1) * 50 >= matching.length
+    $('orders-next').disabled = (orderPage + 1) * 50 >= expanded.length
     if (!matching.length)
       list.append(
         node('p', 'No orders match these filters.', 'order-search-empty')
       )
-    for (const record of matching.slice(orderPage * 50, (orderPage + 1) * 50)) {
+    const visible = new Set(
+      expanded
+        .slice(orderPage * 50, (orderPage + 1) * 50)
+        .map(({ snapshot }) => snapshot.orderId)
+    )
+    let lastMonth
+    for (const record of matching) {
       const order = record.snapshot
       const month = purchaseMonth(order)
-      if (month !== lastMonth)
-        list.append(node('h3', monthLabel(month), 'order-month'))
+      if (month !== lastMonth) {
+        const section = node('h3', undefined, 'order-month')
+        const toggle = node('button', undefined, 'month-toggle')
+        toggle.append(
+          node('span', monthLabel(month)),
+          node(
+            'small',
+            String(
+              matching.filter(
+                ({ snapshot }) => purchaseMonth(snapshot) === month
+              ).length
+            )
+          )
+        )
+        decorateIcon(toggle, 'chevron')
+        toggle.setAttribute('aria-expanded', String(expandedMonths.has(month)))
+        toggle.setAttribute('aria-label', `${monthLabel(month)} orders`)
+        preparationHelp(
+          toggle,
+          'Expand or collapse this month. Use the purchase-month filter to change the product list.'
+        )
+        toggle.addEventListener('click', () => {
+          if (expandedMonths.has(month)) expandedMonths.delete(month)
+          else expandedMonths.add(month)
+          const first = matching
+            .filter(({ snapshot }) =>
+              expandedMonths.has(purchaseMonth(snapshot))
+            )
+            .findIndex(({ snapshot }) => purchaseMonth(snapshot) === month)
+          orderPage = Math.max(0, Math.floor(first / 50))
+          renderOrders()
+        })
+        section.append(toggle)
+        list.append(section)
+      }
       lastMonth = month
+      if (!visible.has(order.orderId)) continue
       const card = node('div', undefined, 'order-card')
       card.setAttribute('role', 'option')
       card.setAttribute('aria-label', `Order ${order.orderId}`)
       card.setAttribute('aria-describedby', `order-summary-${order.orderId}`)
-      card.title =
-        'Click to select. Shift-click for a range. Double-click or Enter for details.'
+      preparationHelp(
+        card,
+        'Click to select or deselect. Shift-click selects a range. Double-click opens order details.'
+      )
       const summary = node('div', undefined, 'order-summary')
       summary.id = `order-summary-${order.orderId}`
       summary.append(node('strong', order.sellerName))
-      summary.append(
-        node(
-          'small',
-          `…${order.orderId.slice(-8)} · ${order.items.length} products`
-        )
-      )
+      summary.append(node('small', `Order ${order.orderId}`, 'order-reference'))
       const meta = node('span', undefined, 'order-card-meta')
       meta.append(statusBadge(order.status), dateBadge(order))
-      summary.append(meta)
       const badge = node(
         'span',
         record.revision > 1 ? 'Updated' : 'Saved',
         `badge${record.revision > 1 ? ' changed' : ''}`
       )
-      card.append(summary, badge)
+      meta.append(
+        badge,
+        node('span', `${order.items.length} products`, 'order-products')
+      )
+      summary.append(meta)
+      card.append(summary)
       orderSelection.bind(card, order.orderId)
       list.append(card)
     }
@@ -469,16 +712,18 @@ export async function startLibrary(
     updateOrderActions()
   }
   function updateOrderActions() {
-    const matching = matchingOrders()
-    $('refresh-orders').textContent = selectedOrders.size
-      ? `Refresh ${selectedOrders.size}`
-      : 'Refresh selected'
+    const matching = scopedOrders()
+    $('refresh-orders').textContent =
+      `Refresh ${matching.length} order${matching.length === 1 ? '' : 's'}`
+    decorateIcon($('refresh-orders'), 'refresh')
+    $('refresh-scope').textContent = selectedOrders.size
+      ? 'Selected orders'
+      : selectedMonths.size
+        ? 'Selected months · matching search'
+        : 'All matching orders'
     const running = jobs.some((job) => job.state === 'running')
-    $('refresh-orders').disabled = !selectedOrders.size || running
+    $('refresh-orders').disabled = !matching.length || running
     $('refresh-all').disabled = !records.length || running
-    $('refresh-filtered').disabled = !matching.length || running
-    $('refresh-filtered').textContent =
-      `Refresh ${matching.length} matching orders`
     $('remove-orders').disabled = !selectedOrders.size
   }
   function renderRows() {
@@ -516,6 +761,10 @@ export async function startLibrary(
         image.src = preparedImages.get(row.thumbnail)
       else imageObserver.observe(image)
       const imageButton = node('button', 'Copy image', 'photo-copy-button')
+      preparationHelp(
+        imageButton,
+        'Copy the full-size product picture. Paste it into Excel or a message.'
+      )
       imageButton.addEventListener('click', () =>
         copyAction(imageButton, async () => {
           const original = await send('IMAGE_GET', { url: row.thumbnail })
@@ -527,16 +776,23 @@ export async function startLibrary(
       const zoom = node('button', undefined, 'product-photo-button')
       zoom.type = 'button'
       zoom.setAttribute('aria-label', `Zoom product photo ${row.entryId}`)
-      zoom.title = 'Enlarge product photo'
+      preparationHelp(
+        zoom,
+        'Open the large photo. Scroll to zoom, then drag to inspect it.'
+      )
       zoom.disabled = !row.thumbnail
       zoom.append(image)
       zoom.addEventListener('click', () => void photos.open(row))
       thumb.append(zoom, imageButton)
       const description = node('td', undefined, 'description-cell')
       const metadata = node('div', undefined, 'row-meta')
-      metadata.append(
+      const identity = node('div', undefined, 'row-identity')
+      identity.append(
         node('span', row.sellerName, 'meta-seller'),
-        node('span', `…${row.orderId.slice(-8)}`, 'meta-order'),
+        node('span', `Order ${row.orderId}`, 'meta-order')
+      )
+      metadata.append(
+        identity,
         dateBadge(row.record.snapshot),
         statusBadge(row.record.snapshot.status)
       )
@@ -582,12 +838,12 @@ export async function startLibrary(
     $('next-page').disabled = page === maxPage
     productSelection.paint()
     updateSelection()
+    renderTotals(rows)
+    updateOrderActions()
   }
   function renderJobs() {
     const running = jobs.some((job) => job.state === 'running')
-    $('refresh-orders').disabled = !selectedOrders.size || running
-    $('refresh-all').disabled = !records.length || running
-    $('refresh-filtered').disabled = !matchingOrders().length || running
+    updateOrderActions()
     const sorted = [...jobs].sort((a, b) =>
       (b.updatedAt || '').localeCompare(a.updatedAt || '')
     )
@@ -809,6 +1065,54 @@ export async function startLibrary(
     renderRows()
     renderJobs()
   }
+  function updateMonthFilter() {
+    $('month-filter-label').textContent = !selectedMonths.size
+      ? 'All purchase months'
+      : selectedMonths.size === 1
+        ? monthLabel([...selectedMonths][0])
+        : `${selectedMonths.size} purchase months`
+    for (const button of $('month-options').querySelectorAll('button'))
+      button.setAttribute(
+        'aria-pressed',
+        String(selectedMonths.has(button.dataset.month))
+      )
+  }
+  function renderMonthOptions() {
+    const months = [
+      ...new Set(records.map(({ snapshot }) => purchaseMonth(snapshot))),
+    ]
+    for (const month of selectedMonths)
+      if (!months.includes(month)) selectedMonths.delete(month)
+    $('month-options').replaceChildren(
+      ...months.map((month) => {
+        const button = node('button', monthLabel(month), 'month-choice')
+        button.dataset.month = month
+        button.addEventListener('click', (event) => {
+          if (event.shiftKey && monthAnchor && months.includes(monthAnchor)) {
+            const start = months.indexOf(monthAnchor),
+              end = months.indexOf(month)
+            for (const value of months.slice(
+              Math.min(start, end),
+              Math.max(start, end) + 1
+            ))
+              selectedMonths.add(value)
+          } else {
+            if (selectedMonths.has(month)) selectedMonths.delete(month)
+            else selectedMonths.add(month)
+            monthAnchor = month
+          }
+          for (const value of selectedMonths) expandedMonths.add(value)
+          orderSelection.reset()
+          productSelection.reset()
+          page = orderPage = 0
+          updateMonthFilter()
+          render()
+        })
+        return button
+      })
+    )
+    updateMonthFilter()
+  }
   async function refresh() {
     if (loading) {
       refreshPending = true
@@ -829,15 +1133,7 @@ export async function startLibrary(
             a.snapshot.purchasedAt || ''
           ) || b.snapshot.orderId.localeCompare(a.snapshot.orderId)
       )
-      const oldMonth = $('month-filter').value
-      const months = [
-        ...new Set(records.map((record) => purchaseMonth(record.snapshot))),
-      ]
-      $('month-filter').replaceChildren(
-        new Option('All purchase months', ''),
-        ...months.map((month) => new Option(monthLabel(month), month))
-      )
-      $('month-filter').value = months.includes(oldMonth) ? oldMonth : ''
+      renderMonthOptions()
       const oldStatus = $('status-filter').value
       $('status-filter').replaceChildren(
         new Option('All statuses', ''),
@@ -1137,7 +1433,9 @@ export async function startLibrary(
     clearTimeout(orderSearchTimer)
     orderSelection.reset()
     productSelection.reset()
-    $('month-filter').value = ''
+    selectedMonths.clear()
+    monthAnchor = null
+    updateMonthFilter()
     $('order-search').value = ''
     $('date-from').value = ''
     $('date-to').value = ''
@@ -1172,13 +1470,21 @@ export async function startLibrary(
     await refresh()
     feedback('Refresh started. Pause from Activity or the progress bar.')
   }
-  action('refresh-orders', () => refreshOrders([...selectedOrders]))
+  action('refresh-orders', () =>
+    refreshOrders(scopedOrders().map(({ snapshot }) => snapshot.orderId))
+  )
   action('refresh-all', () =>
     refreshOrders(records.map((record) => record.snapshot.orderId))
   )
-  action('refresh-filtered', () =>
-    refreshOrders(matchingOrders().map((record) => record.snapshot.orderId))
-  )
+  action('clear-months', () => {
+    selectedMonths.clear()
+    monthAnchor = null
+    orderSelection.reset()
+    productSelection.reset()
+    page = orderPage = 0
+    updateMonthFilter()
+    render()
+  })
   action('activity-open', () => $('activity-drawer').showModal())
   action('pause-active', async () => {
     const active = jobs.find((job) => job.state === 'running')
@@ -1246,7 +1552,12 @@ export async function startLibrary(
     productSelection.reset()
     page = 0
     orderPage = 0
-    orderSearchTimer = setTimeout(render, 150)
+    orderSearchTimer = setTimeout(() => {
+      if ($('order-search').value.trim())
+        for (const { snapshot } of matchingOrders())
+          expandedMonths.add(purchaseMonth(snapshot))
+      render()
+    }, 150)
   })
   for (const id of ['status-filter', 'changes-only'])
     $(id).addEventListener('change', () => {
@@ -1254,12 +1565,15 @@ export async function startLibrary(
       productSelection.reset()
       renderRows()
     })
-  for (const id of ['month-filter', 'date-from', 'date-to'])
+  for (const id of ['date-from', 'date-to'])
     $(id).addEventListener('change', () => {
       orderSelection.reset()
       productSelection.reset()
       page = 0
       orderPage = 0
+      if ($('date-from').value || $('date-to').value)
+        for (const { snapshot } of matchingOrders())
+          expandedMonths.add(purchaseMonth(snapshot))
       render()
     })
   globalThis.chrome?.runtime?.onMessage?.addListener((message) => {
@@ -1282,14 +1596,13 @@ export async function startLibrary(
     refresh().catch((error) => feedback(error.message, true))
   )
   try {
+    await repository?.refreshNamingSuggestions?.()
     packing = await startPackingWorkspace({
       repository: repository || (await openDatabase()),
       getRecords: () => records,
       getRows: copyRows,
       headers: () => $('include-headers').checked,
-      changed: () => {
-        renderRows()
-      },
+      changed: ({ reload = false } = {}) => (reload ? refresh() : renderRows()),
       feedback,
       loadImage: async (url) => {
         const result = await send('IMAGE_GET', { url })

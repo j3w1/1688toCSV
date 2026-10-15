@@ -5,7 +5,7 @@
     <meta name="color-scheme" content="dark" />
     <script src="theme.js"></script>
     <meta name="viewport" content="width=device-width,initial-scale=1" />
-    <title>Preparation workspace · 1688toCSV</title>
+    <title>1688 Packing workspace</title>
     <link rel="stylesheet" href="library.css" />
     <link rel="stylesheet" href="packing.css" />
     <link rel="stylesheet" href="label-editor.css" />
@@ -14,9 +14,15 @@
   <body>
     <header class="topbar">
       <a class="brand" href="library.html"
-        ><span class="brand-mark">1688</span
-        ><span
-          >Preparation workspace<small>Orders, codes & labels</small></span
+        ><img
+          class="brand-mark"
+          src="icons/icon48.png"
+          width="36"
+          height="36"
+          alt=""
+        />
+        <span
+          >1688 Packing workspace<small>Orders · packing · Excel</small></span
         ></a
       >
       <span class="local-label"><i></i> Stored in this browser</span>
@@ -34,13 +40,6 @@
             ><span class="sr-only">Switch to light theme</span></span
           >
         </button>
-        <details class="data-menu">
-          <summary>Data</summary>
-          <div>
-            <button id="backup">Back up</button
-            ><button id="restore">Restore</button>
-          </div>
-        </details>
         <input
           id="backup-file"
           type="file"
@@ -50,25 +49,6 @@
       </div>
     </header>
     <main>
-      <section class="intro">
-        <div>
-          <p class="eyebrow">PREPARE → COPY → EXCEL</p>
-          <h1>Ready for the next step.</h1>
-          <p>
-            Review your products, prepare their labels, and copy what you need.
-          </p>
-        </div>
-        <div class="library-actions">
-          <button id="refresh-all">Refresh all</button
-          ><a
-            class="button"
-            href="https://air.1688.com/app/ctf-page/trade-order-list/buyer-order-list.html?page=1&amp;pageSize=10"
-            target="_blank"
-            rel="noreferrer"
-            >Open 1688 orders ↗</a
-          >
-        </div>
-      </section>
       <section class="stats" aria-label="Library overview">
         <div><span id="order-count">0</span><small>Orders</small></div>
         <div><span id="product-count">0</span><small>Product rows</small></div>
@@ -76,6 +56,13 @@
           <span id="changed-count">0</span><small>Updated orders</small>
         </div>
         <div><span id="checked-at">—</span><small>Last checked</small></div>
+        <a
+          class="open-orders"
+          href="https://air.1688.com/app/ctf-page/trade-order-list/buyer-order-list.html?page=1&amp;pageSize=10"
+          target="_blank"
+          rel="noreferrer"
+          >Open 1688 orders</a
+        >
       </section>
       <div id="active-job" class="active-job" hidden>
         <progress
@@ -88,7 +75,7 @@
       <div class="workspace">
         <aside class="orders-pane" aria-label="Saved orders">
           <div class="pane-heading">
-            <h2>Orders</h2>
+            <h2 id="orders-heading" tabindex="0">Orders</h2>
             <button id="all-orders" class="text-button">Show all</button>
           </div>
           <div class="order-search search">
@@ -104,24 +91,23 @@
               aria-controls="order-list"
             />
           </div>
-          <div class="month-filter">
-            <label class="sr-only" for="month-filter">Purchase month</label
-            ><select id="month-filter">
-              <option value="">All purchase months</option>
-            </select>
-          </div>
+          <details id="month-filter" class="month-filter">
+            <summary id="month-filter-label">All purchase months</summary>
+            <div class="month-picker">
+              <button id="clear-months" class="text-button">All months</button>
+              <p>Click months to toggle. Shift-click for a range.</p>
+              <div id="month-options" aria-label="Purchase months"></div>
+            </div>
+          </details>
           <details class="date-range">
             <summary>Purchase date range</summary>
             <label>From<input type="date" id="date-from" /></label
             ><label>Through<input type="date" id="date-to" /></label>
           </details>
-          <button id="refresh-filtered" class="text-button">
-            Refresh matching orders
-          </button>
-          <p class="selection-help">
-            Click to select · Shift-click for a range<br />Double-click for
-            details
-          </p>
+          <div class="order-refresh">
+            <button id="refresh-orders">Refresh orders</button
+            ><span id="refresh-scope"></span>
+          </div>
           <div
             id="order-list"
             role="listbox"
@@ -134,8 +120,7 @@
             ><button id="orders-next" aria-label="Next order page">→</button>
           </div>
           <div class="pane-footer">
-            <button id="refresh-orders">Refresh selected</button
-            ><button id="remove-orders">Remove selected</button>
+            <button id="remove-orders">Remove selected</button>
           </div>
         </aside>
         <section class="sheet-pane" aria-label="Order spreadsheet">
@@ -144,15 +129,14 @@
               <h2 id="sheet-title">All products</h2>
               <p id="selection-summary">0 rows</p>
             </div>
-            <div class="copy-actions">
-              <button id="copy-values">Copy values</button
-              ><button id="copy-images">Copy images</button
-              ><button id="copy-excel" class="primary">Copy to Excel</button>
-              <button
-                id="copy-excel-image"
-                title="Copy selected rows as one picture with Chinese headings"
-              >
-                Copy Excel image
+            <div class="packing-launch">
+              <label
+                >Packing month<input
+                  type="month"
+                  id="packing-month"
+                  required /></label
+              ><button id="prepare-orders" class="primary" disabled>
+                Prepare packing list
               </button>
             </div>
           </div>
@@ -170,18 +154,35 @@
               </select></label
             ><label class="check"
               ><input id="changes-only" type="checkbox" />Changed only</label
-            ><label class="check"
-              ><input id="include-headers" type="checkbox" />Headers</label
             >
           </div>
-          <div class="preparation-toolbar">
-            <label
-              >Packing month
-              <input type="month" id="packing-month" required /></label
-            ><button id="prepare-orders" class="primary">Prepare labels</button
-            ><button id="open-preparation">Edit preparation</button
-            ><button id="copy-preparation">Copy preparation columns</button
-            ><button id="copy-group-codes">Copy group codes</button>
+          <section
+            id="order-totals"
+            class="order-totals"
+            aria-label="Matching order totals"
+            aria-live="polite"
+          ></section>
+          <div class="export-toolbar">
+            <div class="copy-actions" aria-label="Copy selected product rows">
+              <span class="toolbar-caption">Products</span
+              ><button id="copy-values">Copy values</button
+              ><button id="copy-images">Copy images</button
+              ><button id="copy-excel">Copy to Excel</button
+              ><button
+                id="copy-excel-image"
+                title="Copy selected rows as one picture with Chinese headings"
+              >
+                Copy Excel image
+              </button>
+            </div>
+            <div class="copy-actions" aria-label="Copy packing values">
+              <span class="toolbar-caption">Packing</span
+              ><button id="copy-preparation">Copy preparation columns</button
+              ><button id="copy-group-codes">Copy group codes</button
+              ><label class="check"
+                ><input id="include-headers" type="checkbox" />Headers</label
+              >
+            </div>
           </div>
           <div id="empty-state" class="empty-state">
             <span aria-hidden="true">▦</span>
@@ -218,9 +219,6 @@
             <div class="row-selection-actions">
               <button id="select-rows">Select all rows</button>
               <button id="clear-rows">Clear selection</button>
-              <span id="paste-help"
-                >Click · Shift-click range · Ctrl-click toggle</span
-              >
             </div>
             <div>
               <button id="previous-page" aria-label="Previous product page">
@@ -249,10 +247,10 @@
     <dialog
       id="preparation-dialog"
       class="preparation-dialog"
-      aria-label="Preparation"
+      aria-label="Prepare packing list"
     >
       <form method="dialog">
-        <button class="dialog-close" aria-label="Close preparation">×</button>
+        <button class="dialog-close" aria-label="Close packing list">×</button>
       </form>
       <fieldset id="preparation-content"></fieldset>
     </dialog>
@@ -267,6 +265,20 @@
         <button class="dialog-close" aria-label="Close settings">×</button>
       </form>
       <div id="settings-content"></div>
+      <section id="settings-data" class="settings-data">
+        <h3>Library data</h3>
+        <p>Keep a backup before clearing this browser or moving computers.</p>
+        <div class="settings-data-actions">
+          <button id="backup">Back up</button
+          ><button id="restore">Restore</button>
+        </div>
+        <h3>Refresh entire library</h3>
+        <p>
+          For an occasional full update. Use the Orders panel for individual
+          orders or months.
+        </p>
+        <button id="refresh-all">Refresh all orders</button>
+      </section>
     </dialog>
     <dialog id="order-details">
       <form method="dialog">

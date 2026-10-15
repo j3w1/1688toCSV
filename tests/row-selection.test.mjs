@@ -24,6 +24,10 @@ test('row clicks replace selection; Ctrl and Meta independently toggle rows', ()
   assert.deepEqual([...selected], ['d'])
   selection.select('c')
   assert.deepEqual([...selected], ['c'])
+  selection.select('c')
+  assert.deepEqual([...selected], [])
+  selection.select('c')
+  assert.deepEqual([...selected], ['c'])
 })
 
 test('Shift extends and contracts an inclusive range from the unchanged anchor', () => {

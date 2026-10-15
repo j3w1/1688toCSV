@@ -1,5 +1,5 @@
 const controls =
-  'button, a, input, select, textarea, label, [contenteditable="true"]'
+  'button, a, input, select, textarea, label, [contenteditable]:not([contenteditable="false"])'
 
 /** Shared selection for ordered lists. Keys come from the current filtered scope. */
 export function createRowSelection({
@@ -41,8 +41,9 @@ export function createRowSelection({
       ))
         selected.add(id)
     } else {
+      const wasSelected = selected.has(key)
       if (!additive) selected.clear()
-      if (additive && selected.has(key)) selected.delete(key)
+      if (wasSelected) selected.delete(key)
       else selected.add(key)
       anchor = key
     }
@@ -86,6 +87,7 @@ export function createRowSelection({
     })
     element.addEventListener('click', (event) => {
       if (!ownsEvent(event)) return
+      if (event.detail > 1) return
       element.focus({ preventScroll: true })
       select(key, event)
     })

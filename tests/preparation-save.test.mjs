@@ -1,6 +1,11 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
 import { acknowledgePreparation } from '../src/preparation-save.js'
+import {
+  automaticNaming,
+  recordNamingEdits,
+  refreshPreparationNames,
+} from '../src/product-vocabulary.js'
 
 test('save acknowledgement applies codes without replacing live objects or later typing', () => {
   const draft = {
@@ -57,4 +62,96 @@ test('a manual base edit during an allocation is retained for the next validated
   acknowledgePreparation(draft, submitted, saved)
   assert.equal(draft.groups[0].baseCode, 'CE26100202')
   assert.equal(draft.revision, 1)
+})
+
+test('repeated autosaves retain manual names and clears after returning to the initial suggestion', () => {
+  for (const initial of ['VELA', '']) {
+    let stored = {
+      orderId: '1',
+      revision: 1,
+      groups: [
+        {
+          id: 'g',
+          title: 'Synthetic product',
+          spanishName: initial,
+          category: initial,
+          naming: automaticNaming({ spanishName: initial, category: initial }),
+          variants: [{ id: 'v', variantSuffix: 'A' }],
+        },
+      ],
+    }
+    const draft = structuredClone(stored)
+    const save = () => {
+      const submitted = structuredClone(draft)
+      stored = {
+        ...recordNamingEdits(submitted, stored),
+        revision: stored.revision + 1,
+      }
+      acknowledgePreparation(draft, submitted, stored)
+    }
+    draft.groups[0].spanishName = 'MANUAL'
+    draft.groups[0].category = '测试'
+    save()
+    draft.groups[0].spanishName = initial
+    draft.groups[0].category = initial
+    save()
+    draft.groups[0].variants[0].variantSuffix = 'B'
+    save()
+    for (const field of ['spanishName', 'category']) {
+      assert.deepEqual(stored.groups[0].naming[field], {
+        source: 'manual',
+        value: initial,
+      })
+      assert.deepEqual(
+        draft.groups[0].naming[field],
+        stored.groups[0].naming[field]
+      )
+    }
+    const refreshed = refreshPreparationNames(stored, () => ({
+      spanishName: 'NEW SUGGESTION',
+      category: '新建议',
+    }))
+    assert.equal(refreshed.groups[0].spanishName, initial)
+    assert.equal(refreshed.groups[0].category, initial)
+  }
+})
+
+test('acknowledging name provenance preserves independent typing during a pending save', () => {
+  const previous = {
+    revision: 1,
+    groups: [
+      {
+        id: 'g',
+        title: 'Synthetic product',
+        spanishName: 'VELA',
+        category: '蜡烛',
+        naming: automaticNaming({ spanishName: 'VELA', category: '蜡烛' }),
+        variants: [],
+      },
+    ],
+  }
+  const draft = structuredClone(previous)
+  draft.groups[0].spanishName = 'VELA AROMATICA'
+  const submitted = structuredClone(draft)
+  const saved = { ...recordNamingEdits(submitted, previous), revision: 2 }
+  draft.groups[0].spanishName = 'VELA GRANDE'
+  draft.groups[0].category = '香薰蜡烛'
+  acknowledgePreparation(draft, submitted, saved)
+  assert.equal(draft.groups[0].spanishName, 'VELA GRANDE')
+  assert.equal(draft.groups[0].category, '香薰蜡烛')
+  const nextSaved = recordNamingEdits(draft, saved)
+  const refreshed = refreshPreparationNames(nextSaved, () => ({
+    spanishName: 'NEW SUGGESTION',
+    category: '新建议',
+  }))
+  assert.deepEqual(refreshed.groups[0].naming.spanishName, {
+    source: 'manual',
+    value: 'VELA GRANDE',
+  })
+  assert.deepEqual(refreshed.groups[0].naming.category, {
+    source: 'manual',
+    value: '香薰蜡烛',
+  })
+  assert.equal(refreshed.groups[0].spanishName, 'VELA GRANDE')
+  assert.equal(refreshed.groups[0].category, '香薰蜡烛')
 })

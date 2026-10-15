@@ -105,7 +105,11 @@ test('single picture copies original non-square pixels with inline success', asy
   const button = row.getByRole('button', { name: 'Copy image', exact: true })
   const before = await button.boundingBox()
   expect(before.height).toBeLessThanOrEqual(30)
-  expect(before.width).toBeLessThanOrEqual(76)
+  // The icon and full label fit on one line, including wider fallback fonts.
+  expect(before.width).toBeLessThanOrEqual(100)
+  expect(
+    await button.evaluate((node) => node.scrollWidth <= node.clientWidth)
+  ).toBe(true)
   await button.click()
   await expect(
     row.getByRole('button', { name: 'Copied', exact: true })

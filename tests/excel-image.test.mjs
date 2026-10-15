@@ -52,7 +52,15 @@ async function withCanvas(work, { bitmapHeight = 152 } = {}) {
       assert.equal(tag, 'canvas')
       const context = {
         measureText: (text) => ({ width: measure(text) }),
-        fillText: (text, x, y) => state.text.push({ text, x, y }),
+        fillText(text, x, y) {
+          state.text.push({
+            text,
+            x,
+            y,
+            font: this.font,
+            color: this.fillStyle,
+          })
+        },
         drawImage: (...args) => state.draws.push(args),
         scale() {},
         fillRect() {},
@@ -112,13 +120,11 @@ test('Excel image keeps Chinese headers, saved values and one base code per grou
         '序号',
         '图片',
         '产品描述',
-        '产品编码',
+        '唛头编码',
         '条码编号',
-        '西班牙语品名',
         '中文品类',
         '单价（元）',
         '数量',
-        '优惠（元）',
       ]
     )
     const input = [
@@ -141,12 +147,18 @@ test('Excel image keeps Chinese headers, saved values and one base code per grou
       ['none', 'row', 'order']
     )
     assert.equal(cell(plan.rows[0], 'price').text, '3.00')
-    assert.equal(cell(plan.rows[0], 'discount').text, '0.20')
     assert.equal(cell(plan.rows[0], 'description').text, row.description)
     assert.equal(cell(plan.rows[1], 'barcode').text, 'CE26100101AL')
     assert.equal(cell(plan.rows[0], 'chineseCategory').text, '玻璃')
-    input[0].spanishName = 'CHANGED AFTER CONFIRMATION'
-    assert.equal(plan.rows[0].source.spanishName, 'FRASCO DE VIDRIO')
+    input[0].chineseCategory = 'CHANGED AFTER CONFIRMATION'
+    assert.equal(plan.rows[0].source.chineseCategory, '玻璃')
+    assert.equal(input[0].discount, '0.20')
+    assert.equal(input[0].spanishName, 'FRASCO DE VIDRIO')
+    assert.ok(
+      !excelImageColumns.some(({ key }) =>
+        ['spanishName', 'discount'].includes(key)
+      )
+    )
     assert.equal(Object.isFrozen(plan.rows[0].source), true)
     assert.equal(Object.isFrozen(plan.rows), true)
     assert.equal(canvases[0].width, 0)
@@ -196,10 +208,10 @@ test('CJK descriptions and long barcode values wrap fully without exceeding thei
     for (const [index, value] of entry.cells.entries()) {
       assert.ok(
         value.lines.every(
-          (line) => measure(line) <= excelImageColumns[index].width - 16
+          (line) => measure(line) <= excelImageColumns[index].width - 20
         )
       )
-      assert.ok(value.lines.length * 20 + 16 <= entry.height)
+      assert.ok(value.height + 20 <= entry.height)
     }
     assert.equal(cell(entry, 'barcode').lines.join(''), barcode)
     assert.equal(
@@ -210,6 +222,87 @@ test('CJK descriptions and long barcode values wrap fully without exceeding thei
       () => planExcelImage([{ ...row, description: '玻'.repeat(6000) }]),
       /row 1 is too tall/
     )
+  }))
+
+test('Rich descriptions separate original titles and attributes and include latest variant notes once', async () =>
+  withCanvas(async (state) => {
+    const input = {
+      ...row,
+      title: '香薰玻璃罐',
+      description: '香薰玻璃罐\n颜色：透明\n容量：300ml\n货号：TEST-01',
+      skuProperties: [
+        { label: '颜色', value: '透明' },
+        { label: '容量', value: '300ml' },
+      ],
+      productNumber: 'TEST-01',
+      variantDescription: '透明 · 300ml',
+      sourceSize: '300ml',
+    }
+    const [plan] = planExcelImage([input])
+    const description = cell(plan.rows[0], 'description')
+    assert.equal(description.blocks[0].font.startsWith('600 14px'), true)
+    assert.deepEqual(
+      description.blocks.map((block) => block.label),
+      ['', '颜色：', '容量：', '货号：']
+    )
+    assert.equal(
+      description.blocks.filter((block) => block.label === '尺寸：').length,
+      0
+    )
+    input.skuProperties[0].value = 'CHANGED'
+    assert.equal(plan.rows[0].source.skuProperties[0].value, '透明')
+    await renderExcelImage(plan, { loadImage: async () => png })
+    assert.ok(
+      state.text.some(
+        (entry) => entry.text === '颜色：' && entry.font.startsWith('600 12px')
+      )
+    )
+    assert.ok(
+      state.text.some(
+        (entry) => entry.text === '透明' && entry.font.startsWith('13px')
+      )
+    )
+    assert.equal(
+      state.text.filter((entry) => entry.text === 'TEST-01').length,
+      1
+    )
+
+    const [exactNote] = planExcelImage([
+      { ...input, variantDescription: '颜色: 透明', skuProperties: [] },
+    ])
+    assert.equal(
+      cell(exactNote.rows[0], 'description').blocks.some(
+        (block) => block.label === '产品规格：'
+      ),
+      false
+    )
+  }))
+
+test('Long edited variant notes and attribute labels remain fully visible at smaller detail type', async () =>
+  withCanvas(() => {
+    const variantDescription = '新品彩色玻璃礼盒'.repeat(30)
+    const longLabel = '适用于多种场景的详细产品尺寸说明'
+    const [plan] = planExcelImage([
+      {
+        ...row,
+        title: '玻璃罐',
+        description: '玻璃罐',
+        variantDescription,
+        skuProperties: [{ label: longLabel, value: '300ml / 500ml' }],
+      },
+    ])
+    const description = cell(plan.rows[0], 'description')
+    const variant = description.blocks.find(
+      (block) => block.label === '产品规格：'
+    )
+    assert.equal(variant.lines.join(''), variantDescription)
+    assert.equal(variant.font.startsWith('13px'), true)
+    const attribute = description.blocks.find(
+      (block) => block.label === `${longLabel}：`
+    )
+    assert.equal(attribute.labelLines.join(''), `${longLabel}：`)
+    assert.ok(description.height + 20 <= plan.rows[0].height)
+    assert.ok(description.lines.every((line) => measure(line) <= 310))
   }))
 
 test('Empty selections and missing photos fail before producing a partial image', async () =>
@@ -245,7 +338,19 @@ test('Excel image reuses photos, reports real row completion and releases resour
     )
     assert.ok(progress.every((value) => value.total === 3))
     assert.ok(state.text.some((value) => value.text === '3.00'))
-    assert.ok(state.text.some((value) => value.text === '0.20'))
+    assert.ok(!state.text.some((value) => value.text === '0.20'))
+    assert.ok(!state.text.some((value) => value.text === 'FRASCO DE VIDRIO'))
+    assert.ok(
+      state.text.some(
+        (value) => value.text === '20' && value.font.startsWith('700 16px')
+      )
+    )
+    assert.ok(
+      state.text.some(
+        (value) =>
+          value.text === 'Glass jar' && value.font.startsWith('600 14px')
+      )
+    )
     assert.equal(result.width, plan.width)
     assert.equal(result.height, plan.height)
     assert.equal(result.blob.type, 'image/png')

@@ -333,13 +333,12 @@ h2 {
   background: var(--hover);
 }
 .selectable-row:focus-visible {
-  outline: 2px solid var(--focus);
-  outline-offset: -2px;
+  outline: 1px solid var(--focus);
+  outline-offset: -1px;
 }
 .order-card.is-selected {
   background: var(--selected);
-  border-inline-start: 3px solid var(--control-accent);
-  padding-inline-start: 9px;
+  box-shadow: inset 2px 0 var(--control-accent);
 }
 .order-summary {
   font-size: 13px;
@@ -349,7 +348,6 @@ h2 {
 }
 .order-summary > strong {
   display: block;
-  padding-right: 46px;
   font-weight: 600;
 }
 .order-card small {
@@ -360,9 +358,6 @@ h2 {
   overflow-wrap: anywhere;
 }
 .order-card .badge {
-  position: absolute;
-  top: 12px;
-  right: 10px;
   font-size: 9px;
   font-weight: 600;
   background: var(--success);
@@ -384,6 +379,13 @@ h2 {
 .order-card-meta .purchase-date,
 .order-card-meta .order-status {
   margin: 0;
+}
+.order-reference {
+  font-variant-numeric: tabular-nums;
+}
+.order-products {
+  font-size: 10px;
+  color: var(--muted);
 }
 .pane-footer {
   padding: 15px;
@@ -582,8 +584,11 @@ tbody tr.changed-row {
   border-radius: 8px;
 }
 .thumb-cell .photo-copy-button {
-  display: block;
-  width: 64px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 4px;
+  width: max-content;
   min-height: 26px;
   height: 26px;
   margin-top: 5px;
@@ -593,8 +598,13 @@ tbody tr.changed-row {
   color: var(--muted);
   font-size: 10px;
   line-height: 1;
-  padding: 2px;
-  white-space: normal;
+  padding: 2px 5px;
+  white-space: nowrap;
+}
+.photo-copy-button > .ui-icon {
+  width: 12px;
+  height: 12px;
+  margin: 0;
 }
 .thumb-cell .product-photo-button {
   display: grid;
@@ -1104,9 +1114,21 @@ dialog a {
 .row-meta .meta-seller {
   color: var(--text);
   font-weight: 600;
+  min-width: 0;
+  overflow-wrap: anywhere;
 }
 .row-meta .meta-order {
   font-variant-numeric: tabular-nums;
+  font-size: 10px;
+  overflow-wrap: anywhere;
+}
+.row-identity {
+  display: flex;
+  flex: 1 1 100%;
+  align-items: baseline;
+  flex-wrap: wrap;
+  gap: 2px 12px;
+  min-width: 0;
 }
 .row-meta .purchase-date,
 .row-meta .order-status {
@@ -1140,6 +1162,285 @@ button.copy-failed {
 }
 .thumb-cell button {
   min-width: 64px;
+}
+.ui-icon {
+  inline-size: 16px;
+  block-size: 16px;
+  flex: none;
+  vertical-align: -3px;
+  margin-inline-end: 6px;
+  pointer-events: none;
+}
+button.icon-button,
+.top-actions .theme-toggle {
+  inline-size: 32px;
+  min-inline-size: 32px;
+  block-size: 32px;
+  min-block-size: 32px;
+  padding: 5px;
+  border: 0;
+  background: transparent;
+  display: inline-grid;
+  place-items: center;
+}
+.icon-button .ui-icon {
+  margin: 0;
+  inline-size: 19px;
+  block-size: 19px;
+}
+body > .topbar {
+  min-height: 60px;
+  height: auto;
+  padding-block: 10px;
+}
+.topbar .brand-mark {
+  background: transparent;
+  padding: 0;
+  border-radius: 9px;
+  width: 36px;
+  height: 36px;
+  object-fit: contain;
+}
+body > main {
+  padding-block: 14px;
+}
+main > .stats {
+  gap: 12px 22px;
+  padding-bottom: 13px;
+  align-items: baseline;
+}
+.stats .open-orders {
+  margin-inline-start: auto;
+  font-size: 12px;
+  color: var(--accent-text);
+  text-decoration: none;
+}
+.month-filter {
+  position: relative;
+}
+.month-filter > summary {
+  padding: 9px 10px;
+  font-size: 12px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  cursor: pointer;
+}
+.month-picker {
+  padding: 8px 0;
+}
+.month-picker p {
+  color: var(--muted);
+  font-size: 10px;
+  margin: 5px 0;
+}
+#month-options {
+  max-height: 210px;
+  overflow: auto;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  scrollbar-gutter: stable;
+}
+.month-choice {
+  padding: 5px 7px;
+  min-height: 28px;
+  font-size: 11px;
+}
+.month-choice[aria-pressed='true'] {
+  background: var(--selected);
+  border-color: var(--control-accent);
+}
+.orders-pane .order-month {
+  padding: 0;
+  margin: 0;
+}
+.month-toggle {
+  width: 100%;
+  border: 0;
+  border-radius: 0;
+  background: var(--field);
+  color: var(--accent-text);
+  text-align: left;
+  padding: 10px;
+  display: flex;
+  align-items: center;
+  gap: 5px;
+}
+.month-toggle small {
+  margin-inline-start: auto;
+  font-size: 10px;
+  color: var(--muted);
+}
+.month-toggle .ui-icon {
+  width: 13px;
+  height: 13px;
+  margin: 0;
+  transform: rotate(-90deg);
+}
+.month-toggle[aria-expanded='true'] .ui-icon {
+  transform: none;
+}
+.order-refresh {
+  padding: 8px 12px 12px;
+  display: grid;
+  gap: 4px;
+}
+.order-refresh button {
+  font-size: 12px;
+  min-height: 32px;
+  padding: 6px 9px;
+}
+#refresh-scope {
+  font-size: 10px;
+  color: var(--muted);
+  text-align: center;
+}
+.sheet-pane .sheet-toolbar {
+  gap: 12px;
+  padding: 14px;
+  flex-wrap: wrap;
+  align-items: center;
+}
+.packing-launch {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+.packing-launch label {
+  display: grid;
+  gap: 2px;
+  font-size: 10px;
+  color: var(--muted);
+}
+.packing-launch input {
+  max-width: 150px;
+  font-size: 12px;
+  padding: 4px 6px;
+  border-radius: 5px;
+  border: 1px solid var(--border);
+}
+.packing-launch button {
+  min-height: 36px;
+  font-size: 12px;
+  padding: 8px 11px;
+}
+.sheet-pane .filterbar {
+  padding: 0 14px 12px;
+  gap: 9px;
+}
+.export-toolbar {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px 20px;
+  padding: 10px 14px;
+  background: var(--field);
+  border-block: 1px solid var(--divider);
+}
+.export-toolbar .copy-actions {
+  align-items: center;
+  gap: 5px;
+}
+.export-toolbar button {
+  min-width: 0;
+  min-height: 29px;
+  padding: 5px 7px;
+  font-size: 11px;
+}
+.toolbar-caption {
+  font-size: 10px;
+  color: var(--muted);
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  margin-right: 3px;
+}
+.export-toolbar .check {
+  font-size: 11px;
+  margin-left: 4px;
+}
+.order-totals {
+  border-top: 1px solid var(--divider);
+  padding: 9px 14px 11px;
+}
+.totals-scope {
+  font-size: 11px;
+  color: var(--muted);
+  margin: 0 0 8px;
+}
+.totals-grid {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px 22px;
+  margin: 0;
+}
+.totals-grid > div {
+  display: grid;
+  gap: 3px;
+}
+.totals-grid dt {
+  font-size: 10px;
+  color: var(--muted);
+}
+.totals-grid dd {
+  margin: 0;
+  font-size: 13px;
+  font-variant-numeric: tabular-nums;
+  font-weight: 550;
+}
+.totals-grid .total-reduction {
+  color: var(--accent-text);
+}
+.totals-grid .totals-payable {
+  margin-inline-start: auto;
+}
+.totals-payable dd {
+  font-size: 18px;
+  font-weight: 700;
+}
+.totals-warning {
+  color: var(--warning-text);
+  font-size: 11px;
+  margin: 8px 0 0;
+}
+.settings-data {
+  margin-top: 18px;
+  border-top: 1px solid var(--border);
+  padding-top: 10px;
+}
+.settings-data p {
+  color: var(--muted);
+  font-size: 12px;
+}
+.settings-data-actions {
+  display: flex;
+  gap: 8px;
+}
+.sheet-pane .table-scroll {
+  max-height: max(300px, calc(100dvh - 410px));
+}
+.orders-pane #order-list {
+  max-height: max(270px, calc(100dvh - 340px));
+  scrollbar-gutter: stable;
+}
+.topbar .theme-toggle {
+  font-size: 20px;
+}
+@media (max-width: 760px) {
+  .packing-launch {
+    width: 100%;
+  }
+  .order-totals .totals-payable {
+    margin-inline-start: 0;
+  }
+  .orders-pane #order-list {
+    max-height: 260px;
+  }
+  .topbar .brand {
+    font-size: 13px;
+  }
+  .stats .open-orders {
+    margin-inline-start: 0;
+  }
 }
 @media (max-width: 760px) {
   .job {

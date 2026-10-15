@@ -1,3 +1,5 @@
+import { decorateIcon } from './icons.js'
+
 const dismissibleDialogs = new WeakSet()
 
 export function enableLightDismiss(dialog) {
@@ -120,6 +122,7 @@ export async function copied(button, task) {
       button,
       setTimeout(() => {
         button.textContent = label
+        if (button.dataset.icon) decorateIcon(button, button.dataset.icon)
         button.classList.remove('copied', 'copy-failed')
       }, 3000)
     )

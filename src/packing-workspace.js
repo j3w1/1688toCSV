@@ -9,6 +9,8 @@ import { createPreparationHistory } from './preparation-history.js'
 import { acknowledgePreparation } from './preparation-save.js'
 import { createPreparationMedia, preparationHelp } from './preparation-media.js'
 import { createRowSelection } from './row-selection.js'
+import { copyExcelImage } from './excel-image-copy.js'
+import { decorateIcon } from './icons.js'
 import { element as el, confirmScope, copied, yieldUI } from './ui.js'
 import {
   preparationColumns,
@@ -30,20 +32,6 @@ function unusedSuffix(used, sizeSuffix = '') {
     if (!used.has(value + sizeSuffix)) return value
   }
 }
-const initialVocabulary = [
-  ['玻璃罐', 'FRASCO DE VIDRIO', '玻璃'],
-  ['玻璃壶', 'JARRA DE VIDRIO', '玻璃'],
-  ['玻璃杯', 'VASO DE VIDRIO', '玻璃'],
-  ['保鲜盒', 'RECIPIENTE DE COCINA', '日用品'],
-  ['保温杯', 'VASO TERMICO', '日用品'],
-  ['地毯', 'ALFOMBRA', '纺织品'],
-  ['镜子', 'ESPEJO', '镜子'],
-  ['花瓶', 'FLORERO', '工艺品'],
-  ['收纳盒', 'CAJA ORGANIZADORA', '日用品'],
-  ['蜡烛', 'VELA', '工艺品'],
-  ['碗', 'TAZON', '日用品'],
-  ['盘子', 'PLATO', '日用品'],
-].map(([match, spanishName, category]) => ({ match, spanishName, category }))
 function field(title, value, change, type = 'text') {
   const label = el('label', title),
     input = el('input')
@@ -55,15 +43,50 @@ function field(title, value, change, type = 'text') {
   label.append(input)
   return label
 }
-function inlineField(title, value, change, placeholder = '') {
+function inlineField(
+  title,
+  value,
+  change,
+  placeholder = '',
+  multiline = false
+) {
   const label = field(title, value, change)
   label.className = 'preparation-inline-field'
-  const input = label.querySelector('input')
+  let input = label.querySelector('input')
+  if (multiline) {
+    const textarea = el('textarea')
+    textarea.id = input.id
+    textarea.value = input.value
+    textarea.rows = 2
+    textarea.addEventListener('input', () => change(textarea.value))
+    input.replaceWith(textarea)
+    input = textarea
+  }
   input.placeholder = placeholder
   return label
 }
 function button(text, handler, className) {
   const result = el('button', text, className)
+  const buttonIcons = {
+    Undo: 'undo',
+    Redo: 'redo',
+    'Apply to order': 'check',
+    'Merge products': 'packing',
+    'Copy Excel image': 'table',
+    'Copy barcode images': 'barcode',
+    'Copy carton marks': 'carton',
+    'Copy code': 'copy',
+    Barcode: 'barcode',
+    'Carton mark': 'carton',
+    Name: 'edit',
+    Prepare: 'packing',
+    'Share one barcode': 'barcode',
+    'Give rows separate barcodes': 'barcode',
+    'Move to new product': 'packing',
+    'Save settings': 'check',
+    Remove: 'trash',
+  }
+  if (buttonIcons[text]) decorateIcon(result, buttonIcons[text])
   result.addEventListener('click', async () => {
     try {
       await handler(result)
@@ -116,6 +139,7 @@ export async function startPackingWorkspace({
   }
   let preparations = new Map(),
     membership = new Map(),
+    suggestions = new Map(),
     preferences,
     editor,
     drafts = [],
@@ -126,7 +150,20 @@ export async function startPackingWorkspace({
     : null
   const variantPages = new Map()
   const selectionStates = new Map()
-  let activeSelection
+  let activeSelection,
+    copyScope,
+    preparationImageAbort,
+    selectedOrderTabId,
+    selectedOrderOpening
+  function updatePreparationCopyScope() {
+    if (!copyScope || !drafts[current]) return
+    const count = preparationCopyRows(drafts[current]).length
+    const state = selectionStates.get(drafts[current].orderId)
+    const selected =
+      state?.groups.size ||
+      [...(state?.variants.values() || [])].some((entry) => entry.selected.size)
+    copyScope.textContent = `${count} ${selected ? 'selected' : 'current-order'} rows`
+  }
   function detachPreparationSelection() {
     if (!activeSelection) return
     activeSelection.cards.clear()
@@ -150,6 +187,7 @@ export async function startPackingWorkspace({
         onChange: () => {
           for (const [id, card] of state.cards)
             card.classList.toggle('is-selected', state.groups.has(id))
+          updatePreparationCopyScope()
         },
       })
       selectionStates.set(draft.orderId, state)
@@ -167,6 +205,7 @@ export async function startPackingWorkspace({
         variants.controller = createRowSelection({
           selected: variants.selected,
           getKeys: () => variants.keys,
+          onChange: updatePreparationCopyScope,
         })
         state.variants.set(group.id, variants)
       }
@@ -326,6 +365,7 @@ export async function startPackingWorkspace({
     history.breakGroup()
   )
   $('preparation-dialog').addEventListener('close', () => {
+    preparationImageAbort?.abort()
     media.reset()
     detachPreparationSelection()
   })
@@ -365,11 +405,11 @@ export async function startPackingWorkspace({
       (await repository.listPreparations()).map((item) => [item.orderId, item])
     )
     preferences = await repository.getPackingPreferences()
-    if (
-      !preferences.settings.vocabularyInitialized &&
-      !preferences.vocabulary.length
-    )
-      preferences.vocabulary = structuredClone(initialVocabulary)
+    suggestions = new Map()
+    for (const record of getRecords())
+      for (const group of record.namingSuggestions?.groups || [])
+        for (const entryId of group.entryIds)
+          suggestions.set(`${record.snapshot.orderId}/${entryId}`, group)
     membership = new Map()
     for (const prep of preparations.values())
       for (const group of prep.groups)
@@ -382,9 +422,16 @@ export async function startPackingWorkspace({
             })
   }
   await reload()
-  channel?.addEventListener('message', async () => {
-    await reload()
-    changed()
+  channel?.addEventListener('message', async ({ data }) => {
+    try {
+      if (data === 'preferences') await changed({ reload: true })
+      else {
+        await reload()
+        changed()
+      }
+    } catch (error) {
+      feedback(error.message, true)
+    }
   })
   addEventListener(
     'pagehide',
@@ -536,13 +583,15 @@ export async function startPackingWorkspace({
       )
     return result
   }
-  async function openPreparation() {
+  async function openPreparation(orderId) {
     if (preparationBusy)
       throw new Error(
         'Wait for preparation to finish saving before reopening it.'
       )
     await flushSaves()
-    const records = selectedRecords()
+    const records = orderId
+      ? getRecords().filter((record) => record.snapshot.orderId === orderId)
+      : selectedRecords()
     if (!records.length)
       throw new Error('Select orders or products to prepare.')
     const month = $('packing-month').value
@@ -620,6 +669,7 @@ export async function startPackingWorkspace({
     return draft
   }
   function renderPreparation() {
+    preparationImageAbort?.abort()
     checkpoint()
     media.reset()
     codeFields.clear()
@@ -629,18 +679,39 @@ export async function startPackingWorkspace({
     const selection = preparationSelection(draft)
     activeSelection = selection
     const header = el('header', undefined, 'preparation-header')
-    header.append(el('h2', 'Prepare products & labels'))
+    header.append(el('h2', 'Prepare packing list'))
     host.replaceChildren(header)
     const heading = el('div', undefined, 'preparation-heading'),
       select = el('select')
     select.setAttribute('aria-label', 'Preparation order')
+    function orderChoice(prep) {
+      const source = getRecords().find(
+        (record) => record.snapshot.orderId === prep.orderId
+      )?.snapshot
+      const names = [
+        ...new Set(
+          prep.groups.map((group) => group.spanishName).filter(Boolean)
+        ),
+      ]
+      const categories = [
+        ...new Set(prep.groups.map((group) => group.category).filter(Boolean)),
+      ]
+      return [
+        source?.sellerName || prep.sellerId || 'Seller unavailable',
+        names.join(', '),
+        categories.join('、'),
+        prep.orderId,
+      ]
+        .filter(Boolean)
+        .join(' · ')
+    }
+    const updateOrderChoices = () => {
+      drafts.forEach((prep, index) => {
+        select.options[index].textContent = orderChoice(prep)
+      })
+    }
     drafts.forEach((prep, index) =>
-      select.append(
-        new Option(
-          `${prep.sellerId || 'Seller unavailable'} · …${prep.orderId.slice(-8)}`,
-          index
-        )
-      )
+      select.append(new Option(orderChoice(prep), index))
     )
     select.value = String(current)
     select.onchange = () => {
@@ -657,15 +728,67 @@ export async function startPackingWorkspace({
       )
         scheduleSave()
     }
-    heading.append(
-      select,
+    const currentSource = getRecords().find(
+      (record) => record.snapshot.orderId === draft.orderId
+    )?.snapshot
+    const openOrder = el(
+      'a',
+      'Open selected order',
+      'button open-selected-order'
+    )
+    openOrder.href = currentSource.sourceUrl
+    openOrder.target = '_blank'
+    openOrder.rel = 'noopener'
+    decorateIcon(openOrder, 'external')
+    openOrder.addEventListener('click', async (event) => {
+      if (!globalThis.chrome?.tabs) return
+      event.preventDefault()
+      if (selectedOrderOpening) return
+      selectedOrderOpening = true
+      openOrder.setAttribute('aria-disabled', 'true')
+      try {
+        if (selectedOrderTabId) {
+          try {
+            await chrome.tabs.get(selectedOrderTabId)
+          } catch {
+            selectedOrderTabId = null
+          }
+        }
+        if (selectedOrderTabId)
+          await chrome.tabs.update(selectedOrderTabId, {
+            url: currentSource.sourceUrl,
+            active: true,
+          })
+        else
+          selectedOrderTabId = (
+            await chrome.tabs.create({
+              url: currentSource.sourceUrl,
+              active: true,
+            })
+          ).id
+      } catch (error) {
+        showError(error.message)
+      } finally {
+        selectedOrderOpening = false
+        openOrder.removeAttribute('aria-disabled')
+      }
+    })
+    heading.append(select, openOrder)
+    const orderMeta = el('div', undefined, 'preparation-order-meta')
+    orderMeta.append(
+      el(
+        'span',
+        currentSource?.sellerName || draft.sellerId || 'Seller unavailable',
+        'preparation-seller-name'
+      ),
+      el('code', draft.orderId, 'preparation-order-number'),
       el(
         'span',
         `Packing ${new Date(`${draft.month}-01T12:00:00Z`).toLocaleDateString('en-GB', { month: 'long', year: 'numeric', timeZone: 'UTC' })} · ${draft.groups.length} product groups`,
         'packing-help'
       )
     )
-    host.append(heading)
+    host.append(heading, orderMeta)
     const source = getRecords().find(
       ({ snapshot }) => snapshot.orderId === draft.orderId
     )?.snapshot
@@ -695,30 +818,54 @@ export async function startPackingWorkspace({
       host.append(help, seller)
     }
     const categories = new Set(draft.groups.map((group) => group.category))
+    const names = new Set(draft.groups.map((group) => group.spanishName))
     let categoryValue = categories.size === 1 ? [...categories][0] : ''
+    let spanishValue = names.size === 1 ? [...names][0] : ''
+    let categoryChanged = false,
+      spanishChanged = false
     const orderTools = el('section', undefined, 'order-tools')
     orderTools.setAttribute('aria-label', 'Order tools')
-    const orderCategory = field(
-      'Chinese category for this order',
-      categoryValue,
-      (value) => {
-        categoryValue = value
-      }
-    )
+    const orderSpanish = field('Spanish', spanishValue, (value) => {
+      spanishValue = value.toUpperCase()
+      spanishChanged = true
+    })
+    orderSpanish.querySelector('input').placeholder =
+      names.size > 1 ? 'Mixed names' : 'Name all products'
+    const orderCategory = field('Chinese', categoryValue, (value) => {
+      categoryValue = value
+      categoryChanged = true
+    })
     orderCategory.querySelector('input').placeholder =
       categories.size > 1 ? 'Mixed categories' : 'Add a category'
-    const applyCategory = prepButton('Apply to this order', () => {
-      for (const group of draft.groups) group.category = categoryValue
+    const applyCategory = prepButton('Apply to order', () => {
+      for (const group of draft.groups) {
+        if (categoryChanged) group.category = categoryValue
+        if (spanishChanged) {
+          group.spanishName = spanishValue
+          for (const variant of group.variants) variant.spanishName = ''
+        }
+      }
       renderPreparation()
     })
+    orderSpanish
+      .querySelector('input')
+      .setAttribute('aria-label', 'Spanish category for order')
+    orderCategory
+      .querySelector('input')
+      .setAttribute('aria-label', 'Chinese category for order')
     orderTools.append(
+      el('span', 'For this order', 'order-category-label'),
+      preparationHelp(
+        orderSpanish,
+        'Use one Spanish label name for every product in this order.'
+      ),
       preparationHelp(
         orderCategory,
         'One Chinese name for all carton marks in this order. For example, 玻璃 means glass.'
       ),
       preparationHelp(
         applyCategory,
-        'Replace the Chinese category for every product in this order.'
+        'Apply the names you changed to all products in this order. Other fields stay as they are.'
       )
     )
     const actions = el('div', undefined, 'dialog-actions preparation-actions')
@@ -795,14 +942,7 @@ export async function startPackingWorkspace({
       )
     )
     header.append(actions)
-    host.append(
-      orderTools,
-      el(
-        'p',
-        'Click to select · Shift for a range · Ctrl/⌘ for separate rows.',
-        'packing-help preparation-selection-help'
-      )
-    )
+    host.append(orderTools)
     updateHistoryButtons()
     groupPage = Math.min(
       groupPage,
@@ -812,13 +952,13 @@ export async function startPackingWorkspace({
     for (const group of pageGroups) {
       const card = el('section', undefined, 'preparation-group'),
         title = el('h3'),
-        selectGroup = el(
-          'button',
-          group.spanishName || `Product ${draft.groups.indexOf(group) + 1}`
-        )
+        selectGroup = el('button', `Group ${draft.groups.indexOf(group) + 1}`)
       selectGroup.type = 'button'
       selectGroup.className = 'group-select'
-      selectGroup.setAttribute('aria-label', `Select group ${group.title}`)
+      selectGroup.setAttribute(
+        'aria-label',
+        `Select group ${draft.groups.indexOf(group) + 1}: ${group.title}`
+      )
       selection.controller.bind(selectGroup, group.id, {
         attribute: 'aria-pressed',
       })
@@ -826,7 +966,7 @@ export async function startPackingWorkspace({
       card.classList.toggle('is-selected', selection.groups.has(group.id))
       const isCardTarget = (event) =>
         !event.target.closest(
-          'button, a, input, select, textarea, label, [contenteditable="true"], .variants'
+          'button, a, input, select, textarea, label, [contenteditable]:not([contenteditable="false"]), .variants'
         )
       card.addEventListener('pointerdown', (event) => {
         if (event.shiftKey && isCardTarget(event)) event.preventDefault()
@@ -836,44 +976,66 @@ export async function startPackingWorkspace({
         selectGroup.focus({ preventScroll: true })
         selection.controller.select(group.id, event)
       })
-      title.append(selectGroup)
+      const productInput = el('input')
+      productInput.className = 'group-code-editor'
+      productInput.setAttribute('aria-label', 'Product code')
+      productInput.value = group.baseCode
+      productInput.placeholder = 'Assigning code…'
+      productInput.autocomplete = 'off'
+      productInput.setAttribute('autocorrect', 'off')
+      productInput.spellcheck = false
+      productInput.size = 12
+      productInput.addEventListener('input', () => {
+        group.baseCode = productInput.value.toUpperCase()
+      })
+      codeFields.set(group.id, productInput)
+      title.append(
+        selectGroup,
+        preparationHelp(
+          productInput,
+          'Product code shared by all variants. Printed on its carton mark.'
+        )
+      )
+      const groupName = el('input')
+      groupName.className = 'group-name-editor'
+      groupName.setAttribute('aria-label', 'Spanish short name')
+      groupName.placeholder = 'Name product'
+      groupName.value = group.spanishName
+      groupName.maxLength = 80
+      groupName.size = Math.max(12, Math.min(32, group.spanishName.length))
+      groupName.addEventListener('input', () => {
+        group.spanishName = groupName.value.toUpperCase()
+        updateOrderChoices()
+      })
+      preparationHelp(
+        selectGroup,
+        'Click to select this group. Click again to deselect; Shift-click selects a range.'
+      )
+      preparationHelp(
+        title,
+        'Click this header to select the group. Click again to deselect; Shift-click selects a range.'
+      )
       const originalTitle = el('div', undefined, 'original-product-name')
       originalTitle.append(
         el('span', 'Original product name'),
         el('p', group.title)
       )
       const summary = el('div', undefined, 'product-summary')
-      summary.append(title, originalTitle)
+      summary.append(title)
       const fields = el('div', undefined, 'group-fields')
-      const productCode = preparationHelp(
-        inlineField(
-          'Product code',
-          group.baseCode,
-          (v) => (group.baseCode = v.toUpperCase())
-        ),
-        'Shared by all variants of this product. Printed on its carton mark.'
-      )
-      codeFields.set(group.id, productCode.querySelector('input'))
-      const productInput = productCode.querySelector('input')
-      productInput.autocomplete = 'off'
-      productInput.setAttribute('autocorrect', 'off')
-      productInput.spellcheck = false
       fields.append(
-        productCode,
         preparationHelp(
-          inlineField(
-            'Spanish short name',
-            group.spanishName,
-            (v) => (group.spanishName = v.toUpperCase()),
-            'Add a short name'
-          ),
-          'Printed on barcode labels in uppercase.'
+          groupName,
+          'Edit the Spanish name printed on this product’s barcode labels.'
         ),
         preparationHelp(
           inlineField(
             'Chinese category',
             group.category,
-            (v) => (group.category = v),
+            (v) => {
+              group.category = v
+              updateOrderChoices()
+            },
             'Add a category'
           ),
           'Printed on the carton mark, for example 玻璃 for glass.'
@@ -893,7 +1055,7 @@ export async function startPackingWorkspace({
           'mark'
         )
       )
-      summary.append(fields)
+      summary.append(fields, originalTitle)
       overview.append(summary, carton)
       card.append(overview)
       const scroll = el('div', undefined, 'variant-scroll'),
@@ -994,7 +1156,8 @@ export async function startPackingWorkspace({
             (value) => {
               variant.variant = value
             },
-            'Optional note'
+            'Describe this variant',
+            true
           )
         note.classList.add('variant-note')
         note.firstChild.replaceWith(
@@ -1015,10 +1178,32 @@ export async function startPackingWorkspace({
           )
         const codeOptions = el('fieldset', undefined, 'variant-code-options')
         codeOptions.append(el('legend', 'Code options'))
-        const codeReadout = el('output', undefined, 'variant-code-readout')
+        const codeReadout = el(
+          'output',
+          undefined,
+          'variant-code-readout visually-hidden'
+        )
         codeReadout.setAttribute('aria-label', 'Full barcode')
+        const codeDesign = el('div', undefined, 'variant-code-design')
+        const codeBasePart = el('div', undefined, 'code-base-part')
+        const codeBase = el(
+          'code',
+          group.baseCode || 'Assigning code…',
+          'variant-code-base'
+        )
+        codeBasePart.append(
+          codeBase,
+          el('span', 'Product code', 'code-part-label')
+        )
+        codeDesign.append(
+          preparationHelp(
+            codeBasePart,
+            'Shared product code. Edit the title above to change it for every variant.'
+          )
+        )
         const updateCodeReadout = () => {
           codeReadout.textContent = `${group.baseCode || 'Product code'}${variant.variantSuffix}${variant.sizeSuffix}`
+          codeBase.textContent = group.baseCode || 'Assigning code…'
         }
         updateCodeReadout()
         productInput.addEventListener('input', updateCodeReadout)
@@ -1038,13 +1223,24 @@ export async function startPackingWorkspace({
             '—'
           )
           labelField.classList.add(`code-part-${key}`)
+          labelField.firstChild.replaceWith(
+            el(
+              'span',
+              label === 'Variant code' ? 'Variant' : 'Size',
+              'code-part-label'
+            )
+          )
           const codeInput = labelField.querySelector('input')
           codeInput.setAttribute('aria-label', `${label} ${variant.id}`)
           codeInput.autocomplete = 'off'
           codeInput.setAttribute('autocorrect', 'off')
           codeInput.spellcheck = false
           codeInput.maxLength = 30
-          codeOptions.append(
+          codeInput.size = Math.max(1, codeInput.value.length)
+          codeInput.addEventListener('input', () => {
+            codeInput.size = Math.max(1, codeInput.value.length)
+          })
+          codeDesign.append(
             preparationHelp(
               labelField,
               key === 'variantSuffix'
@@ -1053,7 +1249,7 @@ export async function startPackingWorkspace({
             )
           )
         }
-        codeOptions.append(codeReadout)
+        codeOptions.append(codeDesign, codeReadout)
         if (variant.needsSizeMapping)
           codeOptions.append(
             el('small', 'Choose a size code', 'needs-preparation')
@@ -1210,12 +1406,67 @@ export async function startPackingWorkspace({
       )
       host.append(nav)
     }
-    const output = el('div', undefined, 'dialog-actions')
+    const output = el('div', undefined, 'dialog-actions preparation-output')
+    const imageCopy = button('Copy Excel image', async (target) => {
+      if (preparationImageAbort) return
+      const original = target.textContent
+      const abort = new AbortController()
+      preparationImageAbort = abort
+      const cancel = button('Cancel image', () => abort.abort())
+      cancel.hidden = true
+      target.after(cancel)
+      target.disabled = true
+      target.classList.remove('copied', 'copy-failed')
+      output.querySelector('.copy-error')?.remove()
+      try {
+        const rows = await preparationAction(async () => {
+          await flushSaves()
+          if (
+            JSON.stringify(draft) !==
+            JSON.stringify(preparations.get(draft.orderId))
+          )
+            await saveDraft(current)
+          return preparationCopyRows(draft)
+        })
+        if (!rows) return
+        const success = await copyExcelImage(rows, {
+          loadImage,
+          signal: abort.signal,
+          onProgress: (message) => {
+            target.textContent = message
+            cancel.hidden = false
+          },
+        })
+        if (success) {
+          target.textContent = 'Copied'
+          target.classList.add('copied')
+        } else target.textContent = original
+      } catch (error) {
+        target.textContent = 'Try again'
+        target.classList.add('copy-failed')
+        const message = el('span', error.message, 'copy-error')
+        message.setAttribute('role', 'alert')
+        output.append(message)
+      } finally {
+        if (preparationImageAbort === abort) preparationImageAbort = null
+        target.disabled = false
+        cancel.remove()
+        setTimeout(() => {
+          target.textContent = original
+          target.classList.remove('copied', 'copy-failed')
+          decorateIcon(target, 'table')
+        }, 3000)
+      }
+    })
+    copyScope = el('span', '', 'packing-help preparation-copy-scope')
     output.append(
+      copyScope,
+      imageCopy,
       prepButton('Copy barcode images', async () => bulkLabels('barcode')),
       prepButton('Copy carton marks', async () => bulkLabels('mark'))
     )
     host.append(output)
+    updatePreparationCopyScope()
     selection.controller.paint()
     for (const variants of selection.variants.values())
       variants.controller.paint()
@@ -1268,60 +1519,42 @@ export async function startPackingWorkspace({
     })
   }
   async function bulkLabels(kind) {
+    const draft = drafts[current],
+      selected = new Set(preparationCopyRows(draft).map((row) => row.entryId))
     await flushSaves()
-    const targets = [],
-      pending = []
-    const selected = new Set(
-      getRows().map((row) => `${row.orderId}/${row.entryId}`)
-    )
-    for (const record of selectedRecords()) {
-      const prep =
-        drafts.find((draft) => draft.orderId === record.snapshot.orderId) ||
-        preparations.get(record.snapshot.orderId)
-      if (!prep)
-        throw new Error('Open preparation for the selected orders first.')
-      if (
-        JSON.stringify(prep) !== JSON.stringify(preparations.get(prep.orderId))
-      )
-        pending.push(prep)
-      for (const group of activeGroups(prep, record.snapshot)) {
-        const variants = group.variants.filter((variant) =>
-          variant.entryIds.some((id) => selected.has(`${prep.orderId}/${id}`))
-        )
-        if (!variants.length) continue
-        if (kind === 'mark') targets.push({ prep, group, variant: null })
-        else
-          for (const variant of variants) targets.push({ prep, group, variant })
-      }
-    }
-    if (!targets.length) throw new Error('No active labels to copy.')
     if (
-      targets.length > 1 &&
+      JSON.stringify(draft) !== JSON.stringify(preparations.get(draft.orderId))
+    )
+      await saveDraft(drafts.indexOf(draft))
+    const record = getRecords().find(
+        (record) => record.snapshot.orderId === draft.orderId
+      ),
+      prep = preparations.get(draft.orderId),
+      models = []
+    for (const group of activeGroups(prep, record.snapshot)) {
+      const variants = group.variants.filter((variant) =>
+        variant.entryIds.some((id) => selected.has(id))
+      )
+      if (!variants.length) continue
+      if (kind === 'mark') models.push(outputModel(prep, group, null, kind))
+      else
+        for (const variant of variants)
+          models.push(outputModel(prep, group, variant, kind))
+    }
+    if (!models.length) throw new Error('No active labels to copy.')
+    const frozenSettings = structuredClone(settings()),
+      frozenLogo = logoUrl()
+    if (
+      models.length > 1 &&
       !(await confirmScope({
         action: 'Copy',
-        count: targets.length,
+        count: models.length,
         unit: kind === 'mark' ? 'carton marks' : 'barcode labels',
         detail:
-          'Images will be generated at the configured print size.' +
-          (pending.length
-            ? ` This also prepares ${pending.length} orders that have not been saved yet.`
-            : ''),
+          'Uses the selection in this order. Images will be generated at the configured print size.',
       }))
     )
       return
-    for (const prep of pending) await saveDraft(drafts.indexOf(prep))
-    const models = targets.map(({ prep, group, variant }) => {
-      const latest = preparations.get(prep.orderId)
-      const savedGroup = latest.groups.find((entry) => entry.id === group.id)
-      return outputModel(
-        latest,
-        savedGroup,
-        savedGroup.variants.find((entry) => entry.id === variant?.id),
-        kind
-      )
-    })
-    const frozenSettings = structuredClone(settings()),
-      frozenLogo = logoUrl()
     const geometry = frozenSettings[kind]
     const estimatedBytes =
       Math.ceil((geometry.widthMm * frozenSettings.dpi) / 25.4) *
@@ -1376,15 +1609,17 @@ export async function startPackingWorkspace({
   function preparedRows(rows = getRows()) {
     return rows.map((row) => {
       const match = membership.get(`${row.orderId}/${row.entryId}`)
-      if (!match)
+      if (!match) {
+        const suggestion = suggestions.get(`${row.orderId}/${row.entryId}`)
         return {
           ...row,
           baseCode: '',
           barcode: '',
-          spanishName: '',
-          chineseCategory: '',
+          spanishName: suggestion?.spanishName || '',
+          chineseCategory: suggestion?.category || '',
           groupId: row.entryId,
         }
+      }
       let code = ''
       try {
         code = barcodeValue(match.group, match.variant)
@@ -1396,8 +1631,36 @@ export async function startPackingWorkspace({
         spanishName: match.variant.spanishName || match.group.spanishName,
         chineseCategory: match.group.category,
         groupId: match.group.id,
+        variantDescription: match.variant.variant,
+        sourceSize: match.variant.size,
       }
     })
+  }
+  function preparationCopyRows(draft) {
+    const record = getRecords().find(
+      (entry) => entry.snapshot.orderId === draft.orderId
+    )
+    if (!record) throw new Error('This order is no longer available.')
+    const state = preparationSelection(draft)
+    const selectedVariants = [...state.variants.values()].some(
+      (entry) => entry.selected.size
+    )
+    const hasSelection = state.groups.size > 0 || selectedVariants
+    const entryIds = new Set()
+    for (const group of activeGroups(draft, record.snapshot)) {
+      const variants = state.variants.get(group.id)?.selected
+      for (const variant of group.variants) {
+        const include = variants?.size
+          ? variants.has(variant.id)
+          : !hasSelection || state.groups.has(group.id)
+        if (include) for (const id of variant.entryIds) entryIds.add(id)
+      }
+    }
+    return preparedRows(
+      record.snapshot.items
+        .filter((item) => entryIds.has(item.entryId))
+        .map((item) => ({ ...item, orderId: draft.orderId }))
+    )
   }
   async function copyPreparation() {
     const rows = preparedRows()
@@ -1449,135 +1712,410 @@ export async function startPackingWorkspace({
   async function openSettings() {
     const value = structuredClone(preferences)
     value.settings = settings()
-    const host = $('settings-content')
-    host.replaceChildren(el('h2', 'Label settings'))
-    const grid = el('div', undefined, 'settings-grid')
+    const host = $('settings-content'),
+      data = $('settings-data'),
+      tabs = el('div', undefined, 'settings-tabs'),
+      panels = new Map(),
+      tabButtons = []
+    host.replaceChildren(el('h2', 'Settings'), tabs)
+    tabs.setAttribute('role', 'tablist')
+    tabs.setAttribute('aria-label', 'Settings sections')
+    function selectTab(id) {
+      for (const tab of tabButtons) {
+        const selected = tab.getAttribute('aria-controls') === id
+        tab.setAttribute('aria-selected', String(selected))
+        tab.tabIndex = selected ? 0 : -1
+      }
+      for (const [key, panel] of panels) panel.hidden = key !== id
+    }
+    for (const [key, title, symbol] of [
+      ['labels', 'Labels', 'barcode'],
+      ['names', 'Product names', 'text'],
+      ['data', 'Data', 'download'],
+    ]) {
+      const id = `settings-panel-${key}`,
+        tab = decorateIcon(
+          button(title, () => selectTab(id)),
+          symbol
+        ),
+        panel = el('section', undefined, 'settings-panel')
+      tab.id = `settings-tab-${key}`
+      tab.setAttribute('role', 'tab')
+      tab.setAttribute('aria-controls', id)
+      panel.id = id
+      panel.setAttribute('role', 'tabpanel')
+      panel.setAttribute('aria-labelledby', tab.id)
+      panel.tabIndex = 0
+      tabButtons.push(tab)
+      panels.set(id, panel)
+      tabs.append(tab)
+      host.append(panel)
+    }
+    tabs.addEventListener('keydown', (event) => {
+      const current = tabButtons.indexOf(event.target)
+      if (current < 0) return
+      const index =
+        event.key === 'Home'
+          ? 0
+          : event.key === 'End'
+            ? tabButtons.length - 1
+            : event.key === 'ArrowRight'
+              ? (current + 1) % tabButtons.length
+              : event.key === 'ArrowLeft'
+                ? (current + tabButtons.length - 1) % tabButtons.length
+                : -1
+      if (index < 0) return
+      event.preventDefault()
+      selectTab(tabButtons[index].getAttribute('aria-controls'))
+      tabButtons[index].focus()
+    })
+    const labels = panels.get('settings-panel-labels'),
+      names = panels.get('settings-panel-names'),
+      grid = el('div', undefined, 'settings-grid')
+    function card(title, symbol, className = '') {
+      const section = el('section', undefined, `settings-card ${className}`),
+        heading = el('h3', title)
+      decorateIcon(heading, symbol)
+      section.append(heading)
+      grid.append(section)
+      return section
+    }
+    function settingField(
+      title,
+      current,
+      change,
+      { min, max, step, help } = {}
+    ) {
+      const result = field(
+          title,
+          current,
+          change,
+          min === undefined ? 'text' : 'number'
+        ),
+        input = result.querySelector('input')
+      if (min !== undefined) {
+        input.min = String(min)
+        input.max = String(max)
+        input.step = String(step ?? 1)
+      }
+      if (help) preparationHelp(result, help)
+      return result
+    }
+    const shared = card('Shared label text', 'text', 'settings-shared')
     for (const [key, label] of [
       ['website', 'Website'],
       ['destination', 'Destination'],
     ])
-      grid.append(
-        field(label, value.settings[key], (v) => (value.settings[key] = v))
+      shared.append(
+        settingField(
+          label,
+          value.settings[key],
+          (v) => (value.settings[key] = v),
+          {
+            help:
+              key === 'website'
+                ? 'Printed on every barcode label.'
+                : 'Destination printed on every barcode label.',
+          }
+        )
       )
-    grid.append(
-      field(
+    shared.append(
+      settingField(
         'Output DPI',
         value.settings.dpi,
         (v) => (value.settings.dpi = Number(v)),
-        'number'
+        {
+          min: 150,
+          max: 600,
+          help: 'Image detail for copying and printing. 300 DPI is the default; physical dimensions stay the same.',
+        }
       )
     )
-    for (const kind of ['barcode', 'mark'])
-      for (const [key, label] of [
-        ['widthMm', 'width (mm)'],
-        ['heightMm', 'height (mm)'],
-        ['textScale', 'text scale (0.75–1.25)'],
-      ])
-        grid.append(
-          field(
-            `${kind === 'mark' ? 'Carton mark' : 'Barcode'} ${label}`,
-            value.settings[kind][key] ?? 1,
-            (v) => (value.settings[kind][key] = Number(v)),
-            'number'
-          )
+    for (const kind of ['barcode', 'mark']) {
+      const title = kind === 'mark' ? 'Carton mark' : 'Barcode',
+        section = card(title, kind === 'mark' ? 'carton' : 'barcode'),
+        dimensions = el('div', undefined, 'settings-dimensions')
+      for (const [key, label, minimum] of [
+        ['widthMm', 'width', 20],
+        ['heightMm', 'height', 10],
+      ]) {
+        const size = settingField(
+          `${label === 'width' ? 'Width' : 'Height'} (mm)`,
+          value.settings[kind][key] ?? 1,
+          (v) => (value.settings[kind][key] = Number(v)),
+          {
+            min: minimum,
+            max: 300,
+            step: 0.1,
+            help: `${title} ${label} in millimetres. Saved images carry this physical size.`,
+          }
         )
-    const logo = el('input')
+        size
+          .querySelector('input')
+          .setAttribute('aria-label', `${title} ${label} (mm)`)
+        dimensions.append(size)
+      }
+      const scale = settingField(
+          'Text size',
+          value.settings[kind].textScale ?? 1,
+          (v) => {
+            value.settings[kind].textScale = Number(v)
+            scaleValue.value = `${Math.round(Number(v) * 100)}%`
+          },
+          {
+            min: 0.75,
+            max: 1.25,
+            step: 0.05,
+            help: 'Resize label text from 75% to 125%. The layout and barcode bars keep their proportions.',
+          }
+        ),
+        scaleValue = el(
+          'output',
+          `${Math.round((value.settings[kind].textScale ?? 1) * 100)}%`
+        ),
+        scaleInput = scale.querySelector('input')
+      scale.className = 'settings-scale'
+      scaleInput.type = 'range'
+      scaleInput.setAttribute('aria-label', `${title} text scale (0.75–1.25)`)
+      scaleValue.htmlFor = scaleInput.id
+      scale.append(scaleValue)
+      section.append(dimensions, scale)
+    }
+    const logoCard = card('Label logo', 'image', 'settings-logo'),
+      logo = el('input'),
+      logoPreview = el('img'),
+      logoControls = el('div'),
+      logoStatus = el('span', 'PNG, JPG or WebP · up to 2 MB', 'packing-help')
     logo.type = 'file'
+    logo.className = 'settings-logo-file'
     logo.accept = 'image/png,image/jpeg,image/webp'
     logo.setAttribute('aria-label', 'Replace label logo')
+    logoPreview.src = value.logoDataUrl || logoUrl()
+    logoPreview.alt = 'Current label logo'
+    logoPreview.className = 'settings-logo-preview'
     logo.onchange = async () => {
       try {
         const file = logo.files[0]
         if (file) {
           if (file.size > 2 * 1024 * 1024)
             throw new Error('Choose a logo smaller than 2 MB.')
-          value.logoDataUrl = await blobData(file)
+          const url = await blobData(file),
+            image = new Image()
+          image.src = url
+          await image.decode()
+          value.logoDataUrl = url
+          logoPreview.src = url
+          logoStatus.textContent = file.name
         }
       } catch (error) {
         showError(error.message)
       }
     }
-    host.append(
-      grid,
-      el('h3', 'Logo'),
-      logo,
-      el('h3', 'Local vocabulary'),
+    logoControls.append(
+      decorateIcon(
+        button('Replace logo', () => logo.click()),
+        'upload'
+      ),
+      logoStatus,
+      logo
+    )
+    logoCard.append(logoPreview, logoControls)
+    labels.append(grid)
+    names.append(
+      el('h3', 'Automatic product names'),
       el(
         'p',
-        'Match Chinese title text to an uppercase Spanish short name and a Chinese category. No online translation.',
+        'Fill names from product titles. Your edits stay unchanged; unknown products stay unnamed.',
         'packing-help'
       )
     )
     const table = el('table', undefined, 'vocabulary-table'),
       body = el('tbody'),
+      thead = el('thead'),
       head = el('tr')
-    for (const name of ['Title contains', 'Spanish name', 'Category', ''])
-      head.append(el('th', name))
-    table.append(head, body)
+    for (const name of [
+      'Title includes',
+      'Skip if it includes',
+      'Spanish name',
+      'Chinese category',
+      '',
+    ]) {
+      const th = el('th', name)
+      th.scope = 'col'
+      head.append(th)
+    }
+    thead.append(head)
+    table.append(thead, body)
+    let vocabularyPage = 0
+    const pageSize = 12
+    const vocabularySearch = field(
+      'Search naming rules',
+      '',
+      () => {
+        vocabularyPage = 0
+        renderVocabulary()
+      },
+      'search'
+    )
+    vocabularySearch.className = 'vocabulary-search'
+    const vocabularyCount = el('span', undefined, 'packing-help')
+    vocabularyCount.setAttribute('role', 'status')
+    const vocabularyNavigation = el('div', undefined, 'vocabulary-navigation')
+    const previousRules = button('Previous rules', () => {
+      vocabularyPage--
+      renderVocabulary()
+    })
+    const nextRules = button('Next rules', () => {
+      vocabularyPage++
+      renderVocabulary()
+    })
+    decorateIcon(previousRules, 'previous', { iconOnly: true })
+    decorateIcon(nextRules, 'next', { iconOnly: true })
+    preparationHelp(previousRules, 'Previous page of naming rules.')
+    preparationHelp(nextRules, 'Next page of naming rules.')
+    vocabularyNavigation.append(previousRules, vocabularyCount, nextRules)
     function vocabularyRow(entry) {
       const row = el('tr')
-      for (const key of ['match', 'spanishName', 'category']) {
+      for (const [key, name] of [
+        ['match', 'Title includes'],
+        ['exclude', 'Skip if it includes'],
+        ['spanishName', 'Spanish name'],
+        ['category', 'Chinese category'],
+      ]) {
         const td = el('td'),
           input = el('input')
-        input.value = entry[key]
-        input.setAttribute('aria-label', key)
-        input.oninput = () => (entry[key] = input.value)
+        input.value = entry[key] || ''
+        input.setAttribute('aria-label', name)
+        input.oninput = () =>
+          (entry[key] =
+            key === 'spanishName' ? input.value.toUpperCase() : input.value)
+        preparationHelp(
+          input,
+          key === 'match'
+            ? 'Words to match in the original title. Separate alternatives with |.'
+            : key === 'exclude'
+              ? 'Ignore this rule if the title includes any of these words. Separate alternatives with |.'
+              : key === 'spanishName'
+                ? 'Short uppercase name printed on the barcode.'
+                : 'Chinese category printed on the carton mark.'
+        )
         td.append(input)
         row.append(td)
       }
       const td = el('td')
-      td.append(
-        button('Remove', () => {
+      const remove = decorateIcon(
+        button('Remove naming rule', () => {
           value.vocabulary = value.vocabulary.filter((item) => item !== entry)
-          row.remove()
-        })
+          renderVocabulary()
+        }),
+        'trash',
+        { iconOnly: true }
       )
+      preparationHelp(remove, 'Remove this naming rule when you save Settings.')
+      td.append(remove)
       row.append(td)
       body.append(row)
     }
-    value.vocabulary.forEach(vocabularyRow)
-    const scroll = el('div', undefined, 'variant-scroll')
+    function renderVocabulary() {
+      const query = vocabularySearch
+        .querySelector('input')
+        .value.trim()
+        .toLowerCase()
+      const matching = value.vocabulary.filter((entry) =>
+        [entry.match, entry.exclude, entry.spanishName, entry.category].some(
+          (value) =>
+            String(value || '')
+              .toLowerCase()
+              .includes(query)
+        )
+      )
+      const pages = Math.max(1, Math.ceil(matching.length / pageSize))
+      vocabularyPage = Math.max(0, Math.min(vocabularyPage, pages - 1))
+      body.replaceChildren()
+      matching
+        .slice(vocabularyPage * pageSize, (vocabularyPage + 1) * pageSize)
+        .forEach(vocabularyRow)
+      const start = matching.length ? vocabularyPage * pageSize + 1 : 0,
+        end = Math.min((vocabularyPage + 1) * pageSize, matching.length)
+      vocabularyCount.textContent = `${start}–${end} of ${matching.length} rules`
+      if (!matching.length) {
+        const row = el('tr'),
+          cell = el('td', 'No matching rules.', 'vocabulary-empty')
+        cell.colSpan = 5
+        row.append(cell)
+        body.append(row)
+      }
+      previousRules.disabled = vocabularyPage === 0
+      nextRules.disabled = vocabularyPage + 1 === pages
+    }
+    renderVocabulary()
+    const scroll = el('div', undefined, 'vocabulary-scroll'),
+      toolbar = el('div', undefined, 'vocabulary-toolbar')
     scroll.append(table)
-    host.append(
-      scroll,
-      button('Add vocabulary entry', () => {
-        const entry = { match: '', spanishName: '', category: '' }
-        value.vocabulary.push(entry)
-        vocabularyRow(entry)
-      })
+    scroll.tabIndex = 0
+    scroll.setAttribute('role', 'region')
+    scroll.setAttribute('aria-label', 'Naming rules')
+    toolbar.append(
+      vocabularySearch,
+      decorateIcon(
+        button('Add rule', () => {
+          const entry = { match: '', spanishName: '', category: '' }
+          value.vocabulary.unshift(entry)
+          vocabularySearch.querySelector('input').value = ''
+          vocabularyPage = 0
+          renderVocabulary()
+          body.querySelector('input')?.focus()
+        }),
+        'plus'
+      )
     )
-    host.append(
+    names.append(toolbar, scroll, vocabularyNavigation)
+    panels.get('settings-panel-data').append(data)
+    const footer = el('div', undefined, 'settings-footer')
+    const settingsError = el('p', undefined, 'packing-error')
+    settingsError.setAttribute('role', 'alert')
+    host.append(settingsError)
+    footer.append(
+      el('span', 'Save changes to labels and naming rules.', 'packing-help'),
       button(
         'Save settings',
-        async () => {
-          value.settings.vocabularyInitialized = true
-          // Validate geometry with a representative render before accepting settings.
-          await renderLabel({
-            kind: 'barcode',
-            code: 'CE26060101AS',
-            spanishName: 'JARRA DE VIDRIO',
-            settings: value.settings,
-            logoUrl: value.logoDataUrl || logoUrl(),
-          })
-          await renderLabel({
-            kind: 'mark',
-            code: 'CE26060101',
-            category: '玻璃',
-            settings: value.settings,
-          })
-          preferences = await repository.savePackingPreferences(value)
-          channel?.postMessage('changed')
-          $('settings-dialog').close()
-          feedback('Settings saved.')
+        async (save) => {
+          save.disabled = true
+          settingsError.textContent = ''
+          try {
+            value.settings.vocabularyInitialized = true
+            // Validate geometry with a representative render before accepting settings.
+            await renderLabel({
+              kind: 'barcode',
+              code: 'CE26060101AS',
+              spanishName: 'JARRA DE VIDRIO',
+              settings: value.settings,
+              logoUrl: value.logoDataUrl || logoUrl(),
+            })
+            await renderLabel({
+              kind: 'mark',
+              code: 'CE26060101',
+              category: '玻璃',
+              settings: value.settings,
+            })
+            preferences = await repository.savePackingPreferences(value)
+            await changed({ reload: true })
+            channel?.postMessage('preferences')
+            $('settings-dialog').close()
+            feedback('Settings saved.')
+          } finally {
+            save.disabled = false
+          }
         },
         'primary'
       )
     )
+    host.append(footer)
+    selectTab('settings-panel-labels')
     dialog($('settings-dialog'))
   }
-  for (const id of ['prepare-orders', 'open-preparation'])
-    $(id).onclick = () =>
-      openPreparation().catch((e) => feedback(e.message, true))
+  $('prepare-orders').onclick = () =>
+    openPreparation().catch((e) => feedback(e.message, true))
   $('copy-preparation').onclick = () =>
     copyPreparation().catch((e) => feedback(e.message, true))
   $('packing-settings').onclick = () =>
@@ -1609,34 +2147,39 @@ export async function startPackingWorkspace({
     preparedRows,
     searchText(orderId, entryId) {
       const match = membership.get(`${orderId}/${entryId}`)
-      if (!match) return ''
+      if (!match) {
+        const suggestion = suggestions.get(`${orderId}/${entryId}`)
+        return `${suggestion?.spanishName || ''} ${suggestion?.category || ''}`
+      }
       let code = ''
       try {
         code = barcodeValue(match.group, match.variant)
       } catch {}
-      return `${match.group.baseCode} ${code} ${match.group.spanishName} ${match.variant.spanishName || ''}`
+      return `${match.group.baseCode} ${code} ${match.group.spanishName} ${match.variant.spanishName || ''} ${match.group.category}`
     },
     updateActions() {
-      const records = selectedRecords(),
-        unprepared = records.some(
-          ({ snapshot }) => !preparations.has(snapshot.orderId)
-        )
-      $('prepare-orders').hidden = !unprepared && records.length > 0
-      $('open-preparation').hidden = unprepared || !records.length
-      $('prepare-orders').disabled = !records.length
+      $('prepare-orders').disabled = !selectedRecords().length
     },
     decorateRow(host, row) {
       const matched = membership.get(`${row.orderId}/${row.entryId}`),
         bar = el('div', undefined, 'row-preparation')
       if (matched) {
         bar.append(el('code', matched.group.baseCode))
-        if (matched.group.spanishName)
-          bar.append(el('span', matched.group.spanishName))
+        const name = matched.variant.spanishName || matched.group.spanishName
+        if (name) bar.append(el('span', name))
+        if (matched.group.category)
+          bar.append(el('span', matched.group.category, 'category-name'))
         if (
           !(matched.variant.spanishName || matched.group.spanishName) ||
           !matched.group.category
         )
-          bar.append(el('small', 'Finish label names', 'needs-preparation'))
+          bar.append(
+            button(
+              'Name',
+              () => openPreparation(row.orderId),
+              'needs-preparation name-product'
+            )
+          )
         const { prep, group, variant } = matched
         bar.append(
           button('Barcode', () =>
@@ -1650,7 +2193,20 @@ export async function startPackingWorkspace({
           copied(b, () => navigator.clipboard.writeText(group.baseCode))
         )
         bar.append(copy)
-      } else bar.append(el('small', 'Not prepared', 'needs-preparation'))
+      } else {
+        const suggestion = suggestions.get(`${row.orderId}/${row.entryId}`)
+        if (suggestion?.spanishName)
+          bar.append(el('span', suggestion.spanishName))
+        if (suggestion?.category)
+          bar.append(el('span', suggestion.category, 'category-name'))
+        bar.append(
+          button(
+            'Prepare',
+            () => openPreparation(row.orderId),
+            'needs-preparation name-product'
+          )
+        )
+      }
       host.append(bar)
     },
   }

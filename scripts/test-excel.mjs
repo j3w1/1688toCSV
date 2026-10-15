@@ -109,10 +109,10 @@ try {
   await page.getByRole('checkbox', { name: 'Headers', exact: true }).uncheck()
   await page.getByLabel('Packing month', { exact: true }).fill('2026-10')
   await page
-    .getByRole('button', { name: 'Prepare labels', exact: true })
+    .getByRole('button', { name: 'Prepare packing list', exact: true })
     .click()
   const preparation = page.getByRole('dialog', {
-    name: 'Preparation',
+    name: 'Prepare packing list',
     exact: true,
   })
   await expect(preparation.locator('.preparation-group')).toHaveCount(2)
@@ -130,7 +130,7 @@ try {
     .getByLabel('Product code', { exact: true })
     .inputValue()
   await preparation
-    .getByRole('button', { name: 'Close preparation', exact: true })
+    .getByRole('button', { name: 'Close packing list', exact: true })
     .click()
 
   const firstRow = page.locator('#sheet-body tr').first()
@@ -193,7 +193,7 @@ try {
     kind: 'mark',
     code: updatedBase,
     category: '玻璃制品',
-    spanishName: 'FRASCO DE VIDRIO',
+    spanishName: 'FRASCO',
   }
   const mark = await page.evaluate(
     (model) => excelAcceptance.expectedLabel(model),
@@ -271,7 +271,7 @@ try {
       textCell('B2', `${updatedBase}L`),
       textCell('B3', otherBase),
       textCell('D1', 'FRASCO TRANSPARENTE'),
-      textCell('D2', 'FRASCO DE VIDRIO'),
+      textCell('D2', 'FRASCO'),
       textCell('D3', 'CAJA ORGANIZADORA'),
       ...items.flatMap((item, index) => [
         textCell(`C${index + 1}`, compactDescription(item.description)),

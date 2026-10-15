@@ -112,10 +112,10 @@ test('label backdrop saves a valid blurred edit, preserves Escape restore, and k
   const page = await openLibrary(extension)
   await page.getByLabel('Packing month', { exact: true }).fill('2026-10')
   await page
-    .getByRole('button', { name: 'Prepare labels', exact: true })
+    .getByRole('button', { name: 'Prepare packing list', exact: true })
     .click()
   const preparation = page.getByRole('dialog', {
-    name: 'Preparation',
+    name: 'Prepare packing list',
     exact: true,
   })
   await expect(preparation.locator('.preparation-save-status')).toHaveText(
