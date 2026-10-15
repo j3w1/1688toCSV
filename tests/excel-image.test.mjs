@@ -735,9 +735,45 @@ test('Real canvas output preserves centered rich text, blue reordered codes and 
   const prefix = actual.calls.find((call) => call.text === row.baseCode)
   assert.equal(prefix.color, '#1d4ed8')
   assert.ok(prefix.font.startsWith('17px'))
-  const suffix = actual.calls.find((call) => call.text === 'AS')
-  assert.match(suffix.font, /^(?:700|bold) 17px/)
-  assert.equal(suffix.color, '#24211c')
+  const barcodeIndex = excelImageColumns.findIndex(
+    (column) => column.key === 'barcode'
+  )
+  const barcodeLeft =
+    1 +
+    excelImageColumns
+      .slice(0, barcodeIndex)
+      .reduce((width, column) => width + column.width, 0)
+  const barcodeRight = barcodeLeft + excelImageColumns[barcodeIndex].width
+  let barcodeTop = actual.plan.headerHeight + 1
+  for (const [index, expected] of [
+    row.barcode,
+    `${row.baseCode}ABCDEFGHIJKLMNOPQRSTUVWXYZAMBS`,
+  ].entries()) {
+    const barcodeBottom = barcodeTop + actual.plan.rows[index].height
+    const calls = actual.calls.filter(
+      (call) =>
+        call.x >= barcodeLeft &&
+        call.x < barcodeRight &&
+        call.y >= barcodeTop &&
+        call.y < barcodeBottom
+    )
+    // Font metrics differ by OS. Verify every drawn character and its style,
+    // including suffixes that wrap into separate draw calls.
+    assert.equal(calls.map((call) => call.text).join(''), expected)
+    let offset = 0
+    for (const call of calls) {
+      if (offset < row.baseCode.length) {
+        assert.ok(offset + call.text.length <= row.baseCode.length)
+        assert.ok(call.font.startsWith('17px'))
+        assert.equal(call.color, '#1d4ed8')
+      } else {
+        assert.match(call.font, /^(?:700|bold) 17px/)
+        assert.equal(call.color, '#24211c')
+      }
+      offset += call.text.length
+    }
+    barcodeTop = barcodeBottom
+  }
   assert.ok(actual.calls.some((call) => call.text.startsWith('¥ ')))
   assert.equal(actual.photos.length, 2)
   let y = actual.plan.headerHeight + 1
