@@ -2114,6 +2114,7 @@ test('combining, separating, splitting and merging preserve source rows and save
 }) => {
   const { page, record } = await openWorkspace(extension)
   const dialog = await prepare(page)
+  const form = dialog.locator('#preparation-content')
   const groups = dialog.locator('.preparation-group')
   const first = groups.first()
   const original = (await packingBackup(extension)).preparations[0]
@@ -2133,6 +2134,8 @@ test('combining, separating, splitting and merging preserve source rows and save
     .locator('.packing-review')
     .getByRole('button', { name: 'Apply changes', exact: true })
     .click()
+  await expect(page.locator('.packing-review')).toBeHidden()
+  await expect(form).toBeEnabled()
   await expect(first.locator('.variants tbody tr')).toHaveCount(1)
   await expect(first).toContainText('2 source rows')
   let backup = await savePreparationAndRead(extension, dialog)
@@ -2142,6 +2145,8 @@ test('combining, separating, splitting and merging preserve source rows and save
   )
   expect(backup.orders[0].snapshot).toEqual(record.snapshot)
   await dialog.getByRole('button', { name: 'Orders', exact: true }).click()
+  await expect(dialog).toBeHidden()
+  await expect(page.locator('#orders-view')).toBeVisible()
   await expect(page.locator('#sheet-body tr[data-selection-key]')).toHaveCount(
     3
   )
@@ -2161,11 +2166,17 @@ test('combining, separating, splitting and merging preserve source rows and save
     await label
       .getByRole('button', { name: 'Close label editor', exact: true })
       .click()
+    await expect(label).toBeHidden()
   }
 
   await page
     .getByRole('button', { name: 'Prepare packing list', exact: true })
     .click()
+  // Reopening saves/reloads before replacing the previous hidden packing DOM.
+  await expect(dialog).toBeVisible()
+  await expect(page.locator('#orders-view')).toBeHidden()
+  await expect(form).toBeEnabled()
+  await waitForAutosave(dialog)
   await selectVariantRow(first.locator('.variants tbody tr').first())
   await expect(first.locator('.variants tbody tr')).toHaveAttribute(
     'aria-selected',
@@ -2178,6 +2189,8 @@ test('combining, separating, splitting and merging preserve source rows and save
     .locator('.packing-review')
     .getByRole('button', { name: 'Apply changes', exact: true })
     .click()
+  await expect(page.locator('.packing-review')).toBeHidden()
+  await expect(form).toBeEnabled()
   await expect(first.locator('.variants tbody tr')).toHaveCount(2)
   await expect(first).not.toContainText('2 source rows')
   backup = await savePreparationAndRead(extension, dialog)
@@ -2214,6 +2227,8 @@ test('combining, separating, splitting and merging preserve source rows and save
     .locator('.packing-review')
     .getByRole('button', { name: 'Apply changes', exact: true })
     .click()
+  await expect(page.locator('.packing-review')).toBeHidden()
+  await expect(form).toBeEnabled()
   await expect(first.locator('.variants tbody tr')).toHaveCount(1)
   backup = await savePreparationAndRead(extension, dialog)
   expect(backup.preparations[0].groups[0].variants[0].entryIds).toEqual(
@@ -2231,6 +2246,8 @@ test('combining, separating, splitting and merging preserve source rows and save
     .locator('.packing-review')
     .getByRole('button', { name: 'Apply changes', exact: true })
     .click()
+  await expect(page.locator('.packing-review')).toBeHidden()
+  await expect(form).toBeEnabled()
   await expect(first.locator('.variants tbody tr')).toHaveCount(2)
   backup = await savePreparationAndRead(extension, dialog)
   const separatedAgain = backup.preparations[0].groups[0].variants[1]
@@ -2256,6 +2273,8 @@ test('combining, separating, splitting and merging preserve source rows and save
     .locator('.packing-review')
     .getByRole('button', { name: 'Apply changes', exact: true })
     .click()
+  await expect(page.locator('.packing-review')).toBeHidden()
+  await expect(form).toBeEnabled()
   await expect(groups).toHaveCount(3)
   backup = await savePreparationAndRead(extension, dialog)
   const splitCode = backup.preparations[0].groups[2].baseCode
@@ -2281,6 +2300,8 @@ test('combining, separating, splitting and merging preserve source rows and save
     .locator('.packing-review')
     .getByRole('button', { name: 'Apply changes', exact: true })
     .click()
+  await expect(page.locator('.packing-review')).toBeHidden()
+  await expect(form).toBeEnabled()
   await expect(groups).toHaveCount(2)
   await expect(first.locator('.variants tbody tr')).toHaveCount(2)
   backup = await savePreparationAndRead(extension, dialog)
@@ -2297,6 +2318,8 @@ test('combining, separating, splitting and merging preserve source rows and save
   ).toBe(true)
   expect(backup.orders[0].snapshot).toEqual(record.snapshot)
   await dialog.getByRole('button', { name: 'Orders', exact: true }).click()
+  await expect(dialog).toBeHidden()
+  await expect(page.locator('#orders-view')).toBeVisible()
   await page.reload()
   await expect(page.locator('#sheet-body tr[data-selection-key]')).toHaveCount(
     3

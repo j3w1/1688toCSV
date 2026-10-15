@@ -657,6 +657,11 @@ test('reset order and codes retains current names while previous packing restore
   const { page } = await openLibrary(extension)
   await selectAllProducts(page)
   const view = await prepareSelected(page)
+  const form = view.locator('#preparation-content')
+  const productCodes = () =>
+    view
+      .getByLabel('Product code', { exact: true })
+      .evaluateAll((inputs) => inputs.map((input) => input.value))
   const name = view.getByLabel('Spanish short name', { exact: true }).first()
   await name.fill('NOMBRE ANTERIOR')
   await expect(view.locator('.preparation-save-status')).toHaveText(
@@ -668,15 +673,27 @@ test('reset order and codes retains current names while previous packing restore
   await page
     .getByRole('button', { name: 'Prepare packing list', exact: true })
     .click()
-  await page
-    .getByRole('dialog', {
-      name: 'Move selected products to this packing month?',
-      exact: true,
-    })
+  const monthMove = page.getByRole('dialog', {
+    name: 'Move selected products to this packing month?',
+    exact: true,
+  })
+  await expect(monthMove).toBeVisible()
+  const movedCodes = await monthMove
+    .locator('.packing-review-codes code:last-child')
+    .allTextContents()
+  expect(movedCodes).toHaveLength(2)
+  expect(movedCodes.every((code) => /^CE2612\d{4}$/.test(code))).toBe(true)
+  await monthMove
     .getByRole('button', { name: 'Change codes and prepare', exact: true })
     .click()
+  await expect(view).toBeVisible()
+  await expect(page.locator('#orders-view')).toBeHidden()
+  await expect(view.locator('.packing-title')).toContainText('December 2026')
+  await expect.poll(productCodes).toEqual(movedCodes)
   const moved = await backup(extension)
+  expect(moved.preparations[0].month).toBe('2026-12')
   const defaults = moved.preparations[0].defaultPacking
+  expect(defaults.month).toBe('2026-12')
   await name.fill('NOMBRE RECIENTE')
   await view
     .getByLabel('Product code', { exact: true })
@@ -688,6 +705,8 @@ test('reset order and codes retains current names while previous packing restore
   await view
     .getByRole('button', { name: 'Move group 1; use Up or Down arrows' })
     .press('ArrowDown')
+  await expect(form).toBeEnabled()
+  await expect.poll(productCodes).toEqual([movedCodes[1], 'CE26129998'])
   await expect
     .poll(
       async () => (await backup(extension)).preparations[0].groups[1].baseCode
@@ -703,6 +722,8 @@ test('reset order and codes retains current names while previous packing restore
   })
   await expect(reset).toContainText('Current names are retained')
   await reset.getByRole('button', { name: 'Cancel', exact: true }).click()
+  await expect(reset).toBeHidden()
+  await expect(form).toBeEnabled()
   expect((await backup(extension)).preparations).toEqual(edited.preparations)
   await view
     .getByRole('button', { name: 'Reset order and codes', exact: true })
@@ -711,6 +732,11 @@ test('reset order and codes retains current names while previous packing restore
     .getByRole('button', { name: 'Reset order and codes', exact: true })
     .click()
   await expect(reset).toBeHidden()
+  // The review closes before its write starts; wait for the completed reset.
+  await expect(form).toBeEnabled()
+  await expect
+    .poll(productCodes)
+    .toEqual(defaults.groups.map((group) => group.baseCode))
   const resetData = await backup(extension)
   expect(
     resetData.preparations[0].groups.map((group) => [group.id, group.baseCode])
@@ -733,6 +759,11 @@ test('reset order and codes retains current names while previous packing restore
     .getByRole('button', { name: 'Restore previous packing', exact: true })
     .click()
   await expect(previous).toBeHidden()
+  await expect(form).toBeEnabled()
+  await expect(view.locator('.packing-title')).toContainText('October 2026')
+  await expect
+    .poll(productCodes)
+    .toEqual(original.preparations[0].groups.map((group) => group.baseCode))
   const restored = await backup(extension)
   expect(restored.preparations[0].month).toBe('2026-10')
   expect(restored.preparations[0].groups).toEqual(
