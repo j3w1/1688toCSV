@@ -1,4 +1,4 @@
-import { test, expect } from './extension-fixture.mjs'
+import { test, expect, holdPreparationWrites } from './extension-fixture.mjs'
 import { createDemoRecords } from '../../preview/library-fixture.js'
 
 async function backup(extension) {
@@ -299,13 +299,27 @@ test('reset shows position and barcode changes and becomes unavailable after the
   )
   await review.getByRole('button', { name: 'Cancel', exact: true }).click()
   expect((await backup(extension)).preparations).toEqual(changed.preparations)
+  await holdPreparationWrites(page)
   await reset.click()
   await review
     .getByRole('button', { name: 'Reset order and codes', exact: true })
     .click()
-  // The fieldset disables every action throughout review and saving. Wait for
-  // the save to finish before treating reset's disabled state as a no-op.
-  await expect(view.locator('#preparation-content')).toBeEnabled()
+  const fields = view.locator('#preparation-content')
+  try {
+    await expect
+      .poll(() => page.evaluate(() => window.preparationSaveStarted))
+      .toBe(true)
+    await expect(fields).toHaveJSProperty('disabled', true)
+    // Reset is still actionable in the old draft but temporarily inherits the
+    // fieldset's disabled state while the real database transaction is held.
+    await expect(reset).toHaveJSProperty('disabled', false)
+    await expect(reset).toBeDisabled()
+  } finally {
+    await page.evaluate(() => (window.holdPreparationSave = false))
+  }
+  // Playwright's toBeEnabled() ignores FIELDSET. Read its native property so
+  // a pending save cannot satisfy the final no-op/backup assertions below.
+  await expect(fields).toHaveJSProperty('disabled', false)
   await expect(reset).toBeDisabled()
   const restored = await backup(extension)
   expect(restored.preparations[0].groups).toEqual(

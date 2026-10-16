@@ -228,3 +228,29 @@ export const test = base.extend({
 })
 
 export { expect } from '@playwright/test'
+
+export async function holdPreparationWrites(page) {
+  await page.evaluate(() => {
+    // Keep a real write transaction pending; production saves and handlers run.
+    window.holdPreparationSave = true
+    window.preparationSaveStarted = false
+    const put = IDBObjectStore.prototype.put
+    IDBObjectStore.prototype.put = function (...args) {
+      const result = put.apply(this, args)
+      if (
+        this.name === 'preparations' &&
+        this.transaction.mode === 'readwrite' &&
+        window.holdPreparationSave
+      ) {
+        window.preparationSaveStarted = true
+        const keepAlive = () => {
+          if (!window.holdPreparationSave) return
+          const request = this.get([args[0].accountId, args[0].orderId])
+          request.onsuccess = keepAlive
+        }
+        keepAlive()
+      }
+      return result
+    }
+  })
+}

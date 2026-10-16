@@ -1,4 +1,4 @@
-import { test, expect } from './extension-fixture.mjs'
+import { test, expect, holdPreparationWrites } from './extension-fixture.mjs'
 import { createDemoRecords } from '../../preview/library-fixture.js'
 import { readFile } from 'node:fs/promises'
 
@@ -97,32 +97,6 @@ async function waitForAutosave(dialog) {
 async function selectVariantRow(row, key = 'Space') {
   await row.focus()
   await row.press(key)
-}
-
-async function holdPreparationWrites(page) {
-  await page.evaluate(() => {
-    // Keep a real write transaction pending; production saves and handlers run.
-    window.holdPreparationSave = true
-    window.preparationSaveStarted = false
-    const put = IDBObjectStore.prototype.put
-    IDBObjectStore.prototype.put = function (...args) {
-      const result = put.apply(this, args)
-      if (
-        this.name === 'preparations' &&
-        this.transaction.mode === 'readwrite' &&
-        window.holdPreparationSave
-      ) {
-        window.preparationSaveStarted = true
-        const keepAlive = () => {
-          if (!window.holdPreparationSave) return
-          const request = this.get([args[0].accountId, args[0].orderId])
-          request.onsuccess = keepAlive
-        }
-        keepAlive()
-      }
-      return result
-    }
-  })
 }
 
 test('product codes lead group headers; nested hints, hit targets and code baselines stay independent', async ({
