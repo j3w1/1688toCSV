@@ -38,6 +38,43 @@ async function openLibrary(extension, { fallback = false } = {}) {
   return { page, record }
 }
 
+test('copy format helpers explain their output, translate and disappear after hover', async ({
+  extension,
+}) => {
+  const { page } = await openLibrary(extension)
+  await page.locator('#copy-excel-image').hover()
+  await expect(page.getByRole('tooltip')).toHaveText(
+    /Choose and arrange columns.*one table picture per batch/
+  )
+  await page.mouse.move(2, 2)
+  await expect(page.getByRole('tooltip')).toHaveCount(0)
+  await revealCopyActions(page)
+  await page.locator('#copy-values').hover()
+  await expect(page.getByRole('tooltip')).toHaveText(
+    /editable spreadsheet cells.*does not copy pictures/
+  )
+  await page.mouse.move(2, 2)
+  await expect(page.getByRole('tooltip')).toHaveCount(0)
+  await page.keyboard.press('Escape')
+  await page.locator('[data-language="es"]').click()
+  await page.locator('#copy-excel-image').hover()
+  await expect(page.getByRole('tooltip')).toHaveText(
+    /Elige y ordena las columnas/
+  )
+  await page.mouse.move(2, 2)
+  await expect(page.getByRole('tooltip')).toHaveCount(0)
+  await page
+    .locator('#orders-next')
+    .evaluate((button) => (button.disabled = false))
+  await page.locator('#orders-next').hover()
+  await expect(page.getByRole('tooltip')).toHaveText(
+    /página siguiente de pedidos filtrados/
+  )
+  await page.mouse.move(2, 2)
+  await expect(page.getByRole('tooltip')).toHaveCount(0)
+  await page.close()
+})
+
 for (const fallback of [false, true])
   test(`copy formats keep selection, headings and keyboard dismissal at narrow width (${fallback ? 'fallback' : 'native'} placement)`, async ({
     extension,
@@ -56,8 +93,8 @@ for (const fallback of [false, true])
           .map((node) => node.id || node.className)
       )
     expect(order).toEqual([
-      'product-selection-totals',
       'order-totals',
+      'product-selection-totals',
       'table-scroll',
     ])
     await expect(
@@ -124,8 +161,17 @@ test('packing copy formats remain selection-only and Escape dismisses them befor
   await view
     .getByRole('button', { name: 'Clear selection', exact: true })
     .click()
-  await revealCopyActions(page)
-  const panel = view.locator('.copy-actions-panel')
+  const trigger = view.getByRole('button', {
+    name: 'More copy formats',
+    exact: true,
+  })
+  const panel = view.getByRole('group', {
+    name: 'Copy formats',
+    exact: true,
+    includeHidden: true,
+  })
+  await expect(trigger).toBeDisabled()
+  await expect(panel).toBeHidden()
   for (const name of [
     'Copy columns',
     'Copy group codes',
@@ -133,15 +179,22 @@ test('packing copy formats remain selection-only and Escape dismisses them befor
     'Copy carton marks',
   ])
     await expect(
-      panel.getByRole('button', { name, exact: true })
+      panel.getByRole('button', { name, exact: true, includeHidden: true })
     ).toBeDisabled()
   await expect(
-    view.getByRole('button', { name: 'Back up packing', exact: true })
+    panel.getByRole('button', {
+      name: 'Back up packing',
+      exact: true,
+      includeHidden: true,
+    })
   ).toBeDisabled()
+  await view.locator('.group-select').first().click()
+  await expect(trigger).toBeEnabled()
+  await revealCopyActions(page)
+  await expect(panel).toBeVisible()
   await page.keyboard.press('Escape')
   await expect(panel).toBeHidden()
   await expect(view).toBeVisible()
-  await view.locator('.group-select').first().click()
   await revealCopyActions(page)
   await panel.getByRole('button', { name: 'Copy columns', exact: true }).click()
   const dialog = page.getByRole('dialog', {
@@ -155,10 +208,13 @@ test('packing copy formats remain selection-only and Escape dismisses them befor
   await view
     .getByLabel('Show packing orders', { exact: true })
     .selectOption({ index: 1 })
-  await expect(view.locator('.copy-actions-panel')).toHaveCount(1)
+  await expect(panel).toHaveCount(1)
+  await view.getByRole('button', { name: 'Select all', exact: true }).click()
+  await expect(trigger).toBeEnabled()
   await revealCopyActions(page)
-  await expect(view.locator('.copy-actions-panel')).toBeVisible()
+  await expect(panel).toBeVisible()
   await page.keyboard.press('Escape')
+  await expect(panel).toBeHidden()
   await expect(view).toBeVisible()
   await page.keyboard.press('Escape')
   await expect(view).toBeHidden()

@@ -13,6 +13,28 @@ import {
 import { decorateIcon } from './icons.js'
 import { preparationHelp } from './preparation-help.js'
 
+/** Keep the full copyable order number and its source link together. */
+export function orderReference(orderId, { className = '' } = {}) {
+  const pair = element('span', undefined, 'order-reference-pair')
+  pair.append(
+    copyTextButton(orderId, { label: 'Copy order number', className })
+  )
+  if (!/^[1-9]\d*$/.test(String(orderId))) return pair
+  const link = element('a', undefined, 'order-source-link icon-button')
+  link.href = `https://air.1688.com/app/ctf-page/trade-order-detail/index.html?orderId=${orderId}`
+  link.target = '_blank'
+  link.rel = 'noopener noreferrer'
+  decorateIcon(link, 'external', {
+    iconOnly: true,
+    label: uiMessage('Open order {0} in a new tab', { 0: orderId }),
+  })
+  preparationHelp(link, uiMessage('Open this order on 1688 in a new tab.'))
+  link.addEventListener('click', (event) => event.stopPropagation())
+  link.addEventListener('dblclick', (event) => event.stopPropagation())
+  pair.append(link)
+  return pair
+}
+
 /** Copy the visible source text without changing its size, label or selection. */
 export function copyTextButton(
   value,

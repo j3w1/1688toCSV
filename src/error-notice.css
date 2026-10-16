@@ -21,6 +21,38 @@
   color: var(--danger-text);
   font-size: 13px;
 }
+.error-notice-product {
+  display: flex;
+  gap: 9px;
+  margin-block: 8px;
+  align-items: center;
+}
+.error-notice-product img {
+  width: 48px;
+  height: 48px;
+  object-fit: contain;
+  border-radius: 4px;
+  background: var(--thumb);
+}
+.error-notice-product > div {
+  min-width: 0;
+  font-size: 12px;
+}
+.resolution-highlight {
+  outline: 3px solid var(--accent);
+  outline-offset: 4px;
+  animation: resolution-focus 1.2s ease-out 2;
+}
+@keyframes resolution-focus {
+  50% {
+    outline-offset: 8px;
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .resolution-highlight {
+    animation: none;
+  }
+}
 .error-notice p {
   margin: 4px 0 0;
 }

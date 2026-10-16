@@ -1,5 +1,6 @@
 import { test as base, chromium } from '@playwright/test'
-import { createHash, generateKeyPairSync } from 'node:crypto'
+import { createHash, generateKeyPairSync, randomInt } from 'node:crypto'
+import { once } from 'node:events'
 import { createServer } from 'node:http'
 import {
   cp,
@@ -29,11 +30,17 @@ async function startFixtureServer() {
         '/src/product-vocabulary.js',
         '/src/material-vocabulary.js',
         '/src/size-vocabulary.js',
+        '/src/color-vocabulary.js',
+        '/src/appearance.js',
+        '/src/order-tags.js',
         '/src/order-date.js',
         '/src/clipboard.js',
         '/src/money.js',
         '/src/list-toolbar.js',
-      ].includes(pathname)
+      ].includes(pathname) ||
+      /^\/src\/(?:panel-appearance|floating-panel|import-progress|page-download|i18n|ui-messages(?:-[a-z-]+)?)\.js$/.test(
+        pathname
+      )
     ) {
       response.writeHead(200, {
         'Content-Type': 'text/javascript; charset=utf-8',
@@ -51,10 +58,16 @@ async function startFixtureServer() {
       '<!doctype html><html lang="en"><title>Synthetic order fixture</title><body></body></html>'
     )
   })
-  await new Promise((resolve, reject) => {
-    server.once('error', reject)
-    server.listen(0, '127.0.0.1', resolve)
-  })
+  // Some Windows ephemeral ranges include ports that browsers refuse to load.
+  for (let attempt = 0; attempt < 10; attempt++) {
+    try {
+      server.listen(randomInt(49152, 65536), '127.0.0.1')
+      await once(server, 'listening')
+      break
+    } catch (error) {
+      if (error.code !== 'EADDRINUSE' || attempt === 9) throw error
+    }
+  }
   const origin = `http://127.0.0.1:${server.address().port}`
   return { server, origin }
 }

@@ -148,6 +148,14 @@ main {
 .row-preparation code {
   font-size: 12px;
 }
+.row-preparation .spanish-name {
+  color: var(--product-name);
+  font-weight: 650;
+}
+.row-preparation .category-name {
+  color: var(--category-text);
+  font-weight: 550;
+}
 .row-preparation .row-code-copy {
   font:
     600 12px/1.4 ui-monospace,
@@ -411,13 +419,17 @@ select {
   padding: 8px 10px;
   background: var(--surface);
 }
-.packing-order-header > div:first-child {
+.packing-order-header > div:not(.packing-restore-actions) {
   display: flex;
   flex: 1 1 270px;
   flex-wrap: wrap;
   align-items: baseline;
   gap: 3px 12px;
   min-inline-size: 0;
+}
+.packing-order-header > .reorder-handle {
+  flex: 0 0 auto;
+  align-self: center;
 }
 .packing-order-header h2 {
   margin: 0;
@@ -579,12 +591,10 @@ select {
   min-inline-size: min(16ch, 100%);
   max-inline-size: min(26ch, 100%);
   flex: 0 1 auto;
-  color: var(--accent-text);
+  color: var(--product-name);
 }
 .group-name-editor:hover,
-.group-name-editor:focus-visible,
-.group-code-editor:hover,
-.group-code-editor:focus-visible {
+.group-name-editor:focus-visible {
   border-color: var(--border) !important;
   background: var(--field) !important;
 }
@@ -718,7 +728,7 @@ select {
   min-width: 0;
 }
 .variant-order-facts dt {
-  color: var(--muted);
+  color: var(--attribute-label);
   font-size: 11px;
 }
 .variant-order-facts dd {
@@ -728,6 +738,12 @@ select {
   font-weight: 650;
   font-variant-numeric: tabular-nums;
   overflow-wrap: anywhere;
+}
+.variant-order-facts .variant-price dd {
+  color: var(--amount-text);
+}
+.variant-order-facts .variant-quantity dd {
+  color: var(--quantity-text);
 }
 .variants button {
   padding: 7px 10px;
@@ -781,7 +797,6 @@ select {
   margin: 2px 0 0;
 }
 .order-tools,
-.group-tools,
 .original-product-name,
 .variant-code-options {
   color: var(--muted);
@@ -821,17 +836,18 @@ select {
 }
 .material-control {
   flex: 0 1 auto;
-  color: var(--muted);
+  color: var(--attribute-label);
   font-size: 11px;
 }
 .preparation-workspace .material-control input,
 .preparation-workspace .variants .material-control input {
-  inline-size: 16ch;
+  inline-size: calc(16ch + 2px);
   min-inline-size: 5ch;
-  max-inline-size: 28ch;
+  max-inline-size: calc(28ch + 2px);
   min-height: 27px;
   margin: 0;
   padding: 3px 5px;
+  color: var(--material-text);
   font-size: 12px;
 }
 .preparation-workspace .material-apply {
@@ -877,6 +893,19 @@ select {
   min-height: 28px;
   font-size: 13px;
 }
+.preparation-workspace .order-tools input[data-packing-field='spanishName'] {
+  color: var(--product-name);
+  text-transform: uppercase;
+}
+.preparation-workspace
+  :is(.order-tools, .group-fields)
+  input[data-packing-field='category'] {
+  color: var(--category-text);
+}
+.order-tools > label,
+.group-fields > .preparation-inline-field {
+  color: var(--attribute-label);
+}
 .order-category-label {
   font-size: 11px;
   font-weight: 600;
@@ -896,13 +925,14 @@ select {
 }
 .original-product-name p {
   margin: 0;
+  color: var(--description-text);
   line-height: 1.4;
   overflow-wrap: anywhere;
 }
 .product-overview {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) 116px;
-  gap: 12px;
+  grid-template-columns: minmax(0, 1fr) 100px;
+  gap: 10px;
   align-items: start;
   margin-bottom: 8px;
 }
@@ -919,11 +949,24 @@ select {
 .group-fields label:first-child {
   max-width: none;
 }
-.carton-preview > strong {
-  display: block;
-  margin-bottom: 3px;
+.carton-preview {
+  inline-size: 100px;
+  max-inline-size: 100%;
+  justify-self: end;
+}
+.group-size-handling {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  margin: 0;
   font-size: 11px;
   color: var(--muted);
+}
+.group-size-handling select {
+  min-height: 28px;
+  max-inline-size: 160px;
+  padding: 4px 6px;
+  font-size: 11px;
 }
 .preparation-label-preview {
   display: flex;
@@ -1028,6 +1071,7 @@ select {
   border: 1px solid transparent;
   border-bottom-color: var(--border);
   background: transparent;
+  color: var(--description-text);
   border-radius: 2px;
 }
 .variants .variant-option label {
@@ -1055,21 +1099,26 @@ select {
   font-size: 10px;
 }
 .variant-code-design {
+  --variant-code: #e8bd7c;
+  --size-code: #f1aa98;
   display: flex;
   flex-wrap: wrap;
   align-items: center;
-  gap: 4px 6px;
+  gap: 2px;
+  inline-size: fit-content;
   max-inline-size: 100%;
+  box-sizing: border-box;
   border-radius: 5px;
-  padding: 0;
-  background: transparent;
+  padding: 2px 6px;
+  background: #171512;
+  color: #fffdf9;
   font-family: ui-monospace, monospace;
 }
 .variant-code-base {
   padding: 2px 0;
   font-size: 19px;
   font-weight: 650;
-  color: var(--text);
+  color: inherit;
   line-height: 1.4;
   overflow-wrap: anywhere;
   text-decoration: none;
@@ -1173,7 +1222,7 @@ select {
   padding: 2px 0;
   color: inherit;
   border: 0;
-  border-radius: 0;
+  border-radius: 2px;
   background: transparent;
   box-shadow: inset 0 -1px currentColor;
   font:
@@ -1181,6 +1230,18 @@ select {
     monospace;
   text-align: center;
   text-transform: uppercase;
+}
+.preparation-workspace .variants .variant-code-options input:hover,
+.preparation-workspace .variants .variant-code-options input:focus-visible {
+  background: #39322b;
+}
+.preparation-workspace .variants .variant-code-options input:focus-visible {
+  outline-color: #e8bd7c;
+  outline-offset: 0;
+}
+.preparation-workspace .variants .variant-code-options input::placeholder {
+  color: #cbbeb0;
+  opacity: 1;
 }
 .preparation-output {
   display: flex;
@@ -1208,6 +1269,72 @@ select {
   margin-inline-end: auto;
   line-height: 1.5;
 }
+.preparation-output.packing-selection-toolbar {
+  position: sticky;
+  inset-block-start: 8px;
+  z-index: 6;
+  justify-self: center;
+  inline-size: fit-content;
+  max-inline-size: 100%;
+  box-sizing: border-box;
+  gap: 5px 8px;
+  padding: 7px 10px;
+  border: 1px solid var(--border);
+  border-radius: 9px;
+  background: var(--surface);
+  box-shadow: 0 3px 12px #0002;
+}
+.packing-selection-toolbar .preparation-copy-scope {
+  flex: 0 1 auto;
+  min-inline-size: 0;
+  font-size: 11px;
+}
+.packing-selection-actions {
+  display: flex;
+  flex: 0 0 auto;
+  gap: 2px;
+}
+.packing-selection-toolbar .packing-selection-actions .icon-button {
+  inline-size: 28px;
+  min-inline-size: 28px;
+  block-size: 28px;
+  padding: 4px;
+  background: transparent;
+  border-color: transparent;
+}
+.packing-grouping-panel .copy-format-group {
+  grid-template-columns: minmax(0, 1fr);
+}
+.packing-grouping-panel button[aria-disabled='true'] {
+  color: var(--muted);
+  opacity: 0.72;
+  cursor: help;
+}
+.packing-grouping-panel button[aria-disabled='true']:hover {
+  background: transparent;
+}
+html:has(body.packing-active) {
+  scroll-padding-block-start: calc(
+    var(--packing-selection-height, 60px) + 16px
+  );
+}
+.packing-active :is(.preparation-group, .variants tr, input, textarea) {
+  scroll-margin-block-start: calc(var(--packing-selection-height, 60px) + 16px);
+}
+@media (max-width: 540px) {
+  .preparation-output.packing-selection-toolbar {
+    inline-size: 100%;
+    gap: 5px;
+    padding: 6px;
+  }
+  .packing-selection-toolbar .preparation-copy-scope {
+    flex-basis: calc(100% - 70px);
+    margin: 0;
+  }
+  .packing-selection-toolbar .packing-copy-actions {
+    flex: 1 1 auto;
+  }
+}
 .preparation-workspace .visually-hidden {
   position: absolute;
   inline-size: 1px;
@@ -1225,7 +1352,7 @@ select {
   .preparation-workspace
     button:not(.dialog-close):not(.preparation-photo):not(
       .preparation-label-preview
-    ) {
+    ):not(.photo-copy-button) {
     min-height: 44px;
   }
 }
@@ -1279,36 +1406,6 @@ select {
   display: grid;
   margin: 3px auto 0;
 }
-.group-tools {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: center;
-  gap: 5px 10px;
-  border-top: 0;
-  padding-top: 6px;
-  margin-top: 6px;
-}
-.group-tools h4 {
-  margin: 0;
-  font-size: 11px;
-  font-weight: 600;
-}
-.preparation-group .group-tools .dialog-actions {
-  align-items: center;
-  gap: 6px;
-  margin: 0;
-}
-.group-tools button {
-  white-space: normal;
-}
-.preparation-workspace .group-tools button {
-  min-height: 27px;
-  padding: 3px 6px;
-  border-color: transparent;
-  background: transparent;
-  font-size: 11px;
-  text-decoration: none;
-}
 .preparation-photo {
   display: inline-flex;
   flex-direction: column;
@@ -1327,21 +1424,12 @@ select {
   border-radius: 5px;
 }
 .variant-photos > .photo-copy-tile > .preparation-photo {
-  min-inline-size: 78px;
-  min-block-size: 78px;
+  min-inline-size: 80px;
+  min-block-size: 80px;
 }
 .variant-photos > .photo-copy-tile > .preparation-photo img {
-  inline-size: 72px;
-  block-size: 72px;
-}
-.preparation-workspace .photo-copy-button,
-.packing-review-item .photo-copy-button {
-  min-inline-size: 25px;
-  min-block-size: 25px;
-  inline-size: 25px;
-  block-size: 25px;
-  margin: 0;
-  padding: 4px;
+  inline-size: 74px;
+  block-size: 74px;
 }
 .preparation-photo img[hidden] {
   display: none;
@@ -1542,7 +1630,7 @@ select {
     margin-inline-start: 0;
   }
   .product-overview {
-    grid-template-columns: minmax(0, 1fr) 110px;
+    grid-template-columns: minmax(0, 1fr) 100px;
     gap: 10px;
   }
   .group-fields label:first-child {
@@ -1569,7 +1657,7 @@ select {
   .packing-top-tools select {
     flex-basis: 100%;
   }
-  .packing-order-header > div:first-child {
+  .packing-order-header > div:not(.packing-restore-actions) {
     flex-basis: calc(100% - 44px);
   }
   .order-category-label {
@@ -1583,7 +1671,7 @@ select {
     grid-template-columns: minmax(0, 1fr);
   }
   .carton-preview {
-    max-width: 110px;
+    justify-self: start;
   }
   .packing-order-photos .preparation-photo {
     inline-size: 30px;
@@ -1653,13 +1741,31 @@ select {
   font-size: 13px;
 }
 #settings-dialog {
-  width: min(860px, calc(100vw - 24px));
-  max-width: 860px;
+  width: min(920px, calc(100vw - 24px));
+  max-width: 920px;
+  max-block-size: calc(100dvh - 32px);
   padding: 20px;
+  overflow: hidden;
+}
+#settings-dialog > form {
+  position: absolute;
+  inset-block-start: 16px;
+  inset-inline-end: 16px;
+}
+#settings-content {
+  display: flex;
+  flex-direction: column;
+  max-block-size: calc(100dvh - 74px);
+  min-block-size: 0;
+  overflow: hidden;
 }
 #settings-content h2 {
-  font-size: 19px;
+  flex-shrink: 0;
+  font-size: 20px;
   margin: 0 36px 14px 0;
+}
+.settings-edits {
+  display: contents;
 }
 .settings-tabs {
   display: flex;
@@ -1668,6 +1774,7 @@ select {
   border-bottom: 1px solid var(--border);
   padding-bottom: 8px;
   margin-bottom: 14px;
+  flex-shrink: 0;
 }
 .settings-tabs button {
   border-color: transparent;
@@ -1675,6 +1782,7 @@ select {
   color: var(--muted);
   padding: 7px 10px;
   font-size: 12px;
+  min-block-size: 34px;
 }
 .settings-tabs [aria-selected='true'] {
   background: var(--selected);
@@ -1682,6 +1790,29 @@ select {
 }
 .settings-panel {
   min-width: 0;
+  min-block-size: 0;
+  overflow: auto;
+  scrollbar-gutter: stable;
+  padding: 3px 10px 4px 1px;
+  overscroll-behavior: contain;
+}
+#settings-dialog
+  :is(input[type='text'], input[type='search'], input[type='number']) {
+  margin-block: 0;
+  min-block-size: 34px;
+}
+#settings-dialog .settings-panel :is(h3, .settings-data h3) {
+  font-size: 14px;
+  line-height: 1.4;
+  margin: 0 0 8px;
+}
+#settings-dialog .settings-panel > .packing-help,
+.appearance-section > .packing-help,
+#settings-dialog .settings-data > p {
+  margin: 0 0 16px;
+  max-inline-size: 90ch;
+  font-size: 12px;
+  line-height: 1.6;
 }
 .settings-grid {
   display: grid;
@@ -1690,9 +1821,9 @@ select {
 }
 .settings-card {
   min-width: 0;
-  padding: 14px;
-  border: 1px solid var(--divider);
-  border-radius: 12px;
+  padding: 16px;
+  border: 0;
+  border-radius: 7px;
   background: var(--field);
 }
 .settings-card h3,
@@ -1789,8 +1920,20 @@ select {
   justify-content: space-between;
   gap: 10px;
   border-top: 1px solid var(--border);
-  padding-top: 12px;
+  padding-top: 14px;
   margin-top: 14px;
+  flex-shrink: 0;
+  background: var(--surface);
+}
+.settings-footer > span {
+  flex: 1 1 220px;
+  font-size: 11px;
+  color: var(--muted);
+  line-height: 1.5;
+}
+.settings-footer > button {
+  min-block-size: 36px;
+  padding: 8px 14px;
 }
 #settings-content > .packing-error:empty {
   display: none;
@@ -1800,11 +1943,14 @@ select {
   padding: 0;
   margin: 0;
 }
+#settings-dialog .settings-data > h3:not(:first-child) {
+  margin-block-start: 28px;
+}
 .vocabulary-scroll {
   overflow: auto;
-  max-height: min(420px, 48dvh);
+  max-height: min(420px, 43dvh);
   border: 1px solid var(--border);
-  border-radius: 9px;
+  border-radius: 6px;
   scrollbar-gutter: stable;
 }
 .vocabulary-table {
@@ -1850,7 +1996,14 @@ select {
   align-items: end;
   margin-bottom: 12px;
 }
+#settings-dialog .vocabulary-toolbar > button {
+  min-block-size: 34px;
+  padding: 6px 10px;
+  font-size: 12px;
+}
 .vocabulary-search {
+  display: grid;
+  gap: 6px;
   flex: 1;
   min-width: 180px;
   margin: 0;
@@ -1873,6 +2026,18 @@ select {
 @media (max-width: 540px) {
   #settings-dialog {
     padding: 14px;
+  }
+  #settings-content {
+    max-block-size: calc(100dvh - 62px);
+  }
+  .settings-tabs {
+    gap: 2px;
+  }
+  .settings-tabs button {
+    padding: 6px 8px;
+  }
+  .settings-panel {
+    padding-inline-end: 4px;
   }
   .settings-grid,
   .settings-shared {

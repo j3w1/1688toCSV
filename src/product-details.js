@@ -1,9 +1,10 @@
 import { productAttributes, translateAttribute } from './product-attributes.js'
-import { element as el, copyTextButton, copied } from './ui.js'
+import { element as el, copyTextButton, copied, orderReference } from './ui.js'
 import { message, bindAttribute, bindText, getLanguage } from './i18n.js'
 import { decorateIcon } from './icons.js'
 import { photoCopyTile } from './photo-copy.js'
 import { preparationHelp } from './preparation-help.js'
+import { mountProductTags } from './product-tags-ui.js'
 
 /** Display helpers never rewrite the source row or the values exported to Excel. */
 export function createProductDescription(item) {
@@ -45,13 +46,39 @@ export function createProductDescription(item) {
   return fragment
 }
 
-/** Read-only original source details, deliberately unaffected by UI translations. */
+/** Original source stays read-only; optional local product tags save separately. */
 export function openProductDetails(
   item,
-  { loadPhoto, onPhoto, onOrder, copyPhoto }
+  { loadPhoto, onPhoto, onOrder, copyPhoto, tags }
 ) {
   const source = productAttributes(item)
   const dialog = el('dialog', undefined, 'product-details-dialog')
+  dialog.dataset.productEntryId = item.entryId || ''
+  let tagEditor, closing
+  // Dismissal and navigation share one transition: only its first callback runs.
+  const closeDetails = (onClosed) => {
+    if (closing) return closing
+    if (!dialog.open) return Promise.resolve(false)
+    closing = (async () => {
+      tagEditor?.setBusy(true)
+      try {
+        await tagEditor?.flush()
+        dialog.close()
+        onClosed?.()
+        return true
+      } catch {
+        return false
+      } finally {
+        tagEditor?.setBusy(false)
+        closing = undefined
+      }
+    })()
+    return closing
+  }
+  dialog.addEventListener('cancel', (event) => {
+    event.preventDefault()
+    void closeDetails()
+  })
   bindAttribute(dialog, 'aria-label', message('Original product details'))
   const heading = el('header', undefined, 'product-details-heading')
   const close = el('button')
@@ -60,7 +87,7 @@ export function openProductDetails(
     iconOnly: true,
     label: message('Close product details'),
   })
-  close.addEventListener('click', () => dialog.close())
+  close.addEventListener('click', () => void closeDetails())
   heading.append(el('h2', message('Original product details')), close)
   const tools = el('div', undefined, 'product-details-tools')
   const copyAll = el('button', message('Copy description'))
@@ -74,10 +101,7 @@ export function openProductDetails(
   )
   const order = el('button', message('Order details'))
   decorateIcon(order, 'store')
-  order.addEventListener('click', () => {
-    dialog.close()
-    onOrder?.()
-  })
+  order.addEventListener('click', () => void closeDetails(onOrder))
   order.disabled = !onOrder
   tools.append(copyAll, order)
   const identity = el('div', undefined, 'product-details-identity')
@@ -85,10 +109,7 @@ export function openProductDetails(
     identity.append(
       copyTextButton(item.sellerName, { label: 'Copy store name' })
     )
-  if (item.orderId)
-    identity.append(
-      copyTextButton(item.orderId, { label: 'Copy order number' })
-    )
+  if (item.orderId) identity.append(orderReference(item.orderId))
   const body = el('div', undefined, 'product-details-body')
   const data = el('div', undefined, 'product-details-data')
   const title = el('h3')
@@ -144,9 +165,26 @@ export function openProductDetails(
     el('pre', source.description)
   )
   dialog.append(heading, tools, identity, body, original)
-  dialog.addEventListener('close', () => dialog.remove(), { once: true })
+  if (typeof tags?.save === 'function') {
+    const tagHost = el('div')
+    body.after(tagHost)
+    tagEditor = mountProductTags(tagHost, tags)
+  }
+  dialog.addEventListener(
+    'close',
+    () => {
+      tagEditor?.destroy()
+      dialog.remove()
+    },
+    { once: true }
+  )
   document.body.append(dialog)
   dialog.showModal()
   close.focus()
-  return dialog
+  return {
+    dialog,
+    close: closeDetails,
+    dirty: () => Boolean(tagEditor?.dirty()),
+    setDefinitions: (definitions) => tagEditor?.setDefinitions(definitions),
+  }
 }

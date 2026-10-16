@@ -61,6 +61,7 @@ async function withCanvas(
     text: [],
     draws: [],
     paths: [],
+    fills: [],
     encoded: 0,
     peakLiveBytes: 0,
   }
@@ -87,7 +88,9 @@ async function withCanvas(
         },
         drawImage: (...args) => state.draws.push(args),
         scale() {},
-        fillRect() {},
+        fillRect(x, y, width, height) {
+          state.fills.push({ x, y, width, height, color: this.fillStyle })
+        },
         beginPath() {
           this.path = []
         },
@@ -148,6 +151,222 @@ async function withCanvas(
 
 const cell = (entry, key) =>
   entry.cells[excelImageColumns.findIndex((column) => column.key === key)]
+
+test('Excel image errors identify the original product and field that needs attention', async () =>
+  withCanvas(async () => {
+    const original = {
+      ...row,
+      entryId: 'source-variant-1',
+      chineseCategory: '',
+    }
+    assert.throws(
+      () => planExcelImage([original]),
+      (error) => {
+        assert.equal(error.packingIssue.row, original)
+        assert.equal(error.packingIssue.field, 'category')
+        return true
+      }
+    )
+    const [plan] = planExcelImage([{ ...row, entryId: 'source-variant-1' }])
+    await assert.rejects(
+      renderExcelImage(plan, {
+        loadImage: async () => {
+          throw new Error('Synthetic photo unavailable')
+        },
+      }),
+      (error) => {
+        assert.equal(error.packingIssue.row.entryId, 'source-variant-1')
+        assert.equal(error.packingIssue.row.orderId, row.orderId)
+        assert.equal(error.packingIssue.field, 'photo')
+        return true
+      }
+    )
+  }))
+
+test('Store and order bands span the chosen columns without splitting merged carton marks', async () =>
+  withCanvas(async (state) => {
+    const a = {
+      ...row,
+      sellerName: '合成玻璃供应商',
+      sellerMemberLogin: 'supplier-a',
+    }
+    const input = [
+      a,
+      { ...a, barcode: 'CE26100101AL' },
+      { ...a, orderId: 'order-2' },
+      {
+        ...a,
+        sellerName: '合成布艺供应商',
+        sellerMemberLogin: 'supplier-b',
+        orderId: 'order-3',
+      },
+    ]
+    const [plan] = planExcelImage(input, {
+      columns: ['quantity', 'baseCode', 'description'],
+    })
+    assert.deepEqual(
+      plan.columns.map((column) => column.key),
+      ['quantity', 'baseCode', 'description']
+    )
+    assert.deepEqual(
+      plan.rows.map((entry) => entry.band?.kind || null),
+      ['store', null, 'order', 'store']
+    )
+    assert.deepEqual(
+      plan.markSpans.map(({ start, end }) => [start, end]),
+      [
+        [0, 2],
+        [2, 3],
+        [3, 4],
+      ]
+    )
+    assert.equal(
+      plan.cssHeight,
+      plan.headerHeight +
+        2 +
+        plan.rows.reduce(
+          (height, entry) => height + entry.height + (entry.band?.height || 0),
+          0
+        )
+    )
+    assert.equal(
+      plan.markSpans[0].height,
+      plan.rows[0].height + plan.rows[1].height
+    )
+    await renderExcelImage(plan)
+    const bandText = state.text
+      .filter((draw) => /供应商|订单/.test(draw.text))
+      .map((draw) => draw.text)
+      .join(' ')
+    assert.match(bandText, /合成玻璃供应商/)
+    assert.match(bandText, /合成布艺供应商/)
+    for (const id of ['order-1', 'order-2', 'order-3'])
+      assert.ok(bandText.includes(id))
+    const photos = state.draws.filter(([bitmap]) => bitmap.kind === 'photo')
+    assert.equal(photos.length, 0)
+    assert.equal(
+      state.draws.filter(([bitmap]) => bitmap.kind === 'mark').length,
+      3
+    )
+  }))
+
+test('Every Excel batch repeats its seller and full order heading and remains within its image budget', async () =>
+  withCanvas(() => {
+    const input = Array.from({ length: 100 }, () => ({
+      ...row,
+      sellerName: '合成供应商',
+      sellerMemberLogin: 'synthetic-seller',
+      orderId: '5127523670009019539',
+    }))
+    const plans = planExcelImage(input)
+    assert.ok(plans.length > 1)
+    assert.equal(
+      plans.reduce((count, plan) => count + plan.rowCount, 0),
+      100
+    )
+    for (const plan of plans) {
+      assert.equal(plan.rows[0].band.kind, 'store')
+      assert.match(plan.rows[0].band.lines.join(''), /5127523670009019539/)
+      assert.ok(plan.width * plan.height <= 16_000_000)
+      assert.ok(plan.height <= 8192)
+      assert.equal(plan.markSpans.length, 1)
+      assert.equal(
+        plan.markSpans[0].height,
+        plan.rows.reduce((sum, entry) => sum + entry.height, 0)
+      )
+    }
+  }))
+
+test('hidden order details never reach the raster while compact bands retain store and order boundaries', async () =>
+  withCanvas(async (state) => {
+    const first = {
+      ...row,
+      sellerName: 'Private seller A',
+      sellerMemberLogin: 'private-account-a',
+      orderId: '5127523670009019539',
+    }
+    const input = [
+      first,
+      { ...first, barcode: 'CE26100101AL' },
+      { ...first, orderId: '5127523670009019540' },
+      {
+        ...first,
+        sellerName: 'Private seller B',
+        sellerMemberLogin: 'private-account-b',
+        orderId: '5127523670009019541',
+      },
+      first,
+    ]
+    const [shown] = planExcelImage(input, {
+      columns: ['quantity', 'baseCode', 'description'],
+    })
+    const [hidden] = planExcelImage(input, {
+      columns: ['quantity', 'baseCode', 'description'],
+      showOrderDetails: false,
+    })
+    assert.equal(shown.showOrderDetails, true)
+    assert.equal(hidden.showOrderDetails, false)
+    assert.deepEqual(
+      hidden.rows.map(({ separator }) => separator),
+      ['none', 'row', 'order', 'store', 'store']
+    )
+    assert.deepEqual(
+      hidden.rows.map(
+        ({ band }) => band && [band.kind, band.height, band.lines]
+      ),
+      [null, null, ['order', 6, []], ['store', 10, []], ['store', 10, []]]
+    )
+    assert.deepEqual(hidden.markSpans, shown.markSpans)
+    assert.deepEqual(
+      hidden.rows.map(({ source, cells }) => ({ source, cells })),
+      shown.rows.map(({ source, cells }) => ({ source, cells }))
+    )
+    assert.ok(hidden.height < shown.height)
+    await renderExcelImage(hidden)
+    const text = state.text.map(({ text }) => text).join(' ')
+    for (const source of input)
+      for (const value of [
+        source.sellerName,
+        source.sellerMemberLogin,
+        source.orderId,
+      ])
+        assert.equal(text.includes(value), false, `Leaked identity: ${value}`)
+    assert.deepEqual(
+      state.fills
+        .filter(({ color }) => ['#f0dfc5', '#eeebe5'].includes(color))
+        .map(({ x, width, height }) => [x, width, height]),
+      [
+        [1, hidden.cssWidth - 2, 6],
+        [1, hidden.cssWidth - 2, 10],
+        [1, hidden.cssWidth - 2, 10],
+      ]
+    )
+  }))
+
+test('hiding identity headings stays effective in every batch and separates orders without seller metadata', async () =>
+  withCanvas(() => {
+    const input = Array.from({ length: 100 }, (_, index) => ({
+      ...row,
+      sellerName: index < 50 ? 'Private supplier' : '',
+      sellerMemberLogin: '',
+      orderId: `private-order-${Math.floor(index / 10)}`,
+    }))
+    const plans = planExcelImage(input, { showOrderDetails: false })
+    assert.ok(plans.length > 1)
+    assert.equal(
+      plans.reduce((total, plan) => total + plan.rowCount, 0),
+      100
+    )
+    for (const plan of plans) {
+      assert.equal(plan.rows[0].band, null)
+      assert.ok(plan.width * plan.height <= 16_000_000)
+      assert.ok(plan.height <= 8192)
+      for (const entry of plan.rows) {
+        assert.equal(entry.band?.lines.length || 0, 0)
+        if (entry.separator === 'order') assert.equal(entry.band.height, 6)
+      }
+    }
+  }))
 
 test('Localized headers grow narrow columns enough to keep whole words such as Cantidad intact', async () =>
   withCanvas(

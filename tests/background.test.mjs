@@ -7,6 +7,7 @@ import { detailUrl, isListUrl } from '../src/order-list.js'
 import { createImportReport, importJobView } from '../src/import-report.js'
 import { financialDiagnostics } from '../src/import-diagnostics.js'
 import { importProgress } from '../src/import-progress.js'
+import { appearanceTokens } from '../src/appearance.js'
 
 const sourceCode = (
   await readFile(new URL('../src/background.js', import.meta.url), 'utf8')
@@ -33,6 +34,7 @@ function setup({ orderIds = ['10001'] } = {}) {
     tabs = new Map([[7, { id: 7, url: listUrl, status: 'complete' }]]),
     saved = new Map(),
     calls = []
+  const display = { colorScheme: 'dark', appearance: {} }
   let adapter,
     tabSequence = 10
   const repository = {
@@ -67,6 +69,14 @@ function setup({ orderIds = ['10001'] } = {}) {
     },
     async exportBackup() {
       return {}
+    },
+    async getWorkspaceDisplay() {
+      return structuredClone(display)
+    },
+    async setWorkspaceColorScheme(colorScheme) {
+      if (!['light', 'dark', 'system'].includes(colorScheme))
+        throw new Error('The workspace color scheme is invalid.')
+      display.colorScheme = colorScheme
     },
   }
   const chrome = {
@@ -121,7 +131,13 @@ function setup({ orderIds = ['10001'] } = {}) {
         tabs.delete(id)
       },
       async sendMessage(tabId, message, options) {
-        calls.push(['content', tabId, message.type, options.frameId])
+        calls.push([
+          'content',
+          tabId,
+          message.type,
+          options?.frameId,
+          message.data,
+        ])
         if (message.type === 'LIST_READ')
           return {
             ok: true,
@@ -162,6 +178,7 @@ function setup({ orderIds = ['10001'] } = {}) {
     createImportReport,
     financialDiagnostics,
     importProgress,
+    appearanceTokens,
     loadThumbnail: async () => '',
     URL,
     console,
@@ -170,12 +187,94 @@ function setup({ orderIds = ['10001'] } = {}) {
     new Promise((resolve) =>
       chrome.runtime.onMessage.listeners[0](message, who, resolve)
     )
-  return { chrome, jobs, tabs, saved, calls, send, adapter: () => adapter }
+  return {
+    chrome,
+    jobs,
+    tabs,
+    saved,
+    calls,
+    send,
+    display,
+    adapter: () => adapter,
+  }
 }
 const settle = async () => {
   for (let i = 0; i < 20; i++)
     await new Promise((resolve) => setImmediate(resolve))
 }
+
+test('import appearance reads the authoritative palette, persists only mode, and broadcasts to supported pages', async () => {
+  const env = setup()
+  env.display.appearance = { lightTheme: '1688', darkTheme: 'terracotta' }
+  env.tabs.set(8, { id: 8, url: url('10001') })
+  env.tabs.set(9, { id: 9, url: 'https://example.test/' })
+  const initial = await env.send({ type: 'WORKSPACE_APPEARANCE_GET' }, sender)
+  assert.equal(initial.ok, true)
+  assert.equal(initial.data.colorScheme, 'dark')
+  assert.equal(initial.data.dark.surface, '#2d221e')
+  assert.equal(initial.data.light.surface, '#fffcf8')
+  assert.equal(env.calls.length, 0)
+  assert.equal(
+    (
+      await env.send({
+        type: 'WORKSPACE_APPEARANCE_CHANGED',
+        colorScheme: 'light',
+      })
+    ).ok,
+    true
+  )
+  assert.equal(env.display.colorScheme, 'light')
+  const broadcasts = env.calls.filter(
+    (call) => call[2] === 'WORKSPACE_APPEARANCE'
+  )
+  assert.deepEqual(
+    broadcasts.map((call) => call[1]),
+    [7, 8]
+  )
+  assert.ok(broadcasts.every((call) => call[4].colorScheme === 'light'))
+  assert.ok(
+    broadcasts.every((call) => call[3] === undefined),
+    'Update all supported frames in each tab'
+  )
+  env.display.appearance.darkTheme = 'apricot'
+  const next = await env.send(
+    { type: 'WORKSPACE_APPEARANCE_GET' },
+    {
+      ...sender,
+      url: url('10001'),
+    }
+  )
+  assert.equal(next.data.dark.surface, '#2b251f')
+  assert.equal(next.data.colorScheme, 'light')
+  assert.equal(
+    (
+      await env.send(
+        { type: 'WORKSPACE_APPEARANCE_CHANGED', colorScheme: 'dark' },
+        sender
+      )
+    ).ok,
+    false
+  )
+  assert.equal(
+    (
+      await env.send({
+        type: 'WORKSPACE_APPEARANCE_CHANGED',
+        colorScheme: 'invalid',
+      })
+    ).ok,
+    false
+  )
+  assert.equal(
+    (
+      await env.send(
+        { type: 'WORKSPACE_APPEARANCE_GET' },
+        { ...sender, url: 'https://example.test/' }
+      )
+    ).ok,
+    false
+  )
+  assert.equal(env.display.colorScheme, 'light')
+})
 
 test('reader progress is compact, tab/frame/order scoped, read-only and available during a blocked read', async () => {
   const s = setup()

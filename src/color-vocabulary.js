@@ -706,16 +706,80 @@ const variantField =
 const excludedField =
   /(?:货号|款号|编号|型号|香型|香味|香氛|香气|气味|色温|product\s*(?:no\.?|number)|model|fragrance|scent|temperature)/i
 const ambiguous = new Set(['咖啡', '水粉', '奶粉', '桃', '香槟'])
-const bareColors = new Map(
-  COLOR_VOCABULARY.flatMap((entry) =>
-    entry.aliases
-      .filter((alias) => alias.length === 1)
-      .map((alias) => [alias, entry])
+export function validateColorVocabulary(input = COLOR_VOCABULARY) {
+  if (!Array.isArray(input) || input.length > 500)
+    throw new Error('Color rules must be a list with at most 500 entries.')
+  const ids = new Set(),
+    aliases = new Set()
+  return input.map((entry, index) => {
+    const fail = (reason, field = 'aliases') => {
+      const error = new Error(`Color rule ${index + 1}: ${reason}`)
+      error.ruleIndex = index
+      error.ruleReason = reason
+      error.ruleField = field
+      throw error
+    }
+    if (!entry || typeof entry !== 'object') fail('Enter a valid color rule.')
+    const id = normalize(entry.id)
+    if (!/^[a-z0-9-]{1,80}$/.test(id) || ids.has(id))
+      fail('Color identifiers must be unique.')
+    ids.add(id)
+    const names = Array.isArray(entry.aliases) ? entry.aliases : []
+    if (!names.length || names.length > 100)
+      fail('Enter at least one seller color name.')
+    const normalizedAliases = names.map((alias) => {
+      const text = normalize(alias)
+      if (!text || text.length > 80)
+        fail('Each seller color name must contain 1–80 characters.')
+      if (aliases.has(text))
+        fail(`The seller color name “${text}” appears in more than one rule.`)
+      aliases.add(text)
+      return text
+    })
+    const labels = Object.fromEntries(
+      ['en', 'zh', 'es'].map((language) => {
+        const text = normalize(entry.labels?.[language])
+        if (!text || text.length > 80)
+          fail(
+            'Enter a name in English, Chinese and Spanish (up to 80 characters).',
+            language
+          )
+        return [language, text]
+      })
+    )
+    const swatch =
+      entry.swatch === null || entry.swatch === ''
+        ? null
+        : normalize(entry.swatch).toLowerCase()
+    if (swatch !== null && !/^#[0-9a-f]{6}$/.test(swatch))
+      fail('Choose a valid color swatch.', 'swatch')
+    const kind = entry.kind || 'color'
+    if (!['color', 'finish', 'pattern', 'assortment'].includes(kind))
+      fail('Choose a valid color type.')
+    return { id, aliases: normalizedAliases, labels, swatch, kind }
+  })
+}
+
+let activeVocabulary = COLOR_VOCABULARY
+let bareColors, tokens
+function indexVocabulary() {
+  bareColors = new Map(
+    activeVocabulary.flatMap((entry) =>
+      entry.aliases
+        .filter((alias) => alias.length === 1)
+        .map((alias) => [alias, entry])
+    )
   )
-)
-const tokens = COLOR_VOCABULARY.flatMap((entry) =>
-  entry.aliases.map((alias) => ({ alias, entry }))
-).sort((a, b) => b.alias.length - a.alias.length)
+  tokens = activeVocabulary
+    .flatMap((entry) => entry.aliases.map((alias) => ({ alias, entry })))
+    .sort((a, b) => b.alias.length - a.alias.length)
+}
+/** Change display helpers only. Imported seller text and issued codes stay intact. */
+export function configureColorVocabulary(input) {
+  activeVocabulary = validateColorVocabulary(input ?? COLOR_VOCABULARY)
+  indexVocabulary()
+}
+indexVocabulary()
 
 function fieldsForItem(item) {
   const fields = []
@@ -761,7 +825,8 @@ function hintsForField(field, language) {
   )
   const matches = []
   const occupied = new Uint8Array(text.length)
-  const add = (entry, source, start, end, swatch = entry.swatch) => {
+  const add = (entry, source, start, end, swatch = entry?.swatch) => {
+    if (!entry) return
     if (occupied.slice(start, end).some(Boolean)) return
     if (
       /(?:不是|并非|非|不要|不含)[^,，;；。()【】]*$/.test(text.slice(0, start))
@@ -788,7 +853,7 @@ function hintsForField(field, language) {
     const components = raw.replace(/色$/, '').match(/米白|./g)
     const entries = components.map((part) =>
       part === '米白'
-        ? COLOR_VOCABULARY.find((entry) => entry.id === 'off-white')
+        ? activeVocabulary.find((entry) => entry.id === 'off-white')
         : bareColors.get(part)
     )
     if (entries.some((entry) => !entry)) continue
@@ -856,7 +921,7 @@ function hintsForField(field, language) {
           : match[1] === '半透'
             ? 'translucent'
             : 'clear'
-    const effect = COLOR_VOCABULARY.find((value) => value.id === effectId)
+    const effect = activeVocabulary.find((value) => value.id === effectId)
     add(effect, match[1], match.index, start, null)
     add(entry, match[2], start, start + 1, null)
   }

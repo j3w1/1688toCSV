@@ -406,10 +406,10 @@ test('filtered totals count each whole order once and row clicks toggle without 
   await expect(total).toHaveText(
     money(summarizeOrders(records).amounts.payable)
   )
-  await page.locator('.order-card').first().click()
+  await page.locator('.order-card-meta').first().click()
   await expect(page.locator('.order-card[aria-selected=true]')).toHaveCount(1)
   await expect(total).toHaveText(money(records[0].snapshot.totals.payable))
-  await page.locator('.order-card').first().click()
+  await page.locator('.order-card-meta').first().click()
   await expect(page.locator('.order-card[aria-selected=true]')).toHaveCount(0)
   await expect(total).toHaveText(
     money(summarizeOrders(records).amounts.payable)

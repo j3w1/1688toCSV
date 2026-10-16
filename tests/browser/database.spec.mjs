@@ -65,6 +65,497 @@ async function openTestDatabase(extension) {
   return page
 }
 
+test('legacy workspace colors reseed once and later custom colors survive reload and backup restore', async ({
+  extension,
+}) => {
+  const page = await openTestDatabase(extension)
+  const result = await page.evaluate(async (first) => {
+    await library.saveSnapshot(first)
+    await library.setNotes(first.orderId, {
+      notes: 'Keep note',
+      tags: ['Display stock'],
+    })
+    const legacy = await library.getPackingPreferences()
+    legacy.appearance = {
+      lightTheme: '1688',
+      darkTheme: 'terracotta',
+      labelColors: { dates: { light: '#ff00ff' } },
+    }
+    legacy.orderTags = [
+      {
+        name: 'Display stock',
+        colors: { light: '#123456' },
+        textColors: { dark: '#fedcba' },
+      },
+    ]
+    await library.savePackingPreferences(legacy)
+    const before = await library.exportBackup()
+    const upgraded = await library.getPackingPreferences()
+    const after = await library.exportBackup()
+    const custom = structuredClone(upgraded)
+    custom.appearance.labelColors.dates = { light: '#345678' }
+    custom.orderTags[0].colors.dark = '#543210'
+    custom.orderTags[0].textColors = { dark: '#ffeedd' }
+    await library.savePackingPreferences(custom)
+    library.close()
+    window.library = await openOrderDatabase({ name: databaseName })
+    const reopened = await library.getPackingPreferences()
+    const backup = await library.exportBackup()
+    const restored = await openOrderDatabase({ name: `${databaseName}-reseed` })
+    await restored.restoreBackup(backup)
+    const restoredPreferences = await restored.getPackingPreferences()
+    const record = await restored.getOrder(first.orderId)
+    restored.close()
+    return {
+      upgraded,
+      reopened,
+      restoredPreferences,
+      record,
+      beforeUpdatedAt: before.packingPreferences.updatedAt,
+      afterUpdatedAt: after.packingPreferences.updatedAt,
+    }
+  }, snapshot())
+  expect(result.upgraded.appearance).toEqual({
+    lightTheme: '1688',
+    darkTheme: 'terracotta',
+    labelColors: {},
+    paletteRevision: 1,
+  })
+  expect(result.upgraded.orderTags).toEqual([
+    { name: 'Display stock', colors: {}, used: true },
+  ])
+  expect(result.beforeUpdatedAt).toBe(result.afterUpdatedAt)
+  expect(result.reopened.appearance.labelColors.dates).toEqual({
+    light: '#345678',
+  })
+  expect(result.reopened.orderTags[0]).toEqual({
+    name: 'Display stock',
+    colors: { dark: '#543210' },
+    textColors: { dark: '#ffeedd' },
+    used: true,
+  })
+  expect(result.restoredPreferences).toEqual(result.reopened)
+  expect(result.record.notes).toBe('Keep note')
+  expect(result.record.tags).toEqual(['Display stock'])
+  expect(result.record.snapshot).toEqual(snapshot())
+})
+
+test('order tags register atomically with notes and survive stale Settings saves and backup restore', async ({
+  extension,
+}) => {
+  const page = await openTestDatabase(extension)
+  const result = await page.evaluate(async (first) => {
+    await library.saveSnapshot(first)
+    const stale = await library.getPackingPreferences()
+    await library.setNotes(first.orderId, {
+      notes: 'Keep newest note',
+      tags: ['New shared tag'],
+    })
+    let preferences = await library.getPackingPreferences()
+    preferences.orderTags[0].colors = { light: '#301800', dark: '#ffcc88' }
+    preferences.orderTags[0].textColors = { light: '#ffeedd', dark: '#543210' }
+    await library.savePackingPreferences(preferences)
+    stale.orderTags = [{ name: 'Created in settings', colors: {} }]
+    await library.savePackingPreferences(stale)
+    const backup = await library.exportBackup()
+    const restored = await openOrderDatabase({ name: `${databaseName}-tags` })
+    await restored.restoreBackup(backup)
+    const output = {
+      preferences: await restored.getPackingPreferences(),
+      record: await restored.getOrder(first.orderId),
+    }
+    restored.close()
+    return output
+  }, snapshot())
+  expect(result.record.notes).toBe('Keep newest note')
+  expect(result.record.tags).toEqual(['New shared tag'])
+  expect(result.record.snapshot).toEqual(snapshot())
+  expect(result.preferences.orderTags).toEqual([
+    { name: 'Created in settings', colors: {} },
+    {
+      name: 'New shared tag',
+      colors: { light: '#301800', dark: '#ffcc88' },
+      textColors: { light: '#ffeedd', dark: '#543210' },
+      used: true,
+    },
+  ])
+})
+
+test('tag catalogs expire after last use, retain unused Settings entries and stay separate across scopes', async ({
+  extension,
+}) => {
+  const page = await openTestDatabase(extension)
+  const result = await page.evaluate(async (first) => {
+    const second = { ...first, accountId: 'other-account' }
+    await library.saveSnapshot(first)
+    await library.saveSnapshot(second)
+    const prefs = await library.getPackingPreferences()
+    prefs.orderTags = [
+      { name: 'Waiting', colors: {} },
+      { name: 'Shared', colors: {} },
+    ]
+    prefs.productTags = [{ name: 'Unused product', colors: {} }]
+    await library.savePackingPreferences(prefs)
+    const stale = await library.getPackingPreferences()
+    const baseline = {
+      orderTags: stale.orderTags,
+      productTags: stale.productTags,
+    }
+    await library.setNotes(first.orderId, {
+      notes: 'Order note',
+      tags: ['Shared'],
+    })
+    await library.setNotes(
+      first.orderId,
+      { notes: 'Other note', tags: ['Shared'] },
+      { accountId: second.accountId }
+    )
+    await library.setProductTags(first.orderId, first.items[0].entryId, [
+      'Shared',
+      'One product',
+    ])
+    await library.setProductTags(first.orderId, first.items[1].entryId, [
+      'Shared',
+    ])
+    await library.setProductTags(
+      first.orderId,
+      first.items[0].entryId,
+      ['Shared'],
+      { accountId: second.accountId }
+    )
+    const counts = [
+      await library.getTagUsage('Shared'),
+      await library.getTagUsage('Shared', { scope: 'product' }),
+    ]
+    await library.setNotes(first.orderId, { notes: 'Order note', tags: [] })
+    const stillUsed = await library.getPackingPreferences()
+    await library.setNotes(
+      first.orderId,
+      { notes: 'Other note', tags: [] },
+      { accountId: second.accountId }
+    )
+    await library.savePackingPreferences(stale, {
+      tagCatalogBaseline: baseline,
+    })
+    const expired = await library.getPackingPreferences()
+    const removed = await library.removeTag('Shared', { scope: 'product' })
+    const records = [
+      await library.getOrder(first.orderId),
+      await library.getOrder(first.orderId, { accountId: second.accountId }),
+    ]
+    const unusedRemoval = await library.removeTag('Waiting')
+    return { counts, stillUsed, expired, removed, records, unusedRemoval }
+  }, snapshot())
+  expect(result.counts).toEqual([2, 3])
+  expect(
+    result.stillUsed.orderTags.find((tag) => tag.name === 'Shared').used
+  ).toBe(true)
+  expect(result.expired.orderTags.map((tag) => tag.name)).toEqual(['Waiting'])
+  expect(result.expired.productTags.map((tag) => tag.name)).toEqual([
+    'Unused product',
+    'Shared',
+    'One product',
+  ])
+  expect(result.removed.removedAssignments).toBe(3)
+  expect(result.removed.preferences.productTags.map((tag) => tag.name)).toEqual(
+    ['Unused product', 'One product']
+  )
+  expect(result.records[0].productTags).toEqual({
+    [snapshot().items[0].entryId]: ['One product'],
+  })
+  expect(result.records[1].productTags).toEqual({})
+  expect(result.records[0].notes).toBe('Order note')
+  expect(result.records[0].snapshot).toEqual(snapshot())
+  expect(result.unusedRemoval.removedAssignments).toBe(0)
+  expect(result.unusedRemoval.preferences.orderTags).toEqual([])
+})
+
+test('tag renames update current and historical assignments atomically without reviving old catalog names', async ({
+  extension,
+}) => {
+  const page = await openTestDatabase(extension)
+  const result = await page.evaluate(async (first) => {
+    await library.saveSnapshot(first)
+    await library.saveSnapshot({ ...first, accountId: 'other-account' })
+    for (const accountId of ['local', 'other-account']) {
+      await library.setNotes(
+        first.orderId,
+        { notes: 'Keep note', tags: ['Shared'] },
+        { accountId }
+      )
+      await library.setProductTags(
+        first.orderId,
+        first.items[0].entryId,
+        ['Shared'],
+        { accountId }
+      )
+    }
+    await library.setProductTags(first.orderId, first.items[1].entryId, [
+      'Shared',
+    ])
+    const preferences = await library.getPackingPreferences()
+    preferences.orderTags.push({ name: 'Waiting', colors: {} })
+    preferences.productTags.push({ name: 'Waiting', colors: {} })
+    preferences.productTags.find((tag) => tag.name === 'Shared').colors = {
+      dark: '#123456',
+    }
+    await library.savePackingPreferences(preferences)
+    const stale = await library.getPackingPreferences()
+    const baseline = {
+      orderTags: stale.orderTags,
+      productTags: stale.productTags,
+    }
+    await library.saveSnapshot({
+      ...first,
+      observedAt: '2026-01-02T12:00:00.000Z',
+      items: first.items.map((item) => ({
+        ...item,
+        description: `${item.description} refreshed`,
+      })),
+    })
+    const order = await library.renameTag('Shared', 'Order renamed')
+    const product = await library.renameTag('Shared', 'Product renamed', {
+      scope: 'product',
+    })
+    await library.savePackingPreferences(stale, {
+      tagCatalogBaseline: baseline,
+    })
+    const before = await library.exportBackup()
+    const errors = []
+    for (const [name, nextName, scope] of [
+      ['Order renamed', 'Waiting', 'order'],
+      ['Product renamed', 'Waiting', 'product'],
+      ['Product renamed', '', 'product'],
+    ]) {
+      try {
+        await library.renameTag(name, nextName, { scope })
+      } catch (error) {
+        errors.push(error.message)
+      }
+    }
+    const put = IDBObjectStore.prototype.put
+    IDBObjectStore.prototype.put = function (...args) {
+      if (
+        this.name === 'packingPreferences' &&
+        args[0]?.value?.productTags?.some((tag) => tag.name === 'Broken')
+      )
+        throw new DOMException(
+          'Synthetic catalog write unavailable',
+          'QuotaExceededError'
+        )
+      return put.apply(this, args)
+    }
+    try {
+      await library.renameTag('Product renamed', 'Broken', { scope: 'product' })
+    } catch (error) {
+      errors.push(error.message)
+    } finally {
+      IDBObjectStore.prototype.put = put
+    }
+    const after = await library.exportBackup()
+    return {
+      orderCount: order.renamedAssignments,
+      productCount: product.renamedAssignments,
+      before,
+      after,
+      errors,
+    }
+  }, snapshot())
+  expect(result.orderCount).toBe(2)
+  expect(result.productCount).toBe(3)
+  expect(result.errors).toHaveLength(4)
+  expect(result.errors[0]).toContain('already exists')
+  expect(result.errors[1]).toContain('already exists')
+  expect(result.errors[2]).toContain('Enter a tag name')
+  expect(result.errors[3]).toContain('Synthetic catalog write unavailable')
+  expect({ ...result.after, exportedAt: '' }).toEqual({
+    ...result.before,
+    exportedAt: '',
+  })
+  expect(
+    result.after.orders.every(
+      (record) => record.tags.join() === 'Order renamed'
+    )
+  ).toBe(true)
+  expect(
+    result.after.orders.every((record) =>
+      Object.values(record.productTags)
+        .flat()
+        .every((name) => name === 'Product renamed')
+    )
+  ).toBe(true)
+  expect(result.after.history[0].tags).toEqual(['Order renamed'])
+  expect(Object.values(result.after.history[0].productTags).flat()).toEqual([
+    'Product renamed',
+    'Product renamed',
+  ])
+  const prefs = result.after.packingPreferences.value
+  expect(prefs.orderTags.map((tag) => tag.name)).not.toContain('Shared')
+  expect(prefs.productTags.map((tag) => tag.name)).not.toContain('Shared')
+  expect(
+    prefs.productTags.find((tag) => tag.name === 'Product renamed').colors.dark
+  ).toBe('#123456')
+  expect(result.after.orders[0].notes).toBe('Keep note')
+})
+
+test('product tags survive source refresh and backup roundtrip, and older backups cannot undo a clear', async ({
+  extension,
+}) => {
+  const page = await openTestDatabase(extension)
+  const result = await page.evaluate(async (first) => {
+    await library.saveSnapshot(first)
+    await library.setProductTags(first.orderId, first.items[0].entryId, [
+      'Fragile',
+    ])
+    let preferences = await library.getPackingPreferences()
+    preferences.productTags[0].colors = { light: '#301800', dark: '#ffcc88' }
+    preferences.productTags[0].textColors = {
+      light: '#ffeedd',
+      dark: '#543210',
+    }
+    await library.savePackingPreferences(preferences)
+    const tagged = await library.exportBackup()
+    const changed = {
+      ...first,
+      observedAt: '2026-01-02T12:00:00.000Z',
+      items: first.items.map((item) => ({
+        ...item,
+        description: item.description + ' updated',
+      })),
+    }
+    await library.saveSnapshot(changed)
+    const refreshed = await library.getOrder(first.orderId)
+    const backup = await library.exportBackup()
+    const restored = await openOrderDatabase({
+      name: `${databaseName}-product-tags`,
+    })
+    await restored.restoreBackup(backup)
+    const roundtrip = await restored.getOrder(first.orderId)
+    const colors = (await restored.getPackingPreferences()).productTags
+    await restored.setProductTags(first.orderId, first.items[0].entryId, [])
+    await restored.restoreBackup(tagged)
+    const afterOldBackup = await restored.getOrder(first.orderId)
+    const catalog = (await restored.getPackingPreferences()).productTags
+    const beforeInvalid = await restored.exportBackup()
+    let invalidMessage = ''
+    try {
+      await restored.setProductTags(first.orderId, first.items[1].entryId, [
+        'New',
+        null,
+      ])
+    } catch (error) {
+      invalidMessage = error.message
+    }
+    const afterInvalid = await restored.exportBackup()
+    const bad = structuredClone(backup)
+    bad.orders[0].productTags[first.items[1].entryId] = 'not a tag array'
+    let backupError = ''
+    try {
+      await restored.restoreBackup(bad)
+    } catch (error) {
+      backupError = error.message
+    }
+    const afterBadBackup = await restored.exportBackup()
+    restored.close()
+    return {
+      refreshed,
+      roundtrip,
+      colors,
+      afterOldBackup,
+      catalog,
+      beforeInvalid,
+      afterInvalid,
+      afterBadBackup,
+      invalidMessage,
+      backupError,
+    }
+  }, snapshot())
+  const tags = { [snapshot().items[0].entryId]: ['Fragile'] }
+  expect(result.refreshed.productTags).toEqual(tags)
+  expect(result.roundtrip.productTags).toEqual(tags)
+  expect(result.roundtrip.snapshot).toEqual(result.refreshed.snapshot)
+  expect(result.colors).toEqual([
+    {
+      name: 'Fragile',
+      colors: { light: '#301800', dark: '#ffcc88' },
+      textColors: { light: '#ffeedd', dark: '#543210' },
+      used: true,
+    },
+  ])
+  expect(result.afterOldBackup.productTags).toEqual({})
+  expect(result.afterOldBackup.snapshot).toEqual(result.refreshed.snapshot)
+  expect(result.catalog).toEqual([])
+  expect(result.invalidMessage).toContain('Product tags')
+  expect(result.backupError).toContain('Product tags')
+  for (const key of ['orders', 'history', 'packingPreferences']) {
+    expect(result.afterInvalid[key]).toEqual(result.beforeInvalid[key])
+    expect(result.afterBadBackup[key]).toEqual(result.beforeInvalid[key])
+  }
+})
+
+test('archived row tag identities remain while their order exists and global removal also clears history', async ({
+  extension,
+}) => {
+  const page = await openTestDatabase(extension)
+  const result = await page.evaluate(async (first) => {
+    await library.saveSnapshot(first)
+    await library.setNotes(first.orderId, {
+      notes: 'Keep',
+      tags: ['All orders'],
+    })
+    await library.setProductTags(first.orderId, first.items[0].entryId, [
+      'Archived',
+    ])
+    const smaller = {
+      ...first,
+      observedAt: '2026-01-02T12:00:00.000Z',
+      items: [first.items[1]],
+      totals: {
+        goodsGross: '5.00',
+        shipping: '2.00',
+        sourceDiscount: '0.00',
+        orderAdjustment: '0.00',
+        goodsNet: '5.00',
+        payable: '7.00',
+      },
+    }
+    await library.saveSnapshot(smaller)
+    const archived = await library.getOrder(first.orderId)
+    const count = await library.getTagUsage('Archived', { scope: 'product' })
+    await library.removeTag('Archived', { scope: 'product' })
+    await library.removeTag('All orders')
+    const history = await library.getHistory(first.orderId)
+    const current = await library.getOrder(first.orderId)
+    const preferences = await library.getPackingPreferences()
+    await library.setProductTags(first.orderId, first.items[1].entryId, [
+      'Last order',
+    ])
+    await library.removeOrders([first.orderId])
+    const removedOrderPreferences = await library.getPackingPreferences()
+    return {
+      archived,
+      count,
+      history,
+      current,
+      preferences,
+      removedOrderPreferences,
+    }
+  }, snapshot())
+  expect(result.archived.productTags).toEqual({
+    [snapshot().items[0].entryId]: ['Archived'],
+  })
+  expect(result.count).toBe(1)
+  expect(result.current.productTags).toEqual({})
+  expect(result.current.tags).toEqual([])
+  expect(result.current.notes).toBe('Keep')
+  expect(result.history[0].productTags).toEqual({})
+  expect(result.history[0].tags).toEqual([])
+  expect(result.history[0].snapshot).toEqual(snapshot())
+  expect(result.preferences.productTags).toEqual([])
+  expect(result.preferences.orderTags).toEqual([])
+  expect(result.removedOrderPreferences.productTags).toEqual([])
+})
+
 test('customization service survives refresh, change detection and backup without changing product amounts', async ({
   extension,
 }) => {
@@ -1958,6 +2449,84 @@ test('reserved barcode lookup includes retired suffixes and isolates the base an
   expect(result.after).toEqual(result.before)
 })
 
+test('saved product codes can roundtrip while retired barcodes remain owned by their original variant', async ({
+  extension,
+}) => {
+  const page = await openTestDatabase(extension)
+  const result = await page.evaluate(async (first) => {
+    const { createPreparation, restoreDefaultPacking } =
+      await import('/src/packing-model.js')
+    first.items[1].description = first.items[0].description
+    first.items.forEach((item, index) => {
+      const color = index ? 'blue' : 'red'
+      item.skuProperties = [
+        { label: '颜色', value: color, raw: `颜色：${color}` },
+      ]
+    })
+    await library.saveSnapshot(first)
+    const draft = createPreparation(first, '2026-10')
+    draft.groups[0].variants[0].variantSuffix = ''
+    const original = await library.savePreparation(draft)
+    const base = original.groups[0].baseCode
+    const changed = structuredClone(original)
+    changed.groups[0].baseCode = 'CE26100107'
+    await library.savePreparation(changed)
+    const reloaded = await library.getPreparation(first.orderId)
+    reloaded.groups[0].baseCode = base
+    const returned = await library.savePreparation(reloaded)
+    const sameVariant = structuredClone(returned)
+    sameVariant.groups[0].variants[0].variantSuffix = 'A'
+    const moved = await library.savePreparation(sameVariant)
+    const ownership = await library.queryCodeOwnership(base)
+    const otherVariant = structuredClone(moved)
+    otherVariant.groups[0].variants[1].variantSuffix = ''
+    let conflict
+    try {
+      await library.savePreparation(otherVariant)
+    } catch (error) {
+      conflict = error.conflict
+    }
+    const unchanged = await library.getPreparation(first.orderId)
+    const restored = await library.savePreparation(
+      restoreDefaultPacking(unchanged)
+    )
+    const final = await library.exportBackup()
+    return {
+      original,
+      returned,
+      moved,
+      ownership,
+      conflict,
+      unchanged,
+      restored,
+      final,
+    }
+  }, snapshot())
+  expect(result.returned.groups).toEqual(result.original.groups)
+  expect(result.unchanged).toEqual(result.moved)
+  expect(result.restored.groups).toEqual(result.original.groups)
+  const base = result.original.groups[0].baseCode
+  const baseOwner = result.ownership.owners.find(
+    (entry) => entry.kind === 'base'
+  )
+  const barcodeOwner = result.ownership.owners.find(
+    (entry) => entry.kind === 'barcode'
+  )
+  expect(baseOwner.status).toBe('active')
+  expect(baseOwner.currentCode).toBe(base)
+  expect(barcodeOwner.status).toBe('historical')
+  expect(barcodeOwner.currentCode).toBe(`${base}A`)
+  expect(barcodeOwner.currentBaseCode).toBe(base)
+  expect(result.conflict.kind).toBe('barcode')
+  expect(result.conflict.owner.groupId).toBe(
+    result.conflict.requestedOwner.groupId
+  )
+  expect(result.conflict.owner.variantId).not.toBe(
+    result.conflict.requestedOwner.variantId
+  )
+  expect(result.final.issuedCodes).toHaveLength(7)
+})
+
 test('v2 backups preserve independent authoring, preference timestamps and all issued reservations', async ({
   extension,
 }) => {
@@ -2018,6 +2587,12 @@ test('v2 backups preserve independent authoring, preference timestamps and all i
   expect(result.source.snapshot.status).toBe('Refunded')
   expect(result.backup.issuedCodes).toHaveLength(6)
   expect(result.preferences).toEqual({
+    appearance: {
+      lightTheme: 'warm',
+      darkTheme: 'warm',
+      labelColors: {},
+      paletteRevision: 1,
+    },
     sizeVocabulary: DEFAULT_SIZE_VOCABULARY,
     settings: {
       fontSize: 12,

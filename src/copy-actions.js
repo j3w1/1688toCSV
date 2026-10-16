@@ -1,26 +1,40 @@
 import { bindText, bindAttribute, message } from './i18n.js'
 import { decorateIcon, icon } from './icons.js'
+import { actionHelp } from './workspace-action-help.js'
 
 /** Move the existing actions into a native popover; their handlers stay intact. */
-export function mountCopyActions(host, { image, groups }) {
+export function mountCopyActions(
+  host,
+  {
+    image,
+    groups,
+    label = 'Copy…',
+    ariaLabel = 'More copy formats',
+    panelLabel = 'Copy formats',
+    symbol = 'copy',
+  }
+) {
   const trigger = document.createElement('button')
   trigger.type = 'button'
   trigger.className = 'copy-actions-trigger'
-  bindText(trigger, message('Copy…'))
-  bindAttribute(trigger, 'aria-label', message('More copy formats'))
-  decorateIcon(trigger, 'copy')
+  bindText(trigger, message(label))
+  bindAttribute(trigger, 'aria-label', message(ariaLabel))
+  decorateIcon(trigger, symbol)
   trigger.append(icon('chevron'))
+  actionHelp(trigger)
+  if (image) actionHelp(image, { replace: true })
   const panel = document.createElement('div')
   panel.className = 'copy-actions-panel'
   panel.id = `copy-actions-${crypto.randomUUID()}`
   panel.setAttribute('popover', 'auto')
   panel.setAttribute('role', 'group')
-  bindAttribute(panel, 'aria-label', message('Copy formats'))
+  bindAttribute(panel, 'aria-label', message(panelLabel))
   trigger.setAttribute('popovertarget', panel.id)
   const anchor = `--${panel.id}`
   trigger.style.setProperty('anchor-name', anchor)
   panel.style.setProperty('position-anchor', anchor)
   for (const { label, actions } of groups) {
+    for (const action of actions) actionHelp(action, { replace: true })
     const group = document.createElement('div')
     group.className = 'copy-format-group'
     group.setAttribute('role', 'group')
@@ -32,7 +46,7 @@ export function mountCopyActions(host, { image, groups }) {
     panel.append(group)
   }
   host.classList.add('compact-copy-actions')
-  host.replaceChildren(image, trigger, panel)
+  host.replaceChildren(...[image, trigger, panel].filter(Boolean))
   let positioning
   const nativeAnchor =
     CSS.supports('position-area', 'block-end span-inline-end') &&

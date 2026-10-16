@@ -12,6 +12,157 @@ export function imageBatchPlans(count, size) {
   }))
 }
 
+// Preview-only sizing: copied blobs and label dimensions never change.
+function enableImageNavigation(viewport, figure, button, image, tools) {
+  const abort = new AbortController()
+  const listen = (node, name, handler, options = {}) =>
+    node.addEventListener(name, handler, { ...options, signal: abort.signal })
+  const zoomOut = element('button', '−')
+  const zoomIn = element('button', '+')
+  const fit = element('button', message('Fit image'))
+  const amount = element('output', undefined, 'copy-preview-scale')
+  const help = element('span', message('Scroll to zoom · drag to pan'))
+  for (const [control, label] of [
+    [zoomOut, 'Zoom out'],
+    [zoomIn, 'Zoom in'],
+  ]) {
+    bindAttribute(control, 'aria-label', message(label))
+    bindAttribute(control, 'title', message(label))
+  }
+  tools.replaceChildren(zoomOut, amount, zoomIn, fit, help)
+  let scale = 1,
+    fitted = 1,
+    drag,
+    suppressClick = false
+  const ready = () => image.naturalWidth > 0
+  const fitScale = () =>
+    Math.min(1, (viewport.clientWidth - 8) / image.naturalWidth)
+  const apply = (next, point) => {
+    if (!ready()) return
+    const rect = viewport.getBoundingClientRect()
+    const x = point ? point.x - rect.left : viewport.clientWidth / 2
+    const y = point ? point.y - rect.top : viewport.clientHeight / 2
+    const old = scale
+    scale = Math.max(fitted, Math.min(4, next))
+    image.style.inlineSize = `${image.naturalWidth * scale}px`
+    image.style.blockSize = `${image.naturalHeight * scale}px`
+    const enlarged = scale > fitted + 0.001
+    figure.classList.toggle('is-enlarged', enlarged)
+    button.setAttribute('aria-pressed', String(enlarged))
+    viewport.classList.toggle('is-zoomed', enlarged)
+    viewport.scrollLeft = ((viewport.scrollLeft + x) * scale) / old - x
+    viewport.scrollTop = ((viewport.scrollTop + y) * scale) / old - y
+    amount.value = `${Math.round(scale * 100)}%`
+    zoomOut.disabled = !enlarged
+    zoomIn.disabled = scale >= 4
+  }
+  const reset = () => {
+    if (!ready()) return
+    fitted = fitScale()
+    apply(fitted)
+    viewport.scrollTo(0, 0)
+  }
+  listen(fit, 'click', reset)
+  listen(zoomOut, 'click', () => apply(scale / 1.25))
+  listen(zoomIn, 'click', () => apply(scale * 1.25))
+  button.onclick = () => {
+    if (suppressClick) {
+      suppressClick = false
+      return
+    }
+    if (scale > fitted + 0.001) reset()
+    else apply(Math.max(1, fitted * 2))
+  }
+  listen(
+    viewport,
+    'wheel',
+    (event) => {
+      if (!ready() || !event.deltaY) return
+      event.preventDefault()
+      const delta =
+        event.deltaY *
+        (event.deltaMode === 1
+          ? 16
+          : event.deltaMode === 2
+            ? viewport.clientHeight
+            : 1)
+      apply(scale * Math.exp(-Math.max(-200, Math.min(200, delta)) * 0.002), {
+        x: event.clientX,
+        y: event.clientY,
+      })
+    },
+    { passive: false }
+  )
+  // Touch scrolling remains native. The explicit image is the mouse pan handle.
+  listen(button, 'pointerdown', (event) => {
+    suppressClick = false
+    if (
+      event.button !== 0 ||
+      event.pointerType !== 'mouse' ||
+      scale <= fitted + 0.001
+    )
+      return
+    drag = {
+      id: event.pointerId,
+      x: event.clientX,
+      y: event.clientY,
+      left: viewport.scrollLeft,
+      top: viewport.scrollTop,
+    }
+    button.setPointerCapture(event.pointerId)
+  })
+  listen(button, 'pointermove', (event) => {
+    if (!drag || drag.id !== event.pointerId) return
+    const x = event.clientX - drag.x,
+      y = event.clientY - drag.y
+    if (!suppressClick && Math.hypot(x, y) < 4) return
+    suppressClick = true
+    viewport.classList.add('is-panning')
+    viewport.scrollLeft = drag.left - x
+    viewport.scrollTop = drag.top - y
+  })
+  const endDrag = () => {
+    drag = null
+    viewport.classList.remove('is-panning')
+  }
+  listen(button, 'lostpointercapture', endDrag)
+  listen(button, 'pointercancel', endDrag)
+  listen(button, 'keydown', (event) => {
+    const moves = {
+      ArrowLeft: [-40, 0],
+      ArrowRight: [40, 0],
+      ArrowUp: [0, -40],
+      ArrowDown: [0, 40],
+    }
+    if (moves[event.key]) {
+      event.preventDefault()
+      viewport.scrollBy(...moves[event.key])
+    } else if (['+', '=', '-', '0'].includes(event.key)) {
+      event.preventDefault()
+      if (event.key === '0') reset()
+      else apply(scale * (event.key === '-' ? 0.8 : 1.25))
+    }
+  })
+  image.draggable = false
+  listen(image, 'load', reset)
+  bindAttribute(button, 'title', message('Scroll to zoom · drag to pan'))
+  const observer = new ResizeObserver(() => {
+    if (!ready()) return
+    const wasFit = scale <= fitted + 0.001
+    fitted = fitScale()
+    if (wasFit) reset()
+    else apply(scale)
+  })
+  observer.observe(viewport)
+  reset()
+  return () => {
+    abort.abort()
+    observer.disconnect()
+    viewport.classList.remove('is-zoomed', 'is-panning')
+    tools.replaceChildren()
+  }
+}
+
 /** One bounded batch stays in memory; changing batches never writes the clipboard. */
 export function openImageCopyDialog({
   title,
@@ -20,6 +171,8 @@ export function openImageCopyDialog({
   prepare,
   write,
   createOptions,
+  interactivePreview = false,
+  errorOptions,
   signal,
 }) {
   if (signal?.aborted || !count) return Promise.resolve(false)
@@ -42,7 +195,12 @@ export function openImageCopyDialog({
   bindAttribute(preview, 'aria-label', message('Image preview'))
   const options = createOptions?.(() => refresh(true))
   if (options) body.append(options)
-  body.append(preview)
+  const previewPane = element('div', undefined, 'image-copy-preview-pane')
+  const previewTools = element('div', undefined, 'image-copy-preview-tools')
+  previewTools.hidden = !interactivePreview
+  preview.classList.toggle('copy-preview-interactive', interactivePreview)
+  previewPane.append(previewTools, preview)
+  body.append(previewPane)
   const navigation = element('nav', undefined, 'image-copy-navigation')
   bindAttribute(navigation, 'aria-label', message('Image batches'))
   const previous = decorateIcon(element('button'), 'previous', {
@@ -80,11 +238,14 @@ export function openImageCopyDialog({
     copying = false,
     copiedAny = false,
     timer,
-    closed = false
+    closed = false,
+    releaseNavigation
   const copied = new Set()
   const urls = new Set()
   const key = (batch) => `${batch.start}:${batch.end}`
   const release = () => {
+    releaseNavigation?.()
+    releaseNavigation = undefined
     ready = null
     preview.replaceChildren()
     for (const url of urls) URL.revokeObjectURL(url)
@@ -110,18 +271,18 @@ export function openImageCopyDialog({
         message(wasCopied ? 'Batch {0}, copied' : 'Batch {0}', { 0: index + 1 })
       )
     }
-    bindText(
-      status,
-      plans.length
-        ? message('Batch {0} of {1} · items {2}–{3} of {4}', {
-            0: current + 1,
-            1: plans.length,
-            2: plans[current].start + 1,
-            3: plans[current].end,
-            4: count,
-          })
-        : message('Preparing…')
-    )
+    status.hidden = !plans.length
+    if (plans.length)
+      bindText(
+        status,
+        message('Batch {0} of {1} · items {2}–{3} of {4}', {
+          0: current + 1,
+          1: plans.length,
+          2: plans[current].start + 1,
+          3: plans[current].end,
+          4: count,
+        })
+      )
   }
   function renderNavigation() {
     batches.replaceChildren()
@@ -229,8 +390,26 @@ export function openImageCopyDialog({
             )
             zoom.append(img)
             figure.append(zoom)
-            if (item.label) figure.append(element('figcaption', item.label))
+            if (item.label) {
+              const caption = element('figcaption')
+              caption.append(
+                element(
+                  'span',
+                  item.label,
+                  item.codeLabel ? 'ce-code' : undefined
+                )
+              )
+              figure.append(caption)
+            }
             preview.append(figure)
+            if (interactivePreview && result.images.length === 1)
+              releaseNavigation = enableImageNavigation(
+                preview,
+                figure,
+                zoom,
+                img,
+                previewTools
+              )
           }
           ready = result.payload
           bindText(
@@ -246,7 +425,11 @@ export function openImageCopyDialog({
           const retry = element('button', message('Retry'))
           retry.onclick = () => refresh(!plans.length)
           preview.append(retry)
-          showErrorNotice(error.message, { scope: dialog, key: 'image-copy' })
+          showErrorNotice(error, {
+            scope: dialog,
+            key: 'image-copy',
+            ...errorOptions?.(error, dialog),
+          })
         } finally {
           if (ticket === generation && !closed) {
             preview.setAttribute('aria-busy', 'false')
@@ -280,7 +463,11 @@ export function openImageCopyDialog({
     } catch (error) {
       if (!closed) {
         bindText(progress, message('Copy failed. Try again.'))
-        showErrorNotice(error.message, { scope: dialog, key: 'image-copy' })
+        showErrorNotice(error, {
+          scope: dialog,
+          key: 'image-copy',
+          ...errorOptions?.(error, dialog),
+        })
       }
     } finally {
       copying = false

@@ -40,6 +40,14 @@ async function openPacking(extension) {
   await expect(page.locator('#sheet-body tr[data-selection-key]')).toHaveCount(
     3
   )
+  const displayedMaterials = page.locator(
+    '#sheet-body [data-attribute="material"] dd'
+  )
+  await expect(displayedMaterials).toHaveText([
+    'Glass',
+    'Stainless steel',
+    'Plastic',
+  ])
   await page.locator('#select-rows').click()
   await page.locator('#prepare-orders').click()
   const review = page.getByRole('dialog', { name: 'Assign product codes?' })
@@ -80,6 +88,9 @@ test('materials fill automatically, edit per product or apply by group/order, an
   await expect(materials.nth(0)).toHaveValue('Glass')
   await expect(materials.nth(1)).toHaveValue('Stainless steel')
   await expect(materials.nth(2)).toHaveValue('Plastic')
+  await expect(
+    view.locator('.variant-photos .preparation-photo img').first()
+  ).toHaveCSS('width', '74px')
   await materials.nth(0).fill('Custom ceramic')
   await saved(view)
   const firstGroup = view.locator('.preparation-group').first()
@@ -103,6 +114,18 @@ test('materials fill automatically, edit per product or apply by group/order, an
   await saved(view)
   await page.keyboard.press('Escape')
   await expect(view).toBeHidden()
+  const productRows = page.locator('#sheet-body tr[data-selection-key]')
+  await expect(
+    productRows.first().locator('[data-attribute="material"]')
+  ).toHaveCount(0)
+  await expect(
+    productRows.nth(1).locator('[data-attribute="material"] dd')
+  ).toHaveText('Aluminium')
+  await page.locator('[data-language="es"]').click()
+  await expect(
+    productRows.nth(1).locator('[data-attribute="material"] dd')
+  ).toHaveText('Aluminio')
+  await page.locator('[data-language="en"]').click()
   await page.reload()
   await page.locator('#prepare-orders').click()
   await expect(view).toBeVisible()

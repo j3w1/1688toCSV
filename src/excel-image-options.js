@@ -16,7 +16,11 @@ export function normalizeExcelImagePreference(value) {
   const selected = Array.isArray(value?.selected)
     ? [...new Set(value.selected)].filter((key) => keys.includes(key))
     : [...keys]
-  return { order, selected }
+  return {
+    order,
+    selected,
+    showOrderDetails: value?.showOrderDetails !== false,
+  }
 }
 
 export function readExcelImagePreference(storage = globalThis.localStorage) {
@@ -47,8 +51,10 @@ export function saveExcelImagePreference(
   }
 }
 
-export function selectedExcelImageColumns() {
-  const { order, selected } = readExcelImagePreference()
+export function selectedExcelImageColumns(
+  preference = readExcelImagePreference()
+) {
+  const { order, selected } = preference
   return order.filter((key) => selected.includes(key))
 }
 
@@ -56,6 +62,19 @@ const columnLabel = (column) => column.labels?.[getLanguage()] || column.label
 
 export function createExcelImageOptions(onChange) {
   const fieldset = element('fieldset', undefined, 'excel-image-options')
+  const identity = element('label', undefined, 'excel-order-details-toggle')
+  const showOrderDetails = element('input')
+  showOrderDetails.type = 'checkbox'
+  identity.append(
+    showOrderDetails,
+    element('span', message('Show store and order details'))
+  )
+  preparationHelp(
+    identity,
+    message(
+      'Include store names and full order numbers in the image. Turning this off keeps order separators. Remembered for Orders and Prepare packing.'
+    )
+  )
   const details = element('details')
   details.open = matchMedia('(min-width: 701px)').matches
   details.append(element('summary', message('Excel image columns')))
@@ -77,6 +96,10 @@ export function createExcelImageOptions(onChange) {
   let preference = readExcelImagePreference()
   let dragged = null
   let saved = true
+  showOrderDetails.onchange = () => {
+    preference.showOrderDetails = showOrderDetails.checked
+    persist()
+  }
   function persist() {
     saved = saveExcelImagePreference(preference)
     render()
@@ -91,6 +114,7 @@ export function createExcelImageOptions(onChange) {
     persist()
   }
   function render() {
+    showOrderDetails.checked = preference.showOrderDetails
     list.replaceChildren()
     for (const [index, key] of preference.order.entries()) {
       const column = excelImageColumns.find((entry) => entry.key === key)
@@ -207,12 +231,14 @@ export function createExcelImageOptions(onChange) {
   const footer = element('div', undefined, 'excel-options-footer')
   const reset = element('button', message('Default columns'))
   reset.onclick = () => {
-    preference = normalizeExcelImagePreference(null)
+    preference = normalizeExcelImagePreference({
+      showOrderDetails: preference.showOrderDetails,
+    })
     persist()
   }
   footer.append(reset)
   details.append(help, supplier, list, status, footer)
-  fieldset.append(details)
+  fieldset.append(identity, details)
   render()
   return fieldset
 }

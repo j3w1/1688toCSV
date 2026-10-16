@@ -129,6 +129,38 @@ function snapshot(source) {
   })
 }
 
+test('unsigned price changes require one exact direction from the complete totals', () => {
+  for (const [payable, adjustment, discount] of [
+    ['38.00', '-1.90', '0.00'],
+    ['34.20', '1.90', '3.80'],
+  ]) {
+    const source = fixture({
+      rows: [{ price: '0.10', quantity: '380', sourceDiscount: '1.90' }],
+      paymentLabel: '待付款',
+      totals: {
+        goodsGross: '38.00',
+        shipping: '0.00',
+        sourceDiscount: '1.90',
+        orderAdjustment: '¥ 1.90',
+        payable,
+      },
+    })
+    source.fields['商品优惠'].parentNode.querySelector('dt').textContent =
+      'PLUS价优惠'
+    const result = snapshot(source)
+    assert.equal(result.totals.orderAdjustment, adjustment)
+    assert.equal(result.totals.payable, payable)
+    assert.equal(result.items[0].sourceDiscount, '1.90')
+    assert.equal(result.items[0].allocatedDiscount, adjustment)
+    assert.equal(result.items[0].discount, discount)
+    source.payable.querySelector('.sub-ammount').textContent = '01'
+    assert.throws(() => snapshot(source), /payable amount does not reconcile/)
+  }
+  const zero = fixture()
+  zero.field('商品改价', '¥0.00')
+  assert.equal(snapshot(zero).totals.orderAdjustment, '0.00')
+})
+
 test('missing seller retains complete reconciled products with an explicit unavailable identity', () => {
   const source = fixture({
     rows: [{ price: '0.53', quantity: '2', sourceDiscount: '0.00' }],

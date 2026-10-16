@@ -16,6 +16,7 @@ import {
   reorderPreparationVariants,
   restoreDefaultPacking,
   restorePreviousPacking,
+  setGroupSizeMode,
   validatePackingPreferences,
   validatePreparation,
   validatePreparationReservations,
@@ -133,7 +134,7 @@ test('vocabulary suggestions require agreement independently for each field', ()
   assert.equal(unknown.category, '')
 })
 
-test('dimension suggestions order 2, 3 and 5 sizes and leave ambiguous sets unresolved', () => {
+test('dimension suggestions order 2 through 5 sizes and leave ambiguous sets unresolved', () => {
   for (const [dimensions, expected] of [
     [
       ['30cm', '10cm'],
@@ -142,6 +143,10 @@ test('dimension suggestions order 2, 3 and 5 sizes and leave ambiguous sets unre
     [
       ['30cm', '10cm', '20cm'],
       ['L', 'S', 'M'],
+    ],
+    [
+      ['40cm', '10cm', '30cm', '20cm'],
+      ['XL', 'S', 'L', 'M'],
     ],
     [
       ['10cm', '20cm', '30cm', '40cm', '50cm'],
@@ -162,7 +167,7 @@ test('dimension suggestions order 2, 3 and 5 sizes and leave ambiguous sets unre
     )
   }
   for (const dimensions of [
-    ['10cm', '20cm', '30cm', '40cm'],
+    ['10cm', '20cm', '30cm', '40cm', '50cm', '60cm'],
     ['short', 'long'],
     ['10x30cm', '20x20cm'],
   ]) {
@@ -218,6 +223,247 @@ test('barcodes omit non-distinguishing dimensions including a single measured si
     group.variants.map((variant) => barcodeValue(group, variant)),
     ['CE26060101S', 'CE26060101L']
   )
+})
+
+test('identical height and base measurements retain distinct style barcodes without size endings', () => {
+  const snapshot = source(
+    ['#款式二 高33X底径10.5cm', '#款式一 高33X底径10.5cm'].map(
+      (value, index) => ({
+        title: 'Synthetic vase',
+        skuProperties: [{ label: '颜色', value }],
+        price: index ? '21.5' : '23.5',
+      })
+    )
+  )
+  const before = structuredClone(snapshot)
+  const saved = allocatePreparation(
+    createPreparation(snapshot, '2026-10'),
+    [],
+    []
+  )
+  const group = saved.preparation.groups[0]
+  assert.deepEqual(
+    group.variants.map((variant) => [
+      variant.variant,
+      variant.size,
+      variant.needsSizeMapping,
+      barcodeValue(group, variant),
+    ]),
+    [
+      ['颜色: #款式二', '高33X底径10.5cm', false, 'CE26100101A'],
+      ['颜色: #款式一', '高33X底径10.5cm', false, 'CE26100101B'],
+    ]
+  )
+  assert.deepEqual(snapshot, before)
+})
+
+test('the explicit no-size action preserves product identity, source data and materials and protects old reservations', () => {
+  const snapshot = source([
+    { skuProperties: sku('red', '10cm') },
+    { skuProperties: sku('blue', '20cm') },
+    { title: 'Other product', skuProperties: sku('red', 'short') },
+    { title: 'Other product', skuProperties: sku('red', 'long') },
+  ])
+  const original = allocatePreparation(
+    createPreparation(snapshot, '2026-10'),
+    [],
+    []
+  )
+  original.preparation.groups[0].variants[0].material = '手工陶瓷'
+  original.preparation.groups[0].variants[0].materialSource = 'manual'
+  const before = structuredClone({ original, snapshot })
+  const group = original.preparation.groups[0]
+  const candidate = setGroupSizeMode(original.preparation, group.id, 'none')
+  assert.equal(candidate.groups[0].sizeMode, 'none')
+  assert.deepEqual(
+    candidate.groups[0].variants,
+    group.variants.map((variant) => ({
+      ...variant,
+      sizeSuffix: '',
+      needsSizeMapping: false,
+    }))
+  )
+  assert.deepEqual(candidate.groups[1], original.preparation.groups[1])
+  const saved = allocatePreparation(
+    candidate,
+    original.allocations,
+    original.issuedCodes
+  )
+  assert.deepEqual(
+    saved.preparation.groups[0].variants.map((variant) =>
+      barcodeValue(saved.preparation.groups[0], variant)
+    ),
+    ['CE26100101A', 'CE26100101B']
+  )
+  assert.ok(saved.issuedCodes.some((entry) => entry.code === 'CE26100101AS'))
+  assert.ok(saved.issuedCodes.some((entry) => entry.code === 'CE26100101BL'))
+  assert.deepEqual({ original, snapshot }, before)
+})
+
+test('automatic size restoration reanalyzes only its group and preserves authored nonempty endings', () => {
+  const snapshot = source([
+    { skuProperties: sku('red', '10cm') },
+    { skuProperties: sku('blue', '20cm') },
+    { title: 'Other product', skuProperties: sku('red', '10cm') },
+    { title: 'Other product', skuProperties: sku('red', '20cm') },
+  ])
+  const preparation = createPreparation(snapshot, '2026-10')
+  const groupId = preparation.groups[0].id
+  const none = setGroupSizeMode(preparation, groupId, 'none')
+  none.groups[0].variants.forEach((variant) => {
+    variant.size = 'old unparsed size'
+  })
+  none.groups[1].variants.forEach((variant) => {
+    variant.sizeSuffix = ''
+    variant.needsSizeMapping = true
+  })
+  const automatic = setGroupSizeMode(none, groupId, 'automatic', { snapshot })
+  assert.equal(automatic.groups[0].sizeMode, undefined)
+  assert.deepEqual(
+    automatic.groups[0].variants.map((variant) => [
+      variant.size,
+      variant.sizeSuffix,
+      variant.needsSizeMapping,
+    ]),
+    [
+      ['10cm', 'S', false],
+      ['20cm', 'L', false],
+    ]
+  )
+  assert.deepEqual(automatic.groups[1], none.groups[1])
+  none.groups[0].variants[0].sizeSuffix = 'AUTHORED'
+  const restored = setGroupSizeMode(none, groupId, 'automatic', { snapshot })
+  assert.equal(restored.groups[0].variants[0].sizeSuffix, 'AUTHORED')
+  assert.equal(restored.groups[0].variants[0].needsSizeMapping, false)
+  assert.equal(none.groups[0].sizeMode, 'none')
+  for (const mode of ['', null, 'guess'])
+    assert.throws(
+      () => setGroupSizeMode(preparation, groupId, mode),
+      /automatic size/
+    )
+  assert.throws(
+    () => setGroupSizeMode(preparation, 'missing', 'none'),
+    /no longer exists/
+  )
+  assert.throws(
+    () =>
+      setGroupSizeMode(preparation, groupId, 'automatic', {
+        snapshot: { ...snapshot, orderId: '2' },
+      }),
+    /source order does not match/
+  )
+})
+
+test('removing size endings never silently merges colliding variants or takes another reserved barcode', () => {
+  const snapshot = source([
+    { skuProperties: sku('red', '10cm') },
+    { skuProperties: sku('red', '20cm') },
+  ])
+  const original = allocatePreparation(
+    createPreparation(snapshot, '2026-10'),
+    [],
+    []
+  )
+  const group = original.preparation.groups[0]
+  const candidate = setGroupSizeMode(original.preparation, group.id, 'none')
+  const before = structuredClone(original)
+  assert.throws(
+    () =>
+      allocatePreparation(
+        candidate,
+        original.allocations,
+        original.issuedCodes
+      ),
+    (error) =>
+      error.code === 'PACKING_CODE_CONFLICT' &&
+      error.conflict.requestedOwner.variantId === group.variants[1].id
+  )
+  candidate.groups[0].variants[0].variantSuffix = 'A'
+  candidate.groups[0].variants[1].variantSuffix = 'B'
+  const reserved = {
+    ...original.issuedCodes.find((entry) => entry.kind === 'barcode'),
+    code: group.baseCode + 'A',
+    variantId: 'previous-product',
+  }
+  assert.throws(
+    () =>
+      allocatePreparation(candidate, original.allocations, [
+        ...original.issuedCodes,
+        reserved,
+      ]),
+    (error) =>
+      error.code === 'PACKING_CODE_CONFLICT' &&
+      error.conflict.owner.variantId === 'previous-product'
+  )
+  assert.deepEqual(original, before)
+})
+
+test('no-size overrides persist through validation, checkpoints, prepare again and partial month moves', () => {
+  const snapshot = source([
+    { skuProperties: sku('red', '10cm') },
+    { skuProperties: sku('blue', '20cm') },
+  ])
+  let preparation = createPreparation(snapshot, '2026-10')
+  preparation = setGroupSizeMode(preparation, preparation.groups[0].id, 'none')
+  const saved = allocatePreparation(preparation, [], [])
+  saved.preparation.revision = 1
+  saved.preparation.defaultPacking = packingCheckpoint(saved.preparation)
+  saved.preparation.previousPacking = packingCheckpoint(saved.preparation, {
+    includeDefaults: true,
+  })
+  const restored = validatePreparation(
+    JSON.parse(JSON.stringify(saved.preparation))
+  )
+  assert.deepEqual(restored, saved.preparation)
+  validatePreparationReservations(restored, saved)
+  const again = planSelectedPreparations(
+    [{ snapshot, preparation: restored, entryIds: ['1', '2'] }],
+    '2026-10'
+  )
+  assert.equal(again.preparations[0].groups[0].sizeMode, 'none')
+  const moved = planSelectedPreparations(
+    [{ snapshot, preparation: restored, entryIds: ['1'] }],
+    '2026-11'
+  )
+  assert.equal(moved.preparations[0].groups.length, 2)
+  assert.ok(
+    moved.preparations[0].groups.every((group) => group.sizeMode === 'none')
+  )
+  assert.ok(
+    moved.preparations[0].groups.every((group) =>
+      group.variants.every(
+        (variant) => !variant.sizeSuffix && !variant.needsSizeMapping
+      )
+    )
+  )
+  assert.equal(restorePreviousPacking(restored).groups[0].sizeMode, 'none')
+  restored.groups[0].sizeMode = 'invalid'
+  assert.throws(() => validatePreparation(restored), /automatic size/)
+})
+
+test('reset detects size-mode-only changes and restores the recorded default mode', () => {
+  const snapshot = source([
+    { skuProperties: sku('red', '10cm') },
+    { skuProperties: sku('blue', '10cm') },
+  ])
+  const preparation = allocatePreparation(
+    createPreparation(snapshot, '2026-10'),
+    [],
+    []
+  ).preparation
+  preparation.defaultPacking = packingCheckpoint(preparation)
+  const groupId = preparation.groups[0].id
+  const none = setGroupSizeMode(preparation, groupId, 'none')
+  const changes = defaultPackingChanges(none)
+  assert.equal(changes.length, 1)
+  assert.equal(changes[0].sizeModeChanged, true)
+  assert.equal(changes[0].barcodeChanges.length, 0)
+  assert.equal(restoreDefaultPacking(none).groups[0].sizeMode, undefined)
+  none.defaultPacking = packingCheckpoint(none)
+  const automatic = setGroupSizeMode(none, groupId, 'automatic', { snapshot })
+  const restored = restoreDefaultPacking(automatic)
+  assert.equal(restored.groups[0].sizeMode, 'none')
+  assert.equal(hasDefaultPackingChanges(restored), false)
 })
 
 test('size suggestions normalize units and rank measurements only when dimensions agree', () => {
@@ -427,6 +673,102 @@ test('manual base edits reserve old codes, advance allocation and reject seller/
   assert.throws(
     () => allocatePreparation(next, edited.allocations, edited.issuedCodes),
     /chosen month/
+  )
+})
+
+test('the same product and variant can return to their issued codes after edits and a default reset', () => {
+  const snapshot = source([
+    { skuProperties: sku('red') },
+    { skuProperties: sku('blue') },
+  ])
+  let state = allocatePreparation(
+    createPreparation(snapshot, '2026-10'),
+    [],
+    [],
+    { snapshot }
+  )
+  const original = structuredClone(state.preparation)
+  original.defaultPacking = packingCheckpoint(original)
+  const edited = structuredClone(original)
+  edited.groups[0].baseCode = 'CE26100107'
+  state = allocatePreparation(edited, state.allocations, state.issuedCodes, {
+    snapshot,
+  })
+  const reservedAfterEdit = structuredClone(state.issuedCodes)
+  const returned = structuredClone(state.preparation)
+  returned.groups[0].baseCode = original.groups[0].baseCode
+  state = allocatePreparation(returned, state.allocations, state.issuedCodes, {
+    snapshot,
+  })
+  assert.deepEqual(state.preparation.groups, original.groups)
+  assert.deepEqual(state.issuedCodes, reservedAfterEdit)
+  const changedVariant = structuredClone(state.preparation)
+  changedVariant.groups[0].variants[0].variantSuffix = 'ZZ'
+  state = allocatePreparation(
+    changedVariant,
+    state.allocations,
+    state.issuedCodes,
+    { snapshot }
+  )
+  const reset = restoreDefaultPacking(state.preparation)
+  const restored = allocatePreparation(
+    reset,
+    state.allocations,
+    state.issuedCodes,
+    { snapshot }
+  )
+  assert.deepEqual(restored.preparation.groups, original.groups)
+  assert.deepEqual(restored.issuedCodes, state.issuedCodes)
+  assert.equal(restored.preparation.groups[0].id, original.groups[0].id)
+  assert.equal(
+    restored.preparation.groups[0].variants[0].id,
+    original.groups[0].variants[0].id
+  )
+})
+
+test('returning a retired barcode to another variant in the same product remains a conflict', () => {
+  const snapshot = source([
+    { skuProperties: sku('red') },
+    { skuProperties: sku('blue') },
+  ])
+  const draft = createPreparation(snapshot, '2026-10')
+  draft.groups[0].variants[0].variantSuffix = ''
+  let state = allocatePreparation(draft, [], [], { snapshot })
+  const oldVariantId = state.preparation.groups[0].variants[0].id
+  const changed = structuredClone(state.preparation)
+  changed.groups[0].variants[0].variantSuffix = 'A'
+  state = allocatePreparation(changed, state.allocations, state.issuedCodes, {
+    snapshot,
+  })
+  const candidate = structuredClone(state.preparation)
+  candidate.groups[0].variants[1].variantSuffix = ''
+  assert.throws(
+    () =>
+      allocatePreparation(candidate, state.allocations, state.issuedCodes, {
+        snapshot,
+      }),
+    (error) => {
+      assert.equal(error.code, 'PACKING_CODE_CONFLICT')
+      assert.equal(error.conflict.kind, 'barcode')
+      assert.equal(
+        error.message,
+        'Code conflict: CE26100101 belongs to another variant of this product. Keep different variant or size endings.'
+      )
+      assert.equal(
+        error.conflict.owner.groupId,
+        error.conflict.requestedOwner.groupId
+      )
+      assert.equal(error.conflict.owner.variantId, oldVariantId)
+      assert.notEqual(
+        error.conflict.owner.variantId,
+        error.conflict.requestedOwner.variantId
+      )
+      assert.deepEqual(error.conflict.owner.ownerSnapshot.entryIds, ['1'])
+      assert.deepEqual(error.conflict.requestedOwner.ownerSnapshot.entryIds, [
+        '2',
+      ])
+      return true
+    }
   )
 })
 

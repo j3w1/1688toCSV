@@ -119,8 +119,25 @@ export function createPreparationMedia({
               : '',
       }
     } catch (error) {
-      return { error: error.message }
+      return {
+        error: error.message,
+        pending: Boolean(error.previewPending),
+        recovery: error.noticeOptions?.action,
+      }
     }
+  }
+  function showLabelIssue(tile, request) {
+    if (!request.error) return false
+    tile.root.dataset.previewState = request.pending ? 'checking' : 'invalid'
+    bindText(tile.status, uiMessage(request.error))
+    bindAttribute(
+      tile.root,
+      'title',
+      request.pending
+        ? uiMessage(request.error)
+        : uiMessage('Click to resolve this label issue')
+    )
+    return true
   }
   async function draw(tile) {
     release(tile)
@@ -133,7 +150,8 @@ export function createPreparationMedia({
       else {
         const request = labelRequest(tile)
         tile.signature = JSON.stringify(request)
-        if (request.error) throw new Error(request.error)
+        if (showLabelIssue(tile, request)) return
+        tile.root.dataset.previewState = 'loading'
         if (request.incomplete) {
           tile.root.classList.add('label-unfinished')
           bindAttribute(
@@ -163,13 +181,24 @@ export function createPreparationMedia({
         blob = await smallImage(result.blob)
       }
       if (disposed || version !== tile.version || !tile.visible) return
+      // A model or ownership check may change while rendering/reducing a blob.
+      // Never publish that result, even if no refresh happened in between.
+      if (
+        !tile.photo &&
+        tile.signature !== JSON.stringify(labelRequest(tile))
+      ) {
+        void draw(tile)
+        return
+      }
       tile.url = URL.createObjectURL(blob)
       tile.image.src = tile.url
       tile.image.hidden = false
       tile.status.textContent = ''
+      if (!tile.photo) tile.root.dataset.previewState = 'ready'
     } catch (error) {
       if (!disposed && version === tile.version && error.name !== 'AbortError')
-        bindText(tile.status, error.message)
+        if (tile.photo) bindText(tile.status, error.message)
+        else showLabelIssue(tile, { error: error.message })
     }
   }
   function drainPhotos() {
@@ -286,12 +315,23 @@ export function createPreparationMedia({
           : uiMessage('Barcode preview')
       )
       image.hidden = true
+      status.id = `label-preview-status-${crypto.randomUUID()}`
+      root.setAttribute('aria-describedby', status.id)
       root.append(image, placeholder, status)
       root.addEventListener('click', async () => {
         try {
+          const request = labelRequest({ model })
+          if (request.recovery?.onClick) {
+            await request.recovery.onClick()
+            return
+          }
           await onEdit()
         } catch (error) {
-          bindText(status, error.message)
+          const tile = tiles.get(root)
+          if (tile) {
+            release(tile)
+            showLabelIssue(tile, { error: error.message })
+          }
         }
       })
       observe(root, image, status, { model, placeholder })
@@ -299,15 +339,17 @@ export function createPreparationMedia({
     },
     refresh() {
       clearTimeout(timer)
-      for (const tile of tiles.values())
-        if (
-          !tile.photo &&
-          tile.visible &&
-          tile.signature !== JSON.stringify(labelRequest(tile))
-        ) {
+      for (const tile of tiles.values()) {
+        if (tile.photo || !tile.visible) continue
+        const request = labelRequest(tile)
+        const signature = JSON.stringify(request)
+        if (tile.signature !== signature) {
           release(tile)
-          tile.dirty = true
+          tile.signature = signature
+          tile.dirty = !showLabelIssue(tile, request)
+          if (tile.dirty) bindText(tile.status, uiMessage('Loading preview…'))
         }
+      }
       timer = setTimeout(() => {
         for (const tile of tiles.values())
           if (tile.dirty && tile.visible) {

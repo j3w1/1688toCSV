@@ -1,16 +1,51 @@
+import { mountFloatingPanel, floatingPanelStyles } from './floating-panel.js'
+import { mountPanelAppearance } from './panel-appearance.js'
+
 // Page UI only. Reads and job operations stay in the content/worker adapters.
 export function mountListToolbar(document, { readList, send }) {
   const host = document.createElement('div')
   const root = host.attachShadow({ mode: 'open' })
+  const releaseAppearance = mountPanelAppearance(host)
   const make = (tag, text) => {
     const el = document.createElement(tag)
     if (text !== undefined) el.textContent = text
     return el
   }
   const style = make('style')
-  style.textContent = `:host{all:initial;position:fixed;bottom:14px;right:14px;z-index:2147483647;display:block;max-width:calc(100vw - 28px)}aside{font:12px/1.5 system-ui,sans-serif;color:#344330;background:#fcfcf8;border:1px solid #d6dfcc;border-radius:12px;box-shadow:0 5px 25px #19351b24;padding:13px;width:360px;max-width:calc(100vw - 28px);box-sizing:border-box}strong{font-size:12px;display:block;margin-bottom:8px}nav,.actions{display:flex;gap:6px;flex-wrap:wrap}button{font:inherit;border:1px solid #d6dfcc;border-radius:6px;background:white;color:#475b3c;padding:8px 10px;cursor:pointer}.primary{background:#dd4d23;color:white;border-color:#dd4d23}button:disabled{opacity:.5;cursor:default}button:focus-visible,summary:focus-visible{outline:3px solid #b77c32;outline-offset:2px}p{margin:8px 0;overflow-wrap:anywhere;font-size:11px}p:empty,[hidden]{display:none!important}.error{color:#a13f24}details{margin-top:10px}summary{cursor:pointer;font-size:11px;color:#687761}.confirm,.progress{margin-top:10px;padding-top:10px;border-top:1px solid #d6dfcc}.confirm{border:1px solid #dfbd85;background:#fff7e8;padding:10px;border-radius:8px}.confirm strong{font-size:12px}.secondary{font-size:11px}a{color:inherit}@media(prefers-color-scheme:dark){aside{color:#e0e8db;background:#202620;border-color:#43513e}button{color:#d8e4d0;background:#2b3429;border-color:#4b5945}.primary{background:#c64522;color:#fff;border-color:#c64522}summary{color:#b4c4aa}.confirm{background:#352d1f;border-color:#71603c}.error{color:#ffb6a6}.progress{border-color:#43513e}}`
+  style.textContent = `
+    :host { all:initial; position:fixed; bottom:14px; right:14px; z-index:2147483647; display:block; max-width:calc(100vw - 28px); }
+    aside { font:12px/1.5 system-ui,sans-serif; color:var(--text); background:var(--surface); border:1px solid var(--border); border-radius:12px; box-shadow:0 5px 25px #0002; padding:13px; width:360px; max-width:calc(100vw - 28px); box-sizing:border-box; }
+    strong { font-size:12px; display:block; margin-bottom:8px; }
+    nav,.actions { display:flex; gap:6px; flex-wrap:wrap; }
+    button,input { font:inherit; border:1px solid var(--border); border-radius:6px; background:var(--field); color:var(--text); padding:8px 10px; }
+    button { cursor:pointer; }
+    button:hover { background:var(--hover); }
+    .primary { background:var(--accent); color:var(--on-accent); border-color:var(--accent); }
+    .primary:hover { background:var(--accent-hover); border-color:var(--accent-hover); }
+    button:disabled { opacity:.5; cursor:default; }
+    button:focus-visible,input:focus-visible,summary:focus-visible { outline:3px solid var(--focus); outline-offset:2px; }
+    p { margin:8px 0; overflow-wrap:anywhere; font-size:11px; }
+    p:empty,[hidden] { display:none!important; }
+    .error { color:var(--danger-text); }
+    details { margin-top:10px; }
+    summary { cursor:pointer; font-size:11px; color:var(--muted); }
+    .confirm,.progress { margin-top:10px; padding-top:10px; border-top:1px solid var(--border); }
+    .confirm { color:var(--warning-text); border:1px solid var(--warning-border); background:var(--warning); padding:10px; border-radius:8px; }
+    .confirm strong { font-size:12px; }
+    .secondary { font-size:11px; }
+    a { color:inherit; }
+  `
   const aside = make('aside')
+  style.textContent += floatingPanelStyles
   aside.setAttribute('aria-label', '1688 order library')
+  const panelBody = make('div')
+  aside.append(panelBody)
+  const disclosure = mountFloatingPanel(document, {
+    panel: aside,
+    body: panelBody,
+    title: make('strong', '1688toCSV · Your order library'),
+    key: 'list',
+  })
   const nav = make('nav')
   const feedback = make('p')
   feedback.setAttribute('role', 'status')
@@ -313,6 +348,7 @@ export function mountListToolbar(document, { readList, send }) {
       const { jobs } = await send('IMPORT_STATUS')
       if (disposed) return
       latestJob = jobs.find((job) => job.state === 'running') || jobs[0]
+      disclosure.update(latestJob)
       progress.hidden = !latestJob
       if (latestJob) {
         const job = latestJob,
@@ -350,8 +386,7 @@ export function mountListToolbar(document, { readList, send }) {
     void refresh()
   }
   document.defaultView?.addEventListener('focus', focus)
-  aside.append(
-    make('strong', '1688toCSV · Your order library'),
+  panelBody.append(
     nav,
     options,
     confirmation,
@@ -371,6 +406,7 @@ export function mountListToolbar(document, { readList, send }) {
       clearTimeout(statusTimer)
       for (const url of reportFiles.keys()) releaseReport(url)
       document.defaultView?.removeEventListener('focus', focus)
+      releaseAppearance()
       host.remove()
     },
   }

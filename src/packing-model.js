@@ -7,9 +7,13 @@ import {
 import {
   createSizeClassifier,
   DEFAULT_SIZE_VOCABULARY,
+  resolvePendingSizeMappings,
   validateSizeVocabulary,
 } from './size-vocabulary.js'
 import { suggestMaterial } from './material-vocabulary.js'
+import { validateColorVocabulary } from './color-vocabulary.js'
+import { normalizeAppearance } from './appearance.js'
+import { normalizeOrderTags, normalizeTags } from './order-tags.js'
 
 /** Material authoring follows source rows even when grouping is restored. */
 export function variantMaterial(variant, entryId = variant.entryIds[0]) {
@@ -143,8 +147,17 @@ function reordered(value, label) {
 /** Code reservations survive edits and deletion; a conflict identifies its owner. */
 export class CodeConflictError extends Error {
   constructor(existing, requested) {
+    const otherVariant =
+      existing.kind === 'barcode' &&
+      requested.kind === 'barcode' &&
+      existing.accountId === requested.accountId &&
+      existing.orderId === requested.orderId &&
+      existing.groupId === requested.groupId &&
+      existing.variantId !== requested.variantId
     super(
-      `Code conflict: ${requested.code} is already reserved for ${existing.sellerId !== requested.sellerId ? 'another seller' : 'another product or variant'}`
+      otherVariant
+        ? `Code conflict: ${requested.code} belongs to another variant of this product. Keep different variant or size endings.`
+        : `Code conflict: ${requested.code} is already reserved for ${existing.sellerId !== requested.sellerId ? 'another seller' : 'another product or variant'}`
     )
     this.name = 'CodeConflictError'
     this.code = 'PACKING_CODE_CONFLICT'
@@ -364,6 +377,45 @@ export function regeneratePreparationCode(preparation, groupId) {
   return draft
 }
 
+/** Explicit, reviewable override for one product; allocation still validates codes. */
+export function setGroupSizeMode(
+  preparation,
+  groupId,
+  mode,
+  { snapshot, sizeVocabulary = DEFAULT_SIZE_VOCABULARY } = {}
+) {
+  if (!['automatic', 'none'].includes(mode))
+    throw new Error('Choose automatic size codes or no size difference')
+  if (
+    snapshot &&
+    (snapshot.orderId !== preparation.orderId ||
+      (snapshot.accountId || 'local') !== preparation.accountId)
+  )
+    throw new Error('The source order does not match this preparation')
+  const draft = structuredClone(preparation)
+  const group = draft.groups.find((entry) => entry.id === groupId)
+  if (!group)
+    throw new Error('The product group no longer exists in this order')
+  if (mode === 'none') {
+    group.sizeMode = 'none'
+    for (const variant of group.variants) {
+      variant.sizeSuffix = ''
+      variant.needsSizeMapping = false
+    }
+  } else {
+    delete group.sizeMode
+    for (const variant of group.variants)
+      if (!variant.sizeSuffix) variant.needsSizeMapping = true
+    const resolved = resolvePendingSizeMappings(
+      { ...draft, groups: [group] },
+      sizeVocabulary,
+      { snapshot }
+    )
+    draft.groups[draft.groups.indexOf(group)] = resolved.preparation.groups[0]
+  }
+  return draft
+}
+
 export function packingCheckpoint(
   preparation,
   { includeDefaults = false } = {}
@@ -570,6 +622,8 @@ export function defaultPackingChanges(preparation) {
         membership(before).sort(([a], [b]) => a.localeCompare(b)),
         membership(after).sort(([a], [b]) => a.localeCompare(b))
       ),
+      sizeModeChanged:
+        (before?.sizeMode || 'automatic') !== (after?.sizeMode || 'automatic'),
       orderChanged: old?.index !== next?.index,
       variantOrderChanged: !same(
         before?.variants.map((variant) => variant.id) || [],
@@ -585,6 +639,7 @@ export function defaultPackingChanges(preparation) {
       change.baseCodeChanged ||
       change.monthChanged ||
       change.groupingChanged ||
+      change.sizeModeChanged ||
       change.orderChanged ||
       change.variantOrderChanged ||
       change.clearedManualOrdering ||
@@ -838,6 +893,11 @@ export function validatePreparation(input) {
     throw new Error('Preparation updatedAt must be a timestamp')
   if (!Array.isArray(input.groups))
     throw new Error('Preparation groups must be an array')
+  if (
+    input.packingPosition !== undefined &&
+    (!Number.isSafeInteger(input.packingPosition) || input.packingPosition < 0)
+  )
+    throw new Error('Packing position must be a non-negative integer')
   const groupIds = new Set()
   const variantIds = new Set()
   const members = new Set()
@@ -855,8 +915,18 @@ export function validatePreparation(input) {
       (!baseCode.startsWith(codePrefix(groupMonth)) ||
         !/^CE\d{4}(?:0[1-9]|[1-9]\d)(?:0[1-9]|[1-9]\d)$/.test(baseCode))
     )
-      throw new Error(
-        'Base code must use the chosen month and group/item numbers 01–99'
+      throw Object.assign(
+        new Error(
+          'Base code must use the chosen month and group/item numbers 01–99'
+        ),
+        {
+          packingIssue: {
+            orderId: input.orderId,
+            groupId,
+            field: 'code',
+            value: baseCode,
+          },
+        }
       )
     const owner = {
       accountId: input.accountId,
@@ -888,6 +958,11 @@ export function validatePreparation(input) {
         : {}),
       variants: [],
     }
+    if (inputGroup.sizeMode !== undefined) {
+      if (!['automatic', 'none'].includes(inputGroup.sizeMode))
+        throw new Error('Choose automatic size codes or no size difference')
+      if (inputGroup.sizeMode === 'none') group.sizeMode = 'none'
+    }
     group.variants = inputGroup.variants.map((inputVariant) => {
       record(inputVariant, 'Variant')
       const variantId = id(inputVariant.id, 'Variant ID')
@@ -906,8 +981,17 @@ export function validatePreparation(input) {
       const variantSuffix = text(inputVariant.variantSuffix, 'Variant suffix')
       const sizeSuffix = text(inputVariant.sizeSuffix, 'Size suffix')
       if (!/^[A-Z]*$/.test(variantSuffix) || !/^[A-Z0-9]*$/.test(sizeSuffix))
-        throw new Error(
-          'Barcode suffixes must use uppercase letters and numbers'
+        throw Object.assign(
+          new Error('Barcode suffixes must use uppercase letters and numbers'),
+          {
+            packingIssue: {
+              orderId: input.orderId,
+              groupId,
+              variantId,
+              field: !/^[A-Z]*$/.test(variantSuffix) ? 'variant' : 'size',
+              value: variantSuffix + sizeSuffix,
+            },
+          }
         )
       if (
         inputVariant.needsSizeMapping !== undefined &&
@@ -991,6 +1075,19 @@ export function validatePreparation(input) {
     updatedAt: new Date(input.updatedAt).toISOString(),
     groups,
   }
+  if (input.packingPosition !== undefined)
+    result.packingPosition = input.packingPosition
+  Object.assign(
+    result,
+    input.packingManualReordered === undefined
+      ? {}
+      : {
+          packingManualReordered: reordered(
+            input.packingManualReordered,
+            'Order manual ordering'
+          ).manualReordered,
+        }
+  )
   for (const field of ['defaultPacking', 'previousPacking']) {
     if (input[field] === undefined) continue
     const checkpoint = record(input[field], 'Packing checkpoint')
@@ -1084,6 +1181,18 @@ export function validatePackingPreferences(input = {}) {
     sizeVocabulary: validateSizeVocabulary(
       input.sizeVocabulary ?? DEFAULT_SIZE_VOCABULARY
     ),
+    ...(input.colorVocabulary !== undefined
+      ? { colorVocabulary: validateColorVocabulary(input.colorVocabulary) }
+      : {}),
+    ...(input.appearance !== undefined
+      ? { appearance: normalizeAppearance(input.appearance) }
+      : {}),
+    ...(input.orderTags !== undefined
+      ? { orderTags: normalizeOrderTags(input.orderTags) }
+      : {}),
+    ...(input.productTags !== undefined
+      ? { productTags: normalizeTags(input.productTags, 'product') }
+      : {}),
     logoDataUrl,
   }
   if (JSON.stringify(result).length > 3 * 1024 * 1024)

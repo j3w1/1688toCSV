@@ -25,6 +25,7 @@ function completeOrder(
     freeShippingBadge = false,
     foreignFee = false,
     includedDiscounts = false,
+    unsignedAdjustment = false,
     missingSeller = false,
     unsupported = false,
   } = {}
@@ -59,6 +60,7 @@ function completeOrder(
   const totals = document.createElement('order-total-price')
   const payable = (
     (6800 +
+      (unsignedAdjustment ? 190 : 0) +
       (customization ? 1250 : 0) -
       (redPacket ? 125 : 0) -
       (shopDiscount || promotionDiscount ? 160 : 0)) /
@@ -72,6 +74,7 @@ function completeOrder(
       <dl><dt>运费</dt><dd>¥4.40</dd></dl>
       <dl><dt>商品优惠</dt><dd>减 ¥${includedDiscounts ? '1.00' : '2.40'}</dd></dl>
       ${includedDiscounts ? '<dl><dt>批发优惠</dt><dd>减 ¥20.00</dd></dl><dl><dt>商品改价</dt><dd>减 ¥1.40</dd></dl>' : ''}
+      ${unsignedAdjustment ? '<dl><dt>商品改价</dt><dd>¥1.90</dd></dl>' : ''}
       ${customization ? '<dl><dt>定制服务</dt><dd>¥12.50</dd></dl>' : ''}
       ${redPacket ? '<dl><dt>红包</dt><dd>减 ¥1.25</dd></dl>' : ''}
       ${shopDiscount ? '<dl><dt>店铺优惠</dt><dd>减 ¥1.60</dd></dl>' : ''}
@@ -97,6 +100,7 @@ async function setup(
     freeShippingBadge = false,
     foreignFee = false,
     includedDiscounts = false,
+    unsignedAdjustment = false,
     missingSeller = false,
     unsupportedIds = [],
   } = {}
@@ -122,7 +126,7 @@ async function setup(
       body = `<script>
         ${buildOrderFixture.toString()}
         ${completeOrder.toString()}
-        setTimeout(() => completeOrder(document, ${JSON.stringify(id)}, ${JSON.stringify({ summary, customization, redPacket, shopDiscount, promotionDiscount, includedCustomization, freeShippingBadge, foreignFee, includedDiscounts, missingSeller, unsupported: unsupportedIds.includes(id) })}), ${typeof delay === 'object' ? delay[id] || 0 : delay});
+        setTimeout(() => completeOrder(document, ${JSON.stringify(id)}, ${JSON.stringify({ summary, customization, redPacket, shopDiscount, promotionDiscount, includedCustomization, freeShippingBadge, foreignFee, includedDiscounts, unsignedAdjustment, missingSeller, unsupported: unsupportedIds.includes(id) })}), ${typeof delay === 'object' ? delay[id] || 0 : delay});
       </script>`
     }
     await route.fulfill({
@@ -147,6 +151,75 @@ async function expandOrderMonths(library) {
     .all())
     await month.click()
 }
+
+test('1688 list and detail controls follow saved workspace palettes and mode without an open workspace', async ({
+  extension,
+}) => {
+  const { list, library } = await setup(extension)
+  const detail = await extension.context.newPage()
+  await detail.goto(detailUrl(ids[0]))
+  await list.emulateMedia({ colorScheme: 'light' })
+  await detail.emulateMedia({ colorScheme: 'light' })
+  const listPanel = list.getByRole('complementary', {
+    name: '1688 order library',
+    exact: true,
+  })
+  const detailPanel = detail.getByRole('complementary', {
+    name: '1688toCSV',
+    exact: true,
+  })
+  for (const panel of [listPanel, detailPanel])
+    await expect(panel).toHaveCSS('background-color', 'rgb(36, 33, 29)')
+  await library.getByRole('button', { name: 'Settings', exact: true }).click()
+  const settings = library.getByRole('dialog', {
+    name: 'Settings',
+    exact: true,
+  })
+  await settings.getByRole('tab', { name: 'Appearance', exact: true }).click()
+  await settings
+    .getByLabel('Light palette', { exact: true })
+    .selectOption('1688')
+  await settings
+    .getByLabel('Dark palette', { exact: true })
+    .selectOption('terracotta')
+  await settings
+    .getByRole('button', { name: 'Save settings', exact: true })
+    .click()
+  await expect(settings).not.toBeVisible()
+  for (const panel of [listPanel, detailPanel]) {
+    await expect(panel).toHaveCSS('background-color', 'rgb(45, 34, 30)')
+    await expect(panel).toHaveCSS('color', 'rgb(243, 238, 229)')
+    await expect(panel).toHaveCSS('color-scheme', 'dark')
+  }
+  await library.getByRole('button', { name: 'Switch to light theme' }).click()
+  await list.emulateMedia({ colorScheme: 'dark' })
+  await detail.emulateMedia({ colorScheme: 'dark' })
+  for (const panel of [listPanel, detailPanel]) {
+    await expect(panel).toHaveCSS('background-color', 'rgb(255, 252, 248)')
+    await expect(panel).toHaveCSS('color', 'rgb(44, 39, 35)')
+    await expect(panel).toHaveCSS('color-scheme', 'light')
+  }
+  await expect(
+    listPanel.getByRole('button', { name: 'Import selected', exact: true })
+  ).toHaveCSS('background-color', 'rgb(183, 71, 13)')
+  await expect(
+    detailPanel.getByRole('link', { name: 'Download CSV', exact: true })
+  ).toHaveCSS('background-color', 'rgb(183, 71, 13)')
+  await library.close()
+  await list.reload()
+  await detail.reload()
+  for (const panel of [listPanel, detailPanel]) {
+    await expect(panel).toHaveCSS('background-color', 'rgb(255, 252, 248)')
+    await expect(panel).toHaveCSS('color-scheme', 'light')
+  }
+  const saved = await extension.inspector.evaluate(() =>
+    chrome.runtime.sendMessage({ type: 'WORKSPACE_APPEARANCE_GET' })
+  )
+  expect(saved.ok, saved.error).toBe(true)
+  expect(saved.data.colorScheme).toBe('light')
+  expect(saved.data.dark.surface).toBe('#2d221e')
+  expect(extension.unexpectedRequests).toEqual([])
+})
 
 async function assertImported(extension, library) {
   await expect(library.locator('#order-count')).toHaveText('2', {
@@ -201,7 +274,7 @@ test('missing sellers import products but require identification before label pr
         snapshot.sellerUnavailable && snapshot.items.length === 2
     )
   ).toBe(true)
-  await library.locator('.order-card').first().dblclick()
+  await library.locator('.order-card-meta').first().dblclick()
   await expect(library.locator('#order-details')).toContainText(
     'Products and totals are saved'
   )
@@ -209,7 +282,7 @@ test('missing sellers import products but require identification before label pr
     .getByRole('button', { name: 'Close order details', exact: true })
     .click()
   await library.getByRole('button', { name: 'Show all', exact: true }).click()
-  await library.locator('.order-card').first().click()
+  await library.locator('.order-card-meta').first().click()
   await library.locator('#select-rows').click()
   await library.locator('#prepare-orders').click()
   const dialog = library.locator('#packing-view')
@@ -254,13 +327,48 @@ test('missing sellers import products but require identification before label pr
   await dialog.getByRole('button', { name: 'Orders', exact: true }).click()
   await library.getByRole('button', { name: 'Show all', exact: true }).click()
   await expandOrderMonths(library)
-  await library.locator('.order-card').nth(1).click()
+  await library.locator('.order-card-meta').nth(1).click()
   await library.locator('#select-rows').click()
   await library.locator('#prepare-orders').click()
   await expect(seller).toHaveValue('')
   await expect(
     dialog.getByLabel('Product code', { exact: true }).first()
   ).toHaveValue('')
+})
+
+test('unsigned price increases import only after totals reconcile and remain valid in backup', async ({
+  extension,
+}) => {
+  const { list, library } = await setup(extension, { unsignedAdjustment: true })
+  await list
+    .getByRole('button', { name: 'Import selected', exact: true })
+    .click()
+  await list
+    .getByRole('button', { name: 'Import 2 selected orders', exact: true })
+    .click()
+  await expect(library.locator('#order-count')).toHaveText('2', {
+    timeout: 65000,
+  })
+  const { data } = await extension.inspector.evaluate(() =>
+    chrome.runtime.sendMessage({ type: 'LIBRARY_QUERY' })
+  )
+  for (const { snapshot } of data.orders) {
+    expect(snapshot.totals).toMatchObject({
+      sourceDiscount: '2.40',
+      orderAdjustment: '-1.90',
+      goodsNet: '65.50',
+      payable: '69.90',
+    })
+    expect(snapshot.items.map((item) => item.allocatedDiscount)).toEqual([
+      '-1.43',
+      '-0.47',
+    ])
+  }
+  const backup = await extension.inspector.evaluate(() =>
+    chrome.runtime.sendMessage({ type: 'BACKUP_EXPORT' })
+  )
+  expect(backup.ok, backup.error).toBe(true)
+  expect(extension.unexpectedRequests).toEqual([])
 })
 
 test('wholesale prices and embedded adjustments import without double deductions in Excel copying', async ({
@@ -299,7 +407,7 @@ test('wholesale prices and embedded adjustments import without double deductions
       '0.30',
     ])
   }
-  await library.locator('.order-card').first().dblclick()
+  await library.locator('.order-card-meta').first().dblclick()
   await expect(library.locator('#order-details')).toContainText(
     'Wholesale discount (already in prices)'
   )
@@ -347,7 +455,7 @@ test('legacy promotions, free-shipping badges and included customization import 
       '0.00',
     ])
   }
-  await library.locator('.order-card').first().dblclick()
+  await library.locator('.order-card-meta').first().dblclick()
   await expect(library.locator('#order-details')).toContainText(
     'Original total (includes customization)'
   )
@@ -391,7 +499,7 @@ test('order-only shop discounts and unspecified foreign fees import without chan
       '0.00',
     ])
   }
-  await library.locator('.order-card').first().dblclick()
+  await library.locator('.order-card-meta').first().dblclick()
   await expect(library.locator('#order-details')).toContainText(
     'Order-only discount'
   )
@@ -429,7 +537,7 @@ test('red-packet payment reduction imports separately alongside customization an
       '0.30',
     ])
   }
-  await library.locator('.order-card').first().dblclick()
+  await library.locator('.order-card-meta').first().dblclick()
   await expect(library.locator('#order-details')).toContainText(
     'Red-packet discount (payment only)'
   )
@@ -566,7 +674,7 @@ test('customization services survive complete import without changing copied pro
     expect(record.snapshot.totals.payable).toBe('80.50')
     expect(record.snapshot.totals.goodsNet).toBe('63.60')
   }
-  await library.locator('.order-card').first().dblclick()
+  await library.locator('.order-card-meta').first().dblclick()
   await expect(library.locator('#order-details')).toContainText(
     'Customization service'
   )
@@ -603,9 +711,10 @@ test('selected import reaches persistent spreadsheet and clipboard through real 
   await expandOrderMonths(list)
   await list
     .getByRole('option', { name: `Order ${ids[0]}`, exact: true })
+    .locator('.order-card-meta')
     .click()
   await list
-    .getByRole('searchbox', { name: 'Search products and orders', exact: true })
+    .getByRole('combobox', { name: 'Search products and orders', exact: true })
     .fill('no matching synthetic product')
   await expect(list.locator('#sheet-body tr[data-selection-key]')).toHaveCount(
     0
@@ -631,7 +740,7 @@ test('selected import reaches persistent spreadsheet and clipboard through real 
     .getByRole('button', { name: 'Close settings', exact: true })
     .click()
   await list
-    .getByRole('searchbox', { name: 'Search products and orders', exact: true })
+    .getByRole('combobox', { name: 'Search products and orders', exact: true })
     .clear()
   await list.getByRole('button', { name: 'Show all', exact: true }).click()
   await expect(list.locator('#sheet-body tr[data-selection-key]')).toHaveCount(

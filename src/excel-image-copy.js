@@ -3,18 +3,28 @@ import { planExcelImage, renderExcelImage } from './excel-image.js'
 import {
   selectedExcelImageColumns,
   createExcelImageOptions,
+  readExcelImagePreference,
 } from './excel-image-options.js'
 import { openImageCopyDialog } from './image-copy-dialog.js'
 
 export async function copyExcelImage(
   rows,
-  { loadImage, renderCartonMark, signal, columns, language = getLanguage() }
+  {
+    loadImage,
+    renderCartonMark,
+    signal,
+    columns,
+    language = getLanguage(),
+    errorOptions,
+  }
 ) {
   // Freeze only copied values, not the entire library record attached to each row.
   const frozen = rows.map((row) =>
     Object.fromEntries(
       [
         'orderId',
+        'sellerName',
+        'sellerMemberLogin',
         'entryId',
         'groupId',
         'thumbnail',
@@ -47,12 +57,16 @@ export async function copyExcelImage(
     title: 'Copy Excel image',
     count: frozen.length,
     signal,
+    interactivePreview: true,
+    errorOptions,
     createOptions: columns ? undefined : createExcelImageOptions,
     plan: async (signal) => {
       await document.fonts.ready
       signal.throwIfAborted()
+      const preference = readExcelImagePreference()
       return planExcelImage(frozen, {
-        columns: columns || selectedExcelImageColumns(),
+        columns: columns || selectedExcelImageColumns(preference),
+        showOrderDetails: preference.showOrderDetails,
         language,
       })
     },

@@ -110,61 +110,92 @@
   align-items: stretch;
   justify-content: center;
   background: #fff;
-  font-family: Arial, sans-serif;
-  font-weight: 700;
+  font-family: var(--ce-code-font-family);
+  font-weight: var(--ce-code-font-weight);
+  font-kerning: none;
   line-height: 1;
 }
 
 .label-code-strip {
+  position: absolute;
+  box-sizing: border-box;
   display: inline-flex;
   align-items: stretch;
+  height: 100%;
   max-width: 100%;
   padding: 0;
-  background: transparent;
-  color: #fff;
+  background: var(--ce-code-background);
+  color: var(--ce-code-foreground);
+  border-radius: 0.18em;
+  overflow: visible;
 }
 
 .label-code-base {
   display: inline-flex;
+  flex: 0 0 auto;
   align-items: center;
   white-space: nowrap;
-  padding-inline: 0.12em;
-  background: #000;
+  padding: 0;
+}
+
+.label-code-base-text {
+  transform: translateY(var(--code-input-shift, 0px));
+}
+
+@supports (text-box: trim-both cap alphabetic) {
+  .label-code-base-text {
+    text-box: trim-both cap alphabetic;
+    transform: none;
+  }
 }
 
 .label-editor input.label-code-part {
   appearance: none;
   box-sizing: border-box;
+  flex: 0 0 auto;
   height: 100%;
   min-width: 0;
   min-height: 0;
   margin: 0;
-  padding: 0.04em 0;
+  padding: max(0px, calc(2 * var(--code-input-shift, 0px))) 0
+    max(0px, calc(-2 * var(--code-input-shift, 0px)));
   border: 0;
-  border-bottom: 2px solid;
   border-radius: 0;
   box-shadow: none;
   font: inherit;
-  line-height: 1.15;
-  color: #fff;
-  caret-color: #fff;
-  background: #000;
+  line-height: 1;
+  color: var(--ce-code-foreground);
+  caret-color: var(--ce-code-foreground);
+  background: transparent;
+  background-image: linear-gradient(
+    var(--code-part-color),
+    var(--code-part-color)
+  );
+  background-size: 100% 2px;
+  background-repeat: no-repeat;
+  background-position: 0 calc(100% - var(--code-band-inset, 0px));
   text-align: center;
   text-transform: uppercase;
 }
 
 .label-editor input.label-code-variantSuffix,
 .label-editor input.label-code-variantSuffix:hover {
-  border-color: #e7b66d;
+  --code-part-color: #e7b66d;
 }
 
 .label-editor input.label-code-sizeSuffix,
 .label-editor input.label-code-sizeSuffix:hover {
-  border-color: #f0a18e;
+  --code-part-color: #f0a18e;
+}
+
+.label-editor input.label-code-empty {
+  position: absolute;
+  top: 0;
+  border-radius: 0.12em;
 }
 
 .label-editor input.label-code-part:placeholder-shown {
-  background: #fff;
+  background-color: #fff;
   color: #000;
   caret-color: #000;
 }
@@ -175,7 +206,7 @@
 
 .label-editor input.label-code-part:focus-visible {
   outline: 2px solid #fff;
-  outline-offset: 1px;
+  outline-offset: -3px;
 }
 
 .label-editor input.label-code-part:placeholder-shown:focus-visible {
@@ -220,10 +251,38 @@
   overflow-wrap: anywhere;
 }
 
-.label-editor-preview[data-kind='barcode'] .label-editor-code:focus {
-  background: #000;
-  color: #fff;
-  caret-color: #fff;
+.label-code-field-band {
+  position: absolute;
+  background: var(--ce-code-background);
+}
+
+.label-code-field-band:focus-within {
+  outline: 2px solid #95511d;
+  outline-offset: -2px;
+}
+
+.label-editor input.label-editor-code,
+.label-editor input.label-editor-code:focus,
+.label-editor-preview:not([data-ready='true']) input.label-editor-code {
+  top: 0;
+  height: 100%;
+  border: 0;
+  padding-inline: 0;
+  padding-block: max(0px, calc(2 * var(--code-input-shift, 0px)))
+    max(0px, calc(-2 * var(--code-input-shift, 0px)));
+  background: transparent;
+  color: var(--ce-code-foreground);
+  caret-color: var(--ce-code-foreground);
+  font-family: var(--ce-code-font-family);
+  font-weight: var(--ce-code-font-weight);
+  font-kerning: none;
+  line-height: 1;
+  text-align: left;
+  text-transform: uppercase;
+}
+
+.label-editor input.label-editor-code:focus:not([aria-invalid='true']) {
+  outline: none;
 }
 
 .label-editor-spanishName {

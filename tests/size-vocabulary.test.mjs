@@ -4,6 +4,7 @@ import {
   createSizeClassifier,
   DEFAULT_SIZE_VOCABULARY,
   resolvePendingSizeMappings,
+  suggestPriceSizeMappings,
   validateSizeVocabulary,
 } from '../src/size-vocabulary.js'
 
@@ -88,7 +89,7 @@ test('incomparable, tied, mixed and unsupported assortments need an explicit map
     ['20x30cm', '200x300mm'],
     ['10cm', '20ml'],
     ['10cm', '20x30cm'],
-    ['10cm', '20cm', '30cm', '40cm'],
+    ['10cm', '20cm', '30cm', '40cm', '50cm', '60cm'],
     ['10-20cm', '20-30cm'],
     ['1,5cm', '2,5cm'],
     ['0cm', '10cm'],
@@ -433,4 +434,316 @@ test('pending resolution does not create duplicate barcode endings or overwrite 
   ])
   const input = pending(['10cm', '20cm'], { sizeSuffix: 'MANUAL' })
   assert.deepEqual(resolvePendingSizeMappings(input).preparation, input)
+})
+
+test('embedded named axes retain complete dimensions and the original style text', () => {
+  const item = {
+    title: 'Synthetic vase',
+    skuProperties: [property('颜色', '#款式四高28.5X直径13cm')],
+  }
+  const before = structuredClone(item)
+  const extracted = classifier.extract(item)
+  assert.equal(extracted.size, '高28.5X直径13cm')
+  assert.deepEqual(extracted.sizeInfo.axes, ['diameter', 'height'])
+  assert.deepEqual(extracted.sizeInfo.values, [130, 285])
+  assert.equal(extracted.variant, '颜色: #款式四')
+  assert.deepEqual(item, before)
+  assert.deepEqual(
+    codes(['#款式四高28.5X直径13cm', '#款式五高22X直径10.5cm']),
+    ['L', 'S']
+  )
+})
+
+test('named measurements compare matching axes across reordered axes and normalized units', () => {
+  for (const sizes of [
+    ['高28.5X直径13cm', '直径105mm×高度22cm'],
+    ['直径13cm高28.5cm', '高22cm，直径13cm'],
+    ['长30宽20高10cm', '高度8cm×宽度150mm×长度0.2m'],
+    ['厚2mm宽3CM长5M', '长5m×厚2mm×宽2cm'],
+  ])
+    assert.deepEqual(codes(sizes), ['L', 'S'], JSON.stringify(sizes))
+  assert.deepEqual(
+    codes(['高40直径20cm', '高10直径5cm', '高30直径15cm', '高20直径10cm']),
+    ['XL', 'S', 'L', 'M']
+  )
+})
+
+test('identical complete measurements omit size endings without confusing different styles or prices', () => {
+  const styles = ['#款式二 高33X底径10.5cm', '#款式一 高33X底径10.5cm']
+  const snapshot = {
+    items: styles.map((style, index) => ({
+      entryId: String(index),
+      title: 'Synthetic vase',
+      skuProperties: [property('颜色', style)],
+      price: index ? '21.5' : '23.5',
+    })),
+  }
+  const prep = pending(styles)
+  for (const [index, variant] of prep.groups[0].variants.entries())
+    variant.variantSuffix = index ? 'B' : 'A'
+  const before = structuredClone({ prep, snapshot })
+  const extracted = snapshot.items.map((item) => classifier.extract(item))
+  assert.deepEqual(
+    extracted.map((item) => item.sizeInfo.values),
+    [
+      [105, 330],
+      [105, 330],
+    ]
+  )
+  assert.deepEqual(
+    extracted.map((item) => item.variant),
+    ['颜色: #款式二', '颜色: #款式一']
+  )
+  const result = resolvePendingSizeMappings(prep, undefined, { snapshot })
+  assert.deepEqual(result.resolvedVariantIds, ['variant-0', 'variant-1'])
+  assert.deepEqual(
+    result.preparation.groups[0].variants.map((variant) => [
+      variant.id,
+      variant.variantSuffix,
+      variant.sizeSuffix,
+      variant.needsSizeMapping,
+    ]),
+    [
+      ['variant-0', 'A', '', false],
+      ['variant-1', 'B', '', false],
+    ]
+  )
+  assert.deepEqual(suggestPriceSizeMappings(prep.groups[0], snapshot), [])
+  assert.deepEqual({ prep, snapshot }, before)
+})
+
+test('an explicit no-size override suppresses automatic and price suggestions only for its group', () => {
+  const prep = pending(['10cm', '20cm'])
+  const automatic = structuredClone(prep.groups[0])
+  automatic.id = 'automatic'
+  automatic.variants.forEach((variant) => {
+    variant.id += '-automatic'
+  })
+  prep.groups[0].sizeMode = 'none'
+  prep.groups.push(automatic)
+  const result = resolvePendingSizeMappings(prep)
+  assert.deepEqual(result.preparation.groups[0], prep.groups[0])
+  assert.deepEqual(result.resolvedVariantIds, [
+    'variant-0-automatic',
+    'variant-1-automatic',
+  ])
+  const { group, snapshot } = priceCandidates()
+  group.sizeMode = 'none'
+  assert.deepEqual(suggestPriceSizeMappings(group, snapshot), [])
+})
+
+test('different, crossed, incomplete and duplicate axes never rank by one dimension or price', () => {
+  for (const sizes of [
+    ['高28.5X直径10cm', '高22X直径13cm'],
+    ['高30cm', '宽20cm'],
+    ['高30X底径13cm', '高20X直径10cm'],
+    ['高30X口径13cm', '高20X底径10cm'],
+    ['高30X13cm', '高20X10cm'],
+    ['高30X高13cm', '高20X高10cm'],
+    ['长10ml', '长20ml'],
+    ['高30cm', '20cm'],
+    ['高-10cm', '高-20cm'],
+  ])
+    assert.ok(
+      classifier.suggest(sizes).every((entry) => entry.needsSizeMapping),
+      JSON.stringify(sizes)
+    )
+  const negative = classifier.extract({
+    skuProperties: [property('颜色', '高-10cm')],
+  })
+  assert.equal(negative.size, '高-10cm')
+  assert.equal(negative.sizeInfo.kind, 'ambiguous')
+  assert.deepEqual(codes(['S高28.5X直径13cm', 'L高22X直径10.5cm']), ['S', 'L'])
+  assert.deepEqual(
+    createSizeClassifier([{ match: '高28.5X直径13cm', suffix: 'CUSTOM' }])
+      .suggest(['高28.5X直径13cm', 'unknown'])
+      .map((entry) => entry.sizeSuffix),
+    ['CUSTOM', '']
+  )
+})
+
+test('source reanalysis resolves only selected unfinished variants and does not compare merged products', () => {
+  const prep = pending(['unrecognized height', 'unrecognized height'])
+  const snapshot = {
+    items: [
+      {
+        entryId: '0',
+        title: 'Synthetic vase',
+        skuProperties: [property('尺寸', '高28.5X直径13cm')],
+      },
+      {
+        entryId: '1',
+        title: 'Synthetic vase',
+        skuProperties: [property('尺寸', '高22X直径10.5cm')],
+      },
+    ],
+  }
+  const before = structuredClone(prep)
+  const result = resolvePendingSizeMappings(prep, undefined, {
+    snapshot,
+    entryIds: ['0'],
+  })
+  assert.deepEqual(result.resolvedVariantIds, ['variant-0'])
+  assert.equal(result.preparation.groups[0].variants[0].sizeSuffix, 'L')
+  assert.deepEqual(
+    result.preparation.groups[0].variants[1],
+    prep.groups[0].variants[1]
+  )
+  assert.deepEqual(prep, before)
+  snapshot.items[1].title = 'Different source product'
+  assert.deepEqual(
+    resolvePendingSizeMappings(prep, undefined, { snapshot })
+      .resolvedVariantIds,
+    []
+  )
+})
+
+test('source reanalysis refuses inconsistent shared sizes and leaves partially selected shared variants unchanged', () => {
+  const prep = pending(['unrecognized height', 'unrecognized height'])
+  prep.groups[0].variants[0].entryIds.push('extra')
+  const snapshot = {
+    items: [
+      {
+        entryId: '0',
+        title: 'Synthetic vase',
+        skuProperties: [property('尺寸', '高28.5X直径13cm')],
+      },
+      {
+        entryId: 'extra',
+        title: 'Synthetic vase',
+        skuProperties: [property('尺寸', '高28.5X直径13cm')],
+      },
+      {
+        entryId: '1',
+        title: 'Synthetic vase',
+        skuProperties: [property('尺寸', '高22X直径10.5cm')],
+      },
+    ],
+  }
+  const partial = resolvePendingSizeMappings(prep, undefined, {
+    snapshot,
+    entryIds: ['0', '1'],
+  })
+  assert.deepEqual(partial.resolvedVariantIds, ['variant-1'])
+  assert.deepEqual(
+    partial.preparation.groups[0].variants[0],
+    prep.groups[0].variants[0]
+  )
+  snapshot.items[1].skuProperties[0].value = '高24X直径11cm'
+  assert.deepEqual(
+    resolvePendingSizeMappings(prep, undefined, { snapshot })
+      .resolvedVariantIds,
+    []
+  )
+})
+
+function priceCandidates(sizes = ['待确认尺寸甲', '待确认尺寸乙']) {
+  const group = pending(sizes).groups[0]
+  return {
+    group,
+    snapshot: {
+      items: sizes.map((size, index) => ({
+        entryId: String(index),
+        title: 'Synthetic vase',
+        productNumber: 'SYNTHETIC-1',
+        skuProperties: [property('颜色', '白色'), property('尺寸', size)],
+        price: index ? '18.90' : '12.50',
+      })),
+    },
+  }
+}
+
+test('two otherwise matching unknown sizes receive only reviewable exact unit-price suggestions', () => {
+  const { group, snapshot } = priceCandidates()
+  const before = structuredClone({ group, snapshot })
+  assert.deepEqual(suggestPriceSizeMappings(group, snapshot), [
+    { variantId: 'variant-0', price: '12.50', sizeSuffix: 'S' },
+    { variantId: 'variant-1', price: '18.90', sizeSuffix: 'L' },
+  ])
+  snapshot.items[0].price = '0.101'
+  snapshot.items[1].price = '0.1001'
+  assert.deepEqual(
+    suggestPriceSizeMappings(group, snapshot).map((item) => item.sizeSuffix),
+    ['L', 'S']
+  )
+  assert.deepEqual(group, before.group)
+})
+
+test('price suggestions refuse real size evidence, ranges, differing materials/models and manual endings', () => {
+  for (const sizes of [
+    ['高28.5X直径10cm', '高22X直径13cm'],
+    ['10-20cm', '20-30cm'],
+    ['5/10cm', '20/30cm'],
+    ['38-39(适合37-38脚)', '40-41(适合39-40脚)'],
+    ['S', 'L'],
+    ['10cm', '20cm'],
+    ['未知尺寸10', '未知尺寸20'],
+    ['待确认尺寸', '待确认尺寸'],
+  ]) {
+    const { group, snapshot } = priceCandidates(sizes)
+    assert.deepEqual(
+      suggestPriceSizeMappings(group, snapshot),
+      [],
+      JSON.stringify(sizes)
+    )
+  }
+  for (const mutate of [
+    ({ group }) => {
+      group.variants[0].needsSizeMapping = false
+    },
+    ({ group }) => {
+      group.variants[0].sizeSuffix = 'MANUAL'
+    },
+    ({ snapshot }) => {
+      snapshot.items[1].productNumber = 'OTHER'
+    },
+    ({ snapshot }) => {
+      snapshot.items[1].title = 'Other source product'
+    },
+    ({ snapshot }) => {
+      snapshot.items[1].skuProperties.push(property('材质', '木'))
+    },
+    ({ snapshot }) => {
+      snapshot.items[1].skuProperties[0].value = '黑色'
+    },
+    ({ snapshot }) => {
+      snapshot.items[1].price = '12.50'
+    },
+    ({ snapshot }) => {
+      snapshot.items[1].price = '0'
+    },
+    ({ group, snapshot }) => {
+      group.variants[0].entryIds.push('extra')
+      snapshot.items.push({
+        ...snapshot.items[0],
+        entryId: 'extra',
+        price: '13.00',
+      })
+    },
+    ({ group, snapshot }) => {
+      group.variants[0].entryIds.push('extra')
+      snapshot.items.push({
+        ...snapshot.items[0],
+        entryId: 'extra',
+        skuProperties: [
+          property('颜色', '白色'),
+          property('尺寸', '待确认尺寸丙'),
+        ],
+      })
+    },
+  ]) {
+    const candidate = priceCandidates()
+    mutate(candidate)
+    assert.deepEqual(
+      suggestPriceSizeMappings(candidate.group, candidate.snapshot),
+      []
+    )
+  }
+  const { group, snapshot } = priceCandidates()
+  assert.deepEqual(
+    suggestPriceSizeMappings(group, snapshot, [
+      { match: '待确认尺寸甲', suffix: 'CUSTOM' },
+    ]),
+    []
+  )
 })

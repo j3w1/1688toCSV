@@ -1,5 +1,21 @@
 // A write acknowledges only the values it received. Keep newer typing and the
 // existing objects used by field/preview closures while applying allocated codes.
+export function samePreparation(left, right) {
+  if (left === right) return true
+  if (!left || !right || typeof left !== 'object' || typeof right !== 'object')
+    return false
+  if (Array.isArray(left) !== Array.isArray(right)) return false
+  const keys = Object.keys(left).filter((key) => left[key] !== undefined)
+  const otherKeys = Object.keys(right).filter((key) => right[key] !== undefined)
+  return (
+    keys.length === otherKeys.length &&
+    keys.every(
+      (key) =>
+        Object.hasOwn(right, key) && samePreparation(left[key], right[key])
+    )
+  )
+}
+
 export function acknowledgePreparation(draft, submitted, saved) {
   function merge(target, before, after) {
     for (const [key, value] of Object.entries(after)) {

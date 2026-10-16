@@ -3,7 +3,10 @@ import { startLibrary } from '../src/library.js'
 import { openDatabase } from '../src/database.js'
 import { renderLabel } from '../src/labels.js'
 import { planExcelImage, renderExcelImage } from '../src/excel-image.js'
-import { selectedExcelImageColumns } from '../src/excel-image-options.js'
+import {
+  selectedExcelImageColumns,
+  readExcelImagePreference,
+} from '../src/excel-image-options.js'
 import { getLanguage } from '../src/i18n.js'
 import { variantMaterial } from '../src/packing-model.js'
 import { createDemoRecords } from '../preview/library-fixture.js'
@@ -70,6 +73,8 @@ globalThis.excelAcceptance = {
       return {
         ...item,
         orderId: records[0].snapshot.orderId,
+        sellerName: records[0].snapshot.sellerName,
+        sellerMemberLogin: records[0].snapshot.sellerMemberLogin,
         groupId: group.id,
         baseCode: group.baseCode,
         barcode: group.baseCode + variant.variantSuffix + variant.sizeSuffix,
@@ -83,6 +88,7 @@ globalThis.excelAcceptance = {
     await document.fonts.ready
     const plans = planExcelImage(rows, {
       columns: selectedExcelImageColumns(),
+      showOrderDetails: readExcelImagePreference().showOrderDetails,
       language: getLanguage(),
     })
     if (plans.length !== 1)

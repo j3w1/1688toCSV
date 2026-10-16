@@ -1,6 +1,8 @@
 import {
   copyCurrentImageBatch,
   revealCopyActions,
+  revealGroupingActions,
+  clickGroupingAction,
 } from './copy-actions-helpers.mjs'
 import { test, expect, holdPreparationWrites } from './extension-fixture.mjs'
 import { createDemoRecords } from '../../preview/library-fixture.js'
@@ -102,10 +104,228 @@ async function waitForAutosave(dialog) {
   )
 }
 
+test('Casa Elida codes stay readable and order names summarize distinct saved products in English and Spanish', async ({
+  extension,
+}) => {
+  const { page } = await openWorkspace(extension)
+  const view = await prepare(page)
+  const groups = view.locator('.preparation-group')
+  const firstName = 'FRASCOS DE VIDRIO PARA ALMACENAMIENTO'
+  await groups
+    .nth(0)
+    .getByLabel('Spanish short name', { exact: true })
+    .fill(firstName)
+  await groups
+    .nth(1)
+    .getByLabel('Spanish short name', { exact: true })
+    .fill('CAJAS')
+  await waitForAutosave(view)
+  const codes = view.locator(
+    '.group-code-editor, .variant-code-base, .variant-code-band input'
+  )
+  for (const node of await codes.all()) {
+    await expect(node).toHaveCSS('color', 'rgb(255, 255, 255)')
+    await expect(node).toHaveCSS(
+      'font-family',
+      'Arial, "Microsoft YaHei", sans-serif'
+    )
+    await expect(node).toHaveCSS('font-size', '20px')
+    expect(
+      Number(
+        await node.evaluate((element) => getComputedStyle(element).fontWeight)
+      )
+    ).toBeGreaterThanOrEqual(700)
+  }
+  const design = groups.first().locator('.variant-code-design').first()
+  const emptySuffix = design.locator('input[data-packing-field="variant"]')
+  await expect(emptySuffix).toHaveValue('')
+  await expect(
+    design.locator('.variant-code-band input[data-packing-field="variant"]')
+  ).toHaveCount(0)
+  await emptySuffix.fill('A')
+  await expect(emptySuffix).toBeFocused()
+  await expect(
+    design.locator('.variant-code-band input[data-packing-field="variant"]')
+  ).toHaveValue('A')
+  await emptySuffix.fill('')
+  await expect(emptySuffix).toBeFocused()
+  await expect(
+    design.locator('.variant-code-band input[data-packing-field="variant"]')
+  ).toHaveCount(0)
+  await waitForAutosave(view)
+  await view.getByRole('button', { name: 'Orders', exact: true }).click()
+  const summary = page.locator('.order-card .order-name-summary')
+  await expect(summary.locator('.order-name-label')).toHaveText(firstName)
+  // The first name is shared by two variants, but counts as one product name.
+  await expect(summary.locator('.order-name-count')).toHaveText('+1')
+  await summary.hover()
+  await expect(page.getByRole('tooltip')).toContainText(`${firstName} · CAJAS`)
+  await page.mouse.move(0, 0)
+  await page.keyboard.press('Tab')
+  await summary.focus()
+  await expect(page.getByRole('tooltip')).toContainText(`${firstName} · CAJAS`)
+  for (const mode of ['dark', 'light']) {
+    if (
+      (await page
+        .locator('meta[name="color-scheme"]')
+        .getAttribute('content')) !== mode
+    )
+      await page.locator('#theme-toggle').click()
+    await expect(page.locator('meta[name="color-scheme"]')).toHaveAttribute(
+      'content',
+      mode
+    )
+    const code = page.locator('.row-code-copy').first()
+    await expect(code).toHaveCSS(
+      'font-family',
+      'Arial, "Microsoft YaHei", sans-serif'
+    )
+    await expect(code).toHaveCSS('font-size', '12px')
+    await expect(code).toHaveCSS('padding-left', '6.0515px')
+    await expect(code).toHaveCSS('padding-top', '1.26px')
+    await expect(code).toHaveCSS('background-color', 'rgb(0, 0, 0)')
+    await code.hover()
+    await expect(code).toHaveCSS('color', 'rgb(255, 255, 255)')
+  }
+  await page.locator('[data-language="es"]').click()
+  await expect(summary.locator('.order-name-label')).toHaveText(firstName)
+  await page.locator('[data-language="zh"]').click()
+  await expect(summary).toHaveCount(0)
+  await page.locator('[data-language="en"]').click()
+  await page.setViewportSize({ width: 760, height: 900 })
+  await expect(summary.locator('.order-name-count')).toBeVisible()
+  const bounds = await summary.evaluate((element) => {
+    const parent = element.closest('.order-card').getBoundingClientRect()
+    const own = element.getBoundingClientRect()
+    return { right: own.right, parentRight: parent.right }
+  })
+  expect(bounds.right).toBeLessThanOrEqual(bounds.parentRight)
+})
+
 async function selectVariantRow(row, key = 'Space') {
   await row.focus()
   await row.press(key)
 }
+
+for (const unresolvedSizes of [false, true])
+  test(`main product code returns to its own reservation through autosave and reopened carton editors${unresolvedSizes ? ' with unresolved sizes' : ''}`, async ({
+    extension,
+  }) => {
+    const { page, record } = await openWorkspace(extension)
+    if (unresolvedSizes) {
+      record.snapshot.observedAt = '2026-10-16T12:00:00.000Z'
+      record.lastCheckedAt = record.snapshot.observedAt
+      record.changedAt = record.snapshot.observedAt
+      for (const [index, item] of record.snapshot.items.slice(0, 2).entries()) {
+        const size = index ? '15*10CM' : '10*20CM'
+        item.skuProperties = [
+          { label: '颜色', value: '透明', raw: '颜色：透明' },
+          { label: '尺寸', value: size, raw: `尺寸：${size}` },
+        ]
+        item.description = [
+          item.title,
+          ...item.skuProperties.map((property) => property.raw),
+          `货号：${item.productNumber}`,
+        ].join('\n')
+      }
+      const restored = await extension.inspector.evaluate(
+        (order) =>
+          chrome.runtime.sendMessage({
+            type: 'BACKUP_RESTORE',
+            backup: {
+              format: '1688-order-library',
+              version: 1,
+              exportedAt: new Date().toISOString(),
+              orders: [order],
+              history: [],
+              images: [],
+            },
+          }),
+        record
+      )
+      expect(restored.ok, restored.error).toBe(true)
+      await page.reload()
+    }
+    const view = await prepare(page)
+    const group = view.locator('.preparation-group').first()
+    const field = group.getByLabel('Product code', { exact: true })
+    const original = await packingBackup(extension)
+    const originalGroup = original.preparations[0].groups[0]
+    const base = originalGroup.baseCode
+    expect(
+      originalGroup.variants.every(
+        (variant) => variant.needsSizeMapping === unresolvedSizes
+      )
+    ).toBe(true)
+    const currentGroup = async () =>
+      (await packingBackup(extension)).preparations[0].groups[0]
+    for (const code of ['CE26100107', base]) {
+      await field.fill(code)
+      await field.press('Tab')
+      await expect.poll(async () => (await currentGroup()).baseCode).toBe(code)
+      await waitForAutosave(view)
+      await expect(group.locator('.code-field-error:visible')).toHaveCount(0)
+    }
+    expect(await currentGroup()).toEqual(originalGroup)
+
+    // Return to the original main code while the previous real save is pending.
+    await holdPreparationWrites(page)
+    await field.fill('CE26100108')
+    await expect
+      .poll(() => page.evaluate(() => window.preparationSaveStarted))
+      .toBe(true)
+    try {
+      await field.fill(base)
+    } finally {
+      await page.evaluate(() => {
+        window.holdPreparationSave = false
+      })
+    }
+    await expect.poll(async () => (await currentGroup()).baseCode).toBe(base)
+    await waitForAutosave(view)
+    expect(await currentGroup()).toEqual(originalGroup)
+
+    const label = page.getByRole('dialog', {
+      name: 'Label editor',
+      exact: true,
+    })
+    const codeField = label.getByRole('textbox', {
+      name: 'Base CE code',
+      exact: true,
+    })
+    // Closing/reopening tests that the editor uses the latest saved revision.
+    for (const code of ['CE26100109', base]) {
+      await group
+        .getByRole('button', { name: 'Edit carton mark', exact: true })
+        .click()
+      await expect(label).toBeVisible()
+      await codeField.fill(code)
+      await codeField.press('Enter')
+      await expect.poll(async () => (await currentGroup()).baseCode).toBe(code)
+      await expect(
+        label.getByRole('button', { name: 'Copy label', exact: true })
+      ).toBeEnabled({ timeout: 20_000 })
+      await label
+        .getByRole('button', { name: 'Close label editor', exact: true })
+        .click()
+      await expect(label).toBeHidden()
+      await expect(field).toHaveValue(code)
+    }
+    await page.reload()
+    await page
+      .getByRole('button', { name: 'Prepare packing list', exact: true })
+      .click()
+    await expect(view).toBeVisible()
+    await expect(field).toHaveValue(base)
+    await waitForAutosave(view)
+    expect(await currentGroup()).toEqual(originalGroup)
+    const after = await packingBackup(extension)
+    expect(after.orders[0].snapshot).toEqual(record.snapshot)
+    await expect(
+      page.getByRole('dialog', { name: 'Resolve code conflict', exact: true })
+    ).toHaveCount(0)
+    expect(extension.unexpectedRequests).toEqual([])
+  })
 
 test('product codes lead group headers; nested hints, hit targets and code baselines stay independent', async ({
   extension,
@@ -376,6 +596,96 @@ async function prepare(
   ).toHaveValue(/^CE2610\d{4}$/)
   return dialog
 }
+
+test('one sticky selection toolbar batches grouping safely across orders and stays reachable on narrow screens', async ({
+  extension,
+}) => {
+  const originals = [
+    await seedStructuredOrder(extension, '1234567890123456789'),
+    await seedStructuredOrder(extension, '2234567890123456789'),
+  ]
+  const page = await newWorkspacePage(extension)
+  await page.goto(`${extension.extensionBaseUrl}/library.html`)
+  const view = await prepare(page, { groupCount: 4 })
+  const toolbar = view.getByRole('group', {
+    name: 'Selection tools',
+    exact: true,
+  })
+  await expect(toolbar).toHaveCount(1)
+  await expect(view.locator('.group-tools')).toHaveCount(0)
+  await expect(
+    toolbar.getByRole('button', { name: 'Grouping tools', exact: true })
+  ).toBeDisabled()
+  await expect(
+    toolbar.getByRole('button', { name: 'Copy Excel image', exact: true })
+  ).toBeDisabled()
+  await toolbar.getByRole('button', { name: 'Select all', exact: true }).click()
+  const panel = await revealGroupingActions(page)
+  const merge = panel.getByRole('button', {
+    name: 'Merge products',
+    exact: true,
+  })
+  await expect(merge).toBeDisabled()
+  await merge.focus()
+  await page.keyboard.press('Tab')
+  await page.keyboard.press('Shift+Tab')
+  await expect(merge).toBeFocused()
+  await expect(page.getByRole('tooltip')).toContainText('one order at a time')
+  await clickGroupingAction(page, 'Share one barcode')
+  const review = page.getByRole('dialog', {
+    name: 'Share one barcode?',
+    exact: true,
+  })
+  await expect(review).toContainText(
+    'Different groups and orders remain separate'
+  )
+  await review
+    .getByRole('button', { name: 'Apply changes', exact: true })
+    .click()
+  await waitForAutosave(view)
+  let saved = await packingBackup(extension)
+  expect(saved.preparations).toHaveLength(2)
+  for (const prep of saved.preparations) {
+    expect(prep.groups).toHaveLength(2)
+    expect(prep.groups[0].variants).toHaveLength(1)
+    expect(prep.groups[0].variants[0].entryIds).toHaveLength(2)
+  }
+  await clickGroupingAction(page, 'Give rows separate barcodes')
+  await page
+    .locator('.packing-review')
+    .getByRole('button', { name: 'Apply changes', exact: true })
+    .click()
+  await waitForAutosave(view)
+  saved = await packingBackup(extension)
+  for (const prep of saved.preparations)
+    expect(prep.groups[0].variants).toHaveLength(2)
+  for (const record of originals)
+    expect(
+      saved.orders.find(
+        (entry) => entry.snapshot.orderId === record.snapshot.orderId
+      ).snapshot
+    ).toEqual(record.snapshot)
+  for (const width of [1280, 390]) {
+    await page.setViewportSize({ width, height: 720 })
+    const last = view.locator('.preparation-group').last()
+    await last.evaluate((node) => node.scrollIntoView({ block: 'end' }))
+    await expect(toolbar).toBeInViewport({ ratio: 1 })
+    const bounds = await toolbar.boundingBox()
+    expect(bounds.y).toBeGreaterThanOrEqual(0)
+    expect(bounds.y).toBeLessThanOrEqual(10)
+    expect(bounds.x + bounds.width).toBeLessThanOrEqual(width)
+    const field = last.getByLabel('Spanish short name', { exact: true })
+    await field.evaluate((node) => node.scrollIntoView({ block: 'center' }))
+    await field.focus()
+    const fieldBox = await field.boundingBox()
+    const toolbarBox = await toolbar.boundingBox()
+    expect(fieldBox.y).toBeGreaterThanOrEqual(toolbarBox.y + toolbarBox.height)
+    const mark = last.locator('.carton-preview')
+    expect((await mark.boundingBox()).width).toBeLessThanOrEqual(100)
+    await expect(mark.locator('strong')).toHaveCount(0)
+  }
+  expect(extension.unexpectedRequests).toEqual([])
+})
 
 test('structured products prepare, preserve edits and copy exact headerless source and preparation rows', async ({
   extension,
@@ -827,6 +1137,20 @@ test('preparation shows product photos, zooms originals and opens saved labels f
   const thumbnail = await photoButton.locator('img').getAttribute('src')
   expect(thumbnail).toMatch(/^blob:/)
   const copyPhoto = photoButton.locator('..').locator('.photo-copy-button')
+  const pointerSession = await extension.context.newCDPSession(page)
+  for (const touch of [false, true]) {
+    await pointerSession.send('Emulation.setTouchEmulationEnabled', {
+      enabled: touch,
+    })
+    const box = await copyPhoto.boundingBox()
+    expect(box.width).toBe(24)
+    expect(box.height).toBe(24)
+    await expect(copyPhoto.locator('.ui-icon')).toHaveCSS('inline-size', '13px')
+  }
+  await pointerSession.send('Emulation.setTouchEmulationEnabled', {
+    enabled: false,
+  })
+  await pointerSession.detach()
   const selectionBefore = await dialog
     .locator('.variants tbody tr')
     .evaluateAll((rows) => rows.map((row) => row.getAttribute('aria-selected')))
@@ -1008,7 +1332,7 @@ test('preparation shows product photos, zooms originals and opens saved labels f
   expect(extension.unexpectedRequests).toEqual([])
 })
 
-test('preparation has no collapsibles and keeps categories, names, grouping and codes visible', async ({
+test('preparation keeps categories and codes visible with one contextual grouping menu', async ({
   extension,
 }) => {
   const { page } = await openWorkspace(extension)
@@ -1030,7 +1354,7 @@ test('preparation has no collapsibles and keeps categories, names, grouping and 
   await expect(dialog.locator('details, summary')).toHaveCount(0)
   for (const section of [
     dialog.locator('.order-tools'),
-    first.locator('.group-tools'),
+    dialog.locator('.packing-selection-toolbar'),
     first.locator('.original-product-name'),
   ])
     await expect(section).toBeVisible()
@@ -1043,12 +1367,16 @@ test('preparation has no collapsibles and keeps categories, names, grouping and 
   await expect(
     dialog.getByLabel('Chinese category for order', { exact: true })
   ).toBeVisible()
+  await expect(dialog.locator('.group-tools')).toHaveCount(0)
+  await first.locator('.group-select').click()
+  await revealGroupingActions(page)
   await expect(
     dialog.getByRole('button', { name: 'Merge products', exact: true })
   ).toBeVisible()
   await expect(
-    first.getByRole('button', { name: 'Share one barcode', exact: true })
+    dialog.getByRole('button', { name: 'Share one barcode', exact: true })
   ).toBeVisible()
+  await page.keyboard.press('Escape')
   await expect(dialog.getByRole('button', { name: /^Help:/ })).toHaveCount(0)
   await expect(
     variant.getByLabel('Size on order', { exact: true })
@@ -1066,29 +1394,37 @@ test('preparation has no collapsibles and keeps categories, names, grouping and 
     variant.getByRole('textbox', { name: /^Size code / })
   ).toHaveValue('S')
   const codeHelp = variant.getByRole('textbox', { name: /^Size code / })
-  await variant.getByRole('textbox', { name: /^Variant code / }).focus()
-  await page.keyboard.press('Tab')
+  const variantCode = variant.getByRole('textbox', { name: /^Variant code / })
+  // The filled size is in the code band; its empty variant field follows it.
+  await expect(variantCode).toHaveValue('')
+  await variantCode.focus()
+  await page.keyboard.press('Shift+Tab')
   await expect(codeHelp).toBeFocused()
   const codePanel = page.getByRole('tooltip')
   await expect(codePanel).toBeVisible()
   await expect(codePanel).toHaveText(
     'Identifies the size: S, M, L. Leave blank when not needed.'
   )
+  await page.keyboard.press('Tab')
+  await expect(variantCode).toBeFocused()
   await dialog.locator('h1').click()
   await page.mouse.move(0, 0)
   await expect(codePanel).not.toBeVisible()
   await expect(dialog).toBeVisible()
 
-  const splitHelp = first.getByRole('button', {
+  await revealGroupingActions(page)
+  const splitHelp = dialog.getByRole('button', {
     name: 'Give rows separate barcodes',
     exact: true,
   })
   await splitHelp.hover()
   const splitPanel = page.getByRole('tooltip')
-  await expect(splitPanel).toContainText('barcode')
+  await expect(splitHelp).toHaveAttribute('aria-disabled', 'true')
+  await expect(splitPanel).toContainText('multiple source rows')
   await expect(splitPanel.getByRole('button')).toHaveCount(0)
   await page.mouse.move(0, 0)
   await expect(splitPanel).not.toBeVisible()
+  await page.keyboard.press('Escape')
   await expect(first.locator('.variants tbody tr')).toHaveCount(2)
 
   await pauseAutosave(page)
@@ -1174,7 +1510,7 @@ test('compact preparation fits two product groups without hiding fields or clipp
       group.getByLabel('Chinese category', { exact: true })
     ).toBeVisible()
     await expect(group.locator('.original-product-name')).toBeVisible()
-    await expect(group.locator('.group-tools')).toBeVisible()
+    await expect(group.locator('.group-tools')).toHaveCount(0)
     await expect(
       group.getByText('Single variant', { exact: true })
     ).toHaveCount(0)
@@ -1405,9 +1741,7 @@ test('undo and redo restore pending typing, while confirmed regrouping starts a 
     first.locator('.variants tbody tr').nth(1),
     'Control+Space'
   )
-  await first
-    .getByRole('button', { name: 'Share one barcode', exact: true })
-    .click()
+  await clickGroupingAction(page, 'Share one barcode')
   const review = page.getByRole('dialog', {
     name: 'Share one barcode?',
     exact: true,
@@ -1422,9 +1756,7 @@ test('undo and redo restore pending typing, while confirmed regrouping starts a 
   expect((await packingBackup(extension)).issuedCodes).toEqual(
     beforeMerge.issuedCodes
   )
-  await first
-    .getByRole('button', { name: 'Share one barcode', exact: true })
-    .click()
+  await clickGroupingAction(page, 'Share one barcode')
   await review
     .getByRole('button', { name: 'Apply changes', exact: true })
     .click()
@@ -1953,6 +2285,7 @@ test('a conflicting autosave keeps its draft and reloads the saved version witho
   )
   await expect(name).toHaveValue('BORRADOR LOCAL')
   await dialog
+    .locator('.preparation-actions')
     .getByRole('button', { name: 'Reload saved version', exact: true })
     .click()
   const confirmation = page.getByRole('dialog', {
@@ -2285,9 +2618,7 @@ test('combining, separating, splitting and merging preserve source rows and save
     first.locator('.variants tbody tr').nth(1),
     'Control+Space'
   )
-  await first
-    .getByRole('button', { name: 'Share one barcode', exact: true })
-    .click()
+  await clickGroupingAction(page, 'Share one barcode')
   await page
     .locator('.packing-review')
     .getByRole('button', { name: 'Apply changes', exact: true })
@@ -2340,9 +2671,7 @@ test('combining, separating, splitting and merging preserve source rows and save
     'aria-selected',
     'true'
   )
-  await first
-    .getByRole('button', { name: 'Give rows separate barcodes', exact: true })
-    .click()
+  await clickGroupingAction(page, 'Give rows separate barcodes')
   await page
     .locator('.packing-review')
     .getByRole('button', { name: 'Apply changes', exact: true })
@@ -2379,9 +2708,7 @@ test('combining, separating, splitting and merging preserve source rows and save
     first.locator('.variants tbody tr').nth(1),
     'Control+Space'
   )
-  await first
-    .getByRole('button', { name: 'Share one barcode', exact: true })
-    .click()
+  await clickGroupingAction(page, 'Share one barcode')
   await page
     .locator('.packing-review')
     .getByRole('button', { name: 'Apply changes', exact: true })
@@ -2398,9 +2725,7 @@ test('combining, separating, splitting and merging preserve source rows and save
     'aria-selected',
     'true'
   )
-  await first
-    .getByRole('button', { name: 'Give rows separate barcodes', exact: true })
-    .click()
+  await clickGroupingAction(page, 'Give rows separate barcodes')
   await page
     .locator('.packing-review')
     .getByRole('button', { name: 'Apply changes', exact: true })
@@ -2425,9 +2750,7 @@ test('combining, separating, splitting and merging preserve source rows and save
   expect(backup.orders[0].snapshot).toEqual(record.snapshot)
 
   await selectVariantRow(first.locator('.variants tbody tr').nth(1))
-  await first
-    .getByRole('button', { name: 'Move to new product', exact: true })
-    .click()
+  await clickGroupingAction(page, 'Move to new product')
   await page
     .locator('.packing-review')
     .getByRole('button', { name: 'Apply changes', exact: true })
@@ -2452,9 +2775,7 @@ test('combining, separating, splitting and merging preserve source rows and save
     .nth(2)
     .locator('.group-select')
     .click({ modifiers: ['Control'] })
-  await dialog
-    .getByRole('button', { name: 'Merge products', exact: true })
-    .click()
+  await clickGroupingAction(page, 'Merge products')
   await page
     .locator('.packing-review')
     .getByRole('button', { name: 'Apply changes', exact: true })
@@ -2563,9 +2884,7 @@ test('merging product groups across pages returns to a populated page without lo
     .first()
     .locator('.group-select')
     .click({ modifiers: ['Control'] })
-  await dialog
-    .getByRole('button', { name: 'Merge products', exact: true })
-    .click()
+  await clickGroupingAction(page, 'Merge products')
   await page
     .locator('.packing-review')
     .getByRole('button', { name: 'Apply changes', exact: true })

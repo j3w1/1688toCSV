@@ -1,4 +1,16 @@
 export const PACKING_MESSAGES = {
+  'Previously issued here. Current barcode:': {
+    zh: '曾在此使用。当前条码：',
+    es: 'Emitido aquí anteriormente. Código de barras actual:',
+  },
+  'Previously issued here. Current carton code:': {
+    zh: '曾在此使用。当前唛头货号：',
+    es: 'Emitido aquí anteriormente. Código de caja actual:',
+  },
+  'Product names: {0}': {
+    zh: '商品名称：{0}',
+    es: 'Nombres de productos: {0}',
+  },
   'Original product': {
     zh: '原商品',
     es: 'Producto original',
@@ -348,11 +360,14 @@ export const PACKING_MESSAGES = {
     zh: '上一页规则',
     es: 'Reglas anteriores',
   },
-  'Previously issued here. This product now uses {0}. That is why the old code is absent from the product table.':
-    {
-      zh: '此前分配给此商品，目前使用 {0}，所以商品表中不显示旧货号。',
-      es: 'Se emitió aquí antes. Este producto ahora usa {0}; por eso el código anterior no aparece en la tabla.',
-    },
+  'Previously issued here. Current barcode: {0}.': {
+    zh: '此前在此分配。当前条码货号：{0}。',
+    es: 'Se emitió aquí antes. Código de barras actual: {0}.',
+  },
+  'Previously issued here. Current carton code: {0}.': {
+    zh: '此前在此分配。当前唛头货号：{0}。',
+    es: 'Se emitió aquí antes. Código de caja actual: {0}.',
+  },
   'Previously issued to a product that has been regrouped or removed. The reservation remains to prevent duplicate labels.':
     {
       zh: '此前分配给已重新分组或移除的商品。仍保留此货号，防止重复标签。',

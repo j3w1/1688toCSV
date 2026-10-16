@@ -11,6 +11,7 @@ import {
 import { decorateIcon } from './icons.js'
 import { preparationHelp } from './preparation-help.js'
 import { element as el } from './ui.js'
+import { attachSearchSuggestions, searchMatcher } from './search-assistance.js'
 import {
   DEFAULT_SIZE_VOCABULARY,
   validateSizeVocabulary,
@@ -228,14 +229,9 @@ export function mountSizeVocabulary(host, value) {
     rowError(entry, errors.get(entry))
   }
   function render() {
-    const query = search.value.trim().normalize('NFKC').toLowerCase(),
+    const matches = searchMatcher(search.value),
       matching = value.sizeVocabulary.filter((entry) =>
-        [entry.match, entry.suffix].some((part) =>
-          String(part || '')
-            .normalize('NFKC')
-            .toLowerCase()
-            .includes(query)
-        )
+        matches([entry.match, entry.suffix])
       ),
       pages = Math.max(1, Math.ceil(matching.length / pageSize))
     page = Math.max(0, Math.min(page, pages - 1))
@@ -279,6 +275,12 @@ export function mountSizeVocabulary(host, value) {
     navigation
   )
   render()
+  attachSearchSuggestions(search, () =>
+    value.sizeVocabulary.flatMap((entry) => [
+      ...String(entry.match || '').split('|'),
+      entry.suffix,
+    ])
+  )
   return {
     validate() {
       try {

@@ -68,6 +68,54 @@ async function mutations(page) {
   )
 }
 
+test('minimized list import panel retains live progress and restores without changing the job', async ({
+  extension,
+}) => {
+  const page = await setup(extension, [
+    {
+      id: 'synthetic-minimize',
+      state: 'running',
+      phase: 'details',
+      total: 20,
+      discovered: 20,
+      completed: 4,
+      failed: 1,
+    },
+  ])
+  const panel = page.getByRole('complementary', { name: '1688 order library' })
+  const expanded = await panel.boundingBox()
+  await panel
+    .getByRole('button', { name: 'Minimize import panel', exact: true })
+    .click()
+  await expect(panel.locator('.floating-panel-summary')).toContainText(
+    '4/20 saved'
+  )
+  await expect(
+    panel.getByRole('button', { name: 'Pause import', exact: true })
+  ).not.toBeVisible()
+  expect((await panel.boundingBox()).height).toBeLessThan(expanded.height)
+  await page.evaluate(async () => {
+    toolbarTest.jobs[0].completed = 12
+    await toolbar.refresh()
+  })
+  await expect(panel.locator('.floating-panel-summary')).toContainText(
+    '12/20 saved'
+  )
+  expect(await mutations(page)).toEqual([])
+  expect(
+    await page.evaluate(() =>
+      sessionStorage.getItem('1688-floating-panel-list-minimized')
+    )
+  ).toBe('true')
+  await panel
+    .getByRole('button', { name: 'Restore import panel', exact: true })
+    .click()
+  await expect(
+    panel.getByRole('button', { name: 'Pause import', exact: true })
+  ).toBeVisible()
+  expect(await mutations(page)).toEqual([])
+})
+
 test('the list toolbar downloads complete import reports in every job state without starting work and releases files', async ({
   extension,
 }) => {

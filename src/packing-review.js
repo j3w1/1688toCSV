@@ -8,7 +8,7 @@ import {
   getLanguage,
   onLanguageChange,
 } from './i18n.js'
-import { element as el, enableLightDismiss } from './ui.js'
+import { element as el, enableLightDismiss, orderReference } from './ui.js'
 
 /** Review exact frozen changes before any allocation, restore or recoding write. */
 export async function reviewPackingChanges({
@@ -17,6 +17,7 @@ export async function reviewPackingChanges({
   changes,
   proceed = 'Apply changes',
   media,
+  itemKind = 'groups',
 }) {
   const modal = el('dialog', undefined, 'packing-review')
   bindAttribute(modal, 'aria-label', title)
@@ -39,11 +40,20 @@ export async function reviewPackingChanges({
       const content = el('div')
       content.append(el('strong', change.name || uiMessage('Product group')))
       if (change.order) content.append(el('small', change.order))
+      if (change.orderId) content.append(orderReference(change.orderId))
       const codes = el('div', undefined, 'packing-review-codes')
       codes.append(
-        el('code', change.before || uiMessage('Not prepared')),
+        el(
+          'code',
+          change.before || uiMessage('Not prepared'),
+          /^CE\d/i.test(change.before || '') ? 'ce-code' : undefined
+        ),
         el('span', '→'),
-        el('code', change.after || uiMessage('Next available code'))
+        el(
+          'code',
+          change.after || uiMessage('Next available code'),
+          /^CE\d/i.test(change.after || '') ? 'ce-code' : undefined
+        )
       )
       content.append(codes)
       if (change.detail)
@@ -60,11 +70,16 @@ export async function reviewPackingChanges({
     next.disabled = (page + 1) * 12 >= changes.length
     bindText(
       pageStatus,
-      uiMessage('{0}–{1} of {2} groups', {
-        0: Math.min(changes.length, page * 12 + 1),
-        1: Math.min(changes.length, (page + 1) * 12),
-        2: changes.length,
-      })
+      uiMessage(
+        itemKind === 'products'
+          ? '{0}–{1} of {2} products'
+          : '{0}–{1} of {2} groups',
+        {
+          0: Math.min(changes.length, page * 12 + 1),
+          1: Math.min(changes.length, (page + 1) * 12),
+          2: changes.length,
+        }
+      )
     )
   }
   previous.onclick = () => {

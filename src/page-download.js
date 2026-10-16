@@ -1,4 +1,6 @@
 import { createProgressView, importProgressStyles } from './import-progress.js'
+import { mountFloatingPanel, floatingPanelStyles } from './floating-panel.js'
+import { mountPanelAppearance } from './panel-appearance.js'
 
 const controlKey = Symbol.for('1688tocsv.pageDownloadCleanup')
 
@@ -9,6 +11,7 @@ export function mountPageDownload(document, prepareFile, actions = {}) {
   view[controlKey]?.()
   const host = document.createElement('div')
   const root = host.attachShadow({ mode: 'open' })
+  const releaseAppearance = mountPanelAppearance(host)
   let url
   function element(tag, text, parent = root) {
     const node = document.createElement(tag)
@@ -21,43 +24,53 @@ export function mountPageDownload(document, prepareFile, actions = {}) {
     `
     :host { all: initial; position: fixed; inset: auto 16px 16px auto;
       z-index: 2147483647; display: block; max-width: calc(100vw - 32px); }
-    aside { color-scheme: light; box-sizing: border-box; width: 240px;
-      max-width: calc(100vw - 32px); padding: 12px; border: 1px solid #dfe3d7;
-      border-radius: 12px; color: #252820; background: #f7f7f2;
+    aside { box-sizing: border-box; width: 240px;
+      max-width: calc(100vw - 32px); padding: 12px; border: 1px solid var(--border);
+      border-radius: 12px; color: var(--text); background: var(--surface);
       box-shadow: 0 4px 20px #0002; font: 13px/1.5 system-ui, sans-serif; }
-    .brand { margin: 0 0 8px; font-size: 11px; font-weight: 650; color: #58614f; }
+    .brand { margin: 0 0 8px; font-size: 11px; font-weight: 650; color: var(--muted); }
     a { box-sizing: border-box; display: block; padding: 11px 16px;
-      border-radius: 8px; background: #e64b10; color: white; text-decoration: none;
+      border-radius: 8px; background: var(--accent); color: var(--on-accent); text-decoration: none;
       text-align: center; font-weight: 650; }
-    a:hover { background: #c93e08; }
-    a:focus-visible { outline: 3px solid #95511d; outline-offset: 3px; }
-    .status { margin: 8px 0 0; overflow-wrap: anywhere; font-size: 12px; color: #58614f; }
+    a:hover { background: var(--accent-hover); }
+    a:focus-visible { outline: 3px solid var(--focus); outline-offset: 3px; }
+    .status { margin: 8px 0 0; overflow-wrap: anywhere; font-size: 12px; color: var(--muted); }
     .status:empty { margin: 0; }
-    .status[data-tone='error'] { color: #972e21; }
+    .status[data-tone='error'] { color: var(--danger-text); }
     .library-actions { display: flex; gap: 6px; margin-top: 8px; }
     button { font: inherit; cursor: pointer; flex: 1; padding: 8px 5px;
-      border: 1px solid #d9dfd2; border-radius: 6px; background: white; color: #52634b; font-size: 11px; }
-    button:hover { background: #e9eee2; }
-    button:focus-visible { outline: 3px solid #95511d; outline-offset: 3px; }
+      border: 1px solid var(--border); border-radius: 6px; background: var(--field); color: var(--text); font-size: 11px; }
+    button:hover { background: var(--hover); }
+    button:focus-visible { outline: 3px solid var(--focus); outline-offset: 3px; }
     [hidden] { display: none !important; }
     aside[data-importing] { width: 300px; max-height: calc(100dvh - 32px); overflow-y: auto; }
-    .import-section { border-top: 1px solid #d9dfd2; margin-top: 10px; padding-top: 10px; }
+    .import-section { border-top: 1px solid var(--border); margin-top: 10px; padding-top: 10px; }
     .import-section button { width: 100%; margin-top: 6px; }
     ${importProgressStyles}
+    ${floatingPanelStyles}
   `
   )
   const control = element('aside')
   control.setAttribute('aria-label', '1688toCSV')
-  element('p', '1688toCSV · Order export', control).className = 'brand'
-  const link = element('a', 'Download CSV', control)
+  const panelBody = element('div', '', control)
+  const title = document.createElement('p')
+  title.textContent = '1688toCSV · Order export'
+  title.className = 'brand'
+  const disclosure = mountFloatingPanel(document, {
+    panel: control,
+    body: panelBody,
+    title,
+    key: 'detail',
+  })
+  const link = element('a', 'Download CSV', panelBody)
   link.href = '#'
   link.download = ''
-  const status = element('p', '', control)
+  const status = element('p', '', panelBody)
   status.className = 'status'
   status.setAttribute('role', 'status')
   status.setAttribute('aria-live', 'polite')
   if (actions.saveOrder || actions.openLibrary) {
-    const buttons = element('div', '', control)
+    const buttons = element('div', '', panelBody)
     buttons.className = 'library-actions'
     for (const [label, handler] of [
       ['Save order', actions.saveOrder],
@@ -79,7 +92,7 @@ export function mountPageDownload(document, prepareFile, actions = {}) {
       })
     }
   }
-  const collection = element('div', '', control)
+  const collection = element('div', '', panelBody)
   collection.className = 'import-section'
   collection.hidden = true
   const progressView = createProgressView(document)
@@ -108,6 +121,7 @@ export function mountPageDownload(document, prepareFile, actions = {}) {
   }
   function updateProgress(job) {
     currentJob = job
+    disclosure.update(job)
     collection.hidden = !job
     control.toggleAttribute('data-importing', Boolean(job))
     if (job) progressView.update(job)
@@ -141,6 +155,7 @@ export function mountPageDownload(document, prepareFile, actions = {}) {
     view.removeEventListener('pagehide', pageHidden)
     view.removeEventListener('pageshow', pageShown)
     actions.dispose?.()
+    releaseAppearance()
     releaseFile()
     host.remove()
     if (view[controlKey] === cleanup) delete view[controlKey]

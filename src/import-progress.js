@@ -176,11 +176,11 @@ export const importProgressStyles = `
   .import-progress p { margin: 5px 0; font-size: 12px; line-height: 1.5; }
   .import-progress .import-title { display: block; font-size: 13px; margin: 0 0 7px; }
   .import-progress .import-meter { font-weight: 650; }
-  .import-progress progress { display: block; appearance: none; width: 100%; height: 8px; border: 0; border-radius: 9px; overflow: hidden; background: #79866c35; accent-color: #71a557; }
-  .import-progress progress::-webkit-progress-bar { background: #79866c35; border-radius: 9px; }
-  .import-progress progress::-webkit-progress-value { background: #71a557; border-radius: 9px; }
+  .import-progress progress { display: block; appearance: none; width: 100%; height: 8px; border: 0; border-radius: 9px; overflow: hidden; background: var(--divider); accent-color: var(--control-accent); }
+  .import-progress progress::-webkit-progress-bar { background: var(--divider); border-radius: 9px; }
+  .import-progress progress::-webkit-progress-value { background: var(--control-accent); border-radius: 9px; }
   .import-progress .import-current, .import-progress .import-latest { opacity: .85; }
-  .import-progress .import-error { color: inherit; border-left: 3px solid #dd7e39; padding-left: 8px; }
+  .import-progress .import-error { color: var(--danger-text); border-left: 3px solid var(--danger-text); padding-left: 8px; }
 `
 
 export function createProgressView(document) {

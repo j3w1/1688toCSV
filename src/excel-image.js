@@ -225,12 +225,19 @@ function balancedWrap(context, value, width) {
   return result
 }
 
+function productImageError(message, row, field) {
+  return Object.assign(new Error(message), { packingIssue: { row, field } })
+}
+
 function snapshot(row, index, columns) {
   if (!row || typeof row !== 'object')
     throw new Error(`Product row ${index + 1} is invalid.`)
   const values = {}
   for (const key of [
     'orderId',
+    'entryId',
+    'sellerName',
+    'sellerMemberLogin',
     'groupId',
     'title',
     'productNumber',
@@ -255,16 +262,20 @@ function snapshot(row, index, columns) {
     columns.some((column) => column.key === 'thumbnail') &&
     !values.thumbnail.trim()
   )
-    throw new Error(
-      `Product row ${index + 1} has no photo. Add or refresh its photo before copying.`
+    throw productImageError(
+      `Product row ${index + 1} has no photo. Add or refresh its photo before copying.`,
+      row,
+      'photo'
     )
   if (
     columns.some((column) => column.key === 'baseCode') &&
     values.baseCode.trim() &&
     !values.chineseCategory.trim()
   )
-    throw new Error(
-      `Product row ${index + 1} (${values.baseCode}) needs a Chinese category before copying its carton mark.`
+    throw productImageError(
+      `Product row ${index + 1} (${values.baseCode}) needs a Chinese category before copying its carton mark.`,
+      row,
+      'category'
     )
   return Object.freeze(values)
 }
@@ -506,7 +517,11 @@ function codeCell(context, value, width, reordered) {
 /** Plan every selected row before choosing a numbered batch; does not load photos. */
 export function planExcelImage(
   rows,
-  { columns: columnKeys = defaultColumnKeys, language = 'en' } = {}
+  {
+    columns: columnKeys = defaultColumnKeys,
+    language = 'en',
+    showOrderDetails = true,
+  } = {}
 ) {
   if (!Array.isArray(rows) || !rows.length)
     throw new Error('Select product rows to copy as an image.')
@@ -568,6 +583,7 @@ export function planExcelImage(
           headerHeight,
           columns,
           language,
+          showOrderDetails: showOrderDetails !== false,
           headers: Object.freeze(headers),
           rows: Object.freeze(entries),
           markSpans: Object.freeze(markSpans.map(Object.freeze)),
@@ -579,6 +595,40 @@ export function planExcelImage(
       previous = null
     }
     function prepare(source, groupKey) {
+      const sellerKey = source.sellerMemberLogin || source.sellerName
+      const previousSeller =
+        previous?.source.sellerMemberLogin || previous?.source.sellerName
+      const newOrder = !previous || previous.source.orderId !== source.orderId
+      const newStore =
+        Boolean(sellerKey) && (!previous || sellerKey !== previousSeller)
+      const band = (() => {
+        if (!newOrder) return null
+        // Hide only the identity heading, not the source identities needed for
+        // safe grouping, carton-mark ownership, and precise error reporting.
+        if (showOrderDetails === false)
+          return previous
+            ? Object.freeze({
+                lines: Object.freeze([]),
+                kind: newStore ? 'store' : 'order',
+                height: newStore ? 10 : 6,
+              })
+            : null
+        if (!sellerKey) return null
+        const orderLabel = { en: 'Order', es: 'Pedido', zh: '订单' }[language]
+        const text = [
+          source.sellerName || source.sellerMemberLogin,
+          source.orderId && `${orderLabel} ${source.orderId}`,
+        ]
+          .filter(Boolean)
+          .join('  ·  ')
+        context.font = HEADER_FONT
+        const lines = Object.freeze(wrap(context, text, cssWidth - PADDING * 2))
+        return Object.freeze({
+          lines,
+          kind: newStore ? 'store' : 'order',
+          height: lines.length * LINE_HEIGHT + 16,
+        })
+      })()
       const cells = columns.map((column) => {
         if (column.key === 'description')
           return descriptionCell(
@@ -634,13 +684,16 @@ export function planExcelImage(
         source,
         cells: Object.freeze(cells),
         height,
+        band,
         separator: !previous
           ? 'none'
-          : previous.source.orderId !== source.orderId
-            ? 'order'
-            : previous.groupKey !== groupKey
-              ? 'group'
-              : 'row',
+          : newStore
+            ? 'store'
+            : previous.source.orderId !== source.orderId
+              ? 'order'
+              : previous.groupKey !== groupKey
+                ? 'group'
+                : 'row',
         groupKey,
       })
     }
@@ -656,16 +709,29 @@ export function planExcelImage(
             ])
           : `row:${index}`
       let entry = prepare(source, groupKey)
-      if (entry.height + headerHeight + 2 > maxHeight)
+      if (
+        entry.height + (entry.band?.height || 0) + headerHeight + 2 >
+        maxHeight
+      )
         throw new Error(
           `Product row ${index + 1} is too tall for one image. Shorten its description or copy its values instead.`
         )
-      if (entries.length && cssHeight + entry.height > maxHeight) {
+      if (
+        entries.length &&
+        cssHeight + entry.height + (entry.band?.height || 0) > maxHeight
+      ) {
         finish()
         entry = prepare(source, groupKey)
       }
+      if (
+        entry.height + (entry.band?.height || 0) + headerHeight + 2 >
+        maxHeight
+      )
+        throw new Error(
+          `Product row ${index + 1} is too tall for one image. Shorten its description or copy its values instead.`
+        )
       entries.push(entry)
-      cssHeight += entry.height
+      cssHeight += entry.height + (entry.band?.height || 0)
       previous = entry
     }
     if (entries.length) finish()
@@ -742,7 +808,7 @@ export async function renderExcelImage(
       ])
     )
   )
-  async function bitmapFor(source, number, { mark = false, loader } = {}) {
+  async function bitmapFor(source, row, { mark = false, loader } = {}) {
     const cacheKey = `${mark ? 'mark' : 'photo'}:${source}`
     const cached = photos.get(cacheKey)
     if (cached) {
@@ -791,11 +857,15 @@ export async function renderExcelImage(
       bitmap?.close()
       if (error.name === 'AbortError') throw error
       if (mark)
-        throw new Error(
-          `Carton mark for product row ${number} could not be created. Check its code and Chinese category, then try again. ${error.message}`
+        throw productImageError(
+          `Carton mark for product row ${row.number} could not be created. Check its code and Chinese category, then try again. ${error.message}`,
+          row,
+          error.packingIssue?.field || 'code'
         )
-      throw new Error(
-        `Photo for product row ${number} could not be loaded. Refresh the photo and try again. ${error.message}`
+      throw productImageError(
+        `Photo for product row ${row.number} could not be loaded. Refresh the photo and try again. ${error.message}`,
+        row,
+        'photo'
       )
     }
   }
@@ -861,7 +931,7 @@ export async function renderExcelImage(
     }
   }
   async function cartonMark(span, top) {
-    const bitmap = await bitmapFor(span.groupKey, span.source.number, {
+    const bitmap = await bitmapFor(span.groupKey, span.source, {
       mark: true,
       loader: () => renderCartonMark(span.source, { signal }),
     })
@@ -915,11 +985,16 @@ export async function renderExcelImage(
     }
     onProgress?.({ completed: 0, total: plan.rowCount })
     let y = plan.headerHeight + 1
+    const bands = []
     for (const [index, row] of plan.rows.entries()) {
       await yieldUI()
       aborted(signal)
+      if (row.band) {
+        bands.push({ ...row.band, top: y })
+        y += row.band.height
+      }
       const bitmap = hasPhotos
-        ? await bitmapFor(row.source.thumbnail, row.source.number)
+        ? await bitmapFor(row.source.thumbnail, row.source)
         : null
       aborted(signal)
       if (index % 2) {
@@ -951,11 +1026,19 @@ export async function renderExcelImage(
       }
       context.beginPath()
       context.lineWidth =
-        row.separator === 'order' ? 2 : row.separator === 'group' ? 1.5 : 1
+        row.separator === 'store'
+          ? 3
+          : row.separator === 'order'
+            ? 2
+            : row.separator === 'group'
+              ? 1.5
+              : 1
       context.strokeStyle =
-        row.separator === 'order' || row.separator === 'group'
-          ? '#a79f92'
-          : '#ded9cf'
+        row.separator === 'store' || row.separator === 'order'
+          ? '#84715b'
+          : row.separator === 'group'
+            ? '#a79f92'
+            : '#ded9cf'
       context.moveTo(1, y)
       const span = markRows.get(index)
       if (span && index > span.start) {
@@ -980,6 +1063,29 @@ export async function renderExcelImage(
       x += column.width
     }
     context.stroke()
+    // Merged spreadsheet heading rows sit above the cell grid, never in its
+    // columns, so omitted/reordered columns and merged marks keep their shape.
+    for (const band of bands) {
+      context.fillStyle = band.kind === 'store' ? '#f0dfc5' : '#eeebe5'
+      context.fillRect(1, band.top, plan.cssWidth - 2, band.height)
+      context.strokeStyle = band.kind === 'store' ? '#987449' : '#aaa092'
+      context.lineWidth = band.kind === 'store' ? 2 : 1
+      context.beginPath()
+      context.moveTo(1, band.top)
+      context.lineTo(plan.cssWidth - 1, band.top)
+      context.moveTo(1, band.top + band.height)
+      context.lineTo(plan.cssWidth - 1, band.top + band.height)
+      context.stroke()
+      for (const [index, value] of band.lines.entries())
+        line(
+          [{ text: value, font: HEADER_FONT, color: '#383128' }],
+          plan.cssWidth / 2,
+          band.top + 8 + index * LINE_HEIGHT,
+          LINE_HEIGHT
+        )
+    }
+    context.lineWidth = 1
+    context.strokeStyle = '#d3cdc2'
     context.strokeRect(0.5, 0.5, plan.cssWidth - 1, plan.cssHeight - 1)
     const encoded = await abortable(
       new Promise((resolve, reject) => {

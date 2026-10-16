@@ -328,7 +328,7 @@ test('logo cropping retains pale edges and internal white spaces on transparent 
   assert.equal(result.scratchReleased, true)
 })
 
-test('barcode code bands hug the fitted text with small balanced padding', async (t) => {
+test('barcode and carton code bands have rounded corners and hug fitted text with balanced padding', async (t) => {
   const page = await pageFor(t)
   const bands = []
   for (const input of [
@@ -341,25 +341,41 @@ test('barcode code bands hug the fitted text with small balanced padding', async
         barcode: { widthMm: 50, heightMm: 25, textScale: 1.25 },
       },
     },
+    { kind: 'mark', code: 'CE26100001', category: '工艺品', settings: {} },
+    {
+      kind: 'mark',
+      code: 'CE26100001',
+      category: '工艺品',
+      settings: {
+        dpi: 600,
+        mark: { widthMm: 148.5, heightMm: 105, textScale: 1.25 },
+      },
+    },
   ]) {
     const result = await page.evaluate(async (input) => {
       const rectangles = []
       let codeText
       const prototype = CanvasRenderingContext2D.prototype
-      const fillRect = prototype.fillRect
+      const roundRect = prototype.roundRect
       const fillText = prototype.fillText
-      prototype.fillRect = function (x, y, width, height) {
-        rectangles.push({ x, y, width, height, color: this.fillStyle })
-        return fillRect.call(this, x, y, width, height)
+      prototype.roundRect = function (x, y, width, height, radius) {
+        rectangles.push({ x, y, width, height, radius, color: this.fillStyle })
+        return roundRect.call(this, x, y, width, height, radius)
       }
       prototype.fillText = function (text, x, y, ...rest) {
-        if (text === input.code)
+        if (text === input.code) {
+          const ink = this.measureText(text)
           codeText = {
             x,
             y,
-            width: this.measureText(text).width,
+            left: x - ink.actualBoundingBoxLeft,
+            right: x + ink.actualBoundingBoxRight,
+            top: y - ink.actualBoundingBoxAscent,
+            bottom: y + ink.actualBoundingBoxDescent,
             color: this.fillStyle,
+            font: this.font,
           }
+        }
         return fillText.call(this, text, x, y, ...rest)
       }
       try {
@@ -368,14 +384,31 @@ test('barcode code bands hug the fitted text with small balanced padding', async
           spanishName: 'TAZA',
           ...input,
         })
+        const bitmap = await createImageBitmap(label.blob)
+        const canvas = document.createElement('canvas')
+        canvas.width = bitmap.width
+        canvas.height = bitmap.height
+        const context = canvas.getContext('2d')
+        context.drawImage(bitmap, 0, 0)
+        const band = rectangles[0]
+        const pixel = (x, y) =>
+          Array.from(
+            context.getImageData(Math.floor(x), Math.floor(y), 1, 1).data
+          )
+        const corner = pixel(band.x + 1, band.y + 1)
+        const topCenter = pixel(band.x + band.width / 2, band.y + 1)
+        bitmap.close()
         return {
           width: label.width,
           height: label.height,
+          codeBox: Labels.LABEL_FIELDS[input.kind || 'barcode'].code,
           rectangles,
           codeText,
+          corner,
+          topCenter,
         }
       } finally {
-        prototype.fillRect = fillRect
+        prototype.roundRect = roundRect
         prototype.fillText = fillText
       }
     }, input)
@@ -385,19 +418,272 @@ test('barcode code bands hug the fitted text with small balanced padding', async
     )
     assert.equal(backgrounds.length, 1)
     const band = backgrounds[0]
-    const padding = (band.width - result.codeText.width) / 2
-    assert.ok(padding >= result.width * 0.01)
-    assert.ok(padding <= result.width * 0.015)
-    assert.ok(Math.abs(band.x + band.width / 2 - result.codeText.x) < 1)
-    assert.ok(result.codeText.y > band.y)
-    assert.ok(result.codeText.y < band.y + band.height)
+    const { left, right, top, bottom } = result.codeText
+    const padding =
+      (result.width * 0.012 + (input.settings.dpi || 300) / 300) * 0.8645
+    assert.ok(Math.abs(left - band.x - padding) < 0.01)
+    assert.ok(Math.abs(band.x + band.width - right - padding) < 0.01)
+    assert.ok(Math.abs(top - band.y - (band.y + band.height - bottom)) < 0.01)
+    const previousHeight = result.height * result.codeBox[3]
+    const previousPadding = (previousHeight - (bottom - top)) / 2
+    assert.ok(Math.abs(top - band.y - previousPadding * 0.63) < 0.01)
+    assert.ok(
+      Math.abs(band.y + band.height - bottom - previousPadding * 0.63) < 0.01
+    )
+    assert.ok(
+      Math.abs(
+        band.y +
+          band.height / 2 -
+          result.height * (result.codeBox[1] + result.codeBox[3] / 2)
+      ) < 0.01
+    )
+    assert.match(result.codeText.font, /^(?:700|bold) /)
     assert.equal(result.codeText.color, '#ffffff')
     assert.ok(band.y >= result.height * 0.49)
     assert.ok(band.height < result.height * 0.2)
+    assert.ok(band.radius > 0 && band.radius < band.height * 0.25)
+    assert.ok(result.corner.slice(0, 3).every((channel) => channel > 220))
+    assert.ok(result.topCenter.slice(0, 3).every((channel) => channel < 20))
     bands.push(band)
   }
   assert.ok(bands[0].width < 472 * 0.45)
   assert.ok(bands[1].width > bands[0].width)
+})
+
+async function visibleCodeOffset(page, band, radius) {
+  const screenshot = await page.locator('.label-editor-preview').screenshot()
+  return page.evaluate(
+    async ({ bytes, band, radius }) => {
+      const bitmap = await createImageBitmap(
+        new Blob([new Uint8Array(bytes)], { type: 'image/png' })
+      )
+      const canvas = document.createElement('canvas')
+      canvas.width = bitmap.width
+      canvas.height = bitmap.height
+      const context = canvas.getContext('2d')
+      context.drawImage(bitmap, 0, 0)
+      bitmap.close()
+      // The screenshot includes the preview's one-pixel border.
+      const left = band.x + 1,
+        top = band.y + 1
+      let x1 = Infinity,
+        y1 = Infinity,
+        x2 = -Infinity,
+        y2 = -Infinity
+      const { data } = context.getImageData(0, 0, canvas.width, canvas.height)
+      for (let y = Math.ceil(top + 1); y < top + band.height - 1; y++)
+        for (
+          let x = Math.ceil(left + radius);
+          x < left + band.width - radius;
+          x++
+        ) {
+          const at = (y * canvas.width + x) * 4
+          if (data[at] < 240 || data[at + 1] < 240 || data[at + 2] < 240)
+            continue
+          x1 = Math.min(x1, x)
+          x2 = Math.max(x2, x + 1)
+          y1 = Math.min(y1, y)
+          y2 = Math.max(y2, y + 1)
+        }
+      return {
+        horizontal: Math.abs((x1 + x2) / 2 - (left + band.width / 2)),
+        vertical: Math.abs((y1 + y2) / 2 - (top + band.height / 2)),
+      }
+    },
+    { bytes: Array.from(screenshot), band, radius }
+  )
+}
+
+test('joined label designer uses the printed band geometry without empty slots shifting the code', async (t) => {
+  const page = await pageFor(t, true)
+  for (const endings of [
+    { variantSuffix: 'A', sizeSuffix: '' },
+    { variantSuffix: 'AB', sizeSuffix: 'XL' },
+    { variantSuffix: '', sizeSuffix: '' },
+  ]) {
+    await page.evaluate((endings) => {
+      globalThis.labelBandEditor?.destroy()
+      globalThis.labelBandEditor = LabelEditor.mountLabelEditor(
+        document.getElementById('editor'),
+        {
+          model: {
+            kind: 'barcode',
+            baseCode: 'CE26100101',
+            code: `CE26100101${endings.variantSuffix}${endings.sizeSuffix}`,
+            spanishName: 'ARBOL DE VIDRIO',
+            ...endings,
+          },
+        }
+      )
+    }, endings)
+    await page.waitForFunction(
+      () => !document.querySelector('.label-editor-copy').disabled
+    )
+    const geometry = await page.evaluate(() => {
+      const preview = document.querySelector('.label-editor-preview')
+      const strip = preview.querySelector('.label-code-strip')
+      const canvas = document.createElement('canvas')
+      const context = canvas.getContext('2d')
+      const settings = Labels.normalizeLabelSettings()
+      const result = labelBandEditor.getLatestValidRender()
+      const layout = Labels.labelCodeLayout(
+        context,
+        result.model,
+        settings,
+        result.width,
+        result.height
+      )
+      const origin = preview.getBoundingClientRect(),
+        band = strip.getBoundingClientRect(),
+        scale = preview.clientWidth / result.width
+      return {
+        band: {
+          x: band.x - origin.x - preview.clientLeft,
+          y: band.y - origin.y - preview.clientTop,
+          width: band.width,
+          height: band.height,
+        },
+        expected: layout.band.map((value) => value * scale),
+        expectedHitHeight: layout.box[3] * scale,
+        hitHeights: [...preview.querySelectorAll('.label-code-part')].map(
+          (field) => field.getBoundingClientRect().height
+        ),
+        background: getComputedStyle(strip).backgroundColor,
+        radius: parseFloat(getComputedStyle(strip).borderTopLeftRadius),
+        fields: [
+          preview.querySelector('.label-code-base-text'),
+          ...preview.querySelectorAll(
+            '.label-code-part:not(.label-code-empty)'
+          ),
+        ].map((field) => ({
+          color: getComputedStyle(field).color,
+          weight: getComputedStyle(field).fontWeight,
+        })),
+        empty: [...preview.querySelectorAll('.label-code-empty')].map(
+          (field) => {
+            const box = field.getBoundingClientRect()
+            return {
+              inside: box.left >= origin.left && box.right <= origin.right,
+              outsideBand: box.right <= band.left || box.left >= band.right,
+            }
+          }
+        ),
+      }
+    })
+    for (const [index, key] of ['x', 'y', 'width', 'height'].entries())
+      assert.ok(
+        Math.abs(geometry.band[key] - geometry.expected[index]) < 0.2,
+        `${key} follows printed geometry`
+      )
+    assert.equal(geometry.background, 'rgb(0, 0, 0)')
+    assert.ok(geometry.radius > 0)
+    assert.ok(
+      geometry.hitHeights.every(
+        (height) => Math.abs(height - geometry.expectedHitHeight) < 0.2
+      )
+    )
+    for (const field of geometry.fields) {
+      assert.equal(field.color, 'rgb(255, 255, 255)')
+      assert.equal(field.weight, '700')
+    }
+    assert.ok(
+      geometry.empty.every((field) => field.inside && field.outsideBand)
+    )
+    // Read visible white ink inside the black band, excluding rounded corners.
+    const optical = await visibleCodeOffset(
+      page,
+      geometry.band,
+      geometry.radius
+    )
+    assert.ok(
+      optical.horizontal <= 1.5,
+      'visible code is horizontally centered'
+    )
+    assert.ok(optical.vertical <= 1.5, 'visible code is vertically centered')
+  }
+})
+
+test('carton and standalone barcode editors keep the same centered code band while editing', async (t) => {
+  const page = await pageFor(t, true)
+  for (const model of [
+    { kind: 'mark', code: 'CE26100001', category: '工艺品' },
+    { kind: 'barcode', code: 'CE26100001A', spanishName: 'TAZA' },
+  ]) {
+    await page.evaluate((model) => {
+      globalThis.codeBandEditor?.destroy()
+      globalThis.codeBandEditor = LabelEditor.mountLabelEditor(
+        document.getElementById('editor'),
+        { model }
+      )
+    }, model)
+    await page.waitForFunction(
+      () => !document.querySelector('.label-editor-copy').disabled
+    )
+    const code = page.locator('.label-editor-code')
+    await code.focus()
+    const geometry = await page.evaluate(() => {
+      const preview = document.querySelector('.label-editor-preview')
+      const field = preview.querySelector('.label-editor-code')
+      const backing = preview.querySelector('.label-code-field-band')
+      const result = codeBandEditor.getLatestValidRender()
+      const layout = Labels.labelCodeLayout(
+        document.createElement('canvas').getContext('2d'),
+        result.model,
+        Labels.normalizeLabelSettings(),
+        result.width,
+        result.height
+      )
+      const origin = preview.getBoundingClientRect(),
+        band = backing.getBoundingClientRect(),
+        style = getComputedStyle(field),
+        bandStyle = getComputedStyle(backing),
+        scale = preview.clientWidth / result.width
+      return {
+        band: {
+          x: band.x - origin.x - preview.clientLeft,
+          y: band.y - origin.y - preview.clientTop,
+          width: band.width,
+          height: band.height,
+        },
+        expected: layout.band.map((value) => value * scale),
+        background: bandStyle.backgroundColor,
+        color: style.color,
+        weight: style.fontWeight,
+        scrollLeft: field.scrollLeft,
+        fontSize: parseFloat(style.fontSize),
+        expectedFontSize: layout.fontSize * scale,
+        hitHeight: field.getBoundingClientRect().height,
+        expectedHitHeight: layout.box[3] * scale,
+        radius: parseFloat(bandStyle.borderTopLeftRadius),
+      }
+    })
+    for (const [index, key] of ['x', 'y', 'width', 'height'].entries())
+      assert.ok(
+        Math.abs(geometry.band[key] - geometry.expected[index]) < 0.2,
+        `${model.kind}: ${key} follows printed geometry`
+      )
+    assert.equal(geometry.background, 'rgb(0, 0, 0)')
+    assert.equal(geometry.color, 'rgb(255, 255, 255)')
+    assert.equal(geometry.weight, '700')
+    assert.equal(geometry.scrollLeft, 0)
+    assert.ok(Math.abs(geometry.fontSize - geometry.expectedFontSize) < 0.01)
+    assert.ok(Math.abs(geometry.hitHeight - geometry.expectedHitHeight) < 0.2)
+    const optical = await visibleCodeOffset(
+      page,
+      geometry.band,
+      geometry.radius
+    )
+    assert.ok(
+      optical.horizontal <= 1.5,
+      `${model.kind}: visible code is horizontally centered (${optical.horizontal}px)`
+    )
+    assert.ok(
+      // Native inputs rasterize a fractional CSS font independently of the PNG;
+      // allow two edge pixels while keeping shared geometry within 0.2px above.
+      optical.vertical <= 2,
+      `${model.kind}: visible code is vertically centered (${optical.vertical}px)`
+    )
+  }
 })
 
 test('shipping marks export one landscape image with blank operational fields', async (t) => {
@@ -948,6 +1234,105 @@ test('Escape during an in-flight label save restores rejected drafts and preserv
   }
 })
 
+test('editor hides previous artwork during invalid or conflicting edits and restores only the current validated image', async (t) => {
+  const page = await pageFor(t, true)
+  await page.evaluate(() => {
+    globalThis.revokedLabelUrls = []
+    const revoke = URL.revokeObjectURL.bind(URL)
+    URL.revokeObjectURL = (url) => {
+      revokedLabelUrls.push(url)
+      revoke(url)
+    }
+    globalThis.draftEditor = LabelEditor.mountLabelEditor(
+      document.getElementById('editor'),
+      {
+        model: { kind: 'barcode', code: 'CE26100001', spanishName: 'TAZA' },
+        onValidate: (next) => {
+          if (next.code !== 'CE26100002') return
+          return new Promise((resolve, reject) => {
+            globalThis.finishLabelValidation = (conflict) => {
+              globalThis.finishLabelValidation = null
+              if (conflict) reject(new Error('Code is already assigned'))
+              else resolve()
+            }
+          })
+        },
+      }
+    )
+  })
+  const image = page.locator('.label-editor-image')
+  const code = page.getByRole('textbox', { name: 'Barcode code', exact: true })
+  const waitForImage = async (expected) => {
+    await page.waitForFunction(
+      (expected) =>
+        draftEditor.getLatestValidRender()?.model.code === expected &&
+        !document.querySelector('.label-editor-image').hidden &&
+        document.querySelector('.label-editor-image').naturalWidth > 0,
+      expected
+    )
+  }
+  const assertHidden = async () => {
+    assert.equal(await image.isVisible(), false)
+    assert.equal(await image.getAttribute('src'), null)
+    assert.equal(
+      await page.evaluate(() => draftEditor.getLatestValidRender()),
+      null
+    )
+    assert.equal(await code.isEditable(), true)
+    assert.equal(
+      await page.locator('.label-editor-preview').getAttribute('data-ready'),
+      null
+    )
+  }
+  await waitForImage('CE26100001')
+  const originalUrl = await image.getAttribute('src')
+  await code.fill('bad code')
+  await assertHidden()
+  assert.equal(
+    await page.evaluate((url) => revokedLabelUrls.includes(url), originalUrl),
+    true
+  )
+  await page.waitForFunction(() =>
+    document
+      .querySelector('.error-notice-message')
+      ?.textContent.includes('Enter a CE code')
+  )
+  await assertHidden()
+  await code.fill('CE26100002')
+  await page.waitForFunction(() => typeof finishLabelValidation === 'function')
+  await assertHidden()
+  await page.evaluate(() => finishLabelValidation(true))
+  await page.waitForFunction(
+    () =>
+      document.querySelector('.error-notice-message')?.textContent ===
+      'Code is already assigned'
+  )
+  await assertHidden()
+  await code.fill('CE26100003')
+  await waitForImage('CE26100003')
+  assert.notEqual(await image.getAttribute('src'), originalUrl)
+
+  // An earlier successful reservation check cannot revive artwork after a new invalid edit.
+  await code.fill('CE26100002')
+  await page.waitForFunction(() => typeof finishLabelValidation === 'function')
+  await code.fill('bad code again')
+  await page.evaluate(() => finishLabelValidation(false))
+  await page.waitForFunction(() =>
+    document
+      .querySelector('.error-notice-message')
+      ?.textContent.includes('Enter a CE code')
+  )
+  await assertHidden()
+  await code.press('Escape')
+  await waitForImage('CE26100001')
+  const restoredUrl = await image.getAttribute('src')
+  await page.evaluate(() => draftEditor.destroy())
+  assert.equal(
+    await page.evaluate((url) => revokedLabelUrls.includes(url), restoredUrl),
+    true
+  )
+})
+
 test('editor reports save and copy failures without reporting success or copying stale drafts', async (t) => {
   const page = await pageFor(t, true)
   await page.evaluate(() => {
@@ -1007,6 +1392,8 @@ test('editor reports save and copy failures without reporting success or copying
     true
   )
   assert.equal(await code.inputValue(), 'CE26100002')
+  assert.equal(await page.locator('.label-editor-image').isVisible(), false)
+  assert.equal(await page.evaluate(() => editor.getLatestValidRender()), null)
   await code.press('Escape')
   await page.waitForFunction(
     () => !document.querySelector('.label-editor-copy').disabled

@@ -1,4 +1,10 @@
 export const MATERIAL_MESSAGES = {
+  'Copy material': { zh: '复制材质', es: 'Copiar material' },
+  'Material used for this product’s packing and exports. Edit it in Prepare packing; double-click the product to inspect the original seller data.':
+    {
+      zh: '此商品装箱和导出所用的材质。在“准备装箱”中编辑；双击商品可查看卖家原始数据。',
+      es: 'Material usado para el empaque y las exportaciones de este producto. Edítalo en Preparar empaque; haz doble clic en el producto para ver los datos originales del vendedor.',
+    },
   Material: { zh: '材质', es: 'Material' },
   'Mixed materials': { zh: '多种材质', es: 'Materiales diferentes' },
   'Material for order': { zh: '订单材质', es: 'Material del pedido' },

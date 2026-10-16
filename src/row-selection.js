@@ -105,6 +105,7 @@ export function createRowSelection({
       if (!ownsEvent(event) || event.altKey) return
       const additive = event.ctrlKey || event.metaKey
       if (additive && event.key.toLowerCase() === 'a') selectAll()
+      else if (additive && event.key.toLowerCase() === 'd') clear()
       else if (event.key === 'Escape') clear()
       else if (event.key === 'Enter' && onActivate) onActivate(key)
       else if (event.key === ' ' || event.key === 'Enter') select(key, event)

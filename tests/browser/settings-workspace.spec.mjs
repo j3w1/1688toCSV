@@ -102,7 +102,7 @@ test('Settings sections support the keyboard, preserve edits across searches and
   await expect(
     rows.first().getByLabel('Spanish name', { exact: true })
   ).toHaveValue('NOMBRE DE PRUEBA')
-  const search = names.getByRole('searchbox', {
+  const search = names.getByRole('combobox', {
     name: 'Search naming rules',
     exact: true,
   })
@@ -220,7 +220,7 @@ test('Settings stays within a narrow screen and keeps the naming table in its ow
     (await names.locator('.vocabulary-scroll').boundingBox()).height
   ).toBeLessThanOrEqual(420)
   await names
-    .getByRole('searchbox', { name: 'Search naming rules', exact: true })
+    .getByRole('combobox', { name: 'Search naming rules', exact: true })
     .fill('香薰')
   await expect(
     names

@@ -11,11 +11,13 @@ import {
 } from './i18n.js'
 import {
   LABEL_FIELDS,
+  labelCodeLayout,
   normalizeLabel,
   normalizeLabelSettings,
   renderLabel,
 } from './labels.js'
 import { showErrorNotice, clearErrorNotice } from './error-notice.js'
+import { applyCodeDesign } from './code-design.js'
 
 let nextEditorId = 0
 
@@ -45,6 +47,7 @@ export function mountLabelEditor(container, options) {
   let destroyed = false
   let ready = false
   let codeParts = null
+  let codeFieldBand = null
   let composedCode = null
   let validationError = null
   const inputs = new Map()
@@ -63,6 +66,7 @@ export function mountLabelEditor(container, options) {
   }
   dialog?.addEventListener('cancel', dismiss)
   const root = element('section', 'label-editor')
+  applyCodeDesign(root)
   const preview = element('div', 'label-editor-preview')
   const image = element('img', 'label-editor-image')
   bindAttribute(image, 'alt', uiMessage('Printable label preview'))
@@ -121,6 +125,7 @@ export function mountLabelEditor(container, options) {
   }
 
   function issue(error = null) {
+    if (error) invalidatePreview()
     validationError = error
     resolve.hidden = !error?.conflict || !options.onResolve
     for (const [key, input] of inputs) {
@@ -168,30 +173,95 @@ export function mountLabelEditor(container, options) {
     return normalizeLabel(model)
   }
 
-  function updateCodeParts() {
-    if (!codeParts) return
-    model.code = `${model.baseCode}${model.variantSuffix}${model.sizeSuffix}`
-    composedCode.value = model.code
-    // Fit the editing strip to the same fixed code area without distorting the
-    // printable barcode. Empty endings retain a visible, keyboard-focusable slot.
+  function updateCodeLayout() {
+    const codeInput = inputs.get('code')
+    if (!codeParts && !codeInput) return
+    if (codeParts) {
+      model.code = `${model.baseCode}${model.variantSuffix}${model.sizeSuffix}`
+      composedCode.value = model.code
+    }
+    // Use the same glyph geometry as the PNG. Empty ending controls sit beside
+    // the printed band, so a placeholder never shifts the visible CE code.
     const canvas = document.createElement('canvas')
     const context = canvas.getContext('2d')
-    context.font = '700 100px Arial'
-    let units = context.measureText(model.baseCode).width / 100
-    for (const key of ['variantSuffix', 'sizeSuffix']) {
-      const input = inputs.get(key)
-      const width = Math.max(
-        1.2,
-        context.measureText(model[key] || '+').width / 100 + 0.25
+    try {
+      const normalized = normalizeLabelSettings(settings)
+      const dimensions = normalized[model.kind]
+      const width = Math.round((dimensions.widthMm * normalized.dpi) / 25.4),
+        height = Math.round((dimensions.heightMm * normalized.dpi) / 25.4)
+      const layout = labelCodeLayout(
+        context,
+        { ...model, code: String(model.code || '').toUpperCase() },
+        normalized,
+        width,
+        height
       )
-      input.style.width = `${width}em`
-      units += width
+      const unit = (value) => `${(100 * value) / width}cqw`
+      if (codeInput) {
+        codeFieldBand.style.left = `${(100 * layout.band[0]) / width}%`
+        codeFieldBand.style.top = `${(100 * layout.band[1]) / height}%`
+        codeFieldBand.style.width = `${(100 * layout.band[2]) / width}%`
+        codeFieldBand.style.height = `${(100 * layout.band[3]) / height}%`
+        codeFieldBand.style.borderRadius = unit(layout.radius)
+        codeInput.style.left = unit(layout.textX - layout.band[0])
+        codeInput.style.top = unit(layout.box[1] - layout.band[1])
+        codeInput.style.width = unit(layout.advanceWidth + 2)
+        codeInput.style.height = unit(layout.box[3])
+        codeInput.style.fontSize = unit(layout.fontSize)
+        codeInput.style.setProperty(
+          '--code-input-shift',
+          unit(layout.inputShift)
+        )
+        return
+      }
+      const strip = codeParts.querySelector('.label-code-strip')
+      const base = codeParts.querySelector('.label-code-base')
+      codeParts.style.fontSize = unit(layout.fontSize)
+      codeParts.style.setProperty('--code-input-shift', unit(layout.inputShift))
+      codeParts.style.setProperty(
+        '--code-band-inset',
+        unit(layout.band[1] - layout.box[1])
+      )
+      strip.style.left = `${(100 * (layout.band[0] - layout.box[0])) / layout.box[2]}%`
+      strip.style.top = `${(100 * (layout.band[1] - layout.box[1])) / layout.box[3]}%`
+      strip.style.width = `${(100 * layout.band[2]) / layout.box[2]}%`
+      strip.style.height = `${(100 * layout.band[3]) / layout.box[3]}%`
+      strip.style.paddingLeft = unit(layout.textX - layout.band[0])
+      strip.style.paddingRight = unit(
+        layout.band[0] + layout.band[2] - layout.textX - layout.advanceWidth
+      )
+      strip.style.borderRadius = unit(layout.radius)
+      context.font = layout.font
+      context.fontKerning = 'none'
+      base.style.width = unit(context.measureText(model.baseCode).width)
+      const empty = ['variantSuffix', 'sizeSuffix'].filter((key) => !model[key])
+      const slotWidth = layout.fontSize * 0.9,
+        gap = Math.max(1, normalized.dpi / 300)
+      const after =
+        layout.band[0] + layout.band[2] + gap + empty.length * slotWidth <=
+        width - width * 0.015
+      let slotLeft = after
+        ? layout.band[2] + gap
+        : -gap - empty.length * slotWidth
+      for (const key of ['variantSuffix', 'sizeSuffix']) {
+        const input = inputs.get(key)
+        input.style.height = unit(layout.box[3])
+        input.style.marginTop = unit(layout.box[1] - layout.band[1])
+        input.classList.toggle('label-code-empty', !model[key])
+        input.style.width = unit(
+          model[key] ? context.measureText(model[key]).width : slotWidth
+        )
+        if (!model[key]) {
+          input.style.left = unit(slotLeft)
+          slotLeft += slotWidth
+        } else input.style.removeProperty('left')
+      }
+    } catch {
+      // Keep the editable controls mounted for invalid/overlong drafts. The
+      // normal preview validation supplies its actionable error description.
+    } finally {
+      canvas.width = canvas.height = 0
     }
-    const normalized = normalizeLabelSettings(settings).barcode
-    const maximum =
-      ((12 * normalized.heightMm) / normalized.widthMm) * normalized.textScale
-    codeParts.style.fontSize = `${Math.min(maximum, 52 / (units + 0.6))}cqw`
-    canvas.width = canvas.height = 0
   }
 
   function controls(disabled) {
@@ -200,13 +270,24 @@ export function mountLabelEditor(container, options) {
     copy.disabled = disabled || !ready
   }
 
-  async function previewNow() {
+  function invalidatePreview() {
     clearTimeout(timer)
     previewController?.abort()
-    previewController = new AbortController()
-    const version = ++previewVersion
+    previewVersion++
     ready = false
+    latest = null
+    image.hidden = true
+    image.removeAttribute('src')
+    delete preview.dataset.ready
+    if (previewUrl) URL.revokeObjectURL(previewUrl)
+    previewUrl = null
     copy.disabled = true
+  }
+
+  async function previewNow() {
+    invalidatePreview()
+    previewController = new AbortController()
+    const version = previewVersion
     message(
       uiMessage('Preparing label…{0}', {
         0: dirty() ? uiMessage(' · Unsaved text') : '',
@@ -229,7 +310,6 @@ export function mountLabelEditor(container, options) {
       image.src = nextUrl
       image.hidden = false
       preview.dataset.ready = 'true'
-      if (previewUrl) URL.revokeObjectURL(previewUrl)
       previewUrl = nextUrl
       latest = { result, model: { ...model, ...normalized } }
       ready = true
@@ -252,7 +332,6 @@ export function mountLabelEditor(container, options) {
       )
         return null
       issue(error)
-      copy.disabled = true
       return null
     }
   }
@@ -260,11 +339,7 @@ export function mountLabelEditor(container, options) {
   function queuePreview() {
     clearErrorNotice({ scope: errorScope, key: errorKey })
     resetCopied()
-    clearTimeout(timer)
-    previewController?.abort()
-    previewVersion++
-    ready = false
-    copy.disabled = true
+    invalidatePreview()
     message(
       uiMessage('Updating preview…{0}', {
         0: dirty() ? uiMessage(' · Unsaved text') : '',
@@ -275,7 +350,7 @@ export function mountLabelEditor(container, options) {
 
   function syncValues() {
     for (const [key, input] of inputs) input.value = model[key] ?? ''
-    updateCodeParts()
+    updateCodeLayout()
   }
 
   async function commit() {
@@ -352,8 +427,10 @@ export function mountLabelEditor(container, options) {
     for (const input of inputs.values()) input.remove()
     inputs.clear()
     codeParts?.remove()
+    codeFieldBand?.remove()
     composedCode?.closest('.label-code-guide')?.remove()
     codeParts = null
+    codeFieldBand = null
     composedCode = null
     const kind = model.kind
     const fields = LABEL_FIELDS[kind]
@@ -390,14 +467,17 @@ export function mountLabelEditor(container, options) {
         })
       )
       bindAttribute(input, 'placeholder', attributeMessage(input, 'aria-label'))
-      input.style.left = `${box[0] * 100}%`
-      input.style.top = `${box[1] * 100}%`
-      input.style.width = `${box[2] * 100}%`
-      input.style.height = `${box[3] * 100}%`
+      if (key !== 'code') {
+        input.style.left = `${box[0] * 100}%`
+        input.style.top = `${box[1] * 100}%`
+        input.style.width = `${box[2] * 100}%`
+        input.style.height = `${box[3] * 100}%`
+      }
       input.maxLength =
         key === 'spanishName' ? 80 : key === 'category' ? 30 : 40
       input.addEventListener('input', () => {
         model = { ...model, [key]: input.value }
+        if (key === 'code') updateCodeLayout()
         revision++
         queuePreview()
       })
@@ -415,7 +495,11 @@ export function mountLabelEditor(container, options) {
       })
       input.addEventListener('blur', () => void commit())
       inputs.set(key, input)
-      preview.append(input)
+      if (key === 'code') {
+        codeFieldBand = element('div', 'label-code-field-band')
+        codeFieldBand.append(input)
+        preview.append(codeFieldBand)
+      } else preview.append(input)
     }
     syncValues()
   }
@@ -427,7 +511,8 @@ export function mountLabelEditor(container, options) {
     codeParts.style.width = `${box[2] * 100}%`
     codeParts.style.height = `${box[3] * 100}%`
     const strip = element('div', 'label-code-strip')
-    const base = element('span', 'label-code-base', model.baseCode)
+    const base = element('span', 'label-code-base')
+    base.append(element('span', 'label-code-base-text', model.baseCode))
     bindAttribute(
       base,
       'title',
@@ -456,7 +541,7 @@ export function mountLabelEditor(container, options) {
       input.addEventListener('input', () => {
         model[key] = input.value.toUpperCase()
         if (key === 'sizeSuffix') model.needsSizeMapping = false
-        updateCodeParts()
+        updateCodeLayout()
         revision++
         queuePreview()
       })
@@ -496,7 +581,7 @@ export function mountLabelEditor(container, options) {
       label.htmlFor = input.id
       guide.append(label)
     }
-    composedCode = element('output', 'label-composed-code')
+    composedCode = element('output', 'label-composed-code ce-code')
     bindAttribute(composedCode, 'aria-label', uiMessage('Barcode code'))
     guide.append(composedCode)
     hint.before(guide)
@@ -568,7 +653,7 @@ export function mountLabelEditor(container, options) {
     buildFields()
     void previewNow()
   } catch (error) {
-    message(error.message, true)
+    issue(error)
   }
 
   return {
@@ -586,9 +671,7 @@ export function mountLabelEditor(container, options) {
         buildFields()
         void previewNow()
       } catch (error) {
-        message(error.message, true)
-        ready = false
-        copy.disabled = true
+        issue(error)
       }
     },
     getLatestValidRender: () =>
@@ -598,11 +681,8 @@ export function mountLabelEditor(container, options) {
       clearErrorNotice({ scope: errorScope, key: errorKey })
       dialog?.removeEventListener('cancel', dismiss)
       revision++
-      previewVersion++
-      clearTimeout(timer)
       clearTimeout(copiedTimer)
-      previewController?.abort()
-      if (previewUrl) URL.revokeObjectURL(previewUrl)
+      invalidatePreview()
       root.remove()
     },
   }

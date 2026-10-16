@@ -27,9 +27,39 @@ try {
   await product.press('Enter')
   const details = page.locator('.product-details-dialog')
   await details.locator('img').evaluate((image) => image.decode())
+  await details.locator('h2').click()
   await page.mouse.move(0, 0)
+  await page
+    .locator('.preparation-help-popover:visible')
+    .waitFor({ state: 'hidden' })
   await details.screenshot({ path: 'screenshots/product-details.png' })
-  await page.keyboard.press('Escape')
+  await details
+    .getByRole('button', { name: 'Close product details', exact: true })
+    .click()
+  for (const toggle of await page
+    .locator('.month-toggle[aria-expanded=false]')
+    .all())
+    await toggle.click()
+  await page.locator('#order-list .order-card-meta').first().dblclick()
+  const orderDetails = page.locator('#order-details')
+  await orderDetails
+    .getByRole('combobox', { name: 'Tags', exact: true })
+    .fill('December packing')
+  await orderDetails
+    .getByRole('combobox', { name: 'Tags', exact: true })
+    .press('Enter')
+  await orderDetails
+    .locator('#order-notes')
+    .fill('Synthetic example: confirm carton dimensions before dispatch.')
+  await orderDetails
+    .locator('.annotation-state')
+    .filter({ hasText: /^Saved$/ })
+    .waitFor()
+  await page.mouse.move(0, 0)
+  await orderDetails.screenshot({ path: 'screenshots/order-details.png' })
+  await orderDetails
+    .getByRole('button', { name: 'Close order details', exact: true })
+    .click()
   await page
     .getByRole('button', { name: 'Copy Excel image', exact: true })
     .click()
@@ -93,7 +123,20 @@ try {
   await page
     .getByRole('button', { name: 'Close label editor', exact: true })
     .click()
+  await group
+    .getByRole('button', { name: 'Edit carton mark', exact: true })
+    .click()
+  await page
+    .getByAltText('Printable label preview')
+    .evaluate((image) => image.decode())
+  await page
+    .locator('#label-dialog')
+    .screenshot({ path: 'work/carton-label-editor.png' })
+  await page
+    .getByRole('button', { name: 'Close label editor', exact: true })
+    .click()
   await page.getByRole('button', { name: 'Orders', exact: true }).click()
+  await page.screenshot({ path: 'work/prepared-products-dark.png' })
   await page.getByRole('button', { name: 'Settings', exact: true }).click()
   await page.locator('#settings-dialog h2').click()
   await page.mouse.move(0, 0)
@@ -103,6 +146,19 @@ try {
   await page
     .locator('#settings-dialog')
     .screenshot({ path: 'screenshots/settings.png' })
+  await page.getByRole('tab', { name: 'Appearance', exact: true }).click()
+  await page.mouse.move(0, 0)
+  await page
+    .locator('#settings-dialog')
+    .screenshot({ path: 'screenshots/appearance-settings.png' })
+  await page.keyboard.press('Escape')
+  await page.locator('#sheet-title').click()
+  await page.mouse.move(0, 0)
+  await page.setViewportSize({ width: 390, height: 844 })
+  await page.screenshot({ path: 'work/workspace-narrow-dark.png' })
+  await page.getByRole('button', { name: 'Switch to light theme' }).click()
+  await page.screenshot({ path: 'work/workspace-narrow-light.png' })
+  await page.setViewportSize({ width: 1280, height: 960 })
   await page.goto(`${preview.url}/?state=import`)
   await page.locator('.import-latest').waitFor()
   await page

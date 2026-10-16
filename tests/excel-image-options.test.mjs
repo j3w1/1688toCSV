@@ -9,6 +9,7 @@ import {
 
 test('image columns default to all product and blank supplier fields', () => {
   const value = normalizeExcelImagePreference()
+  assert.equal(value.showOrderDetails, true)
   assert.equal(value.order.length, 11)
   assert.deepEqual(value.selected, value.order)
   assert.deepEqual(value.order.slice(-3), [
@@ -27,6 +28,16 @@ test('saved image column order is validated without silently reselecting disable
   assert.equal(new Set(value.order).size, 11)
   assert.deepEqual(value.selected, ['quantity', 'supplierCarton'])
   assert.deepEqual(normalizeExcelImagePreference({ selected: [] }).selected, [])
+  assert.equal(
+    normalizeExcelImagePreference({ selected: ['quantity'] }).showOrderDetails,
+    true
+  )
+  for (const value of [null, 0, 'false', {}])
+    assert.equal(
+      normalizeExcelImagePreference({ showOrderDetails: value })
+        .showOrderDetails,
+      true
+    )
 })
 
 test('the same saved selection and order survive a new settings read', () => {
@@ -38,6 +49,7 @@ test('the same saved selection and order survive a new settings read', () => {
   const preference = normalizeExcelImagePreference({
     order: ['price', 'quantity'],
     selected: ['price', 'quantity'],
+    showOrderDetails: false,
   })
   assert.equal(saveExcelImagePreference(preference, storage), true)
   assert.equal(values.has(EXCEL_IMAGE_PREFERENCE), true)
@@ -58,6 +70,7 @@ test('a failed write retains the latest session choice instead of copying stale 
   const latest = normalizeExcelImagePreference({
     order: ['quantity'],
     selected: ['quantity'],
+    showOrderDetails: false,
   })
   assert.equal(saveExcelImagePreference(latest, storage), false)
   assert.deepEqual(readExcelImagePreference(storage), latest)

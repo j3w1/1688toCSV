@@ -10,6 +10,7 @@
     <link rel="stylesheet" href="packing.css" />
     <link rel="stylesheet" href="label-editor.css" />
     <link rel="stylesheet" href="copy-actions.css" />
+    <link rel="stylesheet" href="code-design.css" />
     <script type="module" src="library.js"></script>
   </head>
   <body>
@@ -329,19 +330,19 @@
             >
           </div>
           <section
+            data-i18n-aria-label="Matching order totals"
+            id="order-totals"
+            class="order-totals"
+            aria-label="Matching order totals"
+            aria-live="polite"
+          ></section>
+          <section
             data-i18n-aria-label="Selected product totals"
             id="product-selection-totals"
             class="product-selection-totals"
             aria-label="Selected product totals"
             aria-live="polite"
             aria-atomic="true"
-          ></section>
-          <section
-            data-i18n-aria-label="Matching order totals"
-            id="order-totals"
-            class="order-totals"
-            aria-label="Matching order totals"
-            aria-live="polite"
           ></section>
           <div id="empty-state" class="empty-state">
             <span aria-hidden="true">▦</span>

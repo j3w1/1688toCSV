@@ -158,6 +158,61 @@ test('Excel preview matches copied bytes, errors retry in place, columns refresh
   await expect(primary).toBeEnabled()
   const preview = dialog.locator('.copy-preview')
   const zoom = dialog.locator('.copy-preview-zoom')
+  const originalSource = await zoom.locator('img').getAttribute('src')
+  const beforeSize = await zoom.locator('img').boundingBox()
+  await preview.hover()
+  await page.mouse.wheel(0, -240)
+  await expect(zoom).toHaveAttribute('aria-pressed', 'true')
+  const enlargedSize = await zoom.locator('img').boundingBox()
+  expect(enlargedSize.width).toBeGreaterThan(beforeSize.width)
+  expect(await page.evaluate(() => window.batchWrites.length)).toBe(0)
+  // Mouse panning does not accidentally activate the image's click-to-fit action.
+  const viewport = await preview.boundingBox()
+  const beforePan = await preview.evaluate((node) => ({
+    left: node.scrollLeft,
+    top: node.scrollTop,
+  }))
+  await page.mouse.move(
+    viewport.x + viewport.width / 2,
+    viewport.y + viewport.height / 2
+  )
+  await page.mouse.down()
+  await page.mouse.move(
+    viewport.x + viewport.width / 2 - 80,
+    viewport.y + viewport.height / 2 - 60,
+    { steps: 5 }
+  )
+  await page.mouse.up()
+  await expect(zoom).toHaveAttribute('aria-pressed', 'true')
+  const afterPan = await preview.evaluate((node) => ({
+    left: node.scrollLeft,
+    top: node.scrollTop,
+  }))
+  expect(afterPan.left).toBeGreaterThan(beforePan.left)
+  expect(afterPan.top).toBeGreaterThan(beforePan.top)
+  await expect(zoom.locator('img')).toHaveAttribute('src', originalSource)
+  await dialog.getByRole('button', { name: 'Fit image', exact: true }).click()
+  await expect(zoom).toHaveAttribute('aria-pressed', 'false')
+  await dialog.getByRole('button', { name: 'Zoom in', exact: true }).click()
+  await expect(zoom).toHaveAttribute('aria-pressed', 'true')
+  await zoom.focus()
+  await preview.evaluate((node) => node.scrollTo(0, 0))
+  await page.keyboard.press('ArrowDown')
+  expect(await preview.evaluate((node) => node.scrollTop)).toBeGreaterThan(0)
+  await page.keyboard.press('0')
+  await expect(zoom).toHaveAttribute('aria-pressed', 'false')
+  const originalViewport = page.viewportSize()
+  await page.setViewportSize({ width: 390, height: 844 })
+  await expect
+    .poll(() =>
+      dialog.evaluate((node) => node.scrollWidth <= node.clientWidth + 1)
+    )
+    .toBe(true)
+  await expect(
+    dialog.getByRole('button', { name: 'Fit image', exact: true })
+  ).toBeVisible()
+  await page.setViewportSize(originalViewport)
+  await dialog.getByRole('button', { name: 'Fit image', exact: true }).click()
   await zoom.click()
   await expect(zoom).toHaveAttribute('aria-pressed', 'true')
   expect(
@@ -196,6 +251,10 @@ test('Excel preview matches copied bytes, errors retry in place, columns refresh
         .getByRole('button', { name: 'Next batch', exact: true })
         .click()
       await expect(primary).toBeEnabled()
+      await expect(dialog.locator('.copy-preview-zoom')).toHaveAttribute(
+        'aria-pressed',
+        'false'
+      )
       expect(
         await page.evaluate(async (url) => {
           try {

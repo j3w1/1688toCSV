@@ -216,7 +216,7 @@ test('Escape dismisses an open copy menu before the underlying error notice', as
   await view
     .getByRole('button', { name: 'More copy formats', exact: true })
     .click()
-  const panel = view.locator('.copy-actions-panel')
+  const panel = view.getByRole('group', { name: 'Copy formats', exact: true })
   await expect(panel).toBeVisible()
   await page.keyboard.press('Escape')
   await expect(panel).toBeHidden()

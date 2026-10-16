@@ -216,7 +216,13 @@ test('order metadata appears once per section and identical delivery statuses us
   const revisionStyles = await revisions.evaluateAll((nodes) =>
     nodes.map((node) => {
       const style = getComputedStyle(node)
-      return [style.color, style.backgroundColor, style.fontWeight]
+      // Badge hues can differ with editable palettes; emphasis stays equal.
+      return [
+        style.fontWeight,
+        style.fontSize,
+        style.padding,
+        style.borderWidth,
+      ]
     })
   )
   expect(revisionStyles[0]).toEqual(revisionStyles[1])

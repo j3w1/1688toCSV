@@ -1,3 +1,4 @@
+import { clickGroupingAction } from './copy-actions-helpers.mjs'
 import { test, expect } from './extension-fixture.mjs'
 import { createDemoRecords } from '../../preview/library-fixture.js'
 import { centsToMoney, lineGrossCents, moneyToCents } from '../../src/money.js'
@@ -108,9 +109,7 @@ async function mergeFirstGroup(page, view) {
   await page.keyboard.press('Control+Space')
   await expect(rows.nth(0)).toHaveAttribute('aria-selected', 'true')
   await expect(rows.nth(1)).toHaveAttribute('aria-selected', 'true')
-  await group
-    .getByRole('button', { name: 'Share one barcode', exact: true })
-    .click()
+  await clickGroupingAction(page, 'Share one barcode')
   const review = page.getByRole('dialog', {
     name: 'Share one barcode?',
     exact: true,

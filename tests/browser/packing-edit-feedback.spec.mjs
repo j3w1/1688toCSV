@@ -78,6 +78,7 @@ test('packing backup uses selected products and restore reopens only that scope 
   const save = view.getByRole('button', {
     name: 'Back up packing',
     exact: true,
+    includeHidden: true,
   })
   await expect(save).toBeDisabled()
   const row = view.locator('.variants tbody tr').first()
@@ -86,6 +87,9 @@ test('packing backup uses selected products and restore reopens only that scope 
   await expect(save).toBeEnabled()
   const before = await backup(extension)
   const downloaded = page.waitForEvent('download')
+  await view
+    .getByRole('button', { name: 'More copy formats', exact: true })
+    .click()
   await save.click()
   const file = await downloaded
   expect(await file.failure()).toBeNull()
@@ -140,11 +144,12 @@ test('a product code conflict is visible while typing and can be resolved withou
   await expect(first).toBeFocused()
   await expect(first).toHaveAttribute('aria-invalid', 'true')
   await expect(
-    groups.first().locator('.code-field-error:not([hidden])')
+    groups.first().locator('.product-summary > .code-field-error:not([hidden])')
   ).toContainText(/reserved|conflict/i)
   expect((await backup(extension)).preparations).toEqual(before.preparations)
   await groups
     .first()
+    .locator('.product-summary')
     .getByRole('button', { name: 'Resolve code', exact: true })
     .click()
   const resolver = page.getByRole('dialog', {
@@ -261,4 +266,178 @@ test('an unresolved size elsewhere does not block resolving a newly mapped varia
   expect(after.orders).toEqual(before.orders)
   for (const issued of before.issuedCodes)
     expect(after.issuedCodes).toContainEqual(issued)
+})
+
+test('conflicting barcode previews disappear immediately and a delayed render cannot restore them', async ({
+  extension,
+}) => {
+  const { page, view } = await openPacking(extension)
+  await page.setViewportSize({ width: 1600, height: 1800 })
+  const groups = view.locator('.preparation-group')
+  for (let index = 0; index < 2; index++) {
+    await groups
+      .nth(index)
+      .getByLabel('Spanish short name', { exact: true })
+      .fill(index ? 'CAJA' : 'TARRO')
+    await groups
+      .nth(index)
+      .getByLabel('Chinese category', { exact: true })
+      .fill(index ? '收纳盒' : '玻璃罐')
+  }
+  const [first, second] = await groups
+    .first()
+    .locator('.variants tbody tr')
+    .all()
+  const firstVariant = first.locator('.code-part-variantSuffix input')
+  const secondVariant = second.locator('.code-part-variantSuffix input')
+  const firstSize = first.locator('.code-part-sizeSuffix input')
+  const secondSize = second.locator('.code-part-sizeSuffix input')
+  const firstPreview = first.getByRole('button', {
+    name: 'Edit barcode',
+    exact: true,
+  })
+  const secondPreview = second.getByRole('button', {
+    name: 'Edit barcode',
+    exact: true,
+  })
+  const carton = groups.first().getByAltText('Carton mark preview', {
+    exact: true,
+  })
+  const unrelated = groups.nth(1).getByAltText('Barcode preview', {
+    exact: true,
+  })
+  await firstVariant.fill('A')
+  await firstSize.fill('A')
+  await secondVariant.fill('B')
+  await secondSize.fill('B')
+  // Settle the serialized initial renders before testing immediate invalidation.
+  // Native PNG encoding can take several seconds in the background browser.
+  for (const preview of [firstPreview, secondPreview])
+    await expect(preview).toHaveAttribute('data-preview-state', 'ready', {
+      timeout: 20_000,
+    })
+  await expect(carton).toBeVisible()
+  await expect(unrelated).toBeVisible()
+  const cartonUrl = await carton.getAttribute('src')
+  const unrelatedUrl = await unrelated.getAttribute('src')
+
+  // Clearing the variant letters is still valid while size endings differ.
+  await firstVariant.fill('')
+  await secondVariant.fill('')
+  for (const preview of [firstPreview, secondPreview])
+    await expect(preview).toHaveAttribute('data-preview-state', 'ready')
+  await firstSize.fill('')
+  await expect(firstPreview).toHaveAttribute('data-preview-state', 'ready')
+
+  // Hold a real reduced barcode PNG in flight, then make its model invalid.
+  await page.evaluate(() => {
+    const encode = HTMLCanvasElement.prototype.toBlob
+    let hold = true
+    HTMLCanvasElement.prototype.toBlob = function (callback, ...args) {
+      if (hold && this.width === 360 && this.height === 180) {
+        hold = false
+        window.finishBarcodePreview = () =>
+          new Promise((resolve) => {
+            encode.call(
+              this,
+              (blob) => {
+                callback(blob)
+                resolve()
+              },
+              ...args
+            )
+          })
+        return
+      }
+      return encode.call(this, callback, ...args)
+    }
+  })
+  await secondSize.fill('C')
+  await expect
+    .poll(() => page.evaluate(() => Boolean(window.finishBarcodePreview)))
+    .toBe(true)
+  await secondSize.fill('')
+  for (const preview of [firstPreview, secondPreview]) {
+    await expect(preview).toHaveAttribute('data-preview-state', 'invalid')
+    await expect(preview.locator('img')).toBeHidden()
+    await expect(preview.locator('img')).not.toHaveAttribute('src')
+    await expect(preview).toContainText('Code conflict')
+  }
+  await expect(firstSize).toHaveAttribute('aria-invalid', 'true')
+  await expect(secondSize).toHaveAttribute('aria-invalid', 'true')
+  await expect(carton).toHaveAttribute('src', cartonUrl)
+  await expect(unrelated).toHaveAttribute('src', unrelatedUrl)
+  await page.evaluate(async () => {
+    await window.finishBarcodePreview()
+    await new Promise((resolve) => requestAnimationFrame(resolve))
+  })
+  for (const preview of [firstPreview, secondPreview]) {
+    await expect(preview).toHaveAttribute('data-preview-state', 'invalid')
+    await expect(preview.locator('img')).not.toHaveAttribute('src')
+  }
+
+  // The invalid image itself opens the existing conflict recovery flow.
+  await secondPreview.click()
+  const resolver = page.getByRole('dialog', {
+    name: 'Resolve code conflict',
+    exact: true,
+  })
+  await expect(resolver).toBeVisible()
+  await resolver
+    .getByRole('button', {
+      name: 'Use next available variant code',
+      exact: true,
+    })
+    .click()
+  await expect(resolver).toBeHidden()
+  for (const preview of [firstPreview, secondPreview])
+    await expect(preview).toHaveAttribute('data-preview-state', 'ready')
+  await expect(firstSize).not.toHaveAttribute('aria-invalid', 'true')
+  await expect(secondSize).not.toHaveAttribute('aria-invalid', 'true')
+  const saved = (await backup(extension)).preparations[0].groups[0]
+  const codes = saved.variants.map(
+    (variant) => saved.baseCode + variant.variantSuffix + variant.sizeSuffix
+  )
+  expect(new Set(codes).size).toBe(2)
+})
+
+test('reverting to a saved barcode before rerender does not leave its preview checking forever', async ({
+  extension,
+}) => {
+  const { page, view } = await openPacking(extension)
+  await page.setViewportSize({ width: 1600, height: 1200 })
+  const group = view.locator('.preparation-group').first()
+  await group.getByLabel('Spanish short name', { exact: true }).fill('TARRO')
+  await expect(view.locator('.preparation-save-status')).toHaveText(
+    'Saved automatically'
+  )
+  const preview = group
+    .getByRole('button', { name: 'Edit barcode', exact: true })
+    .first()
+  await expect(preview).toHaveAttribute('data-preview-state', 'ready')
+  const before = await backup(extension)
+  // Keep the edit, revert and selection rerender in one task so the old input
+  // is disconnected before its 180ms ownership check is allowed to start.
+  await view
+    .getByRole('button', { name: 'Clear selection', exact: true })
+    .evaluate((clear) => {
+      const input = document.querySelector(
+        '#preparation-content .variants tbody tr .code-part-variantSuffix input'
+      )
+      const saved = input.value
+      input.value = `${saved}Z`
+      input.dispatchEvent(new Event('input', { bubbles: true }))
+      input.value = saved
+      input.dispatchEvent(new Event('input', { bubbles: true }))
+      clear.click()
+    })
+  await expect(view.locator('.preparation-save-status')).toHaveText(
+    'Saved automatically'
+  )
+  await expect(preview).toHaveAttribute('data-preview-state', 'ready')
+  await expect(preview.getByAltText('Barcode preview')).toBeVisible()
+  const after = await backup(extension)
+  expect(after.preparations).toEqual(before.preparations)
+  expect(after.issuedCodes).toEqual(before.issuedCodes)
+  expect(after.orders).toEqual(before.orders)
 })

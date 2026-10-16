@@ -315,7 +315,9 @@ test('translated product details never rewrite saved label names or original ord
   await expect(
     field(details, '规格', '.product-original-fields').getByRole('button')
   ).toHaveText('14*65CM')
-  await page.keyboard.press('Escape')
+  await details
+    .getByRole('button', { name: '关闭商品详情', exact: true })
+    .click()
   await expect(details).toHaveCount(0)
   const after = await backup(extension)
   expect(after.orders).toEqual(before.orders)

@@ -1,4 +1,9 @@
 export const EXCEL_MESSAGES = {
+  'Fit image': { zh: '适应宽度', es: 'Ajustar imagen' },
+  'Scroll to zoom · drag to pan': {
+    zh: '滚轮缩放 · 拖动平移',
+    es: 'Rueda para ampliar · arrastra para desplazar',
+  },
   'Copy a batch, paste it into Excel, then continue here.': {
     zh: '复制一批并粘贴到Excel，然后在此继续。',
     es: 'Copia un lote, pégalo en Excel y continúa aquí.',
@@ -34,6 +39,15 @@ export const EXCEL_MESSAGES = {
     es: 'No se pudo copiar. Inténtalo de nuevo.',
   },
   'Excel image columns': { zh: '表格图片列', es: 'Columnas de imagen Excel' },
+  'Show store and order details': {
+    zh: '显示店铺与订单信息',
+    es: 'Mostrar tienda y pedido',
+  },
+  'Include store names and full order numbers in the image. Turning this off keeps order separators. Remembered for Orders and Prepare packing.':
+    {
+      zh: '在图片中显示店铺名称和完整订单号。关闭后仍保留订单分隔。设置在订单和装箱准备视图中共用并自动保存。',
+      es: 'Incluye los nombres de las tiendas y los números completos de pedido en la imagen. Al desactivarlo se conservan los separadores. Se recuerda en Pedidos y Preparar empaque.',
+    },
   'Click columns to include them. Drag to reorder, or use the arrows. Changes are remembered for both views.':
     {
       zh: '点击选择要包含的列。拖动或使用箭头排序。设置会自动保存，并用于两个视图。',

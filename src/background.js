@@ -5,6 +5,7 @@ import { loadThumbnail } from './images.js'
 import { financialDiagnostics } from './import-diagnostics.js'
 import { createImportReport, importJobView } from './import-report.js'
 import { importProgress } from './import-progress.js'
+import { appearanceTokens } from './appearance.js'
 
 const alarmName = 'order-import'
 // This lock only orders concurrent events in one worker lifetime. Every job
@@ -241,6 +242,10 @@ async function dispatch(message, sender, repository, controller) {
   if (!message || typeof message.type !== 'string')
     throw new Error('Unknown extension action.')
   switch (message.type) {
+    case 'WORKSPACE_APPEARANCE_GET':
+      if (!isExtensionPage(sender))
+        requireContent(sender, isListUrl(sender.url) ? 'list' : 'detail')
+      return workspaceAppearance(repository)
     case 'OPEN_LIBRARY':
       if (
         !isExtensionPage(sender) &&
@@ -353,6 +358,21 @@ async function dispatch(message, sender, repository, controller) {
   if (!isExtensionPage(sender))
     throw new Error('Open the extension spreadsheet to use this action.')
   switch (message.type) {
+    case 'WORKSPACE_APPEARANCE_CHANGED': {
+      await repository.setWorkspaceColorScheme(message.colorScheme)
+      const data = await workspaceAppearance(repository)
+      await Promise.allSettled(
+        (await chrome.tabs.query({}))
+          .filter((tab) => isListUrl(tab.url) || detailUrl(tab.url))
+          .map((tab) =>
+            chrome.tabs.sendMessage(tab.id, {
+              type: 'WORKSPACE_APPEARANCE',
+              data,
+            })
+          )
+      )
+      return true
+    }
     case 'LIBRARY_UPDATED':
       await changed()
       return true
@@ -399,6 +419,15 @@ async function dispatch(message, sender, repository, controller) {
   }
 }
 
+async function workspaceAppearance(repository) {
+  const { appearance, colorScheme } = await repository.getWorkspaceDisplay()
+  return {
+    colorScheme,
+    light: appearanceTokens(appearance, 'light'),
+    dark: appearanceTokens(appearance, 'dark'),
+  }
+}
+
 // Register listeners synchronously so events can wake a terminated worker.
 chrome.runtime.onMessage.addListener((message, sender, respond) => {
   if (['LIBRARY_CHANGED', 'IMPORT_PROGRESS'].includes(message?.type)) return
@@ -408,9 +437,11 @@ chrome.runtime.onMessage.addListener((message, sender, respond) => {
         usingRepository((repository, controller) =>
           dispatch(message, sender, repository, controller)
         )
-      // Thumbnail downloads and read-only views must not hold the import lock.
+      // Display preferences, thumbnails and read-only views do not use import state.
       const data = [
         'IMAGE_GET',
+        'WORKSPACE_APPEARANCE_GET',
+        'WORKSPACE_APPEARANCE_CHANGED',
         'LIBRARY_QUERY',
         'JOBS_QUERY',
         'IMPORT_STATUS',

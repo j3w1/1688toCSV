@@ -292,6 +292,20 @@ function validateRecord(input) {
     changedEntryIds: strings(input.changedEntryIds, 'changedEntryIds'),
     removedEntryIds: strings(input.removedEntryIds, 'removedEntryIds'),
   }
+  if (input.productTags !== undefined) {
+    object(input.productTags, 'Product tags')
+    record.productTags = Object.fromEntries(
+      Object.entries(input.productTags).map(([entryId, tags]) => [
+        identifier(entryId, 'Product tag entry ID'),
+        strings(tags, 'Product tags'),
+      ])
+    )
+  }
+  if (input.productTagsUpdatedAt !== undefined)
+    record.productTagsUpdatedAt = date(
+      input.productTagsUpdatedAt,
+      'Product tags updatedAt'
+    )
   if (record.lastCheckedAt < record.snapshot.observedAt)
     throw new Error('Order lastCheckedAt precedes its observation')
   if (record.changedAt > record.snapshot.observedAt)
@@ -398,6 +412,12 @@ function reconcile(snapshot, previous) {
       lastCheckedAt: snapshot.observedAt,
       notes: previous?.notes ?? '',
       tags: previous?.tags ?? [],
+      ...(previous?.productTags !== undefined
+        ? { productTags: previous.productTags }
+        : {}),
+      ...(previous?.productTagsUpdatedAt !== undefined
+        ? { productTagsUpdatedAt: previous.productTagsUpdatedAt }
+        : {}),
       changedEntryIds: previous
         ? snapshot.items
             .filter(
@@ -655,12 +675,14 @@ export async function openDatabase({ name = '1688-order-library' } = {}) {
   async function packingPreferencesFor(tx) {
     const store = tx.objectStore('packingPreferences')
     const previous = await requested(store.get('packing'))
-    const value = initializeVocabulary(
-      previous?.value
-        ? previous.value.sizeVocabulary === undefined
-          ? validatePackingPreferences(previous.value)
-          : previous.value
-        : validatePackingPreferences()
+    const value = upgradeWorkspaceColors(
+      initializeVocabulary(
+        previous?.value
+          ? previous.value.sizeVocabulary === undefined
+            ? validatePackingPreferences(previous.value)
+            : previous.value
+          : validatePackingPreferences()
+      )
     )
     if (!previous || value !== previous.value)
       store.put({
@@ -671,6 +693,45 @@ export async function openDatabase({ name = '1688-order-library' } = {}) {
         updatedAt: previous?.updatedAt ?? '1970-01-01T00:00:00.000Z',
       })
     return value
+  }
+
+  function nextEditTimestamp(previous) {
+    return new Date(
+      Math.max(Date.now(), Date.parse(previous || 0) + 1)
+    ).toISOString()
+  }
+
+  async function syncTagCatalogs(
+    tx,
+    value,
+    { previousRecords = [], touch = false } = {}
+  ) {
+    const records = await requested(tx.objectStore('orders').getAll())
+    const next = { ...value }
+    for (const scope of ['order', 'product']) {
+      const field = `${scope}Tags`
+      const catalog = reconcileTagCatalog(
+        value[field],
+        assignedTagNames(records, scope),
+        {
+          previousNames: assignedTagNames(previousRecords, scope),
+          scope,
+        }
+      )
+      if (catalog.length || value[field] !== undefined) next[field] = catalog
+    }
+    if (JSON.stringify(next) !== JSON.stringify(value)) {
+      const store = tx.objectStore('packingPreferences')
+      const previous = await requested(store.get('packing'))
+      store.put({
+        id: 'packing',
+        value: next,
+        updatedAt: touch
+          ? nextEditTimestamp(previous?.updatedAt)
+          : previous?.updatedAt || '1970-01-01T00:00:00.000Z',
+      })
+    }
+    return next
   }
 
   function refreshPreparedNames(tx, preparation, suggest) {
@@ -766,10 +827,14 @@ export async function openDatabase({ name = '1688-order-library' } = {}) {
           const expectedRevision = expectedRevisions[index]
           const key = [draft.accountId, draft.orderId]
           const previous = await requested(store.get(key))
-          if ((previous?.revision ?? 0) !== expectedRevision)
-            throw new Error(
+          if ((previous?.revision ?? 0) !== expectedRevision) {
+            const error = new Error(
               'Preparation changed in another tab. Reload it before saving your edits.'
             )
+            error.code = 'PACKING_REVISION_CONFLICT'
+            error.packingIssue = { orderId: draft.orderId }
+            throw error
+          }
           const order = await requested(tx.objectStore('orders').get(key))
           if (!order)
             throw new Error('Save the source order before preparing labels')
@@ -921,28 +986,187 @@ export async function openDatabase({ name = '1688-order-library' } = {}) {
     async setNotes(orderId, { notes, tags }, { accountId = 'local' } = {}) {
       string(notes, 'notes')
       const uniqueTags = strings(tags, 'tags')
-      return write(['orders'], async (tx) => {
+      return write(['orders', 'packingPreferences'], async (tx) => {
         const store = tx.objectStore('orders')
         const order = await requested(store.get([accountId, orderId]))
         if (!order) throw new Error('Order was not found')
         const result = { ...order, notes, tags: uniqueTags }
         store.put(result)
+        const value = await packingPreferencesFor(tx)
+        await syncTagCatalogs(tx, value, {
+          previousRecords: [order],
+          touch: true,
+        })
         return result
+      })
+    },
+
+    async setProductTags(orderId, entryId, tags, { accountId = 'local' } = {}) {
+      identifier(entryId, 'Product tag entry ID')
+      const uniqueTags = strings(tags, 'Product tags')
+      return write(['orders', 'packingPreferences'], async (tx) => {
+        const store = tx.objectStore('orders')
+        const order = await requested(store.get([accountId, orderId]))
+        if (!order) throw new Error('Order was not found')
+        if (
+          !order.snapshot.items.some((item) => item.entryId === entryId) &&
+          !Object.hasOwn(order.productTags || {}, entryId)
+        )
+          throw new Error('Product was not found in this order')
+        const productTags = { ...order.productTags }
+        if (uniqueTags.length) productTags[entryId] = uniqueTags
+        else delete productTags[entryId]
+        const result = {
+          ...order,
+          productTags,
+          productTagsUpdatedAt: nextEditTimestamp(order.productTagsUpdatedAt),
+        }
+        store.put(result)
+        await syncTagCatalogs(tx, await packingPreferencesFor(tx), {
+          previousRecords: [order],
+          touch: true,
+        })
+        return result
+      })
+    },
+
+    async removeTag(name, { scope = 'order' } = {}) {
+      string(name, 'Tag name', { empty: false })
+      if (!['order', 'product'].includes(scope))
+        throw new Error('Choose order or product tags')
+      return write(['orders', 'history', 'packingPreferences'], async (tx) => {
+        let removedAssignments = 0
+        for (const storeName of ['orders', 'history']) {
+          const store = tx.objectStore(storeName)
+          for (const record of await requested(store.getAll())) {
+            let count = 0
+            const next = { ...record }
+            if (scope === 'order') {
+              count = record.tags.includes(name) ? 1 : 0
+              if (count) next.tags = record.tags.filter((tag) => tag !== name)
+            } else {
+              const entries = Object.entries(record.productTags || {})
+              count = entries.filter(([, tags]) => tags.includes(name)).length
+              if (count) {
+                next.productTags = Object.fromEntries(
+                  entries
+                    .map(([id, tags]) => [
+                      id,
+                      tags.filter((tag) => tag !== name),
+                    ])
+                    .filter(([, tags]) => tags.length)
+                )
+                next.productTagsUpdatedAt = nextEditTimestamp(
+                  record.productTagsUpdatedAt
+                )
+              }
+            }
+            if (count) store.put(next)
+            if (storeName === 'orders') removedAssignments += count
+          }
+        }
+        const value = await packingPreferencesFor(tx)
+        const preferences = {
+          ...value,
+          [`${scope}Tags`]: (value[`${scope}Tags`] || []).filter(
+            (entry) => entry.name !== name
+          ),
+        }
+        const store = tx.objectStore('packingPreferences')
+        const previous = await requested(store.get('packing'))
+        store.put({
+          id: 'packing',
+          value: preferences,
+          updatedAt: nextEditTimestamp(previous?.updatedAt),
+        })
+        return { removedAssignments, preferences }
+      })
+    },
+
+    async getTagUsage(name, { scope = 'order' } = {}) {
+      string(name, 'Tag name', { empty: false })
+      if (!['order', 'product'].includes(scope))
+        throw new Error('Choose order or product tags')
+      return read(
+        ['orders'],
+        async (tx) =>
+          assignedTagNames(
+            await requested(tx.objectStore('orders').getAll()),
+            scope
+          ).filter((tag) => tag === name).length
+      )
+    },
+
+    async renameTag(name, nextName, { scope = 'order' } = {}) {
+      string(name, 'Tag name', { empty: false })
+      return write(['orders', 'history', 'packingPreferences'], async (tx) => {
+        const orders = await requested(tx.objectStore('orders').getAll())
+        const history = await requested(tx.objectStore('history').getAll())
+        const value = await packingPreferencesFor(tx)
+        const renamed = renameTagData(
+          { definitions: value[`${scope}Tags`], orders, history },
+          name,
+          nextName,
+          scope
+        )
+        for (const [storeName, originals] of [
+          ['orders', orders],
+          ['history', history],
+        ]) {
+          const store = tx.objectStore(storeName)
+          renamed[storeName].forEach((record, index) => {
+            if (record === originals[index]) return
+            store.put(
+              scope === 'product'
+                ? {
+                    ...record,
+                    productTagsUpdatedAt: nextEditTimestamp(
+                      record.productTagsUpdatedAt
+                    ),
+                  }
+                : record
+            )
+          })
+        }
+        const preferences = { ...value, [`${scope}Tags`]: renamed.definitions }
+        const store = tx.objectStore('packingPreferences')
+        const previous = await requested(store.get('packing'))
+        store.put({
+          id: 'packing',
+          value: preferences,
+          updatedAt: nextEditTimestamp(previous?.updatedAt),
+        })
+        return { renamedAssignments: renamed.renamedAssignments, preferences }
       })
     },
 
     async removeOrders(orderIds, { accountId = 'local' } = {}) {
       const ids = strings(orderIds, 'orderIds')
-      return write(['orders', 'history', 'preparations'], async (tx) => {
-        for (const id of ids) {
-          tx.objectStore('orders').delete([accountId, id])
-          tx.objectStore('preparations').delete([accountId, id])
-          const keys = await requested(
-            tx.objectStore('history').index('order').getAllKeys([accountId, id])
-          )
-          for (const key of keys) tx.objectStore('history').delete(key)
+      return write(
+        ['orders', 'history', 'preparations', 'packingPreferences'],
+        async (tx) => {
+          const previousRecords = []
+          for (const id of ids) {
+            const record = await requested(
+              tx.objectStore('orders').get([accountId, id])
+            )
+            if (record) previousRecords.push(record)
+            tx.objectStore('orders').delete([accountId, id])
+            tx.objectStore('preparations').delete([accountId, id])
+            const keys = await requested(
+              tx
+                .objectStore('history')
+                .index('order')
+                .getAllKeys([accountId, id])
+            )
+            for (const key of keys) tx.objectStore('history').delete(key)
+          }
+          await syncTagCatalogs(tx, await packingPreferencesFor(tx), {
+            previousRecords,
+            touch: true,
+          })
         }
-      })
+      )
     },
 
     async exportBackup({ orderIds, accountId = 'local' } = {}) {
@@ -1107,13 +1331,27 @@ export async function openDatabase({ name = '1688-order-library' } = {}) {
               imported += 1
             } else {
               const result = reconcile(incoming.snapshot, previous)
+              let next = result.ignored ? previous : result.order
               if (!result.ignored) {
                 if (result.changed) {
                   history.put(historicalRecord(previous))
                   updated += 1
                 }
-                orders.put(result.order)
               }
+              // Product annotations have their own edit clock; a later scrape
+              // cannot overwrite them, and an older backup cannot undo a clear.
+              if (
+                !backup.packingScope &&
+                incoming.productTagsUpdatedAt &&
+                incoming.productTagsUpdatedAt >
+                  (previous.productTagsUpdatedAt || '')
+              )
+                next = {
+                  ...next,
+                  productTags: incoming.productTags || {},
+                  productTagsUpdatedAt: incoming.productTagsUpdatedAt,
+                }
+              if (next !== previous) orders.put(next)
               // An older backup's current version is still useful history.
               if (incoming.snapshot.observedAt < previous.snapshot.observedAt) {
                 const historyKey = [...key, incoming.snapshot.observedAt]
@@ -1190,7 +1428,10 @@ export async function openDatabase({ name = '1688-order-library' } = {}) {
               )
             }
           }
-          await refreshNames(tx, await packingPreferencesFor(tx))
+          await refreshNames(
+            tx,
+            await syncTagCatalogs(tx, await packingPreferencesFor(tx))
+          )
           return { imported, updated }
         }
       )
@@ -1330,6 +1571,7 @@ export async function openDatabase({ name = '1688-order-library' } = {}) {
               variant: snapshot?.variant || evidenceVariant?.variant || '',
               entryIds,
               photos,
+              currentCode: currentCode || '',
               currentBaseCode: group?.baseCode || '',
             })
           }
@@ -1357,10 +1599,35 @@ export async function openDatabase({ name = '1688-order-library' } = {}) {
     },
 
     async getPackingPreferences() {
-      return write(['packingPreferences'], packingPreferencesFor)
+      return write(['packingPreferences', 'orders'], async (tx) =>
+        syncTagCatalogs(tx, await packingPreferencesFor(tx))
+      )
     },
 
-    async savePackingPreferences(input) {
+    async getWorkspaceDisplay() {
+      return read(['packingPreferences'], async (tx) => {
+        const store = tx.objectStore('packingPreferences')
+        const packing = await requested(store.get('packing'))
+        const display = await requested(store.get('workspace-display'))
+        return {
+          appearance: packing?.value?.appearance,
+          colorScheme: display?.colorScheme || 'dark',
+        }
+      })
+    },
+
+    async setWorkspaceColorScheme(colorScheme) {
+      if (!['light', 'dark', 'system'].includes(colorScheme))
+        throw new Error('The workspace color scheme is invalid.')
+      return write(['packingPreferences'], async (tx) => {
+        const store = tx.objectStore('packingPreferences')
+        const previous = await requested(store.get('workspace-display'))
+        if (previous?.colorScheme !== colorScheme)
+          store.put({ id: 'workspace-display', colorScheme })
+      })
+    },
+
+    async savePackingPreferences(input, { tagCatalogBaseline } = {}) {
       const validated = validatePackingPreferences(input)
       const value = initializeVocabulary({
         ...validated,
@@ -1371,6 +1638,25 @@ export async function openDatabase({ name = '1688-order-library' } = {}) {
         async (tx) => {
           const store = tx.objectStore('packingPreferences')
           const previous = await requested(store.get('packing'))
+          const records = await requested(tx.objectStore('orders').getAll())
+          for (const scope of ['order', 'product']) {
+            const field = `${scope}Tags`
+            const catalog = reconcileTagCatalog(
+              value[field],
+              assignedTagNames(records, scope),
+              {
+                previous: previous?.value?.[field],
+                baseline: tagCatalogBaseline?.[field],
+                scope,
+              }
+            )
+            if (
+              catalog.length ||
+              value[field] !== undefined ||
+              previous?.value?.[field] !== undefined
+            )
+              value[field] = catalog
+          }
           const updatedAt = new Date(
             Math.max(Date.now(), Date.parse(previous?.updatedAt || 0) + 1)
           ).toISOString()
@@ -1431,6 +1717,12 @@ export async function openDatabase({ name = '1688-order-library' } = {}) {
     },
   }
 }
+import {
+  assignedTagNames,
+  reconcileTagCatalog,
+  renameTagData,
+} from './order-tags.js'
+import { upgradeWorkspaceColors } from './appearance.js'
 import { lineGrossCents, moneyToCents } from './money.js'
 import { purchaseTimestamp } from './order-date.js'
 import {

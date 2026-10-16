@@ -1,6 +1,7 @@
 @import './photo-viewer.css';
 @import './error-notice.css';
 @import './image-copy-dialog.css';
+@import './appearance-settings.css';
 
 .excel-options-footer {
   display: flex;
@@ -182,6 +183,13 @@
   --on-error: #fffdf9;
   --variant-code: #855621;
   --size-code: #9a4435;
+  --product-name: #82471e;
+  --category-text: #38645c;
+  --material-text: #596331;
+  --attribute-label: #705c4b;
+  --amount-text: #805a24;
+  --quantity-text: #486078;
+  --description-text: #4a4038;
 }
 @media (prefers-color-scheme: dark) {
   :root:not(:has(> head > meta[name='color-scheme'][content='light'])) {
@@ -217,6 +225,13 @@
     --on-error: #381918;
     --variant-code: #e8bd7c;
     --size-code: #f1aa98;
+    --product-name: #e3ad7c;
+    --category-text: #a6c8c1;
+    --material-text: #bec396;
+    --attribute-label: #bead9b;
+    --amount-text: #dec18e;
+    --quantity-text: #b4c3d6;
+    --description-text: #ddd2c5;
   }
 }
 :root:has(> head > meta[name='color-scheme'][content='dark']) {
@@ -253,6 +268,13 @@
   --on-error: #381918;
   --variant-code: #e8bd7c;
   --size-code: #f1aa98;
+  --product-name: #e3ad7c;
+  --category-text: #a6c8c1;
+  --material-text: #bec396;
+  --attribute-label: #bead9b;
+  --amount-text: #dec18e;
+  --quantity-text: #b4c3d6;
+  --description-text: #ddd2c5;
 }
 :root:has(> head > meta[name='color-scheme'][content='light']) {
   color-scheme: light;
@@ -379,6 +401,36 @@ button:disabled {
 .top-actions {
   display: flex;
   gap: 8px;
+}
+#activity-open {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  white-space: nowrap;
+}
+#activity-open > .ui-icon {
+  flex: 0 0 auto;
+  margin: 0;
+}
+#activity-open[data-activity-state='running'] #activity-count {
+  color: var(--label-activity-running-text, var(--info-text));
+  background: var(--label-activity-running-bg, var(--info));
+}
+#activity-open[data-activity-state='unread'] #activity-count {
+  color: var(--label-activity-new-text, var(--success-text));
+  background: var(--label-activity-new-bg, var(--success));
+}
+#activity-count {
+  display: inline-flex;
+  align-items: center;
+  min-block-size: 20px;
+  padding: 2px 7px;
+  border-radius: 5px;
+  font-size: 11px;
+  line-height: 16px;
+  font-weight: 650;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
 }
 main {
   max-width: 1640px;
@@ -795,14 +847,23 @@ tbody tr:hover {
   font-variant-numeric: tabular-nums;
   white-space: nowrap;
 }
+#sheet-body .price-cell {
+  color: var(--amount-text);
+}
+#sheet-body .quantity-cell {
+  color: var(--quantity-text);
+}
+#sheet-body .discount-cell {
+  color: var(--muted);
+}
 .thumb-cell {
-  width: 88px;
+  width: 90px;
   padding-inline: 6px 10px;
 }
 .thumb-cell img {
   display: block;
-  width: 72px;
-  height: 72px;
+  width: 74px;
+  height: 74px;
   object-fit: contain;
   background: var(--thumb);
   border: 1px solid var(--border);
@@ -815,22 +876,22 @@ tbody tr:hover {
 }
 .photo-copy-tile > .photo-copy-button.icon-button {
   position: absolute;
-  inset-block-start: 5px;
-  inset-inline-end: 5px;
+  inset-block-start: 3px;
+  inset-inline-end: 3px;
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  inline-size: 28px;
-  min-inline-size: 28px;
-  block-size: 28px;
-  min-block-size: 28px;
+  inline-size: 24px;
+  min-inline-size: 24px;
+  block-size: 24px;
+  min-block-size: 24px;
   margin: 0;
   border: 1px solid var(--border);
-  border-radius: 5px;
+  border-radius: 4px;
   background: var(--field);
   color: var(--muted);
   line-height: 1;
-  padding: 5px;
+  padding: 4px;
   opacity: 0;
   pointer-events: none;
 }
@@ -839,16 +900,16 @@ tbody tr:hover {
   opacity: 0.94;
   pointer-events: auto;
 }
-.photo-copy-button > .ui-icon {
-  width: 15px;
-  height: 15px;
+.photo-copy-tile > .photo-copy-button.icon-button > .ui-icon {
+  inline-size: 13px;
+  block-size: 13px;
   margin: 0;
 }
 .thumb-cell .product-photo-button {
   display: grid;
   place-items: center;
-  width: 76px;
-  height: 76px;
+  width: 78px;
+  height: 78px;
   padding: 1px;
   border: 1px solid var(--border);
   border-radius: 10px;
@@ -884,8 +945,16 @@ tbody tr:hover {
   overflow-wrap: anywhere;
 }
 .description-cell .product-title {
+  color: var(--description-text);
   font-weight: 560;
   white-space: pre-line;
+}
+.product-row-tags {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px;
+  margin-block-start: 3px;
 }
 .product-attributes {
   display: flex;
@@ -903,13 +972,18 @@ tbody tr:hover {
   max-width: 100%;
 }
 .product-attributes dt {
-  color: var(--muted);
+  color: var(--attribute-label);
   flex: none;
   font-size: 11px;
 }
 .product-attributes dd {
   margin: 0;
   min-width: 0;
+  color: var(--description-text);
+}
+.product-attributes .product-material-value {
+  color: var(--material-text);
+  font-weight: 650;
 }
 .product-attributes .product-color-hint {
   border: 0;
@@ -991,6 +1065,21 @@ tbody tr:hover {
 .product-details-data {
   min-width: 0;
   flex: 1;
+}
+.product-details-tags {
+  margin-block: 18px 4px;
+}
+.product-details-tags .annotation-footer {
+  min-block-size: 24px;
+  margin-block-start: 3px;
+}
+.product-details-tags .annotation-footer button {
+  min-block-size: 24px;
+  padding: 2px 7px;
+  font-size: 11px;
+}
+.product-details-tags[data-save-state='error'] .annotation-state {
+  color: var(--danger-text);
 }
 .product-details-data h3 {
   margin: 0 0 14px;
@@ -1131,6 +1220,12 @@ tbody tr:hover {
   margin: 4px 0;
   color: var(--muted);
   font-size: 11px;
+}
+.job-error-line {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 4px 8px;
 }
 .job button {
   font-size: 11px;
@@ -2005,15 +2100,78 @@ button.copyable-text:hover {
   max-inline-size: 280px;
   white-space: normal;
 }
-.order-summary > .order-seller {
-  display: block;
+.order-card-identity {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 2px 8px;
+  padding-inline-end: 15px;
+}
+.order-card-identity > .order-seller {
+  min-inline-size: 0;
+  max-inline-size: 100%;
   font-weight: 600;
 }
-.order-summary > .order-reference {
-  display: block;
+.order-name-summary {
+  display: inline-flex;
+  align-items: baseline;
+  gap: 4px;
+  min-inline-size: 0;
+  max-inline-size: min(24ch, 100%);
+  color: var(--product-name);
+  font-size: 11px;
+  font-weight: 600;
+}
+.order-name-label {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.order-name-summary > .order-name-count {
+  flex: 0 0 auto;
+  display: inline;
+  margin: 0;
+  color: var(--muted);
+  font-size: 10px;
+  font-weight: 500;
+}
+.order-summary > .order-reference-pair {
+  display: flex;
   margin-block-start: 3px;
   color: var(--muted);
   font-size: 11px;
+}
+.order-reference-pair {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  min-inline-size: 0;
+  max-inline-size: 100%;
+}
+.order-reference-pair > .copyable-text {
+  min-inline-size: 0;
+  overflow-wrap: anywhere;
+}
+.order-source-link.icon-button {
+  display: inline-grid;
+  place-items: center;
+  flex: 0 0 24px;
+  inline-size: 24px;
+  min-block-size: 24px;
+  padding: 0;
+  border: 0;
+  border-radius: 5px;
+  color: var(--muted);
+  background: transparent;
+  text-decoration: none;
+}
+.order-source-link.icon-button .ui-icon {
+  inline-size: 13px;
+  block-size: 13px;
+}
+.order-source-link:hover {
+  color: var(--text);
+  background: var(--hover);
 }
 .revision-badge,
 .order-card .revision-badge {
@@ -2024,4 +2182,36 @@ button.copyable-text:hover {
   font-size: 10px;
   font-weight: 500;
   line-height: 1.35;
+}
+
+.search-suggestions {
+  position: fixed;
+  inset: auto;
+  margin: 0;
+  padding: 4px;
+  box-sizing: border-box;
+  overflow: auto;
+  overscroll-behavior: contain;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--surface);
+  color: var(--text);
+  box-shadow: 0 5px 18px #0002;
+  font-size: 12px;
+}
+.search-suggestions [role='option'] {
+  min-block-size: 28px;
+  padding: 7px 9px;
+  border-radius: 3px;
+  overflow-wrap: anywhere;
+  cursor: pointer;
+}
+.search-suggestions [role='option']:hover,
+.search-suggestions [aria-selected='true'] {
+  background: var(--selected);
+}
+@media (pointer: coarse) {
+  .search-suggestions [role='option'] {
+    min-block-size: 36px;
+  }
 }

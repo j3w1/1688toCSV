@@ -51,11 +51,78 @@
   border: 0;
   overflow: visible;
 }
+.image-copy-preview-pane {
+  min-inline-size: 0;
+}
+.image-copy-preview-tools {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 4px;
+  margin-block-end: 8px;
+}
+.image-copy-preview-tools[hidden] {
+  display: none;
+}
+.image-copy-preview-tools button {
+  min-inline-size: 28px;
+  min-block-size: 28px;
+  padding: 3px 8px;
+  font-size: 12px;
+}
+.copy-preview-scale {
+  min-inline-size: 44px;
+  text-align: center;
+  font-variant-numeric: tabular-nums;
+  font-size: 12px;
+}
+.image-copy-preview-tools > span {
+  margin-inline-start: auto;
+  color: var(--muted);
+  font-size: 11px;
+}
+.copy-preview.copy-preview-interactive {
+  display: block;
+  block-size: min(58dvh, 580px);
+}
+.copy-preview-interactive figure,
+.copy-preview-interactive figure.is-enlarged {
+  inline-size: max-content;
+  min-inline-size: 0;
+}
+.copy-preview-interactive img {
+  max-inline-size: none;
+  max-block-size: none;
+  -webkit-user-select: none;
+  user-select: none;
+}
+.copy-preview-interactive.is-zoomed .copy-preview-zoom {
+  cursor: grab;
+}
+.copy-preview-interactive.is-panning .copy-preview-zoom {
+  cursor: grabbing;
+}
 .excel-image-options details > summary {
   cursor: pointer;
   font-weight: 600;
   font-size: 13px;
   margin-block-start: 0;
+}
+.excel-image-options .excel-order-details-toggle {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 0 0 14px;
+  font-size: 12px;
+  line-height: 1.45;
+  cursor: pointer;
+}
+.excel-order-details-toggle > input {
+  flex: 0 0 auto;
+  inline-size: 15px;
+  block-size: 15px;
+  margin: 0;
+  accent-color: var(--control-accent);
 }
 .image-copy-body .excel-column-list {
   max-block-size: 330px;
@@ -63,12 +130,31 @@
   overscroll-behavior: contain;
   margin-block: 8px;
 }
-.image-copy-body .excel-column-toggle {
-  padding: 5px 4px;
+.image-copy-body .excel-column-item .excel-column-toggle {
+  display: grid;
+  grid-template-columns: 15px minmax(0, 1fr);
+  align-items: start;
+  gap: 2px 6px;
+  min-block-size: 32px;
+  padding: 5px 6px;
   font-size: 12px;
+  line-height: 1.35;
+}
+.image-copy-body .excel-column-toggle > span:not(.excel-column-check) {
+  min-inline-size: 0;
+  white-space: normal;
+  overflow-wrap: anywhere;
+}
+.image-copy-body .excel-column-check {
+  align-self: start;
 }
 .image-copy-body .excel-column-item {
-  grid-template-columns: 20px minmax(0, 1fr) auto;
+  grid-template-columns: 24px minmax(0, 1fr) 54px;
+}
+.image-copy-body .excel-column-moves {
+  align-items: center;
+  justify-content: end;
+  flex-wrap: nowrap;
 }
 .image-copy-body .excel-column-toggle small {
   display: none;

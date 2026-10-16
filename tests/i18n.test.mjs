@@ -99,3 +99,22 @@ test('translation catalogs retain interpolated data placeholders', () => {
     }
   }
 })
+
+test('same-product barcode conflicts translate their recovery advice and preserve the exact code', () => {
+  const code = 'CE26100102AM'
+  const source = `Code conflict: ${code} belongs to another variant of this product. Keep different variant or size endings.`
+  try {
+    setLanguage('zh', { persist: false })
+    assert.equal(
+      t(source),
+      `货号冲突：${code} 属于此商品的另一个款式。请使用不同的款式或尺寸后缀。`
+    )
+    setLanguage('es', { persist: false })
+    assert.equal(
+      t(source),
+      `Conflicto de código: ${code} pertenece a otra variante de este producto. Usa sufijos de variante o talla diferentes.`
+    )
+  } finally {
+    setLanguage('en', { persist: false })
+  }
+})

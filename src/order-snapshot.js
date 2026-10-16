@@ -132,6 +132,7 @@ function readTotals(appQuery) {
   const totals = { sourceDiscount: 0n, orderAdjustment: 0n }
   let orderEligibleDiscount = 0n
   let wholesaleDiscount = 0n
+  let unsignedAdjustment
   let foreignCurrencyFeeUnspecified = false
   const labels = new Set()
   for (const field of fields) {
@@ -164,9 +165,11 @@ function readTotals(appQuery) {
       if (!/^(?:减少|减|[−-])/.test(value.trim()) || discount < 0n)
         throw new Error('Red-packet discount is not an explicit reduction.')
       totals.redPacketDiscount = discount
-    } else if (label === '商品改价')
-      totals.orderAdjustment = readAmount(value, label, { signed: true })
-    else if (label.includes('优惠') || label === '元宝') {
+    } else if (label === '商品改价') {
+      if (/^(?:减少|增加|减|增|加|[+−-])/.test(value.trim()))
+        totals.orderAdjustment = readAmount(value, label, { signed: true })
+      else unsignedAdjustment = readAmount(value, label)
+    } else if (label.includes('优惠') || label === '元宝') {
       const discount = readAmount(value, label, { signed: true })
       if (discount < 0n) throw new Error(`${label} is not a reduction.`)
       totals.sourceDiscount += discount
@@ -230,6 +233,7 @@ function readTotals(appQuery) {
     totals,
     orderEligibleDiscount,
     wholesaleDiscount,
+    unsignedAdjustment,
     foreignCurrencyFeeUnspecified,
   }
 }
@@ -312,6 +316,7 @@ export function extractOrderSnapshot(
     totals,
     orderEligibleDiscount,
     wholesaleDiscount,
+    unsignedAdjustment,
     foreignCurrencyFeeUnspecified,
   } = readTotals(appQuery)
   const actualGross = items.reduce(
@@ -345,33 +350,38 @@ export function extractOrderSnapshot(
   // Consider only explicitly evidenced whole amounts. The discount breakdown
   // and payable must identify one complete interpretation, including when a
   // customization charge happens to equal the wholesale reduction.
-  const includedAdjustments = [
-    0n,
-    ...(totals.orderAdjustment > 0n ? [totals.orderAdjustment] : []),
-  ]
-  const candidates = grossCandidates.flatMap((gross) =>
-    includedAdjustments
-      .map((rowIncludedAdjustment) => {
-        const orderDiscount =
-          totals.sourceDiscount -
-          gross.priceIncludedDiscount +
-          rowIncludedAdjustment -
-          actualDiscount
-        return {
-          ...gross,
-          rowIncludedAdjustment,
-          orderDiscount,
-          goodsNet:
-            actualGross -
-            actualDiscount -
-            (totals.orderAdjustment - rowIncludedAdjustment) -
+  // Some pages omit the sign of 商品改价. Try both directions and require
+  // exactly one complete reconciliation; never assume an unsigned reduction.
+  const adjustments =
+    unsignedAdjustment === undefined
+      ? [totals.orderAdjustment]
+      : [...new Set([unsignedAdjustment, -unsignedAdjustment])]
+  const candidates = adjustments.flatMap((orderAdjustment) =>
+    grossCandidates.flatMap((gross) =>
+      [0n, ...(orderAdjustment > 0n ? [orderAdjustment] : [])]
+        .map((rowIncludedAdjustment) => {
+          const orderDiscount =
+            totals.sourceDiscount -
+            gross.priceIncludedDiscount +
+            rowIncludedAdjustment -
+            actualDiscount
+          return {
+            ...gross,
+            orderAdjustment,
+            rowIncludedAdjustment,
             orderDiscount,
-        }
-      })
-      .filter(
-        ({ orderDiscount }) =>
-          orderDiscount >= 0n && orderDiscount <= orderEligibleDiscount
-      )
+            goodsNet:
+              actualGross -
+              actualDiscount -
+              (orderAdjustment - rowIncludedAdjustment) -
+              orderDiscount,
+          }
+        })
+        .filter(
+          ({ orderDiscount }) =>
+            orderDiscount >= 0n && orderDiscount <= orderEligibleDiscount
+        )
+    )
   )
   if (!candidates.length)
     throw new Error(
@@ -401,7 +411,9 @@ export function extractOrderSnapshot(
     rowIncludedAdjustment,
     orderDiscount,
     goodsNet,
+    orderAdjustment,
   } = reconciled[0]
+  totals.orderAdjustment = orderAdjustment
   totals.sourceDiscount = actualDiscount
   if (grossIncludedCustomization > 0n)
     totals.grossIncludedCustomization = grossIncludedCustomization

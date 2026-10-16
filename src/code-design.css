@@ -1,0 +1,121 @@
+/* Casa Elida codes share one visual identity; source SKU and order IDs do not. */
+:root {
+  --ce-code-padding-inline: calc(7px * var(--ce-code-horizontal-padding-scale));
+  --ce-code-padding-block: calc(2px * var(--ce-code-vertical-padding-scale));
+}
+.ce-code,
+.packing-review-item code.ce-code,
+.packing-review-codes code.ce-code,
+.row-preparation .row-code-copy.ce-code,
+.preparation-workspace .preparation-group input.group-code-editor.ce-code {
+  display: inline-block;
+  box-sizing: border-box;
+  max-inline-size: 100%;
+  padding: var(--ce-code-padding-block) var(--ce-code-padding-inline);
+  min-block-size: 0;
+  border: 1px solid var(--ce-code-background);
+  border-radius: min(
+    var(--ce-code-padding-inline),
+    calc(
+      (1.12em + 2 * var(--ce-code-padding-block) + 2px) *
+        var(--ce-code-radius-ratio)
+    )
+  );
+  background: var(--ce-code-background);
+  color: var(--ce-code-foreground);
+  font-family: var(--ce-code-font-family);
+  font-weight: var(--ce-code-font-weight);
+  font-size: var(--ce-code-size, 14px);
+  line-height: 1.12;
+  text-align: center;
+  vertical-align: middle;
+  overflow-wrap: anywhere;
+  text-decoration: none;
+  font-variant-numeric: tabular-nums;
+}
+.ce-code:is(button, input):hover {
+  background: var(--ce-code-background);
+  color: var(--ce-code-foreground);
+  border-color: #777;
+}
+.ce-code:is(button, input):focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+button.ce-code::before {
+  content: '';
+  position: absolute;
+  inset: -3px 0;
+}
+.preparation-workspace .preparation-group input.group-code-editor.ce-code {
+  --ce-code-size: 20px;
+  min-inline-size: 0;
+  caret-color: var(--ce-code-foreground);
+}
+.row-preparation .row-code-copy.ce-code {
+  --ce-code-size: 12px;
+}
+.label-composed-code.ce-code {
+  --ce-code-size: 20px;
+}
+.variant-code-design {
+  --ce-code-size: 20px;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px;
+  padding: 0;
+  background: transparent;
+  font-family: var(--ce-code-font-family);
+  font-weight: var(--ce-code-font-weight);
+}
+.variant-code-band.ce-code {
+  display: inline-flex;
+  align-items: center;
+  gap: 0;
+}
+.variant-code-design .variant-code-base,
+.preparation-workspace .variants .variant-code-design input {
+  box-sizing: border-box;
+  color: var(--ce-code-foreground);
+  font-family: var(--ce-code-font-family);
+  font-size: var(--ce-code-size);
+  font-weight: var(--ce-code-font-weight);
+  padding: 0;
+  min-height: 0;
+  height: auto;
+  block-size: 1.12em;
+  line-height: 1.12;
+  box-shadow: none;
+  border: 0;
+  background: transparent;
+}
+.preparation-workspace .variants .variant-code-band input {
+  min-inline-size: 0;
+  text-align: left;
+}
+.preparation-workspace
+  .variants
+  .variant-code-design
+  input:is(:hover, :focus-visible) {
+  background: #262626;
+  color: var(--ce-code-foreground);
+}
+.preparation-workspace
+  .variants
+  .variant-code-design
+  > .preparation-inline-field
+  input {
+  min-inline-size: 1.7ch;
+  color: var(--muted);
+  background: var(--field);
+  border-radius: 3px;
+  text-align: center;
+}
+.preparation-workspace .variants .variant-code-design input::placeholder {
+  color: var(--muted);
+}
+.ce-code[aria-invalid='true'] {
+  outline: 2px solid var(--error-text, #d97970);
+  outline-offset: 2px;
+}

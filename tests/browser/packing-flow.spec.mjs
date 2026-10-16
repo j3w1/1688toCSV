@@ -209,6 +209,7 @@ test('order details copies the complete order number with visible success feedba
       name: `Order ${records[0].snapshot.orderId}`,
       exact: true,
     })
+    .locator('.order-card-meta')
     .dblclick()
   const details = page.locator('#order-details')
   await expect(details).toBeVisible()
@@ -251,12 +252,14 @@ test('Ctrl+A prepares every selected product across purchase months; preview Can
       name: `Order ${records[0].snapshot.orderId}`,
       exact: true,
     })
+    .locator('.order-card-meta')
     .click()
   await page
     .getByRole('option', {
       name: `Order ${records[1].snapshot.orderId}`,
       exact: true,
     })
+    .locator('.order-card-meta')
     .click({ modifiers: ['Control'] })
   await selectAllProducts(page)
   await expect(page.locator('#selection-summary')).toContainText('6 selected')
@@ -471,9 +474,11 @@ test('a historical code conflict identifies its owner and resolves with a new re
     exact: true,
   })
   await expect(conflict).toContainText(retiredCode)
-  await expect(conflict).toContainText('This product now uses CE26109998')
   await expect(conflict).toContainText(
-    'That is why the old code is absent from the product table.'
+    'Previously issued here. Current carton code: CE26109998'
+  )
+  await expect(conflict).toContainText(
+    'A code stays with the product it was first issued to, even after that product changes codes or is removed.'
   )
   await expect(conflict.getByAltText('Product photo')).toHaveCount(2)
   await expect(
@@ -791,6 +796,7 @@ test('reset order and codes retains current names while previous packing restore
   expect(restored.orders).toEqual(original.orders)
   for (const reserved of edited.issuedCodes)
     expect(restored.issuedCodes).toContainEqual(reserved)
+  await revealCopyActions(page)
   const downloading = page.waitForEvent('download')
   await view
     .getByRole('button', { name: 'Back up packing', exact: true })

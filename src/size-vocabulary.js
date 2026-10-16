@@ -1,3 +1,5 @@
+import { normalizePrice } from './money.js'
+
 // Literal local aliases only. Product titles and article numbers are not size
 // evidence; measured sizes are compared in compatible units, without area guesses.
 export const SIZE_VOCABULARY_VERSION = 1
@@ -30,6 +32,7 @@ export const DEFAULT_SIZE_VOCABULARY = Object.freeze(
 const rankedSuffixes = {
   2: ['S', 'L'],
   3: ['S', 'M', 'L'],
+  4: ['S', 'M', 'L', 'XL'],
   5: ['XS', 'S', 'M', 'L', 'XL'],
 }
 const units = {
@@ -66,13 +69,33 @@ const numberPattern = String.raw`(?:\d+(?:\.\d+)?|\.\d+)`
 const unitPattern = Object.keys(units)
   .sort((a, b) => b.length - a.length)
   .join('|')
-const partPattern = `${numberPattern}\\s*(?:${unitPattern})?`
+const axisNames = {
+  长度: 'length',
+  长: 'length',
+  宽度: 'width',
+  宽: 'width',
+  高度: 'height',
+  高: 'height',
+  深度: 'depth',
+  深: 'depth',
+  厚度: 'thickness',
+  厚: 'thickness',
+  直径: 'diameter',
+  口径: 'opening',
+  底径: 'base',
+}
+const axisPattern = Object.keys(axisNames)
+  .sort((a, b) => b.length - a.length)
+  .join('|')
+const amountPattern = `${numberPattern}\\s*(?:${unitPattern})?`
+const namedPartPattern = `(?:${axisPattern})\\s*-?\\s*${amountPattern}`
+const partPattern = `(?:${namedPartPattern}|${amountPattern})`
 const measurementPattern = new RegExp(
-  `(?<![a-z0-9.])${partPattern}(?:\\s*[x×*]\\s*${partPattern}){0,2}(?![a-z0-9.])`,
+  `(?<![a-z0-9.])${partPattern}(?:\\s*[x×*]\\s*${partPattern}|\\s*[,，]?\\s*${namedPartPattern}){0,3}(?![a-z0-9.])`,
   'gi'
 )
 const componentPattern = new RegExp(
-  `(${numberPattern})\\s*(${unitPattern})?`,
+  `(?:(?<axis>${axisPattern})\\s*(?<namedAmount>-?\\s*${numberPattern})|(?<amount>${numberPattern}))\\s*(?<unit>${unitPattern})?`,
   'gi'
 )
 const adjacentMeasurements = new RegExp(
@@ -140,29 +163,46 @@ function remainingText(source, spans) {
 
 function measurement(match) {
   const parts = [...match[0].matchAll(componentPattern)]
-  const lastUnit = parts.findLast((part) => part[2])?.[2]?.toLowerCase()
+  const lastUnit = parts
+    .findLast((part) => part.groups.unit)
+    ?.groups.unit?.toLowerCase()
   const dimensions = parts.map((part) => {
-    const unit = (part[2] || lastUnit || '').toLowerCase()
+    const unit = (part.groups.unit || lastUnit || '').toLowerCase()
     const [kind, scale] = unit ? units[unit] : ['number', 1]
     // The decimal conversion is exact enough for ordering after rounding away
     // binary artefacts (for example 0.3m and 30cm).
     return {
       kind,
-      value: Number((Number(part[1]) * scale).toPrecision(12)),
+      axis: axisNames[part.groups.axis],
+      value: Number(
+        (
+          Number(part.groups.namedAmount ?? part.groups.amount) * scale
+        ).toPrecision(12)
+      ),
     }
   })
+  const named = dimensions.some((part) => part.axis)
+  const completeAxes =
+    !named ||
+    (dimensions.every((part) => part.axis) &&
+      new Set(dimensions.map((part) => part.axis)).size === dimensions.length)
+  if (named && completeAxes)
+    dimensions.sort((a, b) => a.axis.localeCompare(b.axis))
   return {
     start: match.index,
     end: match.index + match[0].length,
     hasUnit: Boolean(lastUnit),
     unit: lastUnit,
+    ...(named ? { axes: dimensions.map((part) => part.axis) } : {}),
     values: dimensions.map((part) => part.value),
     dimension: dimensions[0]?.kind,
     valid:
       dimensions.length > 0 &&
+      completeAxes &&
       dimensions.every(
         (part) =>
           part.kind === dimensions[0].kind &&
+          (!named || ['length', 'number', 'inch', 'cun'].includes(part.kind)) &&
           Number.isFinite(part.value) &&
           part.value > 0
       ),
@@ -176,8 +216,6 @@ function parseSize(value, aliases, allowUnitless = true) {
       /(^|[\s([])([2-6]XL|X{0,3}[SML])(?=\d+(?:\.\d+)?\s*[x×*])/gi,
       '$1$2 '
     )
-    .replace(/^(?:长(?:度)?|宽(?:度)?|高(?:度)?)\s*(?=\d)/, '')
-    .replace(/([x×*]\s*)(?:长(?:度)?|宽(?:度)?|高(?:度)?)\s*(?=\d)/g, '$1')
   if (!source) return { kind: 'missing', remainder: '', tokens: '' }
   const lower = source.toLowerCase()
   const measured = [...source.matchAll(measurementPattern)]
@@ -186,6 +224,7 @@ function parseSize(value, aliases, allowUnitless = true) {
       (entry) =>
         !(entry.unit === '米' && /^[白色黄灰]/.test(source.slice(entry.end))) &&
         (entry.hasUnit ||
+          entry.axes ||
           entry.values.length > 1 ||
           source.slice(entry.start, entry.end).trim() === source)
     )
@@ -219,7 +258,8 @@ function parseSize(value, aliases, allowUnitless = true) {
   }
   const hasMeasurements = measured.some((entry) => entry.hasUnit)
   const measurements = measured.filter(
-    (entry) => allowUnitless || hasMeasurements || entry.values.length > 1
+    (entry) =>
+      allowUnitless || hasMeasurements || entry.axes || entry.values.length > 1
   )
   const spans = [...names, ...measurements]
   const remainder = remainingText(source, spans)
@@ -245,8 +285,15 @@ function parseSize(value, aliases, allowUnitless = true) {
     /\d\s*[-~～至到+/]\s*\d/.test(source)
   )
     return { kind: 'composite', remainder, tokens }
-  const { dimension, values } = measurements[0]
-  return { kind: 'measurement', dimension, values, remainder, tokens }
+  const { dimension, values, axes } = measurements[0]
+  return {
+    kind: 'measurement',
+    dimension,
+    values,
+    ...(axes ? { axes } : {}),
+    remainder,
+    tokens,
+  }
 }
 
 function descriptionProperties(item) {
@@ -336,7 +383,7 @@ function suggest(sizes, aliases, variantKeys) {
       const info = parseSize(size, aliases)
       const key =
         info.kind === 'measurement'
-          ? JSON.stringify([info.dimension, info.values])
+          ? JSON.stringify([info.dimension, info.axes || [], info.values])
           : info.kind === 'named'
             ? `name:${info.suffix}`
             : `source:${keyText(size)}`
@@ -393,6 +440,7 @@ function suggest(sizes, aliases, variantKeys) {
     const comparable = measurements.every(
       (entry) =>
         entry.dimension === first.dimension &&
+        JSON.stringify(entry.axes || []) === JSON.stringify(first.axes || []) &&
         entry.values.length === first.values.length
     )
     measurements.sort((a, b) => {
@@ -457,20 +505,52 @@ export function createSizeClassifier(vocabulary = DEFAULT_SIZE_VOCABULARY) {
 /** Only unfinished sizes may be filled later. Existing/manual endings stay put. */
 export function resolvePendingSizeMappings(
   preparation,
-  vocabulary = DEFAULT_SIZE_VOCABULARY
+  vocabulary = DEFAULT_SIZE_VOCABULARY,
+  { snapshot, entryIds } = {}
 ) {
   const result = structuredClone(preparation)
   const classifier = createSizeClassifier(vocabulary)
+  const sourceItems =
+    snapshot && new Map(snapshot.items.map((item) => [item.entryId, item]))
+  const selected = entryIds && new Set(entryIds)
   const resolvedVariantIds = []
   for (const group of result.groups) {
     if (
+      group.sizeMode === 'none' ||
       !group.variants.some(
         (variant) => variant.needsSizeMapping && !variant.sizeSuffix
       )
     )
       continue
+    const sources =
+      sourceItems &&
+      group.variants.flatMap((variant) =>
+        variant.entryIds.map((id) => sourceItems.get(id))
+      )
+    // A manually merged group may contain unrelated source products. Do not
+    // compare their measurements as if they described one size assortment.
+    if (
+      sources &&
+      (sources.some((item) => !item) ||
+        new Set(sources.map((item) => (item.title || item.description).trim()))
+          .size !== 1)
+    )
+      continue
+    const sourceSizes =
+      sourceItems &&
+      group.variants.map((variant) =>
+        variant.entryIds.map(
+          (id) => classifier.extract(sourceItems.get(id)).size
+        )
+      )
+    if (sourceSizes?.some((sizes) => new Set(sizes).size !== 1)) continue
+    const sizes = group.variants.map((variant, index) => {
+      if (!sourceItems || !variant.needsSizeMapping || variant.sizeSuffix)
+        return variant.size
+      return sourceSizes[index][0]
+    })
     const suggestions = classifier.suggest(
-      group.variants.map((variant) => variant.size),
+      sizes,
       group.variants.map((variant) => variant.variantSuffix)
     )
     const contradictsExisting = group.variants.some(
@@ -485,9 +565,11 @@ export function resolvePendingSizeMappings(
       const suggestion = suggestions[index]
       return variant.needsSizeMapping &&
         !variant.sizeSuffix &&
+        (!selected || variant.entryIds.every((id) => selected.has(id))) &&
         !suggestion.needsSizeMapping
         ? {
             ...variant,
+            size: sizes[index],
             sizeSuffix: suggestion.sizeSuffix,
             needsSizeMapping: false,
           }
@@ -503,4 +585,89 @@ export function resolvePendingSizeMappings(
     })
   }
   return { preparation: result, resolvedVariantIds }
+}
+
+/** Price is a reviewable clue only, never an automatic measurement substitute. */
+export function suggestPriceSizeMappings(
+  group,
+  snapshot,
+  vocabulary = DEFAULT_SIZE_VOCABULARY
+) {
+  if (
+    !snapshot ||
+    group.sizeMode === 'none' ||
+    group.variants.length !== 2 ||
+    group.variants.some(
+      (variant) => !variant.needsSizeMapping || variant.sizeSuffix
+    )
+  )
+    return []
+  const classifier = createSizeClassifier(vocabulary)
+  const items = new Map(snapshot.items.map((item) => [item.entryId, item]))
+  let identity
+  const candidates = []
+  const distinctSizes = new Set()
+  for (const variant of group.variants) {
+    const prices = new Set()
+    const sizes = new Set()
+    if (!variant.entryIds.length) return []
+    for (const id of variant.entryIds) {
+      const item = items.get(id)
+      if (!item) return []
+      const extracted = classifier.extract(item)
+      // A range, set, contradictory axes or explicit name must be reviewed from
+      // its own evidence. Price must never override those signals.
+      if (
+        !extracted.size ||
+        /\d/.test(extracted.size) ||
+        !['unknown', 'missing'].includes(extracted.sizeInfo.kind)
+      )
+        return []
+      sizes.add(keyText(extracted.size))
+      const properties = item.skuProperties?.length
+        ? item.skuProperties
+        : descriptionProperties(item)
+      const nonSize = properties
+        .filter((property) => !sizeLabel.test(normalize(property.label || '')))
+        .map((property) => [
+          keyText(property.label || ''),
+          keyText(property.value || ''),
+        ])
+        .sort((a, b) => JSON.stringify(a).localeCompare(JSON.stringify(b)))
+      const key = JSON.stringify([
+        (item.title || '').trim(),
+        (item.productNumber || '').trim(),
+        nonSize,
+      ])
+      if (!item.title?.trim() || (identity && identity !== key)) return []
+      identity = key
+      try {
+        prices.add(normalizePrice(item.price))
+      } catch {
+        return []
+      }
+    }
+    if (prices.size !== 1 || sizes.size !== 1) return []
+    distinctSizes.add([...sizes][0])
+    candidates.push({ variantId: variant.id, price: [...prices][0] })
+  }
+  if (distinctSizes.size !== 2) return []
+  const scale = Math.max(
+    ...candidates.map(({ price }) => price.split('.')[1].length)
+  )
+  const amounts = candidates.map(({ price }) => {
+    const [whole, fraction] = price.split('.')
+    return BigInt(whole + fraction.padEnd(scale, '0'))
+  })
+  if (amounts.some((amount) => amount <= 0n) || amounts[0] === amounts[1])
+    return []
+  const suggestions = candidates.map((candidate, index) => ({
+    ...candidate,
+    sizeSuffix: amounts[index] < amounts[1 - index] ? 'S' : 'L',
+  }))
+  const endings = suggestions.map(
+    (candidate, index) =>
+      group.variants[index].variantSuffix + candidate.sizeSuffix
+  )
+  return new Set(endings).size === endings.length ? suggestions : []
 }

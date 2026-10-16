@@ -94,6 +94,7 @@ test('group selection adds and removes independently without modifiers or interf
   const backupButton = view.getByRole('button', {
     name: 'Back up packing',
     exact: true,
+    includeHidden: true,
   })
   await expect(backupButton).toBeDisabled()
   await first.click()

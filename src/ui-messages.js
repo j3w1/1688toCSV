@@ -5,9 +5,89 @@ import { EXCEL_MESSAGES } from './ui-messages-excel.js'
 import { MATERIAL_MESSAGES } from './ui-messages-materials.js'
 import { COPY_ACTION_MESSAGES } from './ui-messages-copy-actions.js'
 import { ERROR_MESSAGES } from './ui-messages-errors.js'
+import { APPEARANCE_MESSAGES } from './ui-messages-appearance.js'
+import { ACTIVITY_MESSAGES } from './ui-messages-activity.js'
+import { ORDER_TAG_MESSAGES } from './ui-messages-order-tags.js'
+import { ACTION_HELP_MESSAGES } from './ui-messages-action-help.js'
+import { GROUPING_MESSAGES } from './ui-messages-grouping.js'
 
 // Explicit interface messages only; original seller, product and label values are never translated.
 export const UI_MESSAGES = {
+  Sizes: { zh: '尺寸', es: 'Tallas' },
+  'Size handling': { zh: '尺寸处理', es: 'Tratamiento de tallas' },
+  'Automatic sizes': { zh: '自动识别尺寸', es: 'Tallas automáticas' },
+  'No size difference': { zh: '无尺寸差异', es: 'Sin diferencia de talla' },
+  'Change size handling?': {
+    zh: '更改尺寸处理方式？',
+    es: '¿Cambiar el tratamiento de tallas?',
+  },
+  'Apply size handling': {
+    zh: '应用尺寸处理',
+    es: 'Aplicar tratamiento de tallas',
+  },
+  'Restore default size handling': {
+    zh: '恢复默认尺寸处理',
+    es: 'Restaurar tratamiento de tallas',
+  },
+  '{0}–{1} of {2} products': {
+    zh: '第 {0}–{1} 项，共 {2} 件商品',
+    es: '{0}–{1} de {2} productos',
+  },
+  'These variants have no size difference. Remove only their size endings and keep their variant letters, source descriptions and other products unchanged. This choice is remembered for this product.':
+    {
+      zh: '这些款式没有尺寸差异。仅移除其尺寸后缀，保留款式字母、原始描述和其他商品。此设置将为该商品保存。',
+      es: 'Estas variantes no tienen diferencia de talla. Se quitarán solo sus sufijos de talla; se conservarán las letras de variante, las descripciones originales y los demás productos. La elección se guardará para este producto.',
+    },
+  'Use automatic size recognition for this product again. Blank size endings will be checked against its source descriptions; unclear sizes remain for review.':
+    {
+      zh: '重新对此商品使用自动尺寸识别。将根据原始描述检查空白尺寸后缀；不明确的尺寸仍需确认。',
+      es: 'Vuelve a reconocer las tallas automáticamente en este producto. Se comprobarán los sufijos vacíos con las descripciones originales; las tallas ambiguas quedarán pendientes de revisión.',
+    },
+  'Select all products in this group in Orders before changing its size handling.':
+    {
+      zh: '请先在订单中选择此组的全部商品，再更改尺寸处理方式。',
+      es: 'Selecciona todos los productos de este grupo en Pedidos antes de cambiar sus tallas.',
+    },
+  'Use No size difference when the seller used a size field for colors or styles. Variant letters remain distinct; automatic size recognition stays active for other products. Entering a size ending switches this product back to Automatic sizes and keeps your typed ending.':
+    {
+      zh: '当卖家在尺寸字段中填写颜色或款式时，选择“无尺寸差异”。保留不同的款式字母；其他商品仍使用自动尺寸识别。输入尺寸后缀会将此商品切回“自动识别尺寸”，并保留您输入的后缀。',
+      es: 'Usa Sin diferencia de talla cuando el vendedor escribió colores o estilos en el campo de talla. Las letras de variante seguirán siendo distintas y los demás productos mantendrán el reconocimiento automático. Al escribir un sufijo de talla, este producto vuelve a Tallas automáticas y conserva el sufijo que escribiste.',
+    },
+  ...GROUPING_MESSAGES,
+  'Review size suggestions': {
+    zh: '确认尺寸建议',
+    es: 'Revisar tallas sugeridas',
+  },
+  'Apply these size codes': {
+    zh: '应用这些尺寸代码',
+    es: 'Aplicar estas tallas',
+  },
+  'Unit price ¥{price} · Suggested size {size}': {
+    zh: '单价 ¥{price} · 建议尺寸 {size}',
+    es: 'Precio unitario ¥{price} · Talla sugerida {size}',
+  },
+  'Price is only a clue. These matching variants have no reliable measurements. Confirm that the cheaper one is smaller (S) and the more expensive one is larger (L). Only the two size endings shown below will change.':
+    {
+      zh: '价格仅供参考。这两个相似款式没有可靠的尺寸数据。请确认价格较低的是小号（S），价格较高的是大号（L）。仅修改下方显示的两个尺寸后缀。',
+      es: 'El precio es solo una pista. Estas variantes similares no tienen medidas fiables. Confirma que la más barata es pequeña (S) y la más cara es grande (L). Solo cambiarán los dos sufijos de talla mostrados.',
+    },
+  'Compare the two prices and photos before assigning S and L. Price alone does not prove size.':
+    {
+      zh: '分配 S 和 L 前，请比较两个价格和图片。价格本身不能确定尺寸。',
+      es: 'Compara ambos precios y fotos antes de asignar S y L. El precio por sí solo no demuestra el tamaño.',
+    },
+  'Search suggestions': { zh: '搜索建议', es: 'Sugerencias de búsqueda' },
+  ...APPEARANCE_MESSAGES,
+  ...ACTIVITY_MESSAGES,
+  ...ORDER_TAG_MESSAGES,
+  'Open order {0} in a new tab': {
+    zh: '在新标签页打开订单 {0}',
+    es: 'Abrir pedido {0} en otra pestaña',
+  },
+  'Open this order on 1688 in a new tab.': {
+    zh: '在新标签页打开此订单的 1688 详情。',
+    es: 'Abre este pedido de 1688 en otra pestaña.',
+  },
   'Original product details': { zh: '商品原始详情', es: 'Detalles originales' },
   'Close product details': { zh: '关闭商品详情', es: 'Cerrar detalles' },
   'Copy description': { zh: '复制描述', es: 'Copiar descripción' },
@@ -37,6 +117,7 @@ export const UI_MESSAGES = {
   ...MATERIAL_MESSAGES,
   ...COPY_ACTION_MESSAGES,
   ...ERROR_MESSAGES,
+  ...ACTION_HELP_MESSAGES,
   'Selected product totals': {
     zh: '所选商品合计',
     es: 'Totales de productos seleccionados',

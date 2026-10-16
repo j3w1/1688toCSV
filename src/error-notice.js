@@ -1,6 +1,6 @@
 import { message, isMessage } from './i18n.js'
 import { decorateIcon } from './icons.js'
-import { element } from './ui.js'
+import { element, orderReference } from './ui.js'
 
 const notices = new WeakMap()
 const visible = new Set()
@@ -26,9 +26,21 @@ export function showErrorNotice(
     title = 'Could not complete',
     detail = '',
     action,
+    context,
     deduplicate = false,
   } = {}
 ) {
+  if (
+    text instanceof Error ||
+    (text && typeof text === 'object' && !isMessage(text) && text.message)
+  ) {
+    const error = text
+    text = error.message
+    const options = error.noticeOptions || {}
+    detail ||= options.detail || ''
+    action ||= options.action
+    context ||= options.context
+  }
   if (
     !scope?.isConnected ||
     scope.closest('[hidden]') ||
@@ -52,6 +64,33 @@ export function showErrorNotice(
   content.setAttribute('role', 'alert')
   content.setAttribute('aria-atomic', 'true')
   content.append(heading, body)
+  if (context) {
+    const identity = element('div', undefined, 'error-notice-product')
+    if (context.thumbnail) {
+      const image = element('img')
+      image.alt = ''
+      image.width = image.height = 48
+      identity.append(image)
+      void (async () => {
+        try {
+          const url = await (typeof context.thumbnail === 'function'
+            ? context.thumbnail()
+            : context.thumbnail)
+          if (image.isConnected) image.src = url
+        } catch {
+          image.remove()
+        }
+      })()
+    }
+    const values = element('div')
+    if (context.seller) values.append(element('div', String(context.seller)))
+    if (context.orderId) values.append(orderReference(context.orderId))
+    if (context.code)
+      values.append(element('code', String(context.code), 'ce-code'))
+    if (context.variant) values.append(element('div', String(context.variant)))
+    identity.append(values)
+    content.append(identity)
+  }
   if (detail)
     content.append(element('p', translated(detail), 'error-notice-detail'))
   panel.append(content)
@@ -86,7 +125,20 @@ export function showErrorNotice(
         await action.onClick()
       } catch (error) {
         clearErrorNotice({ scope, key })
-        showErrorNotice(error.message, { scope, key, title, detail, action })
+        const nextScope =
+          scope.isConnected &&
+          !scope.closest('[hidden]') &&
+          (!scope.matches('dialog') || scope.open)
+            ? scope
+            : currentScope()
+        showErrorNotice(error, {
+          scope: nextScope,
+          key,
+          title,
+          detail,
+          action,
+          context,
+        })
       }
     })
     panel.append(resolve)
@@ -116,6 +168,7 @@ export function showErrorNotice(
       (event) => {
         if (
           event.key !== 'Escape' ||
+          event.defaultPrevented ||
           document.querySelector('[popover="auto"]:popover-open') ||
           event.target.closest?.('.label-editor-field, .label-code-part')
         )

@@ -1,5 +1,6 @@
 import JsBarcode from 'jsbarcode'
 import { pngWithDpi } from './png-resolution.js'
+import { CE_CODE_DESIGN } from './code-design.js'
 
 export const DEFAULT_LABEL_SETTINGS = Object.freeze({
   dpi: 300,
@@ -108,22 +109,21 @@ function textBox(
     size,
     minSize = size * 0.55,
     color = '#000',
-    background,
-    padding = 0,
     align = 'center',
     wrap = false,
     fitInk = false,
+    field,
   } = {}
 ) {
   const [x, y, width, height] = box
-  const textWidth = width - padding * 2
+  const textWidth = width
   context.textAlign = align
   context.textBaseline = 'middle'
   let lines = [value]
   let fontSize = Math.floor(size)
   let ink
   for (; fontSize >= Math.ceil(minSize); fontSize--) {
-    context.font = `700 ${fontSize}px Arial, "Microsoft YaHei", sans-serif`
+    context.font = `${CE_CODE_DESIGN.fontWeight} ${fontSize}px ${CE_CODE_DESIGN.fontFamily}`
     lines = [value]
     if (wrap && context.measureText(value).width > textWidth) {
       const words = value.includes(' ') ? value.split(' ') : [...value]
@@ -163,28 +163,14 @@ function textBox(
       break
   }
   if (fontSize < Math.ceil(minSize))
-    throw new Error(
-      'Text does not fit this label. Shorten it or increase the label size.'
+    throw Object.assign(
+      new Error(
+        'Text does not fit this label. Shorten it or increase the label size.'
+      ),
+      { labelField: field, labelValue: value }
     )
   const left =
     align === 'left' ? x : align === 'right' ? x + width : x + width / 2
-  if (background) {
-    const fittedWidth = Math.max(
-      ...lines.map((line) => context.measureText(line).width)
-    )
-    const backgroundWidth = Math.min(
-      width,
-      Math.ceil(fittedWidth) + padding * 2
-    )
-    const backgroundLeft =
-      align === 'left'
-        ? left - padding
-        : align === 'right'
-          ? left + padding - backgroundWidth
-          : left - backgroundWidth / 2
-    context.fillStyle = background
-    context.fillRect(backgroundLeft, y, backgroundWidth, height)
-  }
   context.fillStyle = color
   lines.forEach((line, index) => {
     // Large carton identifiers fit their printed glyphs, not unused font leading.
@@ -207,8 +193,11 @@ export function barcodeGeometry(code, width, dpi) {
   const bits = output.encodings.map((entry) => entry.data).join('')
   const moduleWidth = Math.floor((width * 0.94) / (bits.length + 20))
   if (moduleWidth < Math.ceil((dpi * 0.15) / 25.4))
-    throw new Error(
-      'This barcode is too long for the label width. Shorten the suffix or increase the width.'
+    throw Object.assign(
+      new Error(
+        'This barcode is too long for the label width. Shorten the suffix or increase the width.'
+      ),
+      { labelField: 'variant', labelValue: code }
     )
   return {
     bits,
@@ -220,6 +209,100 @@ export function barcodeGeometry(code, width, dpi) {
 
 function scaleBox(box, width, height) {
   return box.map((value, index) => value * (index % 2 ? height : width))
+}
+
+/** Shared printed/editor geometry, centered on visible glyphs rather than font leading. */
+export function labelCodeLayout(context, model, settings, width, height) {
+  const { kind, code } = model
+  const box = scaleBox(LABEL_FIELDS[kind].code, width, height)
+  const padding =
+    (width * 0.012 + settings.dpi / 300) * CE_CODE_DESIGN.horizontalPaddingScale
+  const minimum = Math.ceil(height * (kind === 'mark' ? 0.11 : 0.065))
+  let fontSize = Math.floor(
+    height * (kind === 'mark' ? 0.2 : 0.12) * settings[kind].textScale
+  )
+  let metrics
+  context.save()
+  try {
+    context.textAlign = 'left'
+    context.textBaseline = 'alphabetic'
+    context.fontKerning = 'none'
+    for (; fontSize >= minimum; fontSize--) {
+      context.font = `${CE_CODE_DESIGN.fontWeight} ${fontSize}px ${CE_CODE_DESIGN.fontFamily}`
+      metrics = context.measureText(code)
+      if (
+        Math.max(
+          metrics.width,
+          metrics.actualBoundingBoxLeft + metrics.actualBoundingBoxRight
+        ) <=
+          box[2] - padding * 2 &&
+        metrics.actualBoundingBoxAscent + metrics.actualBoundingBoxDescent <=
+          box[3]
+      )
+        break
+    }
+    if (fontSize < minimum)
+      throw Object.assign(
+        new Error(
+          'Text does not fit this label. Shorten it or increase the label size.'
+        ),
+        { labelField: kind === 'mark' ? 'code' : 'variant', labelValue: code }
+      )
+    const inkWidth =
+      metrics.actualBoundingBoxLeft + metrics.actualBoundingBoxRight
+    const inkHeight =
+      metrics.actualBoundingBoxAscent + metrics.actualBoundingBoxDescent
+    const bandWidth = inkWidth + padding * 2
+    const bandHeight =
+      inkHeight + (box[3] - inkHeight) * CE_CODE_DESIGN.verticalPaddingScale
+    const band = [
+      box[0] + (box[2] - bandWidth) / 2,
+      box[1] + (box[3] - bandHeight) / 2,
+      bandWidth,
+      bandHeight,
+    ]
+    return {
+      box,
+      band,
+      padding,
+      radius: Math.min(bandHeight * CE_CODE_DESIGN.radiusRatio, padding),
+      font: context.font,
+      fontSize,
+      advanceWidth: metrics.width,
+      textX: band[0] + padding + metrics.actualBoundingBoxLeft,
+      textY:
+        band[1] +
+        band[3] / 2 +
+        (metrics.actualBoundingBoxAscent - metrics.actualBoundingBoxDescent) /
+          2,
+      // Native inputs center a font line box. Compensate its leading while the
+      // noneditable span uses text-box trimming where the browser supports it.
+      inputShift:
+        (metrics.actualBoundingBoxAscent -
+          metrics.actualBoundingBoxDescent -
+          metrics.fontBoundingBoxAscent +
+          metrics.fontBoundingBoxDescent) /
+        2,
+    }
+  } finally {
+    context.restore()
+  }
+}
+
+function drawCodeBand(context, model, settings, width, height) {
+  const code = labelCodeLayout(context, model, settings, width, height)
+  context.save()
+  context.fillStyle = CE_CODE_DESIGN.background
+  context.beginPath()
+  context.roundRect(...code.band, code.radius)
+  context.fill()
+  context.font = code.font
+  context.fontKerning = 'none'
+  context.textAlign = 'left'
+  context.textBaseline = 'alphabetic'
+  context.fillStyle = CE_CODE_DESIGN.foreground
+  context.fillText(model.code, code.textX, code.textY)
+  context.restore()
 }
 
 async function logoArtworkBounds(image, signal) {
@@ -324,13 +407,13 @@ async function drawBarcode(
     context,
     settings.website,
     [width * 0.035, height * 0.03, width * 0.58, height * 0.115],
-    { size: height * 0.083 * factor, align: 'left' }
+    { size: height * 0.083 * factor, align: 'left', field: 'labelSettings' }
   )
   textBox(
     context,
     settings.destination,
     [width * 0.66, height * 0.03, width * 0.305, height * 0.115],
-    { size: height * 0.083 * factor, align: 'right' }
+    { size: height * 0.083 * factor, align: 'right', field: 'labelSettings' }
   )
   const geometry = barcodeGeometry(model.code, width, settings.dpi)
   const top = Math.round(height * 0.175)
@@ -345,19 +428,17 @@ async function drawBarcode(
         barHeight
       )
   }
-  const codeBox = scaleBox(LABEL_FIELDS.barcode.code, width, height)
-  textBox(context, model.code, codeBox, {
-    size: height * 0.12 * factor,
-    minSize: height * 0.065,
-    color: '#fff',
-    background: '#000',
-    padding: width * 0.012,
-  })
+  drawCodeBand(context, model, settings, width, height)
   textBox(
     context,
     model.spanishName,
     scaleBox(LABEL_FIELDS.barcode.spanishName, width, height),
-    { size: height * 0.135 * factor, minSize: height * 0.07, wrap: true }
+    {
+      size: height * 0.135 * factor,
+      minSize: height * 0.07,
+      wrap: true,
+      field: 'name',
+    }
   )
   if (logoUrl) {
     const image = new Image()
@@ -389,12 +470,7 @@ function drawMark(context, model, settings, width, height) {
     [width * 0.035, height * 0.015, width * 0.93, height * 0.52],
     { size: height * 0.72 * factor, fitInk: true }
   )
-  textBox(
-    context,
-    model.code,
-    scaleBox(LABEL_FIELDS.mark.code, width, height),
-    { size: height * 0.2 * factor, fitInk: true }
-  )
+  drawCodeBand(context, model, settings, width, height)
   for (const [caption, unit, top] of [
     ['数量：', '', 0.765],
     ['重量：', 'KG', 0.835],
@@ -429,6 +505,7 @@ function drawMark(context, model, settings, width, height) {
       minSize: height * 0.066,
       wrap: true,
       fitInk: true,
+      field: 'category',
     }
   )
 }

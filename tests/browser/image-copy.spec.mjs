@@ -110,9 +110,9 @@ test('single picture copies original non-square pixels with inline success', asy
   await expect
     .poll(() => preview.evaluate((image) => image.naturalWidth))
     .toBe(240)
-  // The 72px preview uses a 240px thumbnail; copying still keeps all
+  // The 74px preview uses a 240px thumbnail; copying still keeps all
   // original 960 × 640 pixels rather than the display-sized derivative.
-  await expect(preview).toHaveCSS('width', '72px')
+  await expect(preview).toHaveCSS('width', '74px')
   const button = row.locator('.photo-copy-button')
   await expect(button).toHaveAccessibleName('Copy image')
   await row.locator('.photo-copy-tile').hover()
@@ -158,6 +158,7 @@ test('bulk picture copying preserves full pixels in separate compact Excel cells
       name: `Order ${records[0].snapshot.orderId}`,
       exact: true,
     })
+    .locator('.order-card-meta')
     .click()
   for (const id of ['copy-images', 'copy-excel']) {
     const button = page.locator(`#${id}`)

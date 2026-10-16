@@ -1,11 +1,43 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
-import { acknowledgePreparation } from '../src/preparation-save.js'
+import {
+  acknowledgePreparation,
+  samePreparation,
+} from '../src/preparation-save.js'
 import {
   automaticNaming,
   recordNamingEdits,
   refreshPreparationNames,
 } from '../src/product-vocabulary.js'
+
+test('save equality ignores validation key order but retains field changes and row order', () => {
+  const draft = {
+    groups: [{ id: 'g', baseCode: 'CE26100101' }],
+    defaultPacking: { groups: [] },
+    packingPosition: 3,
+  }
+  const saved = {
+    packingPosition: 3,
+    defaultPacking: { groups: [] },
+    groups: [{ baseCode: 'CE26100101', id: 'g' }],
+  }
+  assert.equal(samePreparation(draft, saved), true)
+  assert.equal(samePreparation(draft, { ...saved, packingPosition: 2 }), false)
+  assert.equal(
+    samePreparation(
+      { groups: [{ id: 'a' }, { id: 'b' }] },
+      { groups: [{ id: 'b' }, { id: 'a' }] }
+    ),
+    false
+  )
+  assert.equal(
+    samePreparation(draft, {
+      ...saved,
+      groups: [{ id: 'g', baseCode: 'CE26100102' }],
+    }),
+    false
+  )
+})
 
 test('save acknowledgement applies codes without replacing live objects or later typing', () => {
   const draft = {
