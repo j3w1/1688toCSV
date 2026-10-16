@@ -1,4 +1,38 @@
 export const EXCEL_MESSAGES = {
+  'Copy a batch, paste it into Excel, then continue here.': {
+    zh: '复制一批并粘贴到Excel，然后在此继续。',
+    es: 'Copia un lote, pégalo en Excel y continúa aquí.',
+  },
+  'Image preview': { zh: '图片预览', es: 'Vista previa' },
+  'Image batches': { zh: '图片批次', es: 'Lotes de imágenes' },
+  'Previous batch': { zh: '上一批', es: 'Lote anterior' },
+  'Next batch': { zh: '下一批', es: 'Lote siguiente' },
+  'Copy current batch': { zh: '复制当前批次', es: 'Copiar lote actual' },
+  'Batch {0}, copied': { zh: '第{0}批，已复制', es: 'Lote {0}, copiado' },
+  'Batch {0}': { zh: '第{0}批', es: 'Lote {0}' },
+  'Batch {0} of {1} · items {2}–{3} of {4}': {
+    zh: '第{0}/{1}批 · 第{2}–{3}项，共{4}项',
+    es: 'Lote {0} de {1} · elementos {2}–{3} de {4}',
+  },
+  'Preparing preview…': { zh: '正在生成预览…', es: 'Preparando vista previa…' },
+  'Enlarge preview {0}': { zh: '放大预览{0}', es: 'Ampliar vista previa {0}' },
+  'Prepared image {0}': { zh: '已生成图片{0}', es: 'Imagen preparada {0}' },
+  'Copied {0} of {1} batches. Ready to copy.': {
+    zh: '已复制{0}/{1}批。可以复制当前批次。',
+    es: '{0} de {1} lotes copiados. Listo para copiar.',
+  },
+  'Copied {0} of {1} batches. Paste into Excel before copying another.': {
+    zh: '已复制{0}/{1}批。请先粘贴到Excel，再复制下一批。',
+    es: '{0} de {1} lotes copiados. Pega en Excel antes de copiar otro.',
+  },
+  'Preview could not be prepared.': {
+    zh: '无法生成预览。',
+    es: 'No se pudo preparar la vista previa.',
+  },
+  'Copy failed. Try again.': {
+    zh: '复制失败，请重试。',
+    es: 'No se pudo copiar. Inténtalo de nuevo.',
+  },
   'Excel image columns': { zh: '表格图片列', es: 'Columnas de imagen Excel' },
   'Click columns to include them. Drag to reorder, or use the arrows. Changes are remembered for both views.':
     {

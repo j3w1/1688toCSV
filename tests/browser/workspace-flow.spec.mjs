@@ -1,4 +1,7 @@
-import { revealCopyActions } from './copy-actions-helpers.mjs'
+import {
+  copyCurrentImageBatch,
+  revealCopyActions,
+} from './copy-actions-helpers.mjs'
 import { test, expect } from './extension-fixture.mjs'
 import { createDemoRecords } from '../../preview/library-fixture.js'
 import { summarizeOrders } from '../../src/order-summary.js'
@@ -107,7 +110,7 @@ async function assertToolbarStable(page, before, labels = []) {
       document.documentElement.scrollWidth <= innerWidth &&
       [
         ...document.querySelectorAll(
-          '.export-toolbar button, .copy-progress, .copy-error'
+          '.export-toolbar button, .image-copy-dialog, .image-copy-actions button, .image-copy-progress, .image-copy-status, .error-notice'
         ),
       ]
         .filter((node) => node.getClientRects().length && !node.hidden)
@@ -212,14 +215,22 @@ for (const width of [1440, 390]) {
       .toBe(true)
     await expect(button).toHaveText('Copying…')
     await expect(button).toBeDisabled()
-    const progress = page.locator('.copy-progress')
-    await expect(progress).toHaveText('Preparing images 1–8 of 8…')
+    const dialog = page.locator('.image-copy-dialog')
+    const progress = dialog.locator('.image-copy-progress')
+    await expect(progress).toContainText('Preparing')
     await expect(progress).toHaveAttribute('role', 'status')
+    await expect(dialog.locator('.image-copy-submit')).toBeDisabled()
     await assertToolbarStable(page, before, ['Copying…'])
-    await page.locator('#search').fill('no matching product')
+    await page.evaluate(() => {
+      const search = document.getElementById('search')
+      search.value = 'no matching product'
+      search.dispatchEvent(new Event('input', { bubbles: true }))
+    })
     await expect(page.locator('#sheet-body tr.selectable-row')).toHaveCount(0)
     await expect(button).toBeDisabled()
     await page.evaluate(() => window.finishCopyImage())
+    await expect(dialog.locator('.copy-preview img')).toHaveCount(8)
+    await copyCurrentImageBatch(page)
     await expect(button).toHaveText('Copied')
     await expect(button).toBeDisabled()
     await expect(progress).toHaveCount(0)
@@ -239,7 +250,7 @@ for (const width of [1440, 390]) {
     expect(extension.unexpectedRequests).toEqual([])
   })
 
-  test(`Excel image cancellation stays outside the toolbar and leaves the clipboard unchanged at ${width}px`, async ({
+  test(`Excel image dialog cancellation preserves toolbar geometry and the clipboard at ${width}px`, async ({
     extension,
   }) => {
     const { page } = await open(extension)
@@ -263,16 +274,15 @@ for (const width of [1440, 390]) {
       .poll(() => page.evaluate(() => Boolean(window.finishCopyTableImage)))
       .toBe(true)
     await expect(button).toHaveText('Copying…')
-    await expect(page.locator('.copy-progress')).toContainText(
+    const dialog = page.locator('.image-copy-dialog')
+    await expect(dialog.locator('.image-copy-progress')).toContainText(
       'Creating image 8/8…'
     )
     await assertToolbarStable(page, before, ['Copying…'])
-    await page
-      .locator('.copy-progress')
-      .getByRole('button', { name: 'Cancel image', exact: true })
-      .click()
+    await dialog.getByRole('button', { name: 'Close', exact: true }).click()
+    await page.evaluate(() => window.finishCopyTableImage())
     await expect(button).toHaveText('Excel image')
-    await expect(page.locator('.copy-progress')).toHaveCount(0)
+    await expect(dialog).toHaveCount(0)
     await expect(button).toBeEnabled()
     expect(await page.evaluate(() => navigator.clipboard.readText())).toBe(
       'Synthetic copy cancellation sentinel'
@@ -315,24 +325,21 @@ for (const width of [1440, 390]) {
     const before = await watchCopyToolbar(page, 'copy-images')
     const button = page.locator('#copy-images')
     await button.click()
-    await expect(button).toHaveText('Try again')
-    await expect(button).toHaveClass(/copy-failed/)
-    const error = page.locator('.copy-error')
-    await expect(error).toHaveText('Thumbnail could not be loaded (503).')
-    await expect(error).toHaveAttribute('role', 'alert')
-    await assertToolbarStable(page, before, ['Copying…', 'Try again'])
-    await expect(button).toHaveText('Product photos', { timeout: 4500 })
+    const dialog = page.locator('.image-copy-dialog')
+    const error = dialog.getByRole('alert')
+    await expect(error).toContainText('Thumbnail could not be loaded (503).')
+    await expect(dialog.locator('.image-copy-submit')).toBeDisabled()
+    await assertToolbarStable(page, before, ['Copying…'])
     await expect(error).toBeVisible()
-    await page.mouse.click(2, 2)
-    await expect(error).toBeHidden()
-    await revealCopyActions(page)
+    await page.waitForTimeout(3100)
     await expect(error).toBeVisible()
-    await assertToolbarStable(page, before, ['Product photos'])
     unavailable = false
-    await button.click()
+    await dialog.getByRole('button', { name: 'Retry', exact: true }).click()
+    await expect(dialog.locator('.image-copy-submit')).toBeEnabled()
+    await expect(error).toHaveCount(0)
+    await copyCurrentImageBatch(page)
     await expect(button).toHaveText('Copied')
     await expect(button).toHaveClass(/copied/)
-    await expect(error).toHaveCount(0)
     expect(
       await page.evaluate(async () => {
         const item = (await navigator.clipboard.read())[0]

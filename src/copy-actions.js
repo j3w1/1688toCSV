@@ -2,7 +2,7 @@ import { bindText, bindAttribute, message } from './i18n.js'
 import { decorateIcon, icon } from './icons.js'
 
 /** Move the existing actions into a native popover; their handlers stay intact. */
-export function mountCopyActions(host, { image, options, groups }) {
+export function mountCopyActions(host, { image, groups }) {
   const trigger = document.createElement('button')
   trigger.type = 'button'
   trigger.className = 'copy-actions-trigger'
@@ -32,7 +32,7 @@ export function mountCopyActions(host, { image, options, groups }) {
     panel.append(group)
   }
   host.classList.add('compact-copy-actions')
-  host.replaceChildren(image, options, trigger, panel)
+  host.replaceChildren(image, trigger, panel)
   let positioning
   const nativeAnchor =
     CSS.supports('position-area', 'block-end span-inline-end') &&

@@ -88,6 +88,15 @@ try {
     .click()
   await page.getByRole('checkbox', { name: 'Headers', exact: true }).check()
   await page.getByRole('button', { name: 'Copy to Excel', exact: true }).click()
+  const sourceImages = page.locator('.image-copy-dialog')
+  await sourceImages
+    .getByRole('button', { name: 'Copy current batch', exact: true })
+    .click()
+  await expect(sourceImages.locator('.image-copy-progress')).toContainText(
+    'Paste into Excel'
+  )
+  await expect(sourceImages).toBeVisible()
+  await sourceImages.getByRole('button', { name: 'Done', exact: true }).click()
   await expect(page.locator('#copy-excel')).toHaveText('Copied')
   const products = await page.evaluate(() =>
     excelAcceptance.records.flatMap((record) => record.snapshot.items)
@@ -307,6 +316,16 @@ try {
     excelAcceptance.expectedExcelImage([0, 1])
   )
   await page.locator('#copy-excel-image').click()
+  const tableImages = page.locator('.image-copy-dialog')
+  await tableImages
+    .getByRole('button', { name: 'Copy current batch', exact: true })
+    .click()
+  await expect(tableImages.locator('.image-copy-progress')).toContainText(
+    'Paste into Excel',
+    { timeout: 20_000 }
+  )
+  await expect(tableImages).toBeVisible()
+  await tableImages.getByRole('button', { name: 'Done', exact: true }).click()
   await expect(page.locator('#copy-excel-image')).toHaveText('Copied', {
     timeout: 20_000,
   })

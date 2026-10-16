@@ -31,12 +31,20 @@ try {
   await details.screenshot({ path: 'screenshots/product-details.png' })
   await page.keyboard.press('Escape')
   await page
-    .getByRole('button', { name: 'Excel image columns', exact: true })
+    .getByRole('button', { name: 'Copy Excel image', exact: true })
     .click()
   const imageColumns = page.getByRole('dialog', {
-    name: 'Excel image columns',
+    name: 'Copy Excel image',
     exact: true,
   })
+  await imageColumns
+    .getByRole('button', { name: 'Copy current batch', exact: true })
+    .waitFor()
+  await imageColumns
+    .locator('.copy-preview img')
+    .evaluate((image) => image.decode())
+  if (!(await imageColumns.locator('details').evaluate((node) => node.open)))
+    await imageColumns.locator('details summary').click()
   await imageColumns.screenshot({ path: 'screenshots/excel-image-columns.png' })
   await imageColumns.getByRole('button', { name: 'Done', exact: true }).click()
   await page.locator('#select-rows').click()
@@ -58,6 +66,19 @@ try {
     .waitFor({ state: 'hidden' })
   await page.evaluate(() => window.scrollTo(0, 0))
   await page.screenshot({ path: 'screenshots/preparation.png' })
+  await page
+    .getByRole('button', { name: 'More copy formats', exact: true })
+    .click()
+  await page
+    .getByRole('button', { name: 'Copy carton marks', exact: true })
+    .click()
+  const labelBatches = page.locator('.image-copy-dialog')
+  await labelBatches.locator('.copy-preview img').first().waitFor()
+  await labelBatches
+    .locator('.copy-preview img')
+    .evaluateAll((images) => Promise.all(images.map((image) => image.decode())))
+  await labelBatches.screenshot({ path: 'screenshots/copy-label-batches.png' })
+  await labelBatches.getByRole('button', { name: 'Done', exact: true }).click()
   await group
     .getByRole('button', { name: 'Edit barcode', exact: true })
     .first()

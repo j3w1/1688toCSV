@@ -1,0 +1,228 @@
+.image-copy-dialog {
+  inline-size: min(1040px, calc(100% - 28px));
+  max-inline-size: 1040px;
+  max-block-size: calc(100dvh - 28px);
+  padding: 20px;
+  overflow: auto;
+  overscroll-behavior: contain;
+  scrollbar-gutter: stable;
+}
+.image-copy-dialog::backdrop {
+  overflow: hidden;
+  overscroll-behavior: contain;
+}
+.image-copy-heading,
+.image-copy-navigation,
+.image-copy-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.image-copy-heading {
+  justify-content: space-between;
+}
+.image-copy-heading h2 {
+  margin: 0;
+  font-size: 20px;
+}
+.image-copy-heading > button {
+  flex: none;
+}
+.image-copy-hint {
+  color: var(--muted);
+  font-size: 12px;
+  margin: 8px 0 16px;
+}
+.image-copy-body {
+  display: grid;
+  align-items: start;
+  grid-template-columns: minmax(0, 1fr);
+  gap: 18px;
+}
+.image-copy-body:has(.excel-image-options) {
+  grid-template-columns: 255px minmax(0, 1fr);
+}
+.image-copy-body > .excel-image-options {
+  min-inline-size: 0;
+  inline-size: auto;
+  max-block-size: none;
+  padding: 0;
+  margin: 0;
+  border: 0;
+  overflow: visible;
+}
+.excel-image-options details > summary {
+  cursor: pointer;
+  font-weight: 600;
+  font-size: 13px;
+  margin-block-start: 0;
+}
+.image-copy-body .excel-column-list {
+  max-block-size: 330px;
+  overflow: auto;
+  overscroll-behavior: contain;
+  margin-block: 8px;
+}
+.image-copy-body .excel-column-toggle {
+  padding: 5px 4px;
+  font-size: 12px;
+}
+.image-copy-body .excel-column-item {
+  grid-template-columns: 20px minmax(0, 1fr) auto;
+}
+.image-copy-body .excel-column-toggle small {
+  display: none;
+}
+.image-copy-body .excel-options-footer button {
+  font-size: 11px;
+  min-height: 28px;
+  padding: 4px 7px;
+}
+.image-copy-body .excel-column-status {
+  font-size: 11px;
+  margin: 6px 0;
+}
+.image-copy-body .excel-options-help {
+  font-size: 11px;
+  line-height: 1.45;
+  color: var(--muted);
+}
+.copy-preview {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 160px), 1fr));
+  align-content: start;
+  gap: 12px;
+  min-inline-size: 0;
+  min-block-size: 120px;
+  max-block-size: min(58dvh, 580px);
+  overflow: auto;
+  overscroll-behavior: contain;
+  scrollbar-gutter: stable;
+  padding: 4px;
+  background: var(--field);
+  border-radius: 6px;
+}
+.copy-preview figure {
+  min-inline-size: 0;
+  margin: 0;
+}
+.copy-preview figure:only-child,
+.copy-preview figure.is-enlarged {
+  grid-column: 1 / -1;
+}
+.copy-preview .copy-preview-zoom {
+  display: block;
+  inline-size: 100%;
+  padding: 0;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  cursor: zoom-in;
+}
+.copy-preview img {
+  display: block;
+  inline-size: 100%;
+  max-block-size: 240px;
+  object-fit: contain;
+}
+.copy-preview figure:only-child img {
+  max-block-size: none;
+}
+.copy-preview .is-enlarged img {
+  inline-size: auto;
+  max-inline-size: none;
+  max-block-size: none;
+}
+.copy-preview figure.is-enlarged {
+  inline-size: max-content;
+  min-inline-size: 100%;
+}
+.copy-preview .is-enlarged button {
+  cursor: zoom-out;
+}
+.copy-preview figcaption {
+  color: var(--muted);
+  font-size: 11px;
+  line-height: 1.45;
+  overflow-wrap: anywhere;
+  padding: 5px 3px;
+}
+.image-copy-navigation {
+  margin-block: 0 12px;
+}
+.image-copy-batches {
+  display: flex;
+  gap: 4px;
+  overflow: auto;
+  min-inline-size: 0;
+}
+.image-copy-batches button {
+  flex: none;
+  min-inline-size: 32px;
+  min-block-size: 30px;
+  padding: 4px 7px;
+  font-size: 12px;
+  background: transparent;
+  border-color: transparent;
+}
+.image-copy-batches button[aria-pressed='true'] {
+  background: var(--selected);
+  color: var(--text);
+  border-color: var(--border);
+}
+.image-copy-batches .is-copied {
+  color: var(--accent-text);
+}
+.image-copy-footer {
+  margin-block-start: 14px;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 4px 16px;
+  align-items: center;
+}
+.image-copy-status {
+  margin: 0;
+  font-size: 12px;
+  font-weight: 600;
+}
+.image-copy-progress {
+  margin: 0;
+  color: var(--muted);
+  font-size: 11px;
+  min-block-size: 2lh;
+  grid-column: 1;
+}
+.image-copy-actions {
+  grid-column: 2;
+  grid-row: 1 / 3;
+}
+.image-copy-actions button {
+  font-size: 12px;
+  padding: 8px 12px;
+}
+.image-copy-dialog > .error-notice {
+  position: relative;
+  inset: auto;
+  width: auto;
+  max-height: 130px;
+  margin-block-start: 12px;
+  box-shadow: none;
+}
+@media (max-width: 700px) {
+  .image-copy-dialog {
+    padding: 14px;
+  }
+  .image-copy-body:has(.excel-image-options) {
+    grid-template-columns: minmax(0, 1fr);
+  }
+  .image-copy-footer {
+    grid-template-columns: minmax(0, 1fr);
+  }
+  .image-copy-actions {
+    grid-column: 1;
+    grid-row: auto;
+  }
+  .copy-preview {
+    max-block-size: 45dvh;
+  }
+}

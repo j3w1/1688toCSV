@@ -1,30 +1,12 @@
 @import './photo-viewer.css';
 @import './error-notice.css';
+@import './image-copy-dialog.css';
 
-.excel-image-options-trigger.icon-button {
-  flex: 0 0 28px;
-  inline-size: 28px;
-  min-inline-size: 28px;
-  padding: 4px;
-  border: 0;
-  background: transparent;
-}
-.excel-image-options {
-  inline-size: min(520px, calc(100% - 24px));
-  max-block-size: calc(100dvh - 32px);
-  padding: 18px;
-  overflow: auto;
-  scrollbar-gutter: stable;
-}
-.excel-options-heading,
 .excel-options-footer {
   display: flex;
   align-items: center;
   justify-content: space-between;
   gap: 12px;
-}
-.excel-options-heading h2 {
-  margin: 0;
 }
 .excel-image-options p {
   font-size: 12px;
@@ -699,7 +681,7 @@ td {
   vertical-align: middle;
 }
 #sheet-body .selectable-row > td {
-  padding-block: 6px;
+  padding-block: 4px;
 }
 tbody tr:hover {
   background: var(--hover);
@@ -814,13 +796,13 @@ tbody tr:hover {
   white-space: nowrap;
 }
 .thumb-cell {
-  width: 124px;
+  width: 88px;
   padding-inline: 6px 10px;
 }
 .thumb-cell img {
   display: block;
-  width: 108px;
-  height: 108px;
+  width: 72px;
+  height: 72px;
   object-fit: contain;
   background: var(--thumb);
   border: 1px solid var(--border);
@@ -865,8 +847,8 @@ tbody tr:hover {
 .thumb-cell .product-photo-button {
   display: grid;
   place-items: center;
-  width: 112px;
-  height: 112px;
+  width: 76px;
+  height: 76px;
   padding: 1px;
   border: 1px solid var(--border);
   border-radius: 10px;

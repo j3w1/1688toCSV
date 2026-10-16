@@ -679,7 +679,7 @@ select {
 }
 .variants th,
 .variants td {
-  padding: 5px 6px;
+  padding: 3px 6px;
 }
 .variants th {
   padding-block: 4px;
@@ -1327,12 +1327,12 @@ select {
   border-radius: 5px;
 }
 .variant-photos > .photo-copy-tile > .preparation-photo {
-  min-inline-size: 106px;
-  min-block-size: 106px;
+  min-inline-size: 78px;
+  min-block-size: 78px;
 }
 .variant-photos > .photo-copy-tile > .preparation-photo img {
-  inline-size: 100px;
-  block-size: 100px;
+  inline-size: 72px;
+  block-size: 72px;
 }
 .preparation-workspace .photo-copy-button,
 .packing-review-item .photo-copy-button {

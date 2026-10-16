@@ -32,7 +32,7 @@ import {
 } from './product-vocabulary.js'
 import { suggestMaterial, translateMaterial } from './material-vocabulary.js'
 import { getItemColorHints } from './color-vocabulary.js'
-import { mountExcelImageOptions } from './excel-image-options.js'
+import { openImageCopyDialog, imageBatchPlans } from './image-copy-dialog.js'
 import { mountCopyActions, dismissCopyActionsOnEscape } from './copy-actions.js'
 import { reorderHandle, movedKeys } from './packing-reorder.js'
 import { reviewPackingChanges } from './packing-review.js'
@@ -1997,28 +1997,17 @@ export async function startPackingWorkspace({
       if (!selectedRows.length) return
       const abort = new AbortController()
       try {
-        await copied(target, async (progress) => {
+        await copied(target, async () => {
           preparationImageAbort = abort
           updatePreparationCopyScope()
           await flushSaves()
           if (abort.signal.aborted) return false
           const rows = preparedRows(selectedRows)
-          const cancel = button(
-            uiMessage('Cancel image'),
-            () => abort.abort(),
-            'copy-cancel'
-          )
-          updatePreparationCopyScope()
-          try {
-            return await copyExcelImage(rows, {
-              loadImage,
-              renderCartonMark: createCartonMarkRenderer(),
-              signal: abort.signal,
-              onProgress: (message) => progress(message, { cancel }),
-            })
-          } finally {
-            cancel.remove()
-          }
+          return await copyExcelImage(rows, {
+            loadImage,
+            renderCartonMark: createCartonMarkRenderer(),
+            signal: abort.signal,
+          })
         })
       } finally {
         preparationImageAbort = null
@@ -2157,7 +2146,6 @@ export async function startPackingWorkspace({
     copyActions.append(imageCopy)
     copyActionPanel = mountCopyActions(copyActions, {
       image: imageCopy,
-      options: mountExcelImageOptions(imageCopy),
       groups: [
         { label: 'Packing', actions: [columns, codes] },
         { label: 'Labels & codes', actions: copyButtons.slice(3) },
@@ -3298,67 +3286,6 @@ export async function startPackingWorkspace({
     }
   }
 
-  async function chooseImageBatch(rows, size = 20) {
-    if (rows.length <= size) return rows
-    const modal = el('dialog')
-    bindAttribute(modal, 'aria-label', uiMessage('Choose image batch'))
-    modal.append(
-      el('h2', uiMessage('Copy images in manageable batches')),
-      el(
-        'p',
-        uiMessage(
-          '{0} images. Each batch preserves original quality and row order.',
-          { 0: rows.length }
-        )
-      )
-    )
-    document.body.append(modal)
-    return new Promise((resolve) => {
-      let result = null
-      const count = Math.ceil(rows.length / size),
-        select = el('input'),
-        range = el('p')
-      select.type = 'number'
-      select.min = '1'
-      select.max = String(count)
-      select.value = '1'
-      bindAttribute(
-        select,
-        'aria-label',
-        uiMessage('Batch number (1–{0})', { 0: count })
-      )
-      const describe = () => {
-        const start = (Number(select.value) - 1) * size
-        bindText(
-          range,
-          uiMessage('Batch {0} of {1} · rows {2}–{3}', {
-            0: select.value,
-            1: count,
-            2: start + 1,
-            3: Math.min(rows.length, start + size),
-          })
-        )
-      }
-      select.oninput = describe
-      describe()
-      const proceed = el('button', uiMessage('Use this batch'))
-      proceed.onclick = () => {
-        if (!select.reportValidity()) return
-        const start = (Number(select.value) - 1) * size
-        result = rows.slice(start, start + size)
-        modal.close()
-      }
-      modal.append(select, range, proceed)
-      const cancel = el('button', uiMessage('Cancel'))
-      cancel.onclick = () => modal.close()
-      modal.append(cancel)
-      modal.onclose = () => {
-        modal.remove()
-        resolve(result)
-      }
-      modal.showModal()
-    })
-  }
   async function bulkLabels(kind, selectedRows) {
     const selected = new Set(
       selectedRows.map((row) => `${row.orderId}/${row.entryId}`)
@@ -3395,55 +3322,39 @@ export async function startPackingWorkspace({
       1,
       Math.floor((64 * 1024 * 1024) / estimatedBytes)
     )
-    const batch = await chooseImageBatch(
-      models,
-      Math.min(budgetCount, kind === 'mark' ? 4 : 20)
-    )
-    if (!batch) return
-    const modal = el('dialog')
-    bindAttribute(modal, 'aria-label', uiMessage('Prepare label images'))
-    const status = el('p', uiMessage('Preparing…')),
-      copy = el('button', uiMessage('Copy prepared images'), 'primary'),
-      cancel = el('button', uiMessage('Cancel'))
-    copy.disabled = true
-    modal.append(el('h2', uiMessage('Label images')), status, copy, cancel)
-    document.body.append(modal)
-    const abort = new AbortController(),
-      results = []
-    cancel.onclick = () => modal.close()
-    modal.onclose = () => {
-      abort.abort()
-      modal.remove()
-    }
-    modal.showModal()
-    try {
-      for (const [index, model] of batch.entries()) {
-        if (abort.signal.aborted) return
-        bindText(
-          status,
-          uiMessage('Preparing {0} of {1}', { 0: index + 1, 1: batch.length })
-        )
-        results.push(
-          await renderLabel({
+    return openImageCopyDialog({
+      title: 'Prepare label images',
+      count: models.length,
+      plan: () =>
+        imageBatchPlans(
+          models.length,
+          Math.min(budgetCount, kind === 'mark' ? 4 : 20)
+        ),
+      prepare: async ({ start, end }, { signal, onProgress }) => {
+        const results = []
+        const images = []
+        for (const [index, model] of models.slice(start, end).entries()) {
+          signal.throwIfAborted()
+          onProgress(
+            uiMessage('Preparing {0} of {1}', { 0: index + 1, 1: end - start })
+          )
+          const result = await renderLabel({
             ...model,
             settings: frozenSettings,
             logoUrl: frozenLogo,
-            signal: abort.signal,
+            signal,
           })
-        )
-        await yieldUI()
-      }
-      bindText(
-        status,
-        uiMessage('{0} images ready. Paste into Excel after copying.', {
-          0: results.length,
-        })
-      )
-      copy.disabled = false
-      copy.onclick = () => copied(copy, () => labelClipboard(results))
-    } catch (error) {
-      if (!abort.signal.aborted) bindText(status, error.message)
-    }
+          results.push(result)
+          images.push({
+            blob: result.blob,
+            label: model.code,
+          })
+          await yieldUI()
+        }
+        return { images, payload: results }
+      },
+      write: labelClipboard,
+    })
   }
   function orderRows(rows) {
     const ranks = new Map()
@@ -4105,7 +4016,6 @@ export async function startPackingWorkspace({
   }
   return {
     reload,
-    chooseImageBatch,
     preparedRows,
     createCartonMarkRenderer,
     orderRows,

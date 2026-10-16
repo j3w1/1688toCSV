@@ -1,4 +1,7 @@
-import { revealCopyActions } from './copy-actions-helpers.mjs'
+import {
+  copyCurrentImageBatch,
+  revealCopyActions,
+} from './copy-actions-helpers.mjs'
 import { test, expect, holdPreparationWrites } from './extension-fixture.mjs'
 import { createDemoRecords } from '../../preview/library-fixture.js'
 import { readFile } from 'node:fs/promises'
@@ -277,11 +280,14 @@ test('row Prepare opens only that product and copies its latest saved values wit
     name: 'Prepare label images',
     exact: true,
   })
-  await expect(images).toContainText('1 images ready.')
+  await expect(images.locator('.copy-preview img')).toHaveCount(1)
+  await expect(
+    images.getByRole('button', { name: 'Copy current batch', exact: true })
+  ).toBeEnabled()
   await expect(
     page.getByRole('dialog', { name: 'Confirm operation', exact: true })
   ).not.toBeVisible()
-  await images.getByRole('button', { name: 'Cancel', exact: true }).click()
+  await images.getByRole('button', { name: 'Done', exact: true }).click()
   expect((await page.evaluate(() => window.labelOutputProbe)).writes).toBe(0)
   expect((await packingBackup(extension)).preparations).toHaveLength(1)
   await rows
@@ -291,6 +297,7 @@ test('row Prepare opens only that product and copies its latest saved values wit
   await dialog
     .getByRole('button', { name: 'Copy Excel image', exact: true })
     .click()
+  await copyCurrentImageBatch(page)
   await expect(
     dialog.getByRole('button', { name: 'Copied', exact: true })
   ).toBeVisible()
@@ -523,15 +530,17 @@ test('Excel image requires the selected carton category in both views and preser
   await view
     .getByRole('button', { name: 'Copy Excel image', exact: true })
     .click()
-  await expect(view.locator('.copy-error')).toContainText(
+  const images = page.locator('.image-copy-dialog')
+  await expect(images.getByRole('alert')).toContainText(
     `(${code}) needs a Chinese category`
   )
   expect(await page.evaluate(() => navigator.clipboard.readText())).toBe(
     'keep-unfinished-category'
   )
+  await images.getByRole('button', { name: 'Done', exact: true }).click()
   await view.getByRole('button', { name: 'Orders', exact: true }).click()
   await page.locator('#copy-excel-image').click()
-  await expect(page.locator('#orders-view .copy-error')).toContainText(
+  await expect(images.getByRole('alert')).toContainText(
     `(${code}) needs a Chinese category`
   )
   expect(await page.evaluate(() => navigator.clipboard.readText())).toBe(
@@ -616,6 +625,7 @@ test('Copy Excel image freezes selected rows with current-language headings, sup
     search.dispatchEvent(new Event('input', { bubbles: true }))
   })
   await page.evaluate(() => window.finishTableImage())
+  await copyCurrentImageBatch(page)
   await expect(copy).toHaveText('Copied')
   await expect(copy).toHaveClass(/copied/)
   await expect(page.locator('#feedback')).toBeEmpty()
@@ -1667,6 +1677,7 @@ for (const action of ['Copy Excel image', 'Copy group codes', 'Copy columns']) {
         .poll(() => page.evaluate(() => navigator.clipboard.readText()))
         .toBe(latestCode)
     } else {
+      await copyCurrentImageBatch(page)
       await expect(
         view.getByRole('button', { name: 'Copied', exact: true })
       ).toBeVisible()
@@ -1841,7 +1852,10 @@ test('bulk barcode output retains its click selection when Ctrl+A expands rows d
     name: 'Prepare label images',
     exact: true,
   })
-  await expect(images).toContainText('2 images ready.')
+  await expect(images.locator('.copy-preview img')).toHaveCount(2)
+  await expect(
+    images.getByRole('button', { name: 'Copy current batch', exact: true })
+  ).toBeEnabled()
   const text = await page.evaluate(() => window.frozenBarcodeText)
   expect(text.filter((value) => value === 'FRASCO NUEVO')).toHaveLength(2)
   expect(text).not.toContain('PRIMER NOMBRE')
@@ -1850,7 +1864,7 @@ test('bulk barcode output retains its click selection when Ctrl+A expands rows d
     renders: 2,
     writes: 0,
   })
-  await images.getByRole('button', { name: 'Cancel', exact: true }).click()
+  await images.getByRole('button', { name: 'Done', exact: true }).click()
   expect(await page.evaluate(() => navigator.clipboard.readText())).toBe(
     'Synthetic label cancellation sentinel'
   )
@@ -2670,13 +2684,16 @@ test('invalid preparation blocks batch labels and a corrected pending edit saves
     name: 'Prepare label images',
     exact: true,
   })
-  await expect(images).toContainText('3 images ready.')
+  await expect(images.locator('.copy-preview img')).toHaveCount(3)
+  await expect(
+    images.getByRole('button', { name: 'Copy current batch', exact: true })
+  ).toBeEnabled()
   await expect(
     page.getByRole('dialog', { name: 'Confirm operation', exact: true })
   ).not.toBeVisible()
   const saved = await packingBackup(extension)
   expect(saved.preparations[0].groups[0].spanishName).toBe('NOMBRE PENDIENTE')
-  await images.getByRole('button', { name: 'Cancel', exact: true }).click()
+  await images.getByRole('button', { name: 'Done', exact: true }).click()
   await expect(images).not.toBeVisible()
   expect((await page.evaluate(() => window.labelOutputProbe)).writes).toBe(0)
   expect(await page.evaluate(() => navigator.clipboard.readText())).toBe(
@@ -2722,14 +2739,14 @@ test('selected rows limit barcode and carton output and cancel leaves the clipbo
   ]) {
     await revealCopyActions(page)
     await view.getByRole('button', { name: action, exact: true }).click()
-    await expect(images).toContainText(`${count} images ready.`)
+    await expect(images.locator('.copy-preview img')).toHaveCount(count)
     await expect(
-      images.getByRole('button', { name: 'Copy prepared images', exact: true })
+      images.getByRole('button', { name: 'Copy current batch', exact: true })
     ).toBeEnabled()
     await expect(
       page.getByRole('dialog', { name: 'Confirm operation', exact: true })
     ).not.toBeVisible()
-    await images.getByRole('button', { name: 'Cancel', exact: true }).click()
+    await images.getByRole('button', { name: 'Done', exact: true }).click()
     await expect(images).not.toBeVisible()
     expect((await page.evaluate(() => window.labelOutputProbe)).writes).toBe(0)
   }

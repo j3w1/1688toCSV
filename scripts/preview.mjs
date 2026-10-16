@@ -87,6 +87,7 @@ export async function startPreview({ port = 0 } = {}) {
     'photo-viewer.css',
     'copy-actions.css',
     'error-notice.css',
+    'image-copy-dialog.css',
   ])
     assets.set(`/${css}`, [
       'text/css',

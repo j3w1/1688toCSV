@@ -1,4 +1,7 @@
-import { revealCopyActions } from './copy-actions-helpers.mjs'
+import {
+  copyCurrentImageBatch,
+  revealCopyActions,
+} from './copy-actions-helpers.mjs'
 import { test, expect } from './extension-fixture.mjs'
 import { createDemoRecords } from '../../preview/library-fixture.js'
 
@@ -107,9 +110,9 @@ test('single picture copies original non-square pixels with inline success', asy
   await expect
     .poll(() => preview.evaluate((image) => image.naturalWidth))
     .toBe(240)
-  // The larger 108px preview uses a 240px thumbnail; copying still keeps all
+  // The 72px preview uses a 240px thumbnail; copying still keeps all
   // original 960 × 640 pixels rather than the display-sized derivative.
-  await expect(preview).toHaveCSS('width', '108px')
+  await expect(preview).toHaveCSS('width', '72px')
   const button = row.locator('.photo-copy-button')
   await expect(button).toHaveAccessibleName('Copy image')
   await row.locator('.photo-copy-tile').hover()
@@ -160,6 +163,7 @@ test('bulk picture copying preserves full pixels in separate compact Excel cells
     const button = page.locator(`#${id}`)
     await revealCopyActions(page)
     await button.click()
+    await copyCurrentImageBatch(page)
     await expect(button).toHaveText('Copied')
     await expect(button).toHaveClass(/copied/)
     const pictures = await page.evaluate(async () => {
@@ -278,11 +282,14 @@ test('repeated original photos count per row toward the clipboard batch budget',
   await revealCopyActions(page)
   await button.click()
   const batches = page.getByRole('dialog', {
-    name: 'Choose image batch',
+    name: 'Product photos',
     exact: true,
   })
   await expect(batches).toBeVisible()
-  await batches.getByRole('button', { name: 'Cancel', exact: true }).click()
+  await expect
+    .poll(() => batches.locator('[data-batch-index]').count())
+    .toBeGreaterThan(1)
+  await batches.getByRole('button', { name: 'Done', exact: true }).click()
   await expect(button).toHaveText('Product photos')
   expect(await page.evaluate(() => window.clipboardWrites)).toBe(0)
   expect(extension.unexpectedRequests).toEqual([])

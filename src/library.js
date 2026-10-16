@@ -10,12 +10,7 @@ import {
   localize,
   setLanguage,
 } from './i18n.js'
-import {
-  copyTable,
-  copySingleImage,
-  pngThumbnail,
-  pngImage,
-} from './clipboard.js'
+import { copyTable, copySingleImage, pngThumbnail } from './clipboard.js'
 import { openDatabase } from './database.js'
 import {
   confirmScope,
@@ -35,7 +30,7 @@ import { createPhotoViewer } from './photo-viewer.js'
 import { presentOrderStatus } from './order-presentation.js'
 import { createRowSelection } from './row-selection.js'
 import { copyExcelImage } from './excel-image-copy.js'
-import { mountExcelImageOptions } from './excel-image-options.js'
+import { copySourceImages } from './source-image-copy.js'
 import { mountCopyActions } from './copy-actions.js'
 import { showErrorNotice, clearErrorNotice } from './error-notice.js'
 import { photoCopyTile } from './photo-copy.js'
@@ -1686,73 +1681,24 @@ export async function startLibrary(
       history.append(item)
     }
   }
-  async function copy(mode, progress) {
-    if (copyBusy) return
-    let rows = copyRows()
+  async function copy(mode) {
+    if (copyBusy) return false
+    const rows = copyRows()
     if (!rows.length) return false
-    if (mode !== 'values' && rows.length > 20) {
-      const chosen = await packing.chooseImageBatch(rows)
-      if (!chosen) return false
-      rows = chosen
-    }
     copyBusy = true
     updateSelection()
     try {
-      const images = []
-      const originals = new Map()
-      if (mode !== 'values') {
-        let imageBytes = 0
-        for (let index = 0; index < rows.length; index++) {
-          if (index % 10 === 0)
-            progress(
-              uiMessage('Preparing images {0}–{1} of {2}…', {
-                0: index + 1,
-                1: Math.min(rows.length, index + 10),
-                2: rows.length,
-              })
-            )
-          const url = rows[index].thumbnail
-          if (!originals.has(url)) {
-            const original = await send('IMAGE_GET', { url })
-            originals.set(
-              url,
-              await pngImage(
-                typeof original === 'string' ? original : original.dataUrl
-              )
-            )
-          }
-          // Every row embeds the PNG again in clipboard HTML, even when its
-          // conversion is shared with another variant of the same product.
-          imageBytes += originals.get(url).length * 2
-          if (imageBytes > 32 * 1024 * 1024) {
-            const batchSize = Math.max(
-              1,
-              Math.floor(((index + 1) * 32 * 1024 * 1024) / imageBytes)
-            )
-            originals.clear()
-            images.length = 0
-            if (rows.length === 1)
-              throw new Error(
-                'This photo exceeds the clipboard memory budget. Copy its values separately.'
-              )
-            const batch = await packing.chooseImageBatch(
-              rows,
-              Math.min(rows.length - 1, batchSize)
-            )
-            if (!batch) return false
-            rows = batch
-            index = -1
-            imageBytes = 0
-            continue
-          }
-          images.push(originals.get(url))
-          await yieldUI()
-        }
+      if (mode === 'values') {
+        await copyTable(rows, { headers: $('include-headers').checked })
+        return true
       }
-      await copyTable(rows, {
-        images,
+      return await copySourceImages(rows, {
         imagesOnly: mode === 'images',
         headers: $('include-headers').checked,
+        loadImage: async (url) => {
+          const image = await send('IMAGE_GET', { url })
+          return typeof image === 'string' ? image : image.dataUrl
+        },
       })
     } finally {
       copyBusy = false
@@ -1786,7 +1732,6 @@ export async function startLibrary(
   }
   mountCopyActions($('orders-copy-actions'), {
     image: $('copy-excel-image'),
-    options: mountExcelImageOptions($('copy-excel-image')),
     groups: [
       {
         label: 'Products',
@@ -1800,17 +1745,13 @@ export async function startLibrary(
     ],
   })
   $('copy-excel-image').addEventListener('click', () =>
-    copyAction($('copy-excel-image'), async (progress) => {
+    copyAction($('copy-excel-image'), async () => {
       if (copyBusy) return false
       const rows = packing.preparedRows(copyRows())
       if (!rows.length) return false
       copyBusy = true
       updateSelection()
       const abort = new AbortController()
-      const cancel = node('button', uiMessage('Cancel image'), 'copy-cancel')
-      cancel.hidden = true
-      cancel.onclick = () => abort.abort()
-      $('copy-excel-image').after(cancel)
       try {
         return await copyExcelImage(rows, {
           renderCartonMark: packing.createCartonMarkRenderer(),
@@ -1818,14 +1759,9 @@ export async function startLibrary(
             const image = await send('IMAGE_GET', { url })
             return typeof image === 'string' ? image : image.dataUrl
           },
-          onProgress: (message) => {
-            cancel.hidden = false
-            progress(message, { cancel })
-          },
           signal: abort.signal,
         })
       } finally {
-        cancel.remove()
         copyBusy = false
         updateSelection()
       }

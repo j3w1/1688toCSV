@@ -1,6 +1,5 @@
 import { excelImageColumns } from './excel-image.js'
-import { element, enableLightDismiss } from './ui.js'
-import { decorateIcon } from './icons.js'
+import { element } from './ui.js'
 import { preparationHelp } from './preparation-help.js'
 import { bindText, bindAttribute, message, getLanguage } from './i18n.js'
 
@@ -55,27 +54,22 @@ export function selectedExcelImageColumns() {
 
 const columnLabel = (column) => column.labels?.[getLanguage()] || column.label
 
-export function openExcelImageOptions() {
-  const dialog = element('dialog', undefined, 'excel-image-options')
-  enableLightDismiss(dialog)
-  bindAttribute(dialog, 'aria-label', message('Excel image columns'))
-  const heading = element('div', undefined, 'excel-options-heading')
-  const close = element('button')
-  close.type = 'button'
-  decorateIcon(close, 'close', { iconOnly: true, label: 'Close' })
-  close.onclick = () => dialog.close()
-  heading.append(element('h2', message('Excel image columns')), close)
+export function createExcelImageOptions(onChange) {
+  const fieldset = element('fieldset', undefined, 'excel-image-options')
+  const details = element('details')
+  details.open = matchMedia('(min-width: 701px)').matches
+  details.append(element('summary', message('Excel image columns')))
   const help = element(
     'p',
     message(
       'Click columns to include them. Drag to reorder, or use the arrows. Changes are remembered for both views.'
     ),
-    'muted'
+    'excel-options-help'
   )
   const supplier = element(
     'p',
     message('Supplier details stay blank for your supplier to complete.'),
-    'muted'
+    'excel-options-help'
   )
   const list = element('ol', undefined, 'excel-column-list')
   const status = element('p', undefined, 'excel-column-status')
@@ -86,6 +80,7 @@ export function openExcelImageOptions() {
   function persist() {
     saved = saveExcelImagePreference(preference)
     render()
+    onChange()
   }
   function move(key, target) {
     const from = preference.order.indexOf(key)
@@ -215,34 +210,9 @@ export function openExcelImageOptions() {
     preference = normalizeExcelImagePreference(null)
     persist()
   }
-  const done = element('button', message('Done'), 'primary')
-  done.onclick = () => dialog.close()
-  footer.append(reset, done)
-  dialog.append(heading, help, supplier, list, status, footer)
-  dialog.addEventListener('close', () => dialog.remove(), { once: true })
+  footer.append(reset)
+  details.append(help, supplier, list, status, footer)
+  fieldset.append(details)
   render()
-  document.body.append(dialog)
-  dialog.showModal()
-  close.focus()
-  return dialog
-}
-
-/** A compact adjacent control keeps repeat copies one click, with a shared layout. */
-export function mountExcelImageOptions(button) {
-  const options = element('button', undefined, 'excel-image-options-trigger')
-  options.type = 'button'
-  decorateIcon(options, 'columns', {
-    iconOnly: true,
-    label: 'Excel image columns',
-  })
-  preparationHelp(
-    options,
-    'Choose image columns and their order. Your choices apply in Orders and Prepare packing.'
-  )
-  options.onclick = (event) => {
-    event.stopPropagation()
-    openExcelImageOptions()
-  }
-  button.after(options)
-  return options
+  return fieldset
 }

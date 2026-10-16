@@ -1,6 +1,7 @@
 import { test, expect } from './extension-fixture.mjs'
 import { createDemoRecords } from '../../preview/library-fixture.js'
 import { readFile, stat, writeFile } from 'node:fs/promises'
+import { copyCurrentImageBatch } from './copy-actions-helpers.mjs'
 
 async function seed(extension) {
   const records = await extension.inspector.evaluate(
@@ -102,8 +103,8 @@ test('photo copy appears only on hover or keyboard focus without changing select
     const copyBounds = await copy.boundingBox()
     const photoBounds = await photo.boundingBox()
     const imageBounds = await photo.locator('img').boundingBox()
-    expect(imageBounds.width).toBe(108)
-    expect(imageBounds.height).toBe(108)
+    expect(imageBounds.width).toBe(72)
+    expect(imageBounds.height).toBe(72)
     expect(copyBounds.height).toBeGreaterThanOrEqual(24)
     expect(copyBounds.height).toBeLessThanOrEqual(30)
     expect(copyBounds.width).toBeLessThanOrEqual(30)
@@ -197,17 +198,20 @@ test('Excel table image batches keep every selected row across product pages', a
   await page.evaluate(() => navigator.clipboard.writeText('before-batch'))
   const copy = page.locator('#copy-excel-image')
   await copy.click()
-  const batches = page.getByRole('dialog', { name: 'Choose Excel image batch' })
+  const batches = page.getByRole('dialog', {
+    name: 'Copy Excel image',
+    exact: true,
+  })
   await expect(batches).toBeVisible()
-  await batches.getByRole('button', { name: 'Cancel', exact: true }).click()
+  await batches.getByRole('button', { name: 'Done', exact: true }).click()
   await expect(copy).toHaveText('Excel image')
   expect(await page.evaluate(() => navigator.clipboard.readText())).toBe(
     'before-batch'
   )
   await copy.click()
-  await batches.getByLabel('Image batch number').fill('2')
-  const summary = await batches.getByText(/^Batch 2 of/).textContent()
-  const [, first, last] = summary.match(/rows (\d+)–(\d+)/)
+  await expect(
+    batches.getByRole('button', { name: 'Copy current batch', exact: true })
+  ).toBeEnabled()
   await page.evaluate(() => {
     globalThis.drawnBatchRows = []
     const original = CanvasRenderingContext2D.prototype.fillText
@@ -216,9 +220,10 @@ test('Excel table image batches keep every selected row across product pages', a
       return original.call(this, value, ...args)
     }
   })
-  await batches
-    .getByRole('button', { name: 'Copy this batch', exact: true })
-    .click()
+  await batches.getByRole('button', { name: 'Next batch', exact: true }).click()
+  const summary = await batches.getByText(/^Batch 2 of/).textContent()
+  const [, first, last] = summary.match(/items (\d+)–(\d+)/)
+  await copyCurrentImageBatch(page)
   await expect(copy).toHaveText('Copied')
   const ordered = orders
     .toReversed()
@@ -417,6 +422,7 @@ test('library restores complete orders and copies five columns with separate ima
     'clipboard-write',
   ])
   await page.getByRole('button', { name: 'Copy to Excel', exact: true }).click()
+  await copyCurrentImageBatch(page)
   await expect(page.locator('#copy-excel')).toHaveText('Copied')
   await expect(page.locator('#copy-excel')).toHaveClass(/copied/)
   await expect(page.locator('#feedback')).toBeEmpty()
@@ -740,6 +746,7 @@ test('copy images only produces one picture per selected row', async ({
   ])
   await openCopyFormats(page)
   await page.getByRole('button', { name: 'Copy images', exact: true }).click()
+  await copyCurrentImageBatch(page)
   await expect(page.locator('#copy-images')).toHaveText('Copied')
   await expect(page.locator('#feedback')).toBeEmpty()
   const html = await page.evaluate(

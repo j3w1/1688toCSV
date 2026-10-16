@@ -1,4 +1,7 @@
-import { revealCopyActions } from './copy-actions-helpers.mjs'
+import {
+  revealCopyActions,
+  copyCurrentImageBatch,
+} from './copy-actions-helpers.mjs'
 import { test, expect } from './extension-fixture.mjs'
 import { createDemoRecords } from '../../preview/library-fixture.js'
 import { readFile } from 'node:fs/promises'
@@ -625,6 +628,7 @@ test('keyboard group moves and pointer product moves persist and export in the d
   })
   const image = view.locator('.packing-copy-actions button[data-icon="image"]')
   await image.click()
+  await copyCurrentImageBatch(page)
   await expect(image).toHaveText('Copied')
   const imageRuns = await page.evaluate(() => packingImageRuns)
   for (const code of [box.baseCode, jar.baseCode]) {
