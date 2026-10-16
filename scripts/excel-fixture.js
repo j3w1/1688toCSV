@@ -80,8 +80,20 @@ globalThis.excelAcceptance = {
     const plans = planExcelImage(rows)
     if (plans.length !== 1)
       throw new Error('Synthetic Excel fixture should fit one image.')
+    const preferences = await repository.getPackingPreferences()
     const result = await renderExcelImage(plans[0], {
       loadImage: async (url) => url,
+      renderCartonMark: async (source, { signal }) => {
+        const mark = await renderLabel({
+          kind: 'mark',
+          code: source.baseCode,
+          category: source.chineseCategory,
+          settings: preferences.settings,
+          logoUrl: new URL('assets/casa-elida.png', location.href).href,
+          signal,
+        })
+        return mark.blob
+      },
     })
     const bitmap = await createImageBitmap(result.blob)
     const canvas = document.createElement('canvas')

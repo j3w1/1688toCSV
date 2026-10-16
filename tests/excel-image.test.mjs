@@ -4,7 +4,7 @@ import { fileURLToPath } from 'node:url'
 import {
   excelImageColumns,
   planExcelImage,
-  renderExcelImage,
+  renderExcelImage as renderExcelImageBase,
 } from '../src/excel-image.js'
 
 const png = new Blob(
@@ -16,6 +16,11 @@ const png = new Blob(
   ],
   { type: 'image/png' }
 )
+const renderExcelImage = (plan, options) =>
+  renderExcelImageBase(plan, {
+    renderCartonMark: async () => png,
+    ...options,
+  })
 const row = {
   orderId: 'order-1',
   groupId: 'group-1',
@@ -38,7 +43,7 @@ const measure = (value) =>
 
 // Deterministic metrics isolate batching, data preservation and resource lifetime.
 // The browser acceptance suite checks the actual canvas raster and font output.
-async function withCanvas(work, { bitmapHeight = 176 } = {}) {
+async function withCanvas(work, { bitmapHeight = 252 } = {}) {
   const previousDocument = globalThis.document
   const previousBitmap = globalThis.createImageBitmap
   const state = {
@@ -46,6 +51,8 @@ async function withCanvas(work, { bitmapHeight = 176 } = {}) {
     bitmaps: [],
     text: [],
     draws: [],
+    paths: [],
+    encoded: 0,
     peakLiveBytes: 0,
   }
   globalThis.document = {
@@ -66,27 +73,40 @@ async function withCanvas(work, { bitmapHeight = 176 } = {}) {
         drawImage: (...args) => state.draws.push(args),
         scale() {},
         fillRect() {},
-        beginPath() {},
-        moveTo() {},
-        lineTo() {},
-        stroke() {},
+        beginPath() {
+          this.path = []
+        },
+        moveTo(x, y) {
+          this.path.push(['move', x, y])
+        },
+        lineTo(x, y) {
+          this.path.push(['line', x, y])
+        },
+        stroke() {
+          state.paths.push(this.path)
+        },
         strokeRect() {},
       }
       const canvas = {
         width: 300,
         height: 150,
         getContext: () => context,
-        toBlob: (callback) => callback(png),
+        toBlob: (callback) => {
+          state.encoded++
+          callback(png)
+        },
       }
       state.canvases.push(canvas)
       return canvas
     },
   }
   globalThis.createImageBitmap = async (_, options) => {
-    assert.equal(options.resizeWidth, 176)
+    assert.ok([252, 312].includes(options.resizeWidth))
+    const mark = options.resizeWidth === 312
     const bitmap = {
-      width: 176,
-      height: bitmapHeight,
+      width: options.resizeWidth,
+      height: mark ? (options.resizeWidth * 105) / 148.5 : bitmapHeight,
+      kind: mark ? 'mark' : 'photo',
       closed: false,
       close() {
         this.closed = true
@@ -185,6 +205,9 @@ test('Excel image batching retains every row at fixed resolution and repeats its
       assert.ok(plan.width * plan.height <= 16_000_000)
       assert.equal(plan.width / plan.cssWidth, 2)
       assert.equal(cell(plan.rows[0], 'baseCode').text, row.baseCode)
+      assert.equal(plan.markSpans.length, 1)
+      assert.equal(plan.markSpans[0].start, 0)
+      assert.equal(plan.markSpans[0].end, plan.rowCount)
       assert.ok(
         plan.rows.slice(1).every((entry) => cell(entry, 'baseCode').text === '')
       )
@@ -343,8 +366,8 @@ test('Headers, numeric cells and mixed-style descriptions center horizontally an
       centers.description
     )
     const [, photoX, photoY, photoWidth, photoHeight] = state.draws[0]
-    assert.equal(photoWidth, 88)
-    assert.equal(photoHeight, 88)
+    assert.equal(photoWidth, 126)
+    assert.equal(photoHeight, 126)
     assert.equal(photoX + photoWidth / 2, centers.thumbnail)
     assert.equal(photoY + photoHeight / 2, rowCenter)
   }))
@@ -368,8 +391,8 @@ test('Large financial values remain complete and portrait photos fit the availab
       }
       await renderExcelImage(plan, { loadImage: async () => png })
       const [, , photoY, photoWidth, photoHeight] = state.draws[0]
-      assert.ok(photoWidth <= 88)
-      assert.ok(photoHeight <= plan.rows[0].height - 12)
+      assert.ok(photoWidth <= 126)
+      assert.ok(photoHeight <= plan.rows[0].height - 6)
       assert.equal(photoWidth / photoHeight, 1 / 3)
       assert.equal(
         photoY + photoHeight / 2,
@@ -377,7 +400,7 @@ test('Large financial values remain complete and portrait photos fit the availab
       )
       assert.equal(plan.rows[0].source.price, input.price)
     },
-    { bitmapHeight: 528 }
+    { bitmapHeight: 756 }
   ))
 
 test('Rich descriptions separate original titles and attributes and include latest variant notes once', async () =>
@@ -396,7 +419,7 @@ test('Rich descriptions separate original titles and attributes and include late
     }
     const [plan] = planExcelImage([input])
     const description = cell(plan.rows[0], 'description')
-    assert.equal(description.blocks[0].font.startsWith('600 15px'), true)
+    assert.equal(description.blocks[0].font.startsWith('600 16px'), true)
     assert.deepEqual(
       description.blocks.map((block) => block.label),
       ['', '颜色：', '容量：', '货号：']
@@ -470,6 +493,162 @@ test('Empty selections and missing photos fail before producing a partial image'
     )
   }))
 
+test('Carton marks merge only contiguous matching order/group/code rows and leave unprepared rows blank', async () =>
+  withCanvas(async (state) => {
+    const [plan] = planExcelImage([
+      row,
+      { ...row, barcode: `${row.baseCode}BS`, manualReordered: true },
+      { ...row, baseCode: '', barcode: '', chineseCategory: '' },
+      row,
+      { ...row, orderId: 'another-order' },
+      { ...row, baseCode: 'CE26100102', barcode: 'CE26100102A' },
+    ])
+    assert.deepEqual(
+      plan.markSpans.map(({ start, end }) => [start, end]),
+      [
+        [0, 2],
+        [3, 4],
+        [4, 5],
+        [5, 6],
+      ]
+    )
+    assert.equal(cell(plan.rows[3], 'baseCode').text, row.baseCode)
+    assert.equal(plan.markSpans[0].caption.richLines[0][0].color, '#1d4ed8')
+    const marks = []
+    await renderExcelImage(plan, {
+      loadImage: async () => png,
+      renderCartonMark: async (source) => {
+        marks.push([source.orderId, source.groupId, source.baseCode])
+        return png
+      },
+    })
+    assert.equal(marks.length, 3)
+    assert.equal(
+      state.draws.filter(([bitmap]) => bitmap.kind === 'mark').length,
+      4
+    )
+    const markIndex = excelImageColumns.findIndex(
+      (column) => column.key === 'baseCode'
+    )
+    const markLeft =
+      1 +
+      excelImageColumns
+        .slice(0, markIndex)
+        .reduce((width, column) => width + column.width, 0)
+    const separatorY = plan.headerHeight + 1 + plan.rows[0].height
+    assert.ok(
+      state.paths.some(
+        (path) =>
+          JSON.stringify(path) ===
+          JSON.stringify([
+            ['move', 1, separatorY],
+            ['line', markLeft, separatorY],
+            ['move', markLeft + excelImageColumns[markIndex].width, separatorY],
+            ['line', plan.cssWidth - 1, separatorY],
+          ])
+      )
+    )
+    assert.ok(state.bitmaps.every((bitmap) => bitmap.closed))
+  }))
+
+test('Prepared products require Chinese categories and real mark generation while unprepared rows need no renderer', async () =>
+  withCanvas(async (state) => {
+    assert.throws(
+      () => planExcelImage([{ ...row, chineseCategory: '' }]),
+      /row 1 \(CE26100101\) needs a Chinese category/
+    )
+    const [prepared] = planExcelImage([row])
+    await assert.rejects(
+      renderExcelImageBase(prepared, { loadImage: async () => png }),
+      /carton mark renderer/
+    )
+    const [unprepared] = planExcelImage([
+      { ...row, baseCode: '', barcode: '', chineseCategory: '' },
+    ])
+    assert.equal(unprepared.markSpans.length, 0)
+    await renderExcelImageBase(unprepared, { loadImage: async () => png })
+    assert.equal(state.draws.length, 1)
+  }))
+
+test('Mark generation failures and cancellation leave no partial PNG or retained bitmap', async () =>
+  withCanvas(async (state) => {
+    const [plan] = planExcelImage([row])
+    await assert.rejects(
+      renderExcelImage(plan, {
+        loadImage: async () => png,
+        renderCartonMark: async () => {
+          throw new Error('Invalid mark settings')
+        },
+      }),
+      /Carton mark for product row 1 could not be created/
+    )
+    assert.equal(state.encoded, 0)
+    assert.ok(state.bitmaps.every((bitmap) => bitmap.closed))
+    const controller = new AbortController()
+    const started = Promise.withResolvers()
+    const pending = Promise.withResolvers()
+    const result = renderExcelImage(plan, {
+      loadImage: async () => png,
+      signal: controller.signal,
+      renderCartonMark: (source, { signal }) => {
+        assert.equal(source.baseCode, row.baseCode)
+        assert.equal(signal, controller.signal)
+        started.resolve()
+        return pending.promise
+      },
+    })
+    await started.promise
+    controller.abort()
+    await assert.rejects(result, { name: 'AbortError' })
+    pending.resolve(png)
+    assert.equal(state.encoded, 0)
+    assert.ok(state.bitmaps.every((bitmap) => bitmap.closed))
+  }))
+
+test('Centered Chinese descriptions avoid orphan characters and separate titles, variants and article numbers without invented fields', async () =>
+  withCanvas(() => {
+    const title = '玻'.repeat(21) + '销售'
+    const [plan] = planExcelImage([
+      {
+        ...row,
+        title,
+        description: `${title}\n颜色：透明\n货号：TEST-01`,
+        productNumber: 'TEST-01',
+      },
+    ])
+    const description = cell(plan.rows[0], 'description')
+    assert.equal(description.blocks[0].lines.join(''), title)
+    assert.ok(description.blocks[0].lines.every((line) => [...line].length > 1))
+    assert.deepEqual(
+      description.blocks.map((block) => block.label),
+      ['', '颜色：', '货号：']
+    )
+    assert.ok(description.blocks[2].font.startsWith('600'))
+    const [missing] = planExcelImage([
+      {
+        ...row,
+        title: '',
+        description: '型号：A12',
+        productNumber: '',
+        variantDescription: '',
+      },
+    ])
+    assert.deepEqual(
+      cell(missing.rows[0], 'description').blocks.map((block) => block.label),
+      ['型号：']
+    )
+    assert.ok(!cell(missing.rows[0], 'description').text.includes('货号'))
+    const [paragraph] = planExcelImage([
+      { ...row, title: '简短标题', description: '简短标题\n销' },
+    ])
+    assert.deepEqual(
+      cell(paragraph.rows[0], 'description').blocks.map((block) =>
+        block.lines.join('')
+      ),
+      ['简短标题', '销']
+    )
+  }))
+
 test('Excel image reuses photos, reports real row completion and releases resources', async () =>
   withCanvas(async (state) => {
     const [plan] = planExcelImage([
@@ -487,7 +666,14 @@ test('Excel image reuses photos, reports real row completion and releases resour
       onProgress: (value) => progress.push(value),
     })
     assert.equal(loads, 1)
-    assert.equal(state.draws.length, 3)
+    assert.equal(
+      state.draws.filter(([bitmap]) => bitmap.kind === 'photo').length,
+      3
+    )
+    assert.equal(
+      state.draws.filter(([bitmap]) => bitmap.kind === 'mark').length,
+      1
+    )
     assert.deepEqual(
       progress.map((value) => value.completed),
       [0, 1, 2, 3]
@@ -504,7 +690,7 @@ test('Excel image reuses photos, reports real row completion and releases resour
     assert.ok(
       state.text.some(
         (value) =>
-          value.text === 'Glass jar' && value.font.startsWith('600 15px')
+          value.text === 'Glass jar' && value.font.startsWith('600 16px')
       )
     )
     assert.equal(result.width, plan.width)
@@ -532,7 +718,7 @@ test('Photo cache evicts before exceeding its bounded retained memory', async ()
       }))
       rows.push({ ...row, thumbnail: 'photo-0' })
       const [plan] = planExcelImage(rows)
-      assert.equal(plan.rowCount, 31)
+      assert.ok(plan.rowCount > 5)
       let loads = 0
       await renderExcelImage(plan, {
         loadImage: async () => {
@@ -540,12 +726,12 @@ test('Photo cache evicts before exceeding its bounded retained memory', async ()
           return png
         },
       })
-      assert.equal(loads, 31)
+      assert.equal(loads, plan.rowCount)
       // One just-decoded bitmap may coexist with the retained cache before eviction.
-      assert.ok(state.peakLiveBytes <= 4 * 1024 * 1024 + 176 * 528 * 4)
+      assert.ok(state.peakLiveBytes <= 4 * 1024 * 1024 + 252 * 756 * 4)
       assert.ok(state.bitmaps.every((bitmap) => bitmap.closed))
     },
-    { bitmapHeight: 528 }
+    { bitmapHeight: 756 }
   ))
 
 test('Failed photos never produce a partial PNG and close already-loaded images', async () =>
@@ -625,6 +811,18 @@ test('Real canvas output preserves centered rich text, blue reordered codes and 
     photoContext.fillStyle = '#fff'
     photoContext.fillRect(20, 20, 140, 50)
     const photoData = photo.toDataURL()
+    const mark = document.createElement('canvas')
+    mark.width = 297
+    mark.height = 210
+    const markContext = mark.getContext('2d')
+    markContext.fillStyle = '#fff'
+    markContext.fillRect(0, 0, mark.width, mark.height)
+    markContext.fillStyle = '#000'
+    markContext.font = 'bold 100px sans-serif'
+    markContext.fillText('CE', 60, 110)
+    markContext.font = '24px sans-serif'
+    markContext.fillText(input.baseCode, 60, 160)
+    const markBlob = await new Promise((resolve) => mark.toBlob(resolve))
     const rows = [
       {
         ...input,
@@ -673,6 +871,7 @@ test('Real canvas output preserves centered rich text, blue reordered codes and 
     try {
       result = await ExcelImage.renderExcelImage(plan, {
         loadImage: async () => photoData,
+        renderCartonMark: async () => markBlob,
       })
     } finally {
       prototype.fillText = fillText
@@ -696,6 +895,7 @@ test('Real canvas output preserves centered rich text, blue reordered codes and 
     bitmap.close()
     canvas.width = canvas.height = 0
     photo.width = photo.height = 0
+    mark.width = mark.height = 0
     return {
       calls,
       photos,
@@ -775,14 +975,23 @@ test('Real canvas output preserves centered rich text, blue reordered codes and 
     barcodeTop = barcodeBottom
   }
   assert.ok(actual.calls.some((call) => call.text.startsWith('¥ ')))
-  assert.equal(actual.photos.length, 2)
+  const photos = actual.photos.filter((photo) => photo.bitmapWidth === 252)
+  const marks = actual.photos.filter((photo) => photo.bitmapWidth === 312)
+  assert.equal(photos.length, 2)
+  assert.equal(marks.length, 1)
   let y = actual.plan.headerHeight + 1
-  for (const [index, photo] of actual.photos.entries()) {
+  for (const [index, photo] of photos.entries()) {
     const [left, top, width, height] = photo.args
-    assert.equal(width, 88)
+    assert.equal(width, 126)
     assert.equal(width / height, photo.bitmapWidth / photo.bitmapHeight)
-    assert.equal(left + width / 2, 101)
+    assert.equal(left + width / 2, 117)
     assert.equal(top + height / 2, y + actual.plan.rows[index].height / 2)
     y += actual.plan.rows[index].height
   }
+  const [, markTop, markWidth, markHeight] = marks[0].args
+  assert.equal(
+    markWidth / markHeight,
+    marks[0].bitmapWidth / marks[0].bitmapHeight
+  )
+  assert.ok(markTop > actual.plan.headerHeight)
 })

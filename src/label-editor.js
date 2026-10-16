@@ -1,19 +1,34 @@
 import {
+  message as uiMessage,
+  bindText,
+  bindAttribute,
+  isMessage,
+  t,
+  getLocale,
+  getLanguage,
+  onLanguageChange,
+  attributeMessage,
+} from './i18n.js'
+import {
   LABEL_FIELDS,
   normalizeLabel,
   normalizeLabelSettings,
   renderLabel,
 } from './labels.js'
 
+let nextEditorId = 0
+
 function element(tag, className, text) {
   const node = document.createElement(tag)
   if (className) node.className = className
-  if (text) node.textContent = text
+  if (isMessage(text)) bindText(node, text)
+  else if (text) node.textContent = text
   return node
 }
 
 /** Fixed-position text editing; grouping, numbering and persistence remain with the caller. */
 export function mountLabelEditor(container, options) {
+  const editorId = ++nextEditorId
   let model = { ...options.model }
   let committed = { ...model }
   let settings = options.settings
@@ -30,6 +45,7 @@ export function mountLabelEditor(container, options) {
   let ready = false
   let codeParts = null
   let composedCode = null
+  let validationError = null
   const inputs = new Map()
   const dialog = container.closest('dialog')
   const dismiss = async (event) => {
@@ -45,31 +61,57 @@ export function mountLabelEditor(container, options) {
   const root = element('section', 'label-editor')
   const preview = element('div', 'label-editor-preview')
   const image = element('img', 'label-editor-image')
-  image.alt = 'Printable label preview'
+  bindAttribute(image, 'alt', uiMessage('Printable label preview'))
   image.hidden = true
   const hint = element(
     'p',
     'label-editor-hint',
-    'Click a label field to edit. Enter saves; Escape cancels.'
+    uiMessage('Click a label field to edit. Enter saves; Escape cancels.')
   )
   const status = element('p', 'label-editor-status')
   status.setAttribute('role', 'status')
   status.setAttribute('aria-live', 'polite')
-  const copy = element('button', 'label-editor-copy', 'Copy label')
+  status.id = `label-status-${editorId}`
+  const resolve = element(
+    'button',
+    'label-editor-resolve',
+    uiMessage('Resolve code')
+  )
+  resolve.type = 'button'
+  resolve.hidden = true
+  const copy = element('button', 'label-editor-copy', uiMessage('Copy label'))
   copy.type = 'button'
   copy.disabled = true
   preview.append(image)
-  root.append(preview, hint, status, copy)
+  root.append(preview, hint, status, resolve, copy)
   container.append(root)
 
   function message(value, error = false) {
-    status.textContent = value
+    bindText(status, isMessage(value) ? value : uiMessage(value))
     status.classList.toggle('label-editor-error', error)
+  }
+
+  function issue(error = null) {
+    validationError = error
+    resolve.hidden = !error?.conflict || !options.onResolve
+    for (const [key, input] of inputs) {
+      const invalid = Boolean(
+        error && ['code', 'variantSuffix', 'sizeSuffix'].includes(key)
+      )
+      if (invalid) {
+        input.setAttribute('aria-invalid', 'true')
+        input.setAttribute('aria-errormessage', status.id)
+      } else {
+        input.removeAttribute('aria-invalid')
+        input.removeAttribute('aria-errormessage')
+      }
+    }
+    if (error) message(error.message, true)
   }
 
   function resetCopied() {
     clearTimeout(copiedTimer)
-    copy.textContent = 'Copy label'
+    bindText(copy, uiMessage('Copy label'))
     copy.classList.remove('copied')
   }
 
@@ -135,9 +177,17 @@ export function mountLabelEditor(container, options) {
     const version = ++previewVersion
     ready = false
     copy.disabled = true
-    message(`Preparing label…${dirty() ? ' · Unsaved text' : ''}`)
+    message(
+      uiMessage('Preparing label…{0}', {
+        0: dirty() ? uiMessage(' · Unsaved text') : '',
+      })
+    )
     try {
       const normalized = printableModel()
+      // Check reservations without issuing a code or disturbing the active field.
+      await options.onValidate?.({ ...model, ...normalized })
+      if (destroyed || version !== previewVersion) return null
+      issue()
       const result = await renderLabel({
         ...normalized,
         settings,
@@ -156,7 +206,12 @@ export function mountLabelEditor(container, options) {
       copy.disabled = Boolean(pendingCommit)
       if (!pendingCommit)
         message(
-          `${result.widthMm} × ${result.heightMm} mm · ${result.dpi} dpi${dirty() ? ' · Unsaved text' : ''}`
+          uiMessage('{0} × {1} mm · {2} dpi{3}', {
+            0: result.widthMm,
+            1: result.heightMm,
+            2: result.dpi,
+            3: dirty() ? uiMessage(' · Unsaved text') : '',
+          })
         )
       return latest
     } catch (error) {
@@ -166,7 +221,7 @@ export function mountLabelEditor(container, options) {
         error.name === 'AbortError'
       )
         return null
-      message(error.message, true)
+      issue(error)
       copy.disabled = true
       return null
     }
@@ -179,7 +234,11 @@ export function mountLabelEditor(container, options) {
     previewVersion++
     ready = false
     copy.disabled = true
-    message(`Updating preview…${dirty() ? ' · Unsaved text' : ''}`)
+    message(
+      uiMessage('Updating preview…{0}', {
+        0: dirty() ? uiMessage(' · Unsaved text') : '',
+      })
+    )
     timer = setTimeout(() => void previewNow(), 150)
   }
 
@@ -202,7 +261,7 @@ export function mountLabelEditor(container, options) {
           // Validate printable text before an allocator/persistence mutation.
           const checked = await previewNow()
           if (!checked || destroyed || epoch !== revision) return false
-          message('Saving label…')
+          message(uiMessage('Saving label…'))
           const saved = await options.onCommit?.(next)
           if (destroyed || epoch !== revision) return false
           model = { ...(saved || next) }
@@ -211,12 +270,15 @@ export function mountLabelEditor(container, options) {
           const result = await previewNow()
           if (result)
             message(
-              `${result.result.widthMm} × ${result.result.heightMm} mm · ${result.result.dpi} dpi`
+              uiMessage('{0} × {1} mm · {2} dpi', {
+                0: result.result.widthMm,
+                1: result.result.heightMm,
+                2: result.result.dpi,
+              })
             )
           return Boolean(result)
         } catch (error) {
-          if (!destroyed && epoch === revision)
-            message(error.message || 'The label could not be saved', true)
+          if (!destroyed && epoch === revision) issue(error)
           return false
         } finally {
           pendingCommit = null
@@ -237,7 +299,7 @@ export function mountLabelEditor(container, options) {
       pendingCommit = operation()
       return pendingCommit
     } catch (error) {
-      message(error.message, true)
+      issue(error)
       copy.disabled = true
       return false
     }
@@ -278,18 +340,25 @@ export function mountLabelEditor(container, options) {
       input.autocomplete = 'off'
       input.spellcheck = false
       input.setAttribute('autocorrect', 'off')
-      input.setAttribute(
+      bindAttribute(
+        input,
         'aria-label',
         key === 'code'
           ? kind === 'mark'
-            ? 'Base CE code'
-            : 'Barcode code'
+            ? uiMessage('Base CE code')
+            : uiMessage('Barcode code')
           : key === 'category'
-            ? 'Chinese category'
-            : 'Spanish product name'
+            ? uiMessage('Chinese category')
+            : uiMessage('Spanish product name')
       )
-      input.title = `${input.getAttribute('aria-label')} — Enter saves, Escape restores`
-      input.placeholder = input.getAttribute('aria-label')
+      bindAttribute(
+        input,
+        'title',
+        uiMessage('{0} — Enter saves, Escape restores', {
+          0: attributeMessage(input, 'aria-label'),
+        })
+      )
+      bindAttribute(input, 'placeholder', attributeMessage(input, 'aria-label'))
       input.style.left = `${box[0] * 100}%`
       input.style.top = `${box[1] * 100}%`
       input.style.width = `${box[2] * 100}%`
@@ -328,7 +397,11 @@ export function mountLabelEditor(container, options) {
     codeParts.style.height = `${box[3] * 100}%`
     const strip = element('div', 'label-code-strip')
     const base = element('span', 'label-code-base', model.baseCode)
-    base.title = 'Product code · edit on the carton mark'
+    bindAttribute(
+      base,
+      'title',
+      uiMessage('Product code · edit on the carton mark')
+    )
     strip.append(base)
     for (const [key, title] of [
       ['variantSuffix', 'Variant code'],
@@ -336,8 +409,14 @@ export function mountLabelEditor(container, options) {
     ]) {
       const input = element('input', `label-code-part label-code-${key}`)
       input.type = 'text'
-      input.setAttribute('aria-label', title)
-      input.title = `${title} · leave empty if not needed · Enter saves`
+      bindAttribute(input, 'aria-label', title)
+      bindAttribute(
+        input,
+        'title',
+        uiMessage('{0} · leave empty if not needed · Enter saves', {
+          0: uiMessage(title),
+        })
+      )
       input.autocomplete = 'off'
       input.setAttribute('autocorrect', 'off')
       input.spellcheck = false
@@ -369,7 +448,9 @@ export function mountLabelEditor(container, options) {
     codeParts.append(strip)
     preview.append(codeParts)
     const guide = element('div', 'label-code-guide')
-    guide.append(element('span', 'label-code-base-key', 'Product code'))
+    guide.append(
+      element('span', 'label-code-base-key', uiMessage('Product code'))
+    )
     for (const [key, title] of [
       ['variantSuffix', 'Variant'],
       ['sizeSuffix', 'Size'],
@@ -377,25 +458,49 @@ export function mountLabelEditor(container, options) {
       const label = element(
         'label',
         `label-code-key label-code-key-${key}`,
-        title
+        uiMessage(title)
       )
       const input = inputs.get(key)
-      input.id = `label-${key}-${crypto.randomUUID()}`
+      input.id = `label-${key}-${editorId}`
       label.htmlFor = input.id
       guide.append(label)
     }
     composedCode = element('output', 'label-composed-code')
-    composedCode.setAttribute('aria-label', 'Barcode code')
+    bindAttribute(composedCode, 'aria-label', uiMessage('Barcode code'))
     guide.append(composedCode)
     hint.before(guide)
-    hint.textContent =
-      'Edit Variant or Size on the black band. Leave + empty when not needed. Enter saves; Escape cancels.'
+    bindText(
+      hint,
+      uiMessage(
+        'Edit Variant or Size on the black band. Leave + empty when not needed. Enter saves; Escape cancels.'
+      )
+    )
   }
 
   copy.addEventListener('pointerdown', (event) => {
     // Let click commit the focused draft. Blurring first can disable this button
     // while saving and prevent the browser from dispatching the click at all.
     if (event.button === 0) event.preventDefault()
+  })
+  resolve.addEventListener('pointerdown', (event) => {
+    if (event.button === 0) event.preventDefault()
+  })
+  resolve.addEventListener('click', async () => {
+    if (!validationError || resolve.disabled) return
+    resolve.disabled = true
+    try {
+      const next = await options.onResolve(validationError, { ...model })
+      if (!next || destroyed) return
+      model = { ...next }
+      committed = { ...model }
+      revision++
+      syncValues()
+      await previewNow()
+    } catch (error) {
+      if (!destroyed) issue(error)
+    } finally {
+      resolve.disabled = false
+    }
   })
   copy.addEventListener('click', async () => {
     resetCopied()
@@ -405,17 +510,17 @@ export function mountLabelEditor(container, options) {
       const current = await previewNow()
       if (!current || destroyed) return
       copy.disabled = true
-      copy.textContent = 'Copying…'
+      bindText(copy, uiMessage('Copying…'))
       if (options.onCopy) await options.onCopy(current.result, current.model)
       else
         await navigator.clipboard.write([
           new ClipboardItem({ 'image/png': current.result.blob }),
         ])
       if (!destroyed && copiedRevision === revision) {
-        copy.textContent = 'Copied'
+        bindText(copy, uiMessage('Copied'))
         copy.classList.add('copied')
         copiedTimer = setTimeout(resetCopied, 3000)
-        message('Copied')
+        message(uiMessage('Copied'))
       }
     } catch (error) {
       if (!destroyed) {

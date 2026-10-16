@@ -1,40 +1,88 @@
+import {
+  message as uiMessage,
+  bindText,
+  bindAttribute,
+  isMessage,
+  t,
+  getLocale,
+  getLanguage,
+  onLanguageChange,
+} from './i18n.js'
 import { element as el } from './ui.js'
+import { icon } from './icons.js'
+import { preparationHelp } from './preparation-help.js'
 
 export function createPhotoViewer(loadImage) {
   let current = null
 
-  async function open(item) {
+  async function open(item, availableItems = []) {
     current?.close()
+    let gallery = availableItems.filter((entry) => entry.thumbnail)
+    // Packing photos retain their source objects. Table rows are recreated on
+    // filtering, so only their full order/entry pair is a safe fallback.
+    let index = gallery.indexOf(item)
+    if (index < 0 && item.orderId && item.entryId)
+      index = gallery.findIndex(
+        (entry) =>
+          entry.orderId === item.orderId && entry.entryId === item.entryId
+      )
+    // Evidence/review photos outside the active product scope remain standalone.
+    if (index < 0) {
+      gallery = [item]
+      index = 0
+    } else gallery[index] = item
     const modal = el('dialog', undefined, 'product-photo-dialog')
     current = modal
-    modal.setAttribute('aria-label', 'Product photo')
+    bindAttribute(modal, 'aria-label', uiMessage('Product photo'))
     const frame = el('div', undefined, 'photo-viewer-frame'),
-      title = el('h2', 'Product photo'),
+      title = el('h2', uiMessage('Product photo')),
+      heading = el('div', undefined, 'photo-viewer-heading'),
+      caption = el('p', undefined, 'photo-viewer-caption'),
       close = el('button', '×', 'dialog-close'),
       viewport = el('div', undefined, 'photo-viewport'),
-      image = el('img'),
-      status = el('p', 'Loading original image…', 'photo-viewer-status'),
+      status = el(
+        'p',
+        uiMessage('Loading original image…'),
+        'photo-viewer-status'
+      ),
       actions = el('div', undefined, 'photo-zoom-actions'),
       value = el('span', '—', 'photo-zoom-value'),
       minus = el('button', '−'),
       plus = el('button', '+'),
-      fit = el('button', 'Fit'),
+      fit = el('button', uiMessage('Fit')),
       actual = el('button', '100%'),
-      fullscreen = el('button', 'Fullscreen'),
+      fullscreen = el('button', uiMessage('Fullscreen')),
+      navigation = el('div', undefined, 'photo-gallery-actions'),
+      previous = el('button', undefined, 'photo-gallery-button'),
+      next = el('button', undefined, 'photo-gallery-button'),
+      counter = el('span', undefined, 'photo-gallery-count'),
       events = new AbortController()
-    close.setAttribute('aria-label', 'Close product photo')
-    minus.setAttribute('aria-label', 'Zoom out')
-    plus.setAttribute('aria-label', 'Zoom in')
-    actual.setAttribute('aria-label', 'Actual size (100%)')
+    let image = el('img'),
+      loadVersion = 0
+    bindAttribute(close, 'aria-label', uiMessage('Close product photo'))
+    bindAttribute(minus, 'aria-label', uiMessage('Zoom out'))
+    bindAttribute(plus, 'aria-label', uiMessage('Zoom in'))
+    bindAttribute(actual, 'aria-label', uiMessage('Actual size (100%)'))
+    for (const [button, name, symbol] of [
+      [previous, 'Previous photo', 'previous'],
+      [next, 'Next photo', 'next'],
+    ]) {
+      button.type = 'button'
+      bindAttribute(button, 'aria-label', uiMessage(name))
+      preparationHelp(button, uiMessage(name))
+      button.append(icon(symbol))
+    }
     fullscreen.setAttribute('aria-pressed', 'false')
     viewport.tabIndex = 0
     viewport.setAttribute('role', 'region')
-    viewport.setAttribute(
+    bindAttribute(
+      viewport,
       'aria-label',
-      'Product image. Use arrow keys to move, plus or minus to zoom, and 0 to fit.'
+      uiMessage(
+        'Product image. Use arrow keys to move, plus or minus to zoom, and 0 to fit.'
+      )
     )
     status.setAttribute('role', 'status')
-    image.alt = item.title || item.description?.split('\n')[0] || 'Product'
     image.draggable = false
     image.hidden = true
     let ready = false,
@@ -114,6 +162,8 @@ export function createPhotoViewer(loadImage) {
         viewport.releasePointerCapture(pointerId)
     }
     close.onclick = () => modal.close()
+    previous.onclick = () => void showPhoto(index - 1)
+    next.onclick = () => void showPhoto(index + 1)
     minus.onclick = () => zoomTo(scale / 1.5)
     plus.onclick = () => zoomTo(scale * 1.5)
     fit.onclick = () => zoomTo(fitScale)
@@ -127,13 +177,20 @@ export function createPhotoViewer(loadImage) {
           await frame.requestFullscreen()
         else throw new Error('Fullscreen unavailable')
       } catch {
-        status.textContent =
-          'Fullscreen is unavailable in this browser. You can still zoom and drag the image.'
+        bindText(
+          status,
+          uiMessage(
+            'Fullscreen is unavailable in this browser. You can still zoom and drag the image.'
+          )
+        )
       }
     }
     listen(document, 'fullscreenchange', () => {
       const active = document.fullscreenElement === frame
-      fullscreen.textContent = active ? 'Exit fullscreen' : 'Fullscreen'
+      bindText(
+        fullscreen,
+        active ? uiMessage('Exit fullscreen') : uiMessage('Fullscreen')
+      )
       fullscreen.setAttribute('aria-pressed', String(active))
       resize()
     })
@@ -143,8 +200,12 @@ export function createPhotoViewer(loadImage) {
         try {
           await document.exitFullscreen()
         } catch {
-          status.textContent =
-            'Use Exit fullscreen or your browser’s fullscreen control to return.'
+          bindText(
+            status,
+            uiMessage(
+              'Use Exit fullscreen or your browser’s fullscreen control to return.'
+            )
+          )
         }
       }
     })
@@ -198,7 +259,13 @@ export function createPhotoViewer(loadImage) {
     listen(viewport, 'pointercancel', stopDrag)
     listen(viewport, 'lostpointercapture', stopDrag)
     listen(modal, 'keydown', (event) => {
-      if (!ready || event.ctrlKey || event.metaKey || event.altKey) return
+      if (event.ctrlKey || event.metaKey || event.altKey) return
+      if (event.key === 'PageUp' || event.key === 'PageDown') {
+        event.preventDefault()
+        void showPhoto(index + (event.key === 'PageUp' ? -1 : 1))
+        return
+      }
+      if (!ready) return
       if (event.key === '+' || event.key === '=') zoomTo(scale * 1.5)
       else if (event.key === '-' || event.key === '_') zoomTo(scale / 1.5)
       else if (event.key === '0' || event.key.toLowerCase() === 'f')
@@ -223,12 +290,15 @@ export function createPhotoViewer(loadImage) {
     const observer = new ResizeObserver(resize)
     observer.observe(viewport)
     for (const button of [minus, plus, fit, actual]) button.disabled = true
-    actions.append(minus, value, plus, fit, actual, fullscreen)
+    navigation.append(previous, counter, next)
+    actions.append(minus, value, plus, fit, actual, fullscreen, navigation)
+    heading.append(title, caption)
     viewport.append(image)
-    frame.append(close, title, actions, viewport, status)
+    frame.append(close, heading, actions, viewport, status)
     modal.append(frame)
     document.body.append(modal)
     modal.onclose = () => {
+      loadVersion++
       stopDrag()
       events.abort()
       observer.disconnect()
@@ -239,23 +309,68 @@ export function createPhotoViewer(loadImage) {
     }
     modal.showModal()
     close.focus()
-    try {
-      const data = await loadImage(item.thumbnail)
-      if (!modal.open) return
-      image.src = data
-      await image.decode()
-      if (!modal.open) return
-      image.style.width = `${image.naturalWidth}px`
-      image.style.height = `${image.naturalHeight}px`
-      ready = true
-      for (const button of [plus, fit, actual]) button.disabled = false
-      image.hidden = false
-      resize()
-      status.textContent =
-        'Scroll to zoom · Drag to move · Double-click to zoom or fit · + / − zoom · Arrow keys move · 0 fits'
-    } catch (error) {
-      if (modal.open) status.textContent = error.message
+    async function showPhoto(position) {
+      if (position < 0 || position >= gallery.length || !modal.open) return
+      const version = ++loadVersion,
+        selected = gallery[position]
+      index = position
+      stopDrag()
+      ready = false
+      image.hidden = true
+      image.removeAttribute('src')
+      viewport.classList.remove('can-pan')
+      value.textContent = '—'
+      previous.disabled = index === 0
+      next.disabled = index === gallery.length - 1
+      bindText(
+        counter,
+        () =>
+          `${(index + 1).toLocaleString(getLocale())} / ${gallery.length.toLocaleString(getLocale())}`
+      )
+      preparationHelp(
+        counter,
+        uiMessage('Photo {position} of {total}', {
+          position: () => index + 1,
+          total: gallery.length,
+        })
+      )
+      const sourceName =
+        selected.title || selected.description?.split('\n')[0] || ''
+      caption.textContent = sourceName
+      caption.hidden = !sourceName
+      for (const button of [minus, plus, fit, actual]) button.disabled = true
+      bindText(status, uiMessage('Loading original image…'))
+      try {
+        const data = await loadImage(selected.thumbnail)
+        if (!modal.open || version !== loadVersion) return
+        const loaded = el('img')
+        loaded.draggable = false
+        if (sourceName) loaded.alt = sourceName
+        else bindAttribute(loaded, 'alt', uiMessage('Product'))
+        loaded.src = data
+        await loaded.decode()
+        if (!modal.open || version !== loadVersion) return
+        image.replaceWith(loaded)
+        image = loaded
+        image.style.width = `${image.naturalWidth}px`
+        image.style.height = `${image.naturalHeight}px`
+        ready = true
+        fitted = true
+        x = y = 0
+        for (const button of [plus, fit, actual]) button.disabled = false
+        resize()
+        bindText(
+          status,
+          uiMessage(
+            'Scroll to zoom · Drag to move · Double-click to zoom or fit · + / − zoom · Arrow keys move · 0 fits · Page Up / Down changes photo'
+          )
+        )
+      } catch (error) {
+        if (modal.open && version === loadVersion)
+          bindText(status, error.message)
+      }
     }
+    await showPhoto(index)
   }
   return { open, close: () => current?.close() }
 }

@@ -1,11 +1,29 @@
 import {
+  message as uiMessage,
+  bindText,
+  bindAttribute,
+  isMessage,
+  t,
+  getLocale,
+  getLanguage,
+  onLanguageChange,
+  localize,
+  setLanguage,
+} from './i18n.js'
+import {
   copyTable,
   copySingleImage,
   pngThumbnail,
   pngImage,
 } from './clipboard.js'
 import { openDatabase } from './database.js'
-import { confirmScope, copied, yieldUI, enableLightDismiss } from './ui.js'
+import {
+  confirmScope,
+  copied,
+  yieldUI,
+  enableLightDismiss,
+  copyTextButton,
+} from './ui.js'
 import { startPackingWorkspace } from './packing-workspace.js'
 import { createImportReport, importJobView } from './import-report.js'
 import {
@@ -17,9 +35,13 @@ import { createPhotoViewer } from './photo-viewer.js'
 import { presentOrderStatus } from './order-presentation.js'
 import { createRowSelection } from './row-selection.js'
 import { copyExcelImage } from './excel-image-copy.js'
-import { summarizeOrders } from './order-summary.js'
+import { summarizeOrders, summarizeProductRows } from './order-summary.js'
 import { decorateIcon, icon } from './icons.js'
 import { preparationHelp } from './preparation-help.js'
+import {
+  createProductDescription,
+  openProductDetails,
+} from './product-details.js'
 
 const $ = (id) => document.getElementById(id)
 const keyFor = (row) => `${row.orderId}/${row.entryId}`
@@ -29,24 +51,27 @@ const purchaseDay = (order) => order.purchasedAt?.slice(0, 10) || ''
 const purchaseMonth = (order) => purchaseDay(order).slice(0, 7) || 'unknown'
 const monthLabel = (month) =>
   month === 'unknown'
-    ? 'Date unavailable'
-    : new Date(`${month}-01T12:00:00Z`).toLocaleDateString('en-GB', {
+    ? t('Date unavailable')
+    : new Date(`${month}-01T12:00:00Z`).toLocaleDateString(getLocale(), {
         month: 'long',
         year: 'numeric',
         timeZone: 'UTC',
       })
 const purchaseLabel = (order) =>
   purchaseDay(order)
-    ? new Date(`${purchaseDay(order)}T12:00:00Z`).toLocaleDateString('en-GB', {
-        day: 'numeric',
-        month: 'short',
-        year: 'numeric',
-        timeZone: 'UTC',
-      })
-    : 'Date unavailable'
+    ? new Date(`${purchaseDay(order)}T12:00:00Z`).toLocaleDateString(
+        getLocale(),
+        {
+          day: 'numeric',
+          month: 'short',
+          year: 'numeric',
+          timeZone: 'UTC',
+        }
+      )
+    : t('Date unavailable')
 const dateLabel = (value) =>
   value
-    ? new Date(value).toLocaleString(undefined, {
+    ? new Date(value).toLocaleString(getLocale(), {
         month: 'short',
         day: 'numeric',
         hour: '2-digit',
@@ -56,16 +81,18 @@ const dateLabel = (value) =>
 function node(tag, text, className) {
   const element = document.createElement(tag)
   if (tag === 'dialog') enableLightDismiss(element)
-  if (text !== undefined) element.textContent = text
+  if (isMessage(text)) bindText(element, text)
+  else if (text !== undefined) element.textContent = text
   if (className) element.className = className
   if (tag === 'button') {
-    const name = /copy/i.test(text)
+    const source = isMessage(text) ? text.source : text
+    const name = /copy/i.test(source)
       ? 'copy'
-      : /refresh|retry/i.test(text)
+      : /refresh|retry/i.test(source)
         ? 'refresh'
-        : /save|back up/i.test(text)
+        : /save|back up/i.test(source)
           ? 'download'
-          : /remove|dismiss/i.test(text)
+          : /remove|dismiss/i.test(source)
             ? 'trash'
             : null
     if (name) decorateIcon(element, name)
@@ -74,15 +101,30 @@ function node(tag, text, className) {
 }
 function statusBadge(status) {
   const display = presentOrderStatus(status)
-  const badge = node('span', display.label, 'order-status')
+  const badge = node('span', uiMessage(display.label), 'order-status')
   badge.dataset.tone = display.tone
   badge.title = status
   return badge
 }
+function revisionBadge(updated) {
+  const badge = node(
+    'span',
+    uiMessage(updated ? 'Updated' : 'Saved'),
+    'badge revision-badge'
+  )
+  preparationHelp(
+    badge,
+    updated
+      ? 'This order changed during a refresh. Updated does not describe its delivery status.'
+      : 'Saved in this browser. Saved does not describe its delivery status.'
+  )
+  return badge
+}
 function dateBadge(order) {
-  const date = node('time', purchaseLabel(order), 'purchase-date')
+  const date = node('time', undefined, 'purchase-date')
+  bindText(date, () => purchaseLabel(order))
   if (purchaseDay(order)) date.dateTime = purchaseDay(order)
-  date.title = 'Purchase date'
+  bindAttribute(date, 'title', uiMessage('Purchase date'))
   return date
 }
 function downloadJson(value, filename) {
@@ -106,18 +148,27 @@ async function confirmBulkResume(job) {
     Math.max(0, (job.total || job.discovered || job.orders?.length || 0) - done)
   if (count <= 1) return true
   const dialog = node('dialog')
-  dialog.setAttribute('aria-label', 'Confirm bulk import')
+  bindAttribute(dialog, 'aria-label', uiMessage('Confirm bulk import'))
   dialog.append(
-    node('h2', `Resume collection of ${count.toLocaleString()} orders?`),
+    node(
+      'h2',
+      uiMessage('Resume collection of {0} orders?', {
+        0: () => count.toLocaleString(getLocale()),
+      })
+    ),
     node(
       'p',
-      'This resumes the previous bulk import, using one visible detail tab to collect the remaining orders. Cancel if you only want a few selected orders.'
+      uiMessage(
+        'This resumes the previous bulk import, using one visible detail tab to collect the remaining orders. Cancel if you only want a few selected orders.'
+      )
     )
   )
-  const cancel = node('button', 'Cancel'),
+  const cancel = node('button', uiMessage('Cancel')),
     proceed = node(
       'button',
-      `Resume ${count.toLocaleString()} orders`,
+      uiMessage('Resume {0} orders', {
+        0: () => count.toLocaleString(getLocale()),
+      }),
       'primary'
     )
   dialog.append(cancel, proceed)
@@ -146,6 +197,21 @@ export async function startLibrary(
   transport = (message) => chrome.runtime.sendMessage(message),
   repository = null
 ) {
+  localize(document)
+  setLanguage(getLanguage(), { persist: false })
+  const languageButtons = [
+    ...document.querySelectorAll('#language-toggle [data-language]'),
+  ]
+  const updateLanguageButtons = () => {
+    for (const button of languageButtons)
+      button.setAttribute(
+        'aria-pressed',
+        String(button.dataset.language === getLanguage())
+      )
+  }
+  updateLanguageButtons()
+  for (const button of languageButtons)
+    button.addEventListener('click', () => setLanguage(button.dataset.language))
   const progressStyle = node('style', importProgressStyles)
   document.head.append(progressStyle)
   for (const dialog of document.querySelectorAll('dialog'))
@@ -183,6 +249,27 @@ export async function startLibrary(
     selected: selectedRows,
     getKeys: () => filteredRows().map(keyFor),
     onChange: updateSelection,
+    onActivate: (key) => {
+      const row = filteredRows().find((item) => keyFor(item) === key)
+      if (!row) return
+      openProductDetails(row, {
+        loadPhoto: async (url) => {
+          const result = await send('IMAGE_GET', { url })
+          return typeof result === 'string' ? result : result.dataUrl
+        },
+        onPhoto: () => void photos.open(row, filteredRows()),
+        onOrder: () =>
+          void openDetails(row.record).catch((error) =>
+            feedback(error.message, true)
+          ),
+        copyPhoto: async () => {
+          const result = await send('IMAGE_GET', { url: row.thumbnail })
+          await copySingleImage(
+            typeof result === 'string' ? result : result.dataUrl
+          )
+        },
+      })
+    },
   })
   document.querySelector('.table-scroll').addEventListener(
     'keydown',
@@ -226,7 +313,11 @@ export async function startLibrary(
           try {
             entry.target.src = await imageData(entry.target.dataset.thumbnail)
           } catch {
-            entry.target.alt = 'Image unavailable offline'
+            bindAttribute(
+              entry.target,
+              'alt',
+              uiMessage('Image unavailable offline')
+            )
           }
         }
     },
@@ -253,11 +344,15 @@ export async function startLibrary(
   decorateIcon(document.querySelector('.open-orders'), 'external')
   preparationHelp(
     $('orders-heading'),
-    'Click to select or deselect. Shift-click for a range; Ctrl-click adds orders. Double-click or Enter opens details. Click a month heading to expand or collapse it.'
+    uiMessage(
+      'Click to select or deselect. Shift-click for a range; Ctrl-click adds orders. Double-click or Enter opens details. Click a month heading to expand or collapse it.'
+    )
   )
   preparationHelp(
     $('select-rows'),
-    'Click a product row to select or deselect it. Shift-click selects a range; Ctrl-click adds rows. Buttons and photos work independently.'
+    uiMessage(
+      'Click a product row to select or deselect it. Shift-click selects a range; Ctrl-click adds rows. Buttons and photos work independently.'
+    )
   )
   for (const [id, hint] of [
     ['activity-open', 'Import progress, paused jobs and reports.'],
@@ -411,12 +506,15 @@ export async function startLibrary(
   function feedback(message, error = false) {
     clearTimeout(feedbackTimer)
     const close = node('button', '×')
-    close.setAttribute('aria-label', 'Dismiss notification')
+    bindAttribute(close, 'aria-label', uiMessage('Dismiss notification'))
     close.onclick = () => {
       clearTimeout(feedbackTimer)
       $('feedback').replaceChildren()
     }
-    $('feedback').replaceChildren(node('span', message), close)
+    $('feedback').replaceChildren(
+      node('span', isMessage(message) ? message : uiMessage(message)),
+      close
+    )
     $('feedback').className = error ? 'error' : ''
     feedbackTimer = setTimeout(
       () => $('feedback').replaceChildren(),
@@ -498,11 +596,19 @@ export async function startLibrary(
     const host = $('order-totals')
     const heading = node(
       'p',
-      `Whole-order totals · ${totals.orderCount.toLocaleString()} matching order${totals.orderCount === 1 ? '' : 's'}`,
+      uiMessage('Whole-order totals · {0} matching order{1}', {
+        0: () => totals.orderCount.toLocaleString(getLocale()),
+        1: totals.orderCount === 1 ? '' : 's',
+      }),
       'totals-scope'
     )
-    heading.title =
-      'Each matching order is counted once, including all its products, shipping and order discounts. Product searches do not split order charges.'
+    bindAttribute(
+      heading,
+      'title',
+      uiMessage(
+        'Each matching order is counted once, including all its products, shipping and order discounts. Product searches do not split order charges.'
+      )
+    )
     preparationHelp(heading, heading.title)
     heading.removeAttribute('title')
     const amounts = node('dl', undefined, 'totals-grid')
@@ -530,9 +636,9 @@ export async function startLibrary(
       const formatted =
         value === null
           ? 'Unavailable'
-          : `${reduction && Number(value) !== 0 ? (Number(value) > 0 ? '−' : '+') : ''}¥ ${(reduction ? Math.abs(Number(value)) : Number(value)).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`
+          : `${reduction && Number(value) !== 0 ? (Number(value) > 0 ? '−' : '+') : ''}¥ ${(reduction ? Math.abs(Number(value)) : Number(value)).toLocaleString(getLocale(), { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`
       pair.append(
-        node('dt', label),
+        node('dt', uiMessage(label)),
         node('dd', formatted, reduction ? 'total-reduction' : '')
       )
       amounts.append(pair)
@@ -542,7 +648,9 @@ export async function startLibrary(
       host.append(
         node(
           'p',
-          'Some saved totals are incomplete or inconsistent. Refresh the affected orders; unavailable amounts are not treated as zero.',
+          uiMessage(
+            'Some saved totals are incomplete or inconsistent. Refresh the affected orders; unavailable amounts are not treated as zero.'
+          ),
           'totals-warning'
         )
       )
@@ -550,18 +658,91 @@ export async function startLibrary(
       host.append(
         node(
           'p',
-          `${totals.foreignCurrencyFeeUnknownCount} orders report an unspecified foreign-payment fee. It is not included in these CNY totals.`,
+          uiMessage(
+            '{0} orders report an unspecified foreign-payment fee. It is not included in these CNY totals.',
+            { 0: totals.foreignCurrencyFeeUnknownCount }
+          ),
           'totals-warning'
         )
       )
     host.hidden = !records.length
   }
+  function renderSelectionTotals(rows, selected) {
+    const selectedTotals = summarizeProductRows(selected)
+    const filteredTotals = summarizeProductRows(rows)
+    const matchingTotals = summarizeProductRows(
+      scopedOrders(rows).flatMap(({ snapshot }) => snapshot.items)
+    )
+    const host = $('product-selection-totals')
+    const integer = (value) =>
+      value === null
+        ? t('Unavailable')
+        : BigInt(value).toLocaleString(getLocale())
+    const money = (value) => {
+      if (value === null) return t('Unavailable')
+      const [whole, fraction] = value.split('.')
+      const decimal = new Intl.NumberFormat(getLocale())
+        .formatToParts(1.1)
+        .find((part) => part.type === 'decimal').value
+      return `¥ ${BigInt(whole).toLocaleString(getLocale())}${decimal}${fraction}`
+    }
+    const amounts = node('dl', undefined, 'selection-totals-grid')
+    for (const [key, label, value] of [
+      ['rows', 'Selected rows', integer(selectedTotals.rowCount)],
+      ['quantity', 'Quantity', integer(selectedTotals.quantity)],
+      ['gross', 'Price × quantity', money(selectedTotals.gross)],
+      [
+        'after-discounts',
+        'After row discounts',
+        money(selectedTotals.afterDiscount),
+      ],
+    ]) {
+      const pair = node('div')
+      pair.dataset.selectionTotal = key
+      pair.append(node('dt', uiMessage(label)), node('dd', value))
+      amounts.append(pair)
+    }
+    preparationHelp(
+      amounts,
+      uiMessage(
+        'Only selected product rows are summed, across all filtered pages. After row discounts uses the saved Discount column, including already allocated seller adjustments. Shipping and other order-wide charges are not added or divided. This is not the order payable total.'
+      )
+    )
+    const context = node('p', undefined, 'selection-totals-context')
+    context.append(
+      node(
+        'span',
+        uiMessage('Filtered products: {rows} rows · Quantity {quantity}', {
+          rows: integer(filteredTotals.rowCount),
+          quantity: integer(filteredTotals.quantity),
+        })
+      ),
+      node(
+        'span',
+        uiMessage('Complete matching orders: Quantity {quantity}', {
+          quantity: integer(matchingTotals.quantity),
+        })
+      )
+    )
+    host.replaceChildren(amounts, context)
+  }
   function updateSelection() {
     packing?.updateActions()
     const rows = filteredRows(),
       selected = rows.filter((row) => selectedRows.has(keyFor(row)))
-    $('selection-summary').textContent =
-      `${rows.length.toLocaleString()} rows${selected.length ? ` · ${selected.length.toLocaleString()} selected` : ' · all filtered rows will copy'}`
+    renderSelectionTotals(rows, selected)
+    bindText(
+      $('selection-summary'),
+      uiMessage('{0} rows{1}', {
+        0: () => rows.length.toLocaleString(getLocale()),
+        1: () =>
+          selected.length
+            ? uiMessage(' · {0} selected', {
+                0: selected.length.toLocaleString(getLocale()),
+              })
+            : uiMessage(' · all filtered rows will copy'),
+      })
+    )
     $('select-rows').disabled = !rows.length || selected.length === rows.length
     $('clear-rows').disabled = !selectedRows.size
     for (const id of [
@@ -617,7 +798,11 @@ export async function startLibrary(
     $('orders-next').disabled = (orderPage + 1) * 50 >= expanded.length
     if (!matching.length)
       list.append(
-        node('p', 'No orders match these filters.', 'order-search-empty')
+        node(
+          'p',
+          uiMessage('No orders match these filters.'),
+          'order-search-empty'
+        )
       )
     const visible = new Set(
       expanded
@@ -644,10 +829,16 @@ export async function startLibrary(
         )
         decorateIcon(toggle, 'chevron')
         toggle.setAttribute('aria-expanded', String(expandedMonths.has(month)))
-        toggle.setAttribute('aria-label', `${monthLabel(month)} orders`)
+        bindAttribute(
+          toggle,
+          'aria-label',
+          uiMessage('{0} orders', { 0: () => monthLabel(month) })
+        )
         preparationHelp(
           toggle,
-          'Expand or collapse this month. Use the purchase-month filter to change the product list.'
+          uiMessage(
+            'Expand or collapse this month. Use the purchase-month filter to change the product list.'
+          )
         )
         toggle.addEventListener('click', () => {
           if (expandedMonths.has(month)) expandedMonths.delete(month)
@@ -667,26 +858,42 @@ export async function startLibrary(
       if (!visible.has(order.orderId)) continue
       const card = node('div', undefined, 'order-card')
       card.setAttribute('role', 'option')
-      card.setAttribute('aria-label', `Order ${order.orderId}`)
+      bindAttribute(
+        card,
+        'aria-label',
+        uiMessage('Order {0}', { 0: order.orderId })
+      )
       card.setAttribute('aria-describedby', `order-summary-${order.orderId}`)
       preparationHelp(
         card,
-        'Click to select or deselect. Shift-click selects a range. Double-click opens order details.'
+        uiMessage(
+          'Click to select or deselect. Shift-click selects a range. Double-click opens order details.'
+        )
       )
       const summary = node('div', undefined, 'order-summary')
       summary.id = `order-summary-${order.orderId}`
-      summary.append(node('strong', order.sellerName))
-      summary.append(node('small', `Order ${order.orderId}`, 'order-reference'))
+      summary.append(
+        copyTextButton(order.sellerName, {
+          label: 'Copy store name',
+          className: 'order-seller',
+        })
+      )
+      summary.append(
+        copyTextButton(order.orderId, {
+          label: 'Copy order number',
+          className: 'order-reference',
+        })
+      )
       const meta = node('span', undefined, 'order-card-meta')
       meta.append(statusBadge(order.status), dateBadge(order))
-      const badge = node(
-        'span',
-        record.revision > 1 ? 'Updated' : 'Saved',
-        `badge${record.revision > 1 ? ' changed' : ''}`
-      )
+      const badge = revisionBadge(record.revision > 1)
       meta.append(
         badge,
-        node('span', `${order.items.length} products`, 'order-products')
+        node(
+          'span',
+          uiMessage('{0} products', { 0: order.items.length }),
+          'order-products'
+        )
       )
       summary.append(meta)
       card.append(summary)
@@ -698,14 +905,22 @@ export async function startLibrary(
   }
   function updateOrderActions() {
     const matching = scopedOrders()
-    $('refresh-orders').textContent =
-      `Refresh ${matching.length} order${matching.length === 1 ? '' : 's'}`
+    bindText(
+      $('refresh-orders'),
+      uiMessage('Refresh {0} order{1}', {
+        0: matching.length,
+        1: matching.length === 1 ? '' : 's',
+      })
+    )
     decorateIcon($('refresh-orders'), 'refresh')
-    $('refresh-scope').textContent = selectedOrders.size
-      ? 'Selected orders'
-      : selectedMonths.size
-        ? 'Selected months · matching search'
-        : 'All matching orders'
+    bindText(
+      $('refresh-scope'),
+      selectedOrders.size
+        ? uiMessage('Selected orders')
+        : selectedMonths.size
+          ? uiMessage('Selected months · matching search')
+          : uiMessage('All matching orders')
+    )
     const running = jobs.some((job) => job.state === 'running')
     $('refresh-orders').disabled = !matching.length || running
     $('refresh-all').disabled = !records.length || running
@@ -744,16 +959,32 @@ export async function startLibrary(
         cell.id = sectionId
         const band = node('div', undefined, 'order-section-band')
         const shop = node('span', undefined, 'order-section-store')
-        shop.append(icon('store'), node('strong', row.sellerName))
+        shop.append(
+          icon('store'),
+          copyTextButton(row.sellerName, {
+            label: 'Copy store name',
+            className: 'order-seller',
+          })
+        )
         const count = orderCounts.get(row.orderId)
         const continued =
           rows[page * pageSize + index - 1]?.orderId === row.orderId
         band.append(
           shop,
-          node('span', `Order ${row.orderId}`, 'order-section-number'),
+          copyTextButton(row.orderId, {
+            label: 'Copy order number',
+            className: 'order-section-number',
+          }),
+          dateBadge(row.record.snapshot),
+          statusBadge(row.record.snapshot.status),
+          revisionBadge(row.record.revision > 1),
           node(
             'span',
-            `${count.toLocaleString()} matching product${count === 1 ? '' : 's'}${continued ? ' · continued' : ''}`,
+            uiMessage('{0} matching product{1}{2}', {
+              0: () => count.toLocaleString(getLocale()),
+              1: count === 1 ? '' : 's',
+              2: continued ? uiMessage(' · continued') : '',
+            }),
             'order-section-count'
           )
         )
@@ -768,7 +999,11 @@ export async function startLibrary(
         String(page * pageSize + index + 1),
         'row-number'
       )
-      tr.setAttribute('aria-label', `Product ${row.entryId}`)
+      bindAttribute(
+        tr,
+        'aria-label',
+        uiMessage('Product {0}', { 0: row.entryId })
+      )
       productSelection.bind(tr, keyFor(row))
       const thumb = node('td', undefined, 'thumb-cell')
       const image = node('img')
@@ -781,10 +1016,16 @@ export async function startLibrary(
       if (preparedImages.has(row.thumbnail))
         image.src = preparedImages.get(row.thumbnail)
       else imageObserver.observe(image)
-      const imageButton = node('button', 'Copy image', 'photo-copy-button')
+      const imageButton = node(
+        'button',
+        uiMessage('Copy image'),
+        'photo-copy-button'
+      )
       preparationHelp(
         imageButton,
-        'Copy the full-size product picture. Paste it into Excel or a message.'
+        uiMessage(
+          'Copy the full-size product picture. Paste it into Excel or a message.'
+        )
       )
       imageButton.addEventListener('click', () =>
         copyAction(imageButton, async () => {
@@ -796,42 +1037,39 @@ export async function startLibrary(
       )
       const zoom = node('button', undefined, 'product-photo-button')
       zoom.type = 'button'
-      zoom.setAttribute('aria-label', `Zoom product photo ${row.entryId}`)
+      bindAttribute(
+        zoom,
+        'aria-label',
+        uiMessage('Zoom product photo {0}', { 0: row.entryId })
+      )
       preparationHelp(
         zoom,
-        'Open the large photo. Scroll to zoom, then drag to inspect it.'
+        uiMessage(
+          'Open the large photo. Scroll to zoom, then drag to inspect it.'
+        )
       )
       zoom.disabled = !row.thumbnail
       zoom.append(image)
-      zoom.addEventListener('click', () => void photos.open(row))
+      zoom.addEventListener(
+        'click',
+        () => void photos.open(row, filteredRows())
+      )
       thumb.append(zoom, imageButton)
       const description = node('td', undefined, 'description-cell')
-      const metadata = node('div', undefined, 'row-meta')
-      const identity = node('div', undefined, 'row-identity')
-      identity.append(
-        node('span', row.sellerName, 'meta-seller'),
-        node('span', `Order ${row.orderId}`, 'meta-order')
-      )
-      metadata.append(
-        identity,
-        dateBadge(row.record.snapshot),
-        statusBadge(row.record.snapshot.status)
-      )
-      if (changed) metadata.append(node('span', 'Updated', 'badge changed'))
-      description.append(
-        node('div', row.description, 'product-title'),
-        metadata
-      )
+      description.append(createProductDescription(row))
       packing?.decorateRow(description, row)
       const amount = (value) =>
-        Number(value).toLocaleString('en-US', {
+        Number(value).toLocaleString(getLocale(), {
           minimumFractionDigits: 2,
           maximumFractionDigits: 4,
         })
       const discount = node('td', amount(row.discount), 'numeric discount-cell')
       if (Number(row.allocatedDiscount))
         discount.append(
-          node('small', `incl. ${row.allocatedDiscount} allocated`)
+          node(
+            'small',
+            uiMessage('incl. {0} allocated', { 0: row.allocatedDiscount })
+          )
         )
       tr.append(
         selection,
@@ -840,7 +1078,7 @@ export async function startLibrary(
         node('td', amount(row.price), 'numeric'),
         node(
           'td',
-          Number(row.quantity).toLocaleString('en-US', {
+          Number(row.quantity).toLocaleString(getLocale(), {
             maximumFractionDigits: 4,
           }),
           'numeric'
@@ -851,9 +1089,15 @@ export async function startLibrary(
     }
     $('empty-state').hidden = !!records.length
     document.querySelector('.table-scroll').hidden = !records.length
-    $('sheet-title').textContent = selectedOrders.size
-      ? `${selectedOrders.size} selected order${selectedOrders.size === 1 ? '' : 's'}`
-      : 'All products'
+    bindText(
+      $('sheet-title'),
+      selectedOrders.size
+        ? uiMessage('{0} selected order{1}', {
+            0: selectedOrders.size,
+            1: selectedOrders.size === 1 ? '' : 's',
+          })
+        : uiMessage('All products')
+    )
     $('page-label').textContent = `${page + 1} / ${maxPage + 1}`
     $('previous-page').disabled = page === 0
     $('next-page').disabled = page === maxPage
@@ -913,12 +1157,17 @@ export async function startLibrary(
     jobViews.clear()
     $('jobs').replaceChildren()
     const heading = node('div', undefined, 'jobs-heading')
-    heading.append(node('h2', 'Imports'))
+    heading.append(node('h2', uiMessage('Imports')))
     const controls = node('div', undefined, 'job-actions')
     if (jobs.some((job) => !job.dismissedAt && job.state !== 'running')) {
-      const dismissAll = node('button', 'Dismiss all', 'text-button')
-      dismissAll.title =
-        'Hide finished and paused import messages. Saved orders stay in your library.'
+      const dismissAll = node('button', uiMessage('Dismiss all'), 'text-button')
+      bindAttribute(
+        dismissAll,
+        'title',
+        uiMessage(
+          'Hide finished and paused import messages. Saved orders stay in your library.'
+        )
+      )
       dismissAll.addEventListener('click', async () => {
         const targets = jobs.filter(
           (job) => !job.dismissedAt && job.state !== 'running'
@@ -948,7 +1197,9 @@ export async function startLibrary(
     if (jobs.some((job) => job.dismissedAt)) {
       const history = node(
         'button',
-        showDismissed ? 'Hide dismissed' : 'Show dismissed',
+        showDismissed
+          ? uiMessage('Hide dismissed')
+          : uiMessage('Show dismissed'),
         'text-button'
       )
       history.setAttribute('aria-expanded', String(showDismissed))
@@ -974,9 +1225,14 @@ export async function startLibrary(
       updateJobView(job)
       container.append(details)
       const actions = node('div', undefined, 'job-actions')
-      const report = node('button', 'Save import report')
-      report.title =
-        'Save every order status and error for this import. This does not start or retry any orders.'
+      const report = node('button', uiMessage('Save import report'))
+      bindAttribute(
+        report,
+        'title',
+        uiMessage(
+          'Save every order status and error for this import. This does not start or retry any orders.'
+        )
+      )
       report.addEventListener('click', async () => {
         report.disabled = true
         try {
@@ -993,7 +1249,9 @@ export async function startLibrary(
             `1688-import-report-${value.exportedAt.slice(0, 10)}.json`
           )
           feedback(
-            'Import report requested. Check your downloads. Use Data → Back up to save the product database too.'
+            uiMessage(
+              'Import report requested. Check your downloads. Use Data → Back up to save the product database too.'
+            )
           )
         } catch (error) {
           feedback(error.message, true)
@@ -1005,19 +1263,27 @@ export async function startLibrary(
       if (job.state !== 'completed') {
         const button = node(
           'button',
-          job.state === 'running' ? 'Pause' : 'Resume / retry'
+          job.state === 'running'
+            ? uiMessage('Pause')
+            : uiMessage('Resume / retry')
         )
         button.addEventListener('click', async () => {
           button.disabled = true
           try {
             if (job.state !== 'running' && !(await confirmBulkResume(job)))
               return
-            button.textContent =
-              job.state === 'running' ? 'Pausing…' : 'Resuming…'
+            bindText(
+              button,
+              job.state === 'running'
+                ? uiMessage('Pausing…')
+                : uiMessage('Resuming…')
+            )
             feedback(
               job.state === 'running'
-                ? 'Pausing import…'
-                : 'Resuming import. One visible detail tab will read the remaining orders.'
+                ? uiMessage('Pausing import…')
+                : uiMessage(
+                    'Resuming import. One visible detail tab will read the remaining orders.'
+                  )
             )
             await send(
               job.state === 'running' ? 'IMPORT_PAUSE' : 'IMPORT_RESUME',
@@ -1028,16 +1294,25 @@ export async function startLibrary(
             feedback(error.message, true)
           } finally {
             button.disabled = false
-            button.textContent =
-              job.state === 'running' ? 'Pause' : 'Resume / retry'
+            bindText(
+              button,
+              job.state === 'running'
+                ? uiMessage('Pause')
+                : uiMessage('Resume / retry')
+            )
           }
         })
         actions.prepend(button)
       }
       if (job.state !== 'running' && !job.dismissedAt) {
-        const dismiss = node('button', 'Dismiss')
-        dismiss.title =
-          'Hide this message without removing saved orders. Find it later under Show dismissed.'
+        const dismiss = node('button', uiMessage('Dismiss'))
+        bindAttribute(
+          dismiss,
+          'title',
+          uiMessage(
+            'Hide this message without removing saved orders. Find it later under Show dismissed.'
+          )
+        )
         dismiss.addEventListener('click', async () => {
           dismiss.disabled = true
           try {
@@ -1069,13 +1344,13 @@ export async function startLibrary(
       entry.errors.replaceChildren(...errors.map((error) => node('p', error)))
   }
   function render() {
-    $('order-count').textContent = records.length.toLocaleString()
+    $('order-count').textContent = records.length.toLocaleString(getLocale())
     $('product-count').textContent = records
       .reduce((sum, record) => sum + record.snapshot.items.length, 0)
-      .toLocaleString()
+      .toLocaleString(getLocale())
     $('changed-count').textContent = records
       .filter((record) => record.revision > 1)
-      .length.toLocaleString()
+      .length.toLocaleString(getLocale())
     $('checked-at').textContent = dateLabel(
       records
         .map((record) => record.lastCheckedAt)
@@ -1090,11 +1365,14 @@ export async function startLibrary(
     try {
       localStorage.setItem(monthPreference, JSON.stringify([...selectedMonths]))
     } catch {}
-    $('month-filter-label').textContent = !selectedMonths.size
-      ? 'All purchase months'
-      : selectedMonths.size === 1
-        ? monthLabel([...selectedMonths][0])
-        : `${selectedMonths.size} purchase months`
+    bindText(
+      $('month-filter-label'),
+      !selectedMonths.size
+        ? uiMessage('All purchase months')
+        : selectedMonths.size === 1
+          ? monthLabel([...selectedMonths][0])
+          : uiMessage('{0} purchase months', { 0: selectedMonths.size })
+    )
     for (const button of $('month-options').querySelectorAll('button'))
       button.setAttribute(
         'aria-pressed',
@@ -1164,10 +1442,10 @@ export async function startLibrary(
       renderMonthOptions()
       const oldStatus = $('status-filter').value
       $('status-filter').replaceChildren(
-        new Option('All statuses', ''),
+        new Option(t('All statuses'), ''),
         ...[...new Set(records.map((record) => record.snapshot.status))]
           .sort()
-          .map((value) => new Option(presentOrderStatus(value).label, value))
+          .map((value) => new Option(t(presentOrderStatus(value).label), value))
       )
       $('status-filter').value = oldStatus
       render()
@@ -1188,22 +1466,25 @@ export async function startLibrary(
       dateBadge(order),
       node(
         'span',
-        `Version ${record.revision} · Checked ${dateLabel(record.lastCheckedAt)}`
+        uiMessage('Version {0} · Checked {1}', {
+          0: record.revision,
+          1: () => dateLabel(record.lastCheckedAt),
+        })
       )
     )
-    const identity = node('div', undefined, 'order-detail-identity'),
-      copyNumber = node('button', 'Copy order number')
-    decorateIcon(copyNumber, 'copy', { iconOnly: true })
-    copyNumber.type = 'button'
-    preparationHelp(copyNumber, 'Copy the complete order number.')
-    copyNumber.addEventListener('click', () => {
-      void copyAction(copyNumber, () =>
-        navigator.clipboard.writeText(order.orderId)
-      )
-    })
-    identity.append(node('p', `ORDER ${order.orderId}`, 'eyebrow'), copyNumber)
-    content.replaceChildren(identity, node('h2', order.sellerName), metadata)
-    const link = node('a', 'Open original order ↗')
+    const identity = node('div', undefined, 'order-detail-identity')
+    identity.append(
+      copyTextButton(order.orderId, {
+        label: 'Copy order number',
+        className: 'order-reference',
+      })
+    )
+    const sellerHeading = node('h2')
+    sellerHeading.append(
+      copyTextButton(order.sellerName, { label: 'Copy store name' })
+    )
+    content.replaceChildren(identity, sellerHeading, metadata)
+    const link = node('a', uiMessage('Open original order ↗'))
     link.href = order.sourceUrl
     link.target = '_blank'
     link.rel = 'noreferrer'
@@ -1212,7 +1493,9 @@ export async function startLibrary(
       content.append(
         node(
           'p',
-          'Seller unavailable on the source page. Products and totals are saved. Identify the seller in Prepare labels before assigning label codes.',
+          uiMessage(
+            'Seller unavailable on the source page. Products and totals are saved. Identify the seller in Prepare packing list before assigning label codes.'
+          ),
           'packing-help'
         )
       )
@@ -1257,33 +1540,37 @@ export async function startLibrary(
         : []),
       ['Order total', order.totals.payable],
     ])
-      totals.append(node('dt', label), node('dd', `¥ ${value}`))
+      totals.append(node('dt', uiMessage(label)), node('dd', `¥ ${value}`))
     content.append(
       totals,
       node(
         'p',
-        'Price changes not already included in product discounts are allocated in proportion to each product’s value after its own discounts. Wholesale reductions already in prices are counted once. Order-only shop and promotion discounts, shipping, customization services and red-packet payment reductions stay separate. Discounts are totals per row.'
+        uiMessage(
+          'Price changes not already included in product discounts are allocated in proportion to each product’s value after its own discounts. Wholesale reductions already in prices are counted once. Order-only shop and promotion discounts, shipping, customization services and red-packet payment reductions stay separate. Discounts are totals per row.'
+        )
       )
     )
     if (order.foreignCurrencyFeeUnspecified)
       content.append(
         node(
           'p',
-          'Foreign-currency payment fee: amount not shown by the page. The CNY order total reconciles; no fee amount has been assumed.'
+          uiMessage(
+            'Foreign-currency payment fee: amount not shown by the page. The CNY order total reconciles; no fee amount has been assumed.'
+          )
         )
       )
-    const notesLabel = node('label', 'Your notes'),
+    const notesLabel = node('label', uiMessage('Your notes')),
       notes = node('textarea')
     notes.id = 'order-notes'
     notesLabel.htmlFor = notes.id
     notes.value = record.notes
-    const tagsLabel = node('label', 'Tags (comma separated)'),
+    const tagsLabel = node('label', uiMessage('Tags (comma separated)')),
       tags = node('input')
     tags.type = 'text'
     tags.id = 'order-tags'
     tagsLabel.htmlFor = tags.id
     tags.value = record.tags.join(', ')
-    const save = node('button', 'Save notes', 'primary')
+    const save = node('button', uiMessage('Save notes'), 'primary')
     save.addEventListener('click', async () => {
       try {
         await send('LIBRARY_NOTES', {
@@ -1296,14 +1583,14 @@ export async function startLibrary(
         })
         $('order-details').close()
         await refresh()
-        feedback('Notes saved. Source refreshes will preserve them.')
+        feedback(uiMessage('Notes saved. Source refreshes will preserve them.'))
       } catch (error) {
         feedback(error.message, true)
       }
     })
     content.append(notesLabel, notes, tagsLabel, tags, save)
     const history = node('details')
-    history.append(node('summary', 'Previous versions'))
+    history.append(node('summary', uiMessage('Previous versions')))
     content.append(history)
     $('order-details').showModal()
     const versions = await send('LIBRARY_HISTORY', { orderId: order.orderId })
@@ -1311,7 +1598,9 @@ export async function startLibrary(
       history.append(
         node(
           'p',
-          'No earlier version yet. A changed order creates a new version automatically.'
+          uiMessage(
+            'No earlier version yet. A changed order creates a new version automatically.'
+          )
         )
       )
     for (const previous of versions) {
@@ -1319,12 +1608,19 @@ export async function startLibrary(
       item.append(
         node(
           'p',
-          `${dateLabel(previous.snapshot.observedAt)} · ${previous.snapshot.items.length} products · Total ¥ ${previous.snapshot.totals.payable}`
+          uiMessage('{0} · {1} products · Total ¥ {2}', {
+            0: () => dateLabel(previous.snapshot.observedAt),
+            1: previous.snapshot.items.length,
+            2: previous.snapshot.totals.payable,
+          })
         )
       )
       for (const old of previous.snapshot.items) {
         const current = order.items.find((row) => row.entryId === old.entryId)
-        if (!current) item.append(node('p', `Removed: ${old.description}`))
+        if (!current)
+          item.append(
+            node('p', uiMessage('Removed: {0}', { 0: old.description }))
+          )
         else {
           const changes = [
             'description',
@@ -1364,7 +1660,11 @@ export async function startLibrary(
         for (let index = 0; index < rows.length; index++) {
           if (index % 10 === 0)
             progress(
-              `Preparing images ${index + 1}–${Math.min(rows.length, index + 10)} of ${rows.length}…`
+              uiMessage('Preparing images {0}–{1} of {2}…', {
+                0: index + 1,
+                1: Math.min(rows.length, index + 10),
+                2: rows.length,
+              })
             )
           const url = rows[index].thumbnail
           if (!originals.has(url)) {
@@ -1430,12 +1730,13 @@ export async function startLibrary(
       copyBusy = true
       updateSelection()
       const abort = new AbortController()
-      const cancel = node('button', 'Cancel image', 'copy-cancel')
+      const cancel = node('button', uiMessage('Cancel image'), 'copy-cancel')
       cancel.hidden = true
       cancel.onclick = () => abort.abort()
       $('copy-excel-image').after(cancel)
       try {
         return await copyExcelImage(rows, {
+          renderCartonMark: packing.createCartonMarkRenderer(),
           loadImage: async (url) => {
             const image = await send('IMAGE_GET', { url })
             return typeof image === 'string' ? image : image.dataUrl
@@ -1492,7 +1793,9 @@ export async function startLibrary(
       orderIds: frozen,
     })
     await refresh()
-    feedback('Refresh started. Pause from Activity or the progress bar.')
+    feedback(
+      uiMessage('Refresh started. Pause from Activity or the progress bar.')
+    )
   }
   action('refresh-orders', () =>
     refreshOrders(scopedOrders().map(({ snapshot }) => snapshot.orderId))
@@ -1528,7 +1831,10 @@ export async function startLibrary(
     if (
       !selectedOrders.size ||
       !confirm(
-        `Remove ${selectedOrders.size} orders and their history from this browser? A saved backup can restore them.`
+        t(
+          'Remove {count} orders and their history from this browser? A saved backup can restore them.',
+          { count: selectedOrders.size }
+        )
       )
     )
       return
@@ -1536,7 +1842,7 @@ export async function startLibrary(
     orderSelection.reset()
     productSelection.reset()
     await refresh()
-    feedback('Selected orders removed from the library.')
+    feedback(uiMessage('Selected orders removed from the library.'))
   })
   action('backup', async () => {
     const backup = await send('BACKUP_EXPORT')
@@ -1544,7 +1850,7 @@ export async function startLibrary(
       backup,
       `1688-orders-${new Date().toISOString().slice(0, 10)}.json`
     )
-    feedback('Backup requested. Check your downloads.')
+    feedback(uiMessage('Backup requested. Check your downloads.'))
   })
   action('restore', () => $('backup-file').click())
   $('backup-file').addEventListener('change', async () => {
@@ -1553,7 +1859,7 @@ export async function startLibrary(
       if (!file) return
       await send('BACKUP_RESTORE', { backup: JSON.parse(await file.text()) })
       await refresh()
-      feedback('Backup restored. Existing notes were preserved.')
+      feedback(uiMessage('Backup restored. Existing notes were preserved.'))
     } catch (error) {
       feedback(error.message, true)
     } finally {
@@ -1619,6 +1925,21 @@ export async function startLibrary(
   addEventListener('focus', () =>
     refresh().catch((error) => feedback(error.message, true))
   )
+  onLanguageChange(() => {
+    updateLanguageButtons()
+    renderMonthOptions()
+    const status = $('status-filter').value
+    $('status-filter').replaceChildren(
+      new Option(t('All statuses'), ''),
+      ...[...new Set(records.map((record) => record.snapshot.status))]
+        .sort()
+        .map((value) => new Option(t(presentOrderStatus(value).label), value))
+    )
+    $('status-filter').value = status
+    // Only read-only order views are rebuilt. Packing and dialog fields stay mounted.
+    jobStructure = ''
+    render()
+  })
   try {
     await repository?.refreshNamingSuggestions?.()
     packing = await startPackingWorkspace({
@@ -1646,7 +1967,7 @@ if (globalThis.chrome?.runtime?.id) {
     try {
       await startLibrary(undefined, await openDatabase())
     } catch (error) {
-      $('feedback').textContent = error.message
+      bindText($('feedback'), error.message)
       $('feedback').className = 'error'
     }
   })()

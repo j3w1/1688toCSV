@@ -183,12 +183,17 @@ test('table photos open the shared original-image viewer; dates and statuses are
   await seed(extension)
   const page = await openLibrary(extension)
   const row = page.locator('#sheet-body tr[data-selection-key]').first()
-  await expect(row.locator('time.purchase-date')).toHaveAttribute(
+  const header = page.locator('.order-section-heading').first()
+  await expect(header.locator('time.purchase-date')).toHaveAttribute(
     'datetime',
     /2026-\d{2}-\d{2}/
   )
-  await expect(row.locator('.order-status')).toHaveText('Awaiting shipment')
-  await expect(row.locator('.order-status')).toHaveAttribute('title', '待发货')
+  await expect(header.locator('.order-status')).toHaveText('Awaiting shipment')
+  await expect(header.locator('.order-status')).toHaveAttribute(
+    'title',
+    '待发货'
+  )
+  await expect(row.locator('time.purchase-date, .order-status')).toHaveCount(0)
   await row.getByRole('button', { name: /^Zoom product photo/ }).click()
   const photo = page.getByRole('dialog', { name: 'Product photo', exact: true })
   await expect(photo).toBeVisible()
@@ -757,9 +762,9 @@ test('purchase dates group orders by month while separators stay out of copied v
     '8 Oct 2026',
     '25 Sept 2026',
   ])
-  await expect(
-    page.locator('#sheet-body tr[data-selection-key]').first()
-  ).toContainText('12 Oct 2026')
+  await expect(page.locator('.order-section-heading').first()).toContainText(
+    '12 Oct 2026'
+  )
   await page
     .locator('.order-card')
     .filter({ hasText: 'Habitat Studio' })
@@ -780,7 +785,7 @@ test('purchase dates group orders by month while separators stay out of copied v
   await expect(orderBands.first()).toContainText('Habitat Studio')
   await expect(orderBands.first()).toContainText('3 matching products')
   await expect(orderBands.first().locator('.order-section-number')).toHaveText(
-    /^Order \d+$/
+    /^\d+$/
   )
   await orderBands.first().click()
   await expect(page.locator('#sheet-body tr.is-selected')).toHaveCount(0)

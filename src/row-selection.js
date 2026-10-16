@@ -7,6 +7,7 @@ export function createRowSelection({
   getKeys,
   onChange,
   onActivate,
+  additive = false,
 }) {
   const rows = new Map()
   let anchor = null,
@@ -30,9 +31,9 @@ export function createRowSelection({
   function select(key, event = {}) {
     const keys = getKeys()
     if (!keys.includes(key)) return
-    const additive = event.ctrlKey || event.metaKey
+    const extend = additive || event.ctrlKey || event.metaKey
     if (event.shiftKey && keys.includes(anchor)) {
-      if (!additive) selected.clear()
+      if (!extend) selected.clear()
       const start = keys.indexOf(anchor),
         end = keys.indexOf(key)
       for (const id of keys.slice(
@@ -42,7 +43,7 @@ export function createRowSelection({
         selected.add(id)
     } else {
       const wasSelected = selected.has(key)
-      if (!additive) selected.clear()
+      if (!extend) selected.clear()
       if (wasSelected) selected.delete(key)
       else selected.add(key)
       anchor = key

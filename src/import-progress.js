@@ -1,3 +1,5 @@
+import { t, getLocale, bindText, bindAttribute } from './i18n.js'
+
 // Small read-only views of durable importer checkpoints. Polling never advances a job.
 export function importProgress(job) {
   const orders = job.orders?.length ? job.orders : null
@@ -41,7 +43,7 @@ export function importProgress(job) {
   }
 }
 
-const number = (value) => value.toLocaleString('en-US')
+const number = (value) => value.toLocaleString(getLocale())
 const age = (time, now) => {
   const seconds = Math.max(0, Math.floor((now - time) / 1000))
   return seconds < 60
@@ -60,57 +62,96 @@ export function progressPresentation(input, now = Date.now()) {
     : job.total
   const value = Math.min(max, scan ? job.page : job.completed + job.failed)
   const percent = max ? Math.floor((value / max) * 100) : null
-  const title = running
-    ? scan
-      ? 'Finding orders'
-      : 'Collecting product details'
-    : job.state === 'completed-with-errors'
-      ? 'Finished · some orders need attention'
-      : job.state === 'completed'
-        ? 'Collection completed'
-        : 'Collection paused'
-  const label = scan ? 'List pages scanned' : 'Orders processed'
+  const title = t(
+    running
+      ? scan
+        ? 'Finding orders'
+        : 'Collecting product details'
+      : job.state === 'completed-with-errors'
+        ? 'Finished · some orders need attention'
+        : job.state === 'completed'
+          ? 'Collection completed'
+          : 'Collection paused'
+  )
+  const label = t(scan ? 'List pages scanned' : 'Orders processed')
   const meter = max
-    ? `${number(value)} / ${number(max)} ${scan ? 'pages scanned' : 'processed'} · ${percent}%`
+    ? t('{value} / {max} {unit} · {percent}%', {
+        value: number(value),
+        max: number(max),
+        unit: t(scan ? 'pages scanned' : 'processed'),
+        percent,
+      })
     : scan
-      ? 'Waiting for the list count'
-      : 'Waiting for the order count'
-  const counts = `${number(job.completed)} saved · ${number(job.failed)} need attention · ${number(Math.max(0, job.total - job.completed - job.failed))} pending`
+      ? t('Waiting for the list count')
+      : t('Waiting for the order count')
+  const counts = t(
+    '{saved} saved · {failed} need attention · {pending} pending',
+    {
+      saved: number(job.completed),
+      failed: number(job.failed),
+      pending: number(Math.max(0, job.total - job.completed - job.failed)),
+    }
+  )
   const rows =
     job.countedOrders === job.completed
-      ? `${number(job.collectedRows)} product rows saved`
+      ? t('{rows} product rows saved', { rows: number(job.collectedRows) })
       : job.countedOrders
-        ? `${number(job.collectedRows)} product rows counted in ${number(job.countedOrders)} of ${number(job.completed)} saved orders`
-        : 'Product-row count available after resuming'
+        ? t(
+            '{rows} product rows counted in {counted} of {saved} saved orders',
+            {
+              rows: number(job.collectedRows),
+              counted: number(job.countedOrders),
+              saved: number(job.completed),
+            }
+          )
+        : t('Product-row count available after resuming')
   let current = ''
   if (running) {
     if (scan)
-      current = `${number(job.discovered)} orders found · details are collected after discovery`
+      current = t(
+        '{count} orders found · details are collected after discovery',
+        { count: number(job.discovered) }
+      )
     else if (job.currentOrderId && job.detailStage !== 'next') {
       const stages = {
-        loading: 'Waiting for the order page',
-        reading: 'Reading products and checking totals',
-        retrying: 'Waiting to retry the page',
-        saving: `Saving ${number(job.currentRows || 0)} product rows`,
+        loading: t('Waiting for the order page'),
+        reading: t('Reading products and checking totals'),
+        retrying: t('Waiting to retry the page'),
+        saving: t('Saving {rows} product rows', {
+          rows: number(job.currentRows || 0),
+        }),
       }
-      current = `…${job.currentOrderId.slice(-8)} · ${stages[job.detailStage] || 'Waiting for the reader'}`
-      if (job.detailAttempts) current += ` · attempt ${job.detailAttempts}/3`
+      current = `…${job.currentOrderId.slice(-8)} · ${stages[job.detailStage] || t('Waiting for the reader')}`
+      if (job.detailAttempts)
+        current += t(' · attempt {count}/3', { count: job.detailAttempts })
       if (Number.isFinite(job.detailStartedAt))
-        current += ` · ${age(job.detailStartedAt, now)} on this order`
+        current += t(' · {time} on this order', {
+          time: age(job.detailStartedAt, now),
+        })
       if (now - job.detailStartedAt >= 20000 && job.detailStage !== 'saving')
-        current +=
+        current += t(
           ' · Taking longer; check the reader tab for sign-in or loading.'
-    } else current = 'Moving to the next order'
+        )
+    } else current = t('Moving to the next order')
   }
   const last = job.latestResult
   let latest = ''
   if (last) {
     latest =
       last.outcome === 'saved'
-        ? `Last saved: …${last.orderId.slice(-8)} · ${number(last.rows)} product rows${last.sellerName ? ` · ${last.sellerName}` : ''}${last.payable ? ` · CNY ${last.payable}` : ''}`
-        : `Last attempt: …${last.orderId.slice(-8)} · not saved — ${last.error}`
+        ? t('Last saved: …{order} · {rows} product rows{seller}{amount}', {
+            order: last.orderId.slice(-8),
+            rows: number(last.rows),
+            seller: last.sellerName ? ` · ${last.sellerName}` : '',
+            amount: last.payable ? ` · CNY ${last.payable}` : '',
+          })
+        : t('Last attempt: …{order} · not saved — {error}', {
+            order: last.orderId.slice(-8),
+            error: t(last.error),
+          })
     const at = Date.parse(last.at)
-    if (running && Number.isFinite(at)) latest += ` · ${age(at, now)} ago`
+    if (running && Number.isFinite(at))
+      latest += t(' · {time} ago', { time: age(at, now) })
   }
   return {
     title,
@@ -122,9 +163,10 @@ export function progressPresentation(input, now = Date.now()) {
     rows,
     current,
     latest,
-    error:
+    error: t(
       job.error ||
-      (running && job.detailStage === 'retrying' ? job.detailError || '' : ''),
+        (running && job.detailStage === 'retrying' ? job.detailError || '' : '')
+    ),
   }
 }
 
@@ -144,7 +186,7 @@ export const importProgressStyles = `
 export function createProgressView(document) {
   const element = document.createElement('section')
   element.className = 'import-progress'
-  element.setAttribute('aria-label', 'Import progress')
+  bindAttribute(element, 'aria-label', 'Import progress')
   const fields = {}
   for (const [key, tag] of [
     ['title', 'strong'],

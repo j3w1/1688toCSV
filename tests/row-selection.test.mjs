@@ -2,10 +2,14 @@ import test from 'node:test'
 import assert from 'node:assert/strict'
 import { createRowSelection } from '../src/row-selection.js'
 
-function setup() {
+function setup(options = {}) {
   const selected = new Set()
   let keys = ['a', 'b', 'c', 'd', 'e']
-  const selection = createRowSelection({ selected, getKeys: () => keys })
+  const selection = createRowSelection({
+    selected,
+    getKeys: () => keys,
+    ...options,
+  })
   return {
     selected,
     selection,
@@ -14,6 +18,19 @@ function setup() {
     },
   }
 }
+
+test('packing groups toggle independently by default and Shift adds a range', () => {
+  const { selected, selection } = setup({ additive: true })
+  selection.select('a')
+  selection.select('c')
+  assert.deepEqual([...selected], ['a', 'c'])
+  selection.select('e', { shiftKey: true })
+  assert.deepEqual([...selected], ['a', 'c', 'd', 'e'])
+  selection.select('c')
+  assert.deepEqual([...selected], ['a', 'd', 'e'])
+  selection.clear()
+  assert.equal(selected.size, 0)
+})
 
 test('row clicks replace selection; Ctrl and Meta independently toggle rows', () => {
   const { selected, selection } = setup()

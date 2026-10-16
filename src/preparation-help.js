@@ -1,3 +1,5 @@
+import { bindText } from './i18n.js'
+
 let activeHint = null
 const hints = new WeakMap()
 const interactionModes = new WeakMap()
@@ -29,7 +31,7 @@ function interactionMode(doc) {
 /** Add help to an existing field or action, without another button or tab stop. */
 export function preparationHelp(target, text) {
   if (hints.has(target)) {
-    hints.get(target).textContent = text
+    bindText(hints.get(target), text)
     return target
   }
   const doc = target.ownerDocument,
@@ -38,7 +40,7 @@ export function preparationHelp(target, text) {
     nativePopover = 'popover' in panel
   panel.id = `help-${crypto.randomUUID()}`
   panel.className = 'preparation-help-popover'
-  panel.textContent = text
+  bindText(panel, text)
   hints.set(target, panel)
   target.removeAttribute('title')
   panel.setAttribute('role', 'tooltip')

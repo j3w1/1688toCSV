@@ -7,8 +7,9 @@ const MAX_EDGE = 8192
 const CACHE_BYTES = 4 * 1024 * 1024
 const PADDING = 10
 const LINE_HEIGHT = 20
-const PHOTO_SIZE = 88
-const PHOTO_PADDING = 6
+const PHOTO_SIZE = 126
+const PHOTO_PADDING = 3
+const MARK_PADDING = 8
 const FONT_FAMILY =
   '"Segoe UI", "Microsoft YaHei", "Noto Sans CJK SC", sans-serif'
 const BODY_FONT = `16px ${FONT_FAMILY}`
@@ -17,17 +18,18 @@ const NUMBER_FONT = `18px ${FONT_FAMILY}`
 const QUANTITY_FONT = `700 19px ${FONT_FAMILY}`
 const CODE_FONT = `17px ${FONT_FAMILY}`
 const CODE_SUFFIX_FONT = `700 17px ${FONT_FAMILY}`
-const TITLE_FONT = `600 15px ${FONT_FAMILY}`
+const TITLE_FONT = `600 16px ${FONT_FAMILY}`
 const DETAIL_FONT = `14px ${FONT_FAMILY}`
+const ARTICLE_FONT = `600 14px ${FONT_FAMILY}`
 const DETAIL_LABEL_FONT = `600 13px ${FONT_FAMILY}`
 const REORDERED_CODE_COLOR = '#1d4ed8'
 
 export const excelImageColumns = Object.freeze(
   [
     { key: 'number', label: '序号', width: 50, numeric: true },
-    { key: 'thumbnail', label: '图片', width: 100 },
+    { key: 'thumbnail', label: '图片', width: 132 },
     { key: 'description', label: '产品描述', width: 330 },
-    { key: 'baseCode', label: '唛头货号', width: 126 },
+    { key: 'baseCode', label: '唛头货号', width: 172 },
     { key: 'barcode', label: '条码货号', width: 142 },
     { key: 'chineseCategory', label: '中文品类', width: 100 },
     { key: 'price', label: '单价（元）', width: 94, numeric: true },
@@ -51,6 +53,7 @@ function wrap(context, value, width, firstWidth = width) {
   for (const paragraph of String(value)
     .replaceAll('\r\n', '\n')
     .split(/[\r\n]/)) {
+    const paragraphStart = lines.length
     if (!paragraph.trim()) {
       lines.push('')
       continue
@@ -93,9 +96,50 @@ function wrap(context, value, width, firstWidth = width) {
         else line = part
       }
     }
-    lines.push(line.trimEnd())
+    line = line.trimEnd()
+    // A lone final Han character is hard to read (for example 销 / 售).
+    // Move a short suffix from the preceding line without removing source text.
+    const previous = lines.at(-1)
+    if (
+      lines.length > paragraphStart &&
+      /^\p{Script=Han}$/u.test(line) &&
+      previous &&
+      /\p{Script=Han}{2}$/u.test(previous)
+    ) {
+      const parts = [...graphemes.segment(previous)].map(
+        (entry) => entry.segment
+      )
+      const suffix = parts.slice(-2).join('')
+      if (
+        parts.length > 2 &&
+        context.measureText(suffix + line).width <= width
+      ) {
+        lines[lines.length - 1] = parts.slice(0, -2).join('')
+        line = suffix + line
+      }
+    }
+    lines.push(line)
   }
   return lines
+}
+
+function balancedWrap(context, value, width) {
+  let result = wrap(context, value, width)
+  if (result.length < 2 || /[\r\n]/.test(value)) return result
+  const count = result.length
+  let low = width / 2
+  let high = width
+  // Find the narrowest line width that still fits the same number of lines.
+  // This balances centered titles instead of leaving a very short final line.
+  for (let step = 0; step < 9; step++) {
+    const middle = (low + high) / 2
+    const candidate = wrap(context, value, middle)
+    if (candidate.length <= count) {
+      high = middle
+      result = candidate
+    } else low = middle
+  }
+  return result
 }
 
 function snapshot(row, index) {
@@ -126,6 +170,10 @@ function snapshot(row, index) {
     throw new Error(
       `Product row ${index + 1} has no photo. Add or refresh its photo before copying.`
     )
+  if (values.baseCode.trim() && !values.chineseCategory.trim())
+    throw new Error(
+      `Product row ${index + 1} (${values.baseCode}) needs a Chinese category before copying its carton mark.`
+    )
   return Object.freeze(values)
 }
 
@@ -137,7 +185,10 @@ function descriptionCell(context, source, width) {
     .split(/[\r\n]/)
     .map((value) => value.trim())
     .filter(Boolean)
-  const title = source.title.trim() || paragraphs[0] || ''
+  const title =
+    source.title.trim() ||
+    (/^[^:：]{1,24}[:：]/.test(paragraphs[0] || '') ? '' : paragraphs[0]) ||
+    ''
   if (paragraphs[0] === title) paragraphs.shift()
   else if (source.description.trim().startsWith(title) && title)
     paragraphs.splice(
@@ -175,8 +226,15 @@ function descriptionCell(context, source, width) {
   const blocks = sections
     .filter((section) => section.value)
     .map((section, index) => {
-      const font = section.title ? TITLE_FONT : DETAIL_FONT
-      const lineHeight = section.title ? 22 : LINE_HEIGHT
+      const article = /^(?:货号|款号|商品编号|产品编号)$/.test(
+        section.label || ''
+      )
+      const font = section.title
+        ? TITLE_FONT
+        : article
+          ? ARTICLE_FONT
+          : DETAIL_FONT
+      const lineHeight = section.title ? 23 : LINE_HEIGHT
       const label = section.label ? `${section.label}：` : ''
       context.font = DETAIL_LABEL_FONT
       let labelWidth = context.measureText(label).width
@@ -185,8 +243,10 @@ function descriptionCell(context, source, width) {
       const labelLines = ownLabel ? wrap(context, label, width) : []
       if (ownLabel) labelWidth = 0
       context.font = font
-      const lines = wrap(context, section.value, width, width - labelWidth)
-      const gapBefore = index ? (index === 1 ? 6 : 3) : 0
+      const lines = section.title
+        ? balancedWrap(context, section.value, width)
+        : wrap(context, section.value, width, width - labelWidth)
+      const gapBefore = index ? (index === 1 || article ? 7 : 4) : 0
       const blockHeight = (lines.length + labelLines.length) * lineHeight
       height += gapBefore + blockHeight
       return Object.freeze({
@@ -295,9 +355,26 @@ export function planExcelImage(rows) {
     let entries = []
     let start = 0
     let cssHeight = headerHeight + 2
-    let seen = new Set()
     let previous = null
     function finish() {
+      const markSpans = []
+      for (const [index, row] of entries.entries()) {
+        if (!row.source.baseCode.trim()) continue
+        const last = markSpans.at(-1)
+        if (last && last.end === index && last.groupKey === row.groupKey) {
+          last.end++
+          last.height += row.height
+          last.manualReordered ||= row.source.manualReordered
+        } else
+          markSpans.push({
+            start: index,
+            end: index + 1,
+            height: row.height,
+            groupKey: row.groupKey,
+            source: row.source,
+            manualReordered: row.source.manualReordered,
+          })
+      }
       plans.push(
         Object.freeze({
           start,
@@ -310,12 +387,26 @@ export function planExcelImage(rows) {
           headerHeight,
           headers: Object.freeze(headers),
           rows: Object.freeze(entries),
+          markSpans: Object.freeze(
+            markSpans.map((span) =>
+              Object.freeze({
+                ...span,
+                caption: codeCell(
+                  context,
+                  span.source.baseCode,
+                  excelImageColumns.find((column) => column.key === 'baseCode')
+                    .width -
+                    MARK_PADDING * 2,
+                  span.manualReordered
+                ),
+              })
+            )
+          ),
         })
       )
       start += entries.length
       entries = []
       cssHeight = headerHeight + 2
-      seen = new Set()
       previous = null
     }
     function prepare(source, groupKey) {
@@ -324,7 +415,7 @@ export function planExcelImage(rows) {
           return descriptionCell(context, source, column.width - PADDING * 2)
         let text =
           column.key === 'thumbnail' ||
-          (column.key === 'baseCode' && seen.has(groupKey))
+          (column.key === 'baseCode' && previous?.groupKey === groupKey)
             ? ''
             : source[column.key]
         if (column.key === 'baseCode' || column.key === 'barcode')
@@ -373,9 +464,15 @@ export function planExcelImage(rows) {
     }
     for (const [index, row] of rows.entries()) {
       const source = snapshot(row, index)
-      const groupKey = source.groupId
-        ? JSON.stringify([source.orderId, source.groupId])
-        : `row:${index}`
+      const groupKey =
+        source.groupId && source.baseCode
+          ? JSON.stringify([
+              source.orderId,
+              source.groupId,
+              source.baseCode,
+              source.chineseCategory,
+            ])
+          : `row:${index}`
       let entry = prepare(source, groupKey)
       if (entry.height + headerHeight + 2 > maxHeight)
         throw new Error(
@@ -387,7 +484,6 @@ export function planExcelImage(rows) {
       }
       entries.push(entry)
       cssHeight += entry.height
-      seen.add(groupKey)
       previous = entry
     }
     if (entries.length) finish()
@@ -428,10 +524,12 @@ async function yieldUI() {
 /** Render one confirmed batch, with sequential photos and a bounded bitmap cache. */
 export async function renderExcelImage(
   plan,
-  { loadImage, onProgress, signal } = {}
+  { loadImage, renderCartonMark, onProgress, signal } = {}
 ) {
   if (!plan?.rows?.length || typeof loadImage !== 'function')
     throw new Error('Choose an Excel image batch and photo loader.')
+  if (plan.markSpans.length && typeof renderCartonMark !== 'function')
+    throw new Error('A carton mark renderer is required for prepared products.')
   if (
     plan.width > MAX_EDGE ||
     plan.height > MAX_EDGE ||
@@ -444,17 +542,39 @@ export async function renderExcelImage(
   const { canvas, context } = canvasContext()
   const photos = new Map()
   let cacheBytes = 0
-  async function photo(source, number) {
-    const cached = photos.get(source)
+  const markColumn = excelImageColumns.find(
+    (column) => column.key === 'baseCode'
+  )
+  const markLeft =
+    1 +
+    excelImageColumns
+      .slice(0, excelImageColumns.indexOf(markColumn))
+      .reduce((width, column) => width + column.width, 0)
+  const markRows = new Map(
+    plan.markSpans.flatMap((span) =>
+      Array.from({ length: span.end - span.start }, (_, offset) => [
+        span.start + offset,
+        span,
+      ])
+    )
+  )
+  async function bitmapFor(source, number, { mark = false, loader } = {}) {
+    const cacheKey = `${mark ? 'mark' : 'photo'}:${source}`
+    const cached = photos.get(cacheKey)
     if (cached) {
-      photos.delete(source)
-      photos.set(source, cached)
+      photos.delete(cacheKey)
+      photos.set(cacheKey, cached)
       return cached.bitmap
     }
     let bitmap
     try {
-      const loaded = await abortable(Promise.resolve(loadImage(source)), signal)
+      const loaded = await abortable(
+        Promise.resolve(loader ? loader() : loadImage(source)),
+        signal
+      )
       aborted(signal)
+      if (mark && !(loaded instanceof Blob))
+        throw new Error('No carton mark image was returned.')
       if (!(loaded instanceof Blob) && (typeof loaded !== 'string' || !loaded))
         throw new Error('No photo data was returned.')
       const blob =
@@ -463,7 +583,8 @@ export async function renderExcelImage(
           : await (await fetch(loaded, { signal })).blob()
       aborted(signal)
       bitmap = await createImageBitmap(blob, {
-        resizeWidth: PHOTO_SIZE * SCALE,
+        resizeWidth:
+          (mark ? markColumn.width - MARK_PADDING * 2 : PHOTO_SIZE) * SCALE,
         resizeQuality: 'high',
       })
       aborted(signal)
@@ -479,12 +600,16 @@ export async function renderExcelImage(
         cacheBytes -= oldest.bytes
         photos.delete(key)
       }
-      photos.set(source, { bitmap, bytes })
+      photos.set(cacheKey, { bitmap, bytes })
       cacheBytes += bytes
       return bitmap
     } catch (error) {
       bitmap?.close()
       if (error.name === 'AbortError') throw error
+      if (mark)
+        throw new Error(
+          `Carton mark for product row ${number} could not be created. Check its code and Chinese category, then try again. ${error.message}`
+        )
       throw new Error(
         `Photo for product row ${number} could not be loaded. Refresh the photo and try again. ${error.message}`
       )
@@ -551,6 +676,39 @@ export async function renderExcelImage(
       }
     }
   }
+  async function cartonMark(span, top) {
+    const bitmap = await bitmapFor(span.groupKey, span.source.number, {
+      mark: true,
+      loader: () => renderCartonMark(span.source, { signal }),
+    })
+    aborted(signal)
+    const caption = span.caption
+    const gap = 5
+    const ratio = Math.min(
+      (markColumn.width - MARK_PADDING * 2) / bitmap.width,
+      (span.height - MARK_PADDING * 2 - caption.height - gap) / bitmap.height
+    )
+    if (!(ratio > 0))
+      throw new Error('The carton mark cannot fit in the Excel image.')
+    const width = bitmap.width * ratio
+    const height = bitmap.height * ratio
+    const y = top + (span.height - height - gap - caption.height) / 2
+    context.fillStyle = '#fff'
+    context.fillRect(
+      markLeft + 1,
+      top + 1,
+      markColumn.width - 2,
+      span.height - 2
+    )
+    context.drawImage(
+      bitmap,
+      markLeft + (markColumn.width - width) / 2,
+      y,
+      width,
+      height
+    )
+    text(caption, markLeft, y + height + gap, markColumn, caption.height)
+  }
   try {
     canvas.width = plan.width
     canvas.height = plan.height
@@ -579,7 +737,7 @@ export async function renderExcelImage(
     for (const [index, row] of plan.rows.entries()) {
       await yieldUI()
       aborted(signal)
-      const bitmap = await photo(row.source.thumbnail, row.source.number)
+      const bitmap = await bitmapFor(row.source.thumbnail, row.source.number)
       aborted(signal)
       if (index % 2) {
         context.fillStyle = '#faf9f6'
@@ -601,6 +759,8 @@ export async function renderExcelImage(
             width,
             height
           )
+        } else if (column.key === 'baseCode') {
+          // Draw one mark after every row in its contiguous merged cell is painted.
         } else if (column.key === 'description')
           description(row.cells[cellIndex], x, y, column, row.height)
         else text(row.cells[cellIndex], x, y, column, row.height)
@@ -614,9 +774,16 @@ export async function renderExcelImage(
           ? '#a79f92'
           : '#ded9cf'
       context.moveTo(1, y)
+      const span = markRows.get(index)
+      if (span && index > span.start) {
+        context.lineTo(markLeft, y)
+        context.moveTo(markLeft + markColumn.width, y)
+      }
       context.lineTo(plan.cssWidth - 1, y)
       context.stroke()
       y += row.height
+      if (span && index === span.end - 1)
+        await cartonMark(span, y - span.height)
       onProgress?.({ completed: index + 1, total: plan.rowCount })
     }
     aborted(signal)

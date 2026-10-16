@@ -1,4 +1,41 @@
-import { centsToMoney, moneyToCents } from './money.js'
+import { centsToMoney, lineGrossCents, moneyToCents } from './money.js'
+
+/** Sum exactly the supplied product rows, without allocating order charges. */
+export function summarizeProductRows(rows) {
+  const sums = { quantity: 0n, gross: 0n, afterDiscount: 0n }
+  const unknownCounts = { quantity: 0, gross: 0, afterDiscount: 0 }
+  for (const row of rows) {
+    if (typeof row?.quantity === 'string' && /^[1-9]\d*$/.test(row.quantity))
+      sums.quantity += BigInt(row.quantity)
+    else unknownCounts.quantity++
+    let gross = null
+    try {
+      gross = lineGrossCents(row?.price, row?.quantity)
+      sums.gross += gross
+    } catch {
+      unknownCounts.gross++
+    }
+    try {
+      const discount = moneyToCents(row?.discount)
+      if (gross === null || discount > gross)
+        throw new Error('Invalid row amount')
+      // Saved discounts include existing allocated seller adjustments. Negative
+      // discounts represent price increases; do not allocate anything new here.
+      sums.afterDiscount += gross - discount
+    } catch {
+      unknownCounts.afterDiscount++
+    }
+  }
+  return {
+    rowCount: rows.length,
+    quantity: unknownCounts.quantity ? null : String(sums.quantity),
+    gross: unknownCounts.gross ? null : centsToMoney(sums.gross),
+    afterDiscount: unknownCounts.afterDiscount
+      ? null
+      : centsToMoney(sums.afterDiscount),
+    unknownCounts,
+  }
+}
 
 const requiredFields = [
   'goodsGross',

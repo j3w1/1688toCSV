@@ -1,32 +1,45 @@
+import { message as uiMessage, bindText, bindAttribute } from './i18n.js'
 import { planExcelImage, renderExcelImage } from './excel-image.js'
 import { element } from './ui.js'
 
 function choosePlan(plans, count) {
   if (plans.length === 1) return Promise.resolve(plans[0])
   const dialog = element('dialog', undefined, 'scope-dialog')
-  dialog.setAttribute('aria-label', 'Choose Excel image batch')
+  bindAttribute(dialog, 'aria-label', uiMessage('Choose Excel image batch'))
   const number = element('input')
   number.type = 'number'
   number.min = '1'
   number.max = String(plans.length)
   number.value = '1'
-  number.setAttribute('aria-label', 'Image batch number')
+  bindAttribute(number, 'aria-label', uiMessage('Image batch number'))
   const range = element('p')
   const update = () => {
     const plan = plans[Number(number.value) - 1]
-    range.textContent = plan
-      ? `Batch ${number.value} of ${plans.length} · rows ${plan.start + 1}–${plan.end} of ${count}`
-      : 'Choose a valid batch number.'
+    bindText(
+      range,
+      plan
+        ? uiMessage('Batch {0} of {1} · rows {2}–{3} of {4}', {
+            0: number.value,
+            1: plans.length,
+            2: plan.start + 1,
+            3: plan.end,
+            4: count,
+          })
+        : uiMessage('Choose a valid batch number.')
+    )
   }
   number.oninput = update
   update()
-  const cancel = element('button', 'Cancel')
-  const proceed = element('button', 'Copy this batch', 'primary')
+  const cancel = element('button', uiMessage('Cancel'))
+  const proceed = element('button', uiMessage('Copy this batch'), 'primary')
   dialog.append(
-    element('h2', 'Copy the table in numbered images'),
+    element('h2', uiMessage('Copy the table in numbered images')),
     element(
       'p',
-      `${count} rows need ${plans.length} images at full quality. Choose one batch, then repeat for the others.`
+      uiMessage(
+        '{0} rows need {1} images at full quality. Choose one batch, then repeat for the others.',
+        { 0: count, 1: plans.length }
+      )
     ),
     number,
     range,
@@ -51,7 +64,10 @@ function choosePlan(plans, count) {
   })
 }
 
-export async function copyExcelImage(rows, { loadImage, onProgress, signal }) {
+export async function copyExcelImage(
+  rows,
+  { loadImage, renderCartonMark, onProgress, signal }
+) {
   // Freeze only copied values, not the entire library record attached to each row.
   const frozen = rows.map((row) =>
     Object.fromEntries(
@@ -92,9 +108,12 @@ export async function copyExcelImage(rows, { loadImage, onProgress, signal }) {
     signal?.throwIfAborted()
     const { blob } = await renderExcelImage(plan, {
       loadImage,
+      renderCartonMark,
       signal,
       onProgress: ({ completed, total }) =>
-        onProgress?.(`Creating image ${completed}/${total}…`),
+        onProgress?.(
+          uiMessage('Creating image {completed}/{total}…', { completed, total })
+        ),
     })
     signal?.throwIfAborted()
     await navigator.clipboard.write([new ClipboardItem({ 'image/png': blob })])

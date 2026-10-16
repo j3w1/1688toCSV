@@ -484,7 +484,6 @@ test('packing-only backups keep complete included preparations and all issued re
         orderIds: [sources[0].orderId],
       })
       const empty = await library.exportBackup({ orderIds: [] })
-      scoped.packingScope = { month: '2026-12', entryIds: ['2'] }
       const restored = await openOrderDatabase({
         name: `${databaseName}-scoped`,
       })

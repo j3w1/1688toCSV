@@ -376,6 +376,163 @@ export function restoreDefaultPacking(preparation) {
   return draft
 }
 
+/** Describe only changes Reset will make; revisions, timestamps and retained names are not changes. */
+export function defaultPackingChanges(preparation) {
+  if (!preparation.defaultPacking) return []
+  const restored = restoreDefaultPacking(preparation)
+  const beforeGroups = new Map(
+    preparation.groups.map((group, index) => [group.id, { group, index }])
+  )
+  const afterGroups = new Map(
+    restored.groups.map((group, index) => [group.id, { group, index }])
+  )
+  const changes = []
+  for (const groupId of new Set([
+    ...afterGroups.keys(),
+    ...beforeGroups.keys(),
+  ])) {
+    const old = beforeGroups.get(groupId)
+    const next = afterGroups.get(groupId)
+    const before = old?.group
+    const after = next?.group
+    const membership = (group) =>
+      group?.variants.map((variant) => [
+        variant.id,
+        [...variant.entryIds].sort(),
+      ]) || []
+    const same = (a, b) => JSON.stringify(a) === JSON.stringify(b)
+    const members = (group) =>
+      group?.variants.flatMap((variant) => variant.entryIds) || []
+    const beforeVariants = new Map(
+      before?.variants.map((variant) => [variant.id, variant]) || []
+    )
+    const afterVariants = new Map(
+      after?.variants.map((variant) => [variant.id, variant]) || []
+    )
+    const barcodeChanges = []
+    for (const variantId of new Set([
+      ...afterVariants.keys(),
+      ...beforeVariants.keys(),
+    ])) {
+      const previous = beforeVariants.get(variantId)
+      const current = afterVariants.get(variantId)
+      const fields = (variant) =>
+        variant && [
+          variant.variantSuffix,
+          variant.sizeSuffix,
+          variant.size,
+          variant.needsSizeMapping === true,
+        ]
+      if (same(fields(previous), fields(current))) continue
+      barcodeChanges.push({
+        variantId,
+        entryIds: [
+          ...new Set([
+            ...(previous?.entryIds || []),
+            ...(current?.entryIds || []),
+          ]),
+        ],
+        before: previous
+          ? `${before.baseCode}${previous.variantSuffix}${previous.sizeSuffix}`
+          : '',
+        after: current
+          ? `${after.baseCode}${current.variantSuffix}${current.sizeSuffix}`
+          : '',
+        beforeVariantSuffix: previous?.variantSuffix ?? '',
+        afterVariantSuffix: current?.variantSuffix ?? '',
+        beforeSizeSuffix: previous?.sizeSuffix ?? '',
+        afterSizeSuffix: current?.sizeSuffix ?? '',
+        beforeNeedsSizeMapping: previous?.needsSizeMapping === true,
+        afterNeedsSizeMapping: current?.needsSizeMapping === true,
+      })
+    }
+    const change = {
+      groupId,
+      before: before ? structuredClone(before) : null,
+      after: after ? structuredClone(after) : null,
+      entryIds: [...new Set([...members(before), ...members(after)])],
+      beforePosition: old ? old.index + 1 : null,
+      afterPosition: next ? next.index + 1 : null,
+      baseCodeChanged: before?.baseCode !== after?.baseCode,
+      monthChanged: Boolean(
+        before &&
+        after &&
+        groupPackingMonth(preparation, before) !==
+          groupPackingMonth(restored, after)
+      ),
+      groupingChanged: !same(
+        membership(before).sort(([a], [b]) => a.localeCompare(b)),
+        membership(after).sort(([a], [b]) => a.localeCompare(b))
+      ),
+      orderChanged: old?.index !== next?.index,
+      variantOrderChanged: !same(
+        before?.variants.map((variant) => variant.id) || [],
+        after?.variants.map((variant) => variant.id) || []
+      ),
+      clearedManualOrdering: Boolean(
+        before?.manualReordered ||
+        before?.variants.some((variant) => variant.manualReordered)
+      ),
+      barcodeChanges,
+    }
+    if (
+      change.baseCodeChanged ||
+      change.monthChanged ||
+      change.groupingChanged ||
+      change.orderChanged ||
+      change.variantOrderChanged ||
+      change.clearedManualOrdering ||
+      barcodeChanges.length
+    )
+      changes.push(change)
+  }
+  return changes
+}
+
+export function hasDefaultPackingChanges(preparation) {
+  return defaultPackingChanges(preparation).length > 0
+}
+
+/** Remove only packing membership; source rows and the issued-code ledger are untouched. */
+export function removeSelectedProducts(preparation, entryIds) {
+  if (
+    !Array.isArray(entryIds) ||
+    entryIds.some(
+      (entryId) => typeof entryId !== 'string' || !/^[1-9]\d*$/.test(entryId)
+    )
+  )
+    throw new Error('Choose products from this packing to remove')
+  const selected = new Set(entryIds)
+  const known = new Set(
+    preparation.groups.flatMap((group) =>
+      group.variants.flatMap((variant) => variant.entryIds)
+    )
+  )
+  if ([...selected].some((entryId) => !known.has(entryId)))
+    throw new Error('The selected products are no longer in this packing')
+  const draft = structuredClone(preparation)
+  const remove = (checkpoint) => {
+    checkpoint.groups = checkpoint.groups
+      .map((group) => ({
+        ...group,
+        variants: group.variants
+          .map((variant) => ({
+            ...variant,
+            entryIds: variant.entryIds.filter(
+              (entryId) => !selected.has(entryId)
+            ),
+          }))
+          .filter((variant) => variant.entryIds.length),
+      }))
+      .filter((group) => group.variants.length)
+  }
+  remove(draft)
+  // Reset defaults describe the current packing membership. Previous packing
+  // remains a separate, explicit restore action and retains its original scope.
+  if (draft.defaultPacking) remove(draft.defaultPacking)
+  return draft
+}
+
 export function restorePreviousPacking(preparation) {
   if (!preparation.previousPacking)
     throw new Error('This order has no previous packing to restore')

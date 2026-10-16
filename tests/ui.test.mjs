@@ -2,6 +2,7 @@ import test from 'node:test'
 import assert from 'node:assert/strict'
 import { parseHTML } from 'linkedom'
 import { copied } from '../src/ui.js'
+import { bindAttribute, bindText, setLanguage } from '../src/i18n.js'
 
 function setup(t) {
   const { document } = parseHTML(
@@ -78,4 +79,25 @@ test('failed repeated copy clears success styling and a retry clears its error',
   assert.equal(button.classList.contains('copied'), false)
   assert.equal(button.classList.contains('copy-failed'), false)
   assert.equal(document.querySelector('.copy-error'), null)
+})
+
+test('compact copy actions announce their state and restore their translated accessible name', async (t) => {
+  const { button } = setup(t)
+  bindText(button, 'Columns')
+  bindAttribute(button, 'aria-label', 'Copy columns')
+  const pending = Promise.withResolvers()
+  const result = copied(button, () => pending.promise)
+  assert.equal(button.getAttribute('aria-label'), 'Copying…')
+  pending.resolve()
+  await result
+  assert.equal(button.getAttribute('aria-label'), 'Copied')
+  try {
+    setLanguage('zh', { persist: false })
+    assert.equal(button.getAttribute('aria-label'), '已复制')
+    t.mock.timers.tick(3000)
+    assert.equal(button.textContent, '列')
+    assert.equal(button.getAttribute('aria-label'), '复制数据列')
+  } finally {
+    setLanguage('en', { persist: false })
+  }
 })

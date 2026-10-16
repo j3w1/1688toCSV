@@ -447,7 +447,7 @@ async function transaction(database, stores, mode, run) {
   }
 }
 
-function validateBackup(input) {
+export function validateBackup(input) {
   object(input, 'Backup')
   if (input.format !== BACKUP_FORMAT || ![1, 2].includes(input.version))
     throw new Error('Unsupported order-library backup')
@@ -532,7 +532,41 @@ function validateBackup(input) {
             'Packing preferences updatedAt'
           ),
         }
-  return { orders, history, images, preparations, ...state, packingPreferences }
+  const packingScope =
+    input.packingScope === undefined
+      ? undefined
+      : validatePackingScope(input.packingScope, orders, preparations)
+  const scopedPreparations = packingScope
+    ? packingScope.orders.map((order) =>
+        selectPackingPreparation(
+          preparations.find(
+            (preparation) =>
+              preparation.accountId === order.accountId &&
+              preparation.orderId === order.orderId
+          ),
+          order.entryIds
+        )
+      )
+    : preparations
+  const scopedOrderKeys = packingScope
+    ? new Set(
+        packingScope.orders.map((order) =>
+          JSON.stringify([order.accountId, order.orderId])
+        )
+      )
+    : null
+  const inPackingScope = (record) =>
+    !scopedOrderKeys ||
+    scopedOrderKeys.has(JSON.stringify(keyFor(record.snapshot)))
+  return {
+    orders: orders.filter(inPackingScope),
+    history: history.filter(inPackingScope),
+    images,
+    preparations: scopedPreparations,
+    ...state,
+    packingPreferences,
+    packingScope,
+  }
 }
 
 function validatePreparationMembership(preparation, order, history) {
@@ -1023,7 +1057,20 @@ export async function openDatabase({ name = '1688-order-library' } = {}) {
             const previous = await requested(
               store.get([incoming.accountId, incoming.orderId])
             )
-            if (!previous) store.put(incoming)
+            if (backup.packingScope) {
+              const scope = backup.packingScope.orders.find(
+                (order) =>
+                  order.accountId === incoming.accountId &&
+                  order.orderId === incoming.orderId
+              )
+              const merged = mergePackingPreparation(
+                previous,
+                incoming,
+                scope.entryIds
+              )
+              validatePreparationReservations(merged, state)
+              if (merged !== previous) store.put(merged)
+            } else if (!previous) store.put(incoming)
             else if (incoming.updatedAt > previous.updatedAt)
               store.put({
                 ...incoming,
@@ -1044,7 +1091,9 @@ export async function openDatabase({ name = '1688-order-library' } = {}) {
             const previous = await requested(store.get('packing'))
             if (
               !previous ||
-              previous.updatedAt < backup.packingPreferences.updatedAt
+              previous.updatedAt === '1970-01-01T00:00:00.000Z' ||
+              (!backup.packingScope &&
+                previous.updatedAt < backup.packingPreferences.updatedAt)
             )
               store.put({ id: 'packing', ...backup.packingPreferences })
           }
@@ -1096,6 +1145,50 @@ export async function openDatabase({ name = '1688-order-library' } = {}) {
               await requested(orders.get(key)),
               await requested(history.index('order').getAll(key))
             )
+          }
+          if (backup.packingScope) {
+            // Newer local source/preparation data wins. Do not reopen a scope
+            // whose selected rows have since disappeared from either record.
+            const restoredOrders = []
+            const restoredPreparations = []
+            for (const scope of backup.packingScope.orders) {
+              const key = [scope.accountId, scope.orderId]
+              restoredOrders.push(await requested(orders.get(key)))
+              restoredPreparations.push(
+                await requested(tx.objectStore('preparations').get(key))
+              )
+            }
+            try {
+              // Local preparations legitimately retain unselected products.
+              validatePackingScope(
+                {
+                  ...backup.packingScope,
+                  mode: undefined,
+                  months: [
+                    ...new Set(
+                      restoredPreparations.flatMap((preparation, index) => {
+                        const selected = new Set(
+                          backup.packingScope.orders[index].entryIds
+                        )
+                        return preparation.groups
+                          .filter((group) =>
+                            group.variants.some((variant) =>
+                              variant.entryIds.some((id) => selected.has(id))
+                            )
+                          )
+                          .map((group) => group.month ?? preparation.month)
+                      })
+                    ),
+                  ],
+                },
+                restoredOrders,
+                restoredPreparations
+              )
+            } catch {
+              throw new Error(
+                'Packing restore conflict: newer local data changed or removed selected products. Review the current order before restoring this packing.'
+              )
+            }
           }
           await refreshNames(tx, await packingPreferencesFor(tx))
           return { imported, updated }
@@ -1340,6 +1433,11 @@ export async function openDatabase({ name = '1688-order-library' } = {}) {
 }
 import { lineGrossCents, moneyToCents } from './money.js'
 import { purchaseTimestamp } from './order-date.js'
+import {
+  mergePackingPreparation,
+  selectPackingPreparation,
+  validatePackingScope,
+} from './packing-backup.js'
 import {
   createNameSuggester,
   initializeVocabulary,

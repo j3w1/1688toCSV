@@ -5,9 +5,20 @@ import {
   allocatePreparation,
   barcodeValue,
   createPreparation,
+  defaultPackingChanges,
+  extendDefaultPacking,
+  hasDefaultPackingChanges,
   mergePackingState,
+  packingCheckpoint,
+  planSelectedPreparations,
+  removeSelectedProducts,
+  reorderPreparationGroups,
+  reorderPreparationVariants,
+  restoreDefaultPacking,
+  restorePreviousPacking,
   validatePackingPreferences,
   validatePreparation,
+  validatePreparationReservations,
 } from '../src/packing-model.js'
 import { DEFAULT_SIZE_VOCABULARY } from '../src/size-vocabulary.js'
 
@@ -510,4 +521,202 @@ test('preferences retain local vocabulary and reject executable logo formats', (
       }),
     /raster/
   )
+})
+
+function resettablePacking() {
+  const snapshot = source([
+    { title: 'Cup', skuProperties: sku('red', 'S') },
+    { title: 'Cup', skuProperties: sku('red', 'L') },
+    { title: 'Cup', skuProperties: sku('red', 'S') },
+    { title: 'Plate' },
+  ])
+  const allocated = allocatePreparation(
+    createPreparation(snapshot, '2026-10'),
+    [],
+    []
+  )
+  allocated.preparation.revision = 1
+  allocated.preparation.defaultPacking = packingCheckpoint(
+    allocated.preparation
+  )
+  return { snapshot, ...allocated }
+}
+
+test('reset is a no-op for saved defaults and retained names, even after saving again', () => {
+  const original = resettablePacking()
+  const draft = structuredClone(original.preparation)
+  draft.groups[0].spanishName = 'TAZA'
+  draft.groups[0].category = '杯子'
+  draft.groups[0].variants[0].variant = 'Editable product description'
+  draft.groups[0].variants[0].spanishName = 'TAZA ROJA'
+  draft.updatedAt = '2026-10-16T00:00:00.000Z'
+  draft.revision = 2
+  assert.equal(hasDefaultPackingChanges(draft), false)
+  assert.deepEqual(defaultPackingChanges(draft), [])
+  const reset = restoreDefaultPacking(draft)
+  assert.equal(reset.groups[0].spanishName, 'TAZA')
+  assert.equal(
+    reset.groups[0].variants[0].variant,
+    'Editable product description'
+  )
+  assert.equal(reset.groups[0].variants[0].spanishName, 'TAZA ROJA')
+  const saved = allocatePreparation(
+    reset,
+    original.allocations,
+    original.issuedCodes
+  )
+  saved.preparation.revision = 3
+  assert.equal(hasDefaultPackingChanges(saved.preparation), false)
+})
+
+test('reset reports group and variant order and suffix changes when the product code stays the same', () => {
+  const original = resettablePacking()
+  let draft = reorderPreparationGroups(
+    original.preparation,
+    [...original.preparation.groups].reverse().map((group) => group.id)
+  )
+  const cup = draft.groups[1]
+  draft = reorderPreparationVariants(
+    draft,
+    cup.id,
+    [...cup.variants].reverse().map((variant) => variant.id)
+  )
+  draft.groups[1].variants[0].variantSuffix = 'Z'
+  draft.groups[1].variants[0].sizeSuffix = 'XL'
+  const changes = defaultPackingChanges(draft)
+  assert.equal(changes.length, 2)
+  const change = changes.find((entry) => entry.groupId === cup.id)
+  assert.equal(change.baseCodeChanged, false)
+  assert.equal(change.beforePosition, 2)
+  assert.equal(change.afterPosition, 1)
+  assert.equal(change.orderChanged, true)
+  assert.equal(change.variantOrderChanged, true)
+  assert.equal(change.clearedManualOrdering, true)
+  assert.equal(change.groupingChanged, false)
+  assert.equal(change.barcodeChanges.length, 1)
+  assert.equal(change.barcodeChanges[0].before, 'CE26100101ZXL')
+  assert.equal(change.barcodeChanges[0].after, 'CE26100101L')
+  const saved = allocatePreparation(
+    restoreDefaultPacking(draft),
+    original.allocations,
+    original.issuedCodes
+  )
+  assert.deepEqual(
+    saved.preparation.groups.map((group) => group.id),
+    original.preparation.groups.map((group) => group.id)
+  )
+  assert.equal(hasDefaultPackingChanges(saved.preparation), false)
+})
+
+test('reset reports merged or missing products as membership changes without unrelated groups', () => {
+  const original = resettablePacking()
+  const draft = structuredClone(original.preparation)
+  draft.groups[0].variants.push(...draft.groups[1].variants)
+  draft.groups.splice(1, 1)
+  const changes = defaultPackingChanges(draft)
+  assert.equal(changes.length, 2)
+  assert.ok(changes.every((entry) => entry.groupingChanged))
+  assert.equal(changes.find((entry) => entry.before === null).afterPosition, 2)
+  assert.equal(hasDefaultPackingChanges(restoreDefaultPacking(draft)), false)
+})
+
+test('remove packing products preserves partial shared variants, source rows and issued codes', () => {
+  const original = resettablePacking()
+  const unchanged = structuredClone(original)
+  original.preparation.previousPacking = packingCheckpoint(
+    original.preparation,
+    { includeDefaults: true }
+  )
+  const removed = removeSelectedProducts(original.preparation, ['1', '4'])
+  assert.equal(removed.groups.length, 1)
+  assert.deepEqual(
+    removed.groups[0].variants.map((variant) => variant.entryIds),
+    [['3'], ['2']]
+  )
+  assert.equal(removed.groups[0].id, original.preparation.groups[0].id)
+  assert.equal(
+    removed.groups[0].variants[0].id,
+    original.preparation.groups[0].variants[0].id
+  )
+  assert.equal(removed.groups[0].baseCode, 'CE26100101')
+  assert.deepEqual(removed.defaultPacking.groups, removed.groups)
+  assert.equal(hasDefaultPackingChanges(removed), false)
+  assert.deepEqual(
+    extendDefaultPacking(removed, original.snapshot),
+    removed.defaultPacking
+  )
+  assert.deepEqual(original.snapshot, unchanged.snapshot)
+  assert.deepEqual(original.preparation.groups, unchanged.preparation.groups)
+  assert.deepEqual(
+    restorePreviousPacking(removed).groups,
+    original.preparation.groups
+  )
+  const saved = allocatePreparation(
+    removed,
+    original.allocations,
+    original.issuedCodes
+  )
+  assert.deepEqual(saved.issuedCodes, original.issuedCodes)
+  assert.deepEqual(saved.allocations, original.allocations)
+  validatePreparationReservations(saved.preparation, saved)
+  assert.deepEqual(
+    activeGroups(saved.preparation, original.snapshot).flatMap((group) =>
+      group.variants.flatMap((variant) => variant.entryIds)
+    ),
+    ['3', '2']
+  )
+})
+
+test('removing the final packing products keeps a valid empty record and re-addition requires explicit selection', () => {
+  const original = resettablePacking()
+  const removed = removeSelectedProducts(original.preparation, [
+    '1',
+    '2',
+    '3',
+    '4',
+  ])
+  const saved = allocatePreparation(
+    removed,
+    original.allocations,
+    original.issuedCodes
+  )
+  assert.deepEqual(saved.preparation.groups, [])
+  assert.deepEqual(saved.preparation.defaultPacking.groups, [])
+  validatePreparationReservations(saved.preparation, saved)
+  assert.deepEqual(activeGroups(saved.preparation, original.snapshot), [])
+  assert.equal(hasDefaultPackingChanges(saved.preparation), false)
+  const plan = planSelectedPreparations(
+    [
+      {
+        snapshot: original.snapshot,
+        preparation: saved.preparation,
+        entryIds: ['1'],
+      },
+    ],
+    '2026-10'
+  )
+  const added = allocatePreparation(
+    plan.preparations[0],
+    saved.allocations,
+    saved.issuedCodes
+  )
+  assert.deepEqual(added.preparation.groups[0].variants[0].entryIds, ['1'])
+  assert.equal(added.preparation.groups[0].baseCode, 'CE26100103')
+  assert.ok(added.issuedCodes.some((entry) => entry.code === 'CE26100101'))
+  assert.equal(
+    hasDefaultPackingChanges({
+      ...saved.preparation,
+      defaultPacking: undefined,
+    }),
+    false
+  )
+})
+
+test('removal rejects stale or malformed memberships without changing the draft', () => {
+  const { preparation } = resettablePacking()
+  const original = structuredClone(preparation)
+  assert.deepEqual(removeSelectedProducts(preparation, []), preparation)
+  for (const ids of [['9'], ['1', '9'], ['not-an-id'], [1], null])
+    assert.throws(() => removeSelectedProducts(preparation, ids), /products/)
+  assert.deepEqual(preparation, original)
 })

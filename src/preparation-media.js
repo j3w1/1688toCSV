@@ -1,3 +1,13 @@
+import {
+  message as uiMessage,
+  bindText,
+  bindAttribute,
+  isMessage,
+  t,
+  getLocale,
+  getLanguage,
+  onLanguageChange,
+} from './i18n.js'
 import { createPhotoViewer } from './photo-viewer.js'
 import { createLabelRenderer } from './labels.js'
 import { element as el } from './ui.js'
@@ -36,6 +46,7 @@ export function createPreparationMedia({
   loadImage,
   settings,
   logoUrl,
+  getPhotoItems = () => [],
 }) {
   const renderer = createLabelRenderer({
     maxBytes: 16 * 1024 * 1024,
@@ -113,7 +124,7 @@ export function createPreparationMedia({
     release(tile)
     const version = tile.version
     tile.controller = new AbortController()
-    tile.status.textContent = 'Loading preview…'
+    bindText(tile.status, uiMessage('Loading preview…'))
     try {
       let blob
       if (tile.photo) blob = await thumbnail(tile.photo)
@@ -123,15 +134,22 @@ export function createPreparationMedia({
         if (request.error) throw new Error(request.error)
         if (request.incomplete) {
           tile.root.classList.add('label-unfinished')
-          tile.root.title =
+          bindAttribute(
+            tile.root,
+            'title',
             request.incomplete === 'name'
-              ? 'Name this product to preview its barcode'
-              : 'Add a Chinese category to preview its carton mark'
+              ? uiMessage('Name this product to preview its barcode')
+              : uiMessage('Add a Chinese category to preview its carton mark')
+          )
           tile.placeholder.hidden = false
           tile.status.textContent = ''
           return
         }
-        tile.root.title = 'Click the preview to edit or copy this label'
+        bindAttribute(
+          tile.root,
+          'title',
+          uiMessage('Click the preview to edit or copy this label')
+        )
         if (!request.code)
           throw new Error(
             'Assigning a product code… Enter the seller login if requested.'
@@ -149,7 +167,7 @@ export function createPreparationMedia({
       tile.status.textContent = ''
     } catch (error) {
       if (!disposed && version === tile.version && error.name !== 'AbortError')
-        tile.status.textContent = error.message
+        bindText(tile.status, error.message)
     }
   }
   function drainPhotos() {
@@ -189,22 +207,46 @@ export function createPreparationMedia({
   }
 
   return {
-    photo(item) {
-      const root = el('button', undefined, 'preparation-photo'),
+    photo(item, { interactive = true } = {}) {
+      const root = el(
+          interactive ? 'button' : 'span',
+          undefined,
+          'preparation-photo'
+        ),
         image = el('img'),
         status = el('span')
-      root.type = 'button'
-      root.setAttribute('aria-label', `Zoom product photo ${item.entryId}`)
-      image.alt = 'Product photo'
+      if (interactive) {
+        root.type = 'button'
+        bindAttribute(
+          root,
+          'aria-label',
+          uiMessage('Zoom product photo {0}', { 0: item.entryId })
+        )
+      } else root.setAttribute('aria-hidden', 'true')
+      bindAttribute(image, 'alt', uiMessage('Product photo'))
       image.width = image.height = 96
       image.hidden = true
       root.append(image, status)
       if (item.thumbnail) {
-        root.onclick = () => void zoom.open(item)
-        observe(root, image, status, { photo: item.thumbnail })
+        if (interactive) {
+          root.onclick = () => void zoom.open(item, getPhotoItems())
+          observe(root, image, status, { photo: item.thumbnail })
+        } else {
+          const tile = {
+            root,
+            image,
+            status,
+            version: 0,
+            visible: true,
+            photo: item.thumbnail,
+          }
+          tiles.set(root, tile)
+          photoQueue.push(tile)
+          drainPhotos()
+        }
       } else {
         root.disabled = true
-        status.textContent = 'No photo'
+        bindText(status, uiMessage('No photo'))
       }
       return root
     },
@@ -216,19 +258,32 @@ export function createPreparationMedia({
       placeholder.append(icon(kind === 'mark' ? 'carton' : 'barcode'))
       placeholder.hidden = true
       root.type = 'button'
-      root.setAttribute(
+      bindAttribute(
+        root,
         'aria-label',
-        kind === 'mark' ? 'Edit carton mark' : 'Edit barcode'
+        kind === 'mark'
+          ? uiMessage('Edit carton mark')
+          : uiMessage('Edit barcode')
       )
-      root.title = 'Click the preview to edit or copy this label'
-      image.alt = kind === 'mark' ? 'Carton mark preview' : 'Barcode preview'
+      bindAttribute(
+        root,
+        'title',
+        uiMessage('Click the preview to edit or copy this label')
+      )
+      bindAttribute(
+        image,
+        'alt',
+        kind === 'mark'
+          ? uiMessage('Carton mark preview')
+          : uiMessage('Barcode preview')
+      )
       image.hidden = true
       root.append(image, placeholder, status)
       root.addEventListener('click', async () => {
         try {
           await onEdit()
         } catch (error) {
-          status.textContent = error.message
+          bindText(status, error.message)
         }
       })
       observe(root, image, status, { model, placeholder })

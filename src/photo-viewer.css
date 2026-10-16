@@ -19,8 +19,18 @@
   min-height: 32px;
   width: 32px;
 }
-.photo-viewer-frame > h2 {
+.photo-viewer-heading {
   margin: 0 40px 12px 0;
+  min-width: 0;
+}
+.photo-viewer-caption {
+  margin: 4px 0 0;
+  color: var(--muted);
+  font-size: 12px;
+  line-height: 1.4;
+  overflow-wrap: anywhere;
+  max-height: 3.5em;
+  overflow: auto;
 }
 .photo-viewport {
   position: relative;
@@ -72,6 +82,31 @@
   text-align: center;
   font-variant-numeric: tabular-nums;
   font-size: 13px;
+}
+.photo-gallery-actions {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  margin-inline-start: auto;
+}
+.photo-gallery-count {
+  min-width: 52px;
+  text-align: center;
+  color: var(--muted);
+  font:
+    12px/1.4 system-ui,
+    sans-serif;
+  font-variant-numeric: tabular-nums;
+}
+.photo-zoom-actions .photo-gallery-button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 30px;
+  min-height: 30px;
+  padding: 4px;
+  border: 0;
+  background: transparent;
 }
 .photo-viewer-status {
   margin: 10px 0 0;

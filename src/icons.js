@@ -1,3 +1,11 @@
+import {
+  bindAttribute,
+  textMessage,
+  attributeMessage,
+  message,
+  isMessage,
+} from './i18n.js'
+
 const paths = {
   settings:
     'M10 2h4l.5 3 1.5.6L18.5 4 20 5.5 18.4 8l.6 1.5 3 .5v4l-3 .5-.6 1.5 1.6 2.5-1.5 1.5-2.5-1.6-1.5.6-.5 3h-4l-.5-3-1.5-.6L5.5 20 4 18.5 5.6 16 5 14.5 2 14v-4l3-.5L5.6 8 4 5.5 5.5 4 8 5.6 9.5 5zM15 12a3 3 0 1 0-6 0 3 3 0 0 0 6 0',
@@ -50,10 +58,22 @@ export function decorateIcon(button, name, { iconOnly = false, label } = {}) {
   button.querySelector(':scope > .ui-icon')?.remove()
   button.dataset.icon = name
   if (iconOnly) {
-    const accessible = label || button.textContent.trim()
+    const accessible =
+      label ||
+      attributeMessage(button, 'aria-label') ||
+      textMessage(button) ||
+      button.textContent.trim()
     button.replaceChildren()
-    button.setAttribute('aria-label', accessible)
-    button.title = accessible
+    bindAttribute(
+      button,
+      'aria-label',
+      isMessage(accessible) ? accessible : message(accessible)
+    )
+    bindAttribute(
+      button,
+      'title',
+      isMessage(accessible) ? accessible : message(accessible)
+    )
     button.classList.add('icon-button')
   }
   button.prepend(icon(name))

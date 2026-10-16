@@ -1,3 +1,13 @@
+import {
+  message as uiMessage,
+  bindText,
+  bindAttribute,
+  isMessage,
+  t,
+  getLocale,
+  getLanguage,
+  onLanguageChange,
+} from './i18n.js'
 import { decorateIcon } from './icons.js'
 import { preparationHelp } from './preparation-help.js'
 import { element as el } from './ui.js'
@@ -15,7 +25,11 @@ export function mountSizeVocabulary(host, value) {
     errors = new Map(),
     controls = new Map(),
     toolbar = el('div', undefined, 'vocabulary-toolbar'),
-    searchLabel = el('label', 'Search size rules', 'vocabulary-search'),
+    searchLabel = el(
+      'label',
+      uiMessage('Search size rules'),
+      'vocabulary-search'
+    ),
     search = el('input'),
     scroll = el('div', undefined, 'vocabulary-scroll'),
     table = el('table', undefined, 'vocabulary-table size-vocabulary-table'),
@@ -29,7 +43,7 @@ export function mountSizeVocabulary(host, value) {
   search.autocomplete = 'off'
   search.spellcheck = false
   searchLabel.append(search)
-  preparationHelp(search, 'Filter by a size name or barcode ending.')
+  preparationHelp(search, uiMessage('Filter by a size name or barcode ending.'))
   search.addEventListener('input', () => {
     page = 0
     render()
@@ -43,7 +57,7 @@ export function mountSizeVocabulary(host, value) {
     return button
   }
   const previous = action(
-      'Previous size rules',
+      uiMessage('Previous size rules'),
       'previous',
       'Previous page of size rules.',
       () => {
@@ -53,7 +67,7 @@ export function mountSizeVocabulary(host, value) {
       true
     ),
     next = action(
-      'Next size rules',
+      uiMessage('Next size rules'),
       'next',
       'Next page of size rules.',
       () => {
@@ -63,7 +77,7 @@ export function mountSizeVocabulary(host, value) {
       true
     ),
     add = action(
-      'Add size rule',
+      uiMessage('Add size rule'),
       'plus',
       'Add size names and their shared barcode ending.',
       () => {
@@ -80,7 +94,7 @@ export function mountSizeVocabulary(host, value) {
   toolbar.append(searchLabel, add)
   scroll.tabIndex = 0
   scroll.setAttribute('role', 'region')
-  scroll.setAttribute('aria-label', 'Size rules')
+  bindAttribute(scroll, 'aria-label', uiMessage('Size rules'))
   table.style.minWidth = '360px'
   const columns = el('colgroup'),
     namesColumn = el('col'),
@@ -97,7 +111,7 @@ export function mountSizeVocabulary(host, value) {
     ['suffix', 'Size code'],
     ['remove', ''],
   ]) {
-    const heading = el('th', label)
+    const heading = el('th', uiMessage(label))
     if (key === 'match') {
       const arrow = el('span', ' →')
       arrow.setAttribute('aria-hidden', 'true')
@@ -117,7 +131,7 @@ export function mountSizeVocabulary(host, value) {
     else errors.delete(entry)
     const row = controls.get(entry)
     if (!row) return
-    row.error.textContent = message || ''
+    bindText(row.error, message || '')
     row.error.hidden = !message
     for (const input of row.inputs) {
       if (message) input.setAttribute('aria-invalid', 'true')
@@ -174,8 +188,12 @@ export function mountSizeVocabulary(host, value) {
       preparationHelp(
         input,
         key === 'match'
-          ? 'Exact size names. Separate alternatives with |, such as 小号|小码.'
-          : 'Barcode ending: 1–12 letters or numbers, such as S or XL.'
+          ? uiMessage(
+              'Exact size names. Separate alternatives with |, such as 小号|小码.'
+            )
+          : uiMessage(
+              'Barcode ending: 1–12 letters or numbers, such as S or XL.'
+            )
       )
       cell.append(input)
       if (key === 'match') cell.append(error)
@@ -185,7 +203,7 @@ export function mountSizeVocabulary(host, value) {
     const removeCell = el('td')
     removeCell.append(
       action(
-        'Remove size rule',
+        uiMessage('Remove size rule'),
         'trash',
         'Remove this size rule when you save Settings.',
         () => {
@@ -226,21 +244,34 @@ export function mountSizeVocabulary(host, value) {
     matching.slice(page * pageSize, (page + 1) * pageSize).forEach(renderRow)
     if (!matching.length) {
       const row = el('tr'),
-        cell = el('td', 'No matching size rules.', 'vocabulary-empty')
+        cell = el(
+          'td',
+          uiMessage('No matching size rules.'),
+          'vocabulary-empty'
+        )
       cell.colSpan = 3
       row.append(cell)
       body.append(row)
     }
-    count.textContent = `${matching.length ? page * pageSize + 1 : 0}–${Math.min((page + 1) * pageSize, matching.length)} of ${matching.length} rules`
+    bindText(
+      count,
+      uiMessage('{0}–{1} of {2} rules', {
+        0: matching.length ? page * pageSize + 1 : 0,
+        1: Math.min((page + 1) * pageSize, matching.length),
+        2: matching.length,
+      })
+    )
     previous.disabled = page === 0
     next.disabled = page + 1 === pages
     add.disabled = value.sizeVocabulary.length >= 500
   }
   host.replaceChildren(
-    el('h3', 'Automatic size codes'),
+    el('h3', uiMessage('Automatic size codes')),
     el(
       'p',
-      'Map seller size names to barcode endings. Measurements are compared automatically; unclear or mixed sizes stay for review.',
+      uiMessage(
+        'Map seller size names to barcode endings. Measurements are compared automatically; unclear or mixed sizes stay for review.'
+      ),
       'packing-help'
     ),
     toolbar,

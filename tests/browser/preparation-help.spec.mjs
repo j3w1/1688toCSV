@@ -1,5 +1,21 @@
 import { readFile } from 'node:fs/promises'
+import { fileURLToPath } from 'node:url'
+import { build } from 'esbuild'
 import { test, expect } from './extension-fixture.mjs'
+
+let helpSource
+test.beforeAll(async () => {
+  const result = await build({
+    entryPoints: [
+      fileURLToPath(new URL('../../src/preparation-help.js', import.meta.url)),
+    ],
+    bundle: true,
+    format: 'iife',
+    globalName: 'PreparationHelp',
+    write: false,
+  })
+  helpSource = result.outputFiles[0].text
+})
 
 async function helpFixture(extension, { fallback = false } = {}) {
   const page = await extension.context.newPage()
@@ -19,17 +35,9 @@ async function helpFixture(extension, { fallback = false } = {}) {
     await page.evaluate(() => {
       delete HTMLElement.prototype.popover
     })
-  const source = await readFile(
-    new URL('../../src/preparation-help.js', import.meta.url),
-    'utf8'
-  )
-  await page.addScriptTag({
-    content: source.replace(
-      'export function preparationHelp',
-      'window.preparationHelp = function preparationHelp'
-    ),
-  })
+  await page.addScriptTag({ content: helpSource })
   await page.evaluate(() => {
+    window.preparationHelp = PreparationHelp.preparationHelp
     preparationHelp(
       document.querySelector('#field'),
       'Letters added to the product code, such as A for black.'

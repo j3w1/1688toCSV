@@ -1,5 +1,6 @@
 import { test, expect } from './extension-fixture.mjs'
 import { createDemoRecords } from '../../preview/library-fixture.js'
+import { readFile } from 'node:fs/promises'
 
 async function newWorkspacePage(extension) {
   const page = await extension.context.newPage()
@@ -135,8 +136,14 @@ test('product codes lead group headers; nested hints, hit targets and code basel
     select = title.locator('.group-select')
   await expect(code).toHaveValue(/^CE2610\d{4}$/)
   await expect(group.getByLabel('Product code', { exact: true })).toHaveCount(1)
-  expect((await select.boundingBox()).width).toBeGreaterThanOrEqual(72)
-  expect((await select.boundingBox()).height).toBeGreaterThanOrEqual(34)
+  await expect(select).toHaveRole('button')
+  await expect(select).toHaveText('')
+  await expect(select).toHaveAccessibleName('Select group 1: 合成玻璃罐')
+  const check = await select.boundingBox()
+  expect(check.width).toBeGreaterThanOrEqual(24)
+  expect(check.width).toBeLessThanOrEqual(32)
+  expect(check.height).toBeGreaterThanOrEqual(28)
+  expect(check.height).toBeLessThanOrEqual(36)
   await select.focus()
   await page.keyboard.press('Tab')
   await expect(code).toBeFocused()
@@ -150,6 +157,14 @@ test('product codes lead group headers; nested hints, hit targets and code basel
   await expect(group).toHaveClass(/is-selected/)
   await select.click()
   await expect(group).not.toHaveClass(/is-selected/)
+  // The clear corner of the header is a selection target, independent of its
+  // code editor and drag grip. A second click removes the selection.
+  await title.click({ position: { x: 2, y: 2 } })
+  await expect(group).toHaveClass(/is-selected/)
+  await title.click({ position: { x: 2, y: 2 } })
+  await expect(group).not.toHaveClass(/is-selected/)
+  await title.getByRole('button', { name: /^Move group 1;/ }).click()
+  await expect(select).toHaveAttribute('aria-pressed', 'false')
   await code.click()
   await expect(select).toHaveAttribute('aria-pressed', 'false')
   const parts = group.locator('.variant-code-design').first()
@@ -171,7 +186,7 @@ test('product codes lead group headers; nested hints, hit targets and code basel
   ).toBeLessThanOrEqual(2)
 })
 
-test('Open selected order keeps complete IDs and reuses a single destination tab', async ({
+test('packing order choices show seller, Spanish names and photos while retaining full IDs for navigation', async ({
   extension,
 }) => {
   const first = await seedStructuredOrder(extension, '1234567890123456789')
@@ -190,14 +205,45 @@ test('Open selected order keeps complete IDs and reuses a single destination tab
   )
   const dialog = await prepare(page, { groupCount: 4 }),
     select = dialog.getByLabel('Show packing orders', { exact: true })
-  for (const record of [first, second])
-    expect(await select.textContent()).toContain(record.snapshot.orderId)
+  const preparations = (await packingBackup(extension)).preparations
+  const richPicker = await page.evaluate(() =>
+    CSS.supports('appearance', 'base-select')
+  )
+  for (const record of [first, second]) {
+    const option = select.locator(`option[value="${record.snapshot.orderId}"]`)
+    await expect(option).toContainText(record.snapshot.sellerName)
+    await expect(option).not.toContainText(record.snapshot.orderId)
+    for (const group of preparations.find(
+      (prep) => prep.orderId === record.snapshot.orderId
+    ).groups)
+      await expect(option).toContainText(group.spanishName)
+    if (richPicker) {
+      const expectedPhotos = new Set(
+        record.snapshot.items.map((item) => item.thumbnail).filter(Boolean)
+      ).size
+      await expect(option.locator('.packing-order-photos img')).toHaveCount(
+        Math.min(3, expectedPhotos)
+      )
+      await expect(option.locator('button')).toHaveCount(0)
+    }
+  }
   const open = dialog.getByRole('button', {
     name: 'Open selected order',
     exact: true,
   })
   await expect(open).toBeDisabled()
   await select.selectOption(first.snapshot.orderId)
+  await expect(select).toHaveValue(first.snapshot.orderId)
+  if (richPicker)
+    await expect
+      .poll(() =>
+        select
+          .locator('selectedcontent img')
+          .evaluateAll((images) =>
+            images.every((image) => image.naturalWidth > 0)
+          )
+      )
+      .toBe(true)
   const opened = extension.context.waitForEvent('page')
   await open.dblclick()
   const target = await opened
@@ -472,6 +518,45 @@ test('structured products prepare, preserve edits and copy exact headerless sour
   expect(extension.unexpectedRequests).toEqual([])
 })
 
+test('Excel image requires the selected carton category in both views and preserves the clipboard', async ({
+  extension,
+}) => {
+  const { page } = await openWorkspace(extension, { previews: false })
+  const view = await prepare(page)
+  const group = view.locator('.preparation-group').first()
+  const code = await group
+    .getByLabel('Product code', { exact: true })
+    .inputValue()
+  await group.getByLabel('Chinese category', { exact: true }).fill('')
+  await waitForAutosave(view)
+  await group.locator('.group-select').click()
+  await extension.context.grantPermissions([
+    'clipboard-read',
+    'clipboard-write',
+  ])
+  await page.evaluate(() =>
+    navigator.clipboard.writeText('keep-unfinished-category')
+  )
+  await view
+    .getByRole('button', { name: 'Copy Excel image', exact: true })
+    .click()
+  await expect(view.locator('.copy-error')).toContainText(
+    `(${code}) needs a Chinese category`
+  )
+  expect(await page.evaluate(() => navigator.clipboard.readText())).toBe(
+    'keep-unfinished-category'
+  )
+  await view.getByRole('button', { name: 'Orders', exact: true }).click()
+  await page.locator('#copy-excel-image').click()
+  await expect(page.locator('#orders-view .copy-error')).toContainText(
+    `(${code}) needs a Chinese category`
+  )
+  expect(await page.evaluate(() => navigator.clipboard.readText())).toBe(
+    'keep-unfinished-category'
+  )
+  expect(extension.unexpectedRequests).toEqual([])
+})
+
 test('Copy Excel image freezes selected rows and includes Chinese headings, photos and prepared values', async ({
   extension,
 }, testInfo) => {
@@ -503,25 +588,27 @@ test('Copy Excel image freezes selected rows and includes Chinese headings, phot
     globalThis.tableImageDrawing = { text: [], runs: [], images: 0 }
     const fillText = CanvasRenderingContext2D.prototype.fillText
     CanvasRenderingContext2D.prototype.fillText = function (text, ...args) {
-      globalThis.tableImageDrawing.text.push(String(text))
-      globalThis.tableImageDrawing.runs.push({
-        text: String(text),
-        x: args[0],
-        y: args[1],
-        font: this.font,
-      })
+      if (this.canvas.width > 2000) {
+        globalThis.tableImageDrawing.text.push(String(text))
+        globalThis.tableImageDrawing.runs.push({
+          text: String(text),
+          x: args[0],
+          y: args[1],
+          font: this.font,
+        })
+      }
       return fillText.call(this, text, ...args)
     }
     const drawImage = CanvasRenderingContext2D.prototype.drawImage
     CanvasRenderingContext2D.prototype.drawImage = function (...args) {
-      globalThis.tableImageDrawing.images++
+      if (this.canvas.width > 2000) globalThis.tableImageDrawing.images++
       return drawImage.apply(this, args)
     }
     // Keep the actual canvas encoder pending while the visible filter changes.
     // The eventual PNG still passes through the real encoder and clipboard.
     const encode = HTMLCanvasElement.prototype.toBlob
     HTMLCanvasElement.prototype.toBlob = function (...args) {
-      if (this.width > 1500)
+      if (this.width > 2000)
         window.finishTableImage = () => encode.apply(this, args)
       else return encode.apply(this, args)
     }
@@ -587,7 +674,8 @@ test('Copy Excel image freezes selected rows and includes Chinese headings, phot
       /^(?:700|bold) /
     )
   }
-  expect(drawing.images).toBeGreaterThanOrEqual(2)
+  // Two product photos plus one actual carton mark shared by both variants.
+  expect(drawing.images).toBe(3)
   const image = await page.evaluate(async () => {
     const clipboard = await navigator.clipboard.read()
     const blob = await clipboard[0].getType('image/png')
@@ -999,7 +1087,12 @@ test('preparation has no collapsibles and keeps categories, names, grouping and 
     await first
       .getByLabel('Spanish short name', { exact: true })
       .evaluate((node) => node.getBoundingClientRect().width)
-  ).toBeGreaterThanOrEqual(180)
+  ).toBeGreaterThanOrEqual(120)
+  expect(
+    await first
+      .getByLabel('Spanish short name', { exact: true })
+      .evaluate((node) => node.scrollWidth <= node.clientWidth + 1)
+  ).toBe(true)
   expect(extension.unexpectedRequests).toEqual([])
 })
 
@@ -1187,7 +1280,7 @@ test('preparation selects groups and variant rows by range without changing edit
   await expect(
     first.locator('.variants tbody tr[aria-selected="true"]')
   ).toHaveCount(2)
-  await page.keyboard.press('Escape')
+  await selectVariantRow(rows.nth(0))
   await expect(
     first.locator('.variants tbody tr[aria-selected="true"]')
   ).toHaveCount(0)
@@ -1451,7 +1544,8 @@ for (const action of ['Copy Excel image', 'Copy group codes', 'Copy columns']) {
       window.frozenPackingText = []
       const fillText = CanvasRenderingContext2D.prototype.fillText
       CanvasRenderingContext2D.prototype.fillText = function (text, ...args) {
-        window.frozenPackingText.push(String(text))
+        if (this.canvas.width > 2000)
+          window.frozenPackingText.push(String(text))
         return fillText.call(this, text, ...args)
       }
     })
@@ -1471,6 +1565,7 @@ for (const action of ['Copy Excel image', 'Copy group codes', 'Copy columns']) {
       )
       // Selection is allowed to change while the real database is still saving.
       // The export belongs to the two jars chosen when its button was clicked.
+      await first.locator('.group-select').click()
       await groups.nth(1).locator('.group-select').click()
       await expect(view.locator('.preparation-copy-scope')).toHaveText(
         '1 selected products · 1 orders'
@@ -2213,8 +2308,9 @@ test('combining, separating, splitting and merging preserve source rows and save
   const retiredVariant = separated.variants[1]
   const retiredBarcode = `${originalCode}${retiredVariant.variantSuffix}${retiredVariant.sizeSuffix}`
   // Confirmed grouping starts a fresh row selection. Select both source rows.
-  await first.locator('.variants tbody tr').first().focus()
-  await page.keyboard.press('Escape')
+  await dialog
+    .getByRole('button', { name: 'Clear selection', exact: true })
+    .click()
   await selectVariantRow(first.locator('.variants tbody tr').nth(0))
   await selectVariantRow(
     first.locator('.variants tbody tr').nth(1),

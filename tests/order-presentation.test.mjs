@@ -2,6 +2,16 @@ import test from 'node:test'
 import assert from 'node:assert/strict'
 import { presentOrderStatus } from '../src/order-presentation.js'
 
+test('canonical status labels share the same tone as their Chinese source', () => {
+  for (const [source, label] of [
+    ['待收货', 'Awaiting delivery'],
+    ['待发货', 'Awaiting shipment'],
+    ['交易成功', 'Completed'],
+    ['待付款', 'Awaiting payment'],
+  ])
+    assert.deepEqual(presentOrderStatus(label), presentOrderStatus(source))
+})
+
 test('known source statuses get distinct readable display labels; unknowns remain intact', () => {
   assert.deepEqual(presentOrderStatus('交易成功'), {
     label: 'Completed',

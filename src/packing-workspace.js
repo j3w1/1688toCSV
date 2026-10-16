@@ -1,4 +1,14 @@
 import {
+  message as uiMessage,
+  bindText,
+  bindAttribute,
+  isMessage,
+  t,
+  getLocale,
+  getLanguage,
+  onLanguageChange,
+} from './i18n.js'
+import {
   activeGroups,
   barcodeValue,
   groupPackingMonth,
@@ -8,6 +18,9 @@ import {
   restoreDefaultPacking,
   restorePreviousPacking,
   regeneratePreparationCode,
+  hasDefaultPackingChanges,
+  defaultPackingChanges,
+  removeSelectedProducts,
 } from './packing-model.js'
 import { reorderHandle, movedKeys } from './packing-reorder.js'
 import { reviewPackingChanges } from './packing-review.js'
@@ -21,8 +34,17 @@ import { createPreparationMedia, preparationHelp } from './preparation-media.js'
 import { createRowSelection } from './row-selection.js'
 import { copyExcelImage } from './excel-image-copy.js'
 import { decorateIcon } from './icons.js'
+import { validateBackup } from './database.js'
+import { createPackingBackup } from './packing-backup.js'
+import { colorHints } from './color-hints.js'
 import { normalizePrice } from './money.js'
-import { element as el, copied, yieldUI, enableLightDismiss } from './ui.js'
+import {
+  element as el,
+  copied,
+  yieldUI,
+  enableLightDismiss,
+  copyTextButton,
+} from './ui.js'
 import {
   preparationColumns,
   preparationTable,
@@ -32,7 +54,7 @@ import {
 
 const $ = (id) => document.getElementById(id)
 const monthLabel = (month) =>
-  new Date(`${month}-01T12:00:00Z`).toLocaleDateString('en-GB', {
+  new Date(`${month}-01T12:00:00Z`).toLocaleDateString(getLocale(), {
     month: 'long',
     year: 'numeric',
     timeZone: 'UTC',
@@ -50,7 +72,7 @@ function unusedSuffix(used, sizeSuffix = '') {
   }
 }
 function field(title, value, change, type = 'text') {
-  const label = el('label', title),
+  const label = el('label', isMessage(title) ? title : uiMessage(title)),
     input = el('input')
   input.type = type
   input.id = `packing-${crypto.randomUUID()}`
@@ -79,11 +101,16 @@ function inlineField(
     input.replaceWith(textarea)
     input = textarea
   }
-  input.placeholder = placeholder
+  bindAttribute(input, 'placeholder', placeholder)
   return label
 }
 function button(text, handler, className) {
-  const result = el('button', text, className)
+  const result = el(
+    'button',
+    isMessage(text) ? text : uiMessage(text),
+    className
+  )
+  const source = isMessage(text) ? text.source : text
   const buttonIcons = {
     Undo: 'undo',
     Redo: 'redo',
@@ -103,7 +130,7 @@ function button(text, handler, className) {
     'Save settings': 'check',
     Remove: 'trash',
   }
-  if (buttonIcons[text]) decorateIcon(result, buttonIcons[text])
+  if (buttonIcons[source]) decorateIcon(result, buttonIcons[source])
   result.addEventListener('click', async () => {
     try {
       await handler(result)
@@ -125,7 +152,7 @@ function showError(message) {
     error.setAttribute('role', 'alert')
     target.append(error)
   }
-  error.textContent = message
+  bindText(error, message)
 }
 function dialog(target) {
   if (!target.open) target.showModal()
@@ -167,6 +194,7 @@ export async function startPackingWorkspace({
   const scopeEntries = new Map(),
     packingOrders = new Set()
   let copyButtons = [],
+    backupButton,
     opening = false,
     labelOrderId
   const variantPages = new Map()
@@ -206,10 +234,16 @@ export async function startPackingWorkspace({
   function updatePreparationCopyScope() {
     if (!copyScope) return
     const rows = packingCopyRows()
-    copyScope.textContent = rows.length
-      ? `${rows.length.toLocaleString()} selected products · ${new Set(rows.map((row) => row.orderId)).size} orders`
-      : 'Select groups or products to copy'
-    for (const target of copyButtons)
+    bindText(
+      copyScope,
+      rows.length
+        ? uiMessage('{0} selected products · {1} orders', {
+            0: () => rows.length.toLocaleString(),
+            1: new Set(rows.map((row) => row.orderId)).size,
+          })
+        : uiMessage('Select groups or products to copy')
+    )
+    for (const target of [...copyButtons, backupButton].filter(Boolean))
       target.disabled =
         !rows.length ||
         Boolean(preparationImageAbort) ||
@@ -234,6 +268,7 @@ export async function startPackingWorkspace({
       }
       state.controller = createRowSelection({
         selected: state.groups,
+        additive: true,
         getKeys: () => state.keys,
         onChange: () => {
           for (const [id, card] of state.cards) {
@@ -291,26 +326,35 @@ export async function startPackingWorkspace({
   let saveTimer, saveWork, saveStatus, reloadPreparationButton, resolveButton
   const pendingSaves = new Set(),
     saveErrors = new Map(),
-    codeFields = new Map()
+    codeFields = new Map(),
+    resetButtons = new Map()
   function updateSaveStatus() {
     if (!saveStatus) return
     const id = [...saveErrors.keys()][0] || drafts[current]?.orderId
     const error = saveErrors.get(id)
-    saveStatus.textContent = error
-      ? `Not saved — ${error.message || error}. Your edits are still here.`
-      : pendingSaves.has(id) || saveWork
-        ? 'Saving…'
-        : preparations.has(id)
-          ? 'Saved automatically'
-          : 'Changes save automatically'
+    bindText(
+      saveStatus,
+      error
+        ? uiMessage('Not saved — {0}. Your edits are still here.', {
+            0: uiMessage(error.message || error),
+          })
+        : pendingSaves.has(id) || saveWork
+          ? uiMessage('Saving…')
+          : preparations.has(id)
+            ? uiMessage('Saved automatically')
+            : uiMessage('Changes save automatically')
+    )
     saveStatus.classList.toggle('packing-error', Boolean(error))
     if (resolveButton)
       resolveButton.hidden = error?.code !== 'PACKING_CODE_CONFLICT'
     if (reloadPreparationButton) {
       reloadPreparationButton.hidden = !error
-      reloadPreparationButton.textContent = preparations.has(id)
-        ? 'Reload saved version'
-        : 'Discard pending edits'
+      bindText(
+        reloadPreparationButton,
+        preparations.has(id)
+          ? uiMessage('Reload saved version')
+          : uiMessage('Discard pending edits')
+      )
     }
   }
   function scheduleSave(draft = drafts[current]) {
@@ -391,11 +435,44 @@ export async function startPackingWorkspace({
   const logoUrl = () =>
     preferences.logoDataUrl ||
     new URL('assets/casa-elida.png', location.href).href
+  function createCartonMarkRenderer() {
+    const labelSettings = structuredClone(settings())
+    const labelLogo = logoUrl()
+    return async (source, { signal } = {}) => {
+      const rendered = await renderLabel({
+        kind: 'mark',
+        code: source.baseCode,
+        category: source.chineseCategory,
+        settings: labelSettings,
+        logoUrl: labelLogo,
+        signal,
+      })
+      return rendered.blob
+    }
+  }
   const media = createPreparationMedia({
     container: null,
     loadImage,
     settings,
     logoUrl,
+    getPhotoItems: () =>
+      visibleDrafts().flatMap((draft) => {
+        const source = getRecords().find(
+          ({ snapshot }) => snapshot.orderId === draft.orderId
+        )?.snapshot
+        const items = new Map(
+          (source?.items || []).map((item) => [item.entryId, item])
+        )
+        const scope = scopeEntries.get(draft.orderId) || new Set()
+        return scopedGroups(draft).flatMap((group) =>
+          scopedVariants(draft, group).flatMap((variant) =>
+            variant.entryIds
+              .filter((id) => scope.has(id))
+              .map((id) => items.get(id))
+              .filter(Boolean)
+          )
+        )
+      }),
   })
   function updateHistoryButtons() {
     const state = history.state()
@@ -411,6 +488,8 @@ export async function startPackingWorkspace({
         scheduleSave(draft)
     checkpoints.set(draft.orderId, next)
     updateHistoryButtons()
+    const reset = resetButtons.get(draft.orderId)
+    if (reset) reset.disabled = !hasDefaultPackingChanges(draft)
   }
   function travel(direction) {
     const result = history[direction]()
@@ -465,6 +544,16 @@ export async function startPackingWorkspace({
   $('packing-view').addEventListener(
     'keydown',
     (event) => {
+      if (
+        event.key === 'Escape' &&
+        !document.querySelector('dialog[open]') &&
+        !event.target.closest('select')
+      ) {
+        event.preventDefault()
+        event.stopPropagation()
+        void showOrders()
+        return
+      }
       if (
         !(event.ctrlKey || event.metaKey) ||
         event.key.toLowerCase() !== 'a' ||
@@ -591,50 +680,93 @@ export async function startPackingWorkspace({
     editor?.destroy()
     const host = $('label-content')
     host.replaceChildren(
-      el('h2', kind === 'mark' ? 'Carton mark' : 'Barcode label')
+      el(
+        'h2',
+        kind === 'mark' ? uiMessage('Carton mark') : uiMessage('Barcode label')
+      )
     )
     const mount = el('div')
     host.append(mount)
+    function labelDraft(next) {
+      const draft = structuredClone(prep)
+      const group = draft.groups.find((item) => item.id === groupId)
+      const variant = group.variants.find((item) => item.id === variantId)
+      if (kind === 'mark') {
+        group.baseCode = next.code
+        group.category = next.category
+      } else {
+        if (
+          next.baseCode !== group.baseCode ||
+          next.code !== group.baseCode + next.variantSuffix + next.sizeSuffix
+        )
+          throw new Error(
+            'Edit the product code on its carton mark to change the shared base. The barcode must retain that base.'
+          )
+        variant.variantSuffix = next.variantSuffix
+        variant.sizeSuffix = next.sizeSuffix
+        variant.needsSizeMapping = next.needsSizeMapping
+        variant.spanishName = next.spanishName.toUpperCase()
+      }
+      return draft
+    }
+    function acceptedModel(result) {
+      prep = result
+      const savedGroup = prep.groups.find((item) => item.id === groupId)
+      return outputModel(
+        prep,
+        savedGroup,
+        savedGroup.variants.find((item) => item.id === variantId),
+        kind,
+        true
+      )
+    }
     editor = mountLabelEditor(mount, {
       model,
       settings: settings(),
       logoUrl: logoUrl(),
-      onCommit: async (next) => {
-        const draft = structuredClone(prep)
-        const group = draft.groups.find((item) => item.id === groupId)
-        const variant = group.variants.find((item) => item.id === variantId)
-        if (kind === 'mark') {
-          group.baseCode = next.code
-          group.category = next.category
-        } else {
-          if (
-            next.baseCode !== group.baseCode ||
-            next.code !== group.baseCode + next.variantSuffix + next.sizeSuffix
-          )
-            throw new Error(
-              'Edit the product code on its carton mark to change the shared base. The barcode must retain that base.'
-            )
-          variant.variantSuffix = next.variantSuffix
-          variant.sizeSuffix = next.sizeSuffix
-          variant.needsSizeMapping = next.needsSizeMapping
-          variant.spanishName = next.spanishName.toUpperCase()
-        }
-        prep = await saved(draft)
-        const savedGroup = prep.groups.find((item) => item.id === groupId)
-        return outputModel(
-          prep,
-          savedGroup,
-          savedGroup.variants.find((item) => item.id === variantId),
-          kind,
-          true
-        )
+      onValidate: (next) => repository.previewPreparations([labelDraft(next)]),
+      onResolve: async (error, next) => {
+        const result = await resolveConflict(orderId, {
+          candidate: labelDraft(next),
+          error,
+        })
+        return result ? acceptedModel(result) : null
       },
+      onCommit: async (next) => acceptedModel(await saved(labelDraft(next))),
       onCopy: async (result) => labelClipboard([result]),
     })
+    if (kind === 'mark') {
+      const source = getRecords().find(
+        (record) => record.snapshot.orderId === orderId
+      )?.snapshot
+      const ids = new Set(group.variants.flatMap((variant) => variant.entryIds))
+      const items = (source?.items || []).filter((item) =>
+        ids.has(item.entryId)
+      )
+      const affected = el('section', undefined, 'label-affected-products')
+      affected.append(
+        el(
+          'p',
+          uiMessage(
+            '{count} products share this carton mark. Changing its code also changes the start of every barcode below. The Chinese category changes for the whole group.',
+            { count: items.length }
+          )
+        )
+      )
+      const list = el('div', undefined, 'label-affected-list')
+      for (const item of items) {
+        const row = el('article', undefined, 'label-affected-item')
+        row.append(media.photo(item), el('p', item.description || item.title))
+        list.append(row)
+      }
+      affected.append(list)
+      host.append(affected)
+    }
     labelOrderId = orderId
     dialog($('label-dialog'))
   }
   $('label-dialog').addEventListener('close', () => {
+    media.forget($('label-content'))
     editor?.destroy()
     editor = null
     const index = drafts.findIndex((draft) => draft.orderId === labelOrderId)
@@ -680,14 +812,14 @@ export async function startPackingWorkspace({
     }
     return result
   }
-  function reviewChanges(before, after) {
+  function reviewChanges(before, after, records = getRecords()) {
     const previous = new Map(
       before.flatMap((draft) =>
         draft.groups.map((group) => [`${draft.orderId}/${group.id}`, group])
       )
     )
     return after.flatMap((draft) => {
-      const source = getRecords().find(
+      const source = records.find(
         (record) => record.snapshot.orderId === draft.orderId
       )?.snapshot
       return draft.groups.map((group) => {
@@ -707,7 +839,10 @@ export async function startPackingWorkspace({
           before: old?.baseCode,
           after: group.baseCode,
           photo: source?.items.find((item) => entryIds.includes(item.entryId)),
-          detail: `${entryIds.length} product rows · ${group.variants.length} variants`,
+          detail: uiMessage('{0} product rows · {1} variants', {
+            0: entryIds.length,
+            1: group.variants.length,
+          }),
         }
       })
     })
@@ -799,25 +934,31 @@ export async function startPackingWorkspace({
         if (
           !(await reviewPackingChanges({
             title: hasMove
-              ? 'Move selected products to this packing month?'
-              : 'Assign product codes?',
-            explanation:
-              plan.rowCount +
-              ' selected product rows from ' +
-              plan.orderCount +
-              ' orders will be prepared for ' +
-              monthLabel(month) +
-              '. ' +
-              (hasMove
-                ? plan.changedCodeCount +
-                  ' group codes and their barcodes will change. ' +
-                  plan.splitGroupCount +
-                  ' partial groups will be split; unselected products keep their month and codes. Previous issued codes remain reserved. You can restore the previous packing later.'
-                : 'New codes will be assigned to the groups below. Orders without a seller remain editable and receive codes after you identify the seller.'),
+              ? uiMessage('Move selected products to this packing month?')
+              : uiMessage('Assign product codes?'),
+            explanation: uiMessage(
+              '{rows} selected product rows from {orders} orders will be prepared for {month}. {detail}',
+              {
+                rows: plan.rowCount,
+                orders: plan.orderCount,
+                month: () => monthLabel(month),
+                detail: hasMove
+                  ? uiMessage(
+                      '{codes} group codes and their barcodes will change. {splits} partial groups will be split; unselected products keep their month and codes. Previous issued codes remain reserved. You can restore the previous packing later.',
+                      {
+                        codes: plan.changedCodeCount,
+                        splits: plan.splitGroupCount,
+                      }
+                    )
+                  : uiMessage(
+                      'New codes will be assigned to the groups below. Orders without a seller remain editable and receive codes after you identify the seller.'
+                    ),
+              }
+            ),
             changes: reviewChanges([...preparations.values()], after),
             proceed: hasMove
-              ? 'Change codes and prepare'
-              : 'Assign codes and prepare',
+              ? uiMessage('Change codes and prepare')
+              : uiMessage('Assign codes and prepare'),
             media,
           }))
         )
@@ -978,6 +1119,7 @@ export async function startPackingWorkspace({
     checkpoints.set(result.orderId, JSON.stringify(result))
   }
   async function restorePacking(draft, previous) {
+    if (!previous && !hasDefaultPackingChanges(draft)) return
     const restore = previous ? restorePreviousPacking : restoreDefaultPacking
     const [candidate] = await repository.previewPreparations([restore(draft)], {
       preserveNaming: true,
@@ -985,15 +1127,21 @@ export async function startPackingWorkspace({
     if (
       !(await reviewPackingChanges({
         title: previous
-          ? 'Restore previous packing?'
-          : 'Reset order and codes?',
+          ? uiMessage('Restore previous packing?')
+          : uiMessage('Reset order and codes?'),
         explanation: previous
-          ? 'This replaces this order’s current grouping, codes, names and variant settings with the setup saved before its last month move. Later edits will be lost. Other orders are unchanged; old issued codes remain reserved.'
-          : 'This restores this order’s default grouping, source order, product codes and barcode endings. Current names are retained where their groups still exist. Manual reordering and code edits will be replaced. Other orders are unchanged.',
-        changes: reviewChanges([draft], [candidate]),
+          ? uiMessage(
+              'This replaces this order’s current grouping, codes, names and variant settings with the setup saved before its last month move. Later edits will be lost. Other orders are unchanged; old issued codes remain reserved.'
+            )
+          : uiMessage(
+              'This restores this order’s default grouping, source order, product codes and barcode endings. Current names are retained where their groups still exist. Manual reordering and code edits will be replaced. Other orders are unchanged.'
+            ),
+        changes: previous
+          ? reviewChanges([draft], [candidate])
+          : resetReviewChanges(draft, candidate),
         proceed: previous
-          ? 'Restore previous packing'
-          : 'Reset order and codes',
+          ? uiMessage('Restore previous packing')
+          : uiMessage('Reset order and codes'),
         media,
       }))
     )
@@ -1018,6 +1166,77 @@ export async function startPackingWorkspace({
     const state = preparationSelection(result)
     for (const group of scopedGroups(result)) state.groups.add(group.id)
     renderPreparation()
+  }
+  function resetReviewChanges(draft, candidate) {
+    const standard = reviewChanges([draft], [candidate])
+    return defaultPackingChanges(draft).map((change) => {
+      const group = change.after || change.before
+      const card = standard.find((entry) => entry.after === group.baseCode) || {
+        name: group.spanishName || group.title,
+        before: change.before?.baseCode,
+        after: change.after?.baseCode,
+      }
+      const details = []
+      if (change.orderChanged)
+        details.push(
+          uiMessage('Position {before} → {after}', {
+            before: change.beforePosition,
+            after: change.afterPosition,
+          })
+        )
+      if (change.variantOrderChanged)
+        details.push(uiMessage('Restore original product order'))
+      if (change.groupingChanged)
+        details.push(uiMessage('Restore original grouping'))
+      if (change.clearedManualOrdering)
+        details.push(uiMessage('Clear manual sorting'))
+      for (const code of change.barcodeChanges)
+        details.push(`${code.before || '—'} → ${code.after || '—'}`)
+      return {
+        ...card,
+        detail: uiMessage('{0}', { 0: () => details.map(String).join(' · ') }),
+      }
+    })
+  }
+  async function removePackingProducts(draft, entryIds) {
+    const ids = [...new Set(entryIds)]
+    if (!ids.length) return
+    const source = getRecords().find(
+      (record) => record.snapshot.orderId === draft.orderId
+    )?.snapshot
+    const changes = ids.map((id) => {
+      const item = source?.items.find((item) => item.entryId === id)
+      const group = draft.groups.find((group) =>
+        group.variants.some((variant) => variant.entryIds.includes(id))
+      )
+      return {
+        name: item?.description || group?.title,
+        photo: item,
+        before: group?.baseCode,
+        after: uiMessage('Removed from packing'),
+        order: source?.sellerName,
+      }
+    })
+    if (
+      !(await reviewPackingChanges({
+        title: uiMessage('Remove from packing?'),
+        explanation: uiMessage(
+          '{count} selected products will be removed from this packing. Their original order data and issued codes are kept. You can select them in Orders to prepare them again.',
+          { count: ids.length }
+        ),
+        changes,
+        proceed: uiMessage('Remove from packing'),
+        media,
+      }))
+    )
+      return
+    const result = await saved(removeSelectedProducts(draft, ids))
+    acceptDraft(result)
+    const scope = scopeEntries.get(draft.orderId)
+    for (const id of ids) scope?.delete(id)
+    selectionStates.delete(draft.orderId)
+    renderPreparation()
+    updateLaunchActions()
   }
   function requireCompleteGroups(draft, groups) {
     const scope = scopeEntries.get(draft.orderId) || new Set()
@@ -1045,7 +1264,7 @@ export async function startPackingWorkspace({
         title,
         explanation,
         changes: reviewChanges([draft], [preview]),
-        proceed: 'Apply changes',
+        proceed: uiMessage('Apply changes'),
         media,
       }))
     )
@@ -1057,11 +1276,12 @@ export async function startPackingWorkspace({
     for (const group of scopedGroups(result)) state.groups.add(group.id)
     renderPreparation()
   }
-  async function resolveConflict(orderId) {
+  async function resolveConflict(orderId, options = {}) {
     const index = drafts.findIndex((draft) => draft.orderId === orderId),
-      draft = drafts[index]
+      draft = options.candidate || drafts[index]
     if (!draft) return
-    const error = saveErrors.get(orderId)
+    const error = options.error || saveErrors.get(orderId)
+    let resolved = null
     const code =
       error?.conflict?.code || error?.message?.match(/CE\d{8}[A-Z0-9]*/)?.[0]
     const previous = preparations.get(orderId)
@@ -1075,14 +1295,19 @@ export async function startPackingWorkspace({
             entry.baseCode
       ) || draft.groups.find((entry) => entry.id === requestedGroupId)
     const modal = el('dialog', undefined, 'packing-review code-conflict-dialog')
-    modal.setAttribute('aria-label', 'Resolve code conflict')
+    bindAttribute(modal, 'aria-label', uiMessage('Resolve code conflict'))
     modal.append(
-      el('h2', 'Resolve code conflict'),
+      el('h2', uiMessage('Resolve code conflict')),
       el(
         'p',
         code
-          ? `${code} is already reserved. A code stays with the product it was first issued to, even after that product changes codes or is removed.`
-          : error?.message || 'Review the product codes in this order.'
+          ? uiMessage(
+              '{0} is already reserved. A code stays with the product it was first issued to, even after that product changes codes or is removed.',
+              { 0: code }
+            )
+          : uiMessage(
+              error?.message || 'Review the product codes in this order.'
+            )
       )
     )
     const evidence = el('div', undefined, 'conflict-evidence')
@@ -1093,9 +1318,20 @@ export async function startPackingWorkspace({
       : { owners: [] }
     let conflictingVariant
     if (error?.conflict?.kind === 'barcode') {
+      // Owner matching is diagnostic. Incomplete sizes or another unfinished
+      // code must not prevent resolving this collision; saving still validates
+      // the complete edited preparation and its reservations.
+      const comparableBarcode = (entry, variant) => {
+        if (!entry || !variant) return null
+        try {
+          return barcodeValue(entry, variant)
+        } catch {
+          return null
+        }
+      }
       const candidates = draft.groups.flatMap((entry) =>
         entry.variants
-          .filter((variant) => barcodeValue(entry, variant) === code)
+          .filter((variant) => comparableBarcode(entry, variant) === code)
           .map((variant) => ({ group: entry, variant }))
       )
       // Validation may encounter the unchanged owner after the edited row.
@@ -1109,8 +1345,7 @@ export async function startPackingWorkspace({
             (entry) => entry.id === variant.id
           )
           return (
-            (!savedVariant ||
-              barcodeValue(savedGroup, savedVariant) !== code) &&
+            comparableBarcode(savedGroup, savedVariant) !== code &&
             !ownership.owners.some(
               (owner) =>
                 owner.kind === 'barcode' &&
@@ -1144,22 +1379,27 @@ export async function startPackingWorkspace({
       details.append(
         el(
           'strong',
-          owner.spanishName || owner.groupTitle || 'Original product'
+          owner.spanishName || owner.groupTitle || uiMessage('Original product')
         ),
         el('p', `${owner.sellerName} · ${owner.orderId}`),
         el('code', code),
         el(
           'p',
           owner.status === 'active'
-            ? 'Currently used by this product.'
+            ? uiMessage('Currently used by this product.')
             : owner.currentBaseCode
-              ? `Previously issued here. This product now uses ${owner.currentBaseCode}. That is why the old code is absent from the product table.`
-              : 'Previously issued to a product that has been regrouped or removed. The reservation remains to prevent duplicate labels.'
+              ? uiMessage(
+                  'Previously issued here. This product now uses {0}. That is why the old code is absent from the product table.',
+                  { 0: owner.currentBaseCode }
+                )
+              : uiMessage(
+                  'Previously issued to a product that has been regrouped or removed. The reservation remains to prevent duplicate labels.'
+                )
         )
       )
-      if (owner.orderExists && owner.groupExists)
+      if (owner.orderExists && owner.groupExists && !options.candidate)
         details.append(
-          button('Show owning product', async () => {
+          button(uiMessage('Show owning product'), async () => {
             modal.close()
             // Keep pending edits while revealing the owner; no reload or restore.
             let ownerDraft = drafts.find(
@@ -1206,7 +1446,7 @@ export async function startPackingWorkspace({
       if (item) target.append(media.photo(item))
       const description = el('div')
       description.append(
-        el('strong', 'Product you are editing'),
+        el('strong', uiMessage('Product you are editing')),
         el('p', group.spanishName || group.title),
         el('code', group.baseCode)
       )
@@ -1218,12 +1458,12 @@ export async function startPackingWorkspace({
       actions.append(
         button(
           conflictingVariant
-            ? 'Use next available variant code'
-            : 'Use next available code',
+            ? uiMessage('Use next available variant code')
+            : uiMessage('Use next available code'),
           async () => {
             let candidate
             if (conflictingVariant) {
-              candidate = structuredClone(drafts[index])
+              candidate = structuredClone(draft)
               const editedGroup = candidate.groups.find(
                 (entry) => entry.id === group.id
               )
@@ -1244,44 +1484,112 @@ export async function startPackingWorkspace({
                 used,
                 editedVariant.sizeSuffix
               )
-            } else
-              candidate = regeneratePreparationCode(drafts[index], group.id)
+            } else candidate = regeneratePreparationCode(draft, group.id)
             const result = await saved(candidate)
-            acceptDraft(result)
+            resolved = result
+            if (!options.candidate) acceptDraft(result)
             modal.close()
-            renderPreparation()
+            if (!options.candidate) renderPreparation()
           },
           'primary'
         )
       )
     if (previous)
       actions.append(
-        button('Keep saved version', async () => {
-          await reloadSavedOrder(orderId)
+        button(uiMessage('Keep saved version'), async () => {
+          if (options.candidate) resolved = previous
+          else await reloadSavedOrder(orderId)
           modal.close()
         })
       )
-    actions.append(button('Continue editing', () => modal.close()))
+    actions.append(button(uiMessage('Continue editing'), () => modal.close()))
     modal.append(evidence, actions)
-    modal.onclose = () => {
-      media.forget(evidence)
-      modal.remove()
-    }
+    const closed = new Promise((resolve) =>
+      modal.addEventListener(
+        'close',
+        () => {
+          media.forget(evidence)
+          modal.remove()
+          resolve(resolved)
+        },
+        { once: true }
+      )
+    )
     enableLightDismiss(modal)
     document.body.append(modal)
     modal.showModal()
+    return closed
+  }
+  function watchCodeFields(inputs, draft, host) {
+    const notice = el('div', undefined, 'code-field-error')
+    notice.hidden = true
+    const text = el('span')
+    text.id = `code-error-${crypto.randomUUID()}`
+    text.setAttribute('role', 'status')
+    text.setAttribute('aria-live', 'polite')
+    let timer,
+      version = 0,
+      issue = null
+    const resolve = button(uiMessage('Resolve code'), () =>
+      resolveConflict(draft.orderId, { error: issue })
+    )
+    resolve.addEventListener('pointerdown', (event) => {
+      if (event.button === 0) event.preventDefault()
+    })
+    notice.append(text, resolve)
+    host.append(notice)
+    function show(error) {
+      issue = error
+      notice.hidden = !error
+      resolve.hidden = !error?.conflict
+      if (error) {
+        bindText(text, uiMessage(error.message))
+      }
+      for (const input of inputs)
+        if (error) {
+          input.setAttribute('aria-invalid', 'true')
+          input.setAttribute('aria-errormessage', text.id)
+        } else {
+          input.removeAttribute('aria-invalid')
+          input.removeAttribute('aria-errormessage')
+        }
+    }
+    const validate = ({ currentTarget: input }) => {
+      clearTimeout(timer)
+      const current = ++version
+      show(null)
+      timer = setTimeout(async () => {
+        if (!input.isConnected) return
+        const snapshot = JSON.stringify(draft)
+        try {
+          await repository.previewPreparations([JSON.parse(snapshot)])
+        } catch (error) {
+          if (
+            input.isConnected &&
+            current === version &&
+            snapshot === JSON.stringify(draft)
+          )
+            show(error)
+        }
+      }, 180)
+    }
+    for (const input of inputs) input.addEventListener('input', validate)
   }
   function renderPackingHeader(host) {
     const header = el('header', undefined, 'packing-view-header')
-    const back = button('Orders', showOrders, 'text-button')
+    const back = button(uiMessage('Orders'), showOrders, 'text-button')
     decorateIcon(back, 'previous')
     const heading = el('div', undefined, 'packing-title')
     const months = currentPackingMonths()
     heading.append(
-      el('h1', 'Prepare packing list'),
+      el('h1', uiMessage('Prepare packing list')),
       el(
         'p',
-        `${months.map(monthLabel).join(' · ')} · ${drafts.length} orders · ${[...scopeEntries.values()].reduce((sum, ids) => sum + ids.size, 0)} products`
+        uiMessage('{0} · {1} orders · {2} products', {
+          0: () => months.map(monthLabel).join(' · '),
+          1: drafts.length,
+          2: [...scopeEntries.values()].reduce((sum, ids) => sum + ids.size, 0),
+        })
       )
     )
     const actions = el('div', undefined, 'preparation-actions')
@@ -1289,7 +1597,7 @@ export async function startPackingWorkspace({
     redoButton = prepButton('Redo', () => travel('redo'))
     saveStatus = el('span', '', 'preparation-save-status')
     saveStatus.setAttribute('role', 'status')
-    resolveButton = button('Resolve', () =>
+    resolveButton = button(uiMessage('Resolve'), () =>
       resolveConflict([...saveErrors.keys()][0])
     )
     reloadPreparationButton = prepButton('Reload saved version', () =>
@@ -1303,28 +1611,73 @@ export async function startPackingWorkspace({
       reloadPreparationButton
     )
     header.append(back, heading, actions)
-    host.append(header)
+    const commandBar = el('div', undefined, 'packing-command-bar')
+    commandBar.append(header)
     const toolbar = el('div', undefined, 'packing-top-tools')
     const filter = el('select')
-    filter.setAttribute('aria-label', 'Show packing orders')
-    filter.append(new Option(`All ${drafts.length} orders`, ''))
+    bindAttribute(filter, 'aria-label', uiMessage('Show packing orders'))
+    filter.name = 'packing-order'
+    filter.className = 'packing-order-picker'
+    const richPicker = CSS.supports('appearance', 'base-select')
+    if (richPicker) {
+      const selected = el('button')
+      selected.type = 'button'
+      selected.append(el('selectedcontent'))
+      filter.append(selected)
+      // Native selectedcontent snapshots the option before cached photos resolve.
+      // Refresh that snapshot when the selected option's own image is ready.
+      filter.addEventListener(
+        'load',
+        (event) => {
+          const option = event.target.closest?.('option')
+          if (option?.selected)
+            selected
+              .querySelector('selectedcontent')
+              .replaceChildren(
+                ...Array.from(option.childNodes, (node) => node.cloneNode(true))
+              )
+        },
+        true
+      )
+    }
+    const allOrders = new Option('', '')
+    bindText(allOrders, uiMessage('All {0} orders', { 0: drafts.length }))
+    filter.append(allOrders)
     for (const draft of drafts) {
       const source = getRecords().find(
         (record) => record.snapshot.orderId === draft.orderId
       )?.snapshot
       const categories = [
-        ...new Set(
-          scopedGroups(draft).map((group) =>
-            [group.spanishName, group.category].filter(Boolean).join(' / ')
-          )
-        ),
+        ...new Set(scopedGroups(draft).map((group) => group.spanishName)),
       ].filter(Boolean)
-      filter.append(
-        new Option(
-          `${source?.sellerName || draft.sellerId} · ${categories.join(', ')} · ${draft.orderId}`,
-          draft.orderId
-        )
+      const sellerName =
+        source?.sellerName || draft.sellerId || 'Seller unavailable'
+      const option = new Option(
+        `${sellerName} · ${categories.join(', ')}`,
+        draft.orderId
       )
+      if (richPicker) {
+        const photos = el('span', undefined, 'packing-order-photos')
+        const items =
+          source?.items.filter((item) =>
+            scopeEntries.get(draft.orderId)?.has(item.entryId)
+          ) || []
+        for (const item of [
+          ...new Map(
+            items
+              .filter((item) => item.thumbnail)
+              .map((item) => [item.thumbnail, item])
+          ).values(),
+        ].slice(0, 3))
+          photos.append(media.photo(item, { interactive: false }))
+        const text = el('span', undefined, 'packing-order-caption')
+        text.append(
+          el('strong', sellerName),
+          el('small', categories.join(' · '))
+        )
+        option.replaceChildren(photos, text)
+      }
+      filter.append(option)
     }
     filter.value = packingOrders.size === 1 ? [...packingOrders][0] : ''
     filter.onchange = () => {
@@ -1334,19 +1687,23 @@ export async function startPackingWorkspace({
       renderPreparation()
     }
     const open = button(
-      'Open selected order',
+      uiMessage('Open selected order'),
       openSelectedSource,
       'open-selected-order'
     )
     decorateIcon(open, 'external')
     open.disabled = packingOrders.size !== 1
-    const selectAll = button('Select all', () => selectPackingRows(true)),
-      clear = button('Clear selection', () => selectPackingRows(false))
+    const selectAll = button(uiMessage('Select all'), () =>
+        selectPackingRows(true)
+      ),
+      clear = button(uiMessage('Clear selection'), () =>
+        selectPackingRows(false)
+      )
     toolbar.append(filter, open, selectAll, clear)
-    host.append(toolbar)
+    commandBar.append(toolbar)
     const output = el('div', undefined, 'preparation-output')
     copyScope = el('span', '', 'packing-help preparation-copy-scope')
-    const imageCopy = button('Copy Excel image', async (target) => {
+    const imageCopy = button(uiMessage('Copy Excel image'), async (target) => {
       if (preparationImageAbort) return
       const selectedRows = packingCopyRows()
       if (!selectedRows.length) return
@@ -1359,7 +1716,7 @@ export async function startPackingWorkspace({
           if (abort.signal.aborted) return false
           const rows = preparedRows(selectedRows)
           const cancel = button(
-            'Cancel image',
+            uiMessage('Cancel image'),
             () => abort.abort(),
             'copy-cancel'
           )
@@ -1367,6 +1724,7 @@ export async function startPackingWorkspace({
           try {
             return await copyExcelImage(rows, {
               loadImage,
+              renderCartonMark: createCartonMarkRenderer(),
               signal: abort.signal,
               onProgress: (message) => progress(message, { cancel }),
             })
@@ -1379,13 +1737,13 @@ export async function startPackingWorkspace({
         updatePreparationCopyScope()
       }
     })
-    const columns = button('Copy columns', async () => {
+    const columns = button(uiMessage('Copy columns'), async () => {
       const selectedRows = packingCopyRows()
       await flushSaves()
       await copyPreparation(preparedRows(selectedRows))
     })
     decorateIcon(columns, 'copy')
-    const codes = button('Copy group codes', async (target) => {
+    const codes = button(uiMessage('Copy group codes'), async (target) => {
       const selectedRows = packingCopyRows()
       try {
         await copied(target, async () => {
@@ -1413,22 +1771,57 @@ export async function startPackingWorkspace({
       columns,
       codes,
       imageCopy,
-      button('Copy barcode images', () => copyLabels('barcode')),
-      button('Copy carton marks', () => copyLabels('mark')),
+      button(uiMessage('Copy barcode images'), () => copyLabels('barcode')),
+      button(uiMessage('Copy carton marks'), () => copyLabels('mark')),
     ]
-    const backup = button('Back up packing', async (target) => {
+    const copyNames = [
+      ['Copy columns', 'Columns', 'table'],
+      ['Copy group codes', 'Group codes', 'copy'],
+      ['Copy Excel image', 'Excel image', 'image'],
+      ['Copy barcode images', 'Barcodes', 'barcode'],
+      ['Copy carton marks', 'Carton marks', 'carton'],
+    ]
+    copyButtons.forEach((target, index) => {
+      const [full, short, symbol] = copyNames[index]
+      bindText(target, uiMessage(short))
+      bindAttribute(target, 'aria-label', uiMessage(full))
+      decorateIcon(target, symbol)
+      preparationHelp(target, uiMessage(full))
+    })
+    const backup = button(uiMessage('Back up packing'), async (target) => {
+      const rows = packingCopyRows()
+      if (!rows.length) return
       await flushSaves()
-      const backup = await repository.exportBackup({
-        orderIds: drafts.map((draft) => draft.orderId),
-      })
-      const months = currentPackingMonths()
-      backup.packingScope = {
-        months,
-        orders: [...scopeEntries].map(([orderId, ids]) => ({
-          orderId,
-          entryIds: [...ids],
-        })),
+      const selection = new Map()
+      for (const row of rows) {
+        if (!selection.has(row.orderId)) selection.set(row.orderId, new Set())
+        selection.get(row.orderId).add(row.entryId)
       }
+      const months = [
+        ...new Set(
+          [...selection].flatMap(([orderId, ids]) => {
+            const prep = preparations.get(orderId)
+            return prep.groups
+              .filter((group) =>
+                group.variants.some((variant) =>
+                  variant.entryIds.some((id) => ids.has(id))
+                )
+              )
+              .map((group) => groupPackingMonth(prep, group))
+          })
+        ),
+      ].sort()
+      const backup = createPackingBackup(
+        await repository.exportBackup({ orderIds: [...selection.keys()] }),
+        {
+          months,
+          orders: [...selection].map(([orderId, ids]) => ({
+            accountId: preparations.get(orderId).accountId,
+            orderId,
+            entryIds: [...ids],
+          })),
+        }
+      )
       const url = URL.createObjectURL(
         new Blob([JSON.stringify(backup)], { type: 'application/json' })
       )
@@ -1437,21 +1830,141 @@ export async function startPackingWorkspace({
       a.download = `1688-packing-${months.length === 1 ? months[0] : 'mixed-months'}.json`
       a.click()
       setTimeout(() => URL.revokeObjectURL(url), 60000)
-      target.textContent = 'Backup saved'
+      feedback(uiMessage('Packing backup saved'))
     })
+    backupButton = backup
     decorateIcon(backup, 'download')
     preparationHelp(
       backup,
-      'Back up the orders in this packing, including their saved settings and code history. Other products in these orders are retained for a safe restore.'
+      uiMessage(
+        'Back up selected groups and products only. Complete source orders and issued codes are retained so totals and code ownership can be restored safely.'
+      )
     )
-    output.append(copyScope, ...copyButtons, backup)
-    host.append(output)
+    const restoreFile = el('input')
+    restoreFile.type = 'file'
+    restoreFile.accept = '.json,application/json'
+    restoreFile.hidden = true
+    bindAttribute(restoreFile, 'aria-label', uiMessage('Packing backup file'))
+    restoreFile.addEventListener('change', () => {
+      const file = restoreFile.files[0]
+      restoreFile.value = ''
+      if (file)
+        void preparationAction(() => restorePackingFile(file)).catch((error) =>
+          showError(error.message)
+        )
+    })
+    const restore = button(
+      uiMessage('Restore packing'),
+      () => restoreFile.click(),
+      'text-button'
+    )
+    decorateIcon(restore, 'upload')
+    preparationHelp(
+      restore,
+      uiMessage(
+        'Open a packing backup. Missing orders and newer saved edits are restored; newer local edits and issued codes stay protected.'
+      )
+    )
+    const copyActions = el('div', undefined, 'packing-copy-actions')
+    copyActions.append(
+      el('span', uiMessage('Copy'), 'packing-copy-caption'),
+      ...copyButtons
+    )
+    output.append(copyScope, copyActions)
+    const files = el('div', undefined, 'packing-file-actions')
+    files.append(backup, restore, restoreFile)
+    output.append(files)
+    commandBar.append(output)
+    host.append(commandBar)
+  }
+  async function restorePackingFile(file) {
+    await flushSaves()
+    const input = JSON.parse(await file.text())
+    const backup = validateBackup(input)
+    const scope = backup.packingScope
+    if (!scope)
+      throw new Error(
+        'Choose a file created by Back up packing. Use Settings → Data → Restore for a full-library backup.'
+      )
+    const newer = backup.preparations.filter((incoming) => {
+      const local = preparations.get(incoming.orderId)
+      return !local || incoming.updatedAt > local.updatedAt
+    })
+    const count = scope.orders.reduce(
+      (sum, order) => sum + order.entryIds.length,
+      0
+    )
+    const changes = reviewChanges(
+      [...preparations.values()],
+      newer,
+      backup.orders
+    )
+    if (!changes.length) {
+      for (const order of scope.orders) {
+        const record = backup.orders.find(
+          (record) => record.snapshot.orderId === order.orderId
+        )
+        changes.push({
+          name: record.snapshot.sellerName,
+          order: order.orderId,
+          photo: record.snapshot.items.find((item) =>
+            order.entryIds.includes(item.entryId)
+          ),
+          before: uiMessage('Current saved data'),
+          after: uiMessage('Keep newer edits'),
+          detail: uiMessage('{0} selected products', {
+            0: order.entryIds.length,
+          }),
+        })
+      }
+    }
+    if (
+      !(await reviewPackingChanges({
+        title: uiMessage('Restore packing backup?'),
+        explanation: uiMessage(
+          '{0} products from {1} orders will reopen. {2} orders can receive selected packing edits from this file. Unselected products, newer local edits and existing settings stay unchanged. Source orders and issued codes are retained for safe restoration.',
+          { 0: count, 1: scope.orders.length, 2: newer.length }
+        ),
+        changes,
+        proceed: uiMessage('Restore packing'),
+        media,
+      }))
+    )
+      return
+    await repository.restoreBackup(input)
+    await changed({ reload: true })
+    await reload()
+    drafts = scope.orders
+      .map((order) => preparations.get(order.orderId))
+      .filter(Boolean)
+      .map((draft) => structuredClone(draft))
+    scopeEntries.clear()
+    for (const order of scope.orders)
+      scopeEntries.set(order.orderId, new Set(order.entryIds))
+    packingOrders.clear()
+    if (drafts.length === 1) packingOrders.add(drafts[0].orderId)
+    const restoredMonths = currentPackingMonths()
+    if (restoredMonths.length === 1) monthInput.value = restoredMonths[0]
+    current = 0
+    groupPage = 0
+    history.clear()
+    checkpoints.clear()
+    selectionStates.clear()
+    initializePackingSelection()
+    $('orders-view').hidden = true
+    $('packing-view').hidden = false
+    document.body.classList.add('packing-active')
+    renderPreparation()
+    updateLaunchActions()
+    channel?.postMessage('changed')
+    feedback(uiMessage('Packing restored. Newer local edits were kept.'))
   }
   function renderPreparation() {
     preparationImageAbort?.abort()
     for (const draft of drafts) checkpoint(null, draft)
     media.reset()
     codeFields.clear()
+    resetButtons.clear()
     detachPreparationSelection()
     const host = $('preparation-content')
     host.replaceChildren()
@@ -1479,7 +1992,9 @@ export async function startPackingWorkspace({
       body.append(
         el(
           'p',
-          'No products in this packing selection. Return to Orders to choose products.'
+          uiMessage(
+            'No products in this packing selection. Return to Orders to choose products.'
+          )
         )
       )
     host.append(body)
@@ -1499,7 +2014,11 @@ export async function startPackingWorkspace({
         previous,
         el(
           'span',
-          `${groupPage + 1} / ${Math.ceil(groups.length / 20)} · ${groups.length} groups`
+          uiMessage('{0} / {1} · {2} groups', {
+            0: groupPage + 1,
+            1: Math.ceil(groups.length / 20),
+            2: groups.length,
+          })
         ),
         next
       )
@@ -1531,23 +2050,26 @@ export async function startPackingWorkspace({
     )?.snapshot
     const orderHeader = el('header', undefined, 'packing-order-header')
     const identity = el('div')
-    identity.append(
-      el('h2', source?.sellerName || draft.sellerId || 'Seller unavailable'),
-      el('code', draft.orderId)
+    const sellerHeading = el('h2')
+    sellerHeading.append(
+      copyTextButton(
+        source?.sellerName || draft.sellerId || t('Seller unavailable'),
+        { label: uiMessage('Copy store name') }
+      )
     )
-    const copyNumber = button('Copy order number', (target) =>
-      copied(target, () => navigator.clipboard.writeText(draft.orderId))
+    identity.append(sellerHeading)
+    const orderNumber = el('span', undefined, 'packing-order-number')
+    orderNumber.append(
+      copyTextButton(draft.orderId, { label: uiMessage('Copy order number') })
     )
-    decorateIcon(copyNumber, 'copy', {
-      iconOnly: true,
-      label: 'Copy order number',
-    })
+    identity.append(orderNumber)
     const restoreActions = el('div', undefined, 'packing-restore-actions')
     const reset = orderButton('Reset order and codes', () =>
       restorePacking(draft, false)
     )
     decorateIcon(reset, 'refresh')
-    reset.disabled = !draft.defaultPacking
+    reset.disabled = !hasDefaultPackingChanges(draft)
+    resetButtons.set(draft.orderId, reset)
     const previous = orderButton('Restore previous packing', () =>
       restorePacking(draft, true)
     )
@@ -1556,10 +2078,21 @@ export async function startPackingWorkspace({
     restoreActions.append(reset, previous)
     orderHeader.append(
       identity,
-      copyNumber,
       el(
         'span',
-        `${scopedGroups(draft).length} groups · ${[...new Set(scopedGroups(draft).map((group) => groupPackingMonth(draft, group)))].map(monthLabel).join(', ')}`,
+        uiMessage('{0} groups · {1}', {
+          0: scopedGroups(draft).length,
+          1: () =>
+            [
+              ...new Set(
+                scopedGroups(draft).map((group) =>
+                  groupPackingMonth(draft, group)
+                )
+              ),
+            ]
+              .map(monthLabel)
+              .join(', '),
+        }),
         'packing-help'
       ),
       restoreActions
@@ -1568,12 +2101,14 @@ export async function startPackingWorkspace({
     if (source?.sellerUnavailable || !draft.sellerId) {
       const help = el(
         'p',
-        'Seller unavailable on the source page. Enter the seller’s 1688 member login to assign label codes. Reuse the same login for this seller’s other orders.',
+        uiMessage(
+          'Seller unavailable on the source page. Enter the seller’s 1688 member login to assign label codes. Reuse the same login for this seller’s other orders.'
+        ),
         'packing-help'
       )
       help.id = `preparation-seller-help-${draft.orderId}`
       const seller = field(
-        'Seller member login (required)',
+        uiMessage('Seller member login (required)'),
         draft.sellerId,
         (value) => {
           draft.sellerId = value
@@ -1599,19 +2134,31 @@ export async function startPackingWorkspace({
     let categoryChanged = false,
       spanishChanged = false
     const orderTools = el('section', undefined, 'order-tools')
-    orderTools.setAttribute('aria-label', 'Order tools')
-    const orderSpanish = field('Spanish', spanishValue, (value) => {
+    bindAttribute(orderTools, 'aria-label', uiMessage('Order tools'))
+    const orderSpanish = field(uiMessage('Spanish'), spanishValue, (value) => {
       spanishValue = value.toUpperCase()
       spanishChanged = true
     })
-    orderSpanish.querySelector('input').placeholder =
-      names.size > 1 ? 'Mixed names' : 'Name all products'
-    const orderCategory = field('Chinese', categoryValue, (value) => {
-      categoryValue = value
-      categoryChanged = true
-    })
-    orderCategory.querySelector('input').placeholder =
-      categories.size > 1 ? 'Mixed categories' : 'Add a category'
+    bindAttribute(
+      orderSpanish.querySelector('input'),
+      'placeholder',
+      names.size > 1 ? uiMessage('Mixed names') : uiMessage('Name all products')
+    )
+    const orderCategory = field(
+      uiMessage('Chinese'),
+      categoryValue,
+      (value) => {
+        categoryValue = value
+        categoryChanged = true
+      }
+    )
+    bindAttribute(
+      orderCategory.querySelector('input'),
+      'placeholder',
+      categories.size > 1
+        ? uiMessage('Mixed categories')
+        : uiMessage('Add a category')
+    )
     const applyCategory = orderButton('Apply to order', () => {
       for (const group of scopedGroups(draft)) {
         if (categoryChanged) group.category = categoryValue
@@ -1622,25 +2169,33 @@ export async function startPackingWorkspace({
       }
       renderPreparation()
     })
-    orderSpanish
-      .querySelector('input')
-      .setAttribute('aria-label', 'Spanish category for order')
-    orderCategory
-      .querySelector('input')
-      .setAttribute('aria-label', 'Chinese category for order')
+    bindAttribute(
+      orderSpanish.querySelector('input'),
+      'aria-label',
+      uiMessage('Spanish category for order')
+    )
+    bindAttribute(
+      orderCategory.querySelector('input'),
+      'aria-label',
+      uiMessage('Chinese category for order')
+    )
     orderTools.append(
-      el('span', 'For this order', 'order-category-label'),
+      el('span', uiMessage('For this order'), 'order-category-label'),
       preparationHelp(
         orderSpanish,
-        'Use one Spanish label name for every product in this order.'
+        uiMessage('Use one Spanish label name for every product in this order.')
       ),
       preparationHelp(
         orderCategory,
-        'One Chinese name for all carton marks in this order. For example, 玻璃 means glass.'
+        uiMessage(
+          'One Chinese name for all carton marks in this order. For example, 玻璃 means glass.'
+        )
       ),
       preparationHelp(
         applyCategory,
-        'Apply the names you changed to all products in this order. Other fields stay as they are.'
+        uiMessage(
+          'Apply the names you changed to all products in this order. Other fields stay as they are.'
+        )
       )
     )
     orderTools.append(
@@ -1682,10 +2237,15 @@ export async function startPackingWorkspace({
             draft,
             candidate,
             'Merge selected product groups?',
-            `${ids.length} product groups in this order will share ${target.baseCode}. Their barcode endings may change to remain unique. Old issued codes stay reserved.`
+            uiMessage(
+              '{count} product groups in this order will share {code}. Their barcode endings may change to remain unique. Old issued codes stay reserved.',
+              { count: ids.length, code: target.baseCode }
+            )
           )
         }),
-        'Give selected products one product code and carton mark. Variants keep separate barcodes.'
+        uiMessage(
+          'Give selected products one product code and carton mark. Variants keep separate barcodes.'
+        )
       )
     )
     host.append(orderTools)
@@ -1693,13 +2253,16 @@ export async function startPackingWorkspace({
     for (const group of pageGroups) {
       const card = el('section', undefined, 'preparation-group'),
         title = el('h3'),
-        selectGroup = el('button', `Group ${draft.groups.indexOf(group) + 1}`)
+        selectGroup = el('span', undefined, 'group-select')
       card.dataset.groupId = group.id
-      selectGroup.type = 'button'
-      selectGroup.className = 'group-select'
-      selectGroup.setAttribute(
+      selectGroup.setAttribute('role', 'button')
+      bindAttribute(
+        selectGroup,
         'aria-label',
-        `Select group ${draft.groups.indexOf(group) + 1}: ${group.title}`
+        uiMessage('Select group {0}: {1}', {
+          0: draft.groups.indexOf(group) + 1,
+          1: group.title,
+        })
       )
       selection.controller.bind(selectGroup, group.id, {
         attribute: 'aria-pressed',
@@ -1712,7 +2275,7 @@ export async function startPackingWorkspace({
       )
       const isCardTarget = (event) =>
         !event.target.closest(
-          'button, a, input, select, textarea, label, [contenteditable]:not([contenteditable="false"]), .variants'
+          'button, a, input, select, textarea, label, [role="button"], [contenteditable]:not([contenteditable="false"]), .variants'
         )
       card.addEventListener('pointerdown', (event) => {
         if (event.shiftKey && isCardTarget(event)) event.preventDefault()
@@ -1724,9 +2287,9 @@ export async function startPackingWorkspace({
       })
       const productInput = el('input')
       productInput.className = 'group-code-editor'
-      productInput.setAttribute('aria-label', 'Product code')
+      bindAttribute(productInput, 'aria-label', uiMessage('Product code'))
       productInput.value = group.baseCode
-      productInput.placeholder = 'Assigning code…'
+      bindAttribute(productInput, 'placeholder', uiMessage('Assigning code…'))
       productInput.autocomplete = 'off'
       productInput.setAttribute('autocorrect', 'off')
       productInput.spellcheck = false
@@ -1738,7 +2301,7 @@ export async function startPackingWorkspace({
       title.append(
         reorderHandle({
           key: group.id,
-          label: `group ${draft.groups.indexOf(group) + 1}`,
+          label: uiMessage('group {0}', { 0: draft.groups.indexOf(group) + 1 }),
           items: () => scopedGroups(draft).map((entry) => entry.id),
           element: (id) => host.querySelector(`[data-group-id="${id}"]`),
           move: (key, target, after) => {
@@ -1765,56 +2328,85 @@ export async function startPackingWorkspace({
         selectGroup,
         preparationHelp(
           productInput,
-          'Product code shared by all variants. Printed on its carton mark.'
+          uiMessage(
+            'Product code shared by all variants. Printed on its carton mark.'
+          )
+        )
+      )
+      const removeGroup = orderButton('Remove group', () =>
+        removePackingProducts(
+          draft,
+          group.variants
+            .flatMap((variant) => variant.entryIds)
+            .filter((id) => scopeEntries.get(draft.orderId)?.has(id))
+        )
+      )
+      decorateIcon(removeGroup, 'trash', {
+        iconOnly: true,
+        label: uiMessage('Remove group'),
+      })
+      title.append(
+        preparationHelp(
+          removeGroup,
+          uiMessage(
+            'Remove this group’s displayed products from packing. Original orders and issued codes are kept.'
+          )
         )
       )
       const groupName = el('input')
       groupName.className = 'group-name-editor'
-      groupName.setAttribute('aria-label', 'Spanish short name')
-      groupName.placeholder = 'Name product'
+      bindAttribute(groupName, 'aria-label', uiMessage('Spanish short name'))
+      bindAttribute(groupName, 'placeholder', uiMessage('Name product'))
       groupName.value = group.spanishName
       groupName.maxLength = 80
-      groupName.size = Math.max(12, Math.min(32, group.spanishName.length))
+      groupName.size = Math.max(8, Math.min(24, group.spanishName.length))
       groupName.addEventListener('input', () => {
         group.spanishName = groupName.value.toUpperCase()
       })
       preparationHelp(
         selectGroup,
-        'Click to select this group. Click again to deselect; Shift-click selects a range.'
+        uiMessage(
+          'Click to select this group. Click again to deselect; Shift-click selects a range.'
+        )
       )
       preparationHelp(
         title,
-        'Click this header to select the group. Click again to deselect; Shift-click selects a range.'
+        uiMessage(
+          'Click this header to select the group. Click again to deselect; Shift-click selects a range.'
+        )
       )
       const originalTitle = el('div', undefined, 'original-product-name')
       originalTitle.append(
-        el('span', 'Original product name'),
+        el('span', uiMessage('Original product name')),
         el('p', group.title)
       )
       const summary = el('div', undefined, 'product-summary')
       summary.append(title)
+      watchCodeFields([productInput], draft, summary)
       const fields = el('div', undefined, 'group-fields')
       fields.append(
         preparationHelp(
           groupName,
-          'Edit the Spanish name printed on this product’s barcode labels.'
+          uiMessage(
+            'Edit the Spanish name printed on this product’s barcode labels.'
+          )
         ),
         preparationHelp(
           inlineField(
-            'Chinese category',
+            uiMessage('Chinese category'),
             group.category,
             (v) => {
               group.category = v
             },
             'Add a category'
           ),
-          'Printed on the carton mark, for example 玻璃 for glass.'
+          uiMessage('Printed on the carton mark, for example 玻璃 for glass.')
         )
       )
       const overview = el('div', undefined, 'product-overview')
       const carton = el('div', undefined, 'carton-preview')
       carton.append(
-        el('strong', 'Carton mark'),
+        el('strong', uiMessage('Carton mark')),
         media.label(
           () => outputModel(draft, group, null, 'mark'),
           () =>
@@ -1832,13 +2424,14 @@ export async function startPackingWorkspace({
         table = el('table', undefined, 'variants'),
         head = el('tr')
       table.setAttribute('role', 'grid')
-      table.setAttribute(
+      bindAttribute(
+        table,
         'aria-label',
-        `Variants for ${group.spanishName || group.title}`
+        uiMessage('Variants for {0}', { 0: group.spanishName || group.title })
       )
       table.setAttribute('aria-multiselectable', 'true')
       for (const label of ['#', 'Photo', 'Product variant', 'Barcode']) {
-        const column = el('th', label)
+        const column = el('th', uiMessage(label))
         column.scope = 'col'
         head.append(column)
       }
@@ -1874,7 +2467,9 @@ export async function startPackingWorkspace({
         td.append(
           reorderHandle({
             key: variant.id,
-            label: `product ${group.variants.indexOf(variant) + 1}`,
+            label: uiMessage('product {0}', {
+              0: group.variants.indexOf(variant) + 1,
+            }),
             items: () => scopedVariants(draft, group).map((entry) => entry.id),
             element: (id) => card.querySelector(`[data-variant-id="${id}"]`),
             move: (key, target, after) => {
@@ -1906,7 +2501,9 @@ export async function startPackingWorkspace({
           .map((id) => sourceItems.get(id))
           .filter(Boolean)
         if (items.length > 1)
-          td.append(el('small', `${items.length} source rows`))
+          td.append(
+            el('small', uiMessage('{0} source rows', { 0: items.length }))
+          )
         const uniquePhotos = [
           ...new Map(
             items.map((item) => [item.thumbnail || item.entryId, item])
@@ -1940,9 +2537,9 @@ export async function startPackingWorkspace({
               showPhotos()
             })
           previous.textContent = '‹'
-          previous.setAttribute('aria-label', 'Previous photos')
+          bindAttribute(previous, 'aria-label', uiMessage('Previous photos'))
           next.textContent = '›'
-          next.setAttribute('aria-label', 'Next photos')
+          bindAttribute(next, 'aria-label', uiMessage('Next photos'))
           if (pages > 1) navigation.append(previous, pageLabel, next)
           otherPhotos.append(gallery, navigation)
           showPhotos()
@@ -1952,7 +2549,7 @@ export async function startPackingWorkspace({
           details = el('div', undefined, 'variant-details'),
           description = el('div', undefined, 'variant-description'),
           note = inlineField(
-            'Product variant',
+            uiMessage('Product variant'),
             variant.variant,
             (value) => {
               variant.variant = value
@@ -1962,19 +2559,29 @@ export async function startPackingWorkspace({
           )
         note.classList.add('variant-note')
         note.firstChild.replaceWith(
-          el('span', 'Product variant', 'visually-hidden')
+          el('span', uiMessage('Product variant'), 'visually-hidden')
         )
         description.append(
           preparationHelp(
             note,
-            'Describe what differs, such as color or scent. This note is not printed.'
+            uiMessage(
+              'Describe what differs, such as color or scent. This note is not printed.'
+            )
           )
         )
+        const colors = colorHints(items)
+        if (colors.childElementCount) description.append(colors)
         if (variant.size)
           description.append(
             preparationHelp(
-              el('small', `Order size: ${variant.size}`, 'source-size'),
-              'From the order. Helps you choose a size code; this measurement is not printed.'
+              el(
+                'small',
+                uiMessage('Order size: {0}', { 0: variant.size }),
+                'source-size'
+              ),
+              uiMessage(
+                'From the order. Helps you choose a size code; this measurement is not printed.'
+              )
             )
           )
         const facts = el('dl', undefined, 'variant-order-facts')
@@ -1993,54 +2600,65 @@ export async function startPackingWorkspace({
           ],
           [
             'Quantity',
-            items.length ? quantity.toLocaleString('en-GB') : '—',
+            items.length ? () => quantity.toLocaleString(getLocale()) : '—',
             'variant-quantity',
           ],
         ]) {
           const fact = el('div', undefined, className)
-          fact.append(el('dt', label), el('dd', value))
+          const amount = el('dd')
+          if (typeof value === 'function') bindText(amount, value)
+          else amount.textContent = value
+          fact.append(el('dt', uiMessage(label)), amount)
           facts.append(fact)
         }
         description.append(
           preparationHelp(
             facts,
             items.length > 1
-              ? `Source unit prices and combined quantity from ${items.length} order rows. Discounts are not subtracted here.`
-              : 'Source unit price and ordered quantity. Discounts are not subtracted here.'
+              ? uiMessage(
+                  'Source unit prices and combined quantity from {0} order rows. Discounts are not subtracted here.',
+                  { 0: items.length }
+                )
+              : uiMessage(
+                  'Source unit price and ordered quantity. Discounts are not subtracted here.'
+                )
           )
         )
         const codeOptions = el('fieldset', undefined, 'variant-code-options')
-        codeOptions.append(el('legend', 'Code options'))
+        bindAttribute(codeOptions, 'aria-label', uiMessage('Code options'))
         const codeReadout = el(
           'output',
           undefined,
           'variant-code-readout visually-hidden'
         )
-        codeReadout.setAttribute('aria-label', 'Full barcode')
+        bindAttribute(codeReadout, 'aria-label', uiMessage('Full barcode'))
         const codeDesign = el('div', undefined, 'variant-code-design')
         const codeBasePart = el('div', undefined, 'code-base-part')
-        const codeBase = el(
-          'code',
-          group.baseCode || 'Assigning code…',
-          'variant-code-base'
-        )
+        const codeBase = el('code', undefined, 'variant-code-base')
         codeBasePart.append(
           codeBase,
-          el('span', 'Product code', 'code-part-label')
+          el('span', uiMessage('Product code'), 'code-part-label')
         )
         codeDesign.append(
           preparationHelp(
             codeBasePart,
-            'Shared product code. Edit the title above to change it for every variant.'
+            uiMessage(
+              'Shared product code. Edit the title above to change it for every variant.'
+            )
           )
         )
         const updateCodeReadout = () => {
-          codeReadout.textContent = `${group.baseCode || 'Product code'}${variant.variantSuffix}${variant.sizeSuffix}`
-          codeBase.textContent = group.baseCode || 'Assigning code…'
+          bindText(
+            codeReadout,
+            () =>
+              `${group.baseCode || t('Product code')}${variant.variantSuffix}${variant.sizeSuffix}`
+          )
+          bindText(codeBase, () => group.baseCode || t('Assigning code…'))
         }
         updateCodeReadout()
         productInput.addEventListener('input', updateCodeReadout)
         productInput.addEventListener('change', updateCodeReadout)
+        const codeInputs = []
         for (const [key, label] of [
           ['variantSuffix', 'Variant code'],
           ['sizeSuffix', 'Size code'],
@@ -2059,12 +2677,18 @@ export async function startPackingWorkspace({
           labelField.firstChild.replaceWith(
             el(
               'span',
-              label === 'Variant code' ? 'Variant' : 'Size',
+              label === 'Variant code'
+                ? uiMessage('Variant')
+                : uiMessage('Size'),
               'code-part-label'
             )
           )
           const codeInput = labelField.querySelector('input')
-          codeInput.setAttribute('aria-label', `${label} ${variant.id}`)
+          bindAttribute(
+            codeInput,
+            'aria-label',
+            uiMessage('{0} {1}', { 0: uiMessage(label), 1: variant.id })
+          )
           codeInput.autocomplete = 'off'
           codeInput.setAttribute('autocorrect', 'off')
           codeInput.spellcheck = false
@@ -2073,26 +2697,34 @@ export async function startPackingWorkspace({
           codeInput.addEventListener('input', () => {
             codeInput.size = Math.max(1, codeInput.value.length)
           })
+          codeInputs.push(codeInput)
           codeDesign.append(
             preparationHelp(
               labelField,
               key === 'variantSuffix'
-                ? 'Identifies the color or style: A, B, C. Leave blank when not needed.'
-                : 'Identifies the size: S, M, L. Leave blank when not needed.'
+                ? uiMessage(
+                    'Identifies the color or style: A, B, C. Leave blank when not needed.'
+                  )
+                : uiMessage(
+                    'Identifies the size: S, M, L. Leave blank when not needed.'
+                  )
             )
           )
         }
         codeOptions.append(codeDesign, codeReadout)
+        watchCodeFields(codeInputs, draft, codeOptions)
         if (variant.needsSizeMapping)
           codeOptions.append(
-            el('small', 'Choose a size code', 'needs-preparation')
+            el('small', uiMessage('Choose a size code'), 'needs-preparation')
           )
         details.append(description, codeOptions)
         option.append(details)
         row.append(photoCell, option)
         const output = el('td')
         if (!variant.entryIds.some((id) => live.has(id)))
-          output.append(el('span', 'Removed from order', 'packing-help'))
+          output.append(
+            el('span', uiMessage('Removed from order'), 'packing-help')
+          )
         else
           output.append(
             media.label(
@@ -2110,6 +2742,26 @@ export async function startPackingWorkspace({
               'barcode'
             )
           )
+        const removeProduct = orderButton('Remove product', () =>
+          removePackingProducts(
+            draft,
+            variant.entryIds.filter((id) =>
+              scopeEntries.get(draft.orderId)?.has(id)
+            )
+          )
+        )
+        decorateIcon(removeProduct, 'trash', {
+          iconOnly: true,
+          label: uiMessage('Remove product'),
+        })
+        td.append(
+          preparationHelp(
+            removeProduct,
+            uiMessage(
+              'Remove this product from packing. Original order data and issued codes are kept.'
+            )
+          )
+        )
         row.append(output)
         body.append(row)
       }
@@ -2140,8 +2792,8 @@ export async function startPackingWorkspace({
         card.append(navigation)
       }
       const groupTools = el('section', undefined, 'group-tools')
-      groupTools.setAttribute('aria-label', 'Grouping tools')
-      groupTools.append(el('h4', 'Grouping tools'))
+      bindAttribute(groupTools, 'aria-label', uiMessage('Grouping tools'))
+      groupTools.append(el('h4', uiMessage('Grouping tools')))
       const groupActions = el('div', undefined, 'dialog-actions')
       groupActions.append(
         preparationHelp(
@@ -2164,10 +2816,18 @@ export async function startPackingWorkspace({
               draft,
               candidate,
               'Share one barcode?',
-              `${ids.length} selected variants will use ${group.baseCode}${target.variantSuffix}${target.sizeSuffix}. Their original prices and quantities remain separate. Previous barcode reservations remain.`
+              uiMessage(
+                '{count} selected variants will use {code}. Their original prices and quantities remain separate. Previous barcode reservations remain.',
+                {
+                  count: ids.length,
+                  code: `${group.baseCode}${target.variantSuffix}${target.sizeSuffix}`,
+                }
+              )
             )
           }),
-          'Give matching variants one barcode. Original prices and quantities stay separate.'
+          uiMessage(
+            'Give matching variants one barcode. Original prices and quantities stay separate.'
+          )
         ),
         preparationHelp(
           orderButton('Give rows separate barcodes', async () => {
@@ -2208,10 +2868,15 @@ export async function startPackingWorkspace({
               draft,
               candidate,
               'Separate the original product rows?',
-              `${selected.length} combined variants will be split into one barcode per original order row. New endings will be assigned; existing reservations remain.`
+              uiMessage(
+                '{count} combined variants will be split into one barcode per original order row. New endings will be assigned; existing reservations remain.',
+                { count: selected.length }
+              )
             )
           }),
-          'Split a combined variant back into one barcode per original order row.'
+          uiMessage(
+            'Split a combined variant back into one barcode per original order row.'
+          )
         ),
         preparationHelp(
           orderButton('Move to new product', async () => {
@@ -2235,10 +2900,15 @@ export async function startPackingWorkspace({
               draft,
               candidate,
               'Move variants to a new product group?',
-              `${ids.length} variants will receive a new shared product code. The other variants keep ${group.baseCode}. Old issued codes stay reserved.`
+              uiMessage(
+                '{count} variants will receive a new shared product code. The other variants keep {code}. Old issued codes stay reserved.',
+                { count: ids.length, code: group.baseCode }
+              )
             )
           }),
-          'Give selected variants their own product code and carton mark.'
+          uiMessage(
+            'Give selected variants their own product code and carton mark.'
+          )
         )
       )
       groupTools.append(groupActions)
@@ -2250,12 +2920,15 @@ export async function startPackingWorkspace({
   async function chooseImageBatch(rows, size = 20) {
     if (rows.length <= size) return rows
     const modal = el('dialog')
-    modal.setAttribute('aria-label', 'Choose image batch')
+    bindAttribute(modal, 'aria-label', uiMessage('Choose image batch'))
     modal.append(
-      el('h2', 'Copy images in manageable batches'),
+      el('h2', uiMessage('Copy images in manageable batches')),
       el(
         'p',
-        `${rows.length} images. Each batch preserves original quality and row order.`
+        uiMessage(
+          '{0} images. Each batch preserves original quality and row order.',
+          { 0: rows.length }
+        )
       )
     )
     document.body.append(modal)
@@ -2268,14 +2941,26 @@ export async function startPackingWorkspace({
       select.min = '1'
       select.max = String(count)
       select.value = '1'
-      select.setAttribute('aria-label', `Batch number (1–${count})`)
+      bindAttribute(
+        select,
+        'aria-label',
+        uiMessage('Batch number (1–{0})', { 0: count })
+      )
       const describe = () => {
         const start = (Number(select.value) - 1) * size
-        range.textContent = `Batch ${select.value} of ${count} · rows ${start + 1}–${Math.min(rows.length, start + size)}`
+        bindText(
+          range,
+          uiMessage('Batch {0} of {1} · rows {2}–{3}', {
+            0: select.value,
+            1: count,
+            2: start + 1,
+            3: Math.min(rows.length, start + size),
+          })
+        )
       }
       select.oninput = describe
       describe()
-      const proceed = el('button', 'Use this batch')
+      const proceed = el('button', uiMessage('Use this batch'))
       proceed.onclick = () => {
         if (!select.reportValidity()) return
         const start = (Number(select.value) - 1) * size
@@ -2283,7 +2968,7 @@ export async function startPackingWorkspace({
         modal.close()
       }
       modal.append(select, range, proceed)
-      const cancel = el('button', 'Cancel')
+      const cancel = el('button', uiMessage('Cancel'))
       cancel.onclick = () => modal.close()
       modal.append(cancel)
       modal.onclose = () => {
@@ -2335,12 +3020,12 @@ export async function startPackingWorkspace({
     )
     if (!batch) return
     const modal = el('dialog')
-    modal.setAttribute('aria-label', 'Prepare label images')
-    const status = el('p', 'Preparing…'),
-      copy = el('button', 'Copy prepared images', 'primary'),
-      cancel = el('button', 'Cancel')
+    bindAttribute(modal, 'aria-label', uiMessage('Prepare label images'))
+    const status = el('p', uiMessage('Preparing…')),
+      copy = el('button', uiMessage('Copy prepared images'), 'primary'),
+      cancel = el('button', uiMessage('Cancel'))
     copy.disabled = true
-    modal.append(el('h2', 'Label images'), status, copy, cancel)
+    modal.append(el('h2', uiMessage('Label images')), status, copy, cancel)
     document.body.append(modal)
     const abort = new AbortController(),
       results = []
@@ -2353,7 +3038,10 @@ export async function startPackingWorkspace({
     try {
       for (const [index, model] of batch.entries()) {
         if (abort.signal.aborted) return
-        status.textContent = `Preparing ${index + 1} of ${batch.length}`
+        bindText(
+          status,
+          uiMessage('Preparing {0} of {1}', { 0: index + 1, 1: batch.length })
+        )
         results.push(
           await renderLabel({
             ...model,
@@ -2364,11 +3052,16 @@ export async function startPackingWorkspace({
         )
         await yieldUI()
       }
-      status.textContent = `${results.length} images ready. Paste into Excel after copying.`
+      bindText(
+        status,
+        uiMessage('{0} images ready. Paste into Excel after copying.', {
+          0: results.length,
+        })
+      )
       copy.disabled = false
       copy.onclick = () => copied(copy, () => labelClipboard(results))
     } catch (error) {
-      if (!abort.signal.aborted) status.textContent = error.message
+      if (!abort.signal.aborted) bindText(status, error.message)
     }
   }
   function orderRows(rows) {
@@ -2453,8 +3146,10 @@ export async function startPackingWorkspace({
   async function copyPreparation(rows = preparedRows()) {
     if (!rows.length) throw new Error('Select product rows to copy.')
     const modal = el('dialog', undefined, 'packing-column-dialog')
-    modal.setAttribute('aria-label', 'Copy preparation columns')
-    modal.append(el('h2', `Copy ${rows.length} product rows`))
+    bindAttribute(modal, 'aria-label', uiMessage('Copy preparation columns'))
+    modal.append(
+      el('h2', uiMessage('Copy {0} product rows', { 0: rows.length }))
+    )
     const fields = el('div', undefined, 'column-options')
     const preferenceKey = '1688-packing-copy-columns'
     let selectedColumns = preparationColumns.map(([key]) => key)
@@ -2463,7 +3158,7 @@ export async function startPackingWorkspace({
       if (Array.isArray(stored)) selectedColumns = stored
     } catch {}
     for (const [key, title] of preparationColumns) {
-      const label = el('label', title),
+      const label = el('label', uiMessage(title)),
         check = el('input')
       check.type = 'checkbox'
       check.value = key
@@ -2472,7 +3167,7 @@ export async function startPackingWorkspace({
       fields.append(label)
     }
     const copy = button(
-        'Copy chosen columns',
+        uiMessage('Copy chosen columns'),
         async (b) =>
           copied(b, async () => {
             const columns = [...fields.querySelectorAll('input:checked')].map(
@@ -2487,9 +3182,13 @@ export async function startPackingWorkspace({
           }),
         'primary'
       ),
-      close = el('button', 'Close')
+      close = el('button', uiMessage('Close'))
     close.onclick = () => modal.close()
-    const headerChoice = el('label', 'Headers', 'column-header-choice'),
+    const headerChoice = el(
+        'label',
+        uiMessage('Headers'),
+        'column-header-choice'
+      ),
       headerCheck = el('input')
     headerCheck.type = 'checkbox'
     headerCheck.checked = headers()
@@ -2506,7 +3205,7 @@ export async function startPackingWorkspace({
     actions.append(headerChoice, close, copy)
     modal.append(
       fields,
-      el('p', 'Product codes appear only once per group.'),
+      el('p', uiMessage('Product codes appear only once per group.')),
       actions
     )
     document.body.append(modal)
@@ -2522,9 +3221,9 @@ export async function startPackingWorkspace({
       tabs = el('div', undefined, 'settings-tabs'),
       panels = new Map(),
       tabButtons = []
-    host.replaceChildren(el('h2', 'Settings'), tabs)
+    host.replaceChildren(el('h2', uiMessage('Settings')), tabs)
     tabs.setAttribute('role', 'tablist')
-    tabs.setAttribute('aria-label', 'Settings sections')
+    bindAttribute(tabs, 'aria-label', uiMessage('Settings sections'))
     function selectTab(id) {
       for (const tab of tabButtons) {
         const selected = tab.getAttribute('aria-controls') === id
@@ -2580,7 +3279,7 @@ export async function startPackingWorkspace({
       grid = el('div', undefined, 'settings-grid')
     function card(title, symbol, className = '') {
       const section = el('section', undefined, `settings-card ${className}`),
-        heading = el('h3', title)
+        heading = el('h3', isMessage(title) ? title : uiMessage(title))
       decorateIcon(heading, symbol)
       section.append(heading)
       grid.append(section)
@@ -2607,7 +3306,11 @@ export async function startPackingWorkspace({
       if (help) preparationHelp(result, help)
       return result
     }
-    const shared = card('Shared label text', 'text', 'settings-shared')
+    const shared = card(
+      uiMessage('Shared label text'),
+      'text',
+      'settings-shared'
+    )
     for (const [key, label] of [
       ['website', 'Website'],
       ['destination', 'Destination'],
@@ -2620,20 +3323,22 @@ export async function startPackingWorkspace({
           {
             help:
               key === 'website'
-                ? 'Printed on every barcode label.'
-                : 'Destination printed on every barcode label.',
+                ? uiMessage('Printed on every barcode label.')
+                : uiMessage('Destination printed on every barcode label.'),
           }
         )
       )
     shared.append(
       settingField(
-        'Output DPI',
+        uiMessage('Output DPI'),
         value.settings.dpi,
         (v) => (value.settings.dpi = Number(v)),
         {
           min: 150,
           max: 600,
-          help: 'Image detail for copying and printing. 300 DPI is the default; physical dimensions stay the same.',
+          help: uiMessage(
+            'Image detail for copying and printing. 300 DPI is the default; physical dimensions stay the same.'
+          ),
         }
       )
     )
@@ -2646,23 +3351,33 @@ export async function startPackingWorkspace({
         ['heightMm', 'height', 10],
       ]) {
         const size = settingField(
-          `${label === 'width' ? 'Width' : 'Height'} (mm)`,
+          uiMessage('{0} (mm)', {
+            0: label === 'width' ? uiMessage('Width') : uiMessage('Height'),
+          }),
           value.settings[kind][key] ?? 1,
           (v) => (value.settings[kind][key] = Number(v)),
           {
             min: minimum,
             max: 300,
             step: 0.1,
-            help: `${title} ${label} in millimetres. Saved images carry this physical size.`,
+            help: uiMessage(
+              '{0} {1} in millimetres. Saved images carry this physical size.',
+              { 0: uiMessage(title), 1: uiMessage(label) }
+            ),
           }
         )
-        size
-          .querySelector('input')
-          .setAttribute('aria-label', `${title} ${label} (mm)`)
+        bindAttribute(
+          size.querySelector('input'),
+          'aria-label',
+          uiMessage('{0} {1} (mm)', {
+            0: uiMessage(title),
+            1: uiMessage(label),
+          })
+        )
         dimensions.append(size)
       }
       const scale = settingField(
-          'Text size',
+          uiMessage('Text size'),
           value.settings[kind].textScale ?? 1,
           (v) => {
             value.settings[kind].textScale = Number(v)
@@ -2672,7 +3387,9 @@ export async function startPackingWorkspace({
             min: 0.75,
             max: 1.25,
             step: 0.05,
-            help: 'Resize label text from 75% to 125%. The layout and barcode bars keep their proportions.',
+            help: uiMessage(
+              'Resize label text from 75% to 125%. The layout and barcode bars keep their proportions.'
+            ),
           }
         ),
         scaleValue = el(
@@ -2682,22 +3399,30 @@ export async function startPackingWorkspace({
         scaleInput = scale.querySelector('input')
       scale.className = 'settings-scale'
       scaleInput.type = 'range'
-      scaleInput.setAttribute('aria-label', `${title} text scale (0.75–1.25)`)
+      bindAttribute(
+        scaleInput,
+        'aria-label',
+        uiMessage('{0} text scale (0.75–1.25)', { 0: uiMessage(title) })
+      )
       scaleValue.htmlFor = scaleInput.id
       scale.append(scaleValue)
       section.append(dimensions, scale)
     }
-    const logoCard = card('Label logo', 'image', 'settings-logo'),
+    const logoCard = card(uiMessage('Label logo'), 'image', 'settings-logo'),
       logo = el('input'),
       logoPreview = el('img'),
       logoControls = el('div'),
-      logoStatus = el('span', 'PNG, JPG or WebP · up to 2 MB', 'packing-help')
+      logoStatus = el(
+        'span',
+        uiMessage('PNG, JPG or WebP · up to 2 MB'),
+        'packing-help'
+      )
     logo.type = 'file'
     logo.className = 'settings-logo-file'
     logo.accept = 'image/png,image/jpeg,image/webp'
-    logo.setAttribute('aria-label', 'Replace label logo')
+    bindAttribute(logo, 'aria-label', uiMessage('Replace label logo'))
     logoPreview.src = value.logoDataUrl || logoUrl()
-    logoPreview.alt = 'Current label logo'
+    bindAttribute(logoPreview, 'alt', uiMessage('Current label logo'))
     logoPreview.className = 'settings-logo-preview'
     logo.onchange = async () => {
       try {
@@ -2719,7 +3444,7 @@ export async function startPackingWorkspace({
     }
     logoControls.append(
       decorateIcon(
-        button('Replace logo', () => logo.click()),
+        button(uiMessage('Replace logo'), () => logo.click()),
         'upload'
       ),
       logoStatus,
@@ -2728,10 +3453,12 @@ export async function startPackingWorkspace({
     logoCard.append(logoPreview, logoControls)
     labels.append(grid)
     names.append(
-      el('h3', 'Automatic product names'),
+      el('h3', uiMessage('Automatic product names')),
       el(
         'p',
-        'Fill names from product titles. Your edits stay unchanged; unknown products stay unnamed.',
+        uiMessage(
+          'Fill names from product titles. Your edits stay unchanged; unknown products stay unnamed.'
+        ),
         'packing-help'
       )
     )
@@ -2746,7 +3473,7 @@ export async function startPackingWorkspace({
       'Chinese category',
       '',
     ]) {
-      const th = el('th', name)
+      const th = el('th', uiMessage(name))
       th.scope = 'col'
       head.append(th)
     }
@@ -2755,7 +3482,7 @@ export async function startPackingWorkspace({
     let vocabularyPage = 0
     const pageSize = 12
     const vocabularySearch = field(
-      'Search naming rules',
+      uiMessage('Search naming rules'),
       '',
       () => {
         vocabularyPage = 0
@@ -2767,18 +3494,18 @@ export async function startPackingWorkspace({
     const vocabularyCount = el('span', undefined, 'packing-help')
     vocabularyCount.setAttribute('role', 'status')
     const vocabularyNavigation = el('div', undefined, 'vocabulary-navigation')
-    const previousRules = button('Previous rules', () => {
+    const previousRules = button(uiMessage('Previous rules'), () => {
       vocabularyPage--
       renderVocabulary()
     })
-    const nextRules = button('Next rules', () => {
+    const nextRules = button(uiMessage('Next rules'), () => {
       vocabularyPage++
       renderVocabulary()
     })
     decorateIcon(previousRules, 'previous', { iconOnly: true })
     decorateIcon(nextRules, 'next', { iconOnly: true })
-    preparationHelp(previousRules, 'Previous page of naming rules.')
-    preparationHelp(nextRules, 'Next page of naming rules.')
+    preparationHelp(previousRules, uiMessage('Previous page of naming rules.'))
+    preparationHelp(nextRules, uiMessage('Next page of naming rules.'))
     vocabularyNavigation.append(previousRules, vocabularyCount, nextRules)
     function vocabularyRow(entry) {
       const row = el('tr')
@@ -2791,33 +3518,40 @@ export async function startPackingWorkspace({
         const td = el('td'),
           input = el('input')
         input.value = entry[key] || ''
-        input.setAttribute('aria-label', name)
+        bindAttribute(input, 'aria-label', uiMessage(name))
         input.oninput = () =>
           (entry[key] =
             key === 'spanishName' ? input.value.toUpperCase() : input.value)
         preparationHelp(
           input,
           key === 'match'
-            ? 'Words to match in the original title. Separate alternatives with |.'
+            ? uiMessage(
+                'Words to match in the original title. Separate alternatives with |.'
+              )
             : key === 'exclude'
-              ? 'Ignore this rule if the title includes any of these words. Separate alternatives with |.'
+              ? uiMessage(
+                  'Ignore this rule if the title includes any of these words. Separate alternatives with |.'
+                )
               : key === 'spanishName'
-                ? 'Short uppercase name printed on the barcode.'
-                : 'Chinese category printed on the carton mark.'
+                ? uiMessage('Short uppercase name printed on the barcode.')
+                : uiMessage('Chinese category printed on the carton mark.')
         )
         td.append(input)
         row.append(td)
       }
       const td = el('td')
       const remove = decorateIcon(
-        button('Remove naming rule', () => {
+        button(uiMessage('Remove naming rule'), () => {
           value.vocabulary = value.vocabulary.filter((item) => item !== entry)
           renderVocabulary()
         }),
         'trash',
         { iconOnly: true }
       )
-      preparationHelp(remove, 'Remove this naming rule when you save Settings.')
+      preparationHelp(
+        remove,
+        uiMessage('Remove this naming rule when you save Settings.')
+      )
       td.append(remove)
       row.append(td)
       body.append(row)
@@ -2843,10 +3577,17 @@ export async function startPackingWorkspace({
         .forEach(vocabularyRow)
       const start = matching.length ? vocabularyPage * pageSize + 1 : 0,
         end = Math.min((vocabularyPage + 1) * pageSize, matching.length)
-      vocabularyCount.textContent = `${start}–${end} of ${matching.length} rules`
+      bindText(
+        vocabularyCount,
+        uiMessage('{0}–{1} of {2} rules', {
+          0: start,
+          1: end,
+          2: matching.length,
+        })
+      )
       if (!matching.length) {
         const row = el('tr'),
-          cell = el('td', 'No matching rules.', 'vocabulary-empty')
+          cell = el('td', uiMessage('No matching rules.'), 'vocabulary-empty')
         cell.colSpan = 5
         row.append(cell)
         body.append(row)
@@ -2860,11 +3601,11 @@ export async function startPackingWorkspace({
     scroll.append(table)
     scroll.tabIndex = 0
     scroll.setAttribute('role', 'region')
-    scroll.setAttribute('aria-label', 'Naming rules')
+    bindAttribute(scroll, 'aria-label', uiMessage('Naming rules'))
     toolbar.append(
       vocabularySearch,
       decorateIcon(
-        button('Add rule', () => {
+        button(uiMessage('Add rule'), () => {
           const entry = { match: '', spanishName: '', category: '' }
           value.vocabulary.unshift(entry)
           vocabularySearch.querySelector('input').value = ''
@@ -2888,11 +3629,11 @@ export async function startPackingWorkspace({
     footer.append(
       el(
         'span',
-        'Save label settings, product names and size rules.',
+        uiMessage('Save label settings, product names and size rules.'),
         'packing-help'
       ),
       button(
-        'Save settings',
+        uiMessage('Save settings'),
         async (save) => {
           save.disabled = true
           settingsError.textContent = ''
@@ -2930,7 +3671,7 @@ export async function startPackingWorkspace({
             }
             channel?.postMessage('preferences')
             $('settings-dialog').close()
-            feedback('Settings saved.')
+            feedback(uiMessage('Settings saved.'))
           } finally {
             save.disabled = false
           }
@@ -2946,11 +3687,23 @@ export async function startPackingWorkspace({
     const rows = launchRows()
     const selected = getSelectedRows().length
     $('prepare-orders').disabled = opening || !rows.length
-    $('packing-scope').textContent = selected
-      ? `${selected.toLocaleString()} selected products · ${new Set(rows.map((row) => row.orderId)).size} orders → ${monthLabel(monthInput.value)}`
-      : rows.length
-        ? `Reopen ${rows.length.toLocaleString()} products already in ${monthLabel(monthInput.value)}`
-        : 'Select products first. Ctrl+A selects all filtered products.'
+    bindText(
+      $('packing-scope'),
+      selected
+        ? uiMessage('{0} selected products · {1} orders → {2}', {
+            0: () => selected.toLocaleString(),
+            1: new Set(rows.map((row) => row.orderId)).size,
+            2: () => monthLabel(monthInput.value),
+          })
+        : rows.length
+          ? uiMessage('Reopen {0} products already in {1}', {
+              0: () => rows.length.toLocaleString(),
+              1: () => monthLabel(monthInput.value),
+            })
+          : uiMessage(
+              'Select products first. Ctrl+A selects all filtered products.'
+            )
+    )
   }
   monthInput.addEventListener('change', updateLaunchActions)
   $('prepare-orders').onclick = () =>
@@ -2963,7 +3716,7 @@ export async function startPackingWorkspace({
     const rows = preparedRows(),
       codes = [...new Set(rows.map((row) => row.baseCode).filter(Boolean))]
     if (!codes.length) {
-      feedback('Prepare product codes first.', true)
+      feedback(uiMessage('Prepare product codes first.'), true)
       return
     }
     await copied($('copy-group-codes'), () =>
@@ -2974,6 +3727,7 @@ export async function startPackingWorkspace({
     reload,
     chooseImageBatch,
     preparedRows,
+    createCartonMarkRenderer,
     orderRows,
     searchText(orderId, entryId) {
       const match = membership.get(`${orderId}/${entryId}`)
@@ -3003,21 +3757,21 @@ export async function startPackingWorkspace({
         )
           bar.append(
             button(
-              'Name',
+              uiMessage('Name'),
               () => openPreparation(row.orderId, row.entryId),
               'needs-preparation name-product'
             )
           )
         const { prep, group, variant } = matched
         bar.append(
-          button('Barcode', () =>
+          button(uiMessage('Barcode'), () =>
             openLabel(prep.orderId, group.id, variant.id, 'barcode')
           ),
-          button('Carton mark', () =>
+          button(uiMessage('Carton mark'), () =>
             openLabel(prep.orderId, group.id, null, 'mark')
           )
         )
-        const copy = button('Copy code', (b) =>
+        const copy = button(uiMessage('Copy code'), (b) =>
           copied(b, () => navigator.clipboard.writeText(group.baseCode))
         )
         bar.append(copy)
@@ -3029,7 +3783,7 @@ export async function startPackingWorkspace({
           bar.append(el('span', suggestion.category, 'category-name'))
         bar.append(
           button(
-            'Prepare',
+            uiMessage('Prepare'),
             () => openPreparation(row.orderId, row.entryId),
             'needs-preparation name-product'
           )

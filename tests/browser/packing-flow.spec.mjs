@@ -204,17 +204,19 @@ test('order details copies the complete order number with visible success feedba
   const details = page.locator('#order-details')
   await expect(details).toBeVisible()
   const copy = details.locator('.order-detail-identity button')
-  await expect(copy).toHaveAccessibleName('Copy order number')
+  await expect(copy).toHaveAccessibleName(
+    `Copy order number: ${records[0].snapshot.orderId}`
+  )
   await copy.click()
-  await expect(copy).toHaveClass(/copied/)
-  await expect(copy).toHaveAccessibleName('Copy order number: Copied')
-  await expect(copy).toHaveAttribute('data-icon', 'check')
+  await expect(copy.locator('.copy-text-feedback')).toHaveText('Copied')
+  await expect(copy.locator('.copy-text-feedback')).toBeVisible()
+  await expect(copy).toHaveAccessibleName(
+    `Copy order number: ${records[0].snapshot.orderId}`
+  )
   expect(await page.evaluate(() => navigator.clipboard.readText())).toBe(
     records[0].snapshot.orderId
   )
-  await expect(details.locator('.eyebrow')).toHaveText(
-    `ORDER ${records[0].snapshot.orderId}`
-  )
+  await expect(copy).toContainText(records[0].snapshot.orderId)
   expect(extension.unexpectedRequests).toEqual([])
 })
 
@@ -608,7 +610,7 @@ test('keyboard group moves and pointer product moves persist and export in the d
       return fillText.call(this, text, ...args)
     }
   })
-  const image = view.locator('.preparation-output button[data-icon="table"]')
+  const image = view.locator('.packing-copy-actions button[data-icon="image"]')
   await image.click()
   await expect(image).toHaveText('Copied')
   const imageRuns = await page.evaluate(() => packingImageRuns)

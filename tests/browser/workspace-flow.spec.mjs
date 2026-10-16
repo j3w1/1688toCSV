@@ -459,19 +459,21 @@ test('seller names and full order numbers wrap without clipping at desktop and m
   extension,
 }) => {
   const { page, records } = await open(extension, { longSeller: true })
-  const reference = `Order ${records[0].snapshot.orderId}`
+  const reference = records[0].snapshot.orderId
   for (const width of [1440, 900, 390]) {
     await page.setViewportSize({ width, height: 960 })
     const card = page.locator('.order-card').first()
-    const identity = page.locator('#sheet-body .row-identity').first()
-    await expect(card.locator('strong')).toHaveText(
+    const identity = page.locator('#sheet-body .order-section-band').first()
+    await expect(card.locator('.order-seller')).toHaveText(
       records[0].snapshot.sellerName
     )
     await expect(card.locator('.order-reference')).toHaveText(reference)
-    await expect(identity.locator('.meta-seller')).toHaveText(
+    await expect(identity.locator('.order-seller')).toHaveText(
       records[0].snapshot.sellerName
     )
-    await expect(identity.locator('.meta-order')).toHaveText(reference)
+    await expect(identity.locator('.order-section-number')).toHaveText(
+      reference
+    )
     for (const block of [card.locator('.order-summary'), identity])
       expect(
         await block.evaluate(

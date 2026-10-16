@@ -1,4 +1,82 @@
+import {
+  message as uiMessage,
+  bindText,
+  bindAttribute,
+  isMessage,
+  t,
+  getLocale,
+  getLanguage,
+  onLanguageChange,
+  textMessage,
+  attributeMessage,
+} from './i18n.js'
 import { decorateIcon } from './icons.js'
+import { preparationHelp } from './preparation-help.js'
+
+/** Copy the visible source text without changing its size, label or selection. */
+export function copyTextButton(
+  value,
+  { label = 'Copy text', className = '' } = {}
+) {
+  const sourceLabel = isMessage(label) ? label.source : label
+  const button = element(
+    'button',
+    String(value ?? ''),
+    `copyable-text ${className}`.trim()
+  )
+  button.type = 'button'
+  bindAttribute(
+    button,
+    'aria-label',
+    uiMessage('{0}: {1}', {
+      0: isMessage(label) ? label : uiMessage(label),
+      1: value,
+    })
+  )
+  preparationHelp(
+    button,
+    uiMessage(
+      sourceLabel === 'Copy order number'
+        ? 'Click to copy the order number.'
+        : sourceLabel === 'Copy store name'
+          ? 'Click to copy the store name.'
+          : 'Click to copy this value.'
+    )
+  )
+  const status = element('span', undefined, 'copy-text-feedback')
+  status.setAttribute('role', 'status')
+  status.setAttribute('aria-live', 'polite')
+  status.hidden = true
+  button.append(status)
+  let timer,
+    copying = false
+  button.addEventListener('dblclick', (event) => {
+    event.preventDefault()
+    event.stopPropagation()
+  })
+  button.addEventListener('click', async (event) => {
+    event.preventDefault()
+    event.stopPropagation()
+    if (copying) return
+    copying = true
+    clearTimeout(timer)
+    try {
+      await navigator.clipboard.writeText(String(value ?? ''))
+      bindText(status, 'Copied')
+      status.classList.remove('copy-text-error')
+    } catch (error) {
+      bindText(status, error.message || 'Could not copy. Try again.')
+      status.classList.add('copy-text-error')
+    } finally {
+      copying = false
+      status.hidden = false
+      timer = setTimeout(() => {
+        status.hidden = true
+      }, 1800)
+    }
+  })
+  return button
+}
 
 const dismissibleDialogs = new WeakSet()
 
@@ -43,7 +121,8 @@ export function enableLightDismiss(dialog) {
 export function element(tag, text, className) {
   const node = document.createElement(tag)
   if (tag === 'dialog') enableLightDismiss(node)
-  if (text !== undefined) node.textContent = text
+  if (isMessage(text)) bindText(node, text)
+  else if (text !== undefined) node.textContent = text
   if (className) node.className = className
   return node
 }
@@ -57,20 +136,35 @@ export function confirmScope({
 }) {
   if (!count) return Promise.resolve(false)
   const dialog = element('dialog', undefined, 'scope-dialog')
-  dialog.setAttribute('aria-label', name)
-  const cancel = element('button', 'Cancel')
+  bindAttribute(dialog, 'aria-label', name)
+  const cancel = element('button', uiMessage('Cancel'))
   const proceed = element(
     'button',
-    `${action} ${count.toLocaleString()} ${unit}`,
+    uiMessage('{0} {1} {2}', {
+      0: uiMessage(action),
+      1: () => count.toLocaleString(getLocale()),
+      2: uiMessage(unit),
+    }),
     'primary'
   )
   const actions = element('div', undefined, 'dialog-actions')
   actions.append(cancel, proceed)
   dialog.append(
-    element('h2', `${action} ${count.toLocaleString()} ${unit}?`),
+    element(
+      'h2',
+      uiMessage('{0} {1} {2}?', {
+        0: uiMessage(action),
+        1: () => count.toLocaleString(getLocale()),
+        2: uiMessage(unit),
+      })
+    ),
     element(
       'p',
-      `This will iterate over ${count.toLocaleString()} ${unit}. ${detail}`
+      uiMessage('This will iterate over {0} {1}. {2}', {
+        0: () => count.toLocaleString(getLocale()),
+        1: uiMessage(unit),
+        2: uiMessage(detail),
+      })
     ),
     actions
   )
@@ -104,9 +198,13 @@ export async function copied(button, task) {
   let state = copyStates.get(button)
   if (!state) {
     state = {
-      label: (button.dataset.copyLabel ||= button.textContent),
+      label:
+        textMessage(button) ||
+        (button.dataset.copyLabel ||= button.textContent),
       iconOnly: button.classList.contains('icon-button'),
-      ariaLabel: button.getAttribute('aria-label'),
+      ariaLabel:
+        attributeMessage(button, 'aria-label') ||
+        button.getAttribute('aria-label'),
       inlineSize: button.style.inlineSize,
       blockSize: button.style.blockSize,
     }
@@ -125,23 +223,27 @@ export async function copied(button, task) {
   button.setAttribute('aria-live', 'polite')
   button.setAttribute('aria-busy', 'true')
   const show = (label, iconName) => {
-    button.textContent = label
+    bindText(button, label)
     if (state.iconOnly) {
       decorateIcon(button, iconName, {
         iconOnly: true,
-        label: `${state.ariaLabel || state.label}: ${label}`,
+        label: uiMessage('{0}: {1}', {
+          0: state.ariaLabel || state.label,
+          1: label,
+        }),
       })
-    }
+    } else if (state.ariaLabel !== null)
+      bindAttribute(button, 'aria-label', label)
   }
   const reset = () => {
-    button.textContent = state.label
+    bindText(button, state.label)
     if (button.dataset.icon)
       decorateIcon(button, state.icon || button.dataset.icon, {
         iconOnly: state.iconOnly,
         label: state.ariaLabel || state.label,
       })
     if (state.ariaLabel === null) button.removeAttribute('aria-label')
-    else button.setAttribute('aria-label', state.ariaLabel)
+    else bindAttribute(button, 'aria-label', state.ariaLabel)
     button.style.inlineSize = state.inlineSize
     button.style.blockSize = state.blockSize
     button.classList.remove('copy-active', 'copied', 'copy-failed')
@@ -154,7 +256,7 @@ export async function copied(button, task) {
       !error &&
       state.detail.classList.contains('copy-progress')
     ) {
-      state.detail.querySelector('.copy-detail-text').textContent = message
+      bindText(state.detail.querySelector('.copy-detail-text'), message)
       if (cancel && cancel.parentElement !== state.detail)
         state.detail.append(cancel)
       state.positionDetail?.()
@@ -166,7 +268,13 @@ export async function copied(button, task) {
       undefined,
       error ? 'copy-error' : 'copy-progress'
     )
-    content.append(element('span', message, 'copy-detail-text'))
+    content.append(
+      element(
+        'span',
+        isMessage(message) ? message : uiMessage(message),
+        'copy-detail-text'
+      )
+    )
     if (cancel) content.append(cancel)
     state.detail = content
     content.id = `copy-detail-${crypto.randomUUID()}`

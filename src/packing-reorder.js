@@ -1,3 +1,13 @@
+import {
+  message as uiMessage,
+  bindText,
+  bindAttribute,
+  isMessage,
+  t,
+  getLocale,
+  getLanguage,
+  onLanguageChange,
+} from './i18n.js'
 import { element as el } from './ui.js'
 import { preparationHelp } from './preparation-help.js'
 
@@ -5,10 +15,16 @@ import { preparationHelp } from './preparation-help.js'
 export function reorderHandle({ key, label, items, element, move }) {
   const handle = el('button', '⠿', 'reorder-handle')
   handle.type = 'button'
-  handle.setAttribute('aria-label', `Move ${label}; use Up or Down arrows`)
+  bindAttribute(
+    handle,
+    'aria-label',
+    uiMessage('Move {0}; use Up or Down arrows', { 0: label })
+  )
   preparationHelp(
     handle,
-    'Drag to reorder. Or focus here and press ↑ or ↓. Codes stay with their products.'
+    uiMessage(
+      'Drag to reorder. Or focus here and press ↑ or ↓. Codes stay with their products.'
+    )
   )
   let drag
   function clear() {
