@@ -639,10 +639,20 @@ test('one sticky selection toolbar batches grouping safely across orders and sta
   await expect(review).toContainText(
     'Different groups and orders remain separate'
   )
+  await expect(view.locator('#preparation-content')).toHaveJSProperty(
+    'disabled',
+    true
+  )
   await review
     .getByRole('button', { name: 'Apply changes', exact: true })
     .click()
-  await waitForAutosave(view)
+  // Grouping is an explicit transaction; an earlier autosave status can still
+  // say "Saved automatically" until it finishes. The operation lock covers
+  // persistence and the rebuilt selection, so wait for that completion.
+  await expect(view.locator('#preparation-content')).toHaveJSProperty(
+    'disabled',
+    false
+  )
   let saved = await packingBackup(extension)
   expect(saved.preparations).toHaveLength(2)
   for (const prep of saved.preparations) {
@@ -651,11 +661,18 @@ test('one sticky selection toolbar batches grouping safely across orders and sta
     expect(prep.groups[0].variants[0].entryIds).toHaveLength(2)
   }
   await clickGroupingAction(page, 'Give rows separate barcodes')
+  await expect(view.locator('#preparation-content')).toHaveJSProperty(
+    'disabled',
+    true
+  )
   await page
     .locator('.packing-review')
     .getByRole('button', { name: 'Apply changes', exact: true })
     .click()
-  await waitForAutosave(view)
+  await expect(view.locator('#preparation-content')).toHaveJSProperty(
+    'disabled',
+    false
+  )
   saved = await packingBackup(extension)
   for (const prep of saved.preparations)
     expect(prep.groups[0].variants).toHaveLength(2)

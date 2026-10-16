@@ -66,17 +66,33 @@ test('Activity uses distinct running and unread states and reading persists with
     .click()
   await page.reload()
   await expect(button).toHaveAttribute('data-activity-state', 'idle')
+  // A reload wakes the real import worker, which correctly pauses this raw
+  // fixture without an owned reader tab. Publish the checkpoint in place.
   await putJob(extension, 'running', 1)
-  await page.reload()
-  await expect(button).toHaveAttribute('data-activity-state', 'running')
-  await expect(page.locator('#activity-count')).toHaveText('Running')
-  expect(
-    await page
-      .locator('#activity-count')
-      .evaluate((node) => getComputedStyle(node).backgroundColor)
-  ).not.toBe(unreadColor)
-  // A raw fixture has no owned import tab, so the real worker may pause it.
-  // Publish an explicit paused checkpoint before testing the unread transition.
+  await extension.inspector.evaluate(() =>
+    chrome.runtime.sendMessage({ type: 'LIBRARY_UPDATED' })
+  )
+  // Read the state, text and paint together so the comparison cannot combine
+  // two different job checkpoints across separate browser round trips.
+  await expect
+    .poll(() =>
+      button.evaluate((node, unreadColor) => {
+        const badge = node.querySelector('#activity-count')
+        const background = getComputedStyle(badge).backgroundColor
+        return {
+          state: node.dataset.activityState,
+          text: badge.textContent,
+          background,
+          differentFromUnread: background !== unreadColor,
+        }
+      }, unreadColor)
+    )
+    .toMatchObject({
+      state: 'running',
+      text: 'Running',
+      differentFromUnread: true,
+    })
+  // Publish a paused checkpoint before testing the unread transition.
   await putJob(extension, 'paused', 1)
   await extension.inspector.evaluate(() =>
     chrome.runtime.sendMessage({ type: 'LIBRARY_UPDATED' })

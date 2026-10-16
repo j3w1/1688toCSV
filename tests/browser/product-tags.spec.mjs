@@ -52,17 +52,20 @@ const productDetails = (page) =>
 async function failTagWrites(page) {
   await page.evaluate(() => {
     window.failProductTagWrite = true
+    window.failedProductTagWrites = 0
     const put = IDBObjectStore.prototype.put
     IDBObjectStore.prototype.put = function (...args) {
       if (
         window.failProductTagWrite &&
         this.name === 'orders' &&
         args[0]?.productTags
-      )
+      ) {
+        window.failedProductTagWrites++
         throw new DOMException(
           'Synthetic product tag storage unavailable',
           'QuotaExceededError'
         )
+      }
       return put.apply(this, args)
     }
   })
@@ -266,10 +269,24 @@ test('failed product-tag autosave keeps the original-details popup and draft ope
     record.snapshot.items[0].description
   )
   await page.keyboard.press('Escape')
+  // Visibility is not a completion barrier: dismissal keeps the dialog open
+  // while saving. Keep storage unavailable until that retry has failed too.
+  await expect
+    .poll(() => page.evaluate(() => window.failedProductTagWrites))
+    .toBe(2)
+  await expect(
+    details.getByRole('button', { name: 'Retry save', exact: true })
+  ).toBeFocused()
   await expect(details).toBeVisible()
   await details
     .getByRole('button', { name: 'Order details', exact: true })
     .click()
+  await expect
+    .poll(() => page.evaluate(() => window.failedProductTagWrites))
+    .toBe(3)
+  await expect(
+    details.getByRole('button', { name: 'Retry save', exact: true })
+  ).toBeFocused()
   await expect(details).toBeVisible()
   await expect(page.locator('#order-details')).not.toBeVisible()
   await page.evaluate(() => {
