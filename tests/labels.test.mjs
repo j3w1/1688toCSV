@@ -688,8 +688,10 @@ test('workspace badges retain the approved clear space at different font sizes',
             )
           }
           rows.push({ dark, brightest })
-          // Fractional element bounds may include a sliver of the white page.
-          if (dark < canvas.width * 0.1) continue
+          // A fractional crop can include the white page, which has no black
+          // pixels. Dense glyph strokes can leave only one black pixel in a
+          // real band row; a minimum dark-area ratio would discard that ink.
+          if (dark === 0) continue
           bandTop = Math.min(bandTop, y)
           bandBottom = Math.max(bandBottom, y + 1)
           for (
