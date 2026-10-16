@@ -647,6 +647,8 @@ test('workspace badges retain the approved clear space at different font sizes',
         font: parseFloat(style.fontSize),
         left: parseFloat(style.paddingLeft),
         radius: parseFloat(style.borderTopLeftRadius),
+        height: node.getBoundingClientRect().height,
+        textBox: style.textBox,
       }
     })
     assert.ok(Math.abs(dimensions.left / dimensions.font - 7 / 20) < 0.001)
@@ -668,9 +670,11 @@ test('workspace badges retain the approved clear space at different font sizes',
           bottom = 0,
           bandTop = canvas.height,
           bandBottom = 0
+        const rows = []
         // Stay away from the rounded corners and the page behind them.
         for (let y = 0; y < canvas.height; y++) {
           let dark = 0
+          let brightest = 0
           for (
             let x = Math.ceil(canvas.width * 0.1);
             x < canvas.width * 0.9;
@@ -678,7 +682,12 @@ test('workspace badges retain the approved clear space at different font sizes',
           ) {
             const p = (y * canvas.width + x) * 4
             if (data[p] < 20 && data[p + 1] < 20 && data[p + 2] < 20) dark++
+            brightest = Math.max(
+              brightest,
+              Math.min(data[p], data[p + 1], data[p + 2])
+            )
           }
+          rows.push({ dark, brightest })
           // Fractional element bounds may include a sliver of the white page.
           if (dark < canvas.width * 0.1) continue
           bandTop = Math.min(bandTop, y)
@@ -695,14 +704,14 @@ test('workspace badges retain the approved clear space at different font sizes',
             }
           }
         }
-        return { top: top - bandTop, bottom: bandBottom - bottom }
+        return { top: top - bandTop, bottom: bandBottom - bottom, rows }
       },
       [...pixels]
     )
     for (const edge of ['top', 'bottom'])
       assert.ok(
         Math.abs(clearSpace[edge] - (dimensions.font * 6) / 20) <= 1.5,
-        `${dimensions.font}px ${edge}: ${clearSpace[edge]}px clear space follows the approved badge`
+        `${dimensions.font}px ${edge}: ${clearSpace[edge]}px clear space follows the approved badge; ${JSON.stringify({ dimensions, clearSpace })}`
       )
   }
 })
