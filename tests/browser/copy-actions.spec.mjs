@@ -119,8 +119,17 @@ for (const fallback of [false, true])
     await expect(panel).toBeHidden()
     await expect(trigger).toBeFocused()
     await trigger.click()
+    await expect(panel).toBeVisible()
     // Anchored placement can cover the search field. Use the page margin,
-    // which stays outside both native and fallback panels.
+    // waiting for the queued fallback positioning before clicking outside.
+    await expect
+      .poll(() =>
+        panel.evaluate((panel) => {
+          const target = document.elementFromPoint(2, 2)
+          return Boolean(target) && !panel.contains(target)
+        })
+      )
+      .toBe(true)
     await page.mouse.click(2, 2)
     await expect(panel).toBeHidden()
     await page

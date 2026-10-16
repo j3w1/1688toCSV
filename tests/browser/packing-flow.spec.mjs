@@ -247,6 +247,9 @@ test('chosen size columns preserve source dimensions and separate saved barcode 
     'Size\tSize code\r\n300ml\t\r\n500ml\t\r\n\t'
   )
   await columns.getByRole('button', { name: 'Close', exact: true }).click()
+  // Native dialog close removes its controls in the queued close event.
+  // Wait before locating the workspace's identically named Packing month.
+  await expect(columns).toHaveCount(0)
   await selectAllProducts(page)
   const view = await prepareSelected(page)
   await view
@@ -277,6 +280,7 @@ test('chosen size columns preserve source dimensions and separate saved barcode 
     expected
   )
   await columns.getByRole('button', { name: 'Close', exact: true }).click()
+  await expect(columns).toHaveCount(0)
   await view.getByRole('button', { name: 'Orders', exact: true }).click()
   await page.reload()
   await revealCopyActions(page)

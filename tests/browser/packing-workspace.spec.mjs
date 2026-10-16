@@ -1976,10 +1976,18 @@ test('preparation selects groups and variant rows by range without changing edit
     .click()
   const label = page.getByRole('dialog', { name: 'Label editor', exact: true })
   await expect(label).toBeVisible()
+  const groupBeforeLabelClose = await first.elementHandle()
   await label
     .getByRole('button', { name: 'Close label editor', exact: true })
     .click()
-  // Returning from the editor rebuilds the form but keeps its selection.
+  // The queued dialog close event rebuilds the form. Wait for that rebuild
+  // before checking selection or sending keys to rows that it will replace.
+  await page.waitForFunction(
+    (group) => !group.isConnected,
+    groupBeforeLabelClose
+  )
+  await groupBeforeLabelClose.dispose()
+  // Returning from the editor keeps its selection.
   await expect(rows.nth(0)).toHaveAttribute('aria-selected', 'true')
   await expect(rows.nth(1)).toHaveAttribute('aria-selected', 'false')
   await expect(secondRow).toHaveAttribute('aria-selected', 'true')
