@@ -375,7 +375,12 @@ test('Excel preview grows with expanded options, shrinks when collapsed and stay
   await page.setViewportSize({ width: 1280, height: 1000 })
   await page.locator('#copy-excel-image').click()
   const dialog = page.locator('.image-copy-dialog')
-  await expect(dialog.locator('.image-copy-submit')).toBeEnabled()
+  // Large preview PNGs can take several seconds to encode on shared runners.
+  // Settle rendering before measuring layout; all interaction checks keep the
+  // normal deadline and must continue using the same prepared image.
+  await expect(dialog.locator('.image-copy-submit')).toBeEnabled({
+    timeout: 20_000,
+  })
   const preview = dialog.locator('.copy-preview-interactive')
   const image = preview.locator('img')
   const zoom = preview.locator('.copy-preview-zoom')
