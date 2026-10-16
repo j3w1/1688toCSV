@@ -89,6 +89,45 @@ test('language toggle translates interface and color hints, persists, and preser
   )
 })
 
+for (const language of ['en', 'es', 'zh']) {
+  test(`product selection stays in place and double-click opens originals in ${language}`, async ({
+    extension,
+  }) => {
+    const { page } = await openWorkspace(extension)
+    await page.locator(`#language-toggle [data-language=${language}]`).click()
+    const row = page.locator('#sheet-body tr[data-selection-key]').first()
+    const title = row.locator('.product-title')
+    const layout = () =>
+      page.locator('.sheet-toolbar').evaluate((toolbar) => ({
+        height: toolbar.getBoundingClientRect().height,
+        tableTop:
+          document.querySelector('.table-scroll').getBoundingClientRect().top +
+          window.scrollY,
+      }))
+    for (const width of [1440, 1280, 1000, 390]) {
+      await page.setViewportSize({ width, height: 900 })
+      await row.focus()
+      await row.press('Escape')
+      await title.scrollIntoViewIfNeeded()
+      const before = await layout()
+      await title.click()
+      await expect(row).toHaveAttribute('aria-selected', 'true')
+      expect(await layout(), `selection at ${width}px`).toEqual(before)
+      await title.click()
+      await expect(row).toHaveAttribute('aria-selected', 'false')
+      expect(await layout(), `deselection at ${width}px`).toEqual(before)
+      await title.dblclick()
+      const original = page.locator('.product-details-dialog')
+      await expect(original).toBeVisible()
+      await expect(
+        original.locator('.product-original-description pre')
+      ).toHaveText('合成玻璃罐\n颜色：灰色')
+      await page.keyboard.press('Escape')
+      await expect(original).toHaveCount(0)
+    }
+  })
+}
+
 test('source identities copy directly without changing selection, layout, or opening details', async ({
   extension,
 }) => {

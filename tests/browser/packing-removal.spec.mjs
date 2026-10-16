@@ -303,6 +303,9 @@ test('reset shows position and barcode changes and becomes unavailable after the
   await review
     .getByRole('button', { name: 'Reset order and codes', exact: true })
     .click()
+  // The fieldset disables every action throughout review and saving. Wait for
+  // the save to finish before treating reset's disabled state as a no-op.
+  await expect(view.locator('#preparation-content')).toBeEnabled()
   await expect(reset).toBeDisabled()
   const restored = await backup(extension)
   expect(restored.preparations[0].groups).toEqual(
