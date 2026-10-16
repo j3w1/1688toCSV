@@ -104,8 +104,14 @@ for (const language of ['en', 'es', 'zh']) {
           document.querySelector('.table-scroll').getBoundingClientRect().top +
           window.scrollY,
       }))
-    for (const width of [1440, 1280, 1000, 390]) {
+    for (const { width, font } of [
+      ...[1440, 1280, 1000, 390, 375, 360].map((width) => ({ width })),
+      // Different font metrics exposed an extra summary line on hosted Linux.
+      { width: 375, font: 'Georgia, serif' },
+    ]) {
       await page.setViewportSize({ width, height: 900 })
+      if (font)
+        await page.addStyleTag({ content: `body { font-family: ${font}; }` })
       await row.focus()
       await row.press('Escape')
       await title.scrollIntoViewIfNeeded()
@@ -116,6 +122,14 @@ for (const language of ['en', 'es', 'zh']) {
       await title.click()
       await expect(row).toHaveAttribute('aria-selected', 'false')
       expect(await layout(), `deselection at ${width}px`).toEqual(before)
+      await row.focus()
+      await page.keyboard.press('ControlOrMeta+a')
+      await expect(
+        page.locator('#sheet-body tr[aria-selected="true"]')
+      ).toHaveCount(3)
+      expect(await layout(), `select all at ${width}px`).toEqual(before)
+      await row.press('Escape')
+      expect(await layout(), `clear all at ${width}px`).toEqual(before)
       await title.dblclick()
       const original = page.locator('.product-details-dialog')
       await expect(original).toBeVisible()

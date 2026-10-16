@@ -1846,18 +1846,17 @@ main > .stats {
   background: var(--field);
 }
 .selection-totals-grid {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: baseline;
+  /* Keep each total in its own track as selection changes its digit count. */
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 150px), 1fr));
+  align-items: start;
   gap: 4px 20px;
   margin: 0;
 }
 .selection-totals-grid > div {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: baseline;
-  gap: 4px 8px;
-  min-width: 0;
+  display: grid;
+  gap: 2px;
+  min-inline-size: 0;
 }
 .selection-totals-grid dt {
   color: var(--muted);
