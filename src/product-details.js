@@ -2,6 +2,7 @@ import { productAttributes, translateAttribute } from './product-attributes.js'
 import { element as el, copyTextButton, copied } from './ui.js'
 import { message, bindAttribute, bindText, getLanguage } from './i18n.js'
 import { decorateIcon } from './icons.js'
+import { photoCopyTile } from './photo-copy.js'
 import { preparationHelp } from './preparation-help.js'
 
 /** Display helpers never rewrite the source row or the values exported to Excel. */
@@ -117,11 +118,7 @@ export function openProductDetails(
     image.alt = source.title || ''
     photoButton.append(image)
     photoButton.addEventListener('click', () => onPhoto?.())
-    const photoCopy = el('button', message('Copy image'), 'photo-copy-button')
-    decorateIcon(photoCopy, 'image')
-    photoCopy.addEventListener('click', () => void copied(photoCopy, copyPhoto))
-    photoCopy.disabled = !copyPhoto
-    photoColumn.append(photoButton, photoCopy)
+    photoColumn.append(photoCopyTile(photoButton, copyPhoto))
     body.append(photoColumn)
     const error = el('p', undefined, 'product-details-photo-error')
     error.setAttribute('role', 'status')

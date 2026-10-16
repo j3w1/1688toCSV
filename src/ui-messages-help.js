@@ -109,10 +109,10 @@ export const HELP_MESSAGES = {
       zh: '未包含在商品优惠中的改价，按各商品优惠后的金额比例分摊。已计入单价的批发优惠只计算一次。订单级店铺优惠、促销优惠、运费、定制服务和红包抵扣单独列出。优惠金额为每行合计。',
       es: 'Los ajustes de precio que aún no están incluidos en los descuentos de productos se reparten según el valor de cada producto después de sus descuentos. Las rebajas mayoristas ya incluidas en los precios se cuentan una sola vez. Los descuentos de tienda y promociones del pedido, el envío, los servicios de personalización y las reducciones por sobre rojo se mantienen separados. Los descuentos son totales por fila.',
     },
-  'Product image. Use arrow keys to move, plus or minus to zoom, and 0 to fit.':
+  'Product image. Left and right arrows change photos; up and down arrows or plus and minus zoom; 0 fits.':
     {
-      zh: '商品图片。方向键移动，+ 或 − 缩放，0 适应窗口。',
-      es: 'Foto del producto. Usa las flechas para moverla, + o − para ampliar o reducir, y 0 para ajustarla.',
+      zh: '商品图片。左右方向键切换图片，上下方向键或 +、− 缩放，0 适应窗口。',
+      es: 'Foto del producto. Las flechas izquierda y derecha cambian de foto; arriba y abajo o + y − amplían o reducen; 0 ajusta.',
     },
   'Refresh started. Pause from Activity or the progress bar.': {
     zh: '已开始刷新，可在“活动”或进度条处暂停。',
@@ -126,11 +126,6 @@ export const HELP_MESSAGES = {
     {
       zh: '保存本次导入中每个订单的状态和错误，不会开始或重试订单导入。',
       es: 'Guarda el estado y los errores de cada pedido de esta importación. No inicia ni reintenta ningún pedido.',
-    },
-  'Scroll to zoom · Drag to move · Double-click to zoom or fit · + / − zoom · Arrow keys move · 0 fits':
-    {
-      zh: '滚轮缩放 · 拖动移动 · 双击放大或适应窗口 · + / − 缩放 · 方向键移动 · 0 适应窗口',
-      es: 'Rueda para ampliar · Arrastra para mover · Doble clic para ampliar o ajustar · + / − amplía o reduce · Flechas para mover · 0 ajusta',
     },
   'Selected orders removed from the library.': {
     zh: '已从订单库中删除所选订单。',

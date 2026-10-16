@@ -1,7 +1,88 @@
 import { test, expect } from './extension-fixture.mjs'
 import { createDemoRecords } from '../../preview/library-fixture.js'
+import { revealCopyActions } from './copy-actions-helpers.mjs'
 
 const key = '1688-library-color-scheme'
+
+test('workspace text and validation colors stay readable on every interactive surface in both themes', async ({
+  extension,
+}) => {
+  const page = await openLibrary(extension, 'dark')
+  for (const theme of ['light', 'dark']) {
+    await page.evaluate(
+      (theme) =>
+        (document.querySelector('meta[name="color-scheme"]').content = theme),
+      theme
+    )
+    const contrast = await page.evaluate(() => {
+      const styles = getComputedStyle(document.documentElement)
+      const color = (name) => styles.getPropertyValue(`--${name}`).trim()
+      const luminance = (hex) => {
+        const rgb = hex
+          .slice(1)
+          .match(/../g)
+          .map((part) => parseInt(part, 16) / 255)
+          .map((value) =>
+            value <= 0.04045 ? value / 12.92 : ((value + 0.055) / 1.055) ** 2.4
+          )
+        return rgb[0] * 0.2126 + rgb[1] * 0.7152 + rgb[2] * 0.0722
+      }
+      const ratio = (foreground, background) => {
+        const first = luminance(color(foreground)),
+          second = luminance(color(background))
+        return (
+          (Math.max(first, second) + 0.05) / (Math.min(first, second) + 0.05)
+        )
+      }
+      const pairs = []
+      for (const foreground of [
+        'text',
+        'muted',
+        'accent-text',
+        'danger-text',
+        'error',
+        'variant-code',
+        'size-code',
+      ])
+        for (const background of [
+          'page',
+          'surface',
+          'field',
+          'hover',
+          'selected',
+        ])
+          pairs.push({
+            foreground,
+            background,
+            ratio: ratio(foreground, background),
+          })
+      for (const background of ['success', 'warning', 'info', 'danger'])
+        pairs.push({
+          foreground: `${background}-text`,
+          background,
+          ratio: ratio(`${background}-text`, background),
+        })
+      return pairs
+    })
+    for (const pair of contrast)
+      expect(
+        pair.ratio,
+        `${theme}: ${pair.foreground} on ${pair.background}`
+      ).toBeGreaterThanOrEqual(4.5)
+    // Explicit workspace theme wins even when the device preference is opposite.
+    await page.evaluate(() => {
+      const error = document.createElement('p')
+      error.className = 'label-editor-error'
+      error.textContent = 'Invalid code'
+      document.body.append(error)
+    })
+    const error = page.locator('.label-editor-error').last()
+    expect(await error.evaluate((node) => getComputedStyle(node).color)).toBe(
+      theme === 'light' ? 'rgb(156, 53, 66)' : 'rgb(255, 182, 166)'
+    )
+    await error.evaluate((node) => node.remove())
+  }
+})
 async function openLibrary(extension, scheme = 'light') {
   const page = await extension.context.newPage()
   await page.emulateMedia({ colorScheme: scheme })
@@ -235,6 +316,7 @@ test('preference checkboxes keep generous labels and native keyboard focus witho
       '#sheet-body input[type=checkbox], .order-card input[type=checkbox]'
     )
   ).toHaveCount(0)
+  await revealCopyActions(page)
   const headers = page.getByLabel('Headers', { exact: true })
   const target = headers.locator('..')
   const bounds = await target.boundingBox()
@@ -251,6 +333,7 @@ test('preference checkboxes keep generous labels and native keyboard focus witho
   await expect(headers).toHaveCSS('outline-style', 'solid')
   await expect(headers).toHaveCSS('outline-width', '3px')
   await page.getByRole('button', { name: 'Switch to light theme' }).click()
+  await revealCopyActions(page)
   await expect(headers).toHaveCSS('accent-color', 'rgb(155, 91, 37)')
   await headers.focus()
   await headers.press('Space')

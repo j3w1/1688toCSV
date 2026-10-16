@@ -1,4 +1,119 @@
 @import './photo-viewer.css';
+@import './error-notice.css';
+
+.excel-image-options-trigger.icon-button {
+  flex: 0 0 28px;
+  inline-size: 28px;
+  min-inline-size: 28px;
+  padding: 4px;
+  border: 0;
+  background: transparent;
+}
+.excel-image-options {
+  inline-size: min(520px, calc(100% - 24px));
+  max-block-size: calc(100dvh - 32px);
+  padding: 18px;
+  overflow: auto;
+  scrollbar-gutter: stable;
+}
+.excel-options-heading,
+.excel-options-footer {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+.excel-options-heading h2 {
+  margin: 0;
+}
+.excel-image-options p {
+  font-size: 12px;
+  line-height: 1.5;
+}
+.excel-column-list {
+  list-style: none;
+  padding: 0;
+  margin: 12px 0;
+}
+.excel-column-item {
+  display: grid;
+  grid-template-columns: 26px minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 4px;
+  border-radius: 5px;
+}
+.excel-column-item.is-drop-target {
+  outline: 1px solid var(--control-accent);
+}
+.excel-column-item .excel-column-toggle {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 5px 9px;
+  min-inline-size: 0;
+  padding: 7px 8px;
+  background: transparent;
+  border: 0;
+  text-align: start;
+  justify-content: flex-start;
+}
+.excel-column-toggle[aria-pressed='true'] {
+  color: var(--text);
+  background: var(--hover);
+}
+.excel-column-toggle[aria-pressed='false'] {
+  color: var(--muted);
+}
+.excel-column-toggle small {
+  color: var(--muted);
+  font-weight: 400;
+  font-size: 10px;
+}
+.excel-column-check {
+  inline-size: 15px;
+  flex: 0 0 15px;
+  text-align: center;
+}
+.excel-column-item .excel-column-grip {
+  cursor: grab;
+  padding: 3px;
+  min-inline-size: 24px;
+  background: transparent;
+  color: var(--muted);
+  border: 0;
+}
+.excel-column-moves {
+  display: flex;
+  gap: 2px;
+}
+.excel-column-moves .icon-button {
+  inline-size: 26px;
+  min-inline-size: 26px;
+  padding: 2px;
+}
+.excel-column-status {
+  min-block-size: 18px;
+  color: var(--muted);
+}
+.product-source-choices {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-block: 10px;
+}
+.product-source-choices > span {
+  color: var(--muted);
+  font-size: 12px;
+}
+.product-source-choices button {
+  min-inline-size: 28px;
+  padding: 4px 7px;
+}
+.product-source-choices button[aria-pressed='true'] {
+  background: var(--hover);
+  box-shadow: inset 0 -2px var(--control-accent);
+}
 
 .language-toggle {
   display: inline-flex;
@@ -66,7 +181,7 @@
   --on-accent: #fffdf9;
   --accent-text: #855621;
   --control-accent: #9b5b25;
-  --selected: #f4e6d1;
+  --selected: #eee7db;
   --success: #eaf1df;
   --success-text: #48652b;
   --warning: #fff2ce;
@@ -83,6 +198,8 @@
   --on-feedback: #fffdf9;
   --error: #b5363e;
   --on-error: #fffdf9;
+  --variant-code: #855621;
+  --size-code: #9a4435;
 }
 @media (prefers-color-scheme: dark) {
   :root:not(:has(> head > meta[name='color-scheme'][content='light'])) {
@@ -99,7 +216,7 @@
     --on-accent: #291714;
     --accent-text: #e8bd7c;
     --control-accent: #e8ad63;
-    --selected: #443421;
+    --selected: #39342c;
     --success: #2c3824;
     --success-text: #bbd99b;
     --warning: #43351c;
@@ -116,6 +233,8 @@
     --on-feedback: #fff4e3;
     --error: #f5a099;
     --on-error: #381918;
+    --variant-code: #e8bd7c;
+    --size-code: #f1aa98;
   }
 }
 :root:has(> head > meta[name='color-scheme'][content='dark']) {
@@ -133,7 +252,7 @@
   --on-accent: #291714;
   --accent-text: #e8bd7c;
   --control-accent: #e8ad63;
-  --selected: #443421;
+  --selected: #39342c;
   --success: #2c3824;
   --success-text: #bbd99b;
   --warning: #43351c;
@@ -150,6 +269,8 @@
   --on-feedback: #fff4e3;
   --error: #f5a099;
   --on-error: #381918;
+  --variant-code: #e8bd7c;
+  --size-code: #f1aa98;
 }
 :root:has(> head > meta[name='color-scheme'][content='light']) {
   color-scheme: light;
@@ -389,7 +510,17 @@ h2 {
 }
 .order-card.is-selected {
   background: var(--selected);
-  box-shadow: inset 2px 0 var(--control-accent);
+}
+.order-card::after {
+  content: '\2713';
+  position: absolute;
+  inset-block-start: 11px;
+  inset-inline-end: 10px;
+  color: var(--text);
+  visibility: hidden;
+}
+.order-card.is-selected::after {
+  visibility: visible;
 }
 .order-summary {
   font-size: 13px;
@@ -400,6 +531,7 @@ h2 {
 .order-summary > strong {
   display: block;
   font-weight: 600;
+  padding-inline-end: 16px;
 }
 .order-card small {
   display: block;
@@ -408,17 +540,14 @@ h2 {
   margin-top: 5px;
   overflow-wrap: anywhere;
 }
-.order-card .badge {
+.order-card .badge,
+.order-card .changed {
   font-size: 9px;
   font-weight: 600;
-  background: var(--success);
+  background: transparent;
   padding: 2px 4px;
   border-radius: 5px;
-  color: var(--success-text);
-}
-.order-card .changed {
-  background: var(--warning);
-  color: var(--warning-text);
+  color: var(--muted);
 }
 .order-card-meta {
   display: flex;
@@ -569,11 +698,11 @@ td {
   border-bottom: 1px solid var(--divider);
   vertical-align: middle;
 }
+#sheet-body .selectable-row > td {
+  padding-block: 6px;
+}
 tbody tr:hover {
   background: var(--hover);
-}
-tbody tr.changed-row {
-  background: var(--changed);
 }
 .row-number {
   width: 34px;
@@ -598,8 +727,17 @@ tbody tr.changed-row {
   background: var(--selected);
 }
 #sheet-body tr.is-selected .row-number {
-  color: var(--accent-text);
-  box-shadow: inset 3px 0 var(--control-accent);
+  color: var(--text);
+}
+#sheet-body .selectable-row > .row-number::after {
+  content: '\2713';
+  display: block;
+  font-size: 10px;
+  line-height: 12px;
+  visibility: hidden;
+}
+#sheet-body .is-selected > .row-number::after {
+  visibility: visible;
 }
 #sheet-body .order-tone-clay {
   --order-marker: #b98b68;
@@ -627,7 +765,6 @@ tbody tr.changed-row {
   min-height: 42px;
   padding: 9px 12px;
   border-block: 1px solid var(--border);
-  border-inline-start: 4px solid var(--order-marker);
   background: var(--hover);
   color: var(--text);
 }
@@ -655,9 +792,6 @@ tbody tr.changed-row {
   font-size: 11px;
   font-weight: 400;
 }
-#sheet-body .selectable-row > .row-number {
-  border-inline-start: 4px solid var(--order-marker);
-}
 .selection-help {
   margin: 0;
   padding: 6px 12px 10px;
@@ -680,46 +814,60 @@ tbody tr.changed-row {
   white-space: nowrap;
 }
 .thumb-cell {
-  width: 106px;
+  width: 124px;
+  padding-inline: 6px 10px;
 }
 .thumb-cell img {
   display: block;
-  width: 78px;
-  height: 78px;
+  width: 108px;
+  height: 108px;
   object-fit: contain;
   background: var(--thumb);
   border: 1px solid var(--border);
   border-radius: 8px;
 }
-.thumb-cell .photo-copy-button {
+.photo-copy-tile {
+  position: relative;
+  inline-size: fit-content;
+  max-inline-size: 100%;
+}
+.photo-copy-tile > .photo-copy-button.icon-button {
+  position: absolute;
+  inset-block-start: 5px;
+  inset-inline-end: 5px;
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  gap: 4px;
-  width: max-content;
-  min-height: 26px;
-  height: 26px;
-  margin-top: 5px;
+  inline-size: 28px;
+  min-inline-size: 28px;
+  block-size: 28px;
+  min-block-size: 28px;
+  margin: 0;
   border: 1px solid var(--border);
   border-radius: 5px;
   background: var(--field);
   color: var(--muted);
-  font-size: 10px;
   line-height: 1;
-  padding: 2px 5px;
-  white-space: nowrap;
+  padding: 5px;
+  opacity: 0;
+  pointer-events: none;
+}
+.photo-copy-tile:hover > .photo-copy-button,
+.photo-copy-tile:has(:focus-visible) > .photo-copy-button {
+  opacity: 0.94;
+  pointer-events: auto;
 }
 .photo-copy-button > .ui-icon {
-  width: 12px;
-  height: 12px;
+  width: 15px;
+  height: 15px;
   margin: 0;
 }
 .thumb-cell .product-photo-button {
   display: grid;
   place-items: center;
-  width: 88px;
-  height: 88px;
-  padding: 4px;
+  width: 112px;
+  height: 112px;
+  padding: 1px;
   border: 1px solid var(--border);
   border-radius: 10px;
   background: var(--thumb);
@@ -750,7 +898,7 @@ tbody tr.changed-row {
 .description-cell {
   min-width: 260px;
   max-width: 460px;
-  line-height: 1.65;
+  line-height: 1.45;
   overflow-wrap: anywhere;
 }
 .description-cell .product-title {
@@ -760,10 +908,10 @@ tbody tr.changed-row {
 .product-attributes {
   display: flex;
   flex-wrap: wrap;
-  gap: 2px 18px;
-  margin: 5px 0 0;
+  gap: 2px 14px;
+  margin: 3px 0 0;
   font-size: 12px;
-  line-height: 1.65;
+  line-height: 1.45;
 }
 .product-attributes > div {
   display: flex;
@@ -857,14 +1005,6 @@ tbody tr.changed-row {
   inline-size: 100%;
   block-size: 100%;
   object-fit: contain;
-}
-.product-details-photo .photo-copy-button {
-  display: inline-flex;
-  align-items: center;
-  gap: 4px;
-  padding: 5px 7px;
-  font-size: 12px;
-  margin-block-start: 6px;
 }
 .product-details-data {
   min-width: 0;
@@ -1396,8 +1536,8 @@ dialog a {
 .row-meta .badge {
   padding: 2px 5px;
   border-radius: 5px;
-  background: var(--warning);
-  color: var(--warning-text);
+  background: transparent;
+  color: var(--muted);
   font-size: 10px;
   font-weight: 600;
 }
@@ -1622,8 +1762,8 @@ main > .stats {
 .sheet-pane .sheet-toolbar {
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(min(100%, 320px), 1fr));
-  gap: 12px;
-  padding: 14px;
+  gap: 8px;
+  padding: 10px 14px 6px;
   align-items: start;
 }
 .packing-launch {
@@ -1663,17 +1803,17 @@ main > .stats {
   padding: 8px 11px;
 }
 .sheet-pane .filterbar {
-  padding: 0 14px 12px;
+  padding: 0 14px 8px;
   gap: 9px;
 }
 .export-toolbar {
   display: flex;
   flex-wrap: wrap;
   align-items: center;
-  gap: 6px 16px;
-  padding: 8px 14px;
-  background: var(--field);
-  border-block: 1px solid var(--divider);
+  gap: 6px;
+  padding: 2px 0 0;
+  background: transparent;
+  border: 0;
 }
 .export-toolbar .copy-actions {
   align-items: center;
@@ -1702,14 +1842,14 @@ main > .stats {
   margin-left: 4px;
 }
 .product-selection-totals {
-  padding: 9px 14px;
+  padding: 7px 14px;
   background: var(--field);
 }
 .selection-totals-grid {
   display: flex;
   flex-wrap: wrap;
   align-items: baseline;
-  gap: 8px 24px;
+  gap: 4px 20px;
   margin: 0;
 }
 .selection-totals-grid > div {
@@ -1741,17 +1881,17 @@ main > .stats {
 }
 .order-totals {
   border-top: 1px solid var(--divider);
-  padding: 9px 14px 11px;
+  padding: 7px 14px 9px;
 }
 .totals-scope {
   font-size: 11px;
   color: var(--muted);
-  margin: 0 0 8px;
+  margin: 0 0 5px;
 }
 .totals-grid {
   display: flex;
   flex-wrap: wrap;
-  gap: 10px 22px;
+  gap: 6px 20px;
   margin: 0;
 }
 .totals-grid > div {

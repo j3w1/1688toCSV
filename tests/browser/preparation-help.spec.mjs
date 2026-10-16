@@ -92,6 +92,36 @@ test('field hints leave immediately with the pointer and preserve keyboard descr
 })
 
 for (const fallback of [false, true]) {
+  test(`${fallback ? 'fallback' : 'native'} workspace hint dismisses while Escape reaches the owning view`, async ({
+    extension,
+  }) => {
+    const page = await helpFixture(extension, { fallback })
+    await page.evaluate(() => {
+      document.querySelector('dialog').close()
+      const view = document.createElement('section')
+      view.id = 'packing-view'
+      view.append(document.querySelector('#field'))
+      view.addEventListener(
+        'keydown',
+        (event) => {
+          if (event.key !== 'Escape') return
+          event.preventDefault()
+          event.stopPropagation()
+          view.hidden = true
+        },
+        true
+      )
+      document.body.append(view)
+    })
+    await page.locator('#field input').focus()
+    await expect(page.getByRole('tooltip')).toBeVisible()
+    await page.keyboard.press('Escape')
+    await expect(page.getByRole('tooltip')).toHaveCount(0)
+    await expect(page.locator('#packing-view')).toBeHidden()
+    await expect(page.locator('dialog')).toHaveJSProperty('open', false)
+    await page.close()
+  })
+
   test(`${fallback ? 'fallback' : 'native'} helper cannot be pinned by clicking or refocusing a replaced group`, async ({
     extension,
   }) => {

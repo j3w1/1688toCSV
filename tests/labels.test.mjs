@@ -972,7 +972,7 @@ test('editor reports save and copy failures without reporting success or copying
   await page.getByRole('button', { name: 'Copy label', exact: true }).click()
   await page.waitForFunction(
     () =>
-      document.querySelector('.label-editor-status').textContent ===
+      document.querySelector('.error-notice-message')?.textContent ===
       'Clipboard unavailable'
   )
   assert.equal(
@@ -990,7 +990,7 @@ test('editor reports save and copy failures without reporting success or copying
   await page.getByRole('button', { name: 'Copy label', exact: true }).click()
   await page.waitForFunction(
     () =>
-      document.querySelector('.label-editor-status').textContent ===
+      document.querySelector('.error-notice-message')?.textContent ===
       'Code is already assigned'
   )
   assert.equal(
@@ -1019,7 +1019,7 @@ test('editor reports save and copy failures without reporting success or copying
   await code.fill('bad code')
   await code.press('Enter')
   assert.match(
-    await page.locator('.label-editor-status').textContent(),
+    await page.locator('.error-notice-message').textContent(),
     /Enter a CE code/
   )
   assert.equal(await page.evaluate(() => copies), 1)

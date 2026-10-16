@@ -1,0 +1,63 @@
+.error-notice {
+  position: fixed;
+  z-index: 1200;
+  inset: auto 18px 18px auto;
+  width: min(420px, calc(100vw - 36px));
+  max-height: min(320px, calc(100dvh - 36px));
+  overflow: auto;
+  box-sizing: border-box;
+  padding: 12px 40px 12px 14px;
+  border: 1px solid var(--border);
+  border-inline-start: 3px solid var(--danger-text);
+  border-radius: 10px;
+  background: var(--surface);
+  color: var(--text);
+  box-shadow: 0 5px 22px rgb(0 0 0 / 18%);
+  font-size: 13px;
+  line-height: 1.45;
+  overflow-wrap: anywhere;
+}
+.error-notice-title {
+  color: var(--danger-text);
+  font-size: 13px;
+}
+.error-notice p {
+  margin: 4px 0 0;
+}
+.error-notice .error-notice-detail {
+  color: var(--muted);
+  font-size: 12px;
+}
+.error-notice .error-notice-close {
+  position: absolute;
+  top: 6px;
+  right: 6px;
+  width: 28px;
+  height: 28px;
+  min-height: 28px;
+  padding: 5px;
+  border: 0;
+  color: var(--muted);
+  background: transparent;
+}
+.error-notice .error-notice-close:hover {
+  background: var(--hover);
+  color: var(--text);
+}
+.error-notice .error-notice-action {
+  min-height: 28px;
+  margin-top: 8px;
+  padding: 3px 8px;
+  border: 1px solid var(--border);
+  background: var(--field);
+  color: var(--text);
+  font-size: 12px;
+}
+.code-error-description {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip-path: inset(50%);
+  white-space: nowrap;
+}

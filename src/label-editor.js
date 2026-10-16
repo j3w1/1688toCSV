@@ -15,6 +15,7 @@ import {
   normalizeLabelSettings,
   renderLabel,
 } from './labels.js'
+import { showErrorNotice, clearErrorNotice } from './error-notice.js'
 
 let nextEditorId = 0
 
@@ -48,11 +49,14 @@ export function mountLabelEditor(container, options) {
   let validationError = null
   const inputs = new Map()
   const dialog = container.closest('dialog')
+  const errorScope = dialog || container
+  const errorKey = `label:${editorId}`
   const dismiss = async (event) => {
     // Backdrop focus changes use the same save path as ordinary field blur.
     // Keep the editor mounted until that save completes, or show its error.
     if (!dirty() && !pendingCommit) return
     event.preventDefault()
+    clearErrorNotice({ scope: errorScope, key: errorKey })
     if (await commit()) {
       if (!destroyed && dialog?.open) dialog.close()
     }
@@ -72,6 +76,8 @@ export function mountLabelEditor(container, options) {
   status.setAttribute('role', 'status')
   status.setAttribute('aria-live', 'polite')
   status.id = `label-status-${editorId}`
+  const errorDescription = element('span', 'code-error-description')
+  errorDescription.id = `label-error-${editorId}`
   const resolve = element(
     'button',
     'label-editor-resolve',
@@ -83,12 +89,35 @@ export function mountLabelEditor(container, options) {
   copy.type = 'button'
   copy.disabled = true
   preview.append(image)
-  root.append(preview, hint, status, resolve, copy)
+  root.append(preview, hint, status, errorDescription, resolve, copy)
   container.append(root)
 
   function message(value, error = false) {
-    bindText(status, isMessage(value) ? value : uiMessage(value))
+    bindText(
+      status,
+      error
+        ? uiMessage(
+            validationError?.conflict ? 'Code conflict' : 'Could not complete'
+          )
+        : isMessage(value)
+          ? value
+          : uiMessage(value)
+    )
     status.classList.toggle('label-editor-error', error)
+    if (error) {
+      bindText(errorDescription, isMessage(value) ? value : uiMessage(value))
+      showErrorNotice(value, {
+        scope: errorScope,
+        key: errorKey,
+        deduplicate: true,
+        title: dirty() ? 'Not saved' : 'Could not complete',
+        detail: dirty() ? 'Your edits are still here.' : '',
+        action:
+          validationError?.conflict && options.onResolve
+            ? { label: 'Resolve', onClick: () => resolve.click() }
+            : undefined,
+      })
+    }
   }
 
   function issue(error = null) {
@@ -100,13 +129,14 @@ export function mountLabelEditor(container, options) {
       )
       if (invalid) {
         input.setAttribute('aria-invalid', 'true')
-        input.setAttribute('aria-errormessage', status.id)
+        input.setAttribute('aria-errormessage', errorDescription.id)
       } else {
         input.removeAttribute('aria-invalid')
         input.removeAttribute('aria-errormessage')
       }
     }
     if (error) message(error.message, true)
+    else clearErrorNotice({ scope: errorScope, key: errorKey })
   }
 
   function resetCopied() {
@@ -228,6 +258,7 @@ export function mountLabelEditor(container, options) {
   }
 
   function queuePreview() {
+    clearErrorNotice({ scope: errorScope, key: errorKey })
     resetCopied()
     clearTimeout(timer)
     previewController?.abort()
@@ -488,6 +519,7 @@ export function mountLabelEditor(container, options) {
   resolve.addEventListener('click', async () => {
     if (!validationError || resolve.disabled) return
     resolve.disabled = true
+    clearErrorNotice({ scope: errorScope, key: errorKey })
     try {
       const next = await options.onResolve(validationError, { ...model })
       if (!next || destroyed) return
@@ -563,6 +595,7 @@ export function mountLabelEditor(container, options) {
       latest ? { ...latest.result, model: { ...latest.model } } : null,
     destroy() {
       destroyed = true
+      clearErrorNotice({ scope: errorScope, key: errorKey })
       dialog?.removeEventListener('cancel', dismiss)
       revision++
       previewVersion++

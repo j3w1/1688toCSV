@@ -107,23 +107,31 @@ test('click focus and click-driven replacement cannot pin a helper', (t) => {
   assert.equal(document.activeElement, replacement)
 })
 
-test('keyboard focus still exposes descriptions and Escape preserves focus', (t) => {
-  const { document, input, event, focus, hint, leave } = setup(t)
-  event(document, 'keydown', { key: 'Tab' })
-  focus(input)
-  assert.equal(hint()?.textContent, 'Edit this code.')
-  assert.match(input.getAttribute('aria-describedby'), /^existing help-/)
-  leave(input)
-  assert.ok(
-    hint(),
-    'Keyboard focus owns this hint independently of pointer hover'
-  )
-  const escape = event(input, 'keydown', { key: 'Escape' })
-  assert.equal(escape.defaultPrevented, true)
-  assert.equal(hint(), null)
-  assert.equal(input.getAttribute('aria-describedby'), 'existing')
-  assert.equal(document.activeElement, input)
-})
+for (const modal of [false, true]) {
+  test(`keyboard help preserves focus and ${modal ? 'handles modal Escape first' : 'passes Escape to the workspace'}`, (t) => {
+    const { document, input, event, focus, hint, leave } = setup(t)
+    if (modal) {
+      const dialog = document.createElement('dialog')
+      dialog.setAttribute('open', '')
+      document.body.append(dialog)
+      dialog.append(input)
+    }
+    event(document, 'keydown', { key: 'Tab' })
+    focus(input)
+    assert.equal(hint()?.textContent, 'Edit this code.')
+    assert.match(input.getAttribute('aria-describedby'), /^existing help-/)
+    leave(input)
+    assert.ok(
+      hint(),
+      'Keyboard focus owns this hint independently of pointer hover'
+    )
+    const escape = event(input, 'keydown', { key: 'Escape' })
+    assert.equal(escape.defaultPrevented, modal)
+    assert.equal(hint(), null)
+    assert.equal(input.getAttribute('aria-describedby'), 'existing')
+    assert.equal(document.activeElement, input)
+  })
+}
 
 test('a later pointer click invalidates old keyboard focus as a pinning source', (t) => {
   const { document, input, event, focus, hint, hover, leave } = setup(t)

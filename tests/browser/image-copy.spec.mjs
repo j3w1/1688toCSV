@@ -1,3 +1,4 @@
+import { revealCopyActions } from './copy-actions-helpers.mjs'
 import { test, expect } from './extension-fixture.mjs'
 import { createDemoRecords } from '../../preview/library-fixture.js'
 
@@ -105,19 +106,30 @@ test('single picture copies original non-square pixels with inline success', asy
   const preview = row.locator('img')
   await expect
     .poll(() => preview.evaluate((image) => image.naturalWidth))
-    .toBe(64)
-  const button = row.getByRole('button', { name: 'Copy image', exact: true })
+    .toBe(240)
+  // The larger 108px preview uses a 240px thumbnail; copying still keeps all
+  // original 960 × 640 pixels rather than the display-sized derivative.
+  await expect(preview).toHaveCSS('width', '108px')
+  const button = row.locator('.photo-copy-button')
+  await expect(button).toHaveAccessibleName('Copy image')
+  await row.locator('.photo-copy-tile').hover()
   const before = await button.boundingBox()
   expect(before.height).toBeLessThanOrEqual(30)
-  // The icon and full label fit on one line, including wider fallback fonts.
-  expect(before.width).toBeLessThanOrEqual(100)
+  expect(before.width).toBeLessThanOrEqual(30)
+  await expect(button).toHaveText('')
   expect(
     await button.evaluate((node) => node.scrollWidth <= node.clientWidth)
   ).toBe(true)
   await button.click()
+  await expect(button).toHaveAccessibleName('Copy image: Copied')
+  await expect(button).toHaveClass(/copied/)
+  await expect(row).toHaveAttribute('aria-selected', 'false')
   await expect(
-    row.getByRole('button', { name: 'Copied', exact: true })
-  ).toHaveClass(/copied/)
+    page.getByRole('dialog', { name: 'Product photo', exact: true })
+  ).not.toBeVisible()
+  await expect(
+    page.getByRole('dialog', { name: 'Original product details', exact: true })
+  ).not.toBeVisible()
   const after = await button.boundingBox()
   expect(after.width).toBe(before.width)
   expect(after.height).toBe(before.height)
@@ -146,6 +158,7 @@ test('bulk picture copying preserves full pixels in separate compact Excel cells
     .click()
   for (const id of ['copy-images', 'copy-excel']) {
     const button = page.locator(`#${id}`)
+    await revealCopyActions(page)
     await button.click()
     await expect(button).toHaveText('Copied')
     await expect(button).toHaveClass(/copied/)
@@ -198,6 +211,7 @@ test('clipboard failures stay next to the copy control and can be retried', asyn
   })
   const page = await openLibrary(extension)
   const button = page.locator('#copy-values')
+  await revealCopyActions(page)
   await button.click()
   await expect(button).toHaveText('Try again')
   await expect(button).toHaveClass(/copy-failed/)
@@ -205,6 +219,7 @@ test('clipboard failures stay next to the copy control and can be retried', asyn
     'Synthetic clipboard permission failure'
   )
   await expect(page.locator('#feedback')).toBeEmpty()
+  await revealCopyActions(page)
   await button.click()
   await expect(button).toHaveText('Copied')
   await expect(button).toHaveClass(/copied/)
@@ -260,6 +275,7 @@ test('repeated original photos count per row toward the clipboard batch budget',
   })
   const page = await openLibrary(extension)
   const button = page.locator('#copy-images')
+  await revealCopyActions(page)
   await button.click()
   const batches = page.getByRole('dialog', {
     name: 'Choose image batch',
@@ -267,7 +283,7 @@ test('repeated original photos count per row toward the clipboard batch budget',
   })
   await expect(batches).toBeVisible()
   await batches.getByRole('button', { name: 'Cancel', exact: true }).click()
-  await expect(button).toHaveText('Copy images')
+  await expect(button).toHaveText('Product photos')
   expect(await page.evaluate(() => window.clipboardWrites)).toBe(0)
   expect(extension.unexpectedRequests).toEqual([])
 })

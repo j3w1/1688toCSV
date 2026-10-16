@@ -2,10 +2,16 @@ import test from 'node:test'
 import assert from 'node:assert/strict'
 import { fileURLToPath } from 'node:url'
 import {
-  excelImageColumns,
-  planExcelImage,
+  excelImageColumns as allExcelImageColumns,
+  planExcelImage as planExcelImageBase,
   renderExcelImage as renderExcelImageBase,
 } from '../src/excel-image.js'
+
+const excelImageColumns = allExcelImageColumns
+  .filter((column) => !column.supplier)
+  .map((column) => ({ ...column, label: column.labels.zh }))
+const planExcelImage = (rows, options = {}) =>
+  planExcelImageBase(rows, { language: 'zh', ...options })
 
 const png = new Blob(
   [
@@ -43,7 +49,10 @@ const measure = (value) =>
 
 // Deterministic metrics isolate batching, data preservation and resource lifetime.
 // The browser acceptance suite checks the actual canvas raster and font output.
-async function withCanvas(work, { bitmapHeight = 252 } = {}) {
+async function withCanvas(
+  work,
+  { bitmapHeight = 252, headerWidthScale = 1 } = {}
+) {
   const previousDocument = globalThis.document
   const previousBitmap = globalThis.createImageBitmap
   const state = {
@@ -59,7 +68,13 @@ async function withCanvas(work, { bitmapHeight = 252 } = {}) {
     createElement(tag) {
       assert.equal(tag, 'canvas')
       const context = {
-        measureText: (text) => ({ width: measure(text) }),
+        measureText(text) {
+          return {
+            width:
+              measure(text) *
+              (this.font?.startsWith('700 14px') ? headerWidthScale : 1),
+          }
+        },
         fillText(text, x, y) {
           state.text.push({
             text,
@@ -134,7 +149,267 @@ async function withCanvas(work, { bitmapHeight = 252 } = {}) {
 const cell = (entry, key) =>
   entry.cells[excelImageColumns.findIndex((column) => column.key === key)]
 
-test('Excel image keeps Chinese headers, saved values and one base code per group', async () =>
+test('Localized headers grow narrow columns enough to keep whole words such as Cantidad intact', async () =>
+  withCanvas(
+    () => {
+      const [plan] = planExcelImageBase([row], {
+        language: 'es',
+        columns: ['quantity', 'chineseCategory', 'price'],
+      })
+      assert.deepEqual(plan.headers[0], ['Cantidad'])
+      assert.ok(plan.columns[0].width > 78)
+      for (const [index, column] of plan.columns.entries()) {
+        for (const word of column.label.split(/\s+/))
+          assert.ok(
+            plan.headers[index].some((line) =>
+              line.split(/\s+/).includes(word)
+            ),
+            word
+          )
+      }
+    },
+    { headerWidthScale: 1.2 }
+  ))
+
+test('Custom image columns preserve the chosen order and leave supplier fields blank', async () =>
+  withCanvas(async (state) => {
+    const columns = [
+      'supplierCarton',
+      'quantity',
+      'supplierDimensions',
+      'price',
+      'supplierWeight',
+    ]
+    const input = {
+      ...row,
+      thumbnail: '',
+      chineseCategory: '',
+      supplierCarton: 'must not be printed',
+      supplierDimensions: 'must not be printed',
+      supplierWeight: 'must not be printed',
+    }
+    const [plan] = planExcelImageBase([input], { columns, language: 'es' })
+    assert.deepEqual(
+      plan.columns.map((column) => column.key),
+      columns
+    )
+    assert.deepEqual(
+      plan.columns.map((column) => column.label),
+      [
+        'N.º de caja',
+        'Cantidad',
+        'Medidas de caja',
+        'Precio unitario (CNY)',
+        'Peso (kg)',
+      ]
+    )
+    assert.deepEqual(
+      plan.rows[0].cells.map((cell) => cell.text),
+      ['', '20', '', '¥ 3.00', '']
+    )
+    assert.equal(
+      plan.cssWidth,
+      2 + plan.columns.reduce((total, column) => total + column.width, 0)
+    )
+    assert.deepEqual(plan.markSpans, [])
+    const result = await renderExcelImageBase(plan)
+    assert.equal(result.blob.type, 'image/png')
+    assert.equal(state.draws.length, 0)
+    assert.ok(!state.text.some((entry) => entry.text.includes('must not')))
+    assert.ok(Object.isFrozen(plan.columns))
+    assert.ok(Object.isFrozen(plan.columns[0]))
+  }))
+
+test('English is the default image language and unsupported or repeated column keys are rejected', async () =>
+  withCanvas(() => {
+    const [plan] = planExcelImageBase([row])
+    assert.equal(plan.language, 'en')
+    assert.equal(plan.columns[0].label, 'No.')
+    assert.equal(plan.columns.length, 8)
+    assert.equal(allExcelImageColumns.length, 11)
+    assert.throws(
+      () => planExcelImageBase([row], { columns: [] }),
+      /at least one/
+    )
+    assert.throws(
+      () => planExcelImageBase([row], { columns: ['unknown'] }),
+      /valid, unique/
+    )
+    assert.throws(
+      () => planExcelImageBase([row], { columns: ['price', 'price'] }),
+      /valid, unique/
+    )
+  }))
+
+test('Image descriptions use safe language helpers and category materials appear bold underneath', async () =>
+  withCanvas(async (state) => {
+    const input = {
+      ...row,
+      title: '玻璃罐',
+      description:
+        '玻璃罐\n颜色：红色\n规格：14*65CM\n货号：ABC-1\n材质：玻璃\n定制说明：未知卖家文字',
+      spanishName: 'FRASCO',
+      chineseCategory: '玻璃罐',
+      material: '玻璃',
+    }
+    for (const [language, category, material, codeLabel, sizeLabel, color] of [
+      ['en', '玻璃罐', 'Glass', 'Code: ', 'Specifications: ', 'Red'],
+      ['es', 'FRASCO', 'Vidrio', 'Código: ', 'Especificaciones: ', 'Rojo'],
+      ['zh', '玻璃罐', '玻璃', '货号：', '规格：', '红色'],
+    ]) {
+      const [plan] = planExcelImageBase([input], {
+        language,
+        columns: ['description', 'chineseCategory'],
+      })
+      const [description, categoryCell] = plan.rows[0].cells
+      assert.ok(description.text.includes(`${codeLabel}ABC-1`))
+      assert.ok(
+        description.text.includes(
+          `${sizeLabel}14*65${language === 'zh' ? '' : ' '}CM`
+        )
+      )
+      assert.ok(description.text.includes(color))
+      assert.ok(description.text.includes('未知卖家文字'))
+      assert.equal(categoryCell.text, `${category}\n${material}`)
+      assert.ok(categoryCell.richLines.at(-1)[0].font.startsWith('700 16px'))
+      assert.equal(plan.rows[0].source.description, input.description)
+      await renderExcelImageBase(plan)
+      assert.ok(
+        state.text.some(
+          (entry) =>
+            entry.text === material && entry.font.startsWith('700 16px')
+        )
+      )
+    }
+    const [manual] = planExcelImageBase(
+      [{ ...input, material: 'My own material' }],
+      { columns: ['chineseCategory'], language: 'es' }
+    )
+    assert.equal(manual.rows[0].cells[0].text, 'FRASCO\nMy own material')
+  }))
+
+test('Omitted photo and carton columns do not require their resources or category', async () =>
+  withCanvas(async () => {
+    const [textOnly] = planExcelImageBase(
+      [{ ...row, thumbnail: '', chineseCategory: '' }],
+      { columns: ['barcode'] }
+    )
+    await renderExcelImageBase(textOnly)
+    const [markOnly] = planExcelImageBase([{ ...row, thumbnail: '' }], {
+      columns: ['baseCode'],
+    })
+    await renderExcelImageBase(markOnly, { renderCartonMark: async () => png })
+    const [photoOnly] = planExcelImageBase([{ ...row, chineseCategory: '' }], {
+      columns: ['thumbnail'],
+    })
+    await renderExcelImageBase(photoOnly, { loadImage: async () => png })
+    await assert.rejects(renderExcelImageBase(photoOnly), /photo loader/)
+    assert.throws(
+      () =>
+        planExcelImageBase([{ ...row, chineseCategory: '' }], {
+          columns: ['baseCode'],
+        }),
+      /Chinese category/
+    )
+  }))
+
+test('Known categories translate for export while authored Spanish names and original carton categories remain intact', async () =>
+  withCanvas(async () => {
+    const input = {
+      ...row,
+      chineseCategory: '毛绒玩具',
+      spanishName: 'MI PELUCHE',
+      material: '棉',
+    }
+    const [english] = planExcelImageBase([input], {
+      language: 'en',
+      columns: ['chineseCategory', 'baseCode'],
+    })
+    assert.equal(english.rows[0].cells[0].text, 'Plush toy\nCotton')
+    let markCategory
+    await renderExcelImageBase(english, {
+      renderCartonMark: async (source) => {
+        markCategory = source.chineseCategory
+        return png
+      },
+    })
+    assert.equal(markCategory, '毛绒玩具')
+    const [spanish] = planExcelImageBase([input], {
+      language: 'es',
+      columns: ['chineseCategory'],
+    })
+    assert.equal(spanish.rows[0].cells[0].text, 'MI PELUCHE\nAlgodón')
+    const [fallback] = planExcelImageBase([{ ...input, spanishName: '' }], {
+      language: 'es',
+      columns: ['chineseCategory'],
+    })
+    assert.equal(fallback.rows[0].cells[0].text, 'PELUCHE\nAlgodón')
+  }))
+
+test('Combined variant descriptions omit exact repeated attributes but preserve changed values', async () =>
+  withCanvas(() => {
+    const input = {
+      ...row,
+      title: '毛绒玩具',
+      description: '毛绒玩具\n颜色：红色\n高度：55CM',
+      skuProperties: [
+        { label: '颜色', value: '红色' },
+        { label: '高度', value: '55CM' },
+      ],
+    }
+    for (const separator of [' / ', ' · ', '\n']) {
+      const [plan] = planExcelImage([
+        { ...input, variantDescription: `颜色: 红色${separator}高度: 55CM` },
+      ])
+      const description = cell(plan.rows[0], 'description')
+      assert.deepEqual(
+        description.blocks.map((block) => block.label),
+        ['', '颜色：', '高度：']
+      )
+    }
+    for (const variantDescription of [
+      '颜色: 红色 / 高度: 65CM',
+      '颜色: 红',
+      '颜色: 红色 / 高度: 55CM / 新说明',
+    ]) {
+      const [plan] = planExcelImage([{ ...input, variantDescription }])
+      assert.ok(
+        cell(plan.rows[0], 'description').text.includes(variantDescription)
+      )
+    }
+    const [slash] = planExcelImage([
+      {
+        ...input,
+        description: '毛绒玩具\n规格：14/65CM',
+        skuProperties: [],
+        variantDescription: '规格: 14/65CM',
+      },
+    ])
+    assert.deepEqual(
+      cell(slash.rows[0], 'description').blocks.map((block) => block.label),
+      ['', '规格：']
+    )
+  }))
+
+test('Reordered merged carton columns contain only the mark image with no repeated code caption', async () =>
+  withCanvas(async (state) => {
+    const [plan] = planExcelImageBase(
+      [row, { ...row, barcode: `${row.baseCode}AM` }],
+      { columns: ['quantity', 'baseCode', 'price'] }
+    )
+    await renderExcelImageBase(plan, { renderCartonMark: async () => png })
+    assert.equal(plan.markSpans.length, 1)
+    assert.equal(state.draws.length, 1)
+    assert.ok(!state.text.some((entry) => entry.text === row.baseCode))
+    const [, left, top, width, height] = state.draws[0]
+    assert.equal(left + width / 2, 1 + 78 + 172 / 2)
+    assert.equal(
+      top + height / 2,
+      plan.headerHeight + 1 + plan.markSpans[0].height / 2
+    )
+  }))
+
+test('Chinese Excel image keeps saved values and one carton mark per group', async () =>
   withCanvas(({ canvases }) => {
     assert.deepEqual(
       excelImageColumns.map((column) => column.label),
@@ -144,7 +419,7 @@ test('Excel image keeps Chinese headers, saved values and one base code per grou
         '产品描述',
         '唛头货号',
         '条码货号',
-        '中文品类',
+        '品类与材质',
         '单价（元）',
         '数量',
       ]
@@ -513,7 +788,8 @@ test('Carton marks merge only contiguous matching order/group/code rows and leav
       ]
     )
     assert.equal(cell(plan.rows[3], 'baseCode').text, row.baseCode)
-    assert.equal(plan.markSpans[0].caption.richLines[0][0].color, '#1d4ed8')
+    assert.equal(plan.markSpans[0].manualReordered, true)
+    assert.equal(plan.markSpans[0].caption, undefined)
     const marks = []
     await renderExcelImage(plan, {
       loadImage: async () => png,
@@ -837,7 +1113,18 @@ test('Real canvas output preserves centered rich text, blue reordered codes and 
         manualReordered: true,
       },
     ]
-    const [plan] = ExcelImage.planExcelImage(rows)
+    const [plan] = ExcelImage.planExcelImage(rows, { language: 'zh' })
+    const headerChecks = ['en', 'es', 'zh'].map((language) => {
+      const [localized] = ExcelImage.planExcelImage(rows, {
+        language,
+        columns: ExcelImage.excelImageColumns.map((column) => column.key),
+      })
+      return {
+        language,
+        columns: localized.columns,
+        headers: localized.headers,
+      }
+    })
     const calls = []
     const photos = []
     const prototype = CanvasRenderingContext2D.prototype
@@ -901,11 +1188,27 @@ test('Real canvas output preserves centered rich text, blue reordered codes and 
       photos,
       bluePixels,
       plan,
+      headerChecks,
       width: result.width,
       height: result.height,
     }
   }, row)
   assert.ok(actual.bluePixels > 100)
+  for (const check of actual.headerChecks) {
+    for (const [index, column] of check.columns.entries())
+      for (const word of column.label.split(/\s+/))
+        assert.ok(
+          check.headers[index].some((line) => line.split(/\s+/).includes(word)),
+          `${check.language}: ${word}`
+        )
+    if (check.language === 'es')
+      assert.deepEqual(
+        check.headers[
+          check.columns.findIndex((column) => column.key === 'quantity')
+        ],
+        ['Cantidad']
+      )
+  }
   assert.equal(actual.width, actual.plan.width)
   assert.equal(actual.height, actual.plan.height)
   let x = 1

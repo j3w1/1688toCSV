@@ -83,6 +83,9 @@ try {
   await expect(page.locator('#sheet-body tr[data-selection-key]')).toHaveCount(
     8
   )
+  await page
+    .getByRole('button', { name: 'More copy formats', exact: true })
+    .click()
   await page.getByRole('checkbox', { name: 'Headers', exact: true }).check()
   await page.getByRole('button', { name: 'Copy to Excel', exact: true }).click()
   await expect(page.locator('#copy-excel')).toHaveText('Copied')
@@ -109,6 +112,9 @@ try {
   await expect(page.locator('#sheet-body tr[data-selection-key]')).toHaveCount(
     3
   )
+  await page
+    .getByRole('button', { name: 'More copy formats', exact: true })
+    .click()
   await page.getByRole('checkbox', { name: 'Headers', exact: true }).uncheck()
   await page.getByLabel('Packing month', { exact: true }).fill('2026-10')
   await page.locator('#select-rows').click()
@@ -244,6 +250,9 @@ try {
     .getByRole('button', { name: 'Close label editor', exact: true })
     .click()
 
+  await page
+    .getByRole('button', { name: 'More copy formats', exact: true })
+    .click()
   await page
     .getByRole('button', { name: 'Copy preparation columns', exact: true })
     .click()

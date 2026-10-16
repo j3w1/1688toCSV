@@ -212,6 +212,33 @@ test('order metadata appears once per section and identical delivery statuses us
   )
   await revisions.last().hover()
   await expect(page.getByRole('tooltip')).toContainText('Saved in this browser')
+  const updated = rows.filter({ has: page.locator('.row-number') }).first()
+  const saved = rows.last()
+  for (const theme of ['dark', 'light']) {
+    if (theme === 'light') await page.locator('#theme-toggle').click()
+    await page.mouse.move(0, 0)
+    expect(
+      await updated.evaluate((node) => getComputedStyle(node).backgroundColor)
+    ).toBe(
+      await saved.evaluate((node) => getComputedStyle(node).backgroundColor)
+    )
+    await updated.locator('.row-number').click()
+    await page.mouse.move(0, 0)
+    await expect(updated).toHaveAttribute('aria-selected', 'true')
+    await expect(updated.locator('.row-number')).toHaveCSS('box-shadow', 'none')
+    expect(
+      await updated
+        .locator('.row-number')
+        .evaluate((node) => getComputedStyle(node, '::after').visibility)
+    ).toBe('visible')
+    expect(
+      await updated.evaluate((node) => getComputedStyle(node).backgroundColor)
+    ).not.toBe(
+      await saved.evaluate((node) => getComputedStyle(node).backgroundColor)
+    )
+    await updated.locator('.row-number').click()
+    await expect(updated).toHaveAttribute('aria-selected', 'false')
+  }
 })
 
 test('switching languages keeps packing edits mounted and preserves pending authored names', async ({

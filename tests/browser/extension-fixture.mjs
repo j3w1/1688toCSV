@@ -27,6 +27,7 @@ async function startFixtureServer() {
         '/src/packing-model.js',
         '/src/packing-backup.js',
         '/src/product-vocabulary.js',
+        '/src/material-vocabulary.js',
         '/src/size-vocabulary.js',
         '/src/order-date.js',
         '/src/clipboard.js',

@@ -1,9 +1,11 @@
 import { getItemColorHints } from './color-vocabulary.js'
 import { DEFAULT_SIZE_VOCABULARY } from './size-vocabulary.js'
+import { translateMaterial } from './material-vocabulary.js'
 
 // Display-only vocabulary. Never replace imported descriptions, SKU values or
 // product numbers with these helpers when saving or exporting an order.
 const definitions = [
+  ['材质|材料|主要材质|主要材料', 'Material', 'Material', 'material'],
   ['颜色|颜色分类|产品颜色', 'Color', 'Color', 'color'],
   ['规格|规格分类', 'Specifications', 'Especificaciones', 'size'],
   ['货号|商品编号|产品编号|款号|编号', 'Code', 'Código', 'code'],
@@ -227,14 +229,15 @@ export function translateAttribute(field, language = 'en') {
       : definition?.[lang] ||
         originalLabel ||
         (lang === 'es' ? 'Detalle' : 'Details')
-  const colors = ['code', 'model', 'text'].includes(kind)
+  const colors = ['code', 'model', 'text', 'material'].includes(kind)
     ? []
     : getItemColorHints(
         { skuProperties: [{ label: originalLabel, value: originalValue }] },
         lang
       )
-  let value = originalValue
-  if (lang !== 'zh' && !['code', 'model', 'text'].includes(kind)) {
+  let value =
+    kind === 'material' ? translateMaterial(originalValue, lang) : originalValue
+  if (lang !== 'zh' && !['code', 'model', 'text', 'material'].includes(kind)) {
     // The color vocabulary excludes ambiguous terms and scent names. Preserve
     // any unrecognized remainder instead of replacing a seller's variant name.
     if (colors.length)

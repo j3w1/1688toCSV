@@ -12,6 +12,8 @@ import { createPhotoViewer } from './photo-viewer.js'
 import { createLabelRenderer } from './labels.js'
 import { element as el } from './ui.js'
 import { icon } from './icons.js'
+import { photoCopyTile } from './photo-copy.js'
+import { copySingleImage } from './clipboard.js'
 export { preparationHelp } from './preparation-help.js'
 
 async function smallImage(blob, width = 360) {
@@ -66,7 +68,7 @@ export function createPreparationMedia({
     if (pendingPhotos.has(url)) return pendingPhotos.get(url)
     const work = (async () => {
       const data = await loadImage(url)
-      const blob = await smallImage(await (await fetch(data)).blob(), 192)
+      const blob = await smallImage(await (await fetch(data)).blob(), 224)
       if (!disposed) {
         while (
           photos.size &&
@@ -248,7 +250,13 @@ export function createPreparationMedia({
         root.disabled = true
         bindText(status, uiMessage('No photo'))
       }
-      return root
+      return interactive
+        ? photoCopyTile(
+            root,
+            async () => copySingleImage(await loadImage(item.thumbnail)),
+            { disabled: !item.thumbnail }
+          )
+        : root
     },
     label(model, onEdit, kind) {
       const root = el('button', undefined, `preparation-label-preview ${kind}`),

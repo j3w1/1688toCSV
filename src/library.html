@@ -9,6 +9,7 @@
     <link rel="stylesheet" href="library.css" />
     <link rel="stylesheet" href="packing.css" />
     <link rel="stylesheet" href="label-editor.css" />
+    <link rel="stylesheet" href="copy-actions.css" />
     <script type="module" src="library.js"></script>
   </head>
   <body>
@@ -242,9 +243,54 @@
           aria-label="Order spreadsheet"
         >
           <div class="sheet-toolbar">
-            <div>
+            <div class="sheet-title-actions">
               <h2 data-i18n="All products" id="sheet-title">All products</h2>
               <p data-i18n="0 rows" id="selection-summary">0 rows</p>
+              <div class="export-toolbar copy-actions" id="orders-copy-actions">
+                <div
+                  data-i18n-aria-label="Copy selected product rows"
+                  class="copy-actions"
+                  aria-label="Copy selected product rows"
+                >
+                  <span data-i18n="Products" class="toolbar-caption"
+                    >Products</span
+                  ><button data-i18n="Copy values" id="copy-values">
+                    Copy values</button
+                  ><button data-i18n="Copy images" id="copy-images">
+                    Copy images</button
+                  ><button data-i18n="Copy to Excel" id="copy-excel">
+                    Copy to Excel</button
+                  ><button
+                    data-i18n="Copy Excel image"
+                    data-i18n-title="Copy selected rows as one picture in your workspace language"
+                    id="copy-excel-image"
+                    title="Copy selected rows as one picture in your workspace language"
+                  >
+                    Copy Excel image
+                  </button>
+                </div>
+                <div
+                  data-i18n-aria-label="Copy packing values"
+                  class="copy-actions"
+                  aria-label="Copy packing values"
+                >
+                  <span data-i18n="Packing" class="toolbar-caption"
+                    >Packing</span
+                  ><button
+                    data-i18n="Copy preparation columns"
+                    id="copy-preparation"
+                  >
+                    Copy preparation columns</button
+                  ><button data-i18n="Copy group codes" id="copy-group-codes">
+                    Copy group codes</button
+                  ><label class="check"
+                    ><input id="include-headers" type="checkbox" /><span
+                      data-i18n="Headers"
+                      >Headers</span
+                    ></label
+                  >
+                </div>
+              </div>
             </div>
             <div class="packing-launch">
               <label
@@ -282,49 +328,21 @@
               ></label
             >
           </div>
-          <div class="export-toolbar">
-            <div
-              data-i18n-aria-label="Copy selected product rows"
-              class="copy-actions"
-              aria-label="Copy selected product rows"
-            >
-              <span data-i18n="Products" class="toolbar-caption">Products</span
-              ><button data-i18n="Copy values" id="copy-values">
-                Copy values</button
-              ><button data-i18n="Copy images" id="copy-images">
-                Copy images</button
-              ><button data-i18n="Copy to Excel" id="copy-excel">
-                Copy to Excel</button
-              ><button
-                data-i18n="Copy Excel image"
-                data-i18n-title="Copy selected rows as one picture with Chinese headings"
-                id="copy-excel-image"
-                title="Copy selected rows as one picture with Chinese headings"
-              >
-                Copy Excel image
-              </button>
-            </div>
-            <div
-              data-i18n-aria-label="Copy packing values"
-              class="copy-actions"
-              aria-label="Copy packing values"
-            >
-              <span data-i18n="Packing" class="toolbar-caption">Packing</span
-              ><button
-                data-i18n="Copy preparation columns"
-                id="copy-preparation"
-              >
-                Copy preparation columns</button
-              ><button data-i18n="Copy group codes" id="copy-group-codes">
-                Copy group codes</button
-              ><label class="check"
-                ><input id="include-headers" type="checkbox" /><span
-                  data-i18n="Headers"
-                  >Headers</span
-                ></label
-              >
-            </div>
-          </div>
+          <section
+            data-i18n-aria-label="Selected product totals"
+            id="product-selection-totals"
+            class="product-selection-totals"
+            aria-label="Selected product totals"
+            aria-live="polite"
+            aria-atomic="true"
+          ></section>
+          <section
+            data-i18n-aria-label="Matching order totals"
+            id="order-totals"
+            class="order-totals"
+            aria-label="Matching order totals"
+            aria-live="polite"
+          ></section>
           <div id="empty-state" class="empty-state">
             <span aria-hidden="true">▦</span>
             <h2 data-i18n="Your orders belong here.">
@@ -390,21 +408,6 @@
               </button>
             </div>
           </div>
-          <section
-            data-i18n-aria-label="Selected product totals"
-            id="product-selection-totals"
-            class="product-selection-totals"
-            aria-label="Selected product totals"
-            aria-live="polite"
-            aria-atomic="true"
-          ></section>
-          <section
-            data-i18n-aria-label="Matching order totals"
-            id="order-totals"
-            class="order-totals"
-            aria-label="Matching order totals"
-            aria-live="polite"
-          ></section>
         </section>
       </div>
       <section

@@ -35,6 +35,10 @@ import { createPhotoViewer } from './photo-viewer.js'
 import { presentOrderStatus } from './order-presentation.js'
 import { createRowSelection } from './row-selection.js'
 import { copyExcelImage } from './excel-image-copy.js'
+import { mountExcelImageOptions } from './excel-image-options.js'
+import { mountCopyActions } from './copy-actions.js'
+import { showErrorNotice, clearErrorNotice } from './error-notice.js'
+import { photoCopyTile } from './photo-copy.js'
 import { summarizeOrders, summarizeProductRows } from './order-summary.js'
 import { decorateIcon, icon } from './icons.js'
 import { preparationHelp } from './preparation-help.js'
@@ -245,6 +249,67 @@ export async function startLibrary(
     selectedRows = new Set(),
     preparedImages = new Map(),
     loadingImages = new Map()
+  function showProductDetails(row, { sourceItems = [row] } = {}) {
+    const record =
+      row.record ||
+      records.find(({ snapshot }) => snapshot.orderId === row.orderId)
+    const dialog = openProductDetails(row, {
+      loadPhoto: async (url) => {
+        const result = await send('IMAGE_GET', { url })
+        return typeof result === 'string' ? result : result.dataUrl
+      },
+      onPhoto: () =>
+        void photos.open(
+          row,
+          sourceItems.length > 1 || !row.record ? sourceItems : filteredRows()
+        ),
+      onOrder: () =>
+        record &&
+        void openDetails(record).catch((error) =>
+          feedback(error.message, true)
+        ),
+      copyPhoto: async () => {
+        const result = await send('IMAGE_GET', { url: row.thumbnail })
+        await copySingleImage(
+          typeof result === 'string' ? result : result.dataUrl
+        )
+      },
+    })
+    if (sourceItems.length > 1) {
+      const sources = node('nav', undefined, 'product-source-choices')
+      bindAttribute(
+        sources,
+        'aria-label',
+        uiMessage('Original products sharing this barcode')
+      )
+      sources.append(node('span', uiMessage('Original products:')))
+      for (const [index, item] of sourceItems.entries()) {
+        const choice = node('button', String(index + 1))
+        choice.type = 'button'
+        choice.setAttribute(
+          'aria-pressed',
+          String(item.entryId === row.entryId)
+        )
+        bindAttribute(
+          choice,
+          'aria-label',
+          uiMessage('Original product {0}: {1}', {
+            0: index + 1,
+            1: item.title || item.description.split('\n')[0],
+          })
+        )
+        preparationHelp(choice, item.description)
+        choice.onclick = () => {
+          dialog.close()
+          dialog.remove()
+          showProductDetails(item, { sourceItems })
+        }
+        sources.append(choice)
+      }
+      dialog.querySelector('.product-details-body').before(sources)
+    }
+    return dialog
+  }
   const productSelection = createRowSelection({
     selected: selectedRows,
     getKeys: () => filteredRows().map(keyFor),
@@ -252,23 +317,7 @@ export async function startLibrary(
     onActivate: (key) => {
       const row = filteredRows().find((item) => keyFor(item) === key)
       if (!row) return
-      openProductDetails(row, {
-        loadPhoto: async (url) => {
-          const result = await send('IMAGE_GET', { url })
-          return typeof result === 'string' ? result : result.dataUrl
-        },
-        onPhoto: () => void photos.open(row, filteredRows()),
-        onOrder: () =>
-          void openDetails(row.record).catch((error) =>
-            feedback(error.message, true)
-          ),
-        copyPhoto: async () => {
-          const result = await send('IMAGE_GET', { url: row.thumbnail })
-          await copySingleImage(
-            typeof result === 'string' ? result : result.dataUrl
-          )
-        },
-      })
+      showProductDetails(row)
     },
   })
   document.querySelector('.table-scroll').addEventListener(
@@ -402,13 +451,13 @@ export async function startLibrary(
     ],
     [
       'copy-excel-image',
-      'Copy the chosen rows as one table picture with Chinese headings and packing values.',
+      'Copy selected rows as one picture in your workspace language',
     ],
     ['copy-preparation', 'Choose which packing and source columns to copy.'],
     ['copy-group-codes', 'Copy one CE code per product group.'],
     [
       'include-headers',
-      'Include column headings in copied values. Table pictures always have Chinese headings.',
+      'Include column headings in copied values. Image headings follow the workspace language.',
     ],
     [
       'clear-rows',
@@ -505,6 +554,12 @@ export async function startLibrary(
   let feedbackTimer
   function feedback(message, error = false) {
     clearTimeout(feedbackTimer)
+    if (error) {
+      $('feedback').replaceChildren()
+      showErrorNotice(message, { key: 'feedback' })
+      return
+    }
+    clearErrorNotice({ key: 'feedback' })
     const close = node('button', '×')
     bindAttribute(close, 'aria-label', uiMessage('Dismiss notification'))
     close.onclick = () => {
@@ -515,11 +570,8 @@ export async function startLibrary(
       node('span', isMessage(message) ? message : uiMessage(message)),
       close
     )
-    $('feedback').className = error ? 'error' : ''
-    feedbackTimer = setTimeout(
-      () => $('feedback').replaceChildren(),
-      error ? 8000 : 4000
-    )
+    $('feedback').className = ''
+    feedbackTimer = setTimeout(() => $('feedback').replaceChildren(), 4000)
   }
   function action(id, handler) {
     $(id).addEventListener('click', async () => {
@@ -767,7 +819,8 @@ export async function startLibrary(
           try {
             const data = await send('IMAGE_GET', { url })
             const result = await pngThumbnail(
-              typeof data === 'string' ? data : data.dataUrl
+              typeof data === 'string' ? data : data.dataUrl,
+              { size: 240 }
             )
             preparedImages.set(url, result)
             while (preparedImages.size > 200)
@@ -1007,8 +1060,8 @@ export async function startLibrary(
       productSelection.bind(tr, keyFor(row))
       const thumb = node('td', undefined, 'thumb-cell')
       const image = node('img')
-      image.width = 54
-      image.height = 54
+      image.width = 108
+      image.height = 108
       image.loading = 'lazy'
       image.alt = row.description.split('\n')[0]
       // Only image URLs are assigned, never source HTML or arbitrary protocols.
@@ -1016,25 +1069,6 @@ export async function startLibrary(
       if (preparedImages.has(row.thumbnail))
         image.src = preparedImages.get(row.thumbnail)
       else imageObserver.observe(image)
-      const imageButton = node(
-        'button',
-        uiMessage('Copy image'),
-        'photo-copy-button'
-      )
-      preparationHelp(
-        imageButton,
-        uiMessage(
-          'Copy the full-size product picture. Paste it into Excel or a message.'
-        )
-      )
-      imageButton.addEventListener('click', () =>
-        copyAction(imageButton, async () => {
-          const original = await send('IMAGE_GET', { url: row.thumbnail })
-          await copySingleImage(
-            typeof original === 'string' ? original : original.dataUrl
-          )
-        })
-      )
       const zoom = node('button', undefined, 'product-photo-button')
       zoom.type = 'button'
       bindAttribute(
@@ -1054,7 +1088,18 @@ export async function startLibrary(
         'click',
         () => void photos.open(row, filteredRows())
       )
-      thumb.append(zoom, imageButton)
+      thumb.append(
+        photoCopyTile(
+          zoom,
+          async () => {
+            const original = await send('IMAGE_GET', { url: row.thumbnail })
+            await copySingleImage(
+              typeof original === 'string' ? original : original.dataUrl
+            )
+          },
+          { disabled: !row.thumbnail }
+        )
+      )
       const description = node('td', undefined, 'description-cell')
       description.append(createProductDescription(row))
       packing?.decorateRow(description, row)
@@ -1722,6 +1767,38 @@ export async function startLibrary(
     $(id).addEventListener('click', () =>
       copyAction($(id), (progress) => copy(mode, progress))
     )
+  for (const [id, full, short, symbol] of [
+    ['copy-values', 'Copy values', 'Values', 'copy'],
+    ['copy-images', 'Copy images', 'Product photos', 'image'],
+    ['copy-excel', 'Copy to Excel', 'Excel cells', 'table'],
+    [
+      'copy-preparation',
+      'Copy preparation columns',
+      'Chosen columns',
+      'columns',
+    ],
+    ['copy-group-codes', 'Copy group codes', 'Group codes', 'copy'],
+    ['copy-excel-image', 'Copy Excel image', 'Excel image', 'image'],
+  ]) {
+    bindText($(id), uiMessage(short))
+    bindAttribute($(id), 'aria-label', uiMessage(full))
+    decorateIcon($(id), symbol)
+  }
+  mountCopyActions($('orders-copy-actions'), {
+    image: $('copy-excel-image'),
+    options: mountExcelImageOptions($('copy-excel-image')),
+    groups: [
+      {
+        label: 'Products',
+        actions: [$('copy-values'), $('copy-images'), $('copy-excel')],
+      },
+      {
+        label: 'Packing',
+        actions: [$('copy-preparation'), $('copy-group-codes')],
+      },
+      { label: 'Options', actions: [$('include-headers').closest('label')] },
+    ],
+  })
   $('copy-excel-image').addEventListener('click', () =>
     copyAction($('copy-excel-image'), async (progress) => {
       if (copyBusy) return false
@@ -1951,6 +2028,7 @@ export async function startLibrary(
       headers: () => $('include-headers').checked,
       changed: ({ reload = false } = {}) => (reload ? refresh() : renderRows()),
       feedback,
+      onProductDetails: showProductDetails,
       loadImage: async (url) => {
         const result = await send('IMAGE_GET', { url })
         return typeof result === 'string' ? result : result.dataUrl
@@ -1967,8 +2045,7 @@ if (globalThis.chrome?.runtime?.id) {
     try {
       await startLibrary(undefined, await openDatabase())
     } catch (error) {
-      bindText($('feedback'), error.message)
-      $('feedback').className = 'error'
+      showErrorNotice(error.message, { key: 'feedback' })
     }
   })()
 }

@@ -315,6 +315,7 @@ export async function copied(button, task) {
     state.clearDetail = () => {
       events.abort()
       observer?.disconnect()
+      resizeObserver?.disconnect()
       content.remove()
       const ids = (button.getAttribute('aria-describedby') || '')
         .split(/\s+/)
@@ -327,6 +328,9 @@ export async function copied(button, task) {
     }
     const observer =
       globalThis.MutationObserver && new MutationObserver(position)
+    const resizeObserver =
+      globalThis.ResizeObserver && new ResizeObserver(position)
+    resizeObserver?.observe(button)
     observer?.observe(button.ownerDocument, {
       childList: true,
       subtree: true,

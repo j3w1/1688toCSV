@@ -1,4 +1,5 @@
 import { test, expect } from './extension-fixture.mjs'
+import { revealCopyActions } from './copy-actions-helpers.mjs'
 import { buildOrderFixture } from '../fixtures/order-fixture.mjs'
 import { readFile } from 'node:fs/promises'
 
@@ -160,6 +161,7 @@ async function assertImported(extension, library) {
   await library
     .getByRole('button', { name: 'Close activity', exact: true })
     .click()
+  await revealCopyActions(library)
   await expect(
     library.getByRole('checkbox', { name: 'Headers', exact: true })
   ).not.toBeChecked()
@@ -221,7 +223,7 @@ test('missing sellers import products but require identification before label pr
     .fill('PRODUCTO')
   await dialog.getByRole('button', { name: 'Orders', exact: true }).click()
   await expect(seller).toBeFocused()
-  await expect(dialog.locator('.preparation-save-status')).toContainText(
+  await expect(dialog.locator('.error-notice-message')).toContainText(
     'Enter the seller member login'
   )
   await expect(

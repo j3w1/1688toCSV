@@ -81,7 +81,13 @@ export async function startPreview({ port = 0 } = {}) {
       ],
     ],
   ])
-  for (const css of ['packing.css', 'label-editor.css', 'photo-viewer.css'])
+  for (const css of [
+    'packing.css',
+    'label-editor.css',
+    'photo-viewer.css',
+    'copy-actions.css',
+    'error-notice.css',
+  ])
     assets.set(`/${css}`, [
       'text/css',
       await readFile(path.join(root, 'src', css)),

@@ -144,8 +144,13 @@ export function preparationHelp(target, text) {
         if (event.key !== 'Escape') return
         // A photo or label dialog above this form owns its own Escape action.
         if (!ownsDialog(event.target)) return close()
-        event.preventDefault()
-        event.stopPropagation()
+        // A helper inside a modal closes before that modal. On the workspace,
+        // let the owning view handle the same Escape (for example, save and
+        // return from packing to Orders) after dismissing this nonmodal hint.
+        if (target.closest('dialog')) {
+          event.preventDefault()
+          event.stopPropagation()
+        }
         dismissed = hovered || keyboardFocus()
         close()
       },

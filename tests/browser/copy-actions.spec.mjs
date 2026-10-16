@@ -1,0 +1,165 @@
+import { test, expect } from './extension-fixture.mjs'
+import { createDemoRecords } from '../../preview/library-fixture.js'
+import { revealCopyActions } from './copy-actions-helpers.mjs'
+
+async function openLibrary(extension, { fallback = false } = {}) {
+  const [record] = await extension.inspector.evaluate(
+    `(${createDemoRecords.toString()})(document)`
+  )
+  record.snapshot.sellerMemberLogin = 'synthetic-copy-actions'
+  const response = await extension.inspector.evaluate(
+    (record) =>
+      chrome.runtime.sendMessage({
+        type: 'BACKUP_RESTORE',
+        backup: {
+          format: '1688-order-library',
+          version: 1,
+          exportedAt: new Date().toISOString(),
+          orders: [record],
+          history: [],
+          images: [],
+        },
+      }),
+    record
+  )
+  expect(response.ok, response.error).toBe(true)
+  const page = await extension.context.newPage()
+  if (fallback)
+    await page.addInitScript(() => {
+      const supports = CSS.supports.bind(CSS)
+      CSS.supports = (property, ...rest) =>
+        property === 'position-area' ? false : supports(property, ...rest)
+    })
+  await page.clock.setFixedTime(new Date('2026-10-15T04:00:00Z'))
+  await page.goto(`${extension.extensionBaseUrl}/library.html`)
+  await expect(page.locator('#sheet-body tr[data-selection-key]')).toHaveCount(
+    3
+  )
+  return { page, record }
+}
+
+for (const fallback of [false, true])
+  test(`copy formats keep selection, headings and keyboard dismissal at narrow width (${fallback ? 'fallback' : 'native'} placement)`, async ({
+    extension,
+  }) => {
+    const { page, record } = await openLibrary(extension, { fallback })
+    await page.setViewportSize({ width: 390, height: 740 })
+    const order = await page
+      .locator('.sheet-pane')
+      .evaluate((pane) =>
+        [...pane.children]
+          .filter((node) =>
+            node.matches(
+              '#product-selection-totals, #order-totals, .table-scroll'
+            )
+          )
+          .map((node) => node.id || node.className)
+      )
+    expect(order).toEqual([
+      'product-selection-totals',
+      'order-totals',
+      'table-scroll',
+    ])
+    await expect(
+      page.locator('.sheet-toolbar .sheet-title-actions > #orders-copy-actions')
+    ).toHaveCount(1)
+    const trigger = page.locator('#orders-copy-actions .copy-actions-trigger')
+    const panel = page.locator('#orders-copy-actions .copy-actions-panel')
+    await expect(page.locator('#copy-excel-image')).toBeVisible()
+    await expect(page.locator('#copy-values')).toBeHidden()
+    await trigger.focus()
+    await page.keyboard.press('Enter')
+    await expect(panel).toBeVisible()
+    await page.keyboard.press('Tab')
+    await expect(page.locator('#copy-values')).toBeFocused()
+    const bounds = await panel.boundingBox()
+    expect(bounds.x).toBeGreaterThanOrEqual(0)
+    expect(bounds.x + bounds.width).toBeLessThanOrEqual(390)
+    expect(bounds.y).toBeGreaterThanOrEqual(0)
+    expect(bounds.y + bounds.height).toBeLessThanOrEqual(740)
+    await expect(trigger).not.toHaveAttribute('aria-haspopup')
+    await page.keyboard.press('Escape')
+    await expect(panel).toBeHidden()
+    await expect(trigger).toBeFocused()
+    await trigger.click()
+    // Anchored placement can cover the search field. Use the page margin,
+    // which stays outside both native and fallback panels.
+    await page.mouse.click(2, 2)
+    await expect(panel).toBeHidden()
+    await page
+      .locator('#sheet-body tr[data-selection-key] .row-number')
+      .first()
+      .click()
+    await extension.context.grantPermissions([
+      'clipboard-read',
+      'clipboard-write',
+    ])
+    await revealCopyActions(page)
+    await page.locator('#include-headers').check()
+    await page.locator('#copy-values').click()
+    await expect(page.locator('#copy-values')).toHaveClass(/copied/)
+    await expect(panel).toBeVisible()
+    const text = await page.evaluate(() => navigator.clipboard.readText())
+    expect(text.split('\r\n')).toHaveLength(2)
+    expect(text).toContain(record.snapshot.items[0].description.split('\n')[0])
+    expect(text).not.toContain(
+      record.snapshot.items[2].description.split('\n')[0]
+    )
+    await page.reload()
+    await revealCopyActions(page)
+    await expect(page.locator('#include-headers')).toBeChecked()
+  })
+
+test('packing copy formats remain selection-only and Escape dismisses them before leaving packing', async ({
+  extension,
+}) => {
+  const { page } = await openLibrary(extension)
+  await page.locator('#select-rows').click()
+  await page.locator('#prepare-orders').click()
+  await page
+    .getByRole('button', { name: 'Assign codes and prepare', exact: true })
+    .click()
+  const view = page.locator('#packing-view')
+  await expect(view).toBeVisible()
+  await view
+    .getByRole('button', { name: 'Clear selection', exact: true })
+    .click()
+  await revealCopyActions(page)
+  const panel = view.locator('.copy-actions-panel')
+  for (const name of [
+    'Copy columns',
+    'Copy group codes',
+    'Copy barcode images',
+    'Copy carton marks',
+  ])
+    await expect(
+      panel.getByRole('button', { name, exact: true })
+    ).toBeDisabled()
+  await expect(
+    view.getByRole('button', { name: 'Back up packing', exact: true })
+  ).toBeDisabled()
+  await page.keyboard.press('Escape')
+  await expect(panel).toBeHidden()
+  await expect(view).toBeVisible()
+  await view.locator('.group-select').first().click()
+  await revealCopyActions(page)
+  await panel.getByRole('button', { name: 'Copy columns', exact: true }).click()
+  const dialog = page.getByRole('dialog', {
+    name: 'Copy preparation columns',
+    exact: true,
+  })
+  await expect(dialog).toBeVisible()
+  await page.keyboard.press('Escape')
+  await expect(dialog).toBeHidden()
+  await expect(view).toBeVisible()
+  await view
+    .getByLabel('Show packing orders', { exact: true })
+    .selectOption({ index: 1 })
+  await expect(view.locator('.copy-actions-panel')).toHaveCount(1)
+  await revealCopyActions(page)
+  await expect(view.locator('.copy-actions-panel')).toBeVisible()
+  await page.keyboard.press('Escape')
+  await expect(view).toBeVisible()
+  await page.keyboard.press('Escape')
+  await expect(view).toBeHidden()
+})

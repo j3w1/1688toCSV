@@ -1,3 +1,4 @@
+import { revealCopyActions } from './copy-actions-helpers.mjs'
 import { test, expect } from './extension-fixture.mjs'
 import { createDemoRecords } from '../../preview/library-fixture.js'
 import { readFile } from 'node:fs/promises'
@@ -120,6 +121,7 @@ test('copy column choices and Headers survive copying, reopening and a page relo
     'clipboard-read',
     'clipboard-write',
   ])
+  await revealCopyActions(page)
   await view.getByRole('button', { name: 'Copy columns', exact: true }).click()
   const columns = page.getByRole('dialog', {
     name: 'Copy preparation columns',
@@ -159,17 +161,21 @@ test('copy column choices and Headers survive copying, reopening and a page relo
   }
   await retainedChoices()
   await columns.getByRole('button', { name: 'Close', exact: true }).click()
+  await revealCopyActions(page)
   await view.getByRole('button', { name: 'Copy columns', exact: true }).click()
   await retainedChoices()
   await columns.getByRole('button', { name: 'Close', exact: true }).click()
   await view.getByRole('button', { name: 'Orders', exact: true }).click()
+  await revealCopyActions(page)
   await expect(
     page.getByRole('checkbox', { name: 'Headers', exact: true })
   ).toBeChecked()
   await page.reload()
+  await revealCopyActions(page)
   await expect(
     page.getByRole('checkbox', { name: 'Headers', exact: true })
   ).toBeChecked()
+  await revealCopyActions(page)
   await page
     .getByRole('button', { name: 'Copy preparation columns', exact: true })
     .click()
@@ -313,7 +319,9 @@ test('Ctrl+A prepares every selected product across purchase months; preview Can
     'Copy barcode images',
     'Copy carton marks',
   ])
-    await expect(view.getByRole('button', { name, exact: true })).toBeDisabled()
+    await expect(
+      view.getByRole('button', { name, exact: true, includeHidden: true })
+    ).toBeDisabled()
   await view.locator('.group-select').first().focus()
   await page.keyboard.press('Control+a')
   await expect(view.locator('.preparation-copy-scope')).toHaveText(
@@ -323,7 +331,11 @@ test('Ctrl+A prepares every selected product across purchase months; preview Can
     4
   )
   await expect(
-    view.getByRole('button', { name: 'Copy columns', exact: true })
+    view.getByRole('button', {
+      name: 'Copy columns',
+      exact: true,
+      includeHidden: true,
+    })
   ).toBeEnabled()
   await view.getByRole('button', { name: 'Orders', exact: true }).click()
   await page.reload()
@@ -567,6 +579,7 @@ test('keyboard group moves and pointer product moves persist and export in the d
     'clipboard-write',
   ])
   await view.getByRole('button', { name: 'Select all', exact: true }).click()
+  await revealCopyActions(page)
   await view.getByRole('button', { name: 'Copy columns', exact: true }).click()
   const columns = page.getByRole('dialog', {
     name: 'Copy preparation columns',
@@ -902,10 +915,10 @@ test('a month move mixed with an unidentified seller stops before changing any c
   await page
     .getByRole('button', { name: 'Prepare packing list', exact: true })
     .click()
-  await expect(page.locator('#feedback')).toContainText(
+  await expect(page.locator('.error-notice-message')).toContainText(
     'Some selected orders have no identified seller.'
   )
-  await expect(page.locator('#feedback')).toContainText(
+  await expect(page.locator('.error-notice-message')).toContainText(
     'No codes have changed.'
   )
   await expect(view).toBeHidden()

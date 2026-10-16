@@ -93,6 +93,9 @@ test('ordinary copying starts directly without a confirmation overlay', async ({
       window.clipboardWrites++
     }
   })
+  await page
+    .getByRole('button', { name: 'More copy formats', exact: true })
+    .click()
   await page.getByRole('button', { name: 'Copy values', exact: true }).click()
   const dialog = page.getByRole('dialog', {
     name: 'Confirm operation',
@@ -158,7 +161,7 @@ test('label backdrop saves a valid blurred edit, preserves Escape restore, and k
   const code = label.getByRole('textbox', { name: 'Variant code', exact: true })
   await code.fill('INVALID!')
   await backdrop(page, label)
-  await expect(label.locator('.label-editor-status')).toContainText(
+  await expect(label.locator('.error-notice-message')).toContainText(
     'Variant code uses letters only',
     { timeout: 20000 }
   )

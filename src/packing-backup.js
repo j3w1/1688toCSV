@@ -2,6 +2,7 @@ import {
   groupPackingMonth,
   packingMonth,
   validatePreparation,
+  mergeVariantMaterials,
 } from './packing-model.js'
 import { preparationAuthoring } from './product-vocabulary.js'
 
@@ -118,10 +119,15 @@ function selectedGroups(groups, selected) {
     .map((group) => ({
       ...group,
       variants: group.variants
-        .map((variant) => ({
-          ...variant,
-          entryIds: variant.entryIds.filter((id) => selected.has(id)),
-        }))
+        .map((variant) => {
+          const result = {
+            ...variant,
+            entryIds: variant.entryIds.filter((id) => selected.has(id)),
+          }
+          if (Object.hasOwn(variant, 'material') || variant.materialOverrides)
+            mergeVariantMaterials(result, [variant])
+          return result
+        })
         .filter((variant) => variant.entryIds.length),
     }))
     .filter((group) => group.variants.length)
@@ -244,8 +250,22 @@ function mergeGroups(previous, incoming, selected) {
     const variants = group.variants.map((variant) => {
       const old = kept.variants.find((entry) => entry.id === variant.id)
       if (!old) return structuredClone(variant)
-      const { entryIds: oldIds, ...oldFields } = old
-      const { entryIds: newIds, ...newFields } = variant
+      const oldIds = old.entryIds,
+        newIds = variant.entryIds
+      const sharedFields = (value) =>
+        Object.fromEntries(
+          Object.entries(value).filter(
+            ([key]) =>
+              ![
+                'entryIds',
+                'material',
+                'materialSource',
+                'materialOverrides',
+              ].includes(key)
+          )
+        )
+      const oldFields = sharedFields(old),
+        newFields = sharedFields(variant)
       if (JSON.stringify(oldFields) !== JSON.stringify(newFields))
         throw new Error(
           'Packing restore conflict: this variant also contains unselected products. Restore the whole variant to change its shared details.'
@@ -253,7 +273,7 @@ function mergeGroups(previous, incoming, selected) {
       const original = previous
         .find((entry) => entry.id === group.id)
         .variants.find((entry) => entry.id === variant.id)
-      return {
+      const result = {
         ...variant,
         entryIds: mergeSlots(
           original.entryIds.map((id) => ({ id })),
@@ -261,6 +281,13 @@ function mergeGroups(previous, incoming, selected) {
           newIds.map((id) => ({ id }))
         ).map((entry) => entry.id),
       }
+      if (
+        [old, variant].some(
+          (entry) => Object.hasOwn(entry, 'material') || entry.materialOverrides
+        )
+      )
+        mergeVariantMaterials(result, [old, variant])
+      return result
     })
     return {
       ...group,

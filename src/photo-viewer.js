@@ -62,6 +62,9 @@ export function createPhotoViewer(loadImage) {
     bindAttribute(close, 'aria-label', uiMessage('Close product photo'))
     bindAttribute(minus, 'aria-label', uiMessage('Zoom out'))
     bindAttribute(plus, 'aria-label', uiMessage('Zoom in'))
+    minus.setAttribute('aria-keyshortcuts', 'ArrowDown -')
+    plus.setAttribute('aria-keyshortcuts', 'ArrowUp')
+    fit.setAttribute('aria-keyshortcuts', '0 F')
     bindAttribute(actual, 'aria-label', uiMessage('Actual size (100%)'))
     for (const [button, name, symbol] of [
       [previous, 'Previous photo', 'previous'],
@@ -73,13 +76,15 @@ export function createPhotoViewer(loadImage) {
       button.append(icon(symbol))
     }
     fullscreen.setAttribute('aria-pressed', 'false')
+    previous.setAttribute('aria-keyshortcuts', 'ArrowLeft PageUp')
+    next.setAttribute('aria-keyshortcuts', 'ArrowRight PageDown')
     viewport.tabIndex = 0
     viewport.setAttribute('role', 'region')
     bindAttribute(
       viewport,
       'aria-label',
       uiMessage(
-        'Product image. Use arrow keys to move, plus or minus to zoom, and 0 to fit.'
+        'Product image. Left and right arrows change photos; up and down arrows or plus and minus zoom; 0 fits.'
       )
     )
     status.setAttribute('role', 'status')
@@ -259,32 +264,33 @@ export function createPhotoViewer(loadImage) {
     listen(viewport, 'pointercancel', stopDrag)
     listen(viewport, 'lostpointercapture', stopDrag)
     listen(modal, 'keydown', (event) => {
-      if (event.ctrlKey || event.metaKey || event.altKey) return
-      if (event.key === 'PageUp' || event.key === 'PageDown') {
+      if (
+        event.defaultPrevented ||
+        event.isComposing ||
+        event.ctrlKey ||
+        event.metaKey ||
+        event.altKey ||
+        event.target.closest?.(
+          'input, textarea, select, [contenteditable]:not([contenteditable="false"]), [role="textbox"], [role="combobox"], [role="slider"], [role="spinbutton"]'
+        ) ||
+        (event.shiftKey && /^(Arrow|Page)/.test(event.key))
+      )
+        return
+      if (
+        ['ArrowLeft', 'ArrowRight', 'PageUp', 'PageDown'].includes(event.key)
+      ) {
         event.preventDefault()
-        void showPhoto(index + (event.key === 'PageUp' ? -1 : 1))
+        void showPhoto(
+          index + (event.key === 'ArrowLeft' || event.key === 'PageUp' ? -1 : 1)
+        )
         return
       }
       if (!ready) return
-      if (event.key === '+' || event.key === '=') zoomTo(scale * 1.5)
-      else if (event.key === '-' || event.key === '_') zoomTo(scale / 1.5)
+      if (['ArrowUp', '+', '='].includes(event.key)) zoomTo(scale * 1.5)
+      else if (['ArrowDown', '-', '_'].includes(event.key)) zoomTo(scale / 1.5)
       else if (event.key === '0' || event.key.toLowerCase() === 'f')
         zoomTo(fitScale)
-      else if (
-        event.target === viewport &&
-        ['ArrowLeft', 'ArrowRight', 'ArrowUp', 'ArrowDown'].includes(event.key)
-      ) {
-        const step = event.shiftKey ? 120 : 40
-        x +=
-          event.key === 'ArrowLeft'
-            ? step
-            : event.key === 'ArrowRight'
-              ? -step
-              : 0
-        y +=
-          event.key === 'ArrowUp' ? step : event.key === 'ArrowDown' ? -step : 0
-        paint()
-      } else return
+      else return
       event.preventDefault()
     })
     const observer = new ResizeObserver(resize)
@@ -362,7 +368,7 @@ export function createPhotoViewer(loadImage) {
         bindText(
           status,
           uiMessage(
-            'Scroll to zoom · Drag to move · Double-click to zoom or fit · + / − zoom · Arrow keys move · 0 fits · Page Up / Down changes photo'
+            '← / → photos · ↑ / ↓ or + / − zoom · Scroll to zoom · Drag to move · Double-click to zoom or fit · 0 fits'
           )
         )
       } catch (error) {

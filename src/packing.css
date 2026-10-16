@@ -141,12 +141,33 @@ main {
 .row-preparation {
   display: flex;
   flex-wrap: wrap;
-  gap: 6px;
+  gap: 3px 6px;
   align-items: center;
-  margin-top: 6px;
+  margin-top: 4px;
 }
 .row-preparation code {
   font-size: 12px;
+}
+.row-preparation .row-code-copy {
+  font:
+    600 12px/1.4 ui-monospace,
+    monospace;
+  padding: 2px 0;
+  min-height: 24px;
+}
+.row-preparation button.icon-button {
+  inline-size: 26px;
+  min-inline-size: 26px;
+  block-size: 26px;
+  min-block-size: 26px;
+  padding: 4px;
+  border-color: transparent;
+  background: transparent;
+  color: var(--muted);
+}
+.row-preparation button.icon-button:hover {
+  background: var(--field);
+  color: var(--text);
 }
 .row-preparation button {
   min-height: 28px;
@@ -389,7 +410,6 @@ select {
   gap: 8px 12px;
   padding: 8px 10px;
   background: var(--surface);
-  border-inline-start: 3px solid var(--control-accent);
 }
 .packing-order-header > div:first-child {
   display: flex;
@@ -470,7 +490,6 @@ select {
 }
 .preparation-group {
   border: 0;
-  border-inline-start: 2px solid transparent;
   border-radius: 0;
   padding: 10px 8px;
   margin: 12px 0 18px;
@@ -571,11 +590,10 @@ select {
 }
 .preparation-group:has(.group-select:hover),
 .preparation-group:has(.product-summary > h3:hover) {
-  border-color: var(--control-accent);
+  border-color: transparent;
 }
 .preparation-group.is-selected {
-  border-inline-start-color: var(--control-accent);
-  background: color-mix(in srgb, var(--surface) 78%, var(--selected));
+  background: var(--selected);
 }
 .preparation-group.is-selected .product-summary > h3 {
   background: transparent;
@@ -590,11 +608,20 @@ select {
   background: var(--hover);
 }
 .variants tbody tr.is-selected {
-  background: color-mix(in srgb, var(--surface) 25%, var(--selected));
+  background: var(--selected);
 }
 .variants tbody tr.is-selected .variant-index {
   color: var(--text);
-  box-shadow: inset 2px 0 var(--control-accent);
+}
+.variants .variant-index::after {
+  content: '\2713';
+  display: block;
+  font-size: 10px;
+  line-height: 12px;
+  visibility: hidden;
+}
+.variants .is-selected .variant-index::after {
+  visibility: visible;
 }
 .variants tbody tr:focus-visible {
   outline: 1px solid var(--focus);
@@ -602,7 +629,8 @@ select {
 }
 @media (forced-colors: active) {
   .preparation-group.is-selected {
-    border-color: Highlight;
+    outline: 1px solid Highlight;
+    outline-offset: -1px;
   }
   .variants tbody tr.is-selected {
     outline: 1px solid Highlight;
@@ -680,7 +708,7 @@ select {
   flex-wrap: wrap;
   gap: 4px 20px;
   align-items: baseline;
-  margin: 7px 0 1px;
+  margin: 4px 0 1px;
 }
 .variant-order-facts > div {
   display: flex;
@@ -758,6 +786,68 @@ select {
 .variant-code-options {
   color: var(--muted);
   font-size: 12px;
+}
+.packing-progress {
+  display: grid;
+  grid-template-columns: minmax(12ch, 1fr) minmax(80px, 2fr) auto;
+  align-items: center;
+  gap: 6px 14px;
+  grid-column: 1 / -1;
+  padding: 12px 14px;
+  margin-bottom: 10px;
+  background: var(--field);
+  color: var(--text);
+  font-size: 12px;
+}
+.packing-progress progress {
+  width: 100%;
+  height: 7px;
+  accent-color: var(--control-accent);
+}
+.packing-progress p {
+  grid-column: 1 / -1;
+  margin: 0;
+  color: var(--muted);
+  font-size: 11px;
+}
+.material-control,
+.preparation-workspace .material-control > label {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  min-inline-size: 0;
+  max-inline-size: 100%;
+  margin: 0;
+}
+.material-control {
+  flex: 0 1 auto;
+  color: var(--muted);
+  font-size: 11px;
+}
+.preparation-workspace .material-control input,
+.preparation-workspace .variants .material-control input {
+  inline-size: 16ch;
+  min-inline-size: 5ch;
+  max-inline-size: 28ch;
+  min-height: 27px;
+  margin: 0;
+  padding: 3px 5px;
+  font-size: 12px;
+}
+.preparation-workspace .material-apply {
+  flex: 0 0 24px;
+  inline-size: 24px;
+  min-inline-size: 24px;
+  padding: 3px;
+}
+@media (max-width: 520px) {
+  .packing-progress {
+    grid-template-columns: 1fr auto;
+  }
+  .packing-progress progress {
+    grid-column: 1 / -1;
+    grid-row: 2;
+  }
 }
 .order-tools {
   display: flex;
@@ -967,8 +1057,8 @@ select {
 .variant-code-design {
   display: flex;
   flex-wrap: wrap;
-  align-items: baseline;
-  gap: 0;
+  align-items: center;
+  gap: 4px 6px;
   max-inline-size: 100%;
   border-radius: 5px;
   padding: 0;
@@ -992,6 +1082,8 @@ select {
   flex-direction: column;
   justify-content: flex-start;
   text-decoration: none;
+  min-inline-size: 0;
+  max-inline-size: 100%;
 }
 .code-base-part .code-part-label {
   display: none;
@@ -1001,10 +1093,11 @@ select {
   .variant-code-options
   .preparation-inline-field {
   display: flex;
-  flex-direction: column-reverse;
+  flex-direction: row;
   align-items: center;
   gap: 0;
   width: auto;
+  min-inline-size: 0;
   max-inline-size: 100%;
   padding: 0;
   border: 0;
@@ -1023,21 +1116,11 @@ select {
 .variant-code-design .preparation-inline-field {
   position: relative;
 }
-.variant-code-design .preparation-inline-field .code-part-label {
-  position: absolute;
-  top: 100%;
-  opacity: 0;
-  pointer-events: none;
-}
-.variant-code-design:hover .code-part-label,
-.variant-code-design:focus-within .code-part-label {
-  opacity: 1;
-}
 .variants .variant-code-options .code-part-variantSuffix {
-  color: #b77c32;
+  color: var(--variant-code);
 }
 .variants .variant-code-options .code-part-sizeSuffix {
-  color: #bf6b58;
+  color: var(--size-code);
 }
 .variant-code-readout {
   display: block;
@@ -1083,7 +1166,7 @@ select {
   inline-size: auto;
   width: auto;
   min-inline-size: 1.7ch;
-  max-inline-size: min(22ch, 100%);
+  max-inline-size: min(32ch, 100%);
   min-height: 31px;
   height: 31px;
   margin: 0 !important;
@@ -1243,6 +1326,23 @@ select {
   object-fit: contain;
   border-radius: 5px;
 }
+.variant-photos > .photo-copy-tile > .preparation-photo {
+  min-inline-size: 106px;
+  min-block-size: 106px;
+}
+.variant-photos > .photo-copy-tile > .preparation-photo img {
+  inline-size: 100px;
+  block-size: 100px;
+}
+.preparation-workspace .photo-copy-button,
+.packing-review-item .photo-copy-button {
+  min-inline-size: 25px;
+  min-block-size: 25px;
+  inline-size: 25px;
+  block-size: 25px;
+  margin: 0;
+  padding: 4px;
+}
 .preparation-photo img[hidden] {
   display: none;
 }
@@ -1335,7 +1435,7 @@ select {
   border-radius: 10px;
   background: var(--field);
 }
-.packing-review-item:not(:has(> .preparation-photo)) {
+.packing-review-item:not(:has(> .preparation-photo, > .photo-copy-tile)) {
   grid-template-columns: minmax(0, 1fr);
 }
 .packing-review-item > div {
@@ -1364,7 +1464,7 @@ select {
   font-weight: 600;
   overflow-wrap: anywhere;
 }
-.packing-review-item button:not(.preparation-photo) {
+.packing-review-item button:not(.preparation-photo, .photo-copy-button) {
   min-block-size: 30px;
   margin-block-start: 8px;
   padding: 5px 8px;
@@ -1791,7 +1891,7 @@ select {
   flex-wrap: wrap;
   gap: 6px 10px;
   grid-column: 1 / -1;
-  color: var(--danger, #b74539);
+  color: var(--danger-text);
   font-size: 12px;
   line-height: 1.4;
 }
@@ -1825,7 +1925,7 @@ select {
 }
 .group-code-editor[aria-invalid='true'],
 .variant-code-part[aria-invalid='true'] {
-  outline: 1px solid var(--danger, #b74539);
+  outline: 1px solid var(--danger-text);
   outline-offset: 1px;
 }
 .batch-status {

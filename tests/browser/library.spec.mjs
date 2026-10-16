@@ -48,14 +48,41 @@ async function confirmOperation(page, name) {
   await expect(dialog).not.toBeVisible()
 }
 
-test('image copy stays compact with touch input and copied feedback', async ({
+async function openCopyFormats(page) {
+  const panel = page.locator('#orders-view .copy-actions-panel')
+  if (!(await panel.isVisible()))
+    await page
+      .getByRole('button', { name: 'More copy formats', exact: true })
+      .click()
+  await expect(panel).toBeVisible()
+}
+
+test('photo copy appears only on hover or keyboard focus without changing selection or row size', async ({
   extension,
 }) => {
   await seed(extension)
   const page = await openLibrary(extension)
   const row = page.locator('#sheet-body tr[data-selection-key]').first()
   const copy = row.locator('.photo-copy-button')
-  await expect(copy).toBeVisible()
+  const photo = row.locator('.product-photo-button')
+  await row.scrollIntoViewIfNeeded()
+  await page.mouse.move(0, 0)
+  await expect(copy).toHaveCSS('opacity', '0')
+  await expect(copy).toHaveCSS('pointer-events', 'none')
+  await row.locator('.photo-copy-tile').hover()
+  await expect(copy).toHaveCSS('opacity', '0.94')
+  await expect(copy).toHaveCSS('pointer-events', 'auto')
+  await page.mouse.move(0, 0)
+  await expect(copy).toHaveCSS('opacity', '0')
+  await row.focus()
+  await row.press('Tab')
+  await expect(photo).toBeFocused()
+  await expect(copy).toHaveCSS('opacity', '0.94')
+  await photo.press('Tab')
+  await expect(copy).toBeFocused()
+  await expect(copy).toHaveAccessibleName('Copy image')
+  await expect(copy).toHaveText('')
+  const rowBefore = await row.boundingBox()
   const session = await extension.context.newCDPSession(page)
   for (const emulateTouch of [false, true]) {
     if (emulateTouch) {
@@ -67,17 +94,27 @@ test('image copy stays compact with touch input and copied feedback', async ({
           page.evaluate(() => matchMedia('(pointer: coarse)').matches)
         )
         .toBe(true)
+      await page.locator('#search').focus()
+      await page.mouse.move(0, 0)
+      await expect(copy).toHaveCSS('opacity', '0')
+      await expect(copy).toHaveCSS('pointer-events', 'none')
     }
     const copyBounds = await copy.boundingBox()
-    const photoBounds = await row.locator('.product-photo-button').boundingBox()
+    const photoBounds = await photo.boundingBox()
+    const imageBounds = await photo.locator('img').boundingBox()
+    expect(imageBounds.width).toBe(108)
+    expect(imageBounds.height).toBe(108)
     expect(copyBounds.height).toBeGreaterThanOrEqual(24)
     expect(copyBounds.height).toBeLessThanOrEqual(30)
-    expect(copyBounds.width).toBeLessThanOrEqual(100)
-    expect(copyBounds.y).toBeGreaterThanOrEqual(
+    expect(copyBounds.width).toBeLessThanOrEqual(30)
+    expect(copyBounds.y).toBeGreaterThanOrEqual(photoBounds.y)
+    expect(copyBounds.y + copyBounds.height).toBeLessThanOrEqual(
       photoBounds.y + photoBounds.height
     )
-    // Wider fallback fonts must fit without making the photo action taller.
-    // The icon and complete label stay on one line, including fallback fonts.
+    expect(copyBounds.x + copyBounds.width).toBeLessThanOrEqual(
+      photoBounds.x + photoBounds.width
+    )
+    // Icon geometry stays stable even when the surrounding font changes.
     for (const family of ['', 'Verdana']) {
       await copy.evaluate((node, font) => {
         node.style.fontFamily = font
@@ -96,8 +133,24 @@ test('image copy stays compact with touch input and copied feedback', async ({
     'clipboard-read',
     'clipboard-write',
   ])
+  await session.send('Emulation.setTouchEmulationEnabled', { enabled: false })
+  await row.locator('.photo-copy-tile').hover()
   await copy.click()
-  await expect(copy).toHaveText('Copied')
+  await expect(copy).toHaveAccessibleName('Copy image: Copied')
+  await expect(copy).toHaveClass(/copied/)
+  await expect(copy).toHaveText('')
+  await page.mouse.move(0, 0)
+  await expect(copy).toHaveCSS('opacity', '0')
+  await expect(copy).toHaveCSS('pointer-events', 'none')
+  await expect(row).toHaveAttribute('aria-selected', 'false')
+  await expect(
+    page.getByRole('dialog', { name: 'Original product details', exact: true })
+  ).not.toBeVisible()
+  await expect(
+    page.getByRole('dialog', { name: 'Product photo', exact: true })
+  ).not.toBeVisible()
+  expect((await row.boundingBox()).height).toBe(rowBefore.height)
+  expect(rowBefore.height).toBeLessThanOrEqual(140)
   expect((await copy.boundingBox()).height).toBeLessThanOrEqual(30)
   await session.detach()
 })
@@ -147,7 +200,7 @@ test('Excel table image batches keep every selected row across product pages', a
   const batches = page.getByRole('dialog', { name: 'Choose Excel image batch' })
   await expect(batches).toBeVisible()
   await batches.getByRole('button', { name: 'Cancel', exact: true }).click()
-  await expect(copy).toHaveText('Copy Excel image')
+  await expect(copy).toHaveText('Excel image')
   expect(await page.evaluate(() => navigator.clipboard.readText())).toBe(
     'before-batch'
   )
@@ -354,6 +407,7 @@ test('library restores complete orders and copies five columns with separate ima
     8
   )
   await expect(page.locator('#order-count')).toHaveText('3')
+  await openCopyFormats(page)
   await expect(
     page.getByRole('checkbox', { name: 'Headers', exact: true })
   ).not.toBeChecked()
@@ -397,6 +451,7 @@ test('filters and explicit product selections determine copy scope', async ({
     .first()
     .locator('.product-title')
     .click()
+  await openCopyFormats(page)
   await page.getByRole('checkbox', { name: 'Headers', exact: true }).uncheck()
   await extension.context.grantPermissions([
     'clipboard-read',
@@ -526,19 +581,20 @@ test('product rows support ranges and toggles while image and copy actions prese
     'clipboard-read',
     'clipboard-write',
   ])
-  await rows
-    .first()
-    .getByRole('button', { name: 'Copy image', exact: true })
-    .click()
-  await expect(
-    rows.first().getByRole('button', { name: 'Copied', exact: true })
-  ).toBeVisible()
+  await rows.first().locator('.photo-copy-tile').hover()
+  const copyPhoto = rows.first().locator('.photo-copy-button')
+  await copyPhoto.click()
+  await expect(copyPhoto).toHaveAccessibleName('Copy image: Copied')
+  await expect(copyPhoto).toHaveClass(/copied/)
   expect(
     await selected.evaluateAll((items) =>
       items.map((item) => item.dataset.selectionKey)
     )
   ).toEqual(beforeActions)
   await expect(page.locator('#order-details')).not.toBeVisible()
+  await expect(
+    page.getByRole('dialog', { name: 'Original product details', exact: true })
+  ).not.toBeVisible()
 
   await page
     .getByRole('button', { name: 'Select all rows', exact: true })
@@ -643,6 +699,7 @@ test('empty library gives a starting action and narrow widths contain table over
 }) => {
   const page = await openLibrary(extension)
   await expect(page.getByText('Your orders belong here.')).toBeVisible()
+  await openCopyFormats(page)
   await expect(
     page.getByRole('button', { name: 'Copy to Excel', exact: true })
   ).toBeDisabled()
@@ -681,6 +738,7 @@ test('copy images only produces one picture per selected row', async ({
     'clipboard-read',
     'clipboard-write',
   ])
+  await openCopyFormats(page)
   await page.getByRole('button', { name: 'Copy images', exact: true }).click()
   await expect(page.locator('#copy-images')).toHaveText('Copied')
   await expect(page.locator('#feedback')).toBeEmpty()
@@ -810,8 +868,10 @@ test('purchase dates group orders by month while separators stay out of copied v
   await expect(page.locator('#sheet-body tr[data-selection-key]')).toHaveCount(
     8
   )
+  await openCopyFormats(page)
   await page.getByRole('checkbox', { name: 'Headers', exact: true }).uncheck()
   await page.reload()
+  await openCopyFormats(page)
   await expect(
     page.getByRole('checkbox', { name: 'Headers', exact: true })
   ).not.toBeChecked()
@@ -819,6 +879,7 @@ test('purchase dates group orders by month while separators stay out of copied v
     'clipboard-read',
     'clipboard-write',
   ])
+  await openCopyFormats(page)
   await page.locator('#copy-values').click()
   await expect(page.locator('#copy-values')).toHaveText('Copied')
   const copied = await page.evaluate(async () => {
@@ -941,6 +1002,7 @@ test('copy completion keeps controls disabled when the filter changes to no prod
       return write(items)
     }
   })
+  await openCopyFormats(page)
   await page.locator('#copy-values').click()
   await expect(page.locator('#copy-values')).toHaveAttribute(
     'aria-busy',

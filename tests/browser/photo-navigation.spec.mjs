@@ -102,6 +102,16 @@ test('photo navigation follows filtered table order across pages, skips missing 
   await viewer.locator('.photo-viewport').focus()
   await page.keyboard.press('PageDown')
   await expect(viewer.locator('.photo-gallery-count')).toHaveText('101 / 104')
+  await page.keyboard.press('ArrowLeft')
+  await expect(viewer.locator('.photo-gallery-count')).toHaveText('100 / 104')
+  await expect(viewer.locator('.photo-viewport img')).toHaveAttribute(
+    'alt',
+    record.snapshot.items[99].title
+  )
+  await page.keyboard.press('ArrowRight')
+  await expect(viewer.locator('.photo-gallery-count')).toHaveText('101 / 104')
+  await page.keyboard.press('PageUp')
+  await expect(viewer.locator('.photo-gallery-count')).toHaveText('100 / 104')
   await page.keyboard.press('Escape')
   await expect(viewer).toHaveCount(0)
   await expect(row).toHaveAttribute('aria-selected', 'true')
@@ -118,6 +128,77 @@ test('photo navigation follows filtered table order across pages, skips missing 
   await expect(
     viewer.getByRole('button', { name: 'Next photo', exact: true })
   ).toBeDisabled()
+  await page.keyboard.press('ArrowLeft')
+  await page.keyboard.press('ArrowRight')
+  await expect(viewer.locator('.photo-gallery-count')).toHaveText('1 / 1')
+})
+
+test('photo arrow shortcuts work from viewer controls, ignore modified and editing keys, and preserve source detail scope', async ({
+  extension,
+}) => {
+  const { page, record } = await workspace(extension)
+  await page
+    .locator('#sheet-body tr[data-selection-key]')
+    .first()
+    .press('Enter')
+  const details = page.getByRole('dialog', {
+    name: 'Original product details',
+    exact: true,
+  })
+  await details
+    .getByRole('button', { name: 'Open product photo', exact: true })
+    .click()
+  const viewer = page.locator('.product-photo-dialog'),
+    image = viewer.locator('.photo-viewport img'),
+    value = viewer.locator('.photo-zoom-value'),
+    counter = viewer.locator('.photo-gallery-count')
+  await expect(image).toBeVisible()
+  await expect(counter).toHaveText('1 / 3')
+  await expect(
+    viewer.getByRole('button', { name: 'Close product photo' })
+  ).toBeFocused()
+  await page.keyboard.press('ArrowRight')
+  await expect(counter).toHaveText('2 / 3')
+  await expect(image).toHaveAttribute('alt', record.snapshot.items[1].title)
+  await expect(value).toHaveText('100%')
+  await page.keyboard.press('ArrowUp')
+  await expect(value).toHaveText('150%')
+  await page.keyboard.press('ArrowDown')
+  await expect(value).toHaveText('100%')
+  for (const modifier of ['ctrlKey', 'metaKey', 'altKey', 'shiftKey']) {
+    // Dispatch browser events without activating operating-system shortcuts.
+    await viewer.dispatchEvent('keydown', {
+      key: 'ArrowRight',
+      [modifier]: true,
+    })
+    await viewer.dispatchEvent('keydown', {
+      key: 'ArrowUp',
+      [modifier]: true,
+    })
+  }
+  await expect(counter).toHaveText('2 / 3')
+  await expect(value).toHaveText('100%')
+  for (const tag of ['input', 'textarea', 'select', 'div']) {
+    await viewer.evaluate((dialog, tag) => {
+      const editor = document.createElement(tag)
+      editor.dataset.testEditor = 'true'
+      if (tag === 'div') editor.contentEditable = 'true'
+      dialog.querySelector('.photo-viewer-frame').append(editor)
+      editor.focus()
+    }, tag)
+    const editor = viewer.locator('[data-test-editor]')
+    for (const key of ['ArrowRight', 'ArrowUp', 'PageDown', '+', '0'])
+      await editor.dispatchEvent('keydown', { key })
+    await expect(counter).toHaveText('2 / 3')
+    await expect(value).toHaveText('100%')
+    await editor.evaluate((element) => element.remove())
+  }
+  await viewer.locator('.photo-viewport').focus()
+  await page.keyboard.press('ArrowLeft')
+  await expect(counter).toHaveText('1 / 3')
+  await page.keyboard.press('Escape')
+  await expect(viewer).toHaveCount(0)
+  await expect(details).toBeVisible()
 })
 
 test('a delayed previous photo cannot replace the newly selected photo', async ({
@@ -191,9 +272,7 @@ test('packing gallery includes only its launched products and navigation uses th
   await packing.locator('.variant-photos .preparation-photo').first().click()
   const viewer = page.locator('.product-photo-dialog')
   await expect(viewer.locator('.photo-gallery-count')).toHaveText('1 / 2')
-  await viewer
-    .getByRole('button', { name: 'Foto siguiente', exact: true })
-    .click()
+  await page.keyboard.press('ArrowRight')
   await expect(viewer.locator('.photo-viewport img')).toHaveAttribute(
     'alt',
     record.snapshot.items[2].title
@@ -202,6 +281,15 @@ test('packing gallery includes only its launched products and navigation uses th
   await expect(
     viewer.getByRole('button', { name: 'Foto siguiente', exact: true })
   ).toBeDisabled()
+  await expect(viewer.locator('.photo-viewer-status')).toContainText(
+    '← / → fotos · ↑ / ↓ o + / −'
+  )
+  await page.keyboard.press('ArrowUp')
+  await expect(viewer.locator('.photo-zoom-value')).toHaveText('150%')
+  await page.keyboard.press('ArrowDown')
+  await expect(viewer.locator('.photo-zoom-value')).toHaveText('100%')
+  await page.keyboard.press('ArrowLeft')
+  await expect(viewer.locator('.photo-gallery-count')).toHaveText('1 / 2')
   await page.keyboard.press('Escape')
   await expect(packing).toBeVisible()
 })

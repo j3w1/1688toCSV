@@ -9,6 +9,98 @@ import {
   DEFAULT_SIZE_VOCABULARY,
   validateSizeVocabulary,
 } from './size-vocabulary.js'
+import { suggestMaterial } from './material-vocabulary.js'
+
+/** Material authoring follows source rows even when grouping is restored. */
+export function variantMaterial(variant, entryId = variant.entryIds[0]) {
+  return (
+    variant.materialOverrides?.[entryId] || {
+      value: variant.material || '',
+      source:
+        variant.materialSource || (variant.material ? 'manual' : 'suggested'),
+    }
+  )
+}
+
+function storeMaterials(variant, entries) {
+  const values = variant.entryIds.map(
+    (id) => entries.get(id) || variantMaterial(variant, id)
+  )
+  const first = values[0] || { value: '', source: 'suggested' }
+  variant.material = first.value
+  variant.materialSource = first.source
+  delete variant.materialOverrides
+  const different = variant.entryIds.filter(
+    (id, index) =>
+      values[index].value !== first.value ||
+      values[index].source !== first.source
+  )
+  if (different.length)
+    variant.materialOverrides = Object.fromEntries(
+      different.map((id) => [id, { ...values[variant.entryIds.indexOf(id)] }])
+    )
+}
+
+export function mergeVariantMaterials(target, sources) {
+  storeMaterials(
+    target,
+    new Map(
+      sources.flatMap((variant) =>
+        variant.entryIds.map((id) => [id, variantMaterial(variant, id)])
+      )
+    )
+  )
+}
+
+export function setVariantMaterial(
+  variant,
+  value,
+  entryIds = variant.entryIds
+) {
+  const selected = new Set(entryIds)
+  storeMaterials(
+    variant,
+    new Map(
+      variant.entryIds.map((id) => [
+        id,
+        selected.has(id)
+          ? { value: String(value).trim(), source: 'manual' }
+          : variantMaterial(variant, id),
+      ])
+    )
+  )
+}
+
+/** Refresh local suggestions only; authored text and deliberate clears survive. */
+export function refreshPreparationMaterials(
+  preparation,
+  snapshot,
+  suggestions
+) {
+  const result = structuredClone(preparation)
+  const source = new Map(snapshot.items.map((item) => [item.entryId, item]))
+  for (const group of result.groups)
+    for (const variant of group.variants)
+      storeMaterials(
+        variant,
+        new Map(
+          variant.entryIds.map((id) => {
+            const current = variantMaterial(variant, id)
+            return [
+              id,
+              current.source === 'manual' || !source.has(id)
+                ? current
+                : {
+                    value:
+                      suggestions?.get(id) ?? suggestMaterial(source.get(id)),
+                    source: 'suggested',
+                  },
+            ]
+          })
+        )
+      )
+  return result
+}
 
 function text(value, label, empty = true) {
   if (typeof value !== 'string' || (!empty && !value.trim()))
@@ -353,6 +445,18 @@ export function restoreDefaultPacking(preparation) {
       group.variants.map((variant) => [variant.id, variant])
     )
   )
+  const currentMaterials = new Map(
+    draft.groups.flatMap((group) =>
+      group.variants
+        .filter(
+          (variant) =>
+            Object.hasOwn(variant, 'material') || variant.materialOverrides
+        )
+        .flatMap((variant) =>
+          variant.entryIds.map((id) => [id, variantMaterial(variant, id)])
+        )
+    )
+  )
   Object.assign(draft, structuredClone(preparation.defaultPacking))
   draft.updatedAt = preparation.updatedAt
   for (const group of draft.groups) {
@@ -370,6 +474,8 @@ export function restoreDefaultPacking(preparation) {
         if (Object.hasOwn(currentVariant, 'spanishName'))
           variant.spanishName = currentVariant.spanishName
       }
+      if (variant.entryIds.some((id) => currentMaterials.has(id)))
+        storeMaterials(variant, currentMaterials)
       delete variant.manualReordered
     }
   }
@@ -825,6 +931,32 @@ export function validatePreparation(input) {
               ).toUpperCase(),
             }
           : {}),
+        ...(inputVariant.material !== undefined
+          ? { material: text(inputVariant.material, 'Material') }
+          : {}),
+      }
+      if (inputVariant.materialSource !== undefined) {
+        if (!['manual', 'suggested'].includes(inputVariant.materialSource))
+          throw new Error('Material source must be manual or suggested')
+        variant.materialSource = inputVariant.materialSource
+      }
+      if (inputVariant.materialOverrides !== undefined) {
+        record(inputVariant.materialOverrides, 'Material overrides')
+        const overrides = []
+        for (const [entryId, input] of Object.entries(
+          inputVariant.materialOverrides
+        )) {
+          if (!entryIds.includes(entryId)) continue // Partial moves retain only their source rows.
+          record(input, 'Material override')
+          if (!['manual', 'suggested'].includes(input.source))
+            throw new Error('Material source must be manual or suggested')
+          overrides.push([
+            entryId,
+            { value: text(input.value, 'Material'), source: input.source },
+          ])
+        }
+        if (overrides.length)
+          variant.materialOverrides = Object.fromEntries(overrides)
       }
       if (baseCode && !variant.needsSizeMapping) {
         const value = barcodeValue(group, variant)

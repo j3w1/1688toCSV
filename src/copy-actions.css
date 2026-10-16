@@ -1,0 +1,74 @@
+.compact-copy-actions {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+.copy-actions-trigger {
+  gap: 6px;
+}
+.copy-actions-trigger .ui-icon:last-child {
+  width: 12px;
+  height: 12px;
+}
+.copy-actions-panel {
+  position: fixed;
+  inset: auto;
+  margin: 0;
+  width: min(300px, calc(100vw - 16px));
+  max-height: calc(100dvh - 16px);
+  overflow: auto;
+  padding: 12px;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: var(--surface);
+  color: var(--text);
+  box-shadow: 0 8px 24px #0003;
+}
+.copy-actions-panel:popover-open {
+  display: grid;
+  gap: 14px;
+}
+.copy-format-group {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  align-items: start;
+  gap: 6px;
+}
+.copy-format-heading {
+  grid-column: 1 / -1;
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--muted);
+}
+.copy-actions-panel .copy-format-group > button {
+  width: 100%;
+  min-width: 0;
+  min-height: 32px;
+  padding: 6px 8px;
+  border-color: transparent;
+  background: transparent;
+  justify-content: flex-start;
+  white-space: normal;
+  text-align: left;
+  font-size: 12px;
+}
+.copy-actions-panel .copy-format-group > button:hover:not(:disabled) {
+  background: var(--hover);
+}
+.copy-actions-panel .check {
+  grid-column: 1 / -1;
+  margin-top: 4px;
+  font-size: 12px;
+}
+@supports (position-area: block-end span-inline-end) and
+  (position-try-fallbacks: flip-block, flip-inline) {
+  .copy-actions-panel.native-anchor {
+    position-area: block-end span-inline-end;
+    position-try-fallbacks:
+      flip-block,
+      flip-inline,
+      flip-block flip-inline;
+    margin-block: 6px;
+  }
+}

@@ -52,7 +52,8 @@
 }
 
 .label-editor input[aria-invalid='true'] {
-  outline: 2px solid var(--danger, #b74539);
+  /* The artwork is always black/white, regardless of the workspace theme. */
+  outline: 2px solid #b3261e;
   outline-offset: -2px;
 }
 .label-editor-resolve {
@@ -240,7 +241,7 @@
 }
 
 .label-editor-error {
-  color: #b3261e;
+  color: var(--danger-text, #9c3542);
 }
 
 .label-editor-copy {
@@ -252,10 +253,4 @@
   background: var(--success, #e9f1e5);
   color: var(--success-text, #567b4a);
   border-color: var(--success-text, #567b4a);
-}
-
-@media (prefers-color-scheme: dark) {
-  .label-editor-error {
-    color: #ff9990;
-  }
 }

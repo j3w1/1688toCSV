@@ -3,6 +3,9 @@ import { startLibrary } from '../src/library.js'
 import { openDatabase } from '../src/database.js'
 import { renderLabel } from '../src/labels.js'
 import { planExcelImage, renderExcelImage } from '../src/excel-image.js'
+import { selectedExcelImageColumns } from '../src/excel-image-options.js'
+import { getLanguage } from '../src/i18n.js'
+import { variantMaterial } from '../src/packing-model.js'
 import { createDemoRecords } from '../preview/library-fixture.js'
 
 const structured = new URL(location.href).searchParams.has('labels')
@@ -72,12 +75,16 @@ globalThis.excelAcceptance = {
         barcode: group.baseCode + variant.variantSuffix + variant.sizeSuffix,
         spanishName: variant.spanishName || group.spanishName,
         chineseCategory: group.category,
+        material: variantMaterial(variant, item.entryId).value,
         variantDescription: variant.variant,
         sourceSize: variant.size,
       }
     })
     await document.fonts.ready
-    const plans = planExcelImage(rows)
+    const plans = planExcelImage(rows, {
+      columns: selectedExcelImageColumns(),
+      language: getLanguage(),
+    })
     if (plans.length !== 1)
       throw new Error('Synthetic Excel fixture should fit one image.')
     const preferences = await repository.getPackingPreferences()

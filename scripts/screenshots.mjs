@@ -30,6 +30,15 @@ try {
   await page.mouse.move(0, 0)
   await details.screenshot({ path: 'screenshots/product-details.png' })
   await page.keyboard.press('Escape')
+  await page
+    .getByRole('button', { name: 'Excel image columns', exact: true })
+    .click()
+  const imageColumns = page.getByRole('dialog', {
+    name: 'Excel image columns',
+    exact: true,
+  })
+  await imageColumns.screenshot({ path: 'screenshots/excel-image-columns.png' })
+  await imageColumns.getByRole('button', { name: 'Done', exact: true }).click()
   await page.locator('#select-rows').click()
   await page.locator('#prepare-orders').click()
   await page

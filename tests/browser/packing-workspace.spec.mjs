@@ -1,3 +1,4 @@
+import { revealCopyActions } from './copy-actions-helpers.mjs'
 import { test, expect, holdPreparationWrites } from './extension-fixture.mjs'
 import { createDemoRecords } from '../../preview/library-fixture.js'
 import { readFile } from 'node:fs/promises'
@@ -83,7 +84,11 @@ async function openWorkspace(extension, { previews = true } = {}) {
     3
   )
   await expect(
-    page.getByRole('checkbox', { name: 'Headers', exact: true })
+    page.getByRole('checkbox', {
+      name: 'Headers',
+      exact: true,
+      includeHidden: true,
+    })
   ).not.toBeChecked()
   return { page, record }
 }
@@ -124,7 +129,8 @@ test('product codes lead group headers; nested hints, hit targets and code basel
   await expect(page.getByRole('tooltip')).toHaveText(
     'Product code shared by all variants. Printed on its carton mark.'
   )
-  await page.keyboard.press('Escape')
+  await dialog.locator('h1').click()
+  await page.mouse.move(0, 0)
   await expect(page.getByRole('tooltip')).toHaveCount(0)
   await expect(select).toHaveAttribute('aria-pressed', 'false')
   await select.click()
@@ -263,6 +269,7 @@ test('row Prepare opens only that product and copies its latest saved values wit
     '1 selected products · 1 orders'
   )
   await observeLabelOutput(page, extension)
+  await revealCopyActions(page)
   await dialog
     .getByRole('button', { name: 'Copy barcode images', exact: true })
     .click()
@@ -372,7 +379,7 @@ test('structured products prepare, preserve edits and copy exact headerless sour
   await page
     .getByRole('button', { name: 'Prepare packing list', exact: true })
     .click()
-  await expect(page.locator('#feedback')).toContainText(
+  await expect(page.locator('.error-notice-message')).toContainText(
     'Choose a packing month'
   )
   const dialog = await prepare(page)
@@ -409,7 +416,7 @@ test('structured products prepare, preserve edits and copy exact headerless sour
     variant.getByRole('textbox', { name: /^Size code / })
   ).toHaveValue(/xs/i)
   await dialog.getByRole('button', { name: 'Orders', exact: true }).click()
-  await expect(page.locator('.row-preparation code')).toHaveText([
+  await expect(page.locator('.row-code-copy')).toHaveText([
     baseCode,
     baseCode,
     otherCode,
@@ -419,6 +426,7 @@ test('structured products prepare, preserve edits and copy exact headerless sour
     'clipboard-read',
     'clipboard-write',
   ])
+  await revealCopyActions(page)
   await page.getByRole('button', { name: 'Copy values', exact: true }).click()
   await expect(
     page.getByRole('dialog', { name: 'Confirm operation', exact: true })
@@ -439,6 +447,7 @@ test('structured products prepare, preserve edits and copy exact headerless sour
   }
   expect(values).not.toContain('Photo')
 
+  await revealCopyActions(page)
   await page
     .getByRole('button', { name: 'Copy preparation columns', exact: true })
     .click()
@@ -463,7 +472,7 @@ test('structured products prepare, preserve edits and copy exact headerless sour
   await columns.getByRole('button', { name: 'Close', exact: true }).click()
 
   await page.reload()
-  await expect(page.locator('.row-preparation code')).toHaveText([
+  await expect(page.locator('.row-code-copy')).toHaveText([
     baseCode,
     baseCode,
     otherCode,
@@ -531,7 +540,7 @@ test('Excel image requires the selected carton category in both views and preser
   expect(extension.unexpectedRequests).toEqual([])
 })
 
-test('Copy Excel image freezes selected rows and includes Chinese headings, photos and prepared values', async ({
+test('Copy Excel image freezes selected rows with current-language headings, supplier fields and prepared values', async ({
   extension,
 }, testInfo) => {
   const { page, record } = await openWorkspace(extension, { previews: false })
@@ -611,19 +620,13 @@ test('Copy Excel image freezes selected rows and includes Chinese headings, phot
   await expect(copy).toHaveClass(/copied/)
   await expect(page.locator('#feedback')).toBeEmpty()
   const drawing = await page.evaluate(() => tableImageDrawing)
-  expect(drawing.text.slice(0, 8)).toEqual([
-    '序号',
-    '图片',
-    '产品描述',
-    '唛头货号',
-    '条码货号',
-    '中文品类',
-    '单价（元）',
-    '数量',
-  ])
-  // The base is drawn once in the carton-code column and twice in the barcode
-  // column, where each suffix is a separate bold text run.
-  expect(drawing.text.filter((value) => value === base)).toHaveLength(3)
+  const headings = drawing.text.slice(0, drawing.text.indexOf('1')).join(' ')
+  expect(headings).toBe(
+    'No. Photo Product description Carton mark Barcode code Category & material Unit price (CNY) Quantity Carton dimensions Weight (kg) Carton no.'
+  )
+  // Only the barcode column draws text for the base. The merged carton image
+  // already contains its code and has no redundant text caption underneath.
+  expect(drawing.text.filter((value) => value === base)).toHaveLength(2)
   for (const suffix of ['S', 'L']) {
     const suffixRun = drawing.runs.find((run) => run.text === suffix)
     expect(suffixRun.font).toMatch(/^(?:700|bold) /)
@@ -638,8 +641,13 @@ test('Copy Excel image freezes selected rows and includes Chinese headings, phot
   expect(drawing.text).not.toContain('优惠（元）')
   expect(drawing.text).not.toContain('FRASCO DE PRUEBA')
   expect(drawing.text).toContain('玻璃制品')
-  expect(drawing.text.join('')).toContain('300ml')
-  expect(drawing.text.join('')).toContain('500ml')
+  expect(drawing.text.join('')).toContain('300 ml')
+  expect(drawing.text.join('')).toContain('500 ml')
+  expect(
+    drawing.runs.some(
+      (run) => run.text === 'Glass' && /^(?:700|bold) /.test(run.font)
+    )
+  ).toBe(true)
   expect(drawing.text.join('')).not.toContain('TEST-BOX')
   for (const item of record.snapshot.items.slice(0, 2)) {
     expect(drawing.text).toContain(`¥ ${item.price}`)
@@ -664,10 +672,13 @@ test('Copy Excel image freezes selected rows and includes Chinese headings, phot
   expect(image.width).toBeGreaterThan(1500)
   expect(image.height).toBeGreaterThan(200)
   expect(image.width * image.height).toBeLessThanOrEqual(16_000_000)
-  await testInfo.attach('Selected rows with Chinese headings', {
-    body: Buffer.from(image.bytes),
-    contentType: 'image/png',
-  })
+  await testInfo.attach(
+    'Selected rows with English headings and supplier fields',
+    {
+      body: Buffer.from(image.bytes),
+      contentType: 'image/png',
+    }
+  )
   expect((await packingBackup(extension)).preparations).toEqual(
     original.preparations
   )
@@ -805,6 +816,46 @@ test('preparation shows product photos, zooms originals and opens saved labels f
   await expect(photoButton.getByAltText('Product photo')).toBeVisible()
   const thumbnail = await photoButton.locator('img').getAttribute('src')
   expect(thumbnail).toMatch(/^blob:/)
+  const copyPhoto = photoButton.locator('..').locator('.photo-copy-button')
+  const selectionBefore = await dialog
+    .locator('.variants tbody tr')
+    .evaluateAll((rows) => rows.map((row) => row.getAttribute('aria-selected')))
+  await page.mouse.move(0, 0)
+  await expect(copyPhoto).toHaveCSS('opacity', '0')
+  await photoButton.hover()
+  await expect(copyPhoto).toHaveCSS('opacity', '0.94')
+  await photoButton.press('Tab')
+  await expect(copyPhoto).toBeFocused()
+  await page.mouse.move(0, 0)
+  await expect(copyPhoto).toHaveCSS('opacity', '0.94')
+  await extension.context.grantPermissions([
+    'clipboard-read',
+    'clipboard-write',
+  ])
+  await copyPhoto.click()
+  await expect(copyPhoto).toHaveAccessibleName('Copy image: Copied')
+  expect(
+    await dialog
+      .locator('.variants tbody tr')
+      .evaluateAll((rows) =>
+        rows.map((row) => row.getAttribute('aria-selected'))
+      )
+  ).toEqual(selectionBefore)
+  await expect(
+    page.getByRole('dialog', { name: 'Original product details', exact: true })
+  ).not.toBeVisible()
+  await expect(
+    page.getByRole('dialog', { name: 'Product photo', exact: true })
+  ).not.toBeVisible()
+  expect(
+    await page.evaluate(async () => {
+      const [item] = await navigator.clipboard.read()
+      const image = await createImageBitmap(await item.getType('image/png'))
+      const size = [image.width, image.height]
+      image.close()
+      return size
+    })
+  ).toEqual([96, 96])
   await photoButton.click()
   const photo = page.getByRole('dialog', { name: 'Product photo', exact: true })
   const original = photo.locator('.photo-viewport img')
@@ -1013,7 +1064,8 @@ test('preparation has no collapsibles and keeps categories, names, grouping and 
   await expect(codePanel).toHaveText(
     'Identifies the size: S, M, L. Leave blank when not needed.'
   )
-  await page.keyboard.press('Escape')
+  await dialog.locator('h1').click()
+  await page.mouse.move(0, 0)
   await expect(codePanel).not.toBeVisible()
   await expect(dialog).toBeVisible()
 
@@ -1025,7 +1077,7 @@ test('preparation has no collapsibles and keeps categories, names, grouping and 
   const splitPanel = page.getByRole('tooltip')
   await expect(splitPanel).toContainText('barcode')
   await expect(splitPanel.getByRole('button')).toHaveCount(0)
-  await page.keyboard.press('Escape')
+  await page.mouse.move(0, 0)
   await expect(splitPanel).not.toBeVisible()
   await expect(first.locator('.variants tbody tr')).toHaveCount(2)
 
@@ -1207,10 +1259,28 @@ test('preparation selects groups and variant rows by range without changing edit
   await expect(
     groups.locator('.group-select[aria-pressed="true"]')
   ).toHaveCount(0)
-  await expect(first).toHaveClass(/is-selected/)
-  await expect(groups.nth(1)).toHaveClass(/is-selected/)
+  await expect(first).not.toHaveClass(/is-selected/)
+  await expect(groups.nth(1)).not.toHaveClass(/is-selected/)
   await selectVariantRow(rows.nth(1), 'Control+Space')
   await expect(rows.nth(1)).toHaveAttribute('aria-selected', 'false')
+  for (const theme of ['light', 'dark']) {
+    await page.locator('meta[name="color-scheme"]').evaluate((node, value) => {
+      node.content = value
+    }, theme)
+    const selectedFill = await rows
+      .nth(0)
+      .evaluate((node) => getComputedStyle(node).backgroundColor)
+    const siblingFill = await rows
+      .nth(1)
+      .evaluate((node) => getComputedStyle(node).backgroundColor)
+    const groupFill = await first.evaluate(
+      (node) => getComputedStyle(node).backgroundColor
+    )
+    expect(selectedFill).not.toBe(siblingFill)
+    expect(selectedFill).not.toBe(groupFill)
+    await expect(rows.nth(0)).toHaveCSS('box-shadow', 'none')
+    await expect(first).toHaveCSS('box-shadow', 'none')
+  }
 
   // Inputs, drag grips, photos and preview buttons never select their row/card.
   await rows
@@ -1533,6 +1603,7 @@ for (const action of ['Copy Excel image', 'Copy group codes', 'Copy columns']) {
       .poll(() => page.evaluate(() => window.preparationSaveStarted))
       .toBe(true)
     try {
+      await revealCopyActions(page)
       await view.getByRole('button', { name: action, exact: true }).click()
       await expect(view.locator('.preparation-save-status')).toHaveText(
         'Saving…'
@@ -1600,12 +1671,14 @@ for (const action of ['Copy Excel image', 'Copy group codes', 'Copy columns']) {
         view.getByRole('button', { name: 'Copied', exact: true })
       ).toBeVisible()
       const text = await page.evaluate(() => window.frozenPackingText)
-      expect(text.filter((value) => value === latestCode)).toHaveLength(3)
+      // The carton artwork and barcode base contain the code; the redundant
+      // caption beneath the carton image is deliberately absent.
+      expect(text.filter((value) => value === latestCode)).toHaveLength(2)
       expect(text).not.toContain(originalCode)
       expect(text).not.toContain(otherCode)
       expect(text).toContain('新玻璃制品')
-      expect(text.join('')).toContain('300ml')
-      expect(text.join('')).toContain('500ml')
+      expect(text.join('')).toContain('300 ml')
+      expect(text.join('')).toContain('500 ml')
       expect(text.join('')).not.toContain('TEST-BOX')
       for (const item of record.snapshot.items.slice(0, 2)) {
         expect(text).toContain(`¥ ${item.price}`)
@@ -1659,6 +1732,7 @@ test('changing the displayed packing order during a pending column copy retains 
     .poll(() => page.evaluate(() => window.preparationSaveStarted))
     .toBe(true)
   try {
+    await revealCopyActions(page)
     await view
       .getByRole('button', { name: 'Copy columns', exact: true })
       .click()
@@ -1735,6 +1809,7 @@ test('bulk barcode output retains its click selection when Ctrl+A expands rows d
     // This newer edit is queued behind the held write, so the labels must wait
     // for both actual saves before reading their content.
     await name.fill('FRASCO NUEVO')
+    await revealCopyActions(page)
     await view
       .getByRole('button', { name: 'Copy barcode images', exact: true })
       .click()
@@ -2055,10 +2130,10 @@ test('label editor saves repeated text edits and copies barcode and carton image
     .getByRole('button', { name: 'Close label editor', exact: true })
     .click()
   await page.reload()
-  await expect(page.locator('.row-preparation code').nth(0)).toHaveText(
+  await expect(page.locator('.row-code-copy').nth(0)).toHaveText(
     updatedBaseCode
   )
-  await expect(page.locator('.row-preparation code').nth(1)).toHaveText(
+  await expect(page.locator('.row-code-copy').nth(1)).toHaveText(
     updatedBaseCode
   )
   await firstRow
@@ -2127,7 +2202,7 @@ test('barcode image segments persist separately, reject collisions and leave sou
   await expect(label.locator('.label-code-base')).toHaveText(baseCode)
   await size.fill('L')
   await size.press('Enter')
-  await expect(label.locator('.label-editor-status')).toContainText(
+  await expect(label.locator('.error-notice-message')).toContainText(
     /duplicate|already|conflict|unique/i
   )
   await expect(copy).toBeDisabled()
@@ -2394,7 +2469,7 @@ test('combining, separating, splitting and merging preserve source rows and save
   await expect(page.locator('#sheet-body tr[data-selection-key]')).toHaveCount(
     3
   )
-  await expect(page.locator('.row-preparation code')).toHaveText([
+  await expect(page.locator('.row-code-copy')).toHaveText([
     originalCode,
     originalCode,
     original.groups[1].baseCode,
@@ -2562,6 +2637,7 @@ test('invalid preparation blocks batch labels and a corrected pending edit saves
     .getByLabel('Product code', { exact: true })
   await base.fill('INVALID')
   for (const name of ['Copy barcode images', 'Copy carton marks']) {
+    await revealCopyActions(page)
     await view.getByRole('button', { name, exact: true }).click()
     await expect(view.getByRole('alert')).toContainText('Base code')
     await expect(view.locator('.preparation-save-status')).toContainText(
@@ -2586,6 +2662,7 @@ test('invalid preparation blocks batch labels and a corrected pending edit saves
   )
 
   await base.fill(original.preparations[0].groups[0].baseCode)
+  await revealCopyActions(page)
   await view
     .getByRole('button', { name: 'Copy barcode images', exact: true })
     .click()
@@ -2643,6 +2720,7 @@ test('selected rows limit barcode and carton output and cancel leaves the clipbo
     ['Copy barcode images', 2],
     ['Copy carton marks', 1],
   ]) {
+    await revealCopyActions(page)
     await view.getByRole('button', { name: action, exact: true }).click()
     await expect(images).toContainText(`${count} images ready.`)
     await expect(

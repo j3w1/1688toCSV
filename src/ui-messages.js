@@ -1,6 +1,10 @@
 import { PACKING_MESSAGES } from './ui-messages-packing.js'
 import { HELP_MESSAGES } from './ui-messages-help.js'
 import { VALIDATION_MESSAGES } from './ui-messages-validation.js'
+import { EXCEL_MESSAGES } from './ui-messages-excel.js'
+import { MATERIAL_MESSAGES } from './ui-messages-materials.js'
+import { COPY_ACTION_MESSAGES } from './ui-messages-copy-actions.js'
+import { ERROR_MESSAGES } from './ui-messages-errors.js'
 
 // Explicit interface messages only; original seller, product and label values are never translated.
 export const UI_MESSAGES = {
@@ -29,6 +33,10 @@ export const UI_MESSAGES = {
   ...PACKING_MESSAGES,
   ...HELP_MESSAGES,
   ...VALIDATION_MESSAGES,
+  ...EXCEL_MESSAGES,
+  ...MATERIAL_MESSAGES,
+  ...COPY_ACTION_MESSAGES,
+  ...ERROR_MESSAGES,
   'Selected product totals': {
     zh: '所选商品合计',
     es: 'Totales de productos seleccionados',
@@ -55,10 +63,10 @@ export const UI_MESSAGES = {
     zh: '第 {position} 张，共 {total} 张',
     es: 'Foto {position} de {total}',
   },
-  'Scroll to zoom · Drag to move · Double-click to zoom or fit · + / − zoom · Arrow keys move · 0 fits · Page Up / Down changes photo':
+  '← / → photos · ↑ / ↓ or + / − zoom · Scroll to zoom · Drag to move · Double-click to zoom or fit · 0 fits':
     {
-      zh: '滚轮缩放 · 拖动移动 · 双击缩放或适应 · + / − 缩放 · 方向键移动 · 0 适应 · Page Up / Down 切换图片',
-      es: 'Rueda para acercar · Arrastra para mover · Doble clic para acercar o ajustar · + / − acerca · Flechas mueven · 0 ajusta · Re Pág / Av Pág cambia foto',
+      zh: '← / → 切换图片 · ↑ / ↓ 或 + / − 缩放 · 滚轮缩放 · 拖动移动 · 双击缩放或适应 · 0 适应窗口',
+      es: '← / → fotos · ↑ / ↓ o + / − amplía o reduce · Rueda para ampliar · Arrastra para mover · Doble clic para ampliar o ajustar · 0 ajusta',
     },
   '{0} products from {1} orders will reopen. {2} orders can receive selected packing edits from this file. Unselected products, newer local edits and existing settings stay unchanged. Source orders and issued codes are retained for safe restoration.':
     {

@@ -1,5 +1,11 @@
-import { message as uiMessage, bindText, bindAttribute } from './i18n.js'
+import {
+  message as uiMessage,
+  bindText,
+  bindAttribute,
+  getLanguage,
+} from './i18n.js'
 import { planExcelImage, renderExcelImage } from './excel-image.js'
+import { selectedExcelImageColumns } from './excel-image-options.js'
 import { element } from './ui.js'
 
 function choosePlan(plans, count) {
@@ -66,7 +72,14 @@ function choosePlan(plans, count) {
 
 export async function copyExcelImage(
   rows,
-  { loadImage, renderCartonMark, onProgress, signal }
+  {
+    loadImage,
+    renderCartonMark,
+    onProgress,
+    signal,
+    columns = selectedExcelImageColumns(),
+    language = getLanguage(),
+  }
 ) {
   // Freeze only copied values, not the entire library record attached to each row.
   const frozen = rows.map((row) =>
@@ -85,6 +98,8 @@ export async function copyExcelImage(
         'baseCode',
         'barcode',
         'chineseCategory',
+        'spanishName',
+        'material',
         'price',
         'quantity',
       ].map((key) => [key, row[key] ?? ''])
@@ -102,7 +117,7 @@ export async function copyExcelImage(
   try {
     signal?.throwIfAborted()
     await document.fonts.ready
-    const plans = planExcelImage(frozen)
+    const plans = planExcelImage(frozen, { columns, language })
     const plan = await choosePlan(plans, frozen.length)
     if (!plan) return false
     signal?.throwIfAborted()

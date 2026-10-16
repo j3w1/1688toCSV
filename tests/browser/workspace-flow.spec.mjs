@@ -1,3 +1,4 @@
+import { revealCopyActions } from './copy-actions-helpers.mjs'
 import { test, expect } from './extension-fixture.mjs'
 import { createDemoRecords } from '../../preview/library-fixture.js'
 import { summarizeOrders } from '../../src/order-summary.js'
@@ -157,10 +158,11 @@ for (const width of [1440, 390]) {
     )
     await view.getByRole('button', { name: 'Orders', exact: true }).click()
     const code = await page
-      .locator('#sheet-body .row-preparation code')
+      .locator('#sheet-body .row-code-copy')
       .first()
       .textContent()
     expect(code).toMatch(/^CE2610\d{4}$/)
+    await revealCopyActions(page)
     const before = await watchCopyToolbar(page, 'copy-group-codes')
     const button = page.locator('#copy-group-codes')
     await button.click()
@@ -168,8 +170,8 @@ for (const width of [1440, 390]) {
     await expect(button).toHaveClass(/copied/)
     expect(await page.evaluate(() => navigator.clipboard.readText())).toBe(code)
     await assertToolbarStable(page, before, ['Copying…', 'Copied'])
-    await expect(button).toHaveText('Copy group codes', { timeout: 4500 })
-    await assertToolbarStable(page, before, ['Copy group codes'])
+    await expect(button).toHaveText('Group codes', { timeout: 4500 })
+    await assertToolbarStable(page, before, ['Group codes'])
     expect(extension.unexpectedRequests).toEqual([])
   })
 
@@ -179,6 +181,7 @@ for (const width of [1440, 390]) {
     const { page } = await open(extension)
     await page.setViewportSize({ width, height: 960 })
     await enableClipboard(extension, page)
+    await revealCopyActions(page)
     const before = await watchCopyToolbar(page, 'copy-images')
     // Hold one genuine image decode while the user changes the visible scope.
     // Conversion and the final HTML clipboard write still use native browser APIs.
@@ -230,9 +233,9 @@ for (const width of [1440, 390]) {
     expect(count).toBe(8)
     await assertToolbarStable(page, before, ['Copied'])
     await page.locator('#search').fill('')
-    await expect(button).toHaveText('Copy images', { timeout: 4500 })
+    await expect(button).toHaveText('Product photos', { timeout: 4500 })
     await expect(button).toBeEnabled()
-    await assertToolbarStable(page, before, ['Copy images'])
+    await assertToolbarStable(page, before, ['Product photos'])
     expect(extension.unexpectedRequests).toEqual([])
   })
 
@@ -268,13 +271,13 @@ for (const width of [1440, 390]) {
       .locator('.copy-progress')
       .getByRole('button', { name: 'Cancel image', exact: true })
       .click()
-    await expect(button).toHaveText('Copy Excel image')
+    await expect(button).toHaveText('Excel image')
     await expect(page.locator('.copy-progress')).toHaveCount(0)
     await expect(button).toBeEnabled()
     expect(await page.evaluate(() => navigator.clipboard.readText())).toBe(
       'Synthetic copy cancellation sentinel'
     )
-    await assertToolbarStable(page, before, ['Copy Excel image'])
+    await assertToolbarStable(page, before, ['Excel image'])
     expect(extension.unexpectedRequests).toEqual([])
   })
 
@@ -308,6 +311,7 @@ for (const width of [1440, 390]) {
       .locator('#sheet-body tr.selectable-row .row-number')
       .first()
       .click()
+    await revealCopyActions(page)
     const before = await watchCopyToolbar(page, 'copy-images')
     const button = page.locator('#copy-images')
     await button.click()
@@ -317,9 +321,13 @@ for (const width of [1440, 390]) {
     await expect(error).toHaveText('Thumbnail could not be loaded (503).')
     await expect(error).toHaveAttribute('role', 'alert')
     await assertToolbarStable(page, before, ['Copying…', 'Try again'])
-    await expect(button).toHaveText('Copy images', { timeout: 4500 })
+    await expect(button).toHaveText('Product photos', { timeout: 4500 })
     await expect(error).toBeVisible()
-    await assertToolbarStable(page, before, ['Copy images'])
+    await page.mouse.click(2, 2)
+    await expect(error).toBeHidden()
+    await revealCopyActions(page)
+    await expect(error).toBeVisible()
+    await assertToolbarStable(page, before, ['Product photos'])
     unavailable = false
     await button.click()
     await expect(button).toHaveText('Copied')
