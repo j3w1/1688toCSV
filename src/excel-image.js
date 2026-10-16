@@ -2,6 +2,16 @@ import { pngWithDpi } from './png-resolution.js'
 import { translateAttribute } from './product-attributes.js'
 import { translateMaterial } from './material-vocabulary.js'
 import { translateCategory } from './category-translation.js'
+import {
+  normalizeExcelImageDisplay,
+  excelImagePalette,
+} from './excel-image-style.js'
+import { presentOrderStatus } from './order-presentation.js'
+import { UI_MESSAGES } from './ui-messages.js'
+import { t } from './i18n.js'
+import { labelColorKey } from './appearance.js'
+import { orderTagColors } from './order-tags.js'
+import { createExcelImageBadges } from './excel-image-badges.js'
 
 const SCALE = 2
 const DPI = 192
@@ -26,6 +36,8 @@ const TITLE_FONT = `600 16px ${FONT_FAMILY}`
 const DETAIL_FONT = `14px ${FONT_FAMILY}`
 const ARTICLE_FONT = `600 14px ${FONT_FAMILY}`
 const DETAIL_LABEL_FONT = `600 13px ${FONT_FAMILY}`
+const TAG_FONT = `13px ${FONT_FAMILY}`
+const LABEL_FONT = `600 12px ${FONT_FAMILY}`
 const REORDERED_CODE_COLOR = '#1d4ed8'
 
 export const excelImageColumns = Object.freeze(
@@ -238,6 +250,8 @@ function snapshot(row, index, columns) {
     'entryId',
     'sellerName',
     'sellerMemberLogin',
+    'orderDate',
+    'orderStatus',
     'groupId',
     'title',
     'productNumber',
@@ -249,6 +263,14 @@ function snapshot(row, index, columns) {
   ])
     values[key] = key === 'number' ? String(index + 1) : String(row[key] ?? '')
   values.manualReordered = row.manualReordered === true
+  for (const field of ['orderTags', 'productTags'])
+    values[field] = Object.freeze([
+      ...new Set(
+        (Array.isArray(row[field]) ? row[field] : [])
+          .map((tag) => String(tag ?? '').trim())
+          .filter(Boolean)
+      ),
+    ])
   values.skuProperties = Object.freeze(
     (Array.isArray(row.skuProperties) ? row.skuProperties : []).map(
       (property) =>
@@ -282,7 +304,91 @@ function snapshot(row, index, columns) {
 
 const normalized = (value) => String(value).replace(/[\s:：·]/g, '')
 
-function descriptionCell(context, source, width, language) {
+function tagBadges(names, catalog, mode) {
+  return names.map((name) => {
+    const fallback = orderTagColors({ name })
+    const colors = Object.hasOwn(catalog || {}, name) ? catalog[name] : null
+    return {
+      name,
+      background: colors?.background || fallback[mode],
+      foreground: colors?.foreground || fallback[`${mode}Text`],
+    }
+  })
+}
+
+function layoutTags(context, badges, width) {
+  const rows = []
+  let current = [],
+    used = 0
+  for (const badge of badges) {
+    const font = badge.font || TAG_FONT
+    const lineHeight = badge.lineHeight || 18
+    const paddingBlock = badge.paddingBlock || 1
+    context.font = font
+    const lines = Object.freeze(wrap(context, badge.name, width - 12))
+    const tag = Object.freeze({
+      ...badge,
+      font,
+      lineHeight,
+      paddingBlock,
+      radius: badge.radius || 4,
+      lines,
+      width: Math.min(
+        width,
+        Math.max(...lines.map((line) => context.measureText(line).width)) + 12
+      ),
+      height: lines.length * lineHeight + paddingBlock * 2,
+    })
+    if (current.length && used + 6 + tag.width > width) {
+      rows.push(Object.freeze(current))
+      current = []
+      used = 0
+    }
+    if (current.length) used += 6
+    current.push(tag)
+    used += tag.width
+  }
+  if (current.length) rows.push(Object.freeze(current))
+  return Object.freeze({
+    rows: Object.freeze(rows),
+    height:
+      rows.reduce(
+        (height, tags) => height + Math.max(...tags.map((tag) => tag.height)),
+        0
+      ) +
+      Math.max(0, rows.length - 1) * 5,
+  })
+}
+
+function orderDateLabel(value, language) {
+  const day = value.slice(0, 10)
+  const date = new Date(`${day}T12:00:00Z`)
+  if (
+    !/^\d{4}-\d{2}-\d{2}$/.test(day) ||
+    !Number.isFinite(date.getTime()) ||
+    date.toISOString().slice(0, 10) !== day
+  )
+    return value
+  return date.toLocaleDateString(
+    { en: 'en-GB', es: 'es-PE', zh: 'zh-CN' }[language],
+    {
+      day: 'numeric',
+      month: 'short',
+      year: 'numeric',
+      timeZone: 'UTC',
+    }
+  )
+}
+
+function descriptionCell(context, source, width, language, details, badges) {
+  const articleLabel =
+    /^(?:货号|款号|商品编号|产品编号|型号|模型|model|article(?: number)?|item(?: no\.?)?|sku)$/i
+  const isDisplayed = (section) =>
+    section.title
+      ? details.title
+      : articleLabel.test(section.label || '')
+        ? details.model
+        : details.specifications
   const paragraphs = source.description
     .replaceAll('\r\n', '\n')
     .split(/[\r\n]/)
@@ -299,17 +405,17 @@ function descriptionCell(context, source, width, language) {
       paragraphs.length,
       source.description.trim().slice(title.length).trim()
     )
-  const sections = [{ value: title, title: true }]
+  const sections = details.title ? [{ value: title, title: true }] : []
   for (let index = 0; index < paragraphs.length; index++) {
     let value = paragraphs[index]
     if (/^[^:：]{1,24}[:：]$/.test(value) && paragraphs[index + 1])
       value += paragraphs[++index]
     const match = value.match(/^([^:：]{1,24})[:：]\s*(.+)$/s)
-    if (match) sections.push({ label: match[1], value: match[2] })
-    else if (value) sections.push({ value })
+    const section = match ? { label: match[1], value: match[2] } : { value }
+    if (value && isDisplayed(section)) sections.push(section)
   }
   function append(label, value) {
-    if (!value.trim()) return
+    if (!value.trim() || !isDisplayed({ label })) return
     // A combined source variant often repeats the structured SKU fields.
     // Compare complete label/value pairs, so a code substring or a changed
     // measurement cannot accidentally suppress genuinely new information.
@@ -370,7 +476,7 @@ function descriptionCell(context, source, width, language) {
         : translated.measurement
           ? `${translated.measurement.numberText} ${translated.measurement.unit}`
           : translated.value,
-      article: /^(?:货号|款号|商品编号|产品编号)$/.test(section.label),
+      article: articleLabel.test(section.label),
     }
   })
 
@@ -378,9 +484,7 @@ function descriptionCell(context, source, width, language) {
   const blocks = displayedSections
     .filter((section) => section.value)
     .map((section, index) => {
-      const article =
-        section.article ||
-        /^(?:货号|款号|商品编号|产品编号)$/.test(section.label || '')
+      const article = section.article || articleLabel.test(section.label || '')
       const font = section.title
         ? TITLE_FONT
         : article
@@ -415,6 +519,14 @@ function descriptionCell(context, source, width, language) {
         height: blockHeight,
       })
     })
+  const tags = details.productTags
+    ? layoutTags(
+        context,
+        tagBadges(source.productTags, badges.productTags, badges.mode),
+        width
+      )
+    : null
+  if (tags?.height) height += (height ? 8 : 0) + tags.height
   return Object.freeze({
     text: displayedSections
       .map(
@@ -424,6 +536,7 @@ function descriptionCell(context, source, width, language) {
       .join('\n'),
     font: BODY_FONT,
     blocks: Object.freeze(blocks),
+    tags,
     lines: Object.freeze(
       blocks.flatMap((block) => [
         ...block.labelLines,
@@ -521,11 +634,21 @@ export function planExcelImage(
     columns: columnKeys = defaultColumnKeys,
     language = 'en',
     showOrderDetails = true,
+    style,
+    details: detailOptions,
+    badges: badgeOptions,
   } = {}
 ) {
   if (!Array.isArray(rows) || !rows.length)
     throw new Error('Select product rows to copy as an image.')
   language = ['en', 'es', 'zh'].includes(language) ? language : 'en'
+  const display = normalizeExcelImageDisplay({
+    showOrderDetails,
+    style,
+    details: detailOptions,
+  })
+  const details = display.details
+  const badges = badgeOptions || createExcelImageBadges()
   const { canvas, context } = canvasContext()
   try {
     context.font = HEADER_FONT
@@ -583,7 +706,8 @@ export function planExcelImage(
           headerHeight,
           columns,
           language,
-          showOrderDetails: showOrderDetails !== false,
+          ...display,
+          palette: excelImagePalette(display.style),
           headers: Object.freeze(headers),
           rows: Object.freeze(entries),
           markSpans: Object.freeze(markSpans.map(Object.freeze)),
@@ -605,28 +729,72 @@ export function planExcelImage(
         if (!newOrder) return null
         // Hide only the identity heading, not the source identities needed for
         // safe grouping, carton-mark ownership, and precise error reporting.
-        if (showOrderDetails === false)
-          return previous
+        const separator = () =>
+          previous
             ? Object.freeze({
                 lines: Object.freeze([]),
                 kind: newStore ? 'store' : 'order',
                 height: newStore ? 10 : 6,
               })
             : null
-        if (!sellerKey) return null
+        if (!display.showOrderDetails) return separator()
+        // Retain the previous sellerless-row layout unless extra order details
+        // were explicitly enabled; old exports need no new identity band.
+        if (
+          !sellerKey &&
+          !details.date &&
+          !details.status &&
+          !details.orderTags
+        )
+          return null
         const orderLabel = { en: 'Order', es: 'Pedido', zh: '订单' }[language]
+        const status = presentOrderStatus(source.orderStatus).label
         const text = [
-          source.sellerName || source.sellerMemberLogin,
-          source.orderId && `${orderLabel} ${source.orderId}`,
+          details.seller && (source.sellerName || source.sellerMemberLogin),
+          details.orderNumber &&
+            source.orderId &&
+            `${orderLabel} ${source.orderId}`,
         ]
           .filter(Boolean)
           .join('  ·  ')
         context.font = HEADER_FONT
-        const lines = Object.freeze(wrap(context, text, cssWidth - PADDING * 2))
+        const lines = Object.freeze(
+          text ? wrap(context, text, cssWidth - PADDING * 2) : []
+        )
+        const labels = []
+        const addLabel = (name, key) => {
+          if (!name) return
+          labels.push({
+            name,
+            ...badges.labels[key],
+            font: LABEL_FONT,
+            lineHeight: 16,
+            paddingBlock: 2,
+            radius: 5,
+          })
+        }
+        if (details.date && source.orderDate)
+          addLabel(orderDateLabel(source.orderDate, language), 'dates')
+        if (details.status && source.orderStatus)
+          addLabel(
+            UI_MESSAGES[status]?.[language] || status,
+            labelColorKey(status)
+          )
+        if (details.orderTags)
+          labels.push(
+            ...tagBadges(source.orderTags, badges.orderTags, badges.mode)
+          )
+        const tags = layoutTags(context, labels, cssWidth - PADDING * 2)
+        if (!lines.length && !tags?.height) return separator()
         return Object.freeze({
           lines,
+          tags,
           kind: newStore ? 'store' : 'order',
-          height: lines.length * LINE_HEIGHT + 16,
+          height:
+            lines.length * LINE_HEIGHT +
+            (tags?.height || 0) +
+            (lines.length && tags?.height ? 6 : 0) +
+            16,
         })
       })()
       const cells = columns.map((column) => {
@@ -635,7 +803,9 @@ export function planExcelImage(
             context,
             source,
             column.width - PADDING * 2,
-            language
+            language,
+            details,
+            badges
           )
         if (column.key === 'chineseCategory')
           return categoryCell(
@@ -777,6 +947,7 @@ export async function renderExcelImage(
   if (!plan?.rows?.length || !plan.columns?.length)
     throw new Error('Choose an Excel image batch.')
   const columns = plan.columns
+  const palette = plan.palette || excelImagePalette(plan.style)
   const hasPhotos = columns.some((column) => column.key === 'thumbnail')
   if (hasPhotos && typeof loadImage !== 'function')
     throw new Error('Choose a photo loader for the Excel image.')
@@ -858,12 +1029,12 @@ export async function renderExcelImage(
       if (error.name === 'AbortError') throw error
       if (mark)
         throw productImageError(
-          `Carton mark for product row ${row.number} could not be created. Check its code and Chinese category, then try again. ${error.message}`,
+          `Carton mark for product row ${row.number} could not be created. Check its code and Chinese category, then try again. ${t(error.message)}`,
           row,
           error.packingIssue?.field || 'code'
         )
       throw productImageError(
-        `Photo for product row ${row.number} could not be loaded. Refresh the photo and try again. ${error.message}`,
+        `Photo for product row ${row.number} could not be loaded. Refresh the photo and try again. ${t(error.message)}`,
         row,
         'photo'
       )
@@ -903,6 +1074,31 @@ export async function renderExcelImage(
         cell.lineHeight
       )
   }
+  function tags(layout, center, top) {
+    if (!layout?.height) return
+    for (const row of layout.rows) {
+      const width =
+        row.reduce((sum, tag) => sum + tag.width, 0) + (row.length - 1) * 6
+      const height = Math.max(...row.map((tag) => tag.height))
+      let left = center - width / 2
+      for (const tag of row) {
+        const y = top + (height - tag.height) / 2
+        context.fillStyle = tag.background
+        context.beginPath()
+        context.roundRect(left, y, tag.width, tag.height, tag.radius)
+        context.fill()
+        for (const [index, value] of tag.lines.entries())
+          line(
+            [{ text: value, font: tag.font, color: tag.foreground }],
+            left + tag.width / 2,
+            y + tag.paddingBlock + index * tag.lineHeight,
+            tag.lineHeight
+          )
+        left += tag.width + 6
+      }
+      top += height + 5
+    }
+  }
   function description(cell, x, y, column, rowHeight) {
     let top = y + (rowHeight - cell.height) / 2
     const center = x + column.width / 2
@@ -929,6 +1125,7 @@ export async function renderExcelImage(
         top += block.lineHeight
       }
     }
+    tags(cell.tags, center, top + (cell.blocks.length ? 8 : 0))
   }
   async function cartonMark(span, top) {
     const bitmap = await bitmapFor(span.groupKey, span.source, {
@@ -968,7 +1165,7 @@ export async function renderExcelImage(
     context.imageSmoothingQuality = 'high'
     context.fillStyle = '#fff'
     context.fillRect(0, 0, plan.cssWidth, plan.cssHeight)
-    context.fillStyle = '#383128'
+    context.fillStyle = palette.header
     context.fillRect(1, 1, plan.cssWidth - 2, plan.headerHeight)
     let x = 1
     for (const [index, column] of columns.entries()) {
@@ -976,7 +1173,7 @@ export async function renderExcelImage(
         1 + (plan.headerHeight - plan.headers[index].length * LINE_HEIGHT) / 2
       for (const [lineIndex, value] of plan.headers[index].entries())
         line(
-          [{ text: value, font: HEADER_FONT, color: '#fffaf2' }],
+          [{ text: value, font: HEADER_FONT, color: palette.headerText }],
           x + column.width / 2,
           top + lineIndex * LINE_HEIGHT,
           LINE_HEIGHT
@@ -998,7 +1195,7 @@ export async function renderExcelImage(
         : null
       aborted(signal)
       if (index % 2) {
-        context.fillStyle = '#faf9f6'
+        context.fillStyle = palette.stripe
         context.fillRect(1, y, plan.cssWidth - 2, row.height)
       }
       x = 1
@@ -1027,18 +1224,16 @@ export async function renderExcelImage(
       context.beginPath()
       context.lineWidth =
         row.separator === 'store'
-          ? 3
+          ? 1.25
           : row.separator === 'order'
-            ? 2
+            ? 1
             : row.separator === 'group'
-              ? 1.5
-              : 1
+              ? 0.85
+              : 0.65
       context.strokeStyle =
         row.separator === 'store' || row.separator === 'order'
-          ? '#84715b'
-          : row.separator === 'group'
-            ? '#a79f92'
-            : '#ded9cf'
+          ? palette.separator
+          : palette.grid
       context.moveTo(1, y)
       const span = markRows.get(index)
       if (span && index > span.start) {
@@ -1054,7 +1249,7 @@ export async function renderExcelImage(
     }
     aborted(signal)
     context.lineWidth = 1
-    context.strokeStyle = '#d3cdc2'
+    context.strokeStyle = palette.grid
     x = 1
     context.beginPath()
     for (const column of columns) {
@@ -1066,10 +1261,10 @@ export async function renderExcelImage(
     // Merged spreadsheet heading rows sit above the cell grid, never in its
     // columns, so omitted/reordered columns and merged marks keep their shape.
     for (const band of bands) {
-      context.fillStyle = band.kind === 'store' ? '#f0dfc5' : '#eeebe5'
+      context.fillStyle = band.kind === 'store' ? palette.store : palette.order
       context.fillRect(1, band.top, plan.cssWidth - 2, band.height)
-      context.strokeStyle = band.kind === 'store' ? '#987449' : '#aaa092'
-      context.lineWidth = band.kind === 'store' ? 2 : 1
+      context.strokeStyle = palette.separator
+      context.lineWidth = band.kind === 'store' ? 1 : 0.75
       context.beginPath()
       context.moveTo(1, band.top)
       context.lineTo(plan.cssWidth - 1, band.top)
@@ -1083,9 +1278,17 @@ export async function renderExcelImage(
           band.top + 8 + index * LINE_HEIGHT,
           LINE_HEIGHT
         )
+      tags(
+        band.tags,
+        plan.cssWidth / 2,
+        band.top +
+          8 +
+          band.lines.length * LINE_HEIGHT +
+          (band.lines.length ? 6 : 0)
+      )
     }
     context.lineWidth = 1
-    context.strokeStyle = '#d3cdc2'
+    context.strokeStyle = palette.grid
     context.strokeRect(0.5, 0.5, plan.cssWidth - 1, plan.cssHeight - 1)
     const encoded = await abortable(
       new Promise((resolve, reject) => {

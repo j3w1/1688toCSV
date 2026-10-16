@@ -1,4 +1,9 @@
 export const EXCEL_MESSAGES = {
+  'Product description': { zh: '商品描述', es: 'Descripción del producto' },
+  'Select at least one column to copy.': {
+    zh: '请至少选择一列进行复制。',
+    es: 'Selecciona al menos una columna para copiar.',
+  },
   'Fit image': { zh: '适应宽度', es: 'Ajustar imagen' },
   'Scroll to zoom · drag to pan': {
     zh: '滚轮缩放 · 拖动平移',

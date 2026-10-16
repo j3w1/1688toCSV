@@ -124,6 +124,82 @@
   margin: 0;
   accent-color: var(--control-accent);
 }
+.excel-style-details {
+  margin-block-end: 12px;
+}
+.excel-style-panel {
+  display: grid;
+  gap: 12px;
+  max-block-size: min(56dvh, 450px);
+  overflow: auto;
+  overscroll-behavior: contain;
+  padding: 10px 2px 4px;
+}
+.excel-image-colors {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 48px;
+  gap: 10px;
+}
+.excel-image-colors label {
+  display: grid;
+  gap: 5px;
+  color: var(--muted);
+  font-size: 11px;
+  margin: 0;
+}
+.excel-image-colors select {
+  min-inline-size: 0;
+  inline-size: 100%;
+  block-size: 30px;
+  padding: 3px 6px;
+  font-size: 12px;
+}
+.excel-image-colors input[type='color'] {
+  inline-size: 44px;
+  block-size: 30px;
+  padding: 2px;
+  cursor: pointer;
+}
+.excel-detail-fields {
+  display: grid;
+  gap: 3px;
+  min-inline-size: 0;
+  padding: 4px 0 0;
+  margin: 0;
+  border: 0;
+}
+.excel-detail-fields legend {
+  font-weight: 600;
+  font-size: 12px;
+  padding: 0 0 3px;
+}
+.image-copy-dialog label.excel-detail-toggle {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-block-size: 27px;
+  margin: 0;
+  font-size: 12px;
+  cursor: pointer;
+}
+.image-copy-dialog .excel-detail-toggle input[type='checkbox'] {
+  flex: 0 0 16px;
+  inline-size: 16px;
+  block-size: 16px;
+  min-inline-size: 16px;
+  max-inline-size: 16px;
+  margin: 0;
+  accent-color: var(--control-accent);
+}
+@media (pointer: coarse) {
+  .image-copy-dialog label.excel-detail-toggle {
+    min-block-size: 44px;
+  }
+}
+.excel-detail-toggle:has(input:disabled) {
+  color: var(--muted);
+  cursor: default;
+}
 .image-copy-body .excel-column-list {
   max-block-size: 330px;
   overflow: auto;
@@ -293,6 +369,22 @@
   max-height: 130px;
   margin-block-start: 12px;
   box-shadow: none;
+}
+@media (min-width: 701px) {
+  /* Expanded options set the row height; the image keeps its own scrolling. */
+  .image-copy-body:has(.excel-image-options) > .image-copy-preview-pane {
+    display: flex;
+    flex-direction: column;
+    align-self: stretch;
+    min-block-size: 0;
+  }
+  .image-copy-body:has(.excel-image-options) .image-copy-preview-tools {
+    flex: none;
+  }
+  .image-copy-body:has(.excel-image-options) .copy-preview-interactive {
+    flex: 1 1 auto;
+    max-block-size: none;
+  }
 }
 @media (max-width: 700px) {
   .image-copy-dialog {

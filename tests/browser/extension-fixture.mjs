@@ -26,6 +26,7 @@ async function startFixtureServer() {
       [
         '/src/database.js',
         '/src/packing-model.js',
+        '/src/packing-grouping.js',
         '/src/packing-backup.js',
         '/src/product-vocabulary.js',
         '/src/material-vocabulary.js',
@@ -65,7 +66,11 @@ async function startFixtureServer() {
       await once(server, 'listening')
       break
     } catch (error) {
-      if (error.code !== 'EADDRINUSE' || attempt === 9) throw error
+      // Windows also rejects excluded ports in the dynamic range with EACCES.
+      const unavailable =
+        error.code === 'EADDRINUSE' ||
+        (process.platform === 'win32' && error.code === 'EACCES')
+      if (!unavailable || attempt === 9) throw error
     }
   }
   const origin = `http://127.0.0.1:${server.address().port}`

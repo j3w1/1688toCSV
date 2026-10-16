@@ -109,6 +109,9 @@ async function openSharedProductDetails(extension) {
   await products.nth(1).focus()
   await page.keyboard.press('Control+Space')
   await page.locator('#prepare-orders').click()
+  await page
+    .getByRole('button', { name: 'Assign codes and prepare', exact: true })
+    .click()
   const view = page.locator('#packing-view')
   await expect(view.locator('tr[data-variant-id]')).toHaveCount(2)
   await view
@@ -181,6 +184,9 @@ test('product tags autosave, filter products and stay out of packing', async ({
   )
   await first.locator('.row-number').click()
   await page.locator('#prepare-orders').click()
+  await page
+    .getByRole('button', { name: 'Assign codes and prepare', exact: true })
+    .click()
   await expect(page.locator('#packing-view')).toBeVisible()
   await expect(page.locator('#packing-view .product-row-tags')).toHaveCount(0)
   await expect(page.locator('#packing-view')).not.toContainText(

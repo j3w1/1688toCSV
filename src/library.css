@@ -531,7 +531,7 @@ h2 {
 }
 .order-card {
   position: relative;
-  padding: 10px 12px;
+  padding: 8px 10px;
   border-top: 1px solid var(--divider);
   cursor: pointer;
 }
@@ -548,7 +548,7 @@ h2 {
 .order-card::after {
   content: '\2713';
   position: absolute;
-  inset-block-start: 11px;
+  inset-block-start: 8px;
   inset-inline-end: 10px;
   color: var(--text);
   visibility: hidden;
@@ -557,8 +557,10 @@ h2 {
   visibility: visible;
 }
 .order-summary {
-  font-size: 13px;
-  line-height: 1.45;
+  display: grid;
+  gap: 3px;
+  font-size: 12.5px;
+  line-height: 1.35;
   min-width: 0;
   overflow-wrap: anywhere;
 }
@@ -587,8 +589,19 @@ h2 {
   display: flex;
   align-items: center;
   flex-wrap: wrap;
-  gap: 4px;
-  margin-top: 5px;
+  gap: 3px 4px;
+}
+.order-card-meta > .order-card-tags {
+  display: contents;
+}
+.order-card-reference {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) max-content;
+  align-items: center;
+  gap: 5px;
+  min-inline-size: 0;
+  color: var(--muted);
+  font-size: 11px;
 }
 .order-card-meta .purchase-date,
 .order-card-meta .order-status {
@@ -598,7 +611,9 @@ h2 {
   font-variant-numeric: tabular-nums;
 }
 .order-products {
-  font-size: 10px;
+  font-size: 10.5px;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
   color: var(--muted);
 }
 .pane-footer {
@@ -2017,7 +2032,7 @@ main > .stats {
 }
 .orders-pane #order-list {
   max-height: max(270px, calc(100dvh - 340px));
-  scrollbar-gutter: stable;
+  scrollbar-width: thin;
 }
 .topbar .theme-toggle {
   font-size: 20px;
@@ -2094,6 +2109,12 @@ button.copyable-text:hover {
   white-space: nowrap;
   pointer-events: none;
 }
+.copy-text-feedback .ui-icon {
+  inline-size: 12px;
+  block-size: 12px;
+  margin-inline-end: 4px;
+  vertical-align: -2px;
+}
 .copy-text-feedback.copy-text-error {
   color: var(--danger-text);
   background: var(--danger);
@@ -2134,12 +2155,6 @@ button.copyable-text:hover {
   color: var(--muted);
   font-size: 10px;
   font-weight: 500;
-}
-.order-summary > .order-reference-pair {
-  display: flex;
-  margin-block-start: 3px;
-  color: var(--muted);
-  font-size: 11px;
 }
 .order-reference-pair {
   display: inline-flex;

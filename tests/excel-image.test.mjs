@@ -6,6 +6,8 @@ import {
   planExcelImage as planExcelImageBase,
   renderExcelImage as renderExcelImageBase,
 } from '../src/excel-image.js'
+import { createExcelImageBadges } from '../src/excel-image-badges.js'
+import { orderTagColors } from '../src/order-tags.js'
 
 const excelImageColumns = allExcelImageColumns
   .filter((column) => !column.supplier)
@@ -61,6 +63,7 @@ async function withCanvas(
     text: [],
     draws: [],
     paths: [],
+    strokes: [],
     fills: [],
     encoded: 0,
     peakLiveBytes: 0,
@@ -93,6 +96,13 @@ async function withCanvas(
         },
         beginPath() {
           this.path = []
+          this.rounded = null
+        },
+        roundRect(x, y, width, height, radius) {
+          this.rounded = { x, y, width, height, radius }
+        },
+        fill() {
+          state.fills.push({ ...this.rounded, color: this.fillStyle })
         },
         moveTo(x, y) {
           this.path.push(['move', x, y])
@@ -102,6 +112,7 @@ async function withCanvas(
         },
         stroke() {
           state.paths.push(this.path)
+          state.strokes.push({ width: this.lineWidth, color: this.strokeStyle })
         },
         strokeRect() {},
       }
@@ -151,6 +162,314 @@ async function withCanvas(
 
 const cell = (entry, key) =>
   entry.cells[excelImageColumns.findIndex((column) => column.key === key)]
+
+for (const mode of ['light', 'dark'])
+  test(`Excel image badges preserve assigned colors, rounded shapes and wrapped text in ${mode} mode`, async () =>
+    withCanvas(async (state) => {
+      const longTag =
+        'Inspect each glass product carefully and keep every word of this long tag visible '
+          .repeat(3)
+          .trim()
+      const preferences = {
+        appearance: {
+          labelColors: {
+            dates: { light: '#efe0c4', dark: '#40301c' },
+            completed: { light: '#dceac0', dark: '#243516' },
+          },
+          labelTextColors: {
+            dates: { light: '#3a2710', dark: '#f5d8ad' },
+            completed: { light: '#31441a', dark: '#d8edb8' },
+          },
+        },
+        orderTags: [
+          {
+            name: 'Shared',
+            colors: { light: '#f4e2cc', dark: '#442412' },
+            textColors: { light: '#4a2610', dark: '#ffd9b2' },
+          },
+        ],
+        productTags: [
+          {
+            name: 'Shared',
+            colors: { light: '#d6f0da', dark: '#143b24' },
+            textColors: { light: '#16451d', dark: '#b4f3c1' },
+          },
+          {
+            name: longTag,
+            colors: { light: '#eedcec', dark: '#40203e' },
+            textColors: { light: '#4d2348', dark: '#f4b9e9' },
+          },
+        ],
+      }
+      const input = {
+        ...row,
+        sellerName: 'Synthetic badge supplier',
+        orderDate: '2026-10-15T23:30:00+08:00',
+        orderStatus: '交易成功',
+        orderTags: ['Shared', longTag, 'constructor'],
+        productTags: ['Shared', longTag],
+      }
+      const [plan] = planExcelImage([input], {
+        columns: ['description'],
+        language: 'en',
+        badges: createExcelImageBadges(preferences, mode),
+        details: {
+          seller: false,
+          orderNumber: false,
+          date: true,
+          status: true,
+          orderTags: true,
+          productTags: true,
+          title: false,
+          specifications: false,
+          model: false,
+        },
+      })
+      const orderLayout = plan.rows[0].band.tags
+      const productLayout = plan.rows[0].cells[0].tags
+      const orderBadges = orderLayout.rows.flat()
+      const productBadges = productLayout.rows.flat()
+      const pairs = [
+        [
+          orderBadges.find(({ name }) => name === 'Shared'),
+          preferences.orderTags[0],
+        ],
+        [
+          productBadges.find(({ name }) => name === 'Shared'),
+          preferences.productTags[0],
+        ],
+        [
+          productBadges.find(({ name }) => name === longTag),
+          preferences.productTags[1],
+        ],
+      ]
+      for (const [badge, definition] of pairs) {
+        assert.equal(badge.background, definition.colors[mode])
+        assert.equal(badge.foreground, definition.textColors[mode])
+      }
+      for (const [name, key] of [
+        ['15 Oct 2026', 'dates'],
+        ['Completed', 'completed'],
+      ]) {
+        const badge = orderBadges.find((entry) => entry.name === name)
+        assert.equal(
+          badge.background,
+          preferences.appearance.labelColors[key][mode]
+        )
+        assert.equal(
+          badge.foreground,
+          preferences.appearance.labelTextColors[key][mode]
+        )
+        assert.equal(badge.radius, 5)
+      }
+      for (const name of [longTag, 'constructor']) {
+        const badge = orderBadges.find((entry) => entry.name === name)
+        const fallback = orderTagColors({ name })
+        assert.equal(badge.background, fallback[mode])
+        assert.equal(badge.foreground, fallback[`${mode}Text`])
+      }
+      for (const [layout, width] of [
+        [orderLayout, plan.cssWidth - 20],
+        [productLayout, plan.columns[0].width - 20],
+      ]) {
+        assert.ok(
+          layout.rows.flat().find(({ name }) => name === longTag).lines.length >
+            1
+        )
+        for (const badges of layout.rows) {
+          assert.ok(
+            badges.reduce((sum, badge) => sum + badge.width, 0) +
+              (badges.length - 1) * 6 <=
+              width
+          )
+          for (const badge of badges) {
+            assert.equal(
+              badge.lines.join('').replace(/\s/g, ''),
+              badge.name.replace(/\s/g, '')
+            )
+            assert.ok(
+              badge.lines.every((line) => measure(line) <= badge.width - 12)
+            )
+          }
+        }
+      }
+      // Later settings and row edits cannot recolor or replace an already planned batch.
+      preferences.orderTags[0].colors[mode] = '#ffffff'
+      input.productTags.push('Later tag')
+      await renderExcelImage(plan)
+      const rounded = state.fills.filter(({ radius }) => radius)
+      assert.equal(rounded.length, orderBadges.length + productBadges.length)
+      for (const badge of [...orderBadges, ...productBadges]) {
+        const fill = rounded.find((entry) => entry.color === badge.background)
+        assert.ok(fill, `Missing rounded ${badge.name} background`)
+        assert.equal(fill.radius, badge.radius)
+        assert.equal(fill.width, badge.width)
+        assert.equal(fill.height, badge.height)
+        const drawnLines = state.text.filter(
+          (entry) =>
+            entry.color === badge.foreground &&
+            entry.x >= fill.x &&
+            entry.x < fill.x + fill.width &&
+            entry.y > fill.y &&
+            entry.y < fill.y + fill.height
+        )
+        assert.deepEqual(
+          drawnLines.map(({ text }) => text),
+          badge.lines
+        )
+        for (const draw of drawnLines)
+          assert.ok(draw.x + measure(draw.text) <= fill.x + fill.width - 6)
+      }
+      assert.equal(
+        state.text.some(({ text }) => text === 'Later tag'),
+        false
+      )
+      assert.deepEqual(
+        state.text
+          .filter(({ text }) => text === 'Shared')
+          .map(({ color }) => color)
+          .sort(),
+        [
+          mode === 'light' ? '#4a2610' : '#ffd9b2',
+          mode === 'light' ? '#16451d' : '#b4f3c1',
+        ].sort()
+      )
+    }))
+
+test('image details independently show tags and source fields without changing copied source values', async () =>
+  withCanvas(async (state) => {
+    const input = {
+      ...row,
+      sellerName: 'Synthetic supplier',
+      orderId: '5127523670009019539',
+      orderDate: '2026-10-15T23:30:00+08:00',
+      orderStatus: '交易成功',
+      title: '合成花瓶',
+      description: '合成花瓶\n颜色：金色\n货号：MODEL-42',
+      skuProperties: [{ label: '颜色', value: '金色' }],
+      productNumber: 'MODEL-42',
+      productTags: [
+        'Fragile',
+        'A long product tag that must wrap without losing words',
+      ],
+      orderTags: ['Shipment A', 'Verified'],
+    }
+    const before = structuredClone(input)
+    const options = {
+      columns: ['description', 'quantity'],
+      style: { scheme: 'custom', accent: '#ffffff' },
+      details: {
+        seller: false,
+        orderNumber: false,
+        date: true,
+        status: true,
+        orderTags: true,
+        productTags: true,
+        title: false,
+        specifications: false,
+        model: true,
+      },
+    }
+    const [plan] = planExcelImage([input], options)
+    assert.deepEqual(input, before)
+    const description = plan.rows[0].cells[0]
+    assert.equal(description.text, '货号：MODEL-42')
+    assert.ok(description.tags.height > 0)
+    assert.ok(plan.rows[0].band.tags.height > 0)
+    assert.equal(plan.rows[0].source.title, input.title)
+    assert.equal(plan.rows[0].source.description, input.description)
+    assert.deepEqual(plan.rows[0].source.productTags, input.productTags)
+    assert.equal(Object.isFrozen(plan.rows[0].source.productTags), true)
+    input.productTags.push('A later edit')
+    await renderExcelImage(plan)
+    const text = state.text.map(({ text }) => text).join(' ')
+    for (const value of [
+      'MODEL-42',
+      'Fragile',
+      'Shipment A',
+      'Verified',
+      '2026年10月15日',
+      '交易成功',
+    ])
+      assert.ok(text.includes(value), value)
+    for (const value of [
+      '合成花瓶',
+      '金色',
+      input.sellerName,
+      input.orderId,
+      'A later edit',
+    ])
+      assert.equal(text.includes(value), false, value)
+    assert.ok(
+      state.text
+        .filter(({ font }) => font.startsWith('700 14px'))
+        .some(({ color }) => color === '#000000')
+    )
+    assert.ok(state.strokes.every(({ width }) => width <= 1.25))
+
+    const [hidden] = planExcelImage([before], {
+      ...options,
+      showOrderDetails: false,
+    })
+    assert.equal(hidden.rows[0].band, null)
+    assert.deepEqual(hidden.rows[0].cells[0].tags, description.tags)
+    assert.deepEqual(hidden.rows[0].source.orderTags, before.orderTags)
+  }))
+
+test('description toggles suppress complete sections, preserving model-only and title-only outputs', async () =>
+  withCanvas(() => {
+    const input = {
+      ...row,
+      title: 'Original title',
+      description:
+        'Original title\n颜色：红色\n型号：A123\nUnlabelled specification',
+      productNumber: 'SKU-9',
+      sourceSize: '300 ml',
+      productTags: ['Saved annotation'],
+    }
+    const [titleOnly] = planExcelImage([input], {
+      columns: ['description'],
+      details: { specifications: false, model: false },
+    })
+    assert.equal(titleOnly.rows[0].cells[0].text, 'Original title')
+    const [modelOnly] = planExcelImage([input], {
+      columns: ['description'],
+      details: { title: false, specifications: false },
+    })
+    assert.equal(modelOnly.rows[0].cells[0].text, '型号：A123\n货号：SKU-9')
+    const [empty] = planExcelImage([input], {
+      columns: ['description'],
+      details: { title: false, specifications: false, model: false },
+    })
+    assert.equal(empty.rows[0].cells[0].text, '')
+    assert.equal(empty.rows[0].cells[0].height, 0)
+    assert.equal(empty.rows[0].source.sourceSize, '300 ml')
+  }))
+
+test('hidden description sections cannot suppress selected article numbers or measurements', async () =>
+  withCanvas(() => {
+    const input = {
+      ...row,
+      title: 'A123 glass jar 300 ml',
+      description: 'A123 glass jar 300 ml',
+      productNumber: 'A123',
+      sourceSize: '300 ml',
+      variantDescription: '',
+      skuProperties: [],
+    }
+    const original = structuredClone(input)
+    const [article] = planExcelImage([input], {
+      columns: ['description'],
+      details: { title: false, specifications: false, model: true },
+    })
+    assert.equal(article.rows[0].cells[0].text, '货号：A123')
+    const [specifications] = planExcelImage([input], {
+      columns: ['description'],
+      details: { title: false, specifications: true, model: false },
+    })
+    assert.equal(specifications.rows[0].cells[0].text, '尺寸：300 ml')
+    assert.deepEqual(input, original)
+  }))
 
 test('Excel image errors identify the original product and field that needs attention', async () =>
   withCanvas(async () => {
@@ -333,7 +652,9 @@ test('hidden order details never reach the raster while compact bands retain sto
         assert.equal(text.includes(value), false, `Leaked identity: ${value}`)
     assert.deepEqual(
       state.fills
-        .filter(({ color }) => ['#f0dfc5', '#eeebe5'].includes(color))
+        .filter(({ color }) =>
+          [hidden.palette.store, hidden.palette.order].includes(color)
+        )
         .map(({ x, width, height }) => [x, width, height]),
       [
         [1, hidden.cssWidth - 2, 6],

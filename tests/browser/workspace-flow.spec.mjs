@@ -154,6 +154,9 @@ for (const width of [1440, 390]) {
       .first()
       .click()
     await page.locator('#prepare-orders').click()
+    await page
+      .getByRole('button', { name: 'Assign codes and prepare', exact: true })
+      .click()
     const view = page.locator('#packing-view')
     await expect(view).toBeVisible()
     await expect(view.locator('.preparation-save-status')).toHaveText(

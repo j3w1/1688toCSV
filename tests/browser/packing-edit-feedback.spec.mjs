@@ -68,6 +68,68 @@ async function backup(extension) {
   return response.data
 }
 
+test('a product can reuse its first code after a saved code change and a workspace reload', async ({
+  extension,
+}) => {
+  const { page, view } = await openPacking(extension)
+  const initial = await backup(extension)
+  const first = initial.preparations[0].groups[0]
+  const group = view.locator(`[data-group-id="${first.id}"]`)
+  const code = group.getByLabel('Product code', { exact: true })
+  const variantIds = first.variants.map((variant) => variant.id)
+  const alternate = 'CE26100109'
+  // 0102 already belongs to the second fixture product; use a free code so
+  // this exercises same-product reuse, rather than stealing another's code.
+  for (const value of [alternate, first.baseCode]) {
+    await code.fill(value)
+    await expect
+      .poll(
+        async () => (await backup(extension)).preparations[0].groups[0].baseCode
+      )
+      .toBe(value)
+    await expect(code).not.toHaveAttribute('aria-invalid', 'true')
+    await expect(view.locator('.preparation-save-status')).toHaveText(
+      'Saved automatically'
+    )
+  }
+  await page.reload()
+  await page
+    .getByRole('button', { name: 'Prepare packing list', exact: true })
+    .click()
+  await expect(group).toBeVisible()
+  for (const value of [alternate, first.baseCode]) {
+    await code.fill(value)
+    await expect
+      .poll(
+        async () => (await backup(extension)).preparations[0].groups[0].baseCode
+      )
+      .toBe(value)
+    await expect(code).not.toHaveAttribute('aria-invalid', 'true')
+    await expect(view.locator('.preparation-save-status')).toHaveText(
+      'Saved automatically'
+    )
+  }
+  const final = await backup(extension)
+  expect(final.preparations[0].groups[0].id).toBe(first.id)
+  expect(
+    final.preparations[0].groups[0].variants.map((variant) => variant.id)
+  ).toEqual(variantIds)
+  expect(final.issuedCodes).toEqual(expect.arrayContaining(initial.issuedCodes))
+  expect(final.orders).toEqual(initial.orders)
+  for (const base of [first.baseCode, alternate]) {
+    for (const variant of first.variants) {
+      expect(final.issuedCodes).toContainEqual(
+        expect.objectContaining({
+          kind: 'barcode',
+          code: `${base}${variant.variantSuffix}${variant.sizeSuffix}`,
+          groupId: first.id,
+          variantId: variant.id,
+        })
+      )
+    }
+  }
+})
+
 test('packing backup uses selected products and restore reopens only that scope without recoding', async ({
   extension,
 }) => {
@@ -271,6 +333,7 @@ test('an unresolved size elsewhere does not block resolving a newly mapped varia
 test('conflicting barcode previews disappear immediately and a delayed render cannot restore them', async ({
   extension,
 }) => {
+  test.setTimeout(60_000)
   const { page, view } = await openPacking(extension)
   await page.setViewportSize({ width: 1600, height: 1800 })
   const groups = view.locator('.preparation-group')
@@ -391,7 +454,10 @@ test('conflicting barcode previews disappear immediately and a delayed render ca
     .click()
   await expect(resolver).toBeHidden()
   for (const preview of [firstPreview, secondPreview])
-    await expect(preview).toHaveAttribute('data-preview-state', 'ready')
+    // Recovery re-encodes the real PNGs through the same serialized queue.
+    await expect(preview).toHaveAttribute('data-preview-state', 'ready', {
+      timeout: 20_000,
+    })
   await expect(firstSize).not.toHaveAttribute('aria-invalid', 'true')
   await expect(secondSize).not.toHaveAttribute('aria-invalid', 'true')
   const saved = (await backup(extension)).preparations[0].groups[0]
@@ -440,4 +506,139 @@ test('reverting to a saved barcode before rerender does not leave its preview ch
   expect(after.preparations).toEqual(before.preparations)
   expect(after.issuedCodes).toEqual(before.issuedCodes)
   expect(after.orders).toEqual(before.orders)
+})
+
+test('conflict popup restores only code edits and preserves other pending fields', async ({
+  extension,
+}) => {
+  const { page, view } = await openPacking(extension)
+  const original = await backup(extension)
+  const groups = view.locator('.preparation-group')
+  const first = groups.first()
+  await first
+    .getByLabel('Spanish short name', { exact: true })
+    .fill('NOMBRE CONSERVADO')
+  await first.getByLabel('Chinese category', { exact: true }).fill('保留分类')
+  await first
+    .getByLabel('Product code', { exact: true })
+    .fill(original.preparations[0].groups[1].baseCode)
+  await expect(
+    first.getByLabel('Product code', { exact: true })
+  ).toHaveAttribute('aria-invalid', 'true')
+  await first
+    .locator('.product-summary')
+    .getByRole('button', { name: 'Resolve code', exact: true })
+    .click()
+  const resolver = page.getByRole('dialog', {
+    name: 'Resolve code conflict',
+    exact: true,
+  })
+  await expect(
+    resolver.getByLabel('Product code', { exact: true })
+  ).toBeVisible()
+  await resolver
+    .getByRole('button', { name: 'Undo code edits', exact: true })
+    .click()
+  await expect(resolver).toBeHidden()
+  const after = await backup(extension)
+  expect(after.preparations[0].groups[0].baseCode).toBe(
+    original.preparations[0].groups[0].baseCode
+  )
+  expect(after.preparations[0].groups[0].spanishName).toBe('NOMBRE CONSERVADO')
+  expect(after.preparations[0].groups[0].category).toBe('保留分类')
+  expect(after.issuedCodes).toEqual(original.issuedCodes)
+  expect(after.orders).toEqual(original.orders)
+})
+
+test('conflict popup edits remain local until applied and can return to a previous owned code', async ({
+  extension,
+}) => {
+  const { page, view } = await openPacking(extension)
+  const original = await backup(extension)
+  const groups = view.locator('.preparation-group')
+  const first = groups.first()
+  const base = original.preparations[0].groups[0].baseCode
+  const other = original.preparations[0].groups[1].baseCode
+  await first.getByLabel('Product code', { exact: true }).fill('CE26100109')
+  await expect
+    .poll(
+      async () => (await backup(extension)).preparations[0].groups[0].baseCode
+    )
+    .toBe('CE26100109')
+  const saved = await backup(extension)
+  await first.getByLabel('Product code', { exact: true }).fill(other)
+  await expect(
+    first.getByLabel('Product code', { exact: true })
+  ).toHaveAttribute('aria-invalid', 'true')
+  await first
+    .locator('.product-summary')
+    .getByRole('button', { name: 'Resolve code', exact: true })
+    .click()
+  const resolver = page.getByRole('dialog', {
+    name: 'Resolve code conflict',
+    exact: true,
+  })
+  await resolver.getByLabel('Product code', { exact: true }).fill('CE26100108')
+  expect((await backup(extension)).preparations).toEqual(saved.preparations)
+  await resolver.getByLabel('Product code', { exact: true }).fill(other)
+  await resolver
+    .getByRole('button', { name: 'Apply corrections', exact: true })
+    .click()
+  await expect(resolver).toBeVisible()
+  await expect(resolver.locator('.conflict-editor-status')).toContainText(
+    /already reserved|another product/
+  )
+  await expect(
+    resolver.getByLabel('Product code', { exact: true })
+  ).toBeFocused()
+  expect((await backup(extension)).preparations).toEqual(saved.preparations)
+  await resolver
+    .getByLabel('Previously used by this product', { exact: true })
+    .selectOption(base)
+  await expect(
+    resolver.getByLabel('Product code', { exact: true })
+  ).toHaveValue(base)
+  await resolver
+    .getByRole('button', { name: 'Apply corrections', exact: true })
+    .click()
+  await expect(resolver).toBeHidden()
+  const after = await backup(extension)
+  expect(after.preparations[0].groups[0].baseCode).toBe(base)
+  expect(after.issuedCodes).toEqual(saved.issuedCodes)
+  expect(after.orders).toEqual(original.orders)
+})
+
+test('variant conflicts can be corrected inside the resolver without changing the product base', async ({
+  extension,
+}) => {
+  const { page, view } = await openPacking(extension)
+  const original = await backup(extension)
+  const group = original.preparations[0].groups[0]
+  const row = view
+    .locator('.preparation-group')
+    .first()
+    .locator('.variants tbody tr')
+    .first()
+  const [variant, owner] = group.variants
+  await row
+    .getByLabel(`Variant code ${variant.id}`, { exact: true })
+    .fill(owner.variantSuffix)
+  await expect(
+    row.getByLabel(`Variant code ${variant.id}`, { exact: true })
+  ).toHaveAttribute('aria-invalid', 'true')
+  await row.getByRole('button', { name: 'Resolve code', exact: true }).click()
+  const resolver = page.getByRole('dialog', {
+    name: 'Resolve code conflict',
+    exact: true,
+  })
+  await resolver
+    .getByLabel('Variant code', { exact: true })
+    .fill(variant.variantSuffix)
+  await resolver
+    .getByRole('button', { name: 'Apply corrections', exact: true })
+    .click()
+  await expect(resolver).toBeHidden()
+  const after = await backup(extension)
+  expect(after.preparations[0].groups[0]).toEqual(group)
+  expect(after.issuedCodes).toEqual(original.issuedCodes)
 })

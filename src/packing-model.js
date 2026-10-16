@@ -1293,6 +1293,111 @@ function sameOwner(a, b) {
   ].every((field) => a[field] === b[field])
 }
 
+/** Read-only evidence for old reservations whose group was later split or merged. */
+export function codeOwnerEvidence(reservation, preparation, issuedCodes = []) {
+  if (
+    !preparation ||
+    preparation.accountId !== reservation.accountId ||
+    preparation.orderId !== reservation.orderId
+  )
+    return {}
+  const views = [
+    preparation,
+    preparation.defaultPacking,
+    preparation.previousPacking,
+    preparation.previousPacking?.defaults,
+  ]
+    .filter((view) => view?.sellerId === reservation.sellerId)
+    .map((view) => ({
+      current: view === preparation,
+      groups: view.groups.filter(
+        (group) => groupPackingMonth(view, group) === reservation.month
+      ),
+    }))
+  const currentGroups = views.find((view) => view.current)?.groups || []
+  const group = currentGroups.find((entry) => entry.id === reservation.groupId)
+  const variant = group?.variants.find(
+    (entry) => entry.id === reservation.variantId
+  )
+  const exactEvidenceGroup = views
+    .flatMap((view) => view.groups)
+    .find(
+      (entry) =>
+        entry.id === reservation.groupId &&
+        (reservation.kind === 'base' ||
+          entry.variants.some((item) => item.id === reservation.variantId))
+    )
+  const variantIds = new Set(
+    reservation.kind === 'barcode'
+      ? [reservation.variantId]
+      : issuedCodes
+          .filter(
+            (entry) =>
+              entry.kind === 'barcode' &&
+              sameOwner(reservation, {
+                ...entry,
+                kind: 'base',
+                variantId: undefined,
+              }) &&
+              entry.code.slice(0, 10) === reservation.code
+          )
+          .map((entry) => entry.variantId)
+  )
+  const findVariants = (groups) =>
+    groups.flatMap((entry) =>
+      entry.variants
+        .filter((item) => variantIds.has(item.id))
+        .map((item) => ({ group: entry, variant: item }))
+    )
+  const currentMatches = findVariants(currentGroups)
+  const evidence = new Map()
+  for (const view of views)
+    for (const match of findVariants(view.groups))
+      if (!evidence.has(match.variant.id)) evidence.set(match.variant.id, match)
+  const matches = [...evidence.values()]
+  const singleGroup = (items) =>
+    items.length && new Set(items.map((entry) => entry.group.id)).size === 1
+      ? items[0].group
+      : undefined
+  const recoveredCurrentGroup =
+    currentMatches.length === variantIds.size
+      ? singleGroup(currentMatches)
+      : undefined
+  const currentGroup =
+    reservation.kind === 'base'
+      ? group || recoveredCurrentGroup
+      : variant
+        ? group
+        : recoveredCurrentGroup
+  const evidenceGroup = exactEvidenceGroup || singleGroup(matches)
+  const evidenceVariant =
+    reservation.kind === 'barcode'
+      ? evidenceGroup?.variants.find(
+          (entry) => entry.id === reservation.variantId
+        )
+      : undefined
+  return {
+    group,
+    variant,
+    evidenceGroup,
+    evidenceVariant,
+    currentGroup,
+    currentVariant:
+      reservation.kind === 'barcode' ? currentMatches[0]?.variant : undefined,
+    recovered: !exactEvidenceGroup && matches.length > 0,
+    entryIds: [
+      ...new Set(
+        exactEvidenceGroup
+          ? (evidenceVariant
+              ? [evidenceVariant]
+              : exactEvidenceGroup.variants
+            ).flatMap((entry) => entry.entryIds)
+          : matches.flatMap((entry) => entry.variant.entryIds)
+      ),
+    ],
+  }
+}
+
 export function mergePackingState(allocations, issuedCodes) {
   const months = new Map()
   for (const input of allocations) {

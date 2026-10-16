@@ -1076,30 +1076,33 @@ export async function startLibrary(
         identity.append(names)
       }
       summary.append(identity)
-      summary.append(
+      const reference = node('div', undefined, 'order-card-reference')
+      reference.append(
         orderReference(order.orderId, {
           className: 'order-reference',
-        })
-      )
-      const meta = node('span', undefined, 'order-card-meta')
-      meta.append(statusBadge(order.status), dateBadge(order))
-      const badge = revisionBadge(record.revision > 1)
-      meta.append(
-        badge,
+        }),
         node(
           'span',
-          uiMessage('{0} products', { 0: order.items.length }),
+          uiMessage(order.items.length === 1 ? '{0} product' : '{0} products', {
+            0: () => order.items.length.toLocaleString(getLocale()),
+          }),
           'order-products'
         )
       )
-      summary.append(meta)
+      const meta = node('div', undefined, 'order-card-meta')
+      meta.append(
+        statusBadge(order.status),
+        dateBadge(order),
+        revisionBadge(record.revision > 1)
+      )
       if (record.tags.length) {
         const tags = node('div', undefined, 'order-card-tags')
         tags.append(
           ...record.tags.map((name) => orderTagBadge(name, orderTagDefinitions))
         )
-        summary.append(tags)
+        meta.append(tags)
       }
+      summary.append(reference, meta)
       card.append(summary)
       orderSelection.bind(card, order.orderId)
       list.append(card)
@@ -1990,11 +1993,13 @@ export async function startLibrary(
       if (copyBusy) return false
       const rows = packing.preparedRows(copyRows())
       if (!rows.length) return false
+      const badges = packing.getImageBadges()
       copyBusy = true
       updateSelection()
       const abort = new AbortController()
       try {
         return await copyExcelImage(rows, {
+          badges,
           renderCartonMark: packing.createCartonMarkRenderer(),
           loadImage: async (url) => {
             const image = await send('IMAGE_GET', { url })

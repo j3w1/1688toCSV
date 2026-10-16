@@ -2,6 +2,10 @@ import { excelImageColumns } from './excel-image.js'
 import { element } from './ui.js'
 import { preparationHelp } from './preparation-help.js'
 import { bindText, bindAttribute, message, getLanguage } from './i18n.js'
+import {
+  EXCEL_IMAGE_SCHEMES,
+  normalizeExcelImageDisplay,
+} from './excel-image-style.js'
 
 export const EXCEL_IMAGE_PREFERENCE = '1688-excel-image-columns'
 const keys = excelImageColumns.map(({ key }) => key)
@@ -19,7 +23,7 @@ export function normalizeExcelImagePreference(value) {
   return {
     order,
     selected,
-    showOrderDetails: value?.showOrderDetails !== false,
+    ...normalizeExcelImageDisplay(value),
   }
 }
 
@@ -60,7 +64,7 @@ export function selectedExcelImageColumns(
 
 const columnLabel = (column) => column.labels?.[getLanguage()] || column.label
 
-export function createExcelImageOptions(onChange) {
+export function createExcelImageOptions(onChange, { rows = [] } = {}) {
   const fieldset = element('fieldset', undefined, 'excel-image-options')
   const identity = element('label', undefined, 'excel-order-details-toggle')
   const showOrderDetails = element('input')
@@ -72,7 +76,7 @@ export function createExcelImageOptions(onChange) {
   preparationHelp(
     identity,
     message(
-      'Include store names and full order numbers in the image. Turning this off keeps order separators. Remembered for Orders and Prepare packing.'
+      'Include the selected order details in the image. Turning this off hides store names, order numbers, dates, status and order tags, while keeping order separators.'
     )
   )
   const details = element('details')
@@ -96,6 +100,120 @@ export function createExcelImageOptions(onChange) {
   let preference = readExcelImagePreference()
   let dragged = null
   let saved = true
+  const styleDetails = element('details', undefined, 'excel-style-details')
+  styleDetails.append(element('summary', message('Style & details')))
+  const stylePanel = element('div', undefined, 'excel-style-panel')
+  const paletteLabel = element('label', undefined, 'excel-palette-field')
+  const palette = element('select')
+  bindAttribute(palette, 'aria-label', message('Image color scheme'))
+  for (const scheme of EXCEL_IMAGE_SCHEMES) {
+    const option = element('option', message(scheme.label))
+    option.value = scheme.id
+    palette.append(option)
+  }
+  paletteLabel.append(element('span', message('Color scheme')), palette)
+  const accentLabel = element('label', undefined, 'excel-accent-field')
+  const accent = element('input')
+  accent.type = 'color'
+  bindAttribute(accent, 'aria-label', message('Custom image accent'))
+  accentLabel.append(element('span', message('Accent')), accent)
+  preparationHelp(
+    accentLabel,
+    message('Choose a header color. Text contrast is adjusted automatically.')
+  )
+  const colors = element('div', undefined, 'excel-image-colors')
+  colors.append(paletteLabel, accentLabel)
+  stylePanel.append(colors)
+  palette.onchange = () => {
+    preference.style.scheme = palette.value
+    if (palette.value !== 'custom')
+      preference.style.accent = EXCEL_IMAGE_SCHEMES.find(
+        (entry) => entry.id === palette.value
+      ).accent
+    persist()
+  }
+  accent.oninput = () => {
+    preference.style = { scheme: 'custom', accent: accent.value }
+    persist()
+  }
+  const available = {
+    seller: rows.some((row) => row.sellerName || row.sellerMemberLogin),
+    orderNumber: rows.some((row) => row.orderId),
+    date: rows.some((row) => row.orderDate),
+    status: rows.some((row) => row.orderStatus),
+    orderTags: rows.some((row) => row.orderTags?.length),
+    title: rows.some((row) => row.title || row.description),
+    specifications: rows.some(
+      (row) =>
+        row.description ||
+        row.skuProperties?.length ||
+        row.variantDescription ||
+        row.sourceSize
+    ),
+    model: rows.some((row) => row.productNumber || row.description),
+    productTags: rows.some((row) => row.productTags?.length),
+  }
+  const toggles = []
+  for (const [heading, fields] of [
+    [
+      'Order heading',
+      [
+        ['seller', 'Store name'],
+        ['orderNumber', 'Order number'],
+        ['date', 'Purchase date'],
+        ['status', 'Order status'],
+        ['orderTags', 'Order tags'],
+      ],
+    ],
+    [
+      'Product description',
+      [
+        ['title', 'Original product name'],
+        ['specifications', 'Specifications'],
+        ['model', 'Article number'],
+        ['productTags', 'Product tags'],
+      ],
+    ],
+  ]) {
+    const section = element('fieldset', undefined, 'excel-detail-fields')
+    section.append(element('legend', message(heading)))
+    for (const [key, text] of fields) {
+      const label = element('label', undefined, 'excel-detail-toggle')
+      const input = element('input')
+      input.type = 'checkbox'
+      input.dataset.imageDetail = key
+      label.append(input, element('span', message(text)))
+      input.onchange = () => {
+        preference.details[key] = input.checked
+        persist()
+      }
+      const order = heading === 'Order heading'
+      const help = () => {
+        if (!available[key])
+          return message('Not available in the selected products.')
+        if (order && !preference.showOrderDetails)
+          return message('Enable store and order details first.')
+        if (!order && !preference.selected.includes('description'))
+          return message('Include the Product description column first.')
+        return message(
+          'Show this detail in the image. Source values stay unchanged.'
+        )
+      }
+      toggles.push({ input, key, order, label, help })
+      section.append(label)
+    }
+    stylePanel.append(section)
+  }
+  const resetStyle = element('button', message('Reset style & details'))
+  resetStyle.type = 'button'
+  resetStyle.onclick = () => {
+    preference = { ...preference, ...normalizeExcelImageDisplay() }
+    persist()
+  }
+  const styleFooter = element('div', undefined, 'excel-options-footer')
+  styleFooter.append(resetStyle)
+  stylePanel.append(styleFooter)
+  styleDetails.append(stylePanel)
   showOrderDetails.onchange = () => {
     preference.showOrderDetails = showOrderDetails.checked
     persist()
@@ -115,6 +233,17 @@ export function createExcelImageOptions(onChange) {
   }
   function render() {
     showOrderDetails.checked = preference.showOrderDetails
+    palette.value = preference.style.scheme
+    accent.value = preference.style.accent
+    for (const { input, key, order, label, help } of toggles) {
+      input.checked = preference.details[key]
+      input.disabled =
+        !available[key] ||
+        (order
+          ? !preference.showOrderDetails
+          : !preference.selected.includes('description'))
+      preparationHelp(label, help)
+    }
     list.replaceChildren()
     for (const [index, key] of preference.order.entries()) {
       const column = excelImageColumns.find((entry) => entry.key === key)
@@ -231,14 +360,17 @@ export function createExcelImageOptions(onChange) {
   const footer = element('div', undefined, 'excel-options-footer')
   const reset = element('button', message('Default columns'))
   reset.onclick = () => {
-    preference = normalizeExcelImagePreference({
-      showOrderDetails: preference.showOrderDetails,
-    })
+    const defaults = normalizeExcelImagePreference()
+    preference = {
+      ...preference,
+      order: defaults.order,
+      selected: defaults.selected,
+    }
     persist()
   }
   footer.append(reset)
   details.append(help, supplier, list, status, footer)
-  fieldset.append(identity, details)
+  fieldset.append(identity, styleDetails, details)
   render()
   return fieldset
 }

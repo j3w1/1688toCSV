@@ -374,6 +374,87 @@ test('code ownership distinguishes active and historical codes and retains photo
   ).toBe(true)
 })
 
+test('legacy conflict details recover original product photos after merge and split without freeing its code', async ({
+  extension,
+}) => {
+  const page = await openTestDatabase(extension)
+  const result = await page.evaluate(async (source) => {
+    const { regroupSelection } = await import('/src/packing-grouping.js')
+    await library.saveSnapshot(source)
+    const first = await library.savePreparation(
+      packingModel.createPreparation(source, '2026-10')
+    )
+    const [merged] = await regroupSelection(
+      first.groups.map((group) => ({
+        draft: first,
+        group,
+        variants: group.variants,
+        complete: true,
+      })),
+      'merge',
+      { getReservedBarcodes: (code) => library.getReservedBarcodes(code) }
+    )
+    const combined = await library.savePreparation(merged)
+    const group = combined.groups[0]
+    const [split] = await regroupSelection(
+      [
+        {
+          draft: combined,
+          group,
+          variants: group.variants.slice(0, 2),
+          complete: true,
+        },
+      ],
+      'split',
+      { getReservedBarcodes: (code) => library.getReservedBarcodes(code) }
+    )
+    await library.savePreparation(split)
+    const legacy = await library.exportBackup()
+    for (const entry of legacy.issuedCodes) delete entry.ownerSnapshot
+    legacy.preparations[0].defaultPacking = packingModel.packingCheckpoint(
+      legacy.preparations[0]
+    )
+    const restored = await openOrderDatabase({
+      name: `${databaseName}-legacy-owner`,
+    })
+    await restored.restoreBackup(legacy)
+    const before = await restored.exportBackup()
+    const ownership = await restored.queryCodeOwnership('CE26100102')
+    const conflicting = await restored.getPreparation(source.orderId)
+    conflicting.groups[1].baseCode = 'CE26100102'
+    let conflict
+    try {
+      await restored.savePreparation(conflicting)
+    } catch (error) {
+      conflict = error.code
+    }
+    const after = await restored.exportBackup()
+    restored.close()
+    return { first, ownership, conflict, before, after }
+  }, snapshot('1001'))
+  for (const owner of result.ownership.owners) {
+    expect(owner).toMatchObject({
+      status: 'historical',
+      groupExists: false,
+      groupId: result.first.groups[1].id,
+      currentGroupId: result.first.groups[0].id,
+      currentBaseCode: 'CE26100101',
+      currentCode: 'CE26100101',
+      groupTitle: 'Bowl',
+      spanishName: '',
+      entryIds: ['3'],
+      photos: ['https://cbu01.alicdn.com/synthetic-2.png'],
+    })
+  }
+  expect(result.ownership.owners.map((owner) => owner.kind)).toEqual([
+    'base',
+    'barcode',
+  ])
+  expect(result.conflict).toBe('PACKING_CODE_CONFLICT')
+  expect(result.after.preparations).toEqual(result.before.preparations)
+  expect(result.after.issuedCodes).toEqual(result.before.issuedCodes)
+})
+
 test('default and previous packing restore codes with reserved ownership through backup round trips', async ({
   extension,
 }) => {

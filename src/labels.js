@@ -1,6 +1,6 @@
 import JsBarcode from 'jsbarcode'
 import { pngWithDpi } from './png-resolution.js'
-import { CE_CODE_DESIGN } from './code-design.js'
+import { CE_CODE_DESIGN, codeDesignMetrics } from './code-design.js'
 
 export const DEFAULT_LABEL_SETTINGS = Object.freeze({
   dpi: 300,
@@ -17,8 +17,10 @@ export const LABEL_FIELDS = Object.freeze({
     spanishName: [0.39, 0.715, 0.575, 0.23],
   }),
   mark: Object.freeze({
-    code: [0.035, 0.555, 0.93, 0.17],
-    category: [0.51, 0.755, 0.455, 0.22],
+    // The code is slightly narrower than the main artwork, with room above and
+    // below its proportional band. The footer keeps two distinct columns.
+    code: [0.035, 0.53, 0.93, 0.26],
+    category: [0.525, 0.8, 0.44, 0.19],
   }),
 })
 
@@ -215,13 +217,11 @@ function scaleBox(box, width, height) {
 export function labelCodeLayout(context, model, settings, width, height) {
   const { kind, code } = model
   const box = scaleBox(LABEL_FIELDS[kind].code, width, height)
-  const padding =
-    (width * 0.012 + settings.dpi / 300) * CE_CODE_DESIGN.horizontalPaddingScale
   const minimum = Math.ceil(height * (kind === 'mark' ? 0.11 : 0.065))
   let fontSize = Math.floor(
-    height * (kind === 'mark' ? 0.2 : 0.12) * settings[kind].textScale
+    height * (kind === 'mark' ? 0.182 : 0.12) * settings[kind].textScale
   )
-  let metrics
+  let metrics, design
   context.save()
   try {
     context.textAlign = 'left'
@@ -230,13 +230,16 @@ export function labelCodeLayout(context, model, settings, width, height) {
     for (; fontSize >= minimum; fontSize--) {
       context.font = `${CE_CODE_DESIGN.fontWeight} ${fontSize}px ${CE_CODE_DESIGN.fontFamily}`
       metrics = context.measureText(code)
+      design = codeDesignMetrics(fontSize)
       if (
         Math.max(
           metrics.width,
           metrics.actualBoundingBoxLeft + metrics.actualBoundingBoxRight
         ) <=
-          box[2] - padding * 2 &&
-        metrics.actualBoundingBoxAscent + metrics.actualBoundingBoxDescent <=
+          box[2] - design.paddingInline * 2 &&
+        metrics.actualBoundingBoxAscent +
+          metrics.actualBoundingBoxDescent +
+          design.paddingBlock * 2 <=
           box[3]
       )
         break
@@ -252,9 +255,9 @@ export function labelCodeLayout(context, model, settings, width, height) {
       metrics.actualBoundingBoxLeft + metrics.actualBoundingBoxRight
     const inkHeight =
       metrics.actualBoundingBoxAscent + metrics.actualBoundingBoxDescent
+    const padding = design.paddingInline
     const bandWidth = inkWidth + padding * 2
-    const bandHeight =
-      inkHeight + (box[3] - inkHeight) * CE_CODE_DESIGN.verticalPaddingScale
+    const bandHeight = inkHeight + design.paddingBlock * 2
     const band = [
       box[0] + (box[2] - bandWidth) / 2,
       box[1] + (box[3] - bandHeight) / 2,
@@ -265,7 +268,7 @@ export function labelCodeLayout(context, model, settings, width, height) {
       box,
       band,
       padding,
-      radius: Math.min(bandHeight * CE_CODE_DESIGN.radiusRatio, padding),
+      radius: design.radius,
       font: context.font,
       fontSize,
       advanceWidth: metrics.width,
@@ -467,32 +470,32 @@ function drawMark(context, model, settings, width, height) {
   textBox(
     context,
     'CE',
-    [width * 0.035, height * 0.015, width * 0.93, height * 0.52],
+    [width * 0.035, height * 0.01, width * 0.93, height * 0.512],
     { size: height * 0.72 * factor, fitInk: true }
   )
   drawCodeBand(context, model, settings, width, height)
   for (const [caption, unit, top] of [
-    ['数量：', '', 0.765],
-    ['重量：', 'KG', 0.835],
-    ['体积：', 'CBM', 0.905],
+    ['数量：', '', 0.805],
+    ['重量：', 'KG', 0.865],
+    ['体积：', 'CBM', 0.925],
   ]) {
     textBox(
       context,
       caption,
-      [width * 0.035, height * top, width * 0.135, height * 0.06],
+      [width * 0.045, height * top, width * 0.1, height * 0.05],
       { size: height * 0.04 * factor, align: 'left' }
     )
     context.strokeStyle = '#000'
     context.lineWidth = Math.max(1, Math.round(width / 1500))
     context.beginPath()
-    context.moveTo(width * 0.18, height * (top + 0.05))
-    context.lineTo(width * (unit ? 0.365 : 0.465), height * (top + 0.05))
+    context.moveTo(width * 0.135, height * (top + 0.044))
+    context.lineTo(width * (unit ? 0.38 : 0.475), height * (top + 0.044))
     context.stroke()
     if (unit)
       textBox(
         context,
         unit,
-        [width * 0.375, height * top, width * 0.09, height * 0.06],
+        [width * 0.395, height * top, width * 0.08, height * 0.05],
         { size: height * 0.037 * factor, align: 'left' }
       )
   }

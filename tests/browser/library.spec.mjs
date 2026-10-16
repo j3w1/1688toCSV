@@ -485,11 +485,23 @@ test('order cards select across their full surface, range-select and open detail
 }) => {
   await seed(extension)
   const page = await openLibrary(extension)
+  await page.setViewportSize({ width: 1280, height: 1200 })
   const cards = page.locator('.order-card')
   const card = cards.first()
+  const list = page.locator('#order-list')
   const details = page.locator('#order-details')
   const close = details.getByRole('button', { name: 'Close order details' })
   await expect(cards).toHaveCount(3)
+  const listEdges = await list.evaluate((node) => ({
+    overflows: node.scrollHeight > node.clientHeight,
+    right: node.getBoundingClientRect().right,
+    cards: [...node.querySelectorAll('.order-card')].map(
+      (card) => card.getBoundingClientRect().right
+    ),
+  }))
+  expect(listEdges.overflows).toBe(false)
+  for (const right of listEdges.cards)
+    expect(Math.abs(listEdges.right - right)).toBeLessThanOrEqual(1)
   await expect(cards.locator('input[type=checkbox]')).toHaveCount(0)
   await expect(card).toHaveAttribute('aria-selected', 'false')
   for (const target of [
@@ -543,6 +555,19 @@ test('order cards select across their full surface, range-select and open detail
   expect(
     await card.evaluate((node) => getComputedStyle(node).backgroundColor)
   ).not.toBe('rgba(0, 0, 0, 0)')
+  await page.setViewportSize({ width: 390, height: 640 })
+  expect(
+    await list.evaluate((node) => node.scrollHeight > node.clientHeight)
+  ).toBe(true)
+  await card.focus()
+  await card.press('End')
+  await expect(cards.last()).toBeFocused()
+  expect(await list.evaluate((node) => node.scrollTop)).toBeGreaterThan(0)
+  const lastBounds = await cards.last().boundingBox()
+  const listBounds = await list.boundingBox()
+  expect(lastBounds.y + lastBounds.height).toBeLessThanOrEqual(
+    listBounds.y + listBounds.height + 1
+  )
   expect(extension.unexpectedRequests).toEqual([])
 })
 

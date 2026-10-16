@@ -1,7 +1,18 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
+import { readFileSync, readdirSync } from 'node:fs'
 import { parseHTML } from 'linkedom'
 import { UI_MESSAGES } from '../src/ui-messages.js'
+import { preparationColumns } from '../src/preparation-clipboard.js'
+import {
+  excelImageColumns,
+  planExcelImage,
+  renderExcelImage,
+} from '../src/excel-image.js'
+import { EXCEL_IMAGE_SCHEMES } from '../src/excel-image-style.js'
+import { createExcelImageOptions } from '../src/excel-image-options.js'
+import { openImageCopyDialog } from '../src/image-copy-dialog.js'
+import { showErrorNotice, clearErrorNotice } from '../src/error-notice.js'
 import {
   t,
   message,
@@ -88,6 +99,8 @@ test('removed help titles and replaced source attributes are not resurrected by 
 
 test('translation catalogs retain interpolated data placeholders', () => {
   for (const [key, translations] of Object.entries(UI_MESSAGES)) {
+    for (const language of ['es', 'zh'])
+      assert.ok(translations[language]?.trim(), `${language}: ${key}`)
     const source = new Set(key.match(/\{\w+\}/g) || [])
     for (const [language, value] of Object.entries(translations)) {
       assert.ok(value?.trim(), `${language}: ${key}`)
@@ -97,6 +110,329 @@ test('translation catalogs retain interpolated data placeholders', () => {
           `Unknown ${placeholder} in ${language}: ${key}`
         )
     }
+  }
+})
+
+test('explicit interface messages and declared copy fields have Spanish and Chinese mappings', () => {
+  const keys = new Set(
+    preparationColumns.flatMap(([, title, group]) => [title, group])
+  )
+  for (const { label } of EXCEL_IMAGE_SCHEMES) keys.add(label)
+  const sourceDirectory = new URL('../src/', import.meta.url)
+  for (const file of readdirSync(sourceDirectory)) {
+    if (!/\.(js|html)$/.test(file) || file.startsWith('ui-messages')) continue
+    const source = readFileSync(new URL(file, sourceDirectory), 'utf8')
+    // Inspect only explicit translation calls and opted-in markup, never seller
+    // strings, input values, errors from external services or arbitrary literals.
+    for (const match of source.matchAll(
+      /\b(?:t|message|uiMessage|m)\(\s*(['"])((?:\\.|(?!\1)[^\\])*)\1/g
+    ))
+      keys.add(match[2].replace(/\\(['"\\])/g, '$1'))
+    for (const match of source.matchAll(/data-i18n(?:-[a-z-]+)?="([^"]+)"/g))
+      keys.add(match[1])
+  }
+  for (const key of keys) {
+    if (!/\p{L}/u.test(key.replace(/\{\w+\}/g, ''))) continue
+    for (const language of ['es', 'zh'])
+      assert.ok(UI_MESSAGES[key]?.[language]?.trim(), `${language}: ${key}`)
+  }
+  for (const column of excelImageColumns)
+    for (const language of ['es', 'zh'])
+      assert.ok(
+        column.labels?.[language]?.trim() ||
+          UI_MESSAGES[column.label]?.[language]?.trim(),
+        `${language}: Excel image ${column.key}`
+      )
+})
+
+test('Excel image owned static errors have Spanish and Chinese mappings', () => {
+  const keys = new Set()
+  for (const file of [
+    'excel-image.js',
+    'excel-image-copy.js',
+    'excel-image-options.js',
+    'image-copy-dialog.js',
+  ]) {
+    const source = readFileSync(
+      new URL(`../src/${file}`, import.meta.url),
+      'utf8'
+    )
+    // These modules surface their own Error messages in the image-copy popup.
+    // Exclude external failures, cancellation signals and arbitrary source data.
+    for (const match of source.matchAll(
+      /\bnew Error\(\s*(['"])((?:\\.|(?!\1)[^\\])*)\1/g
+    ))
+      keys.add(match[2].replace(/\\(['"\\])/g, '$1'))
+  }
+  assert.ok(keys.has('Choose at least one Excel image column.'))
+  for (const key of keys)
+    for (const language of ['es', 'zh'])
+      assert.ok(UI_MESSAGES[key]?.[language]?.trim(), `${language}: ${key}`)
+})
+
+test('Excel image planning translates the actual empty-column error', () => {
+  const previous = Object.getOwnPropertyDescriptor(globalThis, 'document')
+  Object.defineProperty(globalThis, 'document', {
+    configurable: true,
+    value: {
+      documentElement: {},
+      createElement(tag) {
+        assert.equal(tag, 'canvas')
+        return { getContext: () => ({}) }
+      },
+    },
+  })
+  try {
+    for (const [language, expected] of [
+      ['es', 'Selecciona al menos una columna para copiar.'],
+      ['zh', '请至少选择一列进行复制。'],
+    ]) {
+      setLanguage(language, { persist: false })
+      assert.throws(
+        () => planExcelImage([{ title: 'Source product' }], { columns: [] }),
+        (error) => {
+          assert.equal(error.message, 'Choose at least one Excel image column.')
+          assert.equal(t(error.message), expected)
+          return true
+        }
+      )
+    }
+  } finally {
+    setLanguage('en', { persist: false })
+    if (previous) Object.defineProperty(globalThis, 'document', previous)
+    else delete globalThis.document
+  }
+})
+
+test('Excel image notices translate nested photo and carton failures without changing product identities', async (context) => {
+  const { document, window } = parseHTML('<html><body></body></html>')
+  for (const [key, value] of Object.entries({
+    document,
+    MutationObserver: window.MutationObserver,
+  })) {
+    const previous = Object.getOwnPropertyDescriptor(globalThis, key)
+    Object.defineProperty(globalThis, key, { value, configurable: true })
+    context.after(() => {
+      if (previous) Object.defineProperty(globalThis, key, previous)
+      else delete globalThis[key]
+    })
+  }
+  const createElement = document.createElement.bind(document)
+  context.mock.method(document, 'createElement', (tag, ...args) => {
+    const node = createElement(tag, ...args)
+    if (tag === 'canvas')
+      node.getContext = () => ({
+        measureText: (text) => ({ width: String(text).length * 8 }),
+        scale() {},
+        fillRect() {},
+        fillText() {},
+        beginPath() {},
+        moveTo() {},
+        lineTo() {},
+        stroke() {},
+      })
+    return node
+  })
+  const row = {
+    title: 'Photo',
+    thumbnail: 'synthetic-photo',
+    baseCode: 'CE26100001',
+    barcode: 'CE26100001AS',
+    spanishName: 'No photo data was returned.',
+    chineseCategory: '玻璃',
+  }
+  const original = structuredClone(row)
+  try {
+    for (const [language, photoError, markError] of [
+      [
+        'es',
+        'No se pudo cargar la foto de la fila de producto 1. Actualiza la foto e inténtalo de nuevo. No se recibieron datos de la foto.',
+        'No se pudo crear la marca de caja de la fila 1. Revisa su código y categoría en chino e inténtalo de nuevo. No se recibió ninguna imagen de la marca de caja.',
+      ],
+      [
+        'zh',
+        '无法加载第 1 行商品的图片。请刷新图片后重试。未返回图片数据。',
+        '无法生成商品第 1 行的唛头。请检查货号和中文品类后重试。未返回唛头图片。',
+      ],
+    ]) {
+      setLanguage(language, { persist: false })
+      for (const [column, expected] of [
+        ['thumbnail', photoError],
+        ['baseCode', markError],
+      ]) {
+        const [plan] = planExcelImage([row], { columns: [column], language })
+        await assert.rejects(
+          renderExcelImage(plan, {
+            loadImage: async () => '',
+            renderCartonMark: async () => null,
+          }),
+          (error) => {
+            const source = error.packingIssue.row
+            assert.equal(source.number, '1')
+            assert.equal(source.baseCode, original.baseCode)
+            assert.equal(source.barcode, original.barcode)
+            assert.equal(source.spanishName, original.spanishName)
+            showErrorNotice(error, {
+              scope: document.body,
+              context: { code: source.barcode, variant: source.title },
+            })
+            assert.equal(
+              document.querySelector('.error-notice-message').textContent,
+              expected
+            )
+            assert.equal(
+              document.querySelector('code').textContent,
+              row.barcode
+            )
+            assert.ok(
+              document
+                .querySelector('.error-notice-product')
+                .textContent.endsWith(row.title)
+            )
+            clearErrorNotice({ scope: document.body })
+            return true
+          }
+        )
+        assert.deepEqual(row, original)
+      }
+    }
+  } finally {
+    clearErrorNotice({ scope: document.body })
+    setLanguage('en', { persist: false })
+  }
+})
+
+test('packing menu, pagination, recovery and copy feedback translate their owned labels', () => {
+  const keys = [
+    'Arrange',
+    'Arrange packing',
+    'Arrange displayed orders',
+    'Store',
+    'Group code',
+    'Store, then group code',
+    'Previous groups',
+    'Next groups',
+    'Previous variants',
+    'Next variants',
+    'Describe this variant',
+    'Choose a file created by Back up packing. Use Settings → Data → Restore for a full-library backup.',
+    'No active labels to copy.',
+    'This order is no longer available.',
+    'Select product rows to copy.',
+    'Choose a logo smaller than 2 MB.',
+    'Copied',
+    'Copying…',
+    'Try again',
+    'Copy label',
+    'Could not copy. Try again.',
+    'Copy failed. Try again.',
+    'Click to copy this value.',
+    'Click to copy the order number.',
+    'Click to copy the store name.',
+    'Retry',
+  ]
+  try {
+    for (const language of ['es', 'zh']) {
+      setLanguage(language, { persist: false })
+      for (const key of keys)
+        assert.notEqual(t(key), key, `${language}: ${key}`)
+    }
+    setLanguage('es', { persist: false })
+    assert.equal(t('Article number'), 'Código')
+  } finally {
+    setLanguage('en', { persist: false })
+  }
+})
+
+test('Excel image popup translates description, completion and empty-column feedback without changing source data', async (context) => {
+  const { document, window } = parseHTML(
+    '<html><body><p class="source">Product description</p><input value="Done"></body></html>'
+  )
+  for (const [key, value] of Object.entries({
+    document,
+    matchMedia: () => ({ matches: true }),
+    localStorage: {
+      getItem: () => JSON.stringify({ selected: [] }),
+      setItem() {},
+    },
+    HTMLDialogElement: { prototype: { closedBy: 'any' } },
+  })) {
+    const previous = Object.getOwnPropertyDescriptor(globalThis, key)
+    Object.defineProperty(globalThis, key, { value, configurable: true })
+    context.after(() => {
+      if (previous) Object.defineProperty(globalThis, key, previous)
+      else delete globalThis[key]
+    })
+  }
+  const createElement = document.createElement.bind(document)
+  context.mock.method(document, 'createElement', (tag, ...args) => {
+    const node = createElement(tag, ...args)
+    // Linkedom omits native select writes and modal-dialog methods.
+    if (tag === 'select')
+      Object.defineProperty(node, 'value', {
+        set(value) {
+          for (const option of node.options)
+            option.selected = option.value === value
+        },
+      })
+    if (tag === 'dialog') {
+      node.showModal = () => node.setAttribute('open', '')
+      node.close = () => {
+        node.removeAttribute('open')
+        node.dispatchEvent(new window.Event('close'))
+      }
+    }
+    return node
+  })
+  const rows = [{ title: 'Product description', productNumber: '001-A' }]
+  const original = structuredClone(rows)
+  const completion = openImageCopyDialog({
+    title: 'Copy Excel image',
+    count: 1,
+    plan: async () => [],
+    prepare: () => assert.fail('translation check must not render images'),
+    write: () => assert.fail('translation check must not copy'),
+    createOptions: (onChange) => createExcelImageOptions(onChange, { rows }),
+  })
+  const popup = document.querySelector('dialog')
+  try {
+    for (const [language, description, done, empty] of [
+      [
+        'es',
+        'Descripción del producto',
+        'Listo',
+        'Selecciona al menos una columna para copiar.',
+      ],
+      ['zh', '商品描述', '完成', '请至少选择一列进行复制。'],
+      [
+        'en',
+        'Product description',
+        'Done',
+        'Select at least one column to copy.',
+      ],
+    ]) {
+      setLanguage(language, { persist: false })
+      assert.equal(popup.querySelectorAll('legend')[1].textContent, description)
+      assert.equal(
+        popup.querySelector('.image-copy-actions button:last-child')
+          .textContent,
+        done
+      )
+      assert.equal(
+        popup.querySelector('.excel-column-status').textContent,
+        empty
+      )
+      assert.equal(
+        document.querySelector('.source').textContent,
+        'Product description'
+      )
+      assert.equal(document.querySelector('input').value, 'Done')
+      assert.deepEqual(rows, original)
+    }
+  } finally {
+    popup.close()
+    await completion
+    setLanguage('en', { persist: false })
   }
 })
 

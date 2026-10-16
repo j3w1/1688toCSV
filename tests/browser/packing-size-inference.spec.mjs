@@ -56,10 +56,10 @@ async function openSizes(extension, sizes, colors = ['透明', '透明']) {
   }
 }
 
-test('same-size seller styles keep A and B without price-based size endings', async ({
+test('same-size seller styles change recognition mode without a code warning or a repeated save', async ({
   extension,
 }) => {
-  const { group } = await openSizes(extension, [
+  const { page, view, group } = await openSizes(extension, [
     '#款式二 高33X底径10.5cm',
     '#款式一 高33X底径10.5cm',
   ])
@@ -72,9 +72,34 @@ test('same-size seller styles keep A and B without price-based size endings', as
   await expect(
     group.getByRole('button', { name: 'Review size suggestions', exact: true })
   ).toHaveCount(0)
+  const mode = group.getByLabel('Size handling', { exact: true })
+  const review = page.getByRole('dialog', {
+    name: 'Change size handling?',
+    exact: true,
+  })
+  for (const value of ['none', 'automatic']) {
+    await mode.selectOption(value)
+    await expect(mode).toHaveValue(value)
+    await expect(review).toHaveCount(0)
+    const saved = await backup(extension)
+    const changed = saved.preparations[0].groups[0]
+    expect(changed.sizeMode || 'automatic').toBe(value)
+    expect(changed.variants).toEqual(variants)
+    expect(saved.preparations[0].groups[1]).toEqual(
+      result.preparations[0].groups[1]
+    )
+    expect(saved.orders).toEqual(result.orders)
+    await mode.dispatchEvent('change')
+    await expect(view.locator('#preparation-content')).toHaveJSProperty(
+      'disabled',
+      false
+    )
+    await expect(review).toHaveCount(0)
+    expect((await backup(extension)).preparations).toEqual(saved.preparations)
+  }
 })
 
-test('a per-product no-size-difference override persists and can return to automatic recognition', async ({
+test('unresolved size flags save quietly and the recognition preference survives reopening', async ({
   extension,
 }) => {
   const { page, group } = await openSizes(
@@ -95,12 +120,8 @@ test('a per-product no-size-difference override persists and can return to autom
     name: 'Change size handling?',
     exact: true,
   })
-  await expect(review.locator('.packing-review-item')).toHaveCount(2)
-  await expect(review).toContainText('keep their variant letters')
-  await review
-    .getByRole('button', { name: 'Apply size handling', exact: true })
-    .click()
   await expect(mode).toHaveValue('none')
+  await expect(review).toHaveCount(0)
   const saved = await backup(extension)
   const changed = saved.preparations[0].groups[0]
   expect(changed.sizeMode).toBe('none')
@@ -122,10 +143,8 @@ test('a per-product no-size-difference override persists and can return to autom
   await page.locator('#prepare-orders').click()
   await expect(mode).toHaveValue('none')
   await mode.selectOption('automatic')
-  await review
-    .getByRole('button', { name: 'Apply size handling', exact: true })
-    .click()
   await expect(mode).toHaveValue('automatic')
+  await expect(review).toHaveCount(0)
   const restored = await backup(extension)
   expect(
     restored.preparations[0].groups[0].variants.every(
@@ -134,6 +153,86 @@ test('a per-product no-size-difference override persists and can return to autom
   ).toBe(true)
   await expect(group.getByAltText('Barcode preview').first()).toBeHidden()
   expect(restored.orders).toEqual(before.orders)
+})
+
+test('size mode reviews only changed barcode values and cancellation preserves the saved setup', async ({
+  extension,
+}) => {
+  const { page, group } = await openSizes(
+    extension,
+    ['10cm', '20cm'],
+    ['金色', '银色']
+  )
+  const sizes = group.locator('input[data-packing-field="size"]')
+  await sizes.first().fill('')
+  await expect
+    .poll(
+      async () =>
+        (await backup(extension)).preparations[0].groups[0].variants[0]
+          .sizeSuffix
+    )
+    .toBe('')
+  const before = await backup(extension)
+  const original = before.preparations[0].groups[0]
+  const code = (variant) =>
+    `${original.baseCode}${variant.variantSuffix}${variant.sizeSuffix}`
+  const mode = group.getByLabel('Size handling', { exact: true })
+  const review = page.getByRole('dialog', {
+    name: 'Change size handling?',
+    exact: true,
+  })
+  await mode.selectOption('none')
+  const cards = review.locator('.packing-review-item')
+  await expect(cards).toHaveCount(1)
+  await expect(cards.locator('.packing-review-codes code')).toHaveText([
+    code(original.variants[1]),
+    `${original.baseCode}${original.variants[1].variantSuffix}`,
+  ])
+  await expect(cards.locator('p')).toHaveCount(0)
+  await review.getByRole('button', { name: 'Cancel', exact: true }).click()
+  await expect(page.locator('#preparation-content')).toHaveJSProperty(
+    'disabled',
+    false
+  )
+  await expect(mode).toHaveValue('automatic')
+  expect((await backup(extension)).preparations).toEqual(before.preparations)
+  await mode.selectOption('none')
+  await review
+    .getByRole('button', { name: 'Apply size handling', exact: true })
+    .click()
+  await expect(mode).toHaveValue('none')
+  const saved = await backup(extension)
+  const changed = saved.preparations[0].groups[0]
+  expect(changed.variants[0]).toEqual(original.variants[0])
+  expect(changed.variants[1]).toEqual({
+    ...original.variants[1],
+    sizeSuffix: '',
+    needsSizeMapping: false,
+  })
+  expect(saved.preparations[0].groups[1]).toEqual(
+    before.preparations[0].groups[1]
+  )
+  expect(saved.orders).toEqual(before.orders)
+  for (const issued of before.issuedCodes)
+    expect(saved.issuedCodes).toContainEqual(issued)
+
+  await mode.selectOption('automatic')
+  await expect(cards).toHaveCount(2)
+  await expect(cards.nth(0).locator('.packing-review-codes code')).toHaveText([
+    `${original.baseCode}${original.variants[0].variantSuffix}`,
+    `${original.baseCode}${original.variants[0].variantSuffix}S`,
+  ])
+  await expect(cards.nth(1).locator('.packing-review-codes code')).toHaveText([
+    `${original.baseCode}${original.variants[1].variantSuffix}`,
+    code(original.variants[1]),
+  ])
+  await review
+    .getByRole('button', { name: 'Apply size handling', exact: true })
+    .click()
+  await expect(mode).toHaveValue('automatic')
+  await expect(sizes.nth(0)).toHaveValue('S')
+  await expect(sizes.nth(1)).toHaveValue('L')
+  expect((await backup(extension)).orders).toEqual(before.orders)
 })
 
 async function backup(extension) {
@@ -159,10 +258,8 @@ for (const surface of ['inline', 'label editor'])
       name: 'Change size handling?',
       exact: true,
     })
-    await review
-      .getByRole('button', { name: 'Apply size handling', exact: true })
-      .click()
     await expect(mode).toHaveValue('none')
+    await expect(review).toHaveCount(0)
     const before = await backup(extension)
     const size = group.locator('input[data-packing-field="size"]').first()
     if (surface === 'inline') {

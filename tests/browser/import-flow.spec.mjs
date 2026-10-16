@@ -285,6 +285,9 @@ test('missing sellers import products but require identification before label pr
   await library.locator('.order-card-meta').first().click()
   await library.locator('#select-rows').click()
   await library.locator('#prepare-orders').click()
+  await library
+    .getByRole('button', { name: 'Assign codes and prepare', exact: true })
+    .click()
   const dialog = library.locator('#packing-view')
   const seller = dialog.getByLabel('Seller member login (required)', {
     exact: true,
@@ -311,6 +314,9 @@ test('missing sellers import products but require identification before label pr
   await dialog.getByRole('button', { name: 'Orders', exact: true }).click()
   await expect(dialog).not.toBeVisible()
   await library.locator('#prepare-orders').click()
+  await library
+    .getByRole('button', { name: 'Assign codes and prepare', exact: true })
+    .click()
   await seller.fill('identified-synthetic-shop')
   await expect(dialog.locator('.preparation-save-status')).toHaveText(
     'Saved automatically'
@@ -330,6 +336,9 @@ test('missing sellers import products but require identification before label pr
   await library.locator('.order-card-meta').nth(1).click()
   await library.locator('#select-rows').click()
   await library.locator('#prepare-orders').click()
+  await library
+    .getByRole('button', { name: 'Assign codes and prepare', exact: true })
+    .click()
   await expect(seller).toHaveValue('')
   await expect(
     dialog.getByLabel('Product code', { exact: true }).first()

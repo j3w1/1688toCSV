@@ -1,4 +1,23 @@
-// This history holds unsaved JSON snapshots only. Saving an order must clear it.
+// Session history contains preparation snapshots only, never database state or
+// reservations. Saving acknowledges a revision without discarding user edits.
+export function preparationHistorySnapshot(preparation) {
+  return JSON.stringify({ ...preparation, revision: 0, updatedAt: '' })
+}
+
+export function restorePreparationHistory(value, current) {
+  if (
+    !current ||
+    value.orderId !== current.orderId ||
+    value.accountId !== current.accountId
+  )
+    throw new Error('Preparation history does not match this order.')
+  return {
+    ...structuredClone(value),
+    revision: current.revision,
+    updatedAt: current.updatedAt,
+  }
+}
+
 export function createPreparationHistory({
   maxEntries = 50,
   maxBytes = 8 * 1024 * 1024,
@@ -14,6 +33,8 @@ export function createPreparationHistory({
   let mergeEntry = null
 
   function size(entry) {
+    if (entry.changes)
+      return entry.changes.reduce((total, change) => total + size(change), 0)
     // Account conservatively for UTF-16 strings without encoding every keystroke.
     return (
       2 *
@@ -35,6 +56,18 @@ export function createPreparationHistory({
       position = Math.max(0, position - 1)
       if (removed === mergeEntry) breakGroup()
     }
+  }
+
+  function changes(entry) {
+    return entry.changes || [entry]
+  }
+
+  function result(entry, direction) {
+    const values = changes(entry).map((change) => ({
+      orderId: change.orderId,
+      value: JSON.parse(direction === 'undo' ? change.before : change.after),
+    }))
+    return entry.changes ? { changes: values } : values[0]
   }
 
   return {
@@ -77,22 +110,56 @@ export function createPreparationHistory({
 
     breakGroup,
 
+    recordBatch(values) {
+      const changed = values.filter((entry) => entry.before !== entry.after)
+      if (!changed.length) return false
+      if (
+        changed.some(
+          ({ orderId, before, after }) =>
+            typeof orderId !== 'string' ||
+            typeof before !== 'string' ||
+            typeof after !== 'string'
+        ) ||
+        new Set(changed.map((entry) => entry.orderId)).size !== changed.length
+      )
+        throw new TypeError(
+          'History requires unique order IDs and JSON strings'
+        )
+      breakGroup()
+      for (const removed of entries.splice(position)) bytes -= size(removed)
+      const entry = {
+        changes: changed.map(({ orderId, before, after }) => ({
+          orderId,
+          before,
+          after,
+        })),
+      }
+      entries.push(entry)
+      bytes += size(entry)
+      position = entries.length
+      trim()
+      return true
+    },
+
+    peek(direction) {
+      const entry = entries[direction === 'undo' ? position - 1 : position]
+      return entry ? result(entry, direction) : null
+    },
+
     undo() {
       breakGroup()
       if (!position) return null
       const entry = entries[position - 1]
-      const value = JSON.parse(entry.before)
       position -= 1
-      return { orderId: entry.orderId, value }
+      return result(entry, 'undo')
     },
 
     redo() {
       breakGroup()
       if (position === entries.length) return null
       const entry = entries[position]
-      const value = JSON.parse(entry.after)
       position += 1
-      return { orderId: entry.orderId, value }
+      return result(entry, 'redo')
     },
 
     clear(orderId) {
@@ -105,7 +172,8 @@ export function createPreparationHistory({
       }
       let nextPosition = 0
       entries = entries.filter((entry, index) => {
-        if (entry.orderId === orderId) {
+        // A batch cannot safely survive with only half its orders retained.
+        if (changes(entry).some((change) => change.orderId === orderId)) {
           bytes -= size(entry)
           return false
         }

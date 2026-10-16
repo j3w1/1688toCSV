@@ -4,6 +4,7 @@ import {
   activeGroups,
   allocatePreparation,
   barcodeValue,
+  codeOwnerEvidence,
   createPreparation,
   defaultPackingChanges,
   extendDefaultPacking,
@@ -22,6 +23,7 @@ import {
   validatePreparationReservations,
 } from '../src/packing-model.js'
 import { DEFAULT_SIZE_VOCABULARY } from '../src/size-vocabulary.js'
+import { regroupSelection } from '../src/packing-grouping.js'
 
 function source(items, extra = {}) {
   return {
@@ -770,6 +772,153 @@ test('returning a retired barcode to another variant in the same product remains
       return true
     }
   )
+})
+
+test('legacy owner evidence follows variant identities after merging and splitting without transferring codes', async () => {
+  const snapshot = source([
+    { title: 'Candle' },
+    { title: 'Diffuser', skuProperties: sku('red') },
+    { title: 'Diffuser', skuProperties: sku('green') },
+  ])
+  let state = allocatePreparation(
+    createPreparation(snapshot, '2026-10'),
+    [],
+    []
+  )
+  const original = structuredClone(state.preparation)
+  const originalOwner = state.issuedCodes.find(
+    (entry) => entry.kind === 'base' && entry.code === 'CE26100102'
+  )
+  const originalBarcode = state.issuedCodes.find(
+    (entry) => entry.kind === 'barcode' && entry.code === 'CE26100102A'
+  )
+  const [merged] = await regroupSelection(
+    original.groups.map((group) => ({
+      draft: original,
+      group,
+      variants: group.variants,
+      complete: true,
+    })),
+    'merge',
+    {
+      getReservedBarcodes: async () =>
+        state.issuedCodes
+          .filter((entry) => entry.kind === 'barcode')
+          .map((entry) => entry.code),
+    }
+  )
+  state = allocatePreparation(merged, state.allocations, state.issuedCodes)
+  const group = state.preparation.groups[0]
+  const [split] = await regroupSelection(
+    [
+      {
+        draft: state.preparation,
+        group,
+        variants: [group.variants[0]],
+        complete: true,
+      },
+    ],
+    'split',
+    { getReservedBarcodes: async () => [], newId: () => 'split-candle' }
+  )
+  state = allocatePreparation(split, state.allocations, state.issuedCodes)
+  state.preparation.defaultPacking = packingCheckpoint(state.preparation)
+  const before = structuredClone(state)
+  const evidence = codeOwnerEvidence(
+    originalOwner,
+    state.preparation,
+    state.issuedCodes
+  )
+  assert.equal(evidence.group, undefined)
+  assert.equal(evidence.recovered, true)
+  assert.equal(evidence.currentGroup.baseCode, 'CE26100101')
+  assert.deepEqual(evidence.entryIds, ['2', '3'])
+  const barcodeEvidence = codeOwnerEvidence(
+    originalBarcode,
+    state.preparation,
+    state.issuedCodes
+  )
+  assert.equal(barcodeEvidence.recovered, true)
+  assert.deepEqual(barcodeEvidence.entryIds, ['2'])
+  assert.equal(barcodeEvidence.currentGroup.baseCode, 'CE26100101')
+  assert.equal(barcodeEvidence.currentVariant.id, originalBarcode.variantId)
+  assert.deepEqual(state, before)
+
+  const conflicting = structuredClone(state.preparation)
+  conflicting.groups.find((entry) => entry.id === 'split-candle').baseCode =
+    originalOwner.code
+  assert.throws(
+    () =>
+      allocatePreparation(conflicting, state.allocations, state.issuedCodes),
+    (error) =>
+      error.code === 'PACKING_CODE_CONFLICT' &&
+      error.conflict.owner.groupId === originalOwner.groupId
+  )
+  // Evidence from a regrouped product is not authority to rewrite its old owner.
+  const regrouped = structuredClone(state.preparation)
+  regrouped.groups[0].baseCode = originalOwner.code
+  assert.throws(
+    () => allocatePreparation(regrouped, state.allocations, state.issuedCodes),
+    /Code conflict/
+  )
+})
+
+test('legacy owner evidence stays within its account, order, seller and packing month', () => {
+  const state = allocatePreparation(
+    createPreparation(source([{}]), '2026-10'),
+    [],
+    []
+  )
+  const owner = state.issuedCodes.find((entry) => entry.kind === 'base')
+  const moved = structuredClone(state.preparation)
+  moved.groups[0].id = 'regrouped'
+  for (const [field, value] of [
+    ['accountId', 'another-account'],
+    ['orderId', '2'],
+    ['sellerId', 'another-seller'],
+    ['month', '2026-11'],
+  ]) {
+    const evidence = codeOwnerEvidence(
+      owner,
+      { ...moved, [field]: value },
+      state.issuedCodes
+    )
+    assert.deepEqual(evidence.entryIds || [], [])
+    assert.equal(evidence.currentGroup, undefined)
+  }
+  const unrelated = state.issuedCodes.map((entry) => ({
+    ...entry,
+    groupId: 'unrelated-owner',
+  }))
+  assert.deepEqual(codeOwnerEvidence(owner, moved, unrelated).entryIds, [])
+})
+
+test('legacy owner evidence uses checkpoints without claiming a current group and handles split membership', () => {
+  const state = allocatePreparation(
+    createPreparation(
+      source([{ skuProperties: sku('red') }, { skuProperties: sku('green') }]),
+      '2026-10'
+    ),
+    [],
+    []
+  )
+  const owner = state.issuedCodes.find((entry) => entry.kind === 'base')
+  const regrouped = structuredClone(state.preparation)
+  regrouped.groups[0].id = 'regrouped'
+  const checkpoint = packingCheckpoint(regrouped)
+  regrouped.groups = []
+  regrouped.defaultPacking = checkpoint
+  const historical = codeOwnerEvidence(owner, regrouped, state.issuedCodes)
+  assert.deepEqual(historical.entryIds, ['1', '2'])
+  assert.equal(historical.currentGroup, undefined)
+  regrouped.groups = checkpoint.groups[0].variants.map((variant, index) => ({
+    ...checkpoint.groups[0],
+    id: `split-${index}`,
+    variants: [variant],
+  }))
+  const split = codeOwnerEvidence(owner, regrouped, state.issuedCodes)
+  assert.deepEqual(split.entryIds, ['1', '2'])
+  assert.equal(split.currentGroup, undefined)
 })
 
 test('actual concatenated barcode collisions fail and exhausted allocations stay unchanged', () => {

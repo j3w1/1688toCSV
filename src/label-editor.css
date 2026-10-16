@@ -305,6 +305,16 @@
 
 .label-editor-copy {
   justify-self: start;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 5px;
+}
+
+.label-editor-copy > .ui-icon {
+  inline-size: 16px;
+  block-size: 16px;
+  flex: none;
 }
 
 .label-editor-copy.copied,

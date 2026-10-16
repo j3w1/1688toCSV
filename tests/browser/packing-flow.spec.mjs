@@ -4,6 +4,7 @@ import {
 } from './copy-actions-helpers.mjs'
 import { test, expect } from './extension-fixture.mjs'
 import { createDemoRecords } from '../../preview/library-fixture.js'
+import { UI_MESSAGES } from '../../src/ui-messages.js'
 import { readFile } from 'node:fs/promises'
 
 async function seedOrders(extension, count = 1) {
@@ -131,7 +132,14 @@ test('copy column choices and Headers survive copying, reopening and a page relo
     exact: true,
   })
   const chosen = ['Product code', 'Barcode', 'Quantity']
-  const excluded = ['Description', 'Spanish description', 'Price', 'Discount']
+  const excluded = [
+    'Description',
+    'Spanish description',
+    'Size',
+    'Size code',
+    'Price',
+    'Discount',
+  ]
   for (const name of excluded)
     await columns.getByRole('checkbox', { name, exact: true }).uncheck()
   await columns.getByRole('checkbox', { name: 'Headers', exact: true }).check()
@@ -193,6 +201,222 @@ test('copy column choices and Headers survive copying, reopening and a page relo
   await expect(
     page.getByRole('dialog', { name: 'Confirm operation', exact: true })
   ).not.toBeVisible()
+  expect(extension.unexpectedRequests).toEqual([])
+})
+
+test('chosen size columns preserve source dimensions and separate saved barcode endings in Products and packing', async ({
+  extension,
+}) => {
+  const { page } = await openLibrary(extension)
+  await extension.context.grantPermissions([
+    'clipboard-read',
+    'clipboard-write',
+  ])
+  // Existing preferences must not silently include newly introduced columns.
+  await page.evaluate(() =>
+    localStorage.setItem(
+      '1688-packing-copy-columns',
+      JSON.stringify(['quantity'])
+    )
+  )
+  await revealCopyActions(page)
+  await page
+    .getByRole('button', { name: 'Copy preparation columns', exact: true })
+    .click()
+  const columns = page.getByRole('dialog', {
+    name: 'Copy preparation columns',
+    exact: true,
+  })
+  for (const name of ['Size', 'Size code']) {
+    await expect(
+      columns.getByRole('checkbox', { name, exact: true })
+    ).not.toBeChecked()
+    await columns.getByRole('checkbox', { name, exact: true }).check()
+  }
+  await columns
+    .getByRole('checkbox', { name: 'Quantity', exact: true })
+    .uncheck()
+  await columns.getByRole('checkbox', { name: 'Headers', exact: true }).check()
+  await columns
+    .getByRole('button', { name: 'Copy chosen columns', exact: true })
+    .click()
+  await expect(
+    columns.getByRole('button', { name: 'Copied', exact: true })
+  ).toBeVisible()
+  expect(await page.evaluate(() => navigator.clipboard.readText())).toBe(
+    'Size\tSize code\r\n300ml\t\r\n500ml\t\r\n\t'
+  )
+  await columns.getByRole('button', { name: 'Close', exact: true }).click()
+  await selectAllProducts(page)
+  const view = await prepareSelected(page)
+  await view
+    .locator('tr[data-variant-id]')
+    .first()
+    .getByRole('textbox', { name: /^Size code / })
+    .fill('XS')
+  await expect(view.locator('.preparation-save-status')).toHaveText(
+    'Saved automatically'
+  )
+  await revealCopyActions(page)
+  await view.getByRole('button', { name: 'Copy columns', exact: true }).click()
+  for (const name of ['Size', 'Size code', 'Headers'])
+    await expect(
+      columns.getByRole('checkbox', { name, exact: true })
+    ).toBeChecked()
+  await expect(
+    columns.getByRole('checkbox', { name: 'Quantity', exact: true })
+  ).not.toBeChecked()
+  await columns
+    .getByRole('button', { name: 'Copy chosen columns', exact: true })
+    .click()
+  await expect(
+    columns.getByRole('button', { name: 'Copied', exact: true })
+  ).toBeVisible()
+  const expected = 'Size\tSize code\r\n300ml\tXS\r\n500ml\tL\r\n\t'
+  expect(await page.evaluate(() => navigator.clipboard.readText())).toBe(
+    expected
+  )
+  await columns.getByRole('button', { name: 'Close', exact: true }).click()
+  await view.getByRole('button', { name: 'Orders', exact: true }).click()
+  await page.reload()
+  await revealCopyActions(page)
+  await page
+    .getByRole('button', { name: 'Copy preparation columns', exact: true })
+    .click()
+  for (const name of ['Size', 'Size code', 'Headers'])
+    await expect(
+      columns.getByRole('checkbox', { name, exact: true })
+    ).toBeChecked()
+  await columns
+    .getByRole('button', { name: 'Copy chosen columns', exact: true })
+    .click()
+  await expect(
+    columns.getByRole('button', { name: 'Copied', exact: true })
+  ).toBeVisible()
+  expect(await page.evaluate(() => navigator.clipboard.readText())).toBe(
+    expected
+  )
+  expect(extension.unexpectedRequests).toEqual([])
+})
+
+test('chosen columns search, keyboard selection and paste order persist with translated headers', async ({
+  extension,
+}) => {
+  const { page, records } = await openLibrary(extension)
+  await extension.context.grantPermissions([
+    'clipboard-read',
+    'clipboard-write',
+  ])
+  await revealCopyActions(page)
+  await page.locator('#copy-preparation').click()
+  const columns = page.locator('.preparation-column-dialog')
+  const search = columns.getByRole('combobox', { name: 'Search columns' })
+  const copy = columns.getByRole('button', {
+    name: 'Copy chosen columns',
+    exact: true,
+  })
+  await columns
+    .getByRole('button', { name: 'Clear columns', exact: true })
+    .click()
+  await expect(copy).toBeDisabled()
+  await search.fill('qunatity')
+  await expect(
+    columns.getByRole('checkbox', { name: 'Quantity', exact: true })
+  ).toBeVisible()
+  await expect(search).toHaveAttribute('aria-expanded', 'true')
+  await search.press('ArrowDown')
+  await search.press('Enter')
+  await expect(search).toHaveValue('Quantity')
+  for (const [query, label] of [
+    ['color', 'Original color'],
+    ['order', 'Order number'],
+    ['tags', 'Product tags'],
+    ['quantity', 'Quantity'],
+  ]) {
+    await search.fill(query)
+    const checkbox = columns.getByRole('checkbox', { name: label, exact: true })
+    await checkbox.focus()
+    await page.keyboard.press('Space')
+    await expect(checkbox).toBeChecked()
+  }
+  await search.fill('')
+  await columns
+    .getByRole('button', { name: 'Move Quantity left', exact: true })
+    .click()
+  const order = ['sourceColor', 'orderId', 'quantity', 'productTags']
+  await expect(columns.locator('.preparation-selected-columns li')).toHaveCount(
+    4
+  )
+  expect(
+    await columns
+      .locator('.preparation-selected-columns li')
+      .evaluateAll((rows) => rows.map((row) => row.dataset.column))
+  ).toEqual(order)
+  await columns.getByRole('checkbox', { name: 'Headers', exact: true }).check()
+  const headings = [
+    'Original color',
+    'Order number',
+    'Quantity',
+    'Product tags',
+  ]
+  const source = records[0]
+  const values = source.snapshot.items.map((item) =>
+    [
+      '透明',
+      source.snapshot.orderId,
+      item.quantity,
+      (source.productTags?.[item.entryId] || []).join(' · '),
+    ].join('\t')
+  )
+  await copy.click()
+  await expect(
+    columns.getByRole('button', { name: 'Copied', exact: true })
+  ).toBeVisible()
+  expect(await page.evaluate(() => navigator.clipboard.readText())).toBe(
+    [headings.join('\t'), ...values].join('\r\n')
+  )
+  await columns.getByRole('button', { name: 'Close', exact: true }).click()
+  await page.reload()
+  for (const language of ['es', 'zh']) {
+    const translated = (key) => UI_MESSAGES[key]?.[language] || key
+    await page.locator(`#language-toggle [data-language=${language}]`).click()
+    await revealCopyActions(page)
+    await page.locator('#copy-preparation').click()
+    expect(
+      await columns
+        .locator('.preparation-selected-columns li')
+        .evaluateAll((rows) => rows.map((row) => row.dataset.column))
+    ).toEqual(order)
+    await columns
+      .getByRole('button', {
+        name: translated('Copy chosen columns'),
+        exact: true,
+      })
+      .click()
+    await expect(
+      columns.getByRole('button', { name: translated('Copied'), exact: true })
+    ).toBeVisible()
+    expect(await page.evaluate(() => navigator.clipboard.readText())).toBe(
+      [headings.map(translated).join('\t'), ...values].join('\r\n')
+    )
+    await page.keyboard.press('Escape')
+    await expect(columns).toHaveCount(0)
+  }
+  await page.locator('#language-toggle [data-language=en]').click()
+  await revealCopyActions(page)
+  await page.locator('#copy-preparation').click()
+  await columns
+    .getByRole('button', { name: 'Restore default columns', exact: true })
+    .click()
+  await expect(
+    columns.locator('.preparation-column-groups input:checked')
+  ).toHaveCount(7)
+  await columns
+    .getByRole('button', { name: 'Select all columns', exact: true })
+    .click()
+  await expect(
+    columns.locator('.preparation-column-groups input:checked')
+  ).toHaveCount(45)
   expect(extension.unexpectedRequests).toEqual([])
 })
 
@@ -596,6 +820,8 @@ test('keyboard group moves and pointer product moves persist and export in the d
   for (const name of [
     'Description',
     'Spanish description',
+    'Size',
+    'Size code',
     'Price',
     'Discount',
     'Quantity',
@@ -631,10 +857,15 @@ test('keyboard group moves and pointer product moves persist and export in the d
       return fillText.call(this, text, ...args)
     }
   })
-  const image = view.locator('.packing-copy-actions button[data-icon="image"]')
+  // The primary action changes its icon and label while confirming the copy.
+  const image = view.locator(
+    '.packing-copy-actions > button:not(.copy-actions-trigger)'
+  )
+  await expect(image).toHaveAccessibleName('Copy Excel image')
   await image.click()
   await copyCurrentImageBatch(page)
   await expect(image).toHaveText('Copied')
+  await expect(image).toHaveAttribute('data-icon', 'check')
   const imageRuns = await page.evaluate(() => packingImageRuns)
   for (const code of [box.baseCode, jar.baseCode]) {
     const runs = imageRuns.filter((run) => run.text === code)

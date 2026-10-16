@@ -146,7 +146,7 @@ test('arrangement persists, retains codes and exports the final manual order', a
   const finalOrder = await ids()
   await expect(
     view.getByRole('button', { name: 'Undo', exact: true })
-  ).toBeDisabled()
+  ).toBeEnabled()
   await page.reload()
   await page.locator('#prepare-orders').click()
   await expect(view).toBeVisible()

@@ -1,8 +1,4 @@
 /* Casa Elida codes share one visual identity; source SKU and order IDs do not. */
-:root {
-  --ce-code-padding-inline: calc(7px * var(--ce-code-horizontal-padding-scale));
-  --ce-code-padding-block: calc(2px * var(--ce-code-vertical-padding-scale));
-}
 .ce-code,
 .packing-review-item code.ce-code,
 .packing-review-codes code.ce-code,
@@ -10,28 +6,29 @@
 .preparation-workspace .preparation-group input.group-code-editor.ce-code {
   display: inline-block;
   box-sizing: border-box;
+  inline-size: fit-content;
   max-inline-size: 100%;
   padding: var(--ce-code-padding-block) var(--ce-code-padding-inline);
   min-block-size: 0;
-  border: 1px solid var(--ce-code-background);
-  border-radius: min(
-    var(--ce-code-padding-inline),
-    calc(
-      (1.12em + 2 * var(--ce-code-padding-block) + 2px) *
-        var(--ce-code-radius-ratio)
-    )
-  );
+  border: 0;
+  border-radius: var(--ce-code-radius);
   background: var(--ce-code-background);
   color: var(--ce-code-foreground);
   font-family: var(--ce-code-font-family);
   font-weight: var(--ce-code-font-weight);
   font-size: var(--ce-code-size, 14px);
-  line-height: 1.12;
+  font-kerning: none;
+  line-height: 1;
+  text-box: trim-both cap alphabetic;
   text-align: center;
   vertical-align: middle;
   overflow-wrap: anywhere;
   text-decoration: none;
   font-variant-numeric: tabular-nums;
+}
+.packing-review-codes code.ce-code {
+  justify-self: center;
+  align-self: center;
 }
 .ce-code:is(button, input):hover {
   background: var(--ce-code-background);
@@ -47,10 +44,17 @@ button.ce-code::before {
   position: absolute;
   inset: -3px 0;
 }
+input.ce-code,
+.preparation-workspace .preparation-group input.group-code-editor.ce-code {
+  min-inline-size: 0;
+  /* Native inputs cannot trim their internal line box. Give them the same
+     cap-height + padding envelope and let their text stay vertically centered. */
+  block-size: calc(0.72em + 2 * var(--ce-code-padding-block));
+  padding-block: 0;
+  caret-color: var(--ce-code-foreground);
+}
 .preparation-workspace .preparation-group input.group-code-editor.ce-code {
   --ce-code-size: 20px;
-  min-inline-size: 0;
-  caret-color: var(--ce-code-foreground);
 }
 .row-preparation .row-code-copy.ce-code {
   --ce-code-size: 12px;
@@ -73,6 +77,8 @@ button.ce-code::before {
   display: inline-flex;
   align-items: center;
   gap: 0;
+  block-size: calc(0.72em + 2 * var(--ce-code-padding-block));
+  padding-block: 0;
 }
 .variant-code-design .variant-code-base,
 .preparation-workspace .variants .variant-code-design input {
@@ -84,15 +90,26 @@ button.ce-code::before {
   padding: 0;
   min-height: 0;
   height: auto;
-  block-size: 1.12em;
-  line-height: 1.12;
+  block-size: auto;
+  line-height: 1;
   box-shadow: none;
   border: 0;
   background: transparent;
 }
+.variant-code-design .variant-code-base {
+  text-box: trim-both cap alphabetic;
+}
 .preparation-workspace .variants .variant-code-band input {
   min-inline-size: 0;
+  block-size: 1em;
   text-align: left;
+}
+@supports (height: 1cap) {
+  .variant-code-band.ce-code,
+  input.ce-code,
+  .preparation-workspace .preparation-group input.group-code-editor.ce-code {
+    block-size: calc(1cap + 2 * var(--ce-code-padding-block));
+  }
 }
 .preparation-workspace
   .variants
@@ -116,6 +133,6 @@ button.ce-code::before {
   color: var(--muted);
 }
 .ce-code[aria-invalid='true'] {
-  outline: 2px solid var(--error-text, #d97970);
+  outline: 2px solid var(--danger-text, #d97970);
   outline-offset: 2px;
 }

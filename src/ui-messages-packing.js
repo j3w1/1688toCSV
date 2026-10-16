@@ -1,4 +1,180 @@
 export const PACKING_MESSAGES = {
+  Arrange: { zh: '排序', es: 'Ordenar' },
+  'Arrange packing': { zh: '装箱排序', es: 'Ordenar empaque' },
+  'Arrange displayed orders': {
+    zh: '排列当前显示的订单',
+    es: 'Ordenar pedidos visibles',
+  },
+  Store: { zh: '店铺', es: 'Tienda' },
+  'Group code': { zh: '组货号', es: 'Código de grupo' },
+  'Store, then group code': {
+    zh: '先按店铺，再按组货号',
+    es: 'Tienda y luego código de grupo',
+  },
+  'Previous groups': { zh: '上一页商品组', es: 'Grupos anteriores' },
+  'Next groups': { zh: '下一页商品组', es: 'Grupos siguientes' },
+  'Previous variants': { zh: '上一页款式', es: 'Variantes anteriores' },
+  'Next variants': { zh: '下一页款式', es: 'Variantes siguientes' },
+  'Describe this variant': {
+    zh: '描述此款式',
+    es: 'Describe esta variante',
+  },
+  '{0} product': { zh: '{0} 件商品', es: '{0} producto' },
+  '{0} group': { zh: '{0} 组', es: '{0} grupo' },
+  '{0} groups': { zh: '{0} 组', es: '{0} grupos' },
+  '{0} products · {1} groups': {
+    zh: '{0} 件商品 · {1} 组',
+    es: '{0} productos · {1} grupos',
+  },
+  'Filter the packing orders shown below. Copy and backup use selected products in the displayed orders.':
+    {
+      zh: '筛选下方显示的装箱订单。复制和备份仅包含所显示订单中选中的商品。',
+      es: 'Filtra los pedidos de embalaje que se muestran abajo. La copia y el respaldo incluyen los productos seleccionados de los pedidos visibles.',
+    },
+  'Style & details': { zh: '样式与详情', es: 'Estilo y detalles' },
+  'Image color scheme': { zh: '图片配色', es: 'Paleta de la imagen' },
+  'Color scheme': { zh: '配色', es: 'Paleta' },
+  'Custom image accent': {
+    zh: '自定义图片强调色',
+    es: 'Color de acento de la imagen',
+  },
+  Accent: { zh: '强调色', es: 'Acento' },
+  Neutral: { zh: '中性', es: 'Neutra' },
+  Warm: { zh: '暖色', es: 'Cálida' },
+  Sage: { zh: '鼠尾草绿', es: 'Salvia' },
+  Ink: { zh: '墨色', es: 'Tinta' },
+  Custom: { zh: '自定义', es: 'Personalizada' },
+  'Choose a header color. Text contrast is adjusted automatically.': {
+    zh: '选择表头颜色，文字对比度会自动调整。',
+    es: 'Elige el color del encabezado. El contraste del texto se ajusta automáticamente.',
+  },
+  'Order heading': { zh: '订单标题', es: 'Encabezado del pedido' },
+  Specifications: { zh: '规格', es: 'Especificaciones' },
+  'Article number': { zh: '货号', es: 'Código' },
+  'Not available in the selected products.': {
+    zh: '所选商品中没有此信息。',
+    es: 'No está disponible en los productos seleccionados.',
+  },
+  'Enable store and order details first.': {
+    zh: '请先启用店铺与订单详情。',
+    es: 'Activa primero los detalles de tienda y pedido.',
+  },
+  'Include the Product description column first.': {
+    zh: '请先包含商品描述列。',
+    es: 'Incluye primero la columna Descripción del producto.',
+  },
+  'Show this detail in the image. Source values stay unchanged.': {
+    zh: '在图片中显示此详情，原始数据保持不变。',
+    es: 'Muestra este detalle en la imagen. Los valores originales se conservan.',
+  },
+  'Reset style & details': {
+    zh: '重置样式与详情',
+    es: 'Restablecer estilo y detalles',
+  },
+  'Include the selected order details in the image. Turning this off hides store names, order numbers, dates, status and order tags, while keeping order separators.':
+    {
+      zh: '在图片中显示所选订单详情。关闭后将隐藏店铺名称、订单号、日期、状态和订单标签，但保留订单分隔。',
+      es: 'Incluye los detalles elegidos del pedido en la imagen. Al desactivarlo se ocultan las tiendas, números, fechas, estados y etiquetas de pedido, pero se conservan los separadores.',
+    },
+  'Codes & packing': { zh: '代码与装箱', es: 'Códigos y embalaje' },
+  'Product details': { zh: '商品详情', es: 'Detalles del producto' },
+  Amounts: { zh: '金额', es: 'Importes' },
+  'Order & supplier': { zh: '订单与供应商', es: 'Pedido y proveedor' },
+  'Tags & links': { zh: '标签与链接', es: 'Etiquetas y enlaces' },
+  'Product title': { zh: '商品标题', es: 'Título del producto' },
+  'Seller product code': { zh: '卖家货号', es: 'Código del vendedor' },
+  'Product entry ID': { zh: '商品明细编号', es: 'ID de línea del producto' },
+  Model: { zh: '型号', es: 'Modelo' },
+  'Original specifications': {
+    zh: '原始规格',
+    es: 'Especificaciones originales',
+  },
+  'Original color': { zh: '原始颜色', es: 'Color original' },
+  'Original material': { zh: '原始材质', es: 'Material original' },
+  'Product discount': { zh: '商品优惠', es: 'Descuento del producto' },
+  'Allocated price change': { zh: '分摊改价', es: 'Cambio de precio asignado' },
+  'Item amount': { zh: '商品金额', es: 'Importe del producto' },
+  'Amount after discount': { zh: '优惠后金额', es: 'Importe tras descuento' },
+  'Order number': { zh: '订单号', es: 'Número de pedido' },
+  'Store name': { zh: '店铺名称', es: 'Nombre de tienda' },
+  'Seller login': { zh: '卖家账号', es: 'Cuenta del vendedor' },
+  'Order shipping': { zh: '整单运费', es: 'Envío del pedido' },
+  'Order payable': { zh: '整单应付金额', es: 'Total a pagar del pedido' },
+  'Order goods amount': {
+    zh: '整单商品原金额',
+    es: 'Importe bruto del pedido',
+  },
+  'Order goods net': { zh: '整单商品净金额', es: 'Importe neto del pedido' },
+  'Order customization service': {
+    zh: '整单定制服务费',
+    es: 'Personalización del pedido',
+  },
+  'Order red-packet discount': {
+    zh: '整单红包优惠',
+    es: 'Descuento de cupón rojo del pedido',
+  },
+  'Order notes': { zh: '订单备注', es: 'Notas del pedido' },
+  'Order link': { zh: '订单链接', es: 'Enlace del pedido' },
+  'Store link': { zh: '店铺链接', es: 'Enlace de la tienda' },
+  'Photo link': { zh: '图片链接', es: 'Enlace de la foto' },
+  'Search columns': { zh: '搜索列', es: 'Buscar columnas' },
+  'Paste order': { zh: '粘贴列顺序', es: 'Orden de pegado' },
+  'Selected columns in paste order': {
+    zh: '按粘贴顺序排列的已选列',
+    es: 'Columnas seleccionadas en orden de pegado',
+  },
+  'Select all columns': { zh: '选择所有列', es: 'Seleccionar todas' },
+  'Clear columns': { zh: '清除已选列', es: 'Quitar selección' },
+  'Restore default columns': { zh: '恢复默认列', es: 'Restaurar columnas' },
+  'No matching columns.': {
+    zh: '没有匹配的列。',
+    es: 'No hay columnas coincidentes.',
+  },
+  'Select columns to copy.': {
+    zh: '请选择要复制的列。',
+    es: 'Selecciona columnas para copiar.',
+  },
+  'Remove {0} column': { zh: '移除{0}列', es: 'Quitar columna {0}' },
+  '{0} selected columns · choices and order are remembered.': {
+    zh: '已选 {0} 列 · 已记住选择和顺序。',
+    es: '{0} columnas seleccionadas · se conservan la selección y el orden.',
+  },
+  'Column choices are active, but this browser could not save them. Keep this popup open to copy.':
+    {
+      zh: '列选择已生效，但浏览器无法保存。请保持此窗口打开以复制。',
+      es: 'La selección está activa, pero el navegador no pudo guardarla. Mantén esta ventana abierta para copiar.',
+    },
+  'Whole-order amount repeated for each product. Do not sum this column across product rows.':
+    {
+      zh: '每个商品行都会重复整单金额。请勿按商品行累加此列。',
+      es: 'Importe del pedido completo repetido por producto. No sumes esta columna entre filas de productos.',
+    },
+  'Product codes appear only once per group. Unavailable fields stay blank.': {
+    zh: '每组货号只显示一次。没有数据的字段留空。',
+    es: 'El código aparece una vez por grupo. Los campos sin datos quedan vacíos.',
+  },
+  'Review the new or unassigned products below before opening packing. Names, sizes, colors and materials use saved edits or available suggestions. Orders without a seller remain editable and receive codes after you identify the seller.':
+    {
+      zh: '打开装箱准备前，请确认下方新增或尚未分配代码的商品。名称、尺寸、颜色和材质使用已保存的编辑或可用建议。未提供卖家的订单仍可编辑，确认卖家后即可分配代码。',
+      es: 'Revisa los productos nuevos o sin código antes de abrir el embalaje. Los nombres, tallas, colores y materiales usan los cambios guardados o las sugerencias disponibles. Los pedidos sin vendedor siguen siendo editables y reciben códigos cuando identifiques al vendedor.',
+    },
+  '{scope} · Packing month: {month}. Spanish: {spanish} · Chinese: {category}. Size codes: {sizes} · Colors: {colors} · Materials: {materials}.':
+    {
+      zh: '{scope} · 装箱月份：{month}。西班牙语：{spanish} · 中文：{category}。尺寸代码：{sizes} · 颜色：{colors} · 材质：{materials}。',
+      es: '{scope} · Mes de embalaje: {month}. Español: {spanish} · Chino: {category}. Códigos de talla: {sizes} · Colores: {colors} · Materiales: {materials}.',
+    },
+  'Seller login required before assigning codes': {
+    zh: '分配代码前需要卖家账号',
+    es: 'Se requiere la cuenta del vendedor antes de asignar códigos',
+  },
+  'Group actions': {
+    zh: '商品组操作',
+    es: 'Acciones del grupo',
+  },
+  'Product actions': {
+    zh: '商品操作',
+    es: 'Acciones del producto',
+  },
   'Previously issued here. Current barcode:': {
     zh: '曾在此使用。当前条码：',
     es: 'Emitido aquí anteriormente. Código de barras actual:',
@@ -657,6 +833,16 @@ export const PACKING_MESSAGES = {
     zh: '尺码码',
     es: 'Códigos de talla',
   },
+  'Copy the saved packing size, or the original size and specifications for products not yet prepared. Wording and units stay unchanged.':
+    {
+      zh: '复制已保存的装箱尺寸；尚未准备的商品则复制原始尺寸和规格。保留原文及单位。',
+      es: 'Copia la medida guardada del embalaje o las medidas y especificaciones originales de los productos aún no preparados. Conserva el texto y las unidades.',
+    },
+  'Copy only the assigned size ending from the barcode, such as S, XL or 300. Products without an assigned size code stay blank.':
+    {
+      zh: '仅复制条码中已分配的尺码后缀，例如 S、XL 或 300。未分配尺码代码的商品留空。',
+      es: 'Copia solo el sufijo de talla asignado al código de barras, como S, XL o 300. Queda vacío si el producto no tiene un código de talla asignado.',
+    },
   Data: {
     zh: '数据',
     es: 'Datos',
@@ -705,4 +891,29 @@ export const PACKING_MESSAGES = {
     zh: '卖家颜色：{source}',
     es: 'Color del vendedor: {source}',
   },
+  'Previously used by this product': {
+    zh: '此商品曾使用的货号',
+    es: 'Códigos anteriores de este producto',
+  },
+  'Choose a previous code…': {
+    zh: '选择以前的货号…',
+    es: 'Elegir un código anterior…',
+  },
+  'Saved code': {
+    zh: '已保存的货号',
+    es: 'Código guardado',
+  },
+  'Apply corrections': {
+    zh: '应用修正',
+    es: 'Aplicar correcciones',
+  },
+  'Undo code edits': {
+    zh: '撤销货号修改',
+    es: 'Deshacer cambios de códigos',
+  },
+  'Restore saved product and variant codes in this order. Keep names, materials and other edits.':
+    {
+      zh: '恢复此订单已保存的商品和规格货号，保留名称、材质及其他修改。',
+      es: 'Restaurar los códigos guardados de este pedido. Conservar nombres, materiales y otros cambios.',
+    },
 }

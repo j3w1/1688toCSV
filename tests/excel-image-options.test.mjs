@@ -50,6 +50,8 @@ test('the same saved selection and order survive a new settings read', () => {
     order: ['price', 'quantity'],
     selected: ['price', 'quantity'],
     showOrderDetails: false,
+    style: { scheme: 'custom', accent: '#ffc800' },
+    details: { seller: false, productTags: true, date: true },
   })
   assert.equal(saveExcelImagePreference(preference, storage), true)
   assert.equal(values.has(EXCEL_IMAGE_PREFERENCE), true)

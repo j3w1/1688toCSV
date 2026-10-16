@@ -741,6 +741,8 @@ export const UI_MESSAGES = {
     zh: '关闭',
     es: 'Cerrar',
   },
+  Done: { zh: '完成', es: 'Listo' },
+  Retry: { zh: '重试', es: 'Reintentar' },
   Next: {
     zh: '下一页',
     es: 'Siguiente',

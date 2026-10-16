@@ -120,6 +120,9 @@ test('label backdrop saves a valid blurred edit, preserves Escape restore, and k
   await page
     .getByRole('button', { name: 'Prepare packing list', exact: true })
     .click()
+  await page
+    .getByRole('button', { name: 'Assign codes and prepare', exact: true })
+    .click()
   const preparation = page.locator('#packing-view')
   await expect(preparation.locator('.preparation-save-status')).toHaveText(
     'Saved automatically'

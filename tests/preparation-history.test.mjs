@@ -1,6 +1,10 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
-import { createPreparationHistory } from '../src/preparation-history.js'
+import {
+  createPreparationHistory,
+  preparationHistorySnapshot,
+  restorePreparationHistory,
+} from '../src/preparation-history.js'
 
 const json = (name) => JSON.stringify({ groups: [{ spanishName: name }] })
 
@@ -111,7 +115,7 @@ test('returned drafts are independent and undo/redo end typing coalescence', () 
   assert.equal(after, json('A'))
 })
 
-test('saving an order clears both its undo and redo while retaining other unsaved orders', () => {
+test('explicit reload clears an order and retains history for other orders', () => {
   const history = createPreparationHistory()
   history.record('one', json(''), json('A'))
   history.record('two', json(''), json('B'))
@@ -141,6 +145,120 @@ test('saving an order clears both its undo and redo while retaining other unsave
     bytes: 0,
   })
   assert.equal(history.redo(), null)
+})
+
+test('saved revisions are ignored by history and restored from the current acknowledged draft', () => {
+  const before = {
+    accountId: 'buyer',
+    orderId: 'one',
+    revision: 1,
+    updatedAt: '2026-10-16T00:00:00Z',
+    groups: [{ id: 'group', category: 'old', variants: [{ id: 'variant' }] }],
+  }
+  const after = structuredClone(before)
+  after.groups[0].category = 'new'
+  const history = createPreparationHistory()
+  history.record(
+    'one',
+    preparationHistorySnapshot(before),
+    preparationHistorySnapshot(after)
+  )
+  const acknowledged = {
+    ...after,
+    revision: 8,
+    updatedAt: '2026-10-16T01:00:00Z',
+  }
+  assert.equal(
+    preparationHistorySnapshot(acknowledged),
+    preparationHistorySnapshot(after)
+  )
+  const restored = restorePreparationHistory(history.undo().value, acknowledged)
+  assert.equal(restored.revision, 8)
+  assert.equal(restored.updatedAt, acknowledged.updatedAt)
+  assert.deepEqual(restored.groups, before.groups)
+  assert.equal(history.state().canRedo, true)
+  assert.throws(() =>
+    restorePreparationHistory(restored, { ...acknowledged, orderId: 'other' })
+  )
+  assert.throws(() =>
+    restorePreparationHistory(restored, { ...acknowledged, accountId: 'other' })
+  )
+})
+
+test('multi-order operations remain one reversible step and peek does not consume a failed write', () => {
+  const history = createPreparationHistory()
+  history.recordBatch([
+    { orderId: 'one', before: json('A'), after: json('B') },
+    { orderId: 'two', before: json('C'), after: json('D') },
+  ])
+  assert.equal(history.state().entries, 1)
+  const undo = {
+    changes: [
+      { orderId: 'one', value: JSON.parse(json('A')) },
+      { orderId: 'two', value: JSON.parse(json('C')) },
+    ],
+  }
+  assert.deepEqual(history.peek('undo'), undo)
+  assert.equal(history.state().canUndo, true)
+  assert.deepEqual(history.undo(), undo)
+  assert.equal(history.state().canUndo, false)
+  assert.deepEqual(history.redo(), {
+    changes: [
+      { orderId: 'one', value: JSON.parse(json('B')) },
+      { orderId: 'two', value: JSON.parse(json('D')) },
+    ],
+  })
+  history.record('three', json('E'), json('F'))
+  history.clear('one')
+  assert.equal(history.state().entries, 1)
+  assert.deepEqual(history.undo(), {
+    orderId: 'three',
+    value: JSON.parse(json('E')),
+  })
+})
+
+test('a saved single-order operation retains its atomic persistence boundary', () => {
+  const history = createPreparationHistory()
+  history.recordBatch([
+    { orderId: 'hidden', before: json('old rank'), after: json('new rank') },
+  ])
+  const before = {
+    changes: [{ orderId: 'hidden', value: JSON.parse(json('old rank')) }],
+  }
+  const after = {
+    changes: [{ orderId: 'hidden', value: JSON.parse(json('new rank')) }],
+  }
+  assert.deepEqual(history.peek('undo'), before)
+  assert.deepEqual(history.undo(), before)
+  assert.deepEqual(history.peek('redo'), after)
+  assert.deepEqual(history.redo(), after)
+})
+
+test('batch history is bounded, ignores no-ops, and rejects repeated orders', () => {
+  const history = createPreparationHistory({ maxEntries: 1 })
+  history.record('one', json('A'), json('B'))
+  assert.equal(
+    history.recordBatch([
+      { orderId: 'one', before: json('B'), after: json('B') },
+    ]),
+    false
+  )
+  assert.equal(history.state().entries, 1)
+  assert.throws(
+    () =>
+      history.recordBatch([
+        { orderId: 'one', before: json('A'), after: json('B') },
+        { orderId: 'one', before: json('B'), after: json('C') },
+      ]),
+    TypeError
+  )
+  history.recordBatch([
+    { orderId: 'two', before: json('C'), after: json('D') },
+    { orderId: 'three', before: json('E'), after: json('F') },
+  ])
+  assert.equal(history.state().entries, 1)
+  assert.equal(history.undo().changes.length, 2)
+  assert.equal(history.undo(), null)
 })
 
 test('entry cap evicts oldest changes and counts the redo timeline too', () => {

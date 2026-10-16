@@ -18,6 +18,8 @@ import {
 } from './labels.js'
 import { showErrorNotice, clearErrorNotice } from './error-notice.js'
 import { applyCodeDesign } from './code-design.js'
+import { decorateIcon } from './icons.js'
+import { copied, resetCopyFeedback } from './ui.js'
 
 let nextEditorId = 0
 
@@ -42,8 +44,8 @@ export function mountLabelEditor(container, options) {
   let previewVersion = 0
   let revision = 0
   let timer = null
-  let copiedTimer = null
   let pendingCommit = null
+  let copyInProgress = false
   let destroyed = false
   let ready = false
   let codeParts = null
@@ -92,6 +94,7 @@ export function mountLabelEditor(container, options) {
   const copy = element('button', 'label-editor-copy', uiMessage('Copy label'))
   copy.type = 'button'
   copy.disabled = true
+  decorateIcon(copy, 'copy')
   preview.append(image)
   root.append(preview, hint, status, errorDescription, resolve, copy)
   container.append(root)
@@ -145,8 +148,9 @@ export function mountLabelEditor(container, options) {
   }
 
   function resetCopied() {
-    clearTimeout(copiedTimer)
+    resetCopyFeedback(copy)
     bindText(copy, uiMessage('Copy label'))
+    decorateIcon(copy, 'copy')
     copy.classList.remove('copied')
   }
 
@@ -267,7 +271,7 @@ export function mountLabelEditor(container, options) {
   function controls(disabled) {
     // Preserve keyboard focus so Escape still reaches the field during a save.
     for (const input of inputs.values()) input.readOnly = disabled
-    copy.disabled = disabled || !ready
+    copy.disabled = disabled || !ready || copyInProgress
   }
 
   function invalidatePreview() {
@@ -313,7 +317,7 @@ export function mountLabelEditor(container, options) {
       previewUrl = nextUrl
       latest = { result, model: { ...model, ...normalized } }
       ready = true
-      copy.disabled = Boolean(pendingCommit)
+      copy.disabled = Boolean(pendingCommit) || copyInProgress
       if (!pendingCommit)
         message(
           uiMessage('{0} × {1} mm · {2} dpi{3}', {
@@ -620,32 +624,44 @@ export function mountLabelEditor(container, options) {
     }
   })
   copy.addEventListener('click', async () => {
+    if (copyInProgress) return
     resetCopied()
     try {
       if (!(await commit()) || destroyed) return
       const copiedRevision = revision
       const current = await previewNow()
       if (!current || destroyed) return
-      copy.disabled = true
-      bindText(copy, uiMessage('Copying…'))
-      if (options.onCopy) await options.onCopy(current.result, current.model)
-      else
-        await navigator.clipboard.write([
-          new ClipboardItem({ 'image/png': current.result.blob }),
-        ])
-      if (!destroyed && copiedRevision === revision) {
-        bindText(copy, uiMessage('Copied'))
-        copy.classList.add('copied')
-        copiedTimer = setTimeout(resetCopied, 3000)
-        message(uiMessage('Copied'))
-      }
+      copyInProgress = true
+      await copied(
+        copy,
+        async () => {
+          if (options.onCopy) {
+            if ((await options.onCopy(current.result, current.model)) === false)
+              return false
+          } else
+            await navigator.clipboard.write([
+              new ClipboardItem({ 'image/png': current.result.blob }),
+            ])
+          if (destroyed || copiedRevision !== revision) return false
+          message(uiMessage('Copied'))
+        },
+        {
+          onError(error) {
+            if (!destroyed)
+              message(error.message || 'The label could not be copied', true)
+          },
+        }
+      )
     } catch (error) {
       if (!destroyed) {
         resetCopied()
         message(error.message || 'The label could not be copied', true)
       }
     } finally {
-      if (!destroyed) copy.disabled = !ready || dirty()
+      copyInProgress = false
+      copy.removeAttribute('aria-busy')
+      if (!destroyed)
+        copy.disabled = !ready || dirty() || Boolean(pendingCommit)
     }
   })
 
@@ -681,7 +697,7 @@ export function mountLabelEditor(container, options) {
       clearErrorNotice({ scope: errorScope, key: errorKey })
       dialog?.removeEventListener('cancel', dismiss)
       revision++
-      clearTimeout(copiedTimer)
+      resetCopyFeedback(copy)
       invalidatePreview()
       root.remove()
     },

@@ -189,15 +189,15 @@ export const ACTION_HELP_RULES = [
   ],
   [
     ['Undo'],
-    'Undo the latest pending packing edit. Saved changes are managed by the order’s restore actions.',
-    '撤销最近尚未保存的装箱修改。已保存的更改请使用订单恢复操作。',
-    'Deshace el último cambio de empaque pendiente. Para cambios guardados, usa las opciones de restauración del pedido.',
+    'Undo the latest packing edit in this session, including saved codes, names, grouping, removal and arrangement. Issued codes remain reserved.',
+    '撤销本次装箱会话中的最近修改，包括已保存的编码、名称、分组、移除和排序。已发放的编码仍会保留。',
+    'Deshace el último cambio de esta sesión, incluidos códigos, nombres, agrupación, eliminación y orden ya guardados. Los códigos emitidos siguen reservados.',
   ],
   [
     ['Redo'],
-    'Reapply a pending packing edit that you just undid.',
-    '重新应用刚撤销的待保存装箱修改。',
-    'Vuelve a aplicar un cambio pendiente que acabas de deshacer.',
+    'Reapply the packing edit you just undid, including changes that were already saved.',
+    '重新应用刚撤销的装箱修改，包括此前已保存的更改。',
+    'Vuelve a aplicar el cambio de empaque que acabas de deshacer, aunque ya estuviera guardado.',
   ],
   [
     ['Apply to order'],

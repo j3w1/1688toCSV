@@ -1,4 +1,4 @@
-import { element } from './ui.js'
+import { element, copied as copyFeedback, resetCopyFeedback } from './ui.js'
 import { bindText, bindAttribute, message } from './i18n.js'
 import { decorateIcon } from './icons.js'
 import { showErrorNotice, clearErrorNotice } from './error-notice.js'
@@ -306,6 +306,7 @@ export function openImageCopyDialog({
 
   function refresh(reset = false) {
     if (closed || copying) return
+    resetCopyFeedback(copy)
     const ticket = ++generation
     controller?.abort()
     controller = new AbortController()
@@ -442,33 +443,50 @@ export function openImageCopyDialog({
   }
   copy.onclick = async () => {
     if (copying || !ready) return
-    copying = true
     const payload = ready
     const batchKey = key(plans[current])
     clearErrorNotice({ scope: dialog, key: 'image-copy' })
-    bindText(progress, message('Copying…'))
-    controls()
     try {
-      await write(payload)
-      copied.add(batchKey)
-      copiedAny = true
-      if (!closed)
-        bindText(
-          progress,
-          message(
-            'Copied {0} of {1} batches. Paste into Excel before copying another.',
-            { 0: copied.size, 1: plans.length }
+      await copyFeedback(
+        copy,
+        async () => {
+          copying = true
+          bindText(progress, message('Copying…'))
+          controls()
+          const result = await write(payload)
+          if (closed) return false
+          if (result === false) {
+            bindText(
+              progress,
+              message('Copied {0} of {1} batches. Ready to copy.', {
+                0: copied.size,
+                1: plans.length,
+              })
+            )
+            return false
+          }
+          copied.add(batchKey)
+          copiedAny = true
+          bindText(
+            progress,
+            message(
+              'Copied {0} of {1} batches. Paste into Excel before copying another.',
+              { 0: copied.size, 1: plans.length }
+            )
           )
-        )
-    } catch (error) {
-      if (!closed) {
-        bindText(progress, message('Copy failed. Try again.'))
-        showErrorNotice(error, {
-          scope: dialog,
-          key: 'image-copy',
-          ...errorOptions?.(error, dialog),
-        })
-      }
+        },
+        {
+          onError(error) {
+            if (closed) return
+            bindText(progress, message('Copy failed. Try again.'))
+            showErrorNotice(error, {
+              scope: dialog,
+              key: 'image-copy',
+              ...errorOptions?.(error, dialog),
+            })
+          },
+        }
+      )
     } finally {
       copying = false
       if (!closed) controls()
@@ -491,6 +509,7 @@ export function openImageCopyDialog({
         clearTimeout(timer)
         controller?.abort()
         signal?.removeEventListener('abort', cancel)
+        resetCopyFeedback(copy)
         release()
         dialog.remove()
         resolve(copiedAny)

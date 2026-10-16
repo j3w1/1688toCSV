@@ -47,6 +47,10 @@ before(async () => {
     new URL('../src/label-editor.css', import.meta.url),
     'utf8'
   )
+  css += await readFile(
+    new URL('../src/code-design.css', import.meta.url),
+    'utf8'
+  )
   logoDataUrl = `data:image/png;base64,${(
     await readFile(new URL('../src/assets/casa-elida.png', import.meta.url))
   ).toString('base64')}`
@@ -419,17 +423,18 @@ test('barcode and carton code bands have rounded corners and hug fitted text wit
     assert.equal(backgrounds.length, 1)
     const band = backgrounds[0]
     const { left, right, top, bottom } = result.codeText
-    const padding =
-      (result.width * 0.012 + (input.settings.dpi || 300) / 300) * 0.8645
+    // Approved master: at 20px type, 7px horizontal/6px vertical clear space
+    // around the visible ink, with 4px corners. Label size and DPI must not
+    // independently change those proportions.
+    const fontSize = Number(result.codeText.font.match(/([\d.]+)px/)[1])
+    const padding = (fontSize / 20) * 7
     assert.ok(Math.abs(left - band.x - padding) < 0.01)
     assert.ok(Math.abs(band.x + band.width - right - padding) < 0.01)
     assert.ok(Math.abs(top - band.y - (band.y + band.height - bottom)) < 0.01)
-    const previousHeight = result.height * result.codeBox[3]
-    const previousPadding = (previousHeight - (bottom - top)) / 2
-    assert.ok(Math.abs(top - band.y - previousPadding * 0.63) < 0.01)
-    assert.ok(
-      Math.abs(band.y + band.height - bottom - previousPadding * 0.63) < 0.01
-    )
+    const verticalPadding = (fontSize / 20) * 6
+    assert.ok(Math.abs(top - band.y - verticalPadding) < 0.01)
+    assert.ok(Math.abs(band.y + band.height - bottom - verticalPadding) < 0.01)
+    assert.ok(Math.abs(band.radius - (fontSize / 20) * 4) < 0.01)
     assert.ok(
       Math.abs(
         band.y +
@@ -440,7 +445,12 @@ test('barcode and carton code bands have rounded corners and hug fitted text wit
     assert.match(result.codeText.font, /^(?:700|bold) /)
     assert.equal(result.codeText.color, '#ffffff')
     assert.ok(band.y >= result.height * 0.49)
-    assert.ok(band.height < result.height * 0.2)
+    assert.ok(band.height <= result.height * result.codeBox[3])
+    assert.ok(band.y >= result.height * result.codeBox[1])
+    assert.ok(
+      band.y + band.height <=
+        result.height * (result.codeBox[1] + result.codeBox[3])
+    )
     assert.ok(band.radius > 0 && band.radius < band.height * 0.25)
     assert.ok(result.corner.slice(0, 3).every((channel) => channel > 220))
     assert.ok(result.topCenter.slice(0, 3).every((channel) => channel < 20))
@@ -603,6 +613,100 @@ test('joined label designer uses the printed band geometry without empty slots s
   }
 })
 
+test('workspace badges retain the approved clear space at different font sizes', async (t) => {
+  const page = await pageFor(t, true)
+  await page.evaluate(() => {
+    LabelEditor.mountLabelEditor(document.getElementById('editor'), {
+      model: { kind: 'mark', code: 'CE26100201', category: '工艺品' },
+    })
+    const host = document.createElement('section')
+    host.className = 'preparation-workspace'
+    const group = document.createElement('div')
+    group.className = 'preparation-group'
+    group.style.cssText =
+      'display:grid;justify-items:start;gap:16px;padding:8px'
+    host.append(group)
+    document.querySelector('.label-editor').prepend(host)
+    for (const size of [12, 20, 48]) {
+      const badge = document.createElement('span')
+      badge.className = 'ce-code code-reference'
+      badge.textContent = 'CE26100201A'
+      badge.style.setProperty('--ce-code-size', `${size}px`)
+      group.append(badge)
+    }
+    const input = document.createElement('input')
+    input.className = 'group-code-editor ce-code code-reference'
+    input.value = 'CE26100201A'
+    input.style.fieldSizing = 'content'
+    group.append(input)
+  })
+  for (const badge of await page.locator('.code-reference').all()) {
+    const dimensions = await badge.evaluate((node) => {
+      const style = getComputedStyle(node)
+      return {
+        font: parseFloat(style.fontSize),
+        left: parseFloat(style.paddingLeft),
+        radius: parseFloat(style.borderTopLeftRadius),
+      }
+    })
+    assert.ok(Math.abs(dimensions.left / dimensions.font - 7 / 20) < 0.001)
+    assert.ok(Math.abs(dimensions.radius / dimensions.font - 4 / 20) < 0.001)
+    const pixels = await badge.screenshot()
+    const clearSpace = await page.evaluate(
+      async (bytes) => {
+        const bitmap = await createImageBitmap(
+          new Blob([new Uint8Array(bytes)])
+        )
+        const canvas = document.createElement('canvas')
+        canvas.width = bitmap.width
+        canvas.height = bitmap.height
+        const context = canvas.getContext('2d')
+        context.drawImage(bitmap, 0, 0)
+        bitmap.close()
+        const { data } = context.getImageData(0, 0, canvas.width, canvas.height)
+        let top = canvas.height,
+          bottom = 0,
+          bandTop = canvas.height,
+          bandBottom = 0
+        // Stay away from the rounded corners and the page behind them.
+        for (let y = 0; y < canvas.height; y++) {
+          let dark = 0
+          for (
+            let x = Math.ceil(canvas.width * 0.1);
+            x < canvas.width * 0.9;
+            x++
+          ) {
+            const p = (y * canvas.width + x) * 4
+            if (data[p] < 20 && data[p + 1] < 20 && data[p + 2] < 20) dark++
+          }
+          // Fractional element bounds may include a sliver of the white page.
+          if (dark < canvas.width * 0.1) continue
+          bandTop = Math.min(bandTop, y)
+          bandBottom = Math.max(bandBottom, y + 1)
+          for (
+            let x = Math.ceil(canvas.width * 0.1);
+            x < canvas.width * 0.9;
+            x++
+          ) {
+            const p = (y * canvas.width + x) * 4
+            if (data[p] > 240 && data[p + 1] > 240 && data[p + 2] > 240) {
+              top = Math.min(top, y)
+              bottom = Math.max(bottom, y + 1)
+            }
+          }
+        }
+        return { top: top - bandTop, bottom: bandBottom - bottom }
+      },
+      [...pixels]
+    )
+    for (const edge of ['top', 'bottom'])
+      assert.ok(
+        Math.abs(clearSpace[edge] - (dimensions.font * 6) / 20) <= 1.5,
+        `${dimensions.font}px ${edge}: ${clearSpace[edge]}px clear space follows the approved badge`
+      )
+  }
+})
+
 test('carton and standalone barcode editors keep the same centered code band while editing', async (t) => {
   const page = await pageFor(t, true)
   for (const model of [
@@ -723,6 +827,13 @@ test('shipping marks export one landscape image with blank operational fields', 
         code: 'CE26100002',
         category: '工艺品',
       })
+      const codeLayout = Labels.labelCodeLayout(
+        document.createElement('canvas').getContext('2d'),
+        { kind: 'mark', code: 'CE26100002' },
+        Labels.normalizeLabelSettings(),
+        label.width,
+        label.height
+      )
       return {
         width: label.width,
         height: label.height,
@@ -731,6 +842,7 @@ test('shipping marks export one landscape image with blank operational fields', 
         fields: Labels.LABEL_FIELDS.mark,
         calls,
         lines,
+        band: codeLayout.band,
       }
     } finally {
       CanvasRenderingContext2D.prototype.fillText = original
@@ -751,11 +863,25 @@ test('shipping marks export one landscape image with blank operational fields', 
   const category = result.calls.find((call) => call.text === '工艺品')
   assert.ok(ce.size >= result.height * 0.68)
   assert.ok(ce.bottom - ce.top >= result.height * 0.49)
-  assert.ok(code.size >= result.height * 0.19)
-  assert.ok(code.right - code.left >= result.width * 0.79)
+  assert.ok(code.size >= result.height * 0.18)
+  // The full code stays prominent in a narrower band beneath the CE heading.
+  assert.ok(code.size <= result.height * 0.184)
+  assert.ok(code.right - code.left >= result.width * 0.72)
+  assert.ok(code.right - code.left <= result.width * 0.77)
   assert.ok(category.size >= result.height * 0.19)
   assert.ok(ce.bottom < code.top)
-  assert.ok(code.top - ce.bottom < result.height * 0.06)
+  const [bandX, bandY, bandWidth, bandHeight] = result.band
+  // Measure exterior whitespace, excluding the deliberately padded black band.
+  assert.ok(ce.bottom < bandY)
+  assert.ok(bandY - ce.bottom < result.height * 0.03)
+  assert.ok(bandY + bandHeight < category.top)
+  assert.ok(Math.abs(bandX + bandWidth / 2 - result.width / 2) < 0.01)
+  assert.ok(
+    Math.abs(code.left - bandX - (bandX + bandWidth - code.right)) < 0.01
+  )
+  assert.ok(
+    Math.abs(code.top - bandY - (bandY + bandHeight - code.bottom)) < 0.01
+  )
   assert.ok(code.bottom < category.top)
   assert.ok(ce.top >= result.height * 0.01)
   assert.ok(ce.left >= result.width * 0.03)
@@ -775,21 +901,24 @@ test('shipping marks export one landscape image with blank operational fields', 
   )
   assert.ok(blanks.every((call) => call.size < result.height * 0.045))
   assert.ok(blanks[0].top > code.bottom)
+  assert.ok(blanks[0].top > bandY + bandHeight)
   assert.ok(blanks.at(-1).bottom - blanks[0].top < result.height * 0.2)
   assert.equal(result.lines.length, 3)
   for (let index = 0; index < result.lines.length; index++) {
     const line = result.lines[index]
     assert.ok(line.start.x > blanks[index].right)
+    assert.ok(line.start.x - blanks[index].right < result.width * 0.04)
     assert.equal(line.start.y, line.end.y)
     assert.ok(line.end.x < category.left)
     assert.ok(line.end.y < result.height * 0.97)
-    assert.ok(((line.end.x - line.start.x) / result.width) * 148.5 >= 27)
+    assert.ok(((line.end.x - line.start.x) / result.width) * 148.5 >= 36)
   }
 })
 
 test('carton mark layout keeps enlarged identifiers and writable fields within adjusted print sizes', async (t) => {
   const page = await pageFor(t)
   for (const settings of [
+    { dpi: 300, mark: { widthMm: 148.5, heightMm: 105, textScale: 1 } },
     { dpi: 150, mark: { widthMm: 148.5, heightMm: 105, textScale: 0.75 } },
     { dpi: 300, mark: { widthMm: 200, heightMm: 140, textScale: 1.25 } },
     { dpi: 600, mark: { widthMm: 148.5, heightMm: 105, textScale: 1.25 } },
@@ -1333,6 +1462,104 @@ test('editor hides previous artwork during invalid or conflicting edits and rest
   )
 })
 
+test('editing a label during a clipboard write cannot enable a concurrent copy', async (t) => {
+  const page = await pageFor(t, true)
+  await page.evaluate(() => {
+    globalThis.copyModels = []
+    globalThis.editor = LabelEditor.mountLabelEditor(
+      document.getElementById('editor'),
+      {
+        model: { kind: 'barcode', code: 'CE26100001', spanishName: 'TAZA' },
+        onCopy: async (_result, model) => {
+          globalThis.copyModels.push(model.spanishName)
+          await new Promise((resolve) => {
+            globalThis.finishCopy = resolve
+          })
+        },
+      }
+    )
+  })
+  const copy = page.locator('.label-editor-copy')
+  await page.waitForFunction(
+    () => !document.querySelector('.label-editor-copy').disabled
+  )
+  await copy.click()
+  await page.waitForFunction(() => globalThis.copyModels.length === 1)
+  await page
+    .getByRole('textbox', { name: 'Spanish product name', exact: true })
+    .fill('CAJA')
+  await page.waitForFunction(
+    () => globalThis.editor.getLatestValidRender()?.model.spanishName === 'CAJA'
+  )
+  assert.equal(await copy.isDisabled(), true)
+  await copy.evaluate((button) => button.dispatchEvent(new MouseEvent('click')))
+  assert.deepEqual(await page.evaluate(() => globalThis.copyModels), ['TAZA'])
+  await page.evaluate(() => globalThis.finishCopy())
+  await page.waitForFunction(
+    () =>
+      !document.querySelector('.label-editor-copy').hasAttribute('aria-busy')
+  )
+  assert.equal(
+    await copy.evaluate((button) => button.classList.contains('copied')),
+    false
+  )
+  await page
+    .getByRole('textbox', { name: 'Spanish product name', exact: true })
+    .press('Enter')
+  await page.waitForFunction(
+    () => !document.querySelector('.label-editor-copy').disabled
+  )
+  await copy.click()
+  await page.waitForFunction(() => globalThis.copyModels.length === 2)
+  assert.equal(await copy.textContent(), 'Copying…')
+  assert.equal(await copy.isDisabled(), true)
+  await page.evaluate(() => globalThis.finishCopy())
+  await page.waitForFunction(() =>
+    document.querySelector('.label-editor-copy').classList.contains('copied')
+  )
+  assert.deepEqual(await page.evaluate(() => globalThis.copyModels), [
+    'TAZA',
+    'CAJA',
+  ])
+})
+
+test('editor cancelled copy stays ready without success and a later copy completes', async (t) => {
+  const page = await pageFor(t, true)
+  await page.evaluate(() => {
+    globalThis.copyAttempts = 0
+    globalThis.editor = LabelEditor.mountLabelEditor(
+      document.getElementById('editor'),
+      {
+        model: { kind: 'barcode', code: 'CE26100001', spanishName: 'TAZA' },
+        onCopy: async () => ++globalThis.copyAttempts > 1,
+      }
+    )
+  })
+  const copy = page.locator('.label-editor-copy')
+  await page.waitForFunction(
+    () => !document.querySelector('.label-editor-copy').disabled
+  )
+  await copy.click()
+  await page.waitForFunction(
+    () =>
+      globalThis.copyAttempts === 1 &&
+      !document.querySelector('.label-editor-copy').disabled
+  )
+  assert.equal(await copy.textContent(), 'Copy label')
+  assert.equal(await copy.getAttribute('data-icon'), 'copy')
+  assert.equal(
+    await copy.evaluate((button) => button.classList.contains('copied')),
+    false
+  )
+  await copy.click()
+  await page.waitForFunction(() =>
+    document.querySelector('.label-editor-copy').classList.contains('copied')
+  )
+  assert.equal(await page.evaluate(() => globalThis.copyAttempts), 2)
+  assert.equal(await copy.textContent(), 'Copied')
+  assert.equal(await copy.getAttribute('data-icon'), 'check')
+})
+
 test('editor reports save and copy failures without reporting success or copying stale drafts', async (t) => {
   const page = await pageFor(t, true)
   await page.evaluate(() => {
@@ -1362,7 +1589,7 @@ test('editor reports save and copy failures without reporting success or copying
   )
   assert.equal(
     await page.locator('.label-editor-copy').textContent(),
-    'Copy label'
+    'Try again'
   )
   assert.equal(
     await page

@@ -1,4 +1,49 @@
 export const ERROR_MESSAGES = {
+  'Choose at least one Excel image column.': {
+    zh: '请至少选择一列进行复制。',
+    es: 'Selecciona al menos una columna para copiar.',
+  },
+  'Choose valid, unique Excel image columns.': {
+    zh: '请选择有效且不重复的 Excel 图片列。',
+    es: 'Elige columnas válidas y sin repetir para la imagen de Excel.',
+  },
+  'Choose an Excel image batch.': {
+    zh: '请选择一个 Excel 图片批次。',
+    es: 'Elige un lote de imágenes para Excel.',
+  },
+  'Choose a photo loader for the Excel image.': {
+    zh: '请为 Excel 图片提供照片加载器。',
+    es: 'Elige un cargador de fotos para la imagen de Excel.',
+  },
+  'No carton mark image was returned.': {
+    zh: '未返回唛头图片。',
+    es: 'No se recibió ninguna imagen de la marca de caja.',
+  },
+  'The carton mark cannot fit in the Excel image.': {
+    zh: '唛头无法放入 Excel 图片。',
+    es: 'La marca de caja no cabe en la imagen de Excel.',
+  },
+  'Choose a file created by Back up packing. Use Settings → Data → Restore for a full-library backup.':
+    {
+      zh: '请选择通过“备份装箱清单”创建的文件。完整资料库备份请通过“设置 → 数据 → 恢复”导入。',
+      es: 'Elige un archivo creado con Respaldar empaque. Para una copia de toda la biblioteca, usa Ajustes → Datos → Restaurar.',
+    },
+  'No active labels to copy.': {
+    zh: '没有可复制的有效标签。',
+    es: 'No hay etiquetas activas para copiar.',
+  },
+  'This order is no longer available.': {
+    zh: '此订单已不可用。',
+    es: 'Este pedido ya no está disponible.',
+  },
+  'Select product rows to copy.': {
+    zh: '请选择要复制的商品行。',
+    es: 'Selecciona las filas de productos que quieres copiar.',
+  },
+  'Choose a logo smaller than 2 MB.': {
+    zh: '请选择小于 2 MB 的标志图片。',
+    es: 'Elige un logotipo de menos de 2 MB.',
+  },
   'Code conflict: {code} belongs to another variant of this product. Keep different variant or size endings.':
     {
       zh: '货号冲突：{code} 属于此商品的另一个款式。请使用不同的款式或尺寸后缀。',

@@ -192,7 +192,9 @@ test('a shared barcode lists distinct unit prices and sums large source quantiti
     '¥ 12.345 / ¥ 18.90',
     '9,007,199,254,741,005',
   ])
-  await expect(merged.locator('.variant-index')).toContainText('2 source rows')
+  await expect(merged.locator('.variant-source-count')).toHaveText(
+    '2 source rows'
+  )
   const saved = await backup(extension)
   expect(saved.preparations[0].groups[0].variants[0].entryIds).toEqual(
     record.snapshot.items.slice(0, 2).map((item) => item.entryId)
@@ -227,7 +229,7 @@ test('reopening one selected source row of a shared barcode shows only that row 
     '24',
   ])
   await expect(row.locator('.variant-price')).not.toContainText('12.345')
-  await expect(row.locator('.variant-index')).not.toContainText('2 source rows')
+  await expect(row.locator('.variant-source-count')).toHaveCount(0)
   await expect(view.locator('.preparation-copy-scope')).toHaveText(
     '1 selected products · 1 orders'
   )

@@ -1,6 +1,10 @@
 import { message as uiMessage, getLanguage } from './i18n.js'
 import { planExcelImage, renderExcelImage } from './excel-image.js'
 import {
+  createExcelImageBadges,
+  currentExcelImageMode,
+} from './excel-image-badges.js'
+import {
   selectedExcelImageColumns,
   createExcelImageOptions,
   readExcelImagePreference,
@@ -15,6 +19,7 @@ export async function copyExcelImage(
     signal,
     columns,
     language = getLanguage(),
+    badges = createExcelImageBadges({}, currentExcelImageMode()),
     errorOptions,
   }
 ) {
@@ -25,6 +30,8 @@ export async function copyExcelImage(
         'orderId',
         'sellerName',
         'sellerMemberLogin',
+        'orderDate',
+        'orderStatus',
         'entryId',
         'groupId',
         'thumbnail',
@@ -45,6 +52,10 @@ export async function copyExcelImage(
     )
   )
   frozen.forEach((row, index) => {
+    for (const key of ['orderTags', 'productTags'])
+      row[key] = (Array.isArray(rows[index][key]) ? rows[index][key] : []).map(
+        (tag) => String(tag ?? '')
+      )
     row.skuProperties = (
       Array.isArray(rows[index].skuProperties) ? rows[index].skuProperties : []
     ).map(({ label, value }) => ({
@@ -59,7 +70,9 @@ export async function copyExcelImage(
     signal,
     interactivePreview: true,
     errorOptions,
-    createOptions: columns ? undefined : createExcelImageOptions,
+    createOptions: columns
+      ? undefined
+      : (onChange) => createExcelImageOptions(onChange, { rows: frozen }),
     plan: async (signal) => {
       await document.fonts.ready
       signal.throwIfAborted()
@@ -67,6 +80,9 @@ export async function copyExcelImage(
       return planExcelImage(frozen, {
         columns: columns || selectedExcelImageColumns(preference),
         showOrderDetails: preference.showOrderDetails,
+        style: preference.style,
+        details: preference.details,
+        badges,
         language,
       })
     },

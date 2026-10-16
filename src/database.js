@@ -1463,6 +1463,24 @@ export async function openDatabase({ name = '1688-order-library' } = {}) {
       return keys.map((key) => key[2])
     },
 
+    async getOwnedProductCodes({ accountId = 'local', orderId, groupId }) {
+      string(orderId, 'Order ID', { empty: false })
+      string(groupId, 'Group ID', { empty: false })
+      const range = globalThis.IDBKeyRange.bound(
+        [accountId, 'base', ''],
+        [accountId, 'base', '\uffff']
+      )
+      const reservations = await read(['issuedCodes'], (tx) =>
+        requested(tx.objectStore('issuedCodes').getAll(range))
+      )
+      return reservations
+        .filter(
+          (entry) => entry.orderId === orderId && entry.groupId === groupId
+        )
+        .map((entry) => ({ code: entry.code, month: entry.month }))
+        .sort((a, b) => a.code.localeCompare(b.code))
+    },
+
     async queryCodeOwnership(code, { accountId = 'local' } = {}) {
       string(code, 'Code', { empty: false })
       return read(
@@ -1479,38 +1497,43 @@ export async function openDatabase({ name = '1688-order-library' } = {}) {
               tx.objectStore('preparations').get(key)
             )
             const order = await requested(tx.objectStore('orders').get(key))
-            const group = preparation?.groups.find(
-              (entry) => entry.id === reservation.groupId
+            const barcodeReservations =
+              kind === 'base'
+                ? await requested(
+                    tx
+                      .objectStore('issuedCodes')
+                      .getAll(
+                        globalThis.IDBKeyRange.bound(
+                          [accountId, 'barcode', code],
+                          [accountId, 'barcode', `${code}\uffff`]
+                        )
+                      )
+                  )
+                : []
+            const evidence = codeOwnerEvidence(
+              reservation,
+              preparation,
+              barcodeReservations
             )
-            const evidenceGroup =
-              group ||
-              [
-                preparation?.defaultPacking,
-                preparation?.previousPacking,
-                preparation?.previousPacking?.defaults,
-              ]
-                .filter(Boolean)
-                .flatMap((entry) => entry.groups)
-                .find((entry) => entry.id === reservation.groupId)
-            const variant =
-              kind === 'barcode'
-                ? group?.variants.find(
-                    (entry) => entry.id === reservation.variantId
-                  )
-                : undefined
-            const evidenceVariant =
-              kind === 'barcode'
-                ? evidenceGroup?.variants.find(
-                    (entry) => entry.id === reservation.variantId
-                  )
-                : undefined
+            const {
+              group,
+              variant,
+              evidenceGroup,
+              evidenceVariant,
+              currentGroup,
+              currentVariant,
+            } = evidence
             const snapshot = reservation.ownerSnapshot
-            const entryIds =
-              snapshot?.entryIds ??
-              (evidenceVariant?.entryIds ||
-                evidenceGroup?.variants.flatMap((entry) => entry.entryIds) ||
-                [])
+            const entryIds = snapshot?.entryIds ?? evidence.entryIds ?? []
             const members = new Set(entryIds)
+            const sourceTitle = [
+              ...new Set(
+                order?.snapshot.items
+                  .filter((item) => members.has(item.entryId))
+                  .map((item) => item.title || item.description)
+                  .filter(Boolean) || []
+              ),
+            ].join(' · ')
             let photos = snapshot?.photos || []
             if (!photos.length && order) {
               const records = [
@@ -1535,9 +1558,11 @@ export async function openDatabase({ name = '1688-order-library' } = {}) {
             )
             const currentCode =
               kind === 'base'
-                ? group?.baseCode
-                : group && variant && !variant.needsSizeMapping
-                  ? barcodeValue(group, variant)
+                ? currentGroup?.baseCode
+                : currentGroup &&
+                    currentVariant &&
+                    !currentVariant.needsSizeMapping
+                  ? barcodeValue(currentGroup, currentVariant)
                   : ''
             const currentMembership =
               variant?.entryIds ||
@@ -1554,6 +1579,8 @@ export async function openDatabase({ name = '1688-order-library' } = {}) {
               month: reservation.month,
               sellerId: reservation.sellerId,
               status:
+                group &&
+                (kind === 'base' || variant) &&
                 currentCode === code &&
                 currentMembership.some((entryId) => activeEntries.has(entryId))
                   ? 'active'
@@ -1564,15 +1591,24 @@ export async function openDatabase({ name = '1688-order-library' } = {}) {
                 snapshot?.sellerName ||
                 order?.snapshot.sellerName ||
                 reservation.sellerId,
-              groupTitle: snapshot?.groupTitle || evidenceGroup?.title || '',
+              groupTitle:
+                snapshot?.groupTitle ||
+                (evidence.recovered ? sourceTitle : evidenceGroup?.title) ||
+                '',
               spanishName:
-                snapshot?.spanishName || evidenceGroup?.spanishName || '',
-              category: snapshot?.category || evidenceGroup?.category || '',
+                snapshot?.spanishName ||
+                (!evidence.recovered && evidenceGroup?.spanishName) ||
+                '',
+              category:
+                snapshot?.category ||
+                (!evidence.recovered && evidenceGroup?.category) ||
+                '',
               variant: snapshot?.variant || evidenceVariant?.variant || '',
               entryIds,
               photos,
               currentCode: currentCode || '',
-              currentBaseCode: group?.baseCode || '',
+              currentBaseCode: currentGroup?.baseCode || '',
+              currentGroupId: currentGroup?.id || '',
             })
           }
           return { code, owners }
@@ -1741,6 +1777,7 @@ import {
 import {
   allocatePreparation,
   barcodeValue,
+  codeOwnerEvidence,
   extendDefaultPacking,
   mergePackingState,
   packingCheckpoint,

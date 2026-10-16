@@ -1,6 +1,423 @@
 import { test, expect } from './extension-fixture.mjs'
 import { createDemoRecords } from '../../preview/library-fixture.js'
 
+for (const mode of ['light', 'dark'])
+  test(`Products and Packing export assigned ${mode} badge colors and copy the exact preview PNG`, async ({
+    extension,
+  }) => {
+    const colors = {
+      light: {
+        order: ['#f4e2cc', '#4a2610'],
+        product: ['#d6f0da', '#16451d'],
+        dates: ['#efe0c4', '#3a2710'],
+        completed: ['#dceac0', '#31441a'],
+      },
+      dark: {
+        order: ['#442412', '#ffd9b2'],
+        product: ['#143b24', '#b4f3c1'],
+        dates: ['#40301c', '#f5d8ad'],
+        completed: ['#243516', '#d8edb8'],
+      },
+    }
+    const tag = (scope) => ({
+      name: 'Shared',
+      colors: { light: colors.light[scope][0], dark: colors.dark[scope][0] },
+      textColors: {
+        light: colors.light[scope][1],
+        dark: colors.dark[scope][1],
+      },
+    })
+    const [record] = await extension.inspector.evaluate(
+      `(${createDemoRecords.toString()})(document)`
+    )
+    record.snapshot.sellerMemberLogin = 'synthetic-colored-image'
+    record.snapshot.status = '交易成功'
+    record.snapshot.purchasedAt = '2026-10-15T12:00:00+08:00'
+    record.tags = ['Shared']
+    record.productTags = { [record.snapshot.items[0].entryId]: ['Shared'] }
+    for (const item of record.snapshot.items) item.title = '合成玻璃花瓶'
+    const restored = await extension.inspector.evaluate(
+      ({ record, value }) =>
+        chrome.runtime.sendMessage({
+          type: 'BACKUP_RESTORE',
+          backup: {
+            format: '1688-order-library',
+            version: 2,
+            exportedAt: new Date().toISOString(),
+            orders: [record],
+            history: [],
+            images: [],
+            preparations: [],
+            allocations: [],
+            issuedCodes: [],
+            packingPreferences: { value, updatedAt: new Date().toISOString() },
+          },
+        }),
+      {
+        record,
+        value: {
+          orderTags: [tag('order')],
+          productTags: [tag('product')],
+          appearance: {
+            paletteRevision: 1,
+            labelColors: Object.fromEntries(
+              ['dates', 'completed'].map((key) => [
+                key,
+                { light: colors.light[key][0], dark: colors.dark[key][0] },
+              ])
+            ),
+            labelTextColors: Object.fromEntries(
+              ['dates', 'completed'].map((key) => [
+                key,
+                { light: colors.light[key][1], dark: colors.dark[key][1] },
+              ])
+            ),
+          },
+        },
+      }
+    )
+    expect(restored.ok, restored.error).toBe(true)
+    await extension.context.grantPermissions([
+      'clipboard-read',
+      'clipboard-write',
+    ])
+    const page = await extension.context.newPage()
+    await page.clock.setFixedTime(new Date('2026-10-15T04:00:00Z'))
+    await page.addInitScript((mode) => {
+      localStorage.setItem('1688-library-purchase-months', '[]')
+      localStorage.setItem('1688-library-color-scheme', mode)
+      localStorage.setItem(
+        '1688-excel-image-columns',
+        JSON.stringify({
+          selected: ['description', 'quantity'],
+          details: {
+            date: true,
+            status: true,
+            orderTags: true,
+            productTags: true,
+          },
+        })
+      )
+      window.badgeText = []
+      window.badgeWrites = []
+      window.badgeDigest = async (blob) =>
+        [
+          ...new Uint8Array(
+            await crypto.subtle.digest('SHA-256', await blob.arrayBuffer())
+          ),
+        ].join(',')
+      const fillText = CanvasRenderingContext2D.prototype.fillText
+      CanvasRenderingContext2D.prototype.fillText = function (text, ...args) {
+        window.badgeText.push({ text: String(text), color: this.fillStyle })
+        return fillText.call(this, text, ...args)
+      }
+      const write = navigator.clipboard.write.bind(navigator.clipboard)
+      navigator.clipboard.write = async (items) => {
+        window.badgeWrites.push(
+          await window.badgeDigest(await items[0].getType('image/png'))
+        )
+        await write(items)
+      }
+    }, mode)
+    await page.goto(`${extension.extensionBaseUrl}/library.html`)
+    await expect(
+      page.locator('#sheet-body tr[data-selection-key]')
+    ).toHaveCount(3)
+    await expect(page.locator('meta[name="color-scheme"]')).toHaveAttribute(
+      'content',
+      mode
+    )
+    const dialog = page.getByRole('dialog', {
+      name: 'Copy Excel image',
+      exact: true,
+    })
+    const assertPreviewAndCopy = async () => {
+      await expect(dialog.locator('.image-copy-submit')).toBeEnabled()
+      const text = await page.evaluate(() => window.badgeText)
+      expect(
+        [
+          ...new Set(
+            text
+              .filter(({ text }) => text === 'Shared')
+              .map(({ color }) => color)
+          ),
+        ].sort()
+      ).toEqual([colors[mode].order[1], colors[mode].product[1]].sort())
+      for (const [label, key] of [
+        ['15 Oct 2026', 'dates'],
+        ['Completed', 'completed'],
+      ])
+        expect(
+          text.some(
+            (draw) => draw.text === label && draw.color === colors[mode][key][1]
+          )
+        ).toBe(true)
+      const preview = await dialog.locator('.copy-preview img').evaluate(
+        async (image, backgrounds) => {
+          const blob = await (await fetch(image.src)).blob()
+          const bitmap = await createImageBitmap(blob)
+          const canvas = document.createElement('canvas')
+          canvas.width = bitmap.width
+          canvas.height = bitmap.height
+          const context = canvas.getContext('2d')
+          context.drawImage(bitmap, 0, 0)
+          const { data } = context.getImageData(
+            0,
+            0,
+            canvas.width,
+            canvas.height
+          )
+          const pixels = Object.fromEntries(
+            backgrounds.map((color) => [color, 0])
+          )
+          const channels = backgrounds.map((color) => [
+            color,
+            color
+              .slice(1)
+              .match(/../g)
+              .map((part) => parseInt(part, 16)),
+          ])
+          for (let offset = 0; offset < data.length; offset += 4)
+            for (const [color, [red, green, blue]] of channels)
+              if (
+                data[offset] === red &&
+                data[offset + 1] === green &&
+                data[offset + 2] === blue &&
+                data[offset + 3] === 255
+              )
+                pixels[color]++
+          bitmap.close()
+          canvas.width = canvas.height = 0
+          return { hash: await window.badgeDigest(blob), pixels }
+        },
+        Object.values(colors[mode]).map(([background]) => background)
+      )
+      for (const [color, pixels] of Object.entries(preview.pixels))
+        expect(pixels, `Rendered ${mode} background ${color}`).toBeGreaterThan(
+          100
+        )
+      await dialog.locator('.image-copy-submit').click()
+      await expect(dialog.locator('[data-batch-index="0"]')).toHaveClass(
+        /is-copied/
+      )
+      expect(await page.evaluate(() => window.badgeWrites.at(-1))).toBe(
+        preview.hash
+      )
+      const clipboardTypes = await page.evaluate(
+        async () => (await navigator.clipboard.read())[0].types
+      )
+      expect(clipboardTypes).toContain('image/png')
+    }
+    await page.locator('#copy-excel-image').click()
+    await assertPreviewAndCopy()
+    // Changing the workspace mode while this session is open must not recolor
+    // the captured badges when a style change regenerates its image.
+    await page.locator('meta[name="color-scheme"]').evaluate((meta, mode) => {
+      meta.content = mode === 'light' ? 'dark' : 'light'
+      window.badgeText = []
+    }, mode)
+    await dialog.locator('.excel-style-details > summary').click()
+    await dialog
+      .getByRole('combobox', { name: 'Image color scheme' })
+      .selectOption('sage')
+    await assertPreviewAndCopy()
+    await dialog.getByRole('button', { name: 'Done', exact: true }).click()
+    await page.locator('meta[name="color-scheme"]').evaluate((meta, mode) => {
+      meta.content = mode
+    }, mode)
+    const first = page.locator('#sheet-body tr[data-selection-key]').first()
+    await first.focus()
+    await first.press('Control+a')
+    await page.locator('#prepare-orders').click()
+    await page
+      .getByRole('button', { name: 'Assign codes and prepare', exact: true })
+      .click()
+    const packing = page.locator('#packing-view')
+    await expect(packing.locator('.variants tbody tr')).toHaveCount(3)
+    await page.evaluate(() => {
+      window.badgeText = []
+    })
+    await packing
+      .getByRole('button', { name: 'Copy Excel image', exact: true })
+      .click()
+    await assertPreviewAndCopy()
+    expect(extension.unexpectedRequests).toEqual([])
+  })
+
+test('image style and detail controls persist, update the same preview, and keep tags independent of order headings', async ({
+  extension,
+}) => {
+  const [record] = await extension.inspector.evaluate(
+    `(${createDemoRecords.toString()})(document)`
+  )
+  record.snapshot.sellerMemberLogin = 'synthetic-image-details'
+  record.snapshot.status = '交易成功'
+  record.tags = ['Shipment A']
+  record.productTags = { [record.snapshot.items[0].entryId]: ['Fragile'] }
+  for (const item of record.snapshot.items) item.title = '合成玻璃花瓶'
+  const restored = await extension.inspector.evaluate(
+    (record) =>
+      chrome.runtime.sendMessage({
+        type: 'BACKUP_RESTORE',
+        backup: {
+          format: '1688-order-library',
+          version: 1,
+          exportedAt: new Date().toISOString(),
+          orders: [record],
+          history: [],
+          images: [],
+        },
+      }),
+    record
+  )
+  expect(restored.ok, restored.error).toBe(true)
+  const page = await extension.context.newPage()
+  await page.addInitScript(() => {
+    localStorage.setItem('1688-library-purchase-months', '[]')
+    window.imageDetailText = []
+    window.imageDetailColors = []
+    const fillText = CanvasRenderingContext2D.prototype.fillText
+    const fillRect = CanvasRenderingContext2D.prototype.fillRect
+    CanvasRenderingContext2D.prototype.fillText = function (text, ...args) {
+      window.imageDetailText.push(String(text))
+      return fillText.call(this, text, ...args)
+    }
+    CanvasRenderingContext2D.prototype.fillRect = function (...args) {
+      window.imageDetailColors.push(this.fillStyle)
+      return fillRect.apply(this, args)
+    }
+  })
+  await page.goto(`${extension.extensionBaseUrl}/library.html`)
+  await expect(page.locator('#sheet-body tr[data-selection-key]')).toHaveCount(
+    3
+  )
+  await page.locator('#copy-excel-image').click()
+  const dialog = page.locator('.image-copy-dialog')
+  const ready = () => expect(dialog.locator('.image-copy-submit')).toBeEnabled()
+  await ready()
+  await dialog.locator('.excel-style-details > summary').click()
+  for (const label of await dialog.locator('.excel-detail-toggle').all()) {
+    expect((await label.boundingBox()).height).toBeLessThanOrEqual(30)
+    await expect(label).toHaveCSS('margin-top', '0px')
+  }
+  await dialog
+    .getByRole('combobox', { name: 'Image color scheme' })
+    .selectOption('sage')
+  await dialog
+    .getByRole('checkbox', { name: 'Product tags', exact: true })
+    .check()
+  await dialog
+    .getByRole('checkbox', { name: 'Order tags', exact: true })
+    .check()
+  await dialog
+    .getByRole('checkbox', { name: 'Purchase date', exact: true })
+    .check()
+  await dialog
+    .getByRole('checkbox', { name: 'Order status', exact: true })
+    .check()
+  await ready()
+  const rendered = await page.evaluate(() => window.imageDetailText.join(' '))
+  expect(rendered).toContain('Fragile')
+  expect(rendered).toContain('Shipment A')
+  expect(rendered).toContain('Completed')
+  const before = await dialog.locator('.copy-preview img').getAttribute('src')
+  await page.evaluate(() => {
+    window.imageDetailText = []
+  })
+  await dialog
+    .getByRole('checkbox', {
+      name: 'Show store and order details',
+      exact: true,
+    })
+    .uncheck()
+  await ready()
+  await expect(dialog.locator('.copy-preview img')).not.toHaveAttribute(
+    'src',
+    before
+  )
+  const hidden = await page.evaluate(() => window.imageDetailText.join(' '))
+  expect(hidden).toContain('Fragile')
+  for (const value of [
+    'Shipment A',
+    'Completed',
+    record.snapshot.orderId,
+    record.snapshot.sellerName,
+  ])
+    expect(hidden).not.toContain(value)
+  await expect(
+    dialog.getByRole('checkbox', { name: 'Order tags', exact: true })
+  ).toBeDisabled()
+  await expect(
+    dialog.getByRole('checkbox', { name: 'Product tags', exact: true })
+  ).toBeEnabled()
+  await dialog
+    .getByLabel('Custom image accent', { exact: true })
+    .evaluate((input) => {
+      input.value = '#ffff00'
+      input.dispatchEvent(new Event('input', { bubbles: true }))
+    })
+  await ready()
+  await expect(
+    dialog.getByRole('combobox', { name: 'Image color scheme' })
+  ).toHaveValue('custom')
+  expect(await page.evaluate(() => window.imageDetailColors)).toContain(
+    '#ffff00'
+  )
+  await dialog.locator('.image-copy-heading > button').click()
+  await page.reload()
+  await page.locator('#copy-excel-image').click()
+  await ready()
+  await dialog.locator('.excel-style-details > summary').click()
+  await expect(
+    dialog.getByLabel('Custom image accent', { exact: true })
+  ).toHaveValue('#ffff00')
+  await expect(
+    dialog.getByRole('checkbox', { name: 'Product tags', exact: true })
+  ).toBeChecked()
+  await expect(
+    dialog.getByRole('checkbox', {
+      name: 'Show store and order details',
+      exact: true,
+    })
+  ).not.toBeChecked()
+  await dialog
+    .locator('[data-column="description"] .excel-column-toggle')
+    .click()
+  await expect(
+    dialog.getByRole('checkbox', { name: 'Product tags', exact: true })
+  ).toBeDisabled()
+  await dialog
+    .getByRole('button', { name: 'Default columns', exact: true })
+    .click()
+  await expect(
+    dialog.getByLabel('Custom image accent', { exact: true })
+  ).toHaveValue('#ffff00')
+  await expect(
+    dialog.getByRole('checkbox', { name: 'Product tags', exact: true })
+  ).toBeEnabled()
+  await dialog.locator('[data-column="price"] .excel-column-toggle').click()
+  await dialog
+    .getByRole('button', { name: 'Reset style & details', exact: true })
+    .click()
+  await ready()
+  await expect(
+    dialog.getByRole('combobox', { name: 'Image color scheme' })
+  ).toHaveValue('neutral')
+  await expect(
+    dialog.getByRole('checkbox', { name: 'Product tags', exact: true })
+  ).not.toBeChecked()
+  await expect(
+    dialog.getByRole('checkbox', {
+      name: 'Show store and order details',
+      exact: true,
+    })
+  ).toBeChecked()
+  await expect(
+    dialog.locator('[data-column="price"] .excel-column-toggle')
+  ).toHaveAttribute('aria-pressed', 'false')
+  expect(extension.unexpectedRequests).toEqual([])
+})
+
 test('store and order details toggle regenerates the raster and persists across both copy views', async ({
   extension,
 }) => {
@@ -99,6 +516,9 @@ test('store and order details toggle regenerates the raster and persists across 
   await first.focus()
   await first.press('Control+a')
   await page.locator('#prepare-orders').click()
+  await page
+    .getByRole('button', { name: 'Assign codes and prepare', exact: true })
+    .click()
   const packing = page.locator('#packing-view')
   await expect(packing.locator('.variants tbody tr')).toHaveCount(3)
   await page.evaluate(() => {
@@ -236,6 +656,9 @@ test('image columns reorder, persist across copying and reload, and use the sele
   )
   const description = dialog.locator('[data-column="description"]')
   await expect(description).toContainText('Descripción del producto')
+  await expect(dialog.locator('.excel-detail-fields legend').nth(1)).toHaveText(
+    'Descripción del producto'
+  )
   for (const width of [1280, 701, 390, 320]) {
     await page.setViewportSize({ width, height: 800 })
     const layout = await dialog
@@ -294,8 +717,13 @@ test('image columns reorder, persist across copying and reload, and use the sele
   await expect(dialog.locator('.image-copy-status')).toBeHidden()
   await expect(dialog.locator('.image-copy-submit')).toBeDisabled()
   await expect(dialog.getByRole('alert')).toBeVisible()
-  await expect(dialog.locator('.copy-preview > button')).toBeVisible()
-  await dialog.locator('.copy-preview > button').click()
+  await expect(dialog.getByRole('alert')).toContainText(
+    'Selecciona al menos una columna para copiar.'
+  )
+  await expect(
+    dialog.getByRole('button', { name: 'Reintentar', exact: true })
+  ).toBeVisible()
+  await dialog.getByRole('button', { name: 'Reintentar', exact: true }).click()
   await expect(dialog.locator('.image-copy-progress')).toHaveText(
     'No se pudo preparar la vista previa.'
   )
@@ -333,7 +761,7 @@ test('image columns reorder, persist across copying and reload, and use the sele
     /is-copied/
   )
   await expect(dialog).toBeVisible()
-  await dialog.locator('.image-copy-actions > button').last().click()
+  await dialog.getByRole('button', { name: 'Listo', exact: true }).click()
   await expect(page.locator('#copy-excel-image')).toHaveClass(/copied/)
   const rendered = await page.evaluate(() => imageColumnText.join(' '))
   expect(rendered).toContain('Cantidad')
@@ -353,9 +781,11 @@ test('image columns reorder, persist across copying and reload, and use the sele
   await first.focus()
   await first.press('Control+a')
   await page.locator('#prepare-orders').click()
+  await page
+    .getByRole('button', { name: 'Assign codes and prepare', exact: true })
+    .click()
   const packing = page.locator('#packing-view')
   await expect(packing).toBeVisible()
-  // One new group opens directly; only broader code changes need review.
   await expect(packing.locator('.preparation-group')).toHaveCount(1)
   await expect(packing.locator('.variants tbody tr')).toHaveCount(3)
   await packing

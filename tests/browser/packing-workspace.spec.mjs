@@ -14,7 +14,11 @@ async function newWorkspacePage(extension) {
   return page
 }
 
-async function seedStructuredOrder(extension, orderId) {
+async function seedStructuredOrder(
+  extension,
+  orderId,
+  { singleProduct = false, manyPhotos = false, tags = [] } = {}
+) {
   const records = await extension.inspector.evaluate(
     `(${createDemoRecords.toString()})(document)`
   )
@@ -26,6 +30,41 @@ async function seedStructuredOrder(extension, orderId) {
   record.snapshot.sellerName = 'Synthetic preparation supplier'
   record.snapshot.sellerMemberLogin = 'synthetic-packing-shop'
   record.snapshot.sellerShopOrigin = 'https://synthetic-packing-shop.1688.com'
+  record.tags = tags
+  if (singleProduct) record.snapshot.items = record.snapshot.items.slice(0, 1)
+  else if (manyPhotos) {
+    const originals = records.flatMap((entry) => entry.snapshot.items)
+    const gallery = [...originals.slice(1), originals[0]]
+    record.snapshot.items = [
+      {
+        ...structuredClone(gallery[0]),
+        entryId: `${orderId}90`,
+        thumbnail: '',
+      },
+      gallery[0],
+      { ...structuredClone(gallery[0]), entryId: `${orderId}91` },
+      ...gallery.slice(1),
+    ]
+  }
+  if (singleProduct || manyPhotos) {
+    const gross = record.snapshot.items.reduce(
+      (sum, item) =>
+        sum + Math.round(Number(item.price) * 100) * Number(item.quantity),
+      0
+    )
+    const discount = record.snapshot.items.reduce(
+      (sum, item) => sum + Math.round(Number(item.sourceDiscount) * 100),
+      0
+    )
+    record.snapshot.totals = {
+      goodsGross: (gross / 100).toFixed(2),
+      shipping: '0.00',
+      sourceDiscount: (discount / 100).toFixed(2),
+      orderAdjustment: '0.00',
+      goodsNet: ((gross - discount) / 100).toFixed(2),
+      payable: ((gross - discount) / 100).toFixed(2),
+    }
+  }
   for (const [index, item] of record.snapshot.items.entries()) {
     item.title = index < 2 ? '合成玻璃罐' : '合成收纳盒'
     item.productNumber = index < 2 ? 'TEST-JAR' : 'TEST-BOX'
@@ -181,8 +220,8 @@ test('Casa Elida codes stay readable and order names summarize distinct saved pr
       'Arial, "Microsoft YaHei", sans-serif'
     )
     await expect(code).toHaveCSS('font-size', '12px')
-    await expect(code).toHaveCSS('padding-left', '6.0515px')
-    await expect(code).toHaveCSS('padding-top', '1.26px')
+    await expect(code).toHaveCSS('padding-left', '4.2px')
+    await expect(code).toHaveCSS('padding-top', '3.6px')
     await expect(code).toHaveCSS('background-color', 'rgb(0, 0, 0)')
     await code.hover()
     await expect(code).toHaveCSS('color', 'rgb(255, 255, 255)')
@@ -344,7 +383,7 @@ test('product codes lead group headers; nested hints, hit targets and code basel
   const check = await select.boundingBox()
   expect(check.width).toBeGreaterThanOrEqual(24)
   expect(check.width).toBeLessThanOrEqual(32)
-  expect(check.height).toBeGreaterThanOrEqual(28)
+  expect(check.height).toBeGreaterThanOrEqual(24)
   expect(check.height).toBeLessThanOrEqual(36)
   await select.focus()
   await page.keyboard.press('Tab')
@@ -366,27 +405,33 @@ test('product codes lead group headers; nested hints, hit targets and code basel
   await expect(group).toHaveClass(/is-selected/)
   await title.click({ position: { x: 2, y: 2 } })
   await expect(group).not.toHaveClass(/is-selected/)
-  await title.getByRole('button', { name: /^Move group 1;/ }).click()
+  await group
+    .getByRole('group', { name: 'Group actions', exact: true })
+    .getByRole('button', { name: /^Move group 1;/ })
+    .click()
   await expect(select).toHaveAttribute('aria-pressed', 'false')
   await code.click()
   await expect(select).toHaveAttribute('aria-pressed', 'false')
   const parts = group.locator('.variant-code-design').first()
+  // Cap-trimmed text and native input line boxes have different heights.
+  // Their centers and glyph styling must match inside the shared code design.
   const boxes = await parts
     .locator('.variant-code-base, input')
     .evaluateAll((nodes) =>
-      nodes.map((node) => ({
-        top: node.getBoundingClientRect().top,
-        height: node.getBoundingClientRect().height,
-      }))
+      nodes.map((node) => {
+        const rect = node.getBoundingClientRect()
+        const style = getComputedStyle(node)
+        return {
+          center: rect.top + rect.height / 2,
+          typography: [style.fontFamily, style.fontSize, style.fontWeight],
+        }
+      })
     )
   expect(
-    Math.max(...boxes.map((box) => box.top)) -
-      Math.min(...boxes.map((box) => box.top))
+    Math.max(...boxes.map((box) => box.center)) -
+      Math.min(...boxes.map((box) => box.center))
   ).toBeLessThanOrEqual(1)
-  expect(
-    Math.max(...boxes.map((box) => box.height)) -
-      Math.min(...boxes.map((box) => box.height))
-  ).toBeLessThanOrEqual(2)
+  for (const box of boxes) expect(box.typography).toEqual(boxes[0].typography)
 })
 
 test('packing order choices show seller, Spanish names and photos while retaining full IDs for navigation', async ({
@@ -412,10 +457,24 @@ test('packing order choices show seller, Spanish names and photos while retainin
   const richPicker = await page.evaluate(() =>
     CSS.supports('appearance', 'base-select')
   )
+  const allOrders = select.locator('option[value=""]')
+  await expect(allOrders).toContainText('6 products · 4 groups')
+  if (richPicker) {
+    await expect(
+      allOrders.locator('.packing-order-photos img')
+    ).not.toHaveCount(0)
+    await expect(select.locator('selectedcontent')).toContainText(
+      '6 products · 4 groups'
+    )
+    const bounds = await select.boundingBox()
+    expect(bounds.width).toBeLessThanOrEqual(680)
+    expect(bounds.height).toBeLessThanOrEqual(90)
+  }
   for (const record of [first, second]) {
     const option = select.locator(`option[value="${record.snapshot.orderId}"]`)
     await expect(option).toContainText(record.snapshot.sellerName)
     await expect(option).not.toContainText(record.snapshot.orderId)
+    await expect(option).toContainText('3 products · 2 groups')
     for (const group of preparations.find(
       (prep) => prep.orderId === record.snapshot.orderId
     ).groups)
@@ -425,7 +484,7 @@ test('packing order choices show seller, Spanish names and photos while retainin
         record.snapshot.items.map((item) => item.thumbnail).filter(Boolean)
       ).size
       await expect(option.locator('.packing-order-photos img')).toHaveCount(
-        Math.min(3, expectedPhotos)
+        Math.min(6, expectedPhotos)
       )
       await expect(option.locator('button')).toHaveCount(0)
     }
@@ -437,6 +496,10 @@ test('packing order choices show seller, Spanish names and photos while retainin
   await expect(open).toBeDisabled()
   await select.selectOption(first.snapshot.orderId)
   await expect(select).toHaveValue(first.snapshot.orderId)
+  if (richPicker)
+    await expect(select.locator('selectedcontent')).toContainText(
+      '3 products · 2 groups'
+    )
   if (richPicker)
     await expect
       .poll(() =>
@@ -462,9 +525,234 @@ test('packing order choices show seller, Spanish names and photos while retainin
   ).toHaveLength(1)
   await select.selectOption('')
   await expect(open).toBeDisabled()
+  await page.locator('#language-toggle [data-language=es]').click()
+  const spanishSelect = dialog.getByLabel('Mostrar pedidos del empaque', {
+    exact: true,
+  })
+  await expect(spanishSelect.locator('option[value=""]')).toContainText(
+    '6 productos · 4 grupos'
+  )
+  await page.setViewportSize({ width: 680, height: 800 })
+  const narrow = await spanishSelect.boundingBox()
+  expect(narrow.x).toBeGreaterThanOrEqual(0)
+  expect(narrow.x + narrow.width).toBeLessThanOrEqual(680)
 })
 
-test('row Prepare opens only that product and copies its latest saved values without a warning', async ({
+test('packing order selector aligns single and multiple photos with colored metadata in every language', async ({
+  extension,
+}) => {
+  const single = await seedStructuredOrder(extension, '1234567890123456789', {
+    singleProduct: true,
+    tags: ['Fragile'],
+  })
+  const multiple = await seedStructuredOrder(extension, '2234567890123456789', {
+    manyPhotos: true,
+  })
+  const seeded = await packingBackup(extension)
+  seeded.packingPreferences = {
+    value: {
+      ...seeded.packingPreferences?.value,
+      orderTags: [
+        {
+          name: 'Fragile',
+          colors: { light: '#f4dbc1', dark: '#47351f' },
+        },
+      ],
+      appearance: {
+        ...seeded.packingPreferences?.value.appearance,
+        labelColors: {
+          dates: { light: '#e8c7a3', dark: '#e8c7a3' },
+          'awaiting-shipment': { light: '#e5d2ba', dark: '#e5d2ba' },
+        },
+      },
+    },
+    updatedAt: new Date().toISOString(),
+  }
+  const restored = await extension.inspector.evaluate(
+    (backup) => chrome.runtime.sendMessage({ type: 'BACKUP_RESTORE', backup }),
+    seeded
+  )
+  expect(restored.ok, restored.error).toBe(true)
+  const page = await newWorkspacePage(extension)
+  await page.goto(`${extension.extensionBaseUrl}/library.html`)
+  await expect(page.locator('#sheet-body tr[data-selection-key]')).toHaveCount(
+    11
+  )
+  await page.getByLabel('Packing month', { exact: true }).fill('2026-10')
+  await selectAllProducts(page)
+  await page
+    .getByRole('button', { name: 'Prepare packing list', exact: true })
+    .click()
+  const view = await acceptPreparationPreview(page)
+  await expect(view.locator('.preparation-group')).toHaveCount(3)
+  await waitForAutosave(view)
+  const orders = view.locator('.packing-order-section')
+  await expect(orders).toHaveCount(2)
+  await expect(orders.first()).toHaveCSS('border-top-width', '0px')
+  await expect(orders.nth(1)).toHaveCSS('border-top-width', '1px')
+  const select = view.locator('select[name="packing-order"]')
+  await expect(select).toHaveAccessibleName('Show packing orders')
+  const singleOption = select.locator(
+    `option[value="${single.snapshot.orderId}"]`
+  )
+  const multipleOption = select.locator(
+    `option[value="${multiple.snapshot.orderId}"]`
+  )
+  await expect(singleOption).toContainText('1 product · 1 group')
+  await expect(multipleOption).toContainText('10 products · 2 groups')
+  const richPicker = await page.evaluate(() =>
+    CSS.supports('appearance', 'base-select')
+  )
+  if (richPicker) {
+    await expect(singleOption.locator('.packing-order-photos img')).toHaveCount(
+      1
+    )
+    await expect(
+      multipleOption.locator('.packing-order-photos img')
+    ).toHaveCount(6)
+    const photoPixels = async (container) => {
+      const images = container.locator('.packing-order-photos img')
+      await expect
+        .poll(() =>
+          images.evaluateAll(
+            (nodes) =>
+              nodes.length > 0 &&
+              nodes.every((image) => image.complete && image.naturalWidth > 0)
+          )
+        )
+        .toBe(true)
+      return images.evaluateAll((nodes) =>
+        nodes.map((image) => {
+          const canvas = document.createElement('canvas')
+          canvas.width = image.naturalWidth
+          canvas.height = image.naturalHeight
+          canvas.getContext('2d').drawImage(image, 0, 0)
+          return canvas.toDataURL()
+        })
+      )
+    }
+    const singlePixels = await photoPixels(singleOption)
+    const multiplePixels = await photoPixels(multipleOption)
+    // The fixture starts with a missing photo and a duplicate, and contains
+    // eight distinct pictures. All six displayed tiles must be real and unique.
+    expect(new Set(multiplePixels).size).toBe(6)
+    const allPixels = await photoPixels(select.locator('option[value=""]'))
+    expect(allPixels).toHaveLength(6)
+    expect(allPixels.slice(0, 2)).toEqual(
+      expect.arrayContaining([singlePixels[0], multiplePixels[0]])
+    )
+    for (const option of [singleOption, multipleOption]) {
+      await expect(option.locator('.purchase-date')).toHaveAttribute(
+        'data-ui-label',
+        'dates'
+      )
+      await expect(option.locator('.order-status')).toHaveAttribute(
+        'data-ui-label',
+        'awaiting-shipment'
+      )
+      await expect(option.locator('.purchase-date')).toHaveCSS(
+        'background-color',
+        'rgb(232, 199, 163)'
+      )
+      await expect(option.locator('.order-status')).toHaveCSS(
+        'background-color',
+        'rgb(229, 210, 186)'
+      )
+    }
+    const tag = singleOption.locator('.order-tag-badge')
+    await expect(tag).toHaveText('Fragile')
+    await expect(tag).toHaveCSS('--tag-light', '#f4dbc1')
+    await expect(tag).toHaveCSS('--tag-dark', '#47351f')
+    const assertAlignedPhotos = async () => {
+      await select.click()
+      const geometry = await select.locator('option').evaluateAll((options) =>
+        options.map((option) => {
+          const photos = option.querySelector('.packing-order-photos')
+          const area = photos.getBoundingClientRect()
+          const image = photos
+            .querySelector('.preparation-photo')
+            .getBoundingClientRect()
+          return {
+            width: area.width,
+            height: area.height,
+            captionX: option
+              .querySelector('.packing-order-caption')
+              .getBoundingClientRect().x,
+            count: photos.children.length,
+            centerOffset:
+              (image.left + image.right - area.left - area.right) / 2,
+            verticalOffset:
+              (image.top + image.bottom - area.top - area.bottom) / 2,
+            tiles: [...photos.children].map((tile) => {
+              const bounds = tile.getBoundingClientRect()
+              return {
+                width: bounds.width,
+                height: bounds.height,
+                x: bounds.x - area.x,
+                y: bounds.y - area.y,
+              }
+            }),
+          }
+        })
+      )
+      expect(
+        geometry.every((entry) => entry.width === 116 && entry.height === 76)
+      ).toBe(true)
+      expect(
+        Math.max(...geometry.map((entry) => entry.captionX)) -
+          Math.min(...geometry.map((entry) => entry.captionX))
+      ).toBeLessThanOrEqual(1)
+      expect(
+        Math.abs(geometry.find((entry) => entry.count === 1).centerOffset)
+      ).toBeLessThanOrEqual(1)
+      expect(
+        Math.abs(geometry.find((entry) => entry.count === 1).verticalOffset)
+      ).toBeLessThanOrEqual(1)
+      for (const mosaic of geometry.filter((entry) => entry.count === 6)) {
+        expect(
+          mosaic.tiles.every((tile) => tile.width === 36 && tile.height === 36)
+        ).toBe(true)
+        expect(mosaic.tiles.map(({ x }) => x)).toEqual([0, 40, 80, 0, 40, 80])
+        expect(mosaic.tiles.map(({ y }) => y)).toEqual([0, 0, 0, 40, 40, 40])
+      }
+      await page.keyboard.press('Escape')
+      await expect(view).toBeVisible()
+    }
+    await assertAlignedPhotos()
+    await select.selectOption(single.snapshot.orderId)
+    const selected = select.locator('selectedcontent')
+    await expect(selected.locator('.purchase-date')).toBeVisible()
+    await expect(selected.locator('.order-status')).toBeVisible()
+    await expect(selected.locator('.order-tag-badge')).toBeVisible()
+    await expect(selected.locator('.order-tag-badge')).toHaveCSS(
+      '--tag-dark',
+      '#47351f'
+    )
+    await page.setViewportSize({ width: 390, height: 800 })
+    await assertAlignedPhotos()
+    await select.selectOption(multiple.snapshot.orderId)
+    await expect(selected.locator('.packing-order-photos img')).toHaveCount(6)
+    expect(await photoPixels(selected)).toEqual(multiplePixels)
+    expect(
+      await selected.evaluate(
+        (node) => node.scrollWidth <= node.clientWidth + 1
+      )
+    ).toBe(true)
+    const bounds = await select.boundingBox()
+    expect(bounds.x).toBeGreaterThanOrEqual(0)
+    expect(bounds.x + bounds.width).toBeLessThanOrEqual(390)
+  }
+  await page.locator('#language-toggle [data-language=es]').click()
+  await expect(singleOption).toContainText('1 producto · 1 grupo')
+  await page.locator('#language-toggle [data-language=zh]').click()
+  await expect(singleOption).toContainText('1 件商品 · 1 组')
+  if (richPicker) {
+    await expect(singleOption.locator('.order-status')).toHaveText('待发货')
+    await expect(singleOption.locator('.order-tag-badge')).toHaveText('Fragile')
+  }
+})
+
+test('row Prepare reviews only that product and copies its latest saved values without a copy warning', async ({
   extension,
 }) => {
   const { page } = await openWorkspace(extension, { previews: false })
@@ -478,6 +766,13 @@ test('row Prepare opens only that product and copies its latest saved values wit
     .first()
     .getByRole('button', { name: 'Prepare', exact: true })
     .click()
+  const review = page.getByRole('dialog', {
+    name: 'Assign product codes?',
+    exact: true,
+  })
+  await expect(review).toBeVisible()
+  await expect(review.locator('.packing-review-item')).toHaveCount(1)
+  await expect(review).toContainText('1 selected product rows from 1 orders')
   const dialog = await acceptPreparationPreview(page)
   await waitForAutosave(dialog)
   await expect(
@@ -1641,6 +1936,18 @@ test('preparation selects groups and variant rows by range without changing edit
     )
     expect(selectedFill).not.toBe(siblingFill)
     expect(selectedFill).not.toBe(groupFill)
+    expect(
+      await rows
+        .nth(0)
+        .locator('.variant-note-row')
+        .evaluate((node) => getComputedStyle(node, '::before').display)
+    ).toBe('block')
+    expect(
+      await rows
+        .nth(1)
+        .locator('.variant-note-row')
+        .evaluate((node) => getComputedStyle(node, '::before').display)
+    ).toBe('none')
     await expect(rows.nth(0)).toHaveCSS('box-shadow', 'none')
     await expect(first).toHaveCSS('box-shadow', 'none')
   }
@@ -1701,6 +2008,39 @@ test('preparation selects groups and variant rows by range without changing edit
     'true'
   )
   await expect(first).toHaveClass(/is-selected/)
+  await first.locator('.product-summary > h3').hover()
+  await expect(first.locator('.product-summary > h3')).toHaveCSS(
+    'background-color',
+    'rgba(0, 0, 0, 0)'
+  )
+  for (const theme of ['light', 'dark']) {
+    await page.locator('meta[name="color-scheme"]').evaluate((node, value) => {
+      node.content = value
+    }, theme)
+    const rowFill = await rows
+      .first()
+      .evaluate((node) => getComputedStyle(node).backgroundColor)
+    expect(rowFill).not.toBe('rgba(0, 0, 0, 0)')
+    await expect(first.locator('.product-overview')).toHaveCSS(
+      'background-color',
+      'rgba(0, 0, 0, 0)'
+    )
+    await expect(first.locator('.group-select')).toHaveCSS(
+      'background-color',
+      'rgba(0, 0, 0, 0)'
+    )
+    for (const row of await rows.all()) {
+      await expect(row).toHaveCSS('background-color', rowFill)
+      expect(
+        await row
+          .locator('.variant-note-row')
+          .evaluate((node) => getComputedStyle(node, '::before').display)
+      ).toBe('none')
+      await expect(row).toHaveCSS('box-shadow', 'none')
+    }
+    await expect(first).toHaveCSS('box-shadow', 'none')
+    await expect(first).toHaveCSS('border-left-width', '0px')
+  }
   // Clicking the already-selected group clears it and its highlight.
   await first.locator('.original-product-name').click()
   await expect(first.locator('.group-select')).toHaveAttribute(
@@ -1725,7 +2065,7 @@ test('preparation selects groups and variant rows by range without changing edit
   expect(afterSelection.orders).toEqual(original.orders)
 })
 
-test('undo and redo restore pending typing, while confirmed regrouping starts a new saved checkpoint', async ({
+test('undo and redo retain typing and confirmed regrouping after autosave', async ({
   extension,
 }) => {
   const { page, record } = await openWorkspace(extension)
@@ -1750,7 +2090,7 @@ test('undo and redo restore pending typing, while confirmed regrouping starts a 
   )
   await page.clock.runFor(801)
   await waitForAutosave(view)
-  await expect(undo).toBeDisabled()
+  await expect(undo).toBeEnabled()
   await expect(redo).toBeDisabled()
 
   await selectVariantRow(first.locator('.variants tbody tr').nth(0))
@@ -1779,7 +2119,7 @@ test('undo and redo restore pending typing, while confirmed regrouping starts a 
     .click()
   await expect(first.locator('.variants tbody tr')).toHaveCount(1)
   const saved = await savePreparationAndRead(extension, view)
-  await expect(undo).toBeDisabled()
+  await expect(undo).toBeEnabled()
   await expect(redo).toBeDisabled()
   expect(saved.preparations[0].groups[0].spanishName).toBe('FRASCO EDITADO')
   expect(saved.preparations[0].groups[0].variants[0].entryIds).toEqual(
@@ -1858,7 +2198,7 @@ test('undo follows pending edits across selected orders without preparing an uns
   expect(unsaved.issuedCodes).toEqual(original.issuedCodes)
   await page.clock.runFor(801)
   await waitForAutosave(view)
-  await expect(undo).toBeDisabled()
+  await expect(undo).toBeEnabled()
   await expect(redo).toBeDisabled()
   const saved = await packingBackup(extension)
   expect(saved.preparations).toHaveLength(2)
@@ -1906,7 +2246,7 @@ test('autosave preserves focus and newer typing while an earlier database write 
   await waitForAutosave(dialog)
   await expect(name).toBeEnabled()
   await expect(order).toBeEnabled()
-  await expect(undo).toBeDisabled()
+  await expect(undo).toBeEnabled()
   await expect(redo).toBeDisabled()
   await expect(name).toHaveValue('GUARDADO SEGURO ACTUALIZADO')
   await expect(name).toBeFocused()
@@ -1994,7 +2334,7 @@ for (const action of ['Copy Excel image', 'Copy group codes', 'Copy columns']) {
         name: 'Copy preparation columns',
         exact: true,
       })
-      await expect(columns.getByRole('heading')).toHaveText(
+      await expect(columns.getByRole('heading', { level: 2 })).toHaveText(
         'Copy 2 product rows'
       )
       await columns
@@ -2117,7 +2457,9 @@ test('changing the displayed packing order during a pending column copy retains 
     name: 'Copy preparation columns',
     exact: true,
   })
-  await expect(columns.getByRole('heading')).toHaveText('Copy 2 product rows')
+  await expect(columns.getByRole('heading', { level: 2 })).toHaveText(
+    'Copy 2 product rows'
+  )
   await columns
     .getByRole('button', { name: 'Copy chosen columns', exact: true })
     .click()

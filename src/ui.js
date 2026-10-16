@@ -10,7 +10,7 @@ import {
   textMessage,
   attributeMessage,
 } from './i18n.js'
-import { decorateIcon } from './icons.js'
+import { decorateIcon, icon } from './icons.js'
 import { preparationHelp } from './preparation-help.js'
 
 /** Keep the full copyable order number and its source link together. */
@@ -82,15 +82,20 @@ export function copyTextButton(
     if (copying) return
     copying = true
     clearTimeout(timer)
+    status.hidden = true
+    status.querySelector('.ui-icon')?.remove()
+    button.setAttribute('aria-busy', 'true')
     try {
       await navigator.clipboard.writeText(String(value ?? ''))
       bindText(status, 'Copied')
+      status.prepend(icon('check'))
       status.classList.remove('copy-text-error')
     } catch (error) {
       bindText(status, error.message || 'Could not copy. Try again.')
       status.classList.add('copy-text-error')
     } finally {
       copying = false
+      button.removeAttribute('aria-busy')
       status.hidden = false
       timer = setTimeout(() => {
         status.hidden = true
@@ -214,8 +219,17 @@ export function confirmScope({
 const copyTimers = new WeakMap()
 const copyStates = new WeakMap()
 
+/** A changed batch or preview must not keep the previous copy's success state. */
+export function resetCopyFeedback(button) {
+  clearTimeout(copyTimers.get(button))
+  copyTimers.delete(button)
+  const state = copyStates.get(button)
+  state?.clearDetail?.()
+  state?.reset?.()
+}
+
 /** Keep the action's footprint while short feedback and detailed progress change. */
-export async function copied(button, task) {
+export async function copied(button, task, { onError } = {}) {
   if (button.disabled) return
   let state = copyStates.get(button)
   if (!state) {
@@ -227,6 +241,9 @@ export async function copied(button, task) {
       ariaLabel:
         attributeMessage(button, 'aria-label') ||
         button.getAttribute('aria-label'),
+      title: button.hasAttribute('title')
+        ? attributeMessage(button, 'title') || button.getAttribute('title')
+        : null,
       inlineSize: button.style.inlineSize,
       blockSize: button.style.blockSize,
     }
@@ -251,27 +268,36 @@ export async function copied(button, task) {
         iconOnly: true,
         label: uiMessage('{0}: {1}', {
           0: state.ariaLabel || state.label,
-          1: label,
+          1: uiMessage(label),
         }),
       })
-    } else if (state.ariaLabel !== null)
-      bindAttribute(button, 'aria-label', label)
+    } else {
+      decorateIcon(button, iconName)
+      if (state.ariaLabel !== null) bindAttribute(button, 'aria-label', label)
+    }
   }
   const reset = () => {
     bindText(button, state.label)
-    if (button.dataset.icon)
-      decorateIcon(button, state.icon || button.dataset.icon, {
+    if (state.icon)
+      decorateIcon(button, state.icon, {
         iconOnly: state.iconOnly,
         label: state.ariaLabel || state.label,
       })
+    else {
+      button.querySelector(':scope > .ui-icon')?.remove()
+      delete button.dataset.icon
+    }
     if (state.ariaLabel === null) button.removeAttribute('aria-label')
     else bindAttribute(button, 'aria-label', state.ariaLabel)
+    if (state.title === null) button.removeAttribute('title')
+    else bindAttribute(button, 'title', state.title)
     button.style.inlineSize = state.inlineSize
     button.style.blockSize = state.blockSize
     button.classList.remove('copy-active', 'copied', 'copy-failed')
     if (!state.clearDetail) copyStates.delete(button)
   }
-  state.icon ||= button.dataset.icon
+  state.reset = reset
+  if (!Object.hasOwn(state, 'icon')) state.icon = button.dataset.icon
   const detail = (message, { error = false, cancel } = {}) => {
     if (
       state.detail &&
@@ -378,7 +404,8 @@ export async function copied(button, task) {
     button.classList.add('copied')
     return true
   } catch (error) {
-    detail(error.message, { error: true })
+    if (onError) onError(error)
+    else detail(error.message, { error: true })
     show('Try again', 'refresh')
     button.classList.add('copy-failed')
     return false
