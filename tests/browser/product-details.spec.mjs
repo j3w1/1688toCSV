@@ -58,8 +58,8 @@ async function workspace(extension, { longDescription = false } = {}) {
   await page.evaluate(() => {
     const write = navigator.clipboard.writeText.bind(navigator.clipboard)
     navigator.clipboard.writeText = async (value) => {
-      window.productDetailsCopiedText = value
       await write(value)
+      window.productDetailsCopiedText = value
     }
   })
   return { page, record }
@@ -73,19 +73,24 @@ function field(root, label, selector = '.product-attributes') {
 }
 
 async function expectCopied(page, button, value) {
-  await button.click()
-  await expect
-    .poll(() => page.evaluate(() => window.productDetailsCopiedText))
-    .toBe(value)
+  await test.step('Finish the clipboard write before reading it back', async () => {
+    await page.bringToFront()
+    await button.click()
+    await expect
+      .poll(() => page.evaluate(() => window.productDetailsCopiedText))
+      .toBe(value)
+  })
   // Windows stores native clipboard line endings as CRLF. The exact source
   // argument is asserted above; retain all other whitespace in the readback.
-  await expect
-    .poll(() =>
-      page.evaluate(async () =>
-        (await navigator.clipboard.readText()).replace(/\r\n/g, '\n')
+  await test.step('Verify the completed native clipboard text', async () => {
+    await expect
+      .poll(() =>
+        page.evaluate(async () =>
+          (await navigator.clipboard.readText()).replace(/\r\n/g, '\n')
+        )
       )
-    )
-    .toBe(value.replace(/\r\n/g, '\n'))
+      .toBe(value.replace(/\r\n/g, '\n'))
+  })
 }
 
 async function backup(extension) {
