@@ -92,6 +92,42 @@ test('field hints leave immediately with the pointer and preserve keyboard descr
 })
 
 for (const fallback of [false, true]) {
+  test(`${fallback ? 'fallback' : 'native'} text helper never blocks an adjacent action in a compact dialog`, async ({
+    extension,
+  }) => {
+    const page = await helpFixture(extension, { fallback })
+    await page.setViewportSize({ width: 390, height: 600 })
+    await page.addStyleTag({
+      content:
+        'dialog { width: 300px; padding: 20px; } #field { margin: 0 0 8px; } #existing { display: none; }',
+    })
+    await page.locator('#action').evaluate((button) => {
+      button.addEventListener('click', () => {
+        button.dataset.activated = 'true'
+      })
+    })
+    await page.locator('#field input').focus()
+    const tooltip = page.getByRole('tooltip')
+    await expect(tooltip).toBeVisible()
+    const overlap = await page.locator('#action').evaluate((button) => {
+      const action = button.getBoundingClientRect(),
+        hint = document.querySelector('[role=tooltip]').getBoundingClientRect(),
+        x = action.x + action.width / 2,
+        y = action.y + action.height / 2
+      return (
+        x >= hint.left && x <= hint.right && y >= hint.top && y <= hint.bottom
+      )
+    })
+    expect(overlap).toBe(true)
+    await page.locator('#action').click({ timeout: 3000 })
+    await expect(page.locator('#action')).toHaveAttribute(
+      'data-activated',
+      'true'
+    )
+    await expect(tooltip).toHaveCount(0)
+    await page.close()
+  })
+
   test(`${fallback ? 'fallback' : 'native'} workspace hint dismisses while Escape reaches the owning view`, async ({
     extension,
   }) => {

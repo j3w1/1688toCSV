@@ -1657,6 +1657,8 @@ html:has(body.packing-active) {
 }
 .preparation-help-popover {
   position: fixed;
+  /* Text-only help must not intercept the controls it may overlap. */
+  pointer-events: none;
   inset: auto;
   margin: 0;
   z-index: 25;
