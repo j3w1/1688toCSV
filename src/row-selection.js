@@ -102,8 +102,17 @@ export function createRowSelection({
         onActivate?.(key)
     })
     element.addEventListener('keydown', (event) => {
-      if (!ownsEvent(event) || event.altKey) return
+      if (
+        !ownsEvent(event) ||
+        event.altKey ||
+        event.defaultPrevented ||
+        event.isComposing
+      )
+        return
       const additive = event.ctrlKey || event.metaKey
+      // Modified Enter belongs to workspace actions such as Prepare, even when
+      // that action is disabled. Plain Enter still opens the row's details.
+      if (additive && event.key === 'Enter') return
       if (additive && event.key.toLowerCase() === 'a') selectAll()
       else if (additive && event.key.toLowerCase() === 'd') clear()
       else if (event.key === 'Escape') clear()

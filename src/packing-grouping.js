@@ -128,7 +128,7 @@ export function groupingAvailability(entries) {
   return { share, separate, split, merge }
 }
 
-/** Build one atomic candidate per order; code reservations are never reassigned. */
+/** Build one atomic candidate per order; current assignments must stay unique. */
 export async function regroupSelection(
   entries,
   operation,

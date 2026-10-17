@@ -1,4 +1,5 @@
 import {
+  activePackingState,
   groupPackingMonth,
   packingMonth,
   validatePreparation,
@@ -147,6 +148,66 @@ export function selectPackingPreparation(preparation, ids) {
   return result
 }
 
+export function selectPackingOrder(order, ids) {
+  const selected = new Set(ids)
+  const result = structuredClone(order)
+  if (result.productTags)
+    result.productTags = Object.fromEntries(
+      Object.entries(result.productTags).filter(([id]) => selected.has(id))
+    )
+  if (result.packingExcludedEntryIds)
+    result.packingExcludedEntryIds = result.packingExcludedEntryIds.filter(
+      (id) => selected.has(id)
+    )
+  for (const [clock, partial] of [
+    ['productTagsUpdatedAt', 'productTagsPartialClocks'],
+    ['packingExclusionsUpdatedAt', 'packingExclusionsPartialClocks'],
+  ])
+    if (order[clock] || order[partial]) {
+      result[partial] = Object.fromEntries(
+        ids
+          .map((id) => [id, order[partial]?.[id] || order[clock]])
+          .filter(([, value]) => value)
+      )
+      // Clipping observes selected entries, never the complete annotation map.
+      delete result[clock]
+    }
+  return result
+}
+
+/** Label artwork and assigned tag colors travel with packing, not global catalogs. */
+function packingPreferences(preferences, orders) {
+  if (!preferences) return null
+  const value = preferences.value
+  const settings = {}
+  for (const field of ['dpi', 'website', 'destination'])
+    if (value.settings?.[field] !== undefined)
+      settings[field] = value.settings[field]
+  for (const kind of ['barcode', 'mark'])
+    if (value.settings?.[kind])
+      settings[kind] = Object.fromEntries(
+        ['widthMm', 'heightMm', 'textScale']
+          .filter((field) => value.settings[kind][field] !== undefined)
+          .map((field) => [field, value.settings[kind][field]])
+      )
+  const result = { settings, logoDataUrl: value.logoDataUrl || '' }
+  // Preserve the tag palette's migration state without exporting global themes.
+  if (value.appearance?.paletteRevision !== undefined)
+    result.appearance = { paletteRevision: value.appearance.paletteRevision }
+  for (const [field, names] of [
+    ['orderTags', orders.flatMap((order) => order.tags)],
+    [
+      'productTags',
+      orders.flatMap((order) => Object.values(order.productTags || {}).flat()),
+    ],
+  ]) {
+    const assigned = new Set(names)
+    const tags = value[field]?.filter((tag) => assigned.has(tag.name))
+    if (tags?.length) result[field] = structuredClone(tags)
+  }
+  return { value: result, updatedAt: preferences.updatedAt }
+}
+
 /** Full source orders remain dependencies so their money totals still reconcile. */
 export function createPackingBackup(backup, selection) {
   const scope = validatePackingScope(
@@ -157,12 +218,11 @@ export function createPackingBackup(backup, selection) {
   const selected = new Map(
     scope.orders.map((order) => [key(order), order.entryIds])
   )
-  const orders = backup.orders.filter((order) =>
-    selected.has(key(order.snapshot))
-  )
-  const history = backup.history.filter((order) =>
-    selected.has(key(order.snapshot))
-  )
+  const orders = backup.orders
+    .filter((order) => selected.has(key(order.snapshot)))
+    .map((order) =>
+      selectPackingOrder(order, selected.get(key(order.snapshot)))
+    )
   const preparations = backup.preparations
     .filter((preparation) => selected.has(key(preparation)))
     .map((preparation) =>
@@ -178,13 +238,19 @@ export function createPackingBackup(backup, selection) {
     )
   )
   return {
-    ...structuredClone(backup),
-    orders: structuredClone(orders),
-    history: structuredClone(history),
+    format: '1688-order-library',
+    version: 3,
+    exportedAt: backup.exportedAt,
+    orders,
+    // Every scoped preparation/checkpoint entry exists in its current source.
+    // Prior scraped snapshots and retired ownership are not restore dependencies.
+    history: [],
     preparations,
+    ...activePackingState(preparations),
     images: structuredClone(
-      backup.images.filter((image) => urls.has(image.url))
+      (backup.images || []).filter((image) => urls.has(image.url))
     ),
+    packingPreferences: packingPreferences(backup.packingPreferences, orders),
     packingScope: scope,
   }
 }
@@ -208,6 +274,20 @@ function normalizedAuthoring(preparation) {
     if (preparation[field])
       result[field] = normalizedAuthoring(preparation[field])
   return preparationAuthoring(result)
+}
+
+/** An unchanged scoped copy can be completed by its exact same-time source. */
+export function isPackingPreparationSubset(partial, complete) {
+  const ids = entryIds(partial)
+  const completeIds = new Set(entryIds(complete))
+  return (
+    ids.length < completeIds.size &&
+    ids.every((id) => completeIds.has(id)) &&
+    JSON.stringify(normalizedAuthoring(partial)) ===
+      JSON.stringify(
+        normalizedAuthoring(selectPackingPreparation(complete, ids))
+      )
+  )
 }
 
 /** Replace only selected slots; intervening unselected rows retain their position. */

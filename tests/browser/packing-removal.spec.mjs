@@ -198,7 +198,12 @@ test('packing keeps direct drag and trash controls at the far left for pointer, 
     exact: true,
   })
   await expect(review).toBeVisible()
-  await expect(review.locator('.packing-review-item')).toHaveCount(1)
+  await expect(review.locator('.packing-review-item')).toHaveCount(2)
+  await expect(
+    review
+      .locator('.packing-review-item')
+      .filter({ hasText: 'Removed from packing' })
+  ).toHaveCount(1)
   await review.getByRole('button', { name: 'Cancel', exact: true }).click()
   await expect(review).toBeHidden()
   await expect(group.locator('tr[data-variant-id]')).toHaveCount(2)
@@ -237,7 +242,7 @@ test('group selection adds and removes independently without modifiers or interf
     exact: true,
     includeHidden: true,
   })
-  await expect(backupButton).toBeDisabled()
+  await expect(backupButton).toBeEnabled()
   await first.click()
   await second.click()
   await expect(first).toHaveAttribute('aria-pressed', 'true')
@@ -256,14 +261,14 @@ test('group selection adds and removes independently without modifiers or interf
     '1 selected products · 1 orders'
   )
   await second.click()
-  await expect(backupButton).toBeDisabled()
+  await expect(backupButton).toBeEnabled()
   await first.focus()
   await page.keyboard.press('Control+a')
   await expect(first).toHaveAttribute('aria-pressed', 'true')
   await expect(second).toHaveAttribute('aria-pressed', 'true')
 })
 
-test('product and group removal confirm exact affected photos and persist without changing source rows or reservations', async ({
+test('new product removal returns it to unassigned and later sessions retain the baseline when excluding saved products', async ({
   extension,
 }) => {
   const { page, view } = await seedPacking(extension)
@@ -285,15 +290,20 @@ test('product and group removal confirm exact affected photos and persist withou
     name: 'Remove from packing?',
     exact: true,
   })
-  await expect(review.locator('.packing-review-item')).toHaveCount(
-    removedIds.length
-  )
-  await expect(review.locator('.preparation-photo')).toHaveCount(
-    removedIds.length
-  )
-  await expect(review).toContainText(
-    'original order data and issued codes are kept'
-  )
+  await expect(review.locator('.packing-review-item')).toHaveCount(2)
+  await expect(
+    review
+      .locator('.packing-review-item')
+      .filter({ hasText: 'Removed from packing' })
+  ).toHaveCount(removedIds.length)
+  await expect(review.locator('.preparation-photo')).toHaveCount(2)
+  const keptSibling = review
+    .locator('.packing-review-item')
+    .filter({ hasText: 'This product stays in packing' })
+  await expect(keptSibling).toHaveCount(1)
+  await expect(keptSibling).toContainText('2 product rows · 2 variants')
+  await expect(keptSibling).toContainText('1 product rows · 1 variants')
+  await expect(review).toContainText('Original order data is kept')
   await review.getByRole('button', { name: 'Cancel', exact: true }).click()
   expect((await backup(extension)).preparations).toEqual(before.preparations)
   await removalAction(jarCard, 'Remove product')
@@ -310,7 +320,11 @@ test('product and group removal confirm exact affected photos and persist withou
   await expect(jarCard.locator('.variants tbody tr')).toHaveCount(1)
   const afterProduct = await backup(extension)
   expect(afterProduct.orders).toEqual(before.orders)
-  expect(afterProduct.issuedCodes).toEqual(before.issuedCodes)
+  expect(
+    afterProduct.issuedCodes.some(
+      (entry) => entry.variantId === jar.variants[0].id
+    )
+  ).toBe(false)
   expect(afterProduct.allocations).toEqual(before.allocations)
   await page.reload()
   await openPacking(page)
@@ -323,23 +337,24 @@ test('product and group removal confirm exact affected photos and persist withou
   await expect(view.locator('.preparation-group')).toHaveCount(1)
   const afterGroup = await backup(extension)
   expect(afterGroup.preparations[0].groups.map((group) => group.id)).toEqual([
+    jar.id,
     box.id,
   ])
   expect(
     afterGroup.preparations[0].defaultPacking.groups.map((group) => group.id)
-  ).toEqual([box.id])
+  ).toEqual([jar.id, box.id])
   expect(afterGroup.orders).toEqual(before.orders)
-  expect(afterGroup.issuedCodes).toEqual(before.issuedCodes)
+  expect(afterGroup.issuedCodes).toEqual(afterProduct.issuedCodes)
   await page.reload()
   await expect(page.locator('#sheet-body tr[data-selection-key]')).toHaveCount(
     3
   )
-  await openPacking(page, 1)
+  await openPacking(page, 2)
   await expect(
     view.getByRole('button', { name: 'Reset order and codes', exact: true })
   ).toBeDisabled()
   expect(memberships((await backup(extension)).preparations[0])).toEqual(
-    memberships({ groups: [box] })
+    remaining
   )
 })
 
@@ -366,7 +381,7 @@ test('removing the last group keeps an empty saved packing while original produc
   expect(removed.preparations).toHaveLength(1)
   expect(removed.preparations[0].defaultPacking.groups).toEqual([])
   expect(removed.orders).toEqual(original.orders)
-  expect(removed.issuedCodes).toEqual(original.issuedCodes)
+  expect(removed.issuedCodes).toEqual([])
   await page.reload()
   const rows = page.locator('#sheet-body tr[data-selection-key]')
   await expect(rows).toHaveCount(3)
@@ -385,9 +400,12 @@ test('removing the last group keeps an empty saved packing while original produc
   const originalCodes = original.preparations[0].groups.map(
     (group) => group.baseCode
   )
-  expect(originalCodes).not.toContain(added.preparations[0].groups[0].baseCode)
-  for (const issued of original.issuedCodes)
-    expect(added.issuedCodes).toContainEqual(issued)
+  expect(originalCodes).toContain(added.preparations[0].groups[0].baseCode)
+  expect(
+    added.issuedCodes.every(
+      (entry) => entry.groupId === added.preparations[0].groups[0].id
+    )
+  ).toBe(true)
 })
 
 test('reset shows position and barcode changes and becomes unavailable after the saved defaults are restored', async ({
@@ -429,9 +447,23 @@ test('reset shows position and barcode changes and becomes unavailable after the
     exact: true,
   })
   await expect(review.locator('.packing-review-item')).toHaveCount(2)
-  await expect(review).toContainText('Position 2 → 1')
-  await expect(review).toContainText(
-    `${jar.baseCode}ZZ${firstVariant.sizeSuffix} → ${originalBarcode}`
+  const firstChange = review.locator('.packing-review-item').first()
+  const position = firstChange
+    .locator('.packing-value-row')
+    .filter({ has: page.getByText('Position', { exact: true }) })
+  await expect(
+    position.locator('.packing-value-before .packing-value-content')
+  ).toHaveText('2')
+  await expect(
+    position.locator('.packing-value-after .packing-value-content')
+  ).toHaveText('1')
+  const barcode = firstChange.locator('.packing-value-row').filter({
+    has: page.getByText(`${jar.baseCode}ZZ${firstVariant.sizeSuffix}`, {
+      exact: true,
+    }),
+  })
+  await expect(barcode.locator('.packing-value-after .ce-code')).toHaveText(
+    originalBarcode
   )
   await review.getByRole('button', { name: 'Cancel', exact: true }).click()
   expect((await backup(extension)).preparations).toEqual(changed.preparations)
@@ -461,8 +493,9 @@ test('reset shows position and barcode changes and becomes unavailable after the
   expect(restored.preparations[0].groups).toEqual(
     original.preparations[0].groups
   )
-  for (const issued of changed.issuedCodes)
-    expect(restored.issuedCodes).toContainEqual(issued)
+  expect(restored.issuedCodes.map(({ code }) => code).sort()).toEqual(
+    original.issuedCodes.map(({ code }) => code).sort()
+  )
   await page.reload()
   await openPacking(page)
   await expect(reset).toBeDisabled()

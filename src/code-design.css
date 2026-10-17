@@ -48,7 +48,10 @@ input.ce-code,
 .preparation-workspace .preparation-group input.group-code-editor.ce-code {
   min-inline-size: 0;
   /* Native inputs cannot trim their internal line box. Give them the same
-     cap-height + padding envelope and let their text stay vertically centered. */
+     cap-height + padding envelope and let their text stay vertically centered.
+     Trimming the input itself creates internal vertical overflow in Chromium,
+     allowing a mouse selection to scroll and clip a single line of code. */
+  text-box: normal;
   block-size: calc(0.72em + 2 * var(--ce-code-padding-block));
   padding-block: 0;
   caret-color: var(--ce-code-foreground);

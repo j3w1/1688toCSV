@@ -2,8 +2,19 @@ import { element, copied as copyFeedback, resetCopyFeedback } from './ui.js'
 import { bindText, bindAttribute, message } from './i18n.js'
 import { decorateIcon } from './icons.js'
 import { showErrorNotice, clearErrorNotice } from './error-notice.js'
+import { photoCopyTile } from './photo-copy.js'
 
 export class ImageBatchTooLarge extends Error {}
+
+function writePreparedImage({ blob, url }) {
+  // Start the clipboard write within the click's user activation. A source
+  // photo is already a prepared full-size PNG, never a display thumbnail.
+  return navigator.clipboard.write([
+    new ClipboardItem({
+      'image/png': blob || (async () => (await fetch(url)).blob())(),
+    }),
+  ])
+}
 
 export function imageBatchPlans(count, size) {
   return Array.from({ length: Math.ceil(count / size) }, (_, index) => ({
@@ -170,6 +181,7 @@ export function openImageCopyDialog({
   plan,
   prepare,
   write,
+  writeImage = writePreparedImage,
   createOptions,
   interactivePreview = false,
   errorOptions,
@@ -178,7 +190,8 @@ export function openImageCopyDialog({
   if (signal?.aborted || !count) return Promise.resolve(false)
   const dialog = element('dialog', undefined, 'image-copy-dialog')
   bindAttribute(dialog, 'aria-label', message(title))
-  const heading = element('header', undefined, 'image-copy-heading')
+  const header = element('header', undefined, 'image-copy-header')
+  const heading = element('div', undefined, 'image-copy-heading')
   const close = decorateIcon(element('button'), 'close', {
     iconOnly: true,
     label: 'Close',
@@ -187,9 +200,12 @@ export function openImageCopyDialog({
   heading.append(element('h2', message(title)), close)
   const hint = element(
     'p',
-    message('Copy a batch, paste it into Excel, then continue here.'),
+    message(
+      'Copy a batch or hover over an image to copy it individually. Paste it, then continue here.'
+    ),
     'image-copy-hint'
   )
+  const content = element('div', undefined, 'image-copy-content')
   const body = element('div', undefined, 'image-copy-body')
   const preview = element('div', undefined, 'copy-preview')
   bindAttribute(preview, 'aria-label', message('Image preview'))
@@ -213,7 +229,7 @@ export function openImageCopyDialog({
   })
   const batches = element('div', undefined, 'image-copy-batches')
   navigation.append(previous, batches, next)
-  const footer = element('footer', undefined, 'image-copy-footer')
+  const toolbar = element('div', undefined, 'image-copy-toolbar')
   const status = element('p', undefined, 'image-copy-status')
   const progress = element('p', undefined, 'image-copy-progress')
   progress.setAttribute('role', 'status')
@@ -227,8 +243,10 @@ export function openImageCopyDialog({
   done.onclick = () => dialog.close()
   const actions = element('div', undefined, 'image-copy-actions')
   actions.append(copy, done)
-  footer.append(status, progress, actions)
-  dialog.append(heading, hint, navigation, body, footer)
+  toolbar.append(status, progress, actions)
+  header.append(heading, hint, toolbar, navigation)
+  content.append(body)
+  dialog.append(header, content)
 
   let plans = [],
     current = 0,
@@ -247,6 +265,8 @@ export function openImageCopyDialog({
     releaseNavigation?.()
     releaseNavigation = undefined
     ready = null
+    for (const button of preview.querySelectorAll('.photo-copy-button'))
+      resetCopyFeedback(button)
     preview.replaceChildren()
     for (const url of urls) URL.revokeObjectURL(url)
     urls.clear()
@@ -258,6 +278,8 @@ export function openImageCopyDialog({
     previous.disabled = copying || current === 0 || !plans.length
     next.disabled = copying || current >= plans.length - 1
     if (options) options.disabled = copying
+    for (const button of preview.querySelectorAll('.photo-copy-button'))
+      button.disabled = copying || !ready
     for (const button of batches.children) {
       const index = Number(button.dataset.batchIndex)
       button.disabled = copying
@@ -303,6 +325,46 @@ export function openImageCopyDialog({
   }
   previous.onclick = () => navigate(current - 1)
   next.onclick = () => navigate(current + 1)
+
+  function copyError(error) {
+    if (closed) return
+    bindText(progress, message('Copy failed. Try again.'))
+    showErrorNotice(error, {
+      scope: dialog,
+      key: 'image-copy',
+      ...errorOptions?.(error, dialog),
+    })
+  }
+
+  async function copyImage(item, index, payload) {
+    if (copying || !ready) return false
+    const number = plans[current].start + index + 1
+    copying = true
+    clearErrorNotice({ scope: dialog, key: 'image-copy' })
+    bindText(progress, message('Copying…'))
+    controls()
+    try {
+      const result = await writeImage(item, index, payload)
+      if (closed) return false
+      if (result === false) return false
+      copiedAny = true
+      bindText(
+        progress,
+        message(
+          'Image {0} copied. Paste it before copying another. {1} of {2} batches copied.',
+          {
+            0: number,
+            1: copied.size,
+            2: plans.length,
+          }
+        )
+      )
+      return true
+    } finally {
+      copying = false
+      if (!closed) controls()
+    }
+  }
 
   function refresh(reset = false) {
     if (closed || copying) return
@@ -390,7 +452,19 @@ export function openImageCopyDialog({
               })
             )
             zoom.append(img)
-            figure.append(zoom)
+            figure.append(
+              photoCopyTile(
+                zoom,
+                () => copyImage(item, index, result.payload),
+                {
+                  label: message('Copy image {0}', {
+                    0: plans[current].start + index + 1,
+                  }),
+                  help: 'Copy only this image at its export size. The popup stays open and the batch is not marked as copied.',
+                  onError: copyError,
+                }
+              )
+            )
             if (item.label) {
               const caption = element('figcaption')
               caption.append(
@@ -476,15 +550,7 @@ export function openImageCopyDialog({
           )
         },
         {
-          onError(error) {
-            if (closed) return
-            bindText(progress, message('Copy failed. Try again.'))
-            showErrorNotice(error, {
-              scope: dialog,
-              key: 'image-copy',
-              ...errorOptions?.(error, dialog),
-            })
-          },
+          onError: copyError,
         }
       )
     } finally {

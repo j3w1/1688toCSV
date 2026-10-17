@@ -1,6 +1,11 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
-import { validateBackup } from '../src/database.js'
+import { mergeProductAnnotations, validateBackup } from '../src/database.js'
+import {
+  upgradeWorkspaceColors,
+  WORKSPACE_COLOR_REVISION,
+} from '../src/appearance.js'
+import { initializeVocabulary } from '../src/product-vocabulary.js'
 import {
   allocatePreparation,
   createPreparation,
@@ -10,6 +15,7 @@ import {
 } from '../src/packing-model.js'
 import {
   createPackingBackup,
+  isPackingPreparationSubset,
   mergePackingPreparation,
   selectPackingPreparation,
 } from '../src/packing-backup.js'
@@ -117,9 +123,367 @@ test('packing backup contains only selected prepared products and checkpoints, w
     selected.images.map((image) => image.url),
     [backup.images[1].url]
   )
-  assert.deepEqual(selected.issuedCodes, backup.issuedCodes)
+  const group = selected.preparations[0].groups[0]
+  const variant = group.variants[0]
+  assert.equal(selected.issuedCodes.length, 2)
+  assert.ok(selected.issuedCodes.every((entry) => entry.groupId === group.id))
+  assert.equal(
+    selected.issuedCodes.find((entry) => entry.kind === 'barcode').variantId,
+    variant.id
+  )
+  for (const entry of selected.issuedCodes)
+    if (entry.ownerSnapshot)
+      assert.deepEqual(entry.ownerSnapshot.entryIds, ['2'])
+  assert.equal(
+    selected.issuedCodes.find((entry) => entry.kind === 'base').ownerSnapshot,
+    undefined
+  )
   assert.deepEqual(backup, original)
   assert.deepEqual(members(validateBackup(selected).preparations[0]), ['2'])
+})
+
+test('packing backup omits unrelated history, allocations, image blobs and global preferences', () => {
+  const { backup, snapshot } = fixture()
+  const other = structuredClone(snapshot)
+  other.orderId = '2002'
+  other.sourceUrl = other.sourceUrl.replace('1001', '2002')
+  other.sellerMemberLogin = 'unrelated-seller'
+  other.items = other.items.map((item) => ({
+    ...item,
+    thumbnail: item.thumbnail.replace('synthetic-', 'unrelated-'),
+  }))
+  const allocated = allocatePreparation(
+    createPreparation(other, '2026-11'),
+    backup.allocations,
+    backup.issuedCodes,
+    { snapshot: other }
+  )
+  backup.orders.push({ ...structuredClone(backup.orders[0]), snapshot: other })
+  backup.preparations.push({
+    ...allocated.preparation,
+    revision: 1,
+    updatedAt: backup.preparations[0].updatedAt,
+  })
+  backup.allocations = allocated.allocations
+  backup.issuedCodes = allocated.issuedCodes
+  backup.allocations[0].groups.push({
+    number: 90,
+    sellerId: 'inactive-seller',
+    nextItem: 80,
+  })
+  backup.allocations.push({
+    accountId: 'other-account',
+    month: '2025-01',
+    groups: [{ number: 1, sellerId: 'other-account-seller', nextItem: 40 }],
+  })
+  backup.history = backup.orders.map((order) => {
+    const previous = structuredClone(order)
+    previous.snapshot.observedAt =
+      previous.changedAt =
+      previous.lastCheckedAt =
+        '2026-09-30T12:00:00.000Z'
+    return previous
+  })
+  const largeUnusedImage = 'data:image/png;base64,' + 'AAAA'.repeat(300_000)
+  backup.images.push({
+    url: other.items[0].thumbnail,
+    dataUrl: largeUnusedImage,
+    storedAt: other.observedAt,
+  })
+  backup.importDiagnostics = { unrelated: 'Not part of packing' }
+  backup.orders[0].tags = ['Priority']
+  backup.orders[0].productTags = {
+    1: ['Not packed'],
+    2: ['Fragile'],
+    3: ['Not packed'],
+  }
+  backup.orders[0].productTagsUpdatedAt = backup.exportedAt
+  backup.orders[0].packingExcludedEntryIds = ['1', '2']
+  backup.orders[0].packingExclusionsUpdatedAt = backup.exportedAt
+  const tag = (name) => ({
+    name,
+    colors: { light: '#ffeedd', dark: '#332211' },
+    textColors: { light: '#332211', dark: '#ffeedd' },
+  })
+  const labelSettings = {
+    dpi: 300,
+    website: 'synthetic.example',
+    destination: 'AQP, PE',
+    barcode: { widthMm: 48, heightMm: 24, textScale: 1.1 },
+    mark: { widthMm: 140, heightMm: 100, textScale: 0.95 },
+  }
+  backup.packingPreferences = {
+    updatedAt: backup.exportedAt,
+    value: {
+      settings: {
+        ...labelSettings,
+        barcode: { ...labelSettings.barcode, unusedEditorPreference: true },
+        vocabularyInitialized: true,
+        vocabularyVersion: 1,
+        unrelatedSetting: 'Do not export',
+      },
+      logoDataUrl: 'data:image/png;base64,BBBB',
+      vocabulary: [
+        { match: 'Unrelated', spanishName: 'OTHER', category: '物' },
+      ],
+      sizeVocabulary: [],
+      colorVocabulary: [],
+      appearance: { lightTheme: 'apricot', darkTheme: 'terracotta' },
+      orderTags: [tag('Priority'), tag('Unrelated order tag')],
+      productTags: [tag('Fragile'), tag('Not packed'), tag('Unused tag')],
+    },
+  }
+  const original = structuredClone(backup)
+  const scoped = createPackingBackup(backup, selection())
+  const restored = validateBackup(scoped)
+  assert.deepEqual(Object.keys(scoped).sort(), [
+    'allocations',
+    'exportedAt',
+    'format',
+    'history',
+    'images',
+    'issuedCodes',
+    'orders',
+    'packingPreferences',
+    'packingScope',
+    'preparations',
+    'version',
+  ])
+  assert.equal(scoped.version, 3)
+  assert.equal(scoped.orders.length, 1)
+  assert.deepEqual(scoped.orders[0].snapshot, snapshot)
+  assert.deepEqual(scoped.history, [])
+  assert.deepEqual(scoped.allocations, [
+    {
+      accountId: 'local',
+      month: '2026-10',
+      groups: [{ number: 1, sellerId: 'synthetic-seller', nextItem: 2 }],
+    },
+  ])
+  assert.equal(scoped.issuedCodes.length, 2)
+  assert.ok(
+    scoped.issuedCodes.every(
+      (entry) => entry.orderId === '1001' && !entry.ownerSnapshot
+    )
+  )
+  assert.deepEqual(scoped.images, [backup.images[1]])
+  assert.ok(JSON.stringify(scoped).length < 20_000)
+  assert.deepEqual(scoped.orders[0].productTags, { 2: ['Fragile'] })
+  assert.deepEqual(scoped.orders[0].packingExcludedEntryIds, ['2'])
+  assert.deepEqual(scoped.packingPreferences, {
+    updatedAt: backup.exportedAt,
+    value: {
+      settings: labelSettings,
+      logoDataUrl: 'data:image/png;base64,BBBB',
+      orderTags: [tag('Priority')],
+      productTags: [tag('Fragile')],
+    },
+  })
+  assert.deepEqual(restored.preparations, scoped.preparations)
+  assert.deepEqual(restored.allocations, scoped.allocations)
+  assert.deepEqual(restored.issuedCodes, scoped.issuedCodes)
+  assert.deepEqual(restored.packingPreferences.value.settings, labelSettings)
+  assert.deepEqual(backup, original)
+  const full = validateBackup(backup)
+  assert.equal(full.orders.length, 2)
+  assert.equal(full.history.length, 2)
+  assert.equal(full.images.at(-1).dataUrl, largeUnusedImage)
+  assert.equal(full.allocations.length, 3)
+  assert.equal(full.packingPreferences.value.vocabulary.length, 1)
+})
+
+test('fresh scoped restore retains assigned custom tag colors without importing global appearance', () => {
+  const { backup } = fixture()
+  backup.orders[0].tags = ['Priority']
+  backup.orders[0].productTags = { 1: ['Unselected'], 2: ['Fragile'] }
+  backup.orders[0].productTagsUpdatedAt = backup.exportedAt
+  const orderTag = {
+    name: 'Priority',
+    colors: { light: '#ffe8c4', dark: '#402619' },
+    textColors: { light: '#6b3210', dark: '#ffd8ad' },
+    used: true,
+  }
+  const productTag = {
+    name: 'Fragile',
+    colors: { light: '#dceee6', dark: '#243b30' },
+    textColors: { light: '#274f38', dark: '#bde1cc' },
+    used: true,
+  }
+  backup.packingPreferences = {
+    updatedAt: backup.exportedAt,
+    value: {
+      settings: {},
+      appearance: {
+        paletteRevision: WORKSPACE_COLOR_REVISION,
+        lightTheme: '1688',
+        darkTheme: 'terracotta',
+        labelColors: { saved: { light: '#ddeeff', dark: '#112233' } },
+        labelTextColors: { saved: { light: '#112233', dark: '#ddeeff' } },
+      },
+      orderTags: [orderTag, { name: 'Unused order tag', colors: {} }],
+      productTags: [productTag, { name: 'Unselected', colors: {} }],
+      vocabulary: [{ match: 'Private catalog', spanishName: 'OTHER' }],
+      colorVocabulary: [],
+      sizeVocabulary: [],
+    },
+  }
+  const scoped = createPackingBackup(backup, selection())
+  assert.deepEqual(scoped.packingPreferences.value.appearance, {
+    paletteRevision: WORKSPACE_COLOR_REVISION,
+  })
+  for (const field of ['vocabulary', 'colorVocabulary', 'sizeVocabulary'])
+    assert.equal(scoped.packingPreferences.value[field], undefined)
+  const validated = validateBackup(scoped).packingPreferences.value
+  const initialized = initializeVocabulary(validated)
+  const restored = upgradeWorkspaceColors(initialized)
+  assert.deepEqual(restored.orderTags, [orderTag])
+  assert.deepEqual(restored.productTags, [productTag])
+  assert.deepEqual(restored.appearance, {
+    lightTheme: 'warm',
+    darkTheme: 'warm',
+    labelColors: {},
+    paletteRevision: WORKSPACE_COLOR_REVISION,
+  })
+  assert.ok(
+    restored.vocabulary.every((rule) => rule.match !== 'Private catalog')
+  )
+})
+
+test('clipped annotation clocks describe selected entries and full restore completes only unknown state', () => {
+  const { backup } = fixture()
+  const clock = backup.exportedAt
+  Object.assign(backup.orders[0], {
+    productTags: { 1: ['Outside'], 2: ['Inside'] },
+    productTagsUpdatedAt: clock,
+    packingExcludedEntryIds: ['1', '2'],
+    packingExclusionsUpdatedAt: clock,
+  })
+  const scoped = createPackingBackup(backup, selection())
+  const partial = validateBackup(scoped).orders[0]
+  assert.equal(partial.productTagsUpdatedAt, undefined)
+  assert.equal(partial.packingExclusionsUpdatedAt, undefined)
+  assert.deepEqual(partial.productTagsPartialClocks, { 2: clock })
+  assert.deepEqual(partial.packingExclusionsPartialClocks, { 2: clock })
+  const legacyScoped = structuredClone(scoped)
+  legacyScoped.orders[0].productTagsUpdatedAt = clock
+  legacyScoped.orders[0].packingExclusionsUpdatedAt = clock
+  delete legacyScoped.orders[0].productTagsPartialClocks
+  delete legacyScoped.orders[0].packingExclusionsPartialClocks
+  assert.deepEqual(validateBackup(legacyScoped).orders[0], partial)
+  const complete = mergeProductAnnotations(partial, backup.orders[0])
+  assert.deepEqual(complete, backup.orders[0])
+
+  const later = '2026-10-06T12:00:00.000Z'
+  const cleared = {
+    ...partial,
+    productTags: {},
+    packingExcludedEntryIds: [],
+    productTagsPartialClocks: { 2: later },
+    packingExclusionsPartialClocks: { 2: later },
+  }
+  const filled = mergeProductAnnotations(cleared, backup.orders[0])
+  assert.deepEqual(filled.productTags, { 1: ['Outside'] })
+  assert.deepEqual(filled.packingExcludedEntryIds, ['1'])
+  assert.deepEqual(filled.productTagsPartialClocks, { 2: later })
+  assert.deepEqual(filled.packingExclusionsPartialClocks, { 2: later })
+  assert.equal(filled.productTagsUpdatedAt, clock)
+  assert.equal(filled.packingExclusionsUpdatedAt, clock)
+
+  const middle = '2026-10-05T12:00:00.000Z'
+  const intermediate = {
+    ...backup.orders[0],
+    productTags: { 1: ['Updated outside'], 2: ['Older selected'] },
+    productTagsUpdatedAt: middle,
+    packingExcludedEntryIds: ['2', '3'],
+    packingExclusionsUpdatedAt: middle,
+  }
+  const merged = mergeProductAnnotations(filled, intermediate)
+  assert.deepEqual(merged.productTags, { 1: ['Updated outside'] })
+  assert.deepEqual(merged.packingExcludedEntryIds, ['3'])
+  assert.deepEqual(merged.productTagsPartialClocks, { 2: later })
+  assert.deepEqual(merged.packingExclusionsPartialClocks, { 2: later })
+  assert.equal(merged.productTagsUpdatedAt, middle)
+
+  const partialAgain = createPackingBackup(
+    { ...backup, orders: [merged] },
+    selection(['1', '2'])
+  ).orders[0]
+  assert.deepEqual(partialAgain.productTagsPartialClocks, {
+    1: middle,
+    2: later,
+  })
+  assert.deepEqual(partialAgain.packingExclusionsPartialClocks, {
+    1: middle,
+    2: later,
+  })
+  const restoredPartial = mergeProductAnnotations(
+    backup.orders[0],
+    partialAgain
+  )
+  assert.deepEqual(restoredPartial.productTags, { 1: ['Updated outside'] })
+  assert.deepEqual(restoredPartial.packingExcludedEntryIds, [])
+
+  const newest = {
+    ...intermediate,
+    productTagsUpdatedAt: '2026-10-07T12:00:00.000Z',
+    packingExclusionsUpdatedAt: '2026-10-07T12:00:00.000Z',
+  }
+  const finished = mergeProductAnnotations(merged, newest)
+  assert.deepEqual(finished.productTags, newest.productTags)
+  assert.deepEqual(
+    finished.packingExcludedEntryIds,
+    newest.packingExcludedEntryIds
+  )
+  assert.equal(finished.productTagsPartialClocks, undefined)
+  assert.equal(finished.packingExclusionsPartialClocks, undefined)
+  assert.equal(mergeProductAnnotations(finished, backup.orders[0]), finished)
+  const tie = { ...newest, productTags: {}, packingExcludedEntryIds: [] }
+  assert.equal(mergeProductAnnotations(finished, tie), finished)
+})
+
+test('partial annotation metadata is validated and survives backup validation', () => {
+  const { backup } = fixture()
+  Object.assign(backup.orders[0], {
+    productTags: { 2: ['Inside'] },
+    productTagsUpdatedAt: backup.exportedAt,
+    packingExcludedEntryIds: ['2'],
+    packingExclusionsUpdatedAt: backup.exportedAt,
+  })
+  const scoped = createPackingBackup(backup, selection())
+  assert.deepEqual(validateBackup(scoped).orders, scoped.orders)
+  for (const field of [
+    'productTagsPartialClocks',
+    'packingExclusionsPartialClocks',
+  ]) {
+    for (const value of [
+      [],
+      { 2: 'yesterday' },
+      { bad: backup.exportedAt },
+      {},
+    ]) {
+      const invalid = structuredClone(scoped)
+      invalid.orders[0][field] = value
+      assert.throws(() => validateBackup(invalid), /Partial product annotation/)
+    }
+  }
+  for (const [clock, partial] of [
+    ['productTagsUpdatedAt', 'productTagsPartialClocks'],
+    ['packingExclusionsUpdatedAt', 'packingExclusionsPartialClocks'],
+  ]) {
+    const invalid = structuredClone(backup)
+    invalid.orders[0][partial] = { 2: invalid.orders[0][clock] }
+    assert.throws(() => validateBackup(invalid), /must follow/)
+  }
+})
+
+test('same-time preparation completion accepts exact subsets but rejects changed shared authoring', () => {
+  const { preparation } = fixture()
+  const partial = selectPackingPreparation(preparation, ['2'])
+  assert.equal(isPackingPreparationSubset(partial, preparation), true)
+  assert.equal(isPackingPreparationSubset(preparation, partial), false)
+  assert.equal(isPackingPreparationSubset(preparation, preparation), false)
+  partial.groups[0].baseCode = 'CE26100105'
+  assert.equal(isPackingPreparationSubset(partial, preparation), false)
 })
 
 test('an empty backup selection never means all products', () => {

@@ -41,6 +41,8 @@ export function createPreparationHistory({
       (entry.orderId.length +
         entry.before.length +
         entry.after.length +
+        (entry.beforeScope?.length || 0) +
+        (entry.afterScope?.length || 0) +
         (entry.mergeKey?.length || 0))
     )
   }
@@ -66,6 +68,13 @@ export function createPreparationHistory({
     const values = changes(entry).map((change) => ({
       orderId: change.orderId,
       value: JSON.parse(direction === 'undo' ? change.before : change.after),
+      ...(change.beforeScope !== undefined
+        ? {
+            scope: JSON.parse(
+              direction === 'undo' ? change.beforeScope : change.afterScope
+            ),
+          }
+        : {}),
     }))
     return entry.changes ? { changes: values } : values[0]
   }
@@ -111,14 +120,20 @@ export function createPreparationHistory({
     breakGroup,
 
     recordBatch(values) {
-      const changed = values.filter((entry) => entry.before !== entry.after)
+      const changed = values.filter(
+        (entry) =>
+          entry.before !== entry.after || entry.beforeScope !== entry.afterScope
+      )
       if (!changed.length) return false
       if (
         changed.some(
-          ({ orderId, before, after }) =>
+          ({ orderId, before, after, beforeScope, afterScope }) =>
             typeof orderId !== 'string' ||
             typeof before !== 'string' ||
-            typeof after !== 'string'
+            typeof after !== 'string' ||
+            (beforeScope !== undefined &&
+              (typeof beforeScope !== 'string' ||
+                typeof afterScope !== 'string'))
         ) ||
         new Set(changed.map((entry) => entry.orderId)).size !== changed.length
       )
@@ -128,11 +143,14 @@ export function createPreparationHistory({
       breakGroup()
       for (const removed of entries.splice(position)) bytes -= size(removed)
       const entry = {
-        changes: changed.map(({ orderId, before, after }) => ({
-          orderId,
-          before,
-          after,
-        })),
+        changes: changed.map(
+          ({ orderId, before, after, beforeScope, afterScope }) => ({
+            orderId,
+            before,
+            after,
+            ...(beforeScope !== undefined ? { beforeScope, afterScope } : {}),
+          })
+        ),
       }
       entries.push(entry)
       bytes += size(entry)

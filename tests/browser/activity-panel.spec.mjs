@@ -1,8 +1,13 @@
 import { test, expect } from './extension-fixture.mjs'
 
-async function putJob(extension, state, completed = 0) {
+async function putJob(
+  extension,
+  state,
+  completed = 0,
+  id = 'synthetic-activity'
+) {
   await extension.inspector.evaluate(
-    ({ state, completed }) =>
+    ({ state, completed, id }) =>
       new Promise((resolve, reject) => {
         const request = indexedDB.open('1688-order-library')
         request.onerror = () => reject(request.error)
@@ -10,7 +15,7 @@ async function putJob(extension, state, completed = 0) {
           const db = request.result,
             tx = db.transaction('jobs', 'readwrite')
           tx.objectStore('jobs').put({
-            id: 'synthetic-activity',
+            id,
             state,
             kind: 'import',
             scope: 'selected',
@@ -43,9 +48,40 @@ async function putJob(extension, state, completed = 0) {
           }
         }
       }),
-    { state, completed }
+    { state, completed, id }
   )
 }
+
+test('Activity keeps its heading and Close reachable while import jobs scroll', async ({
+  extension,
+}) => {
+  for (let index = 0; index < 14; index++)
+    await putJob(extension, 'completed', 2, `synthetic-history-${index}`)
+  const page = await extension.context.newPage()
+  await page.setViewportSize({ width: 390, height: 600 })
+  await page.goto(`${extension.extensionBaseUrl}/library.html`)
+  await page.locator('#activity-open').click()
+  const drawer = page.locator('#activity-drawer')
+  const heading = drawer.locator('.detail-dialog-heading')
+  const scroll = drawer.locator('.detail-dialog-scroll')
+  const before = await heading.boundingBox()
+  expect(
+    await scroll.evaluate((node) => node.scrollHeight > node.clientHeight)
+  ).toBe(true)
+  await scroll.evaluate((node) => node.scrollTo(0, node.scrollHeight))
+  expect(await heading.boundingBox()).toEqual(before)
+  await expect(drawer.locator('.job').last()).toBeInViewport()
+  await expect(
+    heading.getByRole('heading', { name: 'Activity', exact: true })
+  ).toBeInViewport()
+  expect(
+    await drawer.evaluate((node) => node.scrollWidth <= node.clientWidth)
+  ).toBe(true)
+  await heading
+    .getByRole('button', { name: 'Close activity', exact: true })
+    .click()
+  await expect(drawer).not.toBeVisible()
+})
 
 test('Activity uses distinct running and unread states and reading persists without modifying import jobs', async ({
   extension,

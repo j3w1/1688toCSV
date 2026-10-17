@@ -229,7 +229,7 @@ test('code conflicts expose original ownership and next-code drafts keep prior c
   assert.ok(result.issuedCodes.some((entry) => entry.code === 'CE26100101'))
 })
 
-test('bounded packing snapshots restore original ownership and cannot hide unreserved codes', () => {
+test('bounded packing snapshots preserve restore values without reserving inactive codes', () => {
   const initial = allocatePreparation(
     createPreparation(source(), '2026-10'),
     [],
@@ -259,6 +259,8 @@ test('bounded packing snapshots restore original ownership and cannot hide unres
   validatePreparationReservations(result.preparation, result)
   const unreserved = structuredClone(result.preparation)
   unreserved.defaultPacking.groups[0].baseCode = 'CE26100199'
+  validatePreparationReservations(unreserved, result)
+  unreserved.groups[0].baseCode = 'CE26100199'
   assert.throws(
     () => validatePreparationReservations(unreserved, result),
     /missing issued code reservations/

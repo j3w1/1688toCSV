@@ -1,7 +1,8 @@
-import { bindText } from './i18n.js'
+import { bindText, message } from './i18n.js'
 
 let activeHint = null
 const hints = new WeakMap()
+const shortcutKeys = new WeakMap()
 const interactionModes = new WeakMap()
 
 function interactionMode(doc) {
@@ -31,7 +32,7 @@ function interactionMode(doc) {
 /** Add help to an existing field or action, without another button or tab stop. */
 export function preparationHelp(target, text) {
   if (hints.has(target)) {
-    bindText(hints.get(target), text)
+    bindText(hints.get(target).content, text)
     return target
   }
   const doc = target.ownerDocument,
@@ -40,14 +41,17 @@ export function preparationHelp(target, text) {
     nativePopover = 'popover' in panel
   panel.id = `help-${crypto.randomUUID()}`
   panel.className = 'preparation-help-popover'
-  bindText(panel, text)
-  hints.set(target, panel)
+  const content = doc.createElement('span')
+  bindText(content, text)
+  panel.append(content)
+  hints.set(target, { panel, content })
   target.removeAttribute('title')
   panel.setAttribute('role', 'tooltip')
   if (nativePopover) panel.setAttribute('popover', 'manual')
   else panel.hidden = true
   target.classList.add('preparation-hint')
   let hovered = false,
+    pointerPosition,
     focused = false,
     keyboardFocused = false,
     focusPointerVersion = mode.pointerVersion,
@@ -67,6 +71,15 @@ export function preparationHelp(target, text) {
     return (
       focused && keyboardFocused && focusPointerVersion === mode.pointerVersion
     )
+  }
+
+  function pointerOwnsTarget() {
+    if (!hovered || !pointerPosition) return false
+    const hit = doc.elementFromPoint(pointerPosition.x, pointerPosition.y)
+    // A disabled pagination button can send focus back to the document body.
+    // Pointer help follows the actual hit target instead, while a newer modal
+    // or popover covering this control still prevents its helper from opening.
+    return Boolean(hit && target.contains(hit) && ownsDialog(hit))
   }
 
   function position() {
@@ -104,11 +117,11 @@ export function preparationHelp(target, text) {
     clearTimeout(timer)
     if (
       dismissed ||
-      (!hovered && !keyboardFocus()) ||
+      (!pointerOwnsTarget() &&
+        !(keyboardFocus() && ownsDialog(doc.activeElement))) ||
       !target.isConnected ||
       !target.getClientRects().length ||
-      target.querySelector('.preparation-hint:hover') ||
-      !ownsDialog(doc.activeElement)
+      target.querySelector('.preparation-hint:hover')
     )
       return
     if (activeHint === close) return
@@ -116,6 +129,18 @@ export function preparationHelp(target, text) {
     activeHint = close
     // Keep the tooltip in its modal dialog's top layer and accessibility tree.
     const host = target.closest('dialog') || doc.body
+    const keys = shortcutKeys.get(target)
+    let shortcut = panel.querySelector('.preparation-help-shortcut')
+    if (keys && !shortcut) {
+      shortcut = doc.createElement('span')
+      shortcut.className = 'preparation-help-shortcut'
+      const label = doc.createElement('span')
+      bindText(label, message('Shortcut outside text fields'))
+      const keyboard = doc.createElement('kbd')
+      keyboard.textContent = keys[0].replace('Control', 'Ctrl')
+      shortcut.append(label, keyboard)
+      panel.append(shortcut)
+    }
     host.append(panel)
     if (nativePopover) panel.showPopover()
     else panel.hidden = false
@@ -182,6 +207,7 @@ export function preparationHelp(target, text) {
     if (event.pointerType === 'touch') return
     if (!ownsHint(event.target) || ownsHint(event.relatedTarget)) return
     hovered = true
+    pointerPosition = { x: event.clientX, y: event.clientY }
     clearTimeout(timer)
     if (!dismissed) timer = setTimeout(show, 500)
   })
@@ -214,4 +240,10 @@ export function preparationHelp(target, text) {
       close()
     })
   return target
+}
+
+/** Add shortcut metadata without replacing the action's changing scope help. */
+export function preparationShortcut(target, keys) {
+  shortcutKeys.set(target, keys)
+  target.setAttribute('aria-keyshortcuts', keys.join(' '))
 }

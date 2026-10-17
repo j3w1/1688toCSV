@@ -104,6 +104,9 @@ export function openProductDetails(
   order.addEventListener('click', () => void closeDetails(onOrder))
   order.disabled = !onOrder
   tools.append(copyAll, order)
+  const top = el('div', undefined, 'product-details-top')
+  top.append(heading, tools)
+  const content = el('div', undefined, 'product-details-scroll')
   const identity = el('div', undefined, 'product-details-identity')
   if (item.sellerName)
     identity.append(
@@ -164,7 +167,8 @@ export function openProductDetails(
     el('h3', message('Original description')),
     el('pre', source.description)
   )
-  dialog.append(heading, tools, identity, body, original)
+  content.append(identity, body, original)
+  dialog.append(top, content)
   if (typeof tags?.save === 'function') {
     const tagHost = el('div')
     body.after(tagHost)

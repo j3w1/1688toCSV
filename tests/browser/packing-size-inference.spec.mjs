@@ -184,7 +184,7 @@ test('size mode reviews only changed barcode values and cancellation preserves t
   await mode.selectOption('none')
   const cards = review.locator('.packing-review-item')
   await expect(cards).toHaveCount(1)
-  await expect(cards.locator('.packing-review-codes code')).toHaveText([
+  await expect(cards.locator('.packing-value-row code')).toHaveText([
     code(original.variants[1]),
     `${original.baseCode}${original.variants[1].variantSuffix}`,
   ])
@@ -213,16 +213,27 @@ test('size mode reviews only changed barcode values and cancellation preserves t
     before.preparations[0].groups[1]
   )
   expect(saved.orders).toEqual(before.orders)
-  for (const issued of before.issuedCodes)
-    expect(saved.issuedCodes).toContainEqual(issued)
+  expect(
+    saved.issuedCodes.some(
+      (issued) => issued.code === code(original.variants[1])
+    )
+  ).toBe(false)
+  expect(
+    saved.issuedCodes.some(
+      (issued) =>
+        issued.code ===
+          `${original.baseCode}${original.variants[1].variantSuffix}` &&
+        issued.variantId === original.variants[1].id
+    )
+  ).toBe(true)
 
   await mode.selectOption('automatic')
   await expect(cards).toHaveCount(2)
-  await expect(cards.nth(0).locator('.packing-review-codes code')).toHaveText([
+  await expect(cards.nth(0).locator('.packing-value-row code')).toHaveText([
     `${original.baseCode}${original.variants[0].variantSuffix}`,
     `${original.baseCode}${original.variants[0].variantSuffix}S`,
   ])
-  await expect(cards.nth(1).locator('.packing-review-codes code')).toHaveText([
+  await expect(cards.nth(1).locator('.packing-value-row code')).toHaveText([
     `${original.baseCode}${original.variants[1].variantSuffix}`,
     code(original.variants[1]),
   ])
@@ -382,7 +393,7 @@ test('price-only suggestions require visual confirmation and preserve source dat
   expect((await backup(extension)).orders).toEqual(before.orders)
 })
 
-test('a reserved size suggestion recovers the reviewed variant without recoding its group', async ({
+test('orphan historical reservations do not block reviewed size suggestions', async ({
   extension,
 }) => {
   const { page, view, group } = await openSizes(extension, [
@@ -398,7 +409,7 @@ test('a reserved size suggestion recovers the reviewed variant without recoding 
   const before = await backup(extension)
   const preparation = before.preparations[0]
   const original = preparation.groups[0]
-  const blockedCode = `${original.baseCode}${original.variants[0].variantSuffix}S`
+  const oldCode = `${original.baseCode}${original.variants[0].variantSuffix}S`
   const reservation = {
     accountId: preparation.accountId,
     orderId: preparation.orderId,
@@ -407,64 +418,32 @@ test('a reserved size suggestion recovers the reviewed variant without recoding 
     groupId: original.id,
     variantId: original.variants[1].id,
     kind: 'barcode',
-    code: blockedCode,
+    code: oldCode,
   }
-  // A prior barcode remains owned after its variant is edited or regrouped.
   const restored = await extension.inspector.evaluate(
     (data) =>
       chrome.runtime.sendMessage({ type: 'BACKUP_RESTORE', backup: data }),
-    { ...before, issuedCodes: [...before.issuedCodes, reservation] }
+    { ...before, version: 2, issuedCodes: [...before.issuedCodes, reservation] }
   )
   expect(restored.ok, restored.error).toBe(true)
-  const reserved = await backup(extension)
+  expect(
+    (await backup(extension)).issuedCodes.some((code) => code.code === oldCode)
+  ).toBe(false)
+  await group
+    .getByRole('button', { name: 'Review size suggestions', exact: true })
+    .click()
   const review = page.getByRole('dialog', {
     name: 'Review size suggestions',
     exact: true,
   })
-  const conflict = page.getByRole('dialog', {
-    name: 'Resolve code conflict',
-    exact: true,
-  })
-  async function applySuggestions() {
-    await group
-      .getByRole('button', { name: 'Review size suggestions', exact: true })
-      .click()
-    await review
-      .getByRole('button', { name: 'Apply these size codes', exact: true })
-      .click()
-    await expect(conflict).toBeVisible()
-    await expect(conflict).toContainText(blockedCode)
-    await expect(
-      conflict.getByRole('button', {
-        name: 'Use next available variant code',
-        exact: true,
-      })
-    ).toBeVisible()
-    await expect(
-      conflict.getByRole('button', {
-        name: 'Use next available code',
-        exact: true,
-      })
-    ).toHaveCount(0)
-  }
-  await applySuggestions()
-  const failed = await backup(extension)
-  expect(failed.preparations).toEqual(reserved.preparations)
-  expect(failed.issuedCodes).toEqual(reserved.issuedCodes)
-  await conflict
-    .getByRole('button', { name: 'Continue editing', exact: true })
+  await expect(review.locator('.packing-value-row')).toHaveCount(2)
+  await review
+    .getByRole('button', { name: 'Apply these size codes', exact: true })
     .click()
+  await expect(
+    page.getByRole('dialog', { name: 'Resolve code conflict', exact: true })
+  ).toHaveCount(0)
   const sizes = group.locator('input[data-packing-field="size"]')
-  await expect(sizes.nth(0)).toHaveValue('')
-  await expect(sizes.nth(1)).toHaveValue('')
-  await applySuggestions()
-  await conflict
-    .getByRole('button', {
-      name: 'Use next available variant code',
-      exact: true,
-    })
-    .click()
-  await expect(conflict).toBeHidden()
   await expect(sizes.nth(0)).toHaveValue('S')
   await expect(sizes.nth(1)).toHaveValue('L')
   const after = await backup(extension)
@@ -472,15 +451,16 @@ test('a reserved size suggestion recovers the reviewed variant without recoding 
   expect(updated.baseCode).toBe(original.baseCode)
   expect(updated.spanishName).toBe('NOMBRE CONSERVADO')
   expect(updated.variants[0].id).toBe(original.variants[0].id)
-  expect(updated.variants[0].variantSuffix).not.toBe(
+  expect(updated.variants[0].variantSuffix).toBe(
     original.variants[0].variantSuffix
   )
   expect(updated.variants[1].variantSuffix).toBe(
     original.variants[1].variantSuffix
   )
   expect(after.preparations[0].groups[1]).toEqual(preparation.groups[1])
-  for (const issued of reserved.issuedCodes)
-    expect(after.issuedCodes).toContainEqual(issued)
+  expect(
+    after.issuedCodes.find((code) => code.code === oldCode)?.variantId
+  ).toBe(original.variants[0].id)
   expect(after.orders).toEqual(before.orders)
   expect(extension.unexpectedRequests).toEqual([])
 })

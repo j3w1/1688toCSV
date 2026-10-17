@@ -1,4 +1,20 @@
 export const EXCEL_MESSAGES = {
+  'Copy a batch or hover over an image to copy it individually. Paste it, then continue here.':
+    {
+      zh: '复制整批，或将鼠标移到图片上单独复制。粘贴后可在此继续。',
+      es: 'Copia un lote o pasa el cursor sobre una imagen para copiarla por separado. Pégala y continúa aquí.',
+    },
+  'Copy image {0}': { zh: '复制图片{0}', es: 'Copiar imagen {0}' },
+  'Copy only this image at its export size. The popup stays open and the batch is not marked as copied.':
+    {
+      zh: '按导出尺寸仅复制此图片。窗口保持打开，整批不会标记为已复制。',
+      es: 'Copia solo esta imagen con su tamaño de exportación. La ventana sigue abierta y el lote no se marca como copiado.',
+    },
+  'Image {0} copied. Paste it before copying another. {1} of {2} batches copied.':
+    {
+      zh: '图片{0}已复制。请先粘贴，再复制下一张。整批已复制{1}/{2}。',
+      es: 'Imagen {0} copiada. Pégala antes de copiar otra. {1} de {2} lotes copiados.',
+    },
   'Product description': { zh: '商品描述', es: 'Descripción del producto' },
   'Select at least one column to copy.': {
     zh: '请至少选择一列进行复制。',

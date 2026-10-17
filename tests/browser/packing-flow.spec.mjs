@@ -7,6 +7,15 @@ import { createDemoRecords } from '../../preview/library-fixture.js'
 import { UI_MESSAGES } from '../../src/ui-messages.js'
 import { readFile } from 'node:fs/promises'
 
+const codeOwners = (codes) =>
+  codes
+    .map(({ ownerSnapshot, ...owner }) => owner)
+    .sort((a, b) =>
+      `${a.kind}/${a.code}/${a.groupId}/${a.variantId || ''}`.localeCompare(
+        `${b.kind}/${b.code}/${b.groupId}/${b.variantId || ''}`
+      )
+    )
+
 async function seedOrders(extension, count = 1) {
   const records = (
     await extension.inspector.evaluate(
@@ -506,7 +515,9 @@ test('Ctrl+A prepares every selected product across purchase months; preview Can
   await expect(review).toContainText('6 selected product rows from 2 orders')
   await expect(review.locator('.packing-review-item')).toHaveCount(4)
   const previewCodes = await review
-    .locator('.packing-review-codes code:last-child')
+    .locator(
+      '.packing-value-row:first-child .packing-value-after .packing-value-content'
+    )
     .allTextContents()
   expect(previewCodes).toHaveLength(4)
   expect(previewCodes.every((code) => /^CE2612\d{4}$/.test(code))).toBe(true)
@@ -519,7 +530,9 @@ test('Ctrl+A prepares every selected product across purchase months; preview Can
     .getByRole('button', { name: 'Prepare packing list', exact: true })
     .click()
   await expect(
-    review.locator('.packing-review-codes code:last-child')
+    review.locator(
+      '.packing-value-row:first-child .packing-value-after .packing-value-content'
+    )
   ).toHaveText(previewCodes)
   await review
     .getByRole('button', { name: 'Assign codes and prepare', exact: true })
@@ -612,12 +625,12 @@ test('moving one selected source row previews its split and leaves all unselecte
   })
   await expect(review).toContainText('1 partial groups will be split')
   await expect(review.locator('.packing-review-item')).toHaveCount(1)
-  await expect(review.locator('.packing-review-codes code').first()).toHaveText(
+  await expect(review.locator('.packing-value-row code').first()).toHaveText(
     oldJar.baseCode
   )
   const newCode = await review
-    .locator('.packing-review-codes code')
-    .last()
+    .locator('.packing-value-row:first-child .packing-value-after code')
+    .first()
     .textContent()
   expect(newCode).toMatch(/^CE2611\d{4}$/)
   await review.getByRole('button', { name: 'Cancel', exact: true }).click()
@@ -646,9 +659,13 @@ test('moving one selected source row previews its split and leaves all unselecte
   )
   expect(moved.orders).toEqual(original.orders)
   expect(
-    moved.issuedCodes.filter((code) => code.code === oldJar.baseCode)
+    codeOwners(
+      moved.issuedCodes.filter((code) => code.code === oldJar.baseCode)
+    )
   ).toEqual(
-    original.issuedCodes.filter((code) => code.code === oldJar.baseCode)
+    codeOwners(
+      original.issuedCodes.filter((code) => code.code === oldJar.baseCode)
+    )
   )
   await view.getByRole('button', { name: 'Orders', exact: true }).click()
   await page
@@ -672,7 +689,7 @@ test('moving one selected source row previews its split and leaves all unselecte
   expect(extension.unexpectedRequests).toEqual([])
 })
 
-test('a historical code conflict identifies its owner and resolves with a new reserved code', async ({
+test('a released code is reusable and an active conflict identifies its owner before applying a correction', async ({
   extension,
 }) => {
   const { page } = await openLibrary(extension)
@@ -693,6 +710,13 @@ test('a historical code conflict identifies its owner and resolves with a new re
     )
     .toBe('CE26109998')
   await first.fill(retiredCode)
+  await expect(view.locator('.preparation-save-status')).toHaveText(
+    'Saved automatically'
+  )
+  await expect(first).not.toHaveAttribute('aria-invalid', 'true')
+  const reused = await backup(extension)
+  expect(reused.preparations[0].groups[0].baseCode).toBe(retiredCode)
+  await first.fill('CE26109998')
   await expect(view.locator('.preparation-save-status')).toContainText(
     'Code conflict'
   )
@@ -701,12 +725,9 @@ test('a historical code conflict identifies its owner and resolves with a new re
     name: 'Resolve code conflict',
     exact: true,
   })
-  await expect(conflict).toContainText(retiredCode)
+  await expect(conflict).toContainText('CE26109998')
   await expect(conflict).toContainText(
-    'Previously issued here. Current carton code: CE26109998'
-  )
-  await expect(conflict).toContainText(
-    'A code stays with the product it was first issued to, even after that product changes codes or is removed.'
+    'is currently assigned to another product'
   )
   await expect(conflict.getByAltText('Product photo')).toHaveCount(2)
   await expect(
@@ -715,16 +736,25 @@ test('a historical code conflict identifies its owner and resolves with a new re
   await conflict
     .getByRole('button', { name: 'Use next available code', exact: true })
     .click()
+  await expect(conflict).toBeVisible()
+  expect((await backup(extension)).preparations).toEqual(reused.preparations)
+  await conflict
+    .getByRole('button', { name: 'Apply corrections', exact: true })
+    .click()
   await expect(conflict).toBeHidden()
   await expect(view.locator('.preparation-save-status')).toHaveText(
     'Saved automatically'
   )
   const resolved = await backup(extension)
-  expect(resolved.preparations[0].groups[0].baseCode).not.toBe(retiredCode)
+  expect(resolved.preparations[0].groups[0].baseCode).not.toBe('CE26109998')
   expect(resolved.preparations[0].groups[1].baseCode).toBe('CE26109998')
   expect(
-    resolved.issuedCodes.filter((code) => code.code === retiredCode)
-  ).toEqual(original.issuedCodes.filter((code) => code.code === retiredCode))
+    resolved.issuedCodes.find(
+      (code) =>
+        code.kind === 'base' &&
+        code.code === resolved.preparations[0].groups[0].baseCode
+    )?.groupId
+  ).toBe(original.preparations[0].groups[0].id)
   expect(resolved.orders).toEqual(original.orders)
   expect(extension.unexpectedRequests).toEqual([])
 })
@@ -798,7 +828,9 @@ test('keyboard group moves and pointer product moves persist and export in the d
   expect(
     reordered.preparations.find((entry) => entry.orderId === second.orderId)
   ).toEqual(second)
-  expect(reordered.issuedCodes).toEqual(original.issuedCodes)
+  expect(codeOwners(reordered.issuedCodes)).toEqual(
+    codeOwners(original.issuedCodes)
+  )
   for (const group of current.groups) {
     const before = first.groups.find((entry) => entry.id === group.id)
     expect(group.baseCode).toBe(before.baseCode)
@@ -938,7 +970,9 @@ test('reset order and codes retains current names while previous packing restore
   })
   await expect(monthMove).toBeVisible()
   const movedCodes = await monthMove
-    .locator('.packing-review-codes code:last-child')
+    .locator(
+      '.packing-value-row:first-child .packing-value-after .packing-value-content'
+    )
     .allTextContents()
   expect(movedCodes).toHaveLength(2)
   expect(movedCodes.every((code) => /^CE2612\d{4}$/.test(code))).toBe(true)
@@ -1029,8 +1063,12 @@ test('reset order and codes retains current names while previous packing restore
     original.preparations[0].groups
   )
   expect(restored.orders).toEqual(original.orders)
-  for (const reserved of edited.issuedCodes)
-    expect(restored.issuedCodes).toContainEqual(reserved)
+  expect(codeOwners(restored.issuedCodes)).toEqual(
+    codeOwners(original.issuedCodes)
+  )
+  expect(
+    restored.issuedCodes.some((entry) => entry.code.startsWith('CE2612'))
+  ).toBe(false)
   await revealCopyActions(page)
   const downloading = page.waitForEvent('download')
   await view
@@ -1047,7 +1085,16 @@ test('reset order and codes retains current names while previous packing restore
   const exported = JSON.parse(await readFile(files[0].filename, 'utf8'))
   expect(exported.packingScope.months).toEqual(['2026-10'])
   expect(exported.preparations).toEqual(restored.preparations)
-  expect(exported.issuedCodes).toEqual(restored.issuedCodes)
+  // Scoped backups carry current ownership only, without redundant owner
+  // snapshots; the preparation/source rows already provide that information.
+  expect(exported.issuedCodes).toEqual(
+    restored.issuedCodes.map(({ ownerSnapshot, ...owner }) => owner)
+  )
+  expect(
+    exported.issuedCodes.every(
+      (owner) => !Object.hasOwn(owner, 'ownerSnapshot')
+    )
+  ).toBe(true)
   expect(extension.unexpectedRequests).toEqual([])
 })
 
@@ -1088,6 +1135,13 @@ for (const editedIndex of [0, 1]) {
         exact: true,
       })
       .click()
+    await expect(conflict).toBeVisible()
+    expect((await backup(extension)).preparations).toEqual(
+      original.preparations
+    )
+    await conflict
+      .getByRole('button', { name: 'Apply corrections', exact: true })
+      .click()
     await expect(conflict).toBeHidden()
     await expect(view.locator('.preparation-save-status')).toHaveText(
       'Saved automatically'
@@ -1111,8 +1165,12 @@ for (const editedIndex of [0, 1]) {
           code.variantId === group.variants[editedIndex].id
       )
     ).toBe(true)
-    for (const reserved of original.issuedCodes)
-      expect(resolved.issuedCodes).toContainEqual(reserved)
+    const oldBarcode = `${originalGroup.baseCode}${originalGroup.variants[editedIndex].variantSuffix}${originalGroup.variants[editedIndex].sizeSuffix}`
+    expect(
+      resolved.issuedCodes.some(
+        (code) => code.kind === 'barcode' && code.code === oldBarcode
+      )
+    ).toBe(false)
     expect(resolved.orders).toEqual(original.orders)
     expect(extension.unexpectedRequests).toEqual([])
   })

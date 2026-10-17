@@ -36,13 +36,14 @@ import { mergeOrderTags } from './order-tags.js'
 import { createRowSelection } from './row-selection.js'
 import { copyExcelImage } from './excel-image-copy.js'
 import { copySourceImages } from './source-image-copy.js'
-import { mountCopyActions } from './copy-actions.js'
+import { mountProductCopyActions } from './copy-actions.js'
 import { showErrorNotice, clearErrorNotice } from './error-notice.js'
 import { photoCopyTile } from './photo-copy.js'
 import { summarizeOrders, summarizeProductRows } from './order-summary.js'
 import { decorateIcon, icon } from './icons.js'
 import { preparationHelp } from './preparation-help.js'
 import { installWorkspaceActionHelp } from './workspace-action-help.js'
+import { installWorkspaceShortcuts } from './workspace-shortcuts.js'
 import { createActivityTracker, ACTIVITY_READ_KEY } from './activity-state.js'
 import { suggestMaterial, translateMaterial } from './material-vocabulary.js'
 import { attachSearchSuggestions, searchMatcher } from './search-assistance.js'
@@ -213,6 +214,7 @@ export async function startLibrary(
 ) {
   localize(document)
   installWorkspaceActionHelp(document)
+  installWorkspaceShortcuts(document)
   setLanguage(getLanguage(), { persist: false })
   const languageButtons = [
     ...document.querySelectorAll('#language-toggle [data-language]'),
@@ -234,7 +236,8 @@ export async function startLibrary(
   let records = [],
     jobs = [],
     page = 0,
-    loading = false,
+    refreshWork,
+    hasLoadedLibrary = false,
     refreshPending = false,
     copyBusy = false,
     showDismissed = false,
@@ -552,15 +555,15 @@ export async function startLibrary(
     ],
     [
       'remove-orders',
-      'Remove the selected orders from this browser. Issued CE codes stay reserved.',
+      'Remove the selected orders and their packing data from this browser. Their codes become available when no remaining product uses them.',
     ],
     [
       'backup',
-      'Save orders, packing edits, naming rules and reserved codes to a local file.',
+      'Save orders, packing edits, naming rules and current code assignments to a local file.',
     ],
     [
       'restore',
-      'Merge a saved backup into this library, preserving newer edits and reserved codes.',
+      'Merge a saved backup into this library, preserving newer edits and checking current code conflicts.',
     ],
     [
       'pause-active',
@@ -605,6 +608,7 @@ export async function startLibrary(
           'BACKUP_RESTORE',
           'LIBRARY_NOTES',
           'LIBRARY_PRODUCT_TAGS',
+          'LIBRARY_PACKING_EXCLUSION',
           'LIBRARY_REMOVE',
         ].includes(type)
       ) {
@@ -631,6 +635,13 @@ export async function startLibrary(
             {
               accountId: data.accountId || 'local',
             }
+          )
+        if (type === 'LIBRARY_PACKING_EXCLUSION')
+          result = await repository.setPackingExcluded(
+            data.orderId,
+            data.entryIds,
+            data.excluded,
+            { accountId: data.accountId || 'local' }
           )
         if (type === 'LIBRARY_REMOVE')
           result = await repository.removeOrders(data.orderIds)
@@ -760,7 +771,10 @@ export async function startLibrary(
           record,
         }))
     })
-    return packing ? packing.orderRows(rows) : rows
+    // Main library rows follow the same purchase chronology as the order
+    // selector, retaining source-row order within each order. Packing's manual
+    // arrangement belongs to preparation and its exports, not this view.
+    return rows
   }
   function copyRows() {
     const rows = filteredRows()
@@ -933,6 +947,11 @@ export async function startLibrary(
     ])
       $(id).disabled =
         !rows.length || copyBusy || $(id).getAttribute('aria-busy') === 'true'
+    for (const id of ['copy-barcodes', 'copy-carton-marks']) {
+      const target = $(id)
+      if (target)
+        target.disabled = copyBusy || !packing?.canCopyLabels(copyRows())
+    }
   }
   async function imageData(url) {
     if (!url)
@@ -1140,6 +1159,7 @@ export async function startLibrary(
     imageObserver.disconnect()
     const body = $('sheet-body')
     body.replaceChildren()
+    productSelection.detach()
     const orderCounts = new Map()
     for (const row of rows)
       orderCounts.set(row.orderId, (orderCounts.get(row.orderId) || 0) + 1)
@@ -1710,56 +1730,83 @@ export async function startLibrary(
     )
     updateMonthFilter()
   }
-  async function refresh() {
-    if (loading) {
+  function refresh() {
+    if (refreshWork) {
       refreshPending = true
-      return
+      return refreshWork
     }
-    loading = true
-    try {
-      const data = await send('LIBRARY_QUERY')
-      records = data.orders
-      jobs = data.jobs
-      const tagPreferences = await repository?.getPackingPreferences?.()
-      orderTagDefinitions = mergeOrderTags(
-        tagPreferences?.orderTags,
-        records.flatMap((record) => record.tags)
+    refreshWork = (async () => {
+      try {
+        // Every caller waits for the queued refresh too. A committed local
+        // edit must not unlock actions while an older read can replace it.
+        do {
+          refreshPending = false
+          await refreshOnce()
+        } while (refreshPending)
+      } finally {
+        refreshWork = undefined
+      }
+    })()
+    return refreshWork
+  }
+  async function refreshOnce() {
+    const previousOrderIds = new Set(
+      records.map((record) => record.snapshot.orderId)
+    )
+    const data = await send('LIBRARY_QUERY')
+    records = data.orders
+    productSearchMetadata = new WeakMap()
+    jobs = data.jobs
+    const tagPreferences = await repository?.getPackingPreferences?.()
+    orderTagDefinitions = mergeOrderTags(
+      tagPreferences?.orderTags,
+      records.flatMap((record) => record.tags)
+    )
+    productTagDefinitions = mergeOrderTags(
+      tagPreferences?.productTags,
+      records.flatMap((record) =>
+        Object.values(record.productTags || {}).flat()
       )
-      productTagDefinitions = mergeOrderTags(
-        tagPreferences?.productTags,
-        records.flatMap((record) =>
-          Object.values(record.productTags || {}).flat()
-        )
+    )
+    annotationEditor?.setDefinitions(orderTagDefinitions)
+    productDetailsEditor?.setDefinitions(productTagDefinitions)
+    await packing?.reload()
+    const present = new Set(records.map((record) => record.snapshot.orderId))
+    for (const id of selectedOrders)
+      if (!present.has(id)) selectedOrders.delete(id)
+    records.sort(
+      (a, b) =>
+        (b.snapshot.purchasedAt || '').localeCompare(
+          a.snapshot.purchasedAt || ''
+        ) || b.snapshot.orderId.localeCompare(a.snapshot.orderId)
+    )
+    renderMonthOptions()
+    const oldStatus = $('status-filter').value
+    $('status-filter').replaceChildren(
+      new Option(t('All statuses'), ''),
+      ...[...new Set(records.map((record) => record.snapshot.status))]
+        .sort()
+        .map((value) => new Option(t(presentOrderStatus(value).label), value))
+    )
+    $('status-filter').value = oldStatus
+    const addedOrderIds = new Set(
+      records
+        .filter((record) => !previousOrderIds.has(record.snapshot.orderId))
+        .map((record) => record.snapshot.orderId)
+    )
+    if (hasLoadedLibrary && addedOrderIds.size) {
+      const addedMatchingOrders = matchingOrders().filter((record) =>
+        addedOrderIds.has(record.snapshot.orderId)
       )
-      annotationEditor?.setDefinitions(orderTagDefinitions)
-      productDetailsEditor?.setDefinitions(productTagDefinitions)
-      await packing?.reload()
-      const present = new Set(records.map((record) => record.snapshot.orderId))
-      for (const id of selectedOrders)
-        if (!present.has(id)) selectedOrders.delete(id)
-      records.sort(
-        (a, b) =>
-          (b.snapshot.purchasedAt || '').localeCompare(
-            a.snapshot.purchasedAt || ''
-          ) || b.snapshot.orderId.localeCompare(a.snapshot.orderId)
-      )
-      renderMonthOptions()
-      const oldStatus = $('status-filter').value
-      $('status-filter').replaceChildren(
-        new Option(t('All statuses'), ''),
-        ...[...new Set(records.map((record) => record.snapshot.status))]
-          .sort()
-          .map((value) => new Option(t(presentOrderStatus(value).label), value))
-      )
-      $('status-filter').value = oldStatus
-      render()
-    } finally {
-      loading = false
+      if (addedMatchingOrders.length) {
+        orderPage = 0
+        for (const { snapshot } of addedMatchingOrders)
+          expandedMonths.add(purchaseMonth(snapshot))
+      }
+      if (filteredRows().some((row) => addedOrderIds.has(row.orderId))) page = 0
     }
-    if (refreshPending) {
-      refreshPending = false
-      await refresh()
-    }
+    render()
+    hasLoadedLibrary = true
   }
   async function openDetails(record) {
     await flushOrderDetails()
@@ -1789,7 +1836,12 @@ export async function startLibrary(
     sellerHeading.append(
       copyTextButton(order.sellerName, { label: 'Copy store name' })
     )
-    content.replaceChildren(identity, sellerHeading, metadata)
+    $('order-details-heading').replaceChildren(
+      identity,
+      sellerHeading,
+      metadata
+    )
+    content.replaceChildren()
     if (order.sellerUnavailable)
       content.append(
         node(
@@ -1974,19 +2026,46 @@ export async function startLibrary(
     bindAttribute($(id), 'aria-label', uiMessage(full))
     decorateIcon($(id), symbol)
   }
-  mountCopyActions($('orders-copy-actions'), {
-    image: $('copy-excel-image'),
-    groups: [
-      {
-        label: 'Products',
-        actions: [$('copy-values'), $('copy-images'), $('copy-excel')],
-      },
-      {
-        label: 'Packing',
-        actions: [$('copy-preparation'), $('copy-group-codes')],
-      },
-      { label: 'Options', actions: [$('include-headers').closest('label')] },
+  const labelCopies = [
+    ['copy-barcodes', 'Copy barcode images', 'Barcodes', 'barcode', 'barcode'],
+    [
+      'copy-carton-marks',
+      'Copy carton marks',
+      'Carton marks',
+      'carton',
+      'mark',
     ],
+  ].map(([id, full, short, symbol, kind]) => {
+    const target = node('button', uiMessage(short))
+    target.id = id
+    bindAttribute(target, 'aria-label', uiMessage(full))
+    decorateIcon(target, symbol)
+    target.disabled = true
+    target.onclick = () =>
+      copyAction(target, async () => {
+        const rows = copyRows()
+        if (copyBusy || !packing?.canCopyLabels(rows)) return false
+        copyBusy = true
+        updateSelection()
+        try {
+          return await packing.copyLabels(kind, rows)
+        } finally {
+          copyBusy = false
+          updateSelection()
+        }
+      })
+    return target
+  })
+  mountProductCopyActions($('orders-copy-actions'), {
+    image: $('copy-excel-image'),
+    values: $('copy-values'),
+    photos: $('copy-images'),
+    cells: $('copy-excel'),
+    columns: $('copy-preparation'),
+    codes: $('copy-group-codes'),
+    barcodes: labelCopies[0],
+    marks: labelCopies[1],
+    headers: $('include-headers').closest('label'),
   })
   $('copy-excel-image').addEventListener('click', () =>
     copyAction($('copy-excel-image'), async () => {
@@ -2261,6 +2340,50 @@ export async function startLibrary(
         renderRows()
       },
       feedback,
+      setPackingExcluded: async (orderId, entryIds, excluded, accountId) => {
+        const saved = await send('LIBRARY_PACKING_EXCLUSION', {
+          orderId,
+          entryIds,
+          excluded,
+          accountId,
+        })
+        const acceptSavedExclusion = () => {
+          const record = records.find(
+            ({ snapshot }) =>
+              snapshot.orderId === orderId &&
+              snapshot.accountId === (accountId || 'local')
+          )
+          if (
+            record &&
+            (record.packingExclusionsUpdatedAt || '') <=
+              (saved.packingExclusionsUpdatedAt || '')
+          ) {
+            record.packingExcludedEntryIds = saved.packingExcludedEntryIds
+            record.packingExclusionsUpdatedAt = saved.packingExclusionsUpdatedAt
+          }
+        }
+        acceptSavedExclusion()
+        try {
+          await refresh()
+        } catch (error) {
+          // The write already committed. A failed read must not leave the
+          // old row action visible or misreport the saved edit as a failure.
+          acceptSavedExclusion()
+          renderRows()
+          showErrorNotice(
+            uiMessage(
+              'The library could not be refreshed. Your packing selection is saved; retry refreshing to update the rest of the workspace.'
+            ),
+            {
+              key: 'packing-exclusion-refresh',
+              title: uiMessage('Packing selection saved'),
+              detail: error.message,
+              context: { orderId },
+              action: { label: uiMessage('Retry'), onClick: refresh },
+            }
+          )
+        }
+      },
       onProductDetails: showProductDetails,
       onRefreshOrder: (orderId) => refreshOrders([orderId]),
       loadImage: async (url) => {

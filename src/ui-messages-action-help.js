@@ -189,9 +189,9 @@ export const ACTION_HELP_RULES = [
   ],
   [
     ['Undo'],
-    'Undo the latest packing edit in this session, including saved codes, names, grouping, removal and arrangement. Issued codes remain reserved.',
-    '撤销本次装箱会话中的最近修改，包括已保存的编码、名称、分组、移除和排序。已发放的编码仍会保留。',
-    'Deshace el último cambio de esta sesión, incluidos códigos, nombres, agrupación, eliminación y orden ya guardados. Los códigos emitidos siguen reservados.',
+    'Undo the latest packing edit in this session, including saved codes, names, grouping, removal and arrangement. Codes are checked against current assignments.',
+    '撤销本次装箱会话中的最近修改，包括已保存的编码、名称、分组、移除和排序。货号会与当前分配进行核对。',
+    'Deshace el último cambio de esta sesión, incluidos códigos, nombres, agrupación, eliminación y orden ya guardados. Se comprueban los códigos con las asignaciones actuales.',
   ],
   [
     ['Redo'],
@@ -219,9 +219,9 @@ export const ACTION_HELP_RULES = [
   ],
   [
     ['Resolve', 'Resolve code'],
-    'Inspect the products and reserved codes involved in this conflict, then choose a safe correction.',
-    '查看冲突涉及的商品和保留货号，再选择合适的修正方法。',
-    'Revisa los productos y códigos reservados implicados en el conflicto y elige una corrección.',
+    'Inspect the products and currently assigned codes involved in this conflict, then choose a correction.',
+    '查看冲突涉及的商品和当前分配的货号，再选择修正方法。',
+    'Revisa los productos y códigos actualmente asignados que intervienen en el conflicto y elige una corrección.',
   ],
   [
     ['Continue editing'],

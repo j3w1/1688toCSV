@@ -182,6 +182,54 @@ main {
   font-size: 11px;
   padding: 4px 7px;
 }
+.row-preparation .packing-skip-button.icon-button {
+  inline-size: 26px;
+  min-inline-size: 26px;
+  block-size: 26px;
+  min-block-size: 26px;
+  padding: 2px;
+  border-radius: 6px;
+  opacity: 0;
+  pointer-events: none;
+}
+.row-preparation .packing-skip-button .ui-icon {
+  inline-size: 20px;
+  block-size: 20px;
+  margin: 0;
+}
+#sheet-body tr:hover .packing-skip-button,
+#sheet-body tr:has(:focus-visible) .packing-skip-button,
+.row-preparation .packing-skip-button.is-saving {
+  opacity: 1;
+  pointer-events: auto;
+}
+.row-preparation .packing-include-button {
+  min-block-size: 24px;
+  padding: 2px 6px;
+  font-size: 10.5px;
+  line-height: 1.3;
+  border-radius: 5px;
+  border-color: var(--border);
+  background: var(--field);
+  color: var(--accent-text);
+}
+.row-preparation .packing-exclusion-toggle:focus-visible {
+  outline: 2px solid var(--control-accent);
+  outline-offset: 2px;
+}
+@media (hover: none), (pointer: coarse) {
+  .row-preparation .packing-skip-button.icon-button {
+    opacity: 1;
+    pointer-events: auto;
+    inline-size: 28px;
+    min-inline-size: 28px;
+    block-size: 28px;
+    min-block-size: 28px;
+  }
+  .row-preparation .packing-include-button {
+    min-block-size: 28px;
+  }
+}
 .needs-preparation {
   color: var(--warning-text);
 }
@@ -1326,6 +1374,10 @@ select {
   margin-inline-start: auto;
 }
 .preparation-output > button {
+  min-block-size: 30px;
+  padding: 4px 8px;
+  font-size: 12px;
+  border-radius: 6px;
   border-color: transparent;
   background: var(--surface);
 }
@@ -1363,6 +1415,7 @@ select {
   inline-size: 28px;
   min-inline-size: 28px;
   block-size: 28px;
+  min-block-size: 28px;
   padding: 4px;
   background: transparent;
   border-color: transparent;
@@ -1636,7 +1689,8 @@ html:has(body.packing-active) {
   font-size: 19px;
   line-height: 1.4;
 }
-.packing-review > p {
+.packing-review > p,
+.packing-review > .scroll-dialog-content > p {
   max-inline-size: 75ch;
   margin: 8px 0 16px;
   color: var(--muted);
@@ -1713,25 +1767,17 @@ html:has(body.packing-active) {
 .packing-review-codes > span {
   color: var(--muted);
 }
-.packing-review > .dialog-actions {
+.packing-review .dialog-actions {
   align-items: center;
   justify-content: center;
   margin-block-start: 12px;
   color: var(--muted);
   font-size: 12px;
 }
-.packing-review > .dialog-actions:empty {
+.packing-review .dialog-actions:empty {
   display: none;
 }
-.packing-review > .dialog-actions:last-child {
-  position: sticky;
-  inset-block-end: -20px;
-  justify-content: flex-end;
-  padding-block: 12px;
-  border-block-start: 1px solid var(--border);
-  background: var(--surface);
-}
-.packing-review > .dialog-actions button {
+.packing-review .dialog-actions button {
   min-block-size: 32px;
   padding: 6px 10px;
   font-size: 12px;
@@ -1877,9 +1923,6 @@ html:has(body.packing-active) {
   }
   .packing-review-codes > span {
     line-height: 1;
-  }
-  .packing-review > .dialog-actions:last-child {
-    inset-block-end: -12px;
   }
 }
 .column-options {
@@ -2370,7 +2413,7 @@ html:has(body.packing-active) {
   width: min(900px, calc(100vw - 24px));
   max-width: 900px;
   max-height: calc(100dvh - 32px);
-  overflow: auto;
+  overflow: hidden;
 }
 .preparation-column-picker {
   display: grid;
@@ -2460,13 +2503,6 @@ html:has(body.packing-active) {
 }
 .preparation-column-status {
   margin: 0;
-}
-.preparation-column-dialog > .dialog-actions {
-  position: sticky;
-  bottom: -20px;
-  background: var(--surface);
-  padding-block: 12px;
-  margin-bottom: -20px;
 }
 @media (max-width: 600px) {
   .preparation-column-picker {

@@ -1893,7 +1893,7 @@ test('invalid backup rows and image data reject the whole restore before writing
         orders: [nextRecord, original.orders[0]],
       }
       const invalid = [
-        { ...candidate, version: 3 },
+        { ...candidate, version: 4 },
         {
           ...candidate,
           orders: [nextRecord, { ...original.orders[0], revision: 0 }],
@@ -2043,7 +2043,7 @@ test('v1 databases upgrade in place with orders, history, images and jobs preser
   expect(result.job.status).toBe('paused')
   expect(result.image).toEqual(image)
   expect(result.preparations).toEqual([])
-  expect(result.backup.version).toBe(2)
+  expect(result.backup.version).toBe(3)
   expect(result.backup.issuedCodes).toEqual([])
 })
 
@@ -2357,7 +2357,7 @@ test('refresh preserves authoring and removed memberships while new entries rema
   expect(result.restoredPreparation).toEqual(result.edited)
 })
 
-test('manual base edits update variant codes and deletions never recycle reservations', async ({
+test('manual base edits update variant codes and deletion releases current assignments', async ({
   extension,
 }) => {
   const page = await openTestDatabase(extension)
@@ -2378,7 +2378,7 @@ test('manual base edits update variant codes and deletions never recycle reserva
       createPreparation(first, '2026-06')
     )
     const collided = structuredClone(regenerated)
-    collided.groups[0].baseCode = 'CE26060101'
+    collided.groups[0].baseCode = regenerated.groups[1].baseCode
     let error
     try {
       await library.savePreparation(collided)
@@ -2396,16 +2396,16 @@ test('manual base edits update variant codes and deletions never recycle reserva
   expect(result.code).toBe('CE26060107')
   expect(result.afterDelete.orders).toEqual([])
   expect(result.afterDelete.preparations).toEqual([])
-  expect(result.afterDelete.issuedCodes).toHaveLength(6)
+  expect(result.afterDelete.issuedCodes).toHaveLength(0)
   expect(result.regenerated.groups.map((group) => group.baseCode)).toEqual([
-    'CE26060108',
-    'CE26060109',
+    'CE26060101',
+    'CE26060102',
   ])
   expect(result.error).toContain('Code conflict')
   expect(result.current).toEqual(result.regenerated)
 })
 
-test('reserved barcode lookup includes retired suffixes and isolates the base and account', async ({
+test('barcode lookup includes only current suffixes and isolates the base and account', async ({
   extension,
 }) => {
   const page = await openTestDatabase(extension)
@@ -2442,14 +2442,14 @@ test('reserved barcode lookup includes retired suffixes and isolates the base an
       after: { ...after, exportedAt: '' },
     }
   }, snapshot())
-  expect(result.reserved).toEqual(['CE26060101A', 'CE26060101B'])
+  expect(result.reserved).toEqual(['CE26060101B'])
   expect(result.otherReserved).toEqual(['CE26060101C'])
   expect(result.absent).toEqual([])
-  expect(result.afterDelete).toEqual(result.reserved)
+  expect(result.afterDelete).toEqual([])
   expect(result.after).toEqual(result.before)
 })
 
-test('saved product codes can roundtrip while retired barcodes remain owned by their original variant', async ({
+test('saved product codes roundtrip and released barcode endings can be reused', async ({
   extension,
 }) => {
   const page = await openTestDatabase(extension)
@@ -2480,9 +2480,12 @@ test('saved product codes can roundtrip while retired barcodes remain owned by t
     const ownership = await library.queryCodeOwnership(base)
     const otherVariant = structuredClone(moved)
     otherVariant.groups[0].variants[1].variantSuffix = ''
+    const reassigned = await library.savePreparation(otherVariant)
+    const duplicate = structuredClone(reassigned)
+    duplicate.groups[0].variants[0].variantSuffix = ''
     let conflict
     try {
-      await library.savePreparation(otherVariant)
+      await library.savePreparation(duplicate)
     } catch (error) {
       conflict = error.conflict
     }
@@ -2495,6 +2498,7 @@ test('saved product codes can roundtrip while retired barcodes remain owned by t
       original,
       returned,
       moved,
+      reassigned,
       ownership,
       conflict,
       unchanged,
@@ -2503,7 +2507,7 @@ test('saved product codes can roundtrip while retired barcodes remain owned by t
     }
   }, snapshot())
   expect(result.returned.groups).toEqual(result.original.groups)
-  expect(result.unchanged).toEqual(result.moved)
+  expect(result.unchanged).toEqual(result.reassigned)
   expect(result.restored.groups).toEqual(result.original.groups)
   const base = result.original.groups[0].baseCode
   const baseOwner = result.ownership.owners.find(
@@ -2514,9 +2518,7 @@ test('saved product codes can roundtrip while retired barcodes remain owned by t
   )
   expect(baseOwner.status).toBe('active')
   expect(baseOwner.currentCode).toBe(base)
-  expect(barcodeOwner.status).toBe('historical')
-  expect(barcodeOwner.currentCode).toBe(`${base}A`)
-  expect(barcodeOwner.currentBaseCode).toBe(base)
+  expect(barcodeOwner).toBeUndefined()
   expect(result.conflict.kind).toBe('barcode')
   expect(result.conflict.owner.groupId).toBe(
     result.conflict.requestedOwner.groupId
@@ -2524,10 +2526,10 @@ test('saved product codes can roundtrip while retired barcodes remain owned by t
   expect(result.conflict.owner.variantId).not.toBe(
     result.conflict.requestedOwner.variantId
   )
-  expect(result.final.issuedCodes).toHaveLength(7)
+  expect(result.final.issuedCodes).toHaveLength(3)
 })
 
-test('v2 backups preserve independent authoring, preference timestamps and all issued reservations', async ({
+test('backups preserve independent authoring and preferences without reviving retired codes', async ({
   extension,
 }) => {
   const page = await openTestDatabase(extension)
@@ -2585,7 +2587,7 @@ test('v2 backups preserve independent authoring, preference timestamps and all i
   expect(result.beforeUpdate).toEqual(result.newerPreparation)
   expect(result.preparation).toEqual(result.newerPreparation)
   expect(result.source.snapshot.status).toBe('Refunded')
-  expect(result.backup.issuedCodes).toHaveLength(6)
+  expect(result.backup.issuedCodes).toHaveLength(4)
   expect(result.preferences).toEqual({
     appearance: {
       lightTheme: 'warm',
@@ -2712,4 +2714,166 @@ test('restore rolls back authoring whose members disappear in tied source or his
     expect(result.error).toContain('entry missing from its order and history')
     expect(result.after).toEqual(result.before)
   }
+})
+
+test('current assignments allow the 3103 to 3105 to 3103 sequence and release 3104 for another product', async ({
+  extension,
+}) => {
+  const page = await openTestDatabase(extension)
+  const result = await page.evaluate(async (first) => {
+    const { createPreparation } = await import('/src/packing-model.js')
+    first.sellerMemberLogin = 'same-synthetic-seller'
+    await library.saveSnapshot(first)
+    const second = { ...structuredClone(first), orderId: '9988776655443322110' }
+    second.sourceUrl = first.sourceUrl.replace(first.orderId, second.orderId)
+    second.items = [second.items[0]]
+    second.totals = {
+      goodsGross: '20.00',
+      shipping: '0.00',
+      sourceDiscount: '1.00',
+      orderAdjustment: '0.00',
+      goodsNet: '19.00',
+      payable: '19.00',
+    }
+    await library.saveSnapshot(second)
+    const existing = createPreparation(first, '2026-10')
+    existing.groups[0].baseCode = 'CE26103101'
+    existing.groups[1].baseCode = 'CE26103102'
+    let original = await library.savePreparation(existing)
+    const draft = createPreparation(second, '2026-10')
+    const before = await library.exportBackup()
+    const [preview] = await library.previewPreparations([draft])
+    const afterPreview = await library.exportBackup()
+    let added = await library.savePreparation(preview)
+    const transitions = [added.groups[0].baseCode]
+    for (const code of [
+      'CE26103105',
+      'CE26103103',
+      'CE26103104',
+      'CE26103103',
+    ]) {
+      added.groups[0].baseCode = code
+      added = await library.savePreparation(added)
+      transitions.push(added.groups[0].baseCode)
+    }
+    library.close()
+    window.library = await openOrderDatabase({ name: databaseName })
+    const freed = await library.queryCodeOwnership('CE26103104')
+    original = await library.getPreparation(first.orderId)
+    original.groups[0].baseCode = 'CE26103104'
+    original.groups[0].spanishName = 'NOMBRE ACTUAL'
+    original.groups[0].category = '当前品类'
+    original = await library.savePreparation(original)
+    const adopted = await library.queryCodeOwnership('CE26103104')
+    const beforeConflict = await library.exportBackup()
+    added = await library.getPreparation(second.orderId)
+    added.groups[0].baseCode = 'CE26103102'
+    let conflict
+    try {
+      await library.savePreparation(added)
+    } catch (error) {
+      conflict = error.conflict
+    }
+    const afterConflict = await library.exportBackup()
+    // Re-importing an older backup must not restore inactive code ownership.
+    await library.restoreBackup(before)
+    const afterOlderRestore = await library.queryCodeOwnership('CE26103101')
+    const restored = await openOrderDatabase({
+      name: `${databaseName}-current-codes`,
+    })
+    await restored.restoreBackup(afterConflict)
+    const roundtrip = await restored.exportBackup()
+    restored.close()
+    return {
+      before,
+      afterPreview,
+      transitions,
+      freed,
+      adopted,
+      beforeConflict,
+      afterConflict,
+      conflict,
+      afterOlderRestore,
+      roundtrip,
+    }
+  }, snapshot())
+  expect(result.transitions).toEqual([
+    'CE26103103',
+    'CE26103105',
+    'CE26103103',
+    'CE26103104',
+    'CE26103103',
+  ])
+  expect({ ...result.afterPreview, exportedAt: '' }).toEqual({
+    ...result.before,
+    exportedAt: '',
+  })
+  expect(result.freed.owners).toEqual([])
+  expect(
+    result.adopted.owners.every((owner) => owner.orderId === orderId)
+  ).toBe(true)
+  expect(
+    result.adopted.owners.every(
+      (owner) =>
+        owner.spanishName === 'NOMBRE ACTUAL' && owner.category === '当前品类'
+    )
+  ).toBe(true)
+  expect(result.conflict.code).toBe('CE26103102')
+  expect(result.conflict.owner.orderId).toBe(orderId)
+  expect({ ...result.afterConflict, exportedAt: '' }).toEqual({
+    ...result.beforeConflict,
+    exportedAt: '',
+  })
+  expect(result.afterOlderRestore.owners).toEqual([])
+  expect(result.roundtrip.preparations).toEqual(
+    result.afterConflict.preparations
+  )
+  expect(result.roundtrip.issuedCodes).toEqual(result.afterConflict.issuedCodes)
+  expect(result.roundtrip.version).toBe(3)
+})
+
+test('an atomic code swap checks final assignments and rejects a duplicate without partial writes', async ({
+  extension,
+}) => {
+  const page = await openTestDatabase(extension)
+  const result = await page.evaluate(async (first) => {
+    const { createPreparation } = await import('/src/packing-model.js')
+    await library.saveSnapshot(first)
+    const second = {
+      ...first,
+      orderId: '9988776655443322110',
+      sourceUrl: first.sourceUrl.replace(first.orderId, '9988776655443322110'),
+    }
+    await library.saveSnapshot(second)
+    const originals = await library.savePreparations(
+      [first, second].map((source) => createPreparation(source, '2026-10'))
+    )
+    const edits = structuredClone(originals)
+    const code = edits[0].groups[0].baseCode
+    edits[0].groups[0].baseCode = edits[1].groups[0].baseCode
+    edits[1].groups[0].baseCode = code
+    const swapped = await library.savePreparations(edits)
+    const before = await library.exportBackup()
+    const invalid = structuredClone(swapped)
+    invalid[0].groups[0].baseCode = invalid[1].groups[0].baseCode
+    let conflict
+    try {
+      await library.savePreparations(invalid)
+    } catch (error) {
+      conflict = error.code
+    }
+    const after = await library.exportBackup()
+    return { originals, swapped, before, after, conflict }
+  }, snapshot())
+  expect(result.swapped[0].groups[0].baseCode).toBe(
+    result.originals[1].groups[0].baseCode
+  )
+  expect(result.swapped[1].groups[0].baseCode).toBe(
+    result.originals[0].groups[0].baseCode
+  )
+  expect(result.conflict).toBe('PACKING_CODE_CONFLICT')
+  expect({ ...result.after, exportedAt: '' }).toEqual({
+    ...result.before,
+    exportedAt: '',
+  })
 })

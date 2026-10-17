@@ -305,6 +305,17 @@
               >
                 Prepare packing list
               </button>
+              <button id="restore-packing" data-i18n="Restore packing">
+                Restore packing
+              </button>
+              <input
+                id="restore-packing-file"
+                type="file"
+                accept=".json,application/json"
+                hidden
+                aria-label="Packing backup file"
+                data-i18n-aria-label="Packing backup file"
+              />
               <p id="packing-scope" role="status"></p>
             </div>
           </div>
@@ -428,24 +439,28 @@
       class="side-drawer"
       aria-label="Activity"
     >
-      <form method="dialog">
-        <button
-          data-i18n-aria-label="Close activity"
-          class="dialog-close"
-          aria-label="Close activity"
-        >
-          ×
-        </button>
-      </form>
-      <h2 data-i18n="Activity">Activity</h2>
-      <section
-        data-i18n-aria-label="Import progress"
-        id="jobs"
-        class="jobs"
-        aria-label="Import progress"
-        hidden
-      ></section>
-      <p data-i18n="No imports yet." id="activity-empty">No imports yet.</p>
+      <header class="detail-dialog-heading">
+        <h2 data-i18n="Activity">Activity</h2>
+        <form method="dialog">
+          <button
+            data-i18n-aria-label="Close activity"
+            class="dialog-close"
+            aria-label="Close activity"
+          >
+            ×
+          </button>
+        </form>
+      </header>
+      <div class="detail-dialog-scroll">
+        <section
+          data-i18n-aria-label="Import progress"
+          id="jobs"
+          class="jobs"
+          aria-label="Import progress"
+          hidden
+        ></section>
+        <p data-i18n="No imports yet." id="activity-empty">No imports yet.</p>
+      </div>
     </dialog>
     <dialog
       data-i18n-aria-label="Label editor"
@@ -453,16 +468,19 @@
       class="label-dialog"
       aria-label="Label editor"
     >
-      <form method="dialog">
-        <button
-          data-i18n-aria-label="Close label editor"
-          class="dialog-close"
-          aria-label="Close label editor"
-        >
-          ×
-        </button>
-      </form>
-      <div id="label-content"></div>
+      <header class="detail-dialog-heading">
+        <div class="label-dialog-tools"></div>
+        <form method="dialog">
+          <button
+            data-i18n-aria-label="Close label editor"
+            class="dialog-close"
+            aria-label="Close label editor"
+          >
+            ×
+          </button>
+        </form>
+      </header>
+      <div id="label-content" class="detail-dialog-scroll"></div>
     </dialog>
     <dialog
       data-i18n-aria-label="Settings"
@@ -503,16 +521,19 @@
       </section>
     </dialog>
     <dialog id="order-details">
-      <form method="dialog">
-        <button
-          data-i18n-aria-label="Close order details"
-          class="dialog-close"
-          aria-label="Close order details"
-        >
-          ×
-        </button>
-      </form>
-      <div id="details-content"></div>
+      <header class="detail-dialog-heading">
+        <div id="order-details-heading"></div>
+        <form method="dialog">
+          <button
+            data-i18n-aria-label="Close order details"
+            class="dialog-close"
+            aria-label="Close order details"
+          >
+            ×
+          </button>
+        </form>
+      </header>
+      <div id="details-content" class="detail-dialog-scroll"></div>
     </dialog>
   </body>
 </html>

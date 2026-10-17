@@ -1,7 +1,7 @@
 import { test, expect } from './extension-fixture.mjs'
 import { createDemoRecords } from '../../preview/library-fixture.js'
 
-async function workspace(extension) {
+async function workspace(extension, { longDescription = false } = {}) {
   const [record] = await extension.inspector.evaluate(
     `(${createDemoRecords.toString()})(document)`
   )
@@ -19,6 +19,12 @@ async function workspace(extension) {
     { label: '包装说明', value: '一件一袋', raw: '包装说明：一件一袋' },
   ]
   structured.description = `${structured.title}\n规格14*65CM\n颜色：灰色\n货号：ABC-42\n\n包装说明：一件一袋  `
+  if (longDescription)
+    structured.description += Array.from(
+      { length: 45 },
+      (_, index) =>
+        `\n原始商品说明 ${index + 1}：合成商品包装、材质与使用说明。`
+    ).join('')
   legacy.description =
     '原始短款玻璃瓶\n规格：8×12cm\n颜色：白色\n货号：LEGACY-8'
   minimal.description = '仅有原始商品说明，没有规格或颜色字段。'
@@ -200,10 +206,59 @@ test('original product details copy exact source values and description and link
     .click()
   await expect(details).toHaveCount(0)
   await expect(page.locator('#order-details')).toBeVisible()
-  await expect(page.locator('#details-content .order-reference')).toHaveText(
+  await expect(
+    page.locator('#order-details-heading .order-reference')
+  ).toHaveText(record.snapshot.orderId)
+  await expect(row).toHaveAttribute('aria-selected', selected)
+})
+
+test('product and order details keep their existing header actions reachable above long content', async ({
+  extension,
+}) => {
+  const { page, record } = await workspace(extension, { longDescription: true })
+  await page.setViewportSize({ width: 390, height: 600 })
+  const row = page.locator('#sheet-body tr[data-selection-key]').first()
+  await row.focus()
+  await row.press('Enter')
+  const product = page.locator('.product-details-dialog')
+  const top = product.locator('.product-details-top')
+  const scroll = product.locator('.product-details-scroll')
+  const before = await top.boundingBox()
+  expect(
+    await scroll.evaluate((node) => node.scrollHeight > node.clientHeight)
+  ).toBe(true)
+  await scroll.evaluate((node) => node.scrollTo(0, node.scrollHeight))
+  expect(await top.boundingBox()).toEqual(before)
+  for (const button of await top.getByRole('button').all())
+    await expect(button).toBeInViewport()
+  expect(
+    await product.evaluate((node) => node.scrollWidth <= node.clientWidth)
+  ).toBe(true)
+  await expectCopied(
+    page,
+    top.getByRole('button', { name: 'Copy description', exact: true }),
+    record.snapshot.items[0].description
+  )
+  await top.getByRole('button', { name: 'Order details', exact: true }).click()
+  const order = page.locator('#order-details')
+  const heading = order.locator('.detail-dialog-heading')
+  const orderBody = order.locator('#details-content')
+  const orderTop = await heading.boundingBox()
+  expect(
+    await orderBody.evaluate((node) => node.scrollHeight > node.clientHeight)
+  ).toBe(true)
+  await orderBody.evaluate((node) => node.scrollTo(0, node.scrollHeight))
+  expect(await heading.boundingBox()).toEqual(orderTop)
+  await expect(
+    order.getByText('Previous versions', { exact: true })
+  ).toBeInViewport()
+  await expect(heading.locator('.order-reference')).toHaveText(
     record.snapshot.orderId
   )
-  await expect(row).toHaveAttribute('aria-selected', selected)
+  await heading
+    .getByRole('button', { name: 'Close order details', exact: true })
+    .click()
+  await expect(order).not.toBeVisible()
 })
 
 test('legacy and missing SKU fields retain their source text, with keyboard dismissal and a narrow usable details dialog', async ({

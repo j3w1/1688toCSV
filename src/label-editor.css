@@ -311,6 +311,25 @@
   gap: 5px;
 }
 
+.label-editor-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px 12px;
+}
+
+.label-editor-actions .label-editor-status {
+  flex: 1 1 140px;
+  min-inline-size: 0;
+  font-size: 12px;
+  overflow-wrap: anywhere;
+}
+
+.label-editor-actions .label-editor-copy,
+.label-editor-actions .label-editor-resolve {
+  flex: none;
+}
+
 .label-editor-copy > .ui-icon {
   inline-size: 16px;
   block-size: 16px;

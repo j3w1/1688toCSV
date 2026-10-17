@@ -995,8 +995,12 @@ export function preparationAuthoring(preparation) {
   }
 }
 
-/** Legacy nonempty fields are authored. An explicit manual clear stays blank. */
-export function refreshPreparationNames(preparation, suggest) {
+/** Passive refresh preserves saved automatic values; rule changes may replace them. */
+export function refreshPreparationNames(
+  preparation,
+  suggest,
+  { replaceAutomatic = true } = {}
+) {
   let changed = false
   const groups = preparation.groups.map((group) => {
     const result = { ...group, naming: { ...group.naming } }
@@ -1009,7 +1013,10 @@ export function refreshPreparationNames(preparation, suggest) {
         provenance.value !== group[field]
       ) {
         result.naming[field] = { source: 'manual', value: group[field] }
-      } else if (provenance || !group[field]) {
+      } else if (
+        (provenance && replaceAutomatic) ||
+        (!provenance && !group[field])
+      ) {
         result[field] = suggestion[field]
         result.naming[field] = { source: 'automatic', value: suggestion[field] }
       }

@@ -10,9 +10,17 @@ import { ACTIVITY_MESSAGES } from './ui-messages-activity.js'
 import { ORDER_TAG_MESSAGES } from './ui-messages-order-tags.js'
 import { ACTION_HELP_MESSAGES } from './ui-messages-action-help.js'
 import { GROUPING_MESSAGES } from './ui-messages-grouping.js'
+import { REVIEW_MESSAGES } from './ui-messages-review.js'
+import { EXCLUSION_MESSAGES } from './ui-messages-exclusions.js'
 
 // Explicit interface messages only; original seller, product and label values are never translated.
 export const UI_MESSAGES = {
+  'Shortcut outside text fields': {
+    zh: '非文本输入时的快捷键',
+    es: 'Atajo fuera de los campos de texto',
+  },
+  ...EXCLUSION_MESSAGES,
+  ...REVIEW_MESSAGES,
   Sizes: { zh: '尺寸', es: 'Tallas' },
   'Size handling': { zh: '尺寸处理', es: 'Tratamiento de tallas' },
   'Automatic sizes': { zh: '自动识别尺寸', es: 'Tallas automáticas' },
@@ -149,20 +157,20 @@ export const UI_MESSAGES = {
       zh: '← / → 切换图片 · ↑ / ↓ 或 + / − 缩放 · 滚轮缩放 · 拖动移动 · 双击缩放或适应 · 0 适应窗口',
       es: '← / → fotos · ↑ / ↓ o + / − amplía o reduce · Rueda para ampliar · Arrastra para mover · Doble clic para ampliar o ajustar · 0 ajusta',
     },
-  '{0} products from {1} orders will reopen. {2} orders can receive selected packing edits from this file. Unselected products, newer local edits and existing settings stay unchanged. Source orders and issued codes are retained for safe restoration.':
+  '{0} products from {1} orders will reopen. {2} orders can receive selected packing edits from this file. Unselected products, newer local edits and existing settings stay unchanged. Source orders and current code assignments are included; restoration checks for current code conflicts.':
     {
-      zh: '将重新打开 {1} 个订单中的 {0} 件商品。其中 {2} 个订单可恢复此文件中所选商品的装箱修改。未选商品、较新的本地修改和现有设置保持不变。保留原始订单和已分配货号，以便准确恢复。',
-      es: 'Se reabrirán {0} productos de {1} pedidos. {2} pedidos pueden recibir los cambios de empaque seleccionados de este archivo. Los productos no seleccionados, los cambios locales más recientes y los ajustes actuales se mantienen. Se conservan los pedidos originales y los códigos asignados para restaurar correctamente los datos.',
+      zh: '将重新打开 {1} 个订单中的 {0} 件商品。其中 {2} 个订单可恢复此文件中所选商品的装箱修改。未选商品、较新的本地修改和现有设置保持不变。文件包含原始订单和当前货号分配；恢复时会检查当前货号是否冲突。',
+      es: 'Se reabrirán {0} productos de {1} pedidos. {2} pedidos pueden recibir los cambios de empaque seleccionados de este archivo. Los productos no seleccionados, los cambios locales más recientes y los ajustes actuales se mantienen. Se incluyen los pedidos originales y las asignaciones actuales de códigos; al restaurar se comprueba si hay conflictos con códigos en uso.',
     },
   '{rows} selected product rows from {orders} orders will be prepared for {month}. {detail}':
     {
       zh: '将为 {month} 准备来自 {orders} 个订单的 {rows} 行所选商品。{detail}',
       es: 'Se prepararán {rows} filas seleccionadas de {orders} pedidos para {month}. {detail}',
     },
-  '{codes} group codes and their barcodes will change. {splits} partial groups will be split; unselected products keep their month and codes. Previous issued codes remain reserved. You can restore the previous packing later.':
+  '{codes} group codes and their barcodes will change. {splits} partial groups will be split; unselected products keep their month and codes. Codes no longer in use become available. You can restore the previous packing later if its codes are available.':
     {
-      zh: '将更改 {codes} 个组货号及其条码。{splits} 个部分选中的组将被拆分；未选商品保留原月份和货号。已分配货号仍会保留。您可以稍后恢复上次装箱设置。',
-      es: 'Cambiarán {codes} códigos de grupo y sus códigos de barras. Se dividirán {splits} grupos parcialmente seleccionados; los productos no seleccionados conservan su mes y códigos. Los códigos anteriores siguen reservados. Puedes restaurar el empaque anterior después.',
+      zh: '将更改 {codes} 个组货号及其条码。{splits} 个部分选中的组将被拆分；未选商品保留原月份和货号。不再使用的货号将可重新分配。若原货号仍可用，您可以稍后恢复上次装箱设置。',
+      es: 'Cambiarán {codes} códigos de grupo y sus códigos de barras. Se dividirán {splits} grupos parcialmente seleccionados; los productos no seleccionados conservan su mes y códigos. Los códigos que dejen de usarse quedarán disponibles. Podrás restaurar el empaque anterior si sus códigos siguen disponibles.',
     },
   'New codes will be assigned to the groups below. Orders without a seller remain editable and receive codes after you identify the seller.':
     {
@@ -187,40 +195,45 @@ export const UI_MESSAGES = {
     zh: '装箱备份已保存',
     es: 'Copia de empaque guardada',
   },
-  'Back up selected groups and products only. Complete source orders and issued codes are retained so totals and code ownership can be restored safely.':
+  'Back up every group and product in this preparation, including other pages and orders. Selection does not limit the backup; removed products and unrelated library data are excluded.':
     {
-      zh: '仅备份所选组和商品。保留完整原始订单和已分配货号，以便准确恢复金额和货号归属。',
-      es: 'Copia solo los grupos y productos seleccionados. Se conservan los pedidos originales completos y los códigos asignados para restaurar correctamente los totales y la propiedad de los códigos.',
+      zh: '备份本次备货中的所有商品组和商品，包括其他页面和订单。勾选范围不限制备份；已移除商品及无关订单库数据不包含在内。',
+      es: 'Respalda todos los grupos y productos de esta preparación, incluidas las demás páginas y pedidos. La selección no limita la copia; se excluyen los productos retirados y los datos ajenos de la biblioteca.',
     },
-  '{count} product groups in this order will share {code}. Their barcode endings may change to remain unique. Old issued codes stay reserved.':
+  'Load a packing backup from Orders and open its saved groups in Preparation. Unrelated library data stays unchanged; newer local edits are kept.':
     {
-      zh: '此订单中的 {count} 个商品组将共用 {code}。条码后缀可能更改以避免重复。旧货号仍会保留。',
-      es: '{count} grupos de este pedido compartirán {code}. Las terminaciones de los códigos de barras pueden cambiar para evitar duplicados. Los códigos anteriores siguen reservados.',
+      zh: '从订单页载入装箱备份，并在备货表中打开其中保存的商品组。无关订单库数据不变，并保留本地较新的修改。',
+      es: 'Carga una copia de empaque desde Pedidos y abre sus grupos guardados en Preparación. Los datos ajenos de la biblioteca no cambian; se conservan las modificaciones locales más recientes.',
     },
-  'Remove this group’s displayed products from packing. Original orders and issued codes are kept.':
+  '{count} product groups in this order will share {code}. Their barcode endings may change to remain unique. Codes no longer in use become available.':
     {
-      zh: '从装箱清单移除此组当前显示的商品。原始订单及已分配货号会保留。',
-      es: 'Quita del empaque los productos mostrados de este grupo. Se conservan los pedidos originales y los códigos asignados.',
+      zh: '此订单中的 {count} 个商品组将共用 {code}。条码后缀可能更改以避免重复。不再使用的货号将可重新分配。',
+      es: '{count} grupos de este pedido compartirán {code}. Las terminaciones de los códigos de barras pueden cambiar para evitar duplicados. Los códigos que dejen de usarse quedarán disponibles.',
     },
-  'Remove this product from packing. Original order data and issued codes are kept.':
+  'Remove this group’s displayed products from packing and discard their preparation edits from this session. Original order data is kept.':
     {
-      zh: '从装箱清单移除此商品。原始订单数据及已分配货号会保留。',
-      es: 'Quita este producto del empaque. Se conservan los datos del pedido original y los códigos asignados.',
+      zh: '从装箱清单移除此组当前显示的商品，并放弃这些商品在本次会话中的装箱修改。保留原始订单数据。',
+      es: 'Quita del empaque los productos mostrados de este grupo y descarta sus cambios de preparación de esta sesión. Se conservan los datos del pedido original.',
     },
-  '{count} selected variants will use {code}. Their original prices and quantities remain separate. Previous barcode reservations remain.':
+  'Remove this product from packing and discard its preparation edits from this session. Original order data is kept.':
     {
-      zh: '{count} 个所选款式将使用 {code}。原始价格和数量仍分开保存。原有条码仍会保留。',
-      es: '{count} variantes seleccionadas usarán {code}. Sus precios y cantidades originales se mantienen separados. Los códigos de barras anteriores siguen reservados.',
+      zh: '从装箱清单移除此商品，并放弃它在本次会话中的装箱修改。保留原始订单数据。',
+      es: 'Quita este producto del empaque y descarta sus cambios de preparación de esta sesión. Se conservan los datos del pedido original.',
     },
-  '{count} combined variants will be split into one barcode per original order row. New endings will be assigned; existing reservations remain.':
+  '{count} selected variants will use {code}. Their original prices and quantities remain separate. Codes no longer in use become available.':
     {
-      zh: '将拆分 {count} 个合并款式，每行原始商品使用独立条码。将分配新后缀，已有货号仍会保留。',
-      es: 'Se dividirán {count} variantes combinadas en un código de barras por fila original del pedido. Se asignarán nuevas terminaciones; los códigos anteriores siguen reservados.',
+      zh: '{count} 个所选款式将使用 {code}。原始价格和数量仍分开保存。不再使用的货号将可重新分配。',
+      es: '{count} variantes seleccionadas usarán {code}. Sus precios y cantidades originales se mantienen separados. Los códigos que dejen de usarse quedarán disponibles.',
     },
-  '{count} variants will receive a new shared product code. The other variants keep {code}. Old issued codes stay reserved.':
+  '{count} combined variants will be split into one barcode per original order row. New endings avoid codes currently used by other products.':
     {
-      zh: '{count} 个款式将共用一个新商品货号。其他款式保留 {code}。旧货号仍会保留。',
-      es: '{count} variantes recibirán un nuevo código de producto compartido. Las demás conservan {code}. Los códigos anteriores siguen reservados.',
+      zh: '将拆分 {count} 个合并款式，每行原始商品使用独立条码。新后缀将避开其他商品当前使用的货号。',
+      es: 'Se dividirán {count} variantes combinadas en un código de barras por fila original del pedido. Los nuevos sufijos evitan códigos que otros productos usan actualmente.',
+    },
+  '{count} variants will receive a new shared product code. The other variants keep {code}. Codes no longer in use become available.':
+    {
+      zh: '{count} 个款式将共用一个新商品货号。其他款式保留 {code}。不再使用的货号将可重新分配。',
+      es: '{count} variantes recibirán un nuevo código de producto compartido. Las demás conservan {code}. Los códigos que dejen de usarse quedarán disponibles.',
     },
   Copy: { zh: '复制', es: 'Copiar' },
   Columns: { zh: '列', es: 'Columnas' },
@@ -235,10 +248,10 @@ export const UI_MESSAGES = {
     es: '¿Quitar del empaque?',
   },
   'Remove from packing': { zh: '从装箱清单中移除', es: 'Quitar del empaque' },
-  '{count} selected products will be removed from this packing. Their original order data and issued codes are kept. You can select them in Orders to prepare them again.':
+  '{count} selected products will leave this packing and their preparation edits from this session will be discarded. Previously prepared products return to their earlier values; newly prepared products become unassigned. Original order data is kept.':
     {
-      zh: '将从此装箱清单中移除 {count} 件所选商品。原始订单数据和已分配货号会保留。您可以在订单页重新选择并准备装箱。',
-      es: 'Se quitarán {count} productos seleccionados de este empaque. Se conservan sus pedidos originales y códigos asignados. Puedes seleccionarlos en Pedidos para prepararlos de nuevo.',
+      zh: '{count} 件所选商品将离开此装箱清单，并放弃本次会话中的装箱修改。此前已准备的商品恢复原值；本次新准备的商品恢复为未分配。原始订单数据保留。',
+      es: '{count} productos seleccionados saldrán de este empaque y se descartarán sus cambios de preparación de esta sesión. Los productos preparados anteriormente recuperan sus valores previos; los recién preparados quedan sin asignar. Se conservan los datos del pedido original.',
     },
   'Resolve code': {
     zh: '解决货号冲突',
@@ -277,10 +290,10 @@ export const UI_MESSAGES = {
     zh: '重置排序和货号？',
     es: '¿Restablecer orden y códigos?',
   },
-  'This replaces this order’s current grouping, codes, names and variant settings with the setup saved before its last month move. Later edits will be lost. Other orders are unchanged; old issued codes remain reserved.':
+  'This replaces this order’s current grouping, codes, names and variant settings with the setup saved before its last month move. Later edits will be lost. Other orders are unchanged. Restoration checks for codes currently used by other products.':
     {
-      zh: '此操作会用上次更改装箱月份前的设置替换本订单当前的分组、货号、名称及款式设置。此后的修改将丢失。其他订单不变，已发放的旧货号仍保留。',
-      es: 'Sustituye los grupos, códigos, nombres y ajustes de variantes de este pedido por la configuración guardada antes de su último cambio de mes. Se perderán los cambios posteriores. Los demás pedidos no cambian; los códigos ya emitidos siguen reservados.',
+      zh: '此操作会用上次更改装箱月份前的设置替换本订单当前的分组、货号、名称及款式设置。此后的修改将丢失。其他订单不变。恢复时会检查货号是否已被其他商品使用。',
+      es: 'Sustituye los grupos, códigos, nombres y ajustes de variantes de este pedido por la configuración guardada antes de su último cambio de mes. Se perderán los cambios posteriores. Los demás pedidos no cambian. Al restaurar se comprueba si otros productos usan esos códigos.',
     },
   'This restores this order’s default grouping, source order, product codes and barcode endings. Current names are retained where their groups still exist. Manual reordering and code edits will be replaced. Other orders are unchanged.':
     {
@@ -307,10 +320,10 @@ export const UI_MESSAGES = {
     zh: '恢复装箱备份？',
     es: '¿Restaurar copia de empaque?',
   },
-  '{0} products from {1} orders will reopen. {2} orders can receive saved packing edits from this file. This merges the complete included orders, label settings and local rules; newer local edits and existing notes are kept. Issued codes remain reserved.':
+  '{0} products from {1} orders will reopen. {2} orders can receive saved packing edits from this file. This merges the complete included orders, label settings and local rules; newer local edits and existing notes are kept. Restoration checks for current code conflicts.':
     {
-      zh: '将重新打开 {1} 个订单中的 {0} 件商品，其中 {2} 个订单可恢复此文件中的装箱修改。此操作会合并所包含的完整订单、标签设置及本地规则，保留较新的本地修改和现有备注。已发放的货号仍保留。',
-      es: 'Se reabrirán {0} productos de {1} pedidos. {2} pedidos pueden recibir los cambios de empaque guardados en este archivo. Se combinan los pedidos completos incluidos, los ajustes de etiquetas y las reglas locales; se conservan los cambios locales más recientes y las notas existentes. Los códigos emitidos siguen reservados.',
+      zh: '将重新打开 {1} 个订单中的 {0} 件商品，其中 {2} 个订单可恢复此文件中的装箱修改。此操作会合并所包含的完整订单、标签设置及本地规则，保留较新的本地修改和现有备注。恢复时会检查当前货号是否冲突。',
+      es: 'Se reabrirán {0} productos de {1} pedidos. {2} pedidos pueden recibir los cambios de empaque guardados en este archivo. Se combinan los pedidos completos incluidos, los ajustes de etiquetas y las reglas locales; se conservan los cambios locales más recientes y las notas existentes. Al restaurar se comprueba si hay conflictos con códigos en uso.',
     },
   'Seller unavailable': {
     zh: '卖家信息不可用',

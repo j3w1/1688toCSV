@@ -103,6 +103,8 @@ async function setup(
     unsignedAdjustment = false,
     missingSeller = false,
     unsupportedIds = [],
+    purchaseTimes = {},
+    beforeDetail,
   } = {}
 ) {
   const visited = []
@@ -114,6 +116,7 @@ async function setup(
         .map(
           (id) => `
         <order-item data-tracker-args="orderId=${id}">
+          ${purchaseTimes[id] ? `<span class="order-time">${purchaseTimes[id]}</span>` : ''}
           <a class="order-detail-action" href="${detailUrl(id)}">Detail</a>
           <q-checkbox data-tracker="checkbox-order-item" checked></q-checkbox>
           <div class="order-item-entry"></div><div class="order-item-entry"></div>
@@ -123,6 +126,7 @@ async function setup(
     } else {
       const id = url.searchParams.get('orderId')
       visited.push(id)
+      await beforeDetail?.(id)
       body = `<script>
         ${buildOrderFixture.toString()}
         ${completeOrder.toString()}
@@ -151,6 +155,71 @@ async function expandOrderMonths(library) {
     .all())
     await month.click()
 }
+
+test('each imported order appears immediately in purchase order without resetting filters or selection', async ({
+  extension,
+}) => {
+  const secondDetail = Promise.withResolvers()
+  const { list, library } = await setup(extension, {
+    purchaseTimes: {
+      [ids[0]]: '2026-10-17 08:30:00',
+      [ids[1]]: '2026-10-17 14:15:00',
+    },
+    beforeDetail: (id) => (id === ids[1] ? secondDetail.promise : undefined),
+  })
+  try {
+    await list
+      .getByRole('button', { name: 'Import selected', exact: true })
+      .click()
+    await list
+      .getByRole('button', { name: 'Import 2 selected orders', exact: true })
+      .click()
+    const rows = library.locator('#sheet-body tr[data-selection-key]')
+    await expect(rows).toHaveCount(2, { timeout: 65000 })
+    await expect(library.locator('.order-card')).toHaveCount(1)
+    await library.locator('#select-rows').click()
+    await library.getByLabel('Packing month', { exact: true }).fill('2026-10')
+    await library.locator('#prepare-orders').click()
+    await library
+      .getByRole('button', { name: 'Assign codes and prepare', exact: true })
+      .click()
+    const packing = library.locator('#packing-view')
+    await expect(packing.locator('.preparation-save-status')).toHaveText(
+      'Saved automatically'
+    )
+    await packing.getByRole('button', { name: 'Orders', exact: true }).click()
+    // Preserve a real filter and an existing selection while the second order
+    // commits. No page reload or import completion is needed to render it.
+    const status = await library
+      .locator('#status-filter option')
+      .nth(1)
+      .getAttribute('value')
+    await library.locator('#status-filter').selectOption(status)
+    await rows.first().focus()
+    await library.keyboard.press('Space')
+    const selected = await library
+      .locator('#sheet-body tr[aria-selected=true]')
+      .getAttribute('data-selection-key')
+    secondDetail.resolve()
+    await expect(rows).toHaveCount(4, { timeout: 65000 })
+    await expect(library.locator('#status-filter')).toHaveValue(status)
+    await expect(
+      library.locator(`#sheet-body tr[data-selection-key="${selected}"]`)
+    ).toHaveAttribute('aria-selected', 'true')
+    const orderKeys = await library
+      .locator('.order-card')
+      .evaluateAll((cards) => cards.map((card) => card.dataset.selectionKey))
+    expect(orderKeys).toEqual([ids[1], ids[0]])
+    expect(
+      await rows.evaluateAll((elements) =>
+        elements.map((row) => row.dataset.selectionKey.split('/')[0])
+      )
+    ).toEqual([ids[1], ids[1], ids[0], ids[0]])
+    expect(extension.unexpectedRequests).toEqual([])
+  } finally {
+    secondDetail.resolve()
+  }
+})
 
 test('1688 list and detail controls follow saved workspace palettes and mode without an open workspace', async ({
   extension,

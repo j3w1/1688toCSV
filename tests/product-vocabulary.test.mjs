@@ -108,6 +108,38 @@ test('automatic names preserve independent manual fields, manual clears and lega
   )
 })
 
+test('passive refresh preserves automatic names and blanks until a naming-rule change', () => {
+  const saved = {
+    groups: [
+      {
+        id: 'saved',
+        title: 'Cup',
+        spanishName: 'TAZA GUARDADA',
+        category: '',
+        naming: automaticNaming({ spanishName: 'TAZA GUARDADA', category: '' }),
+      },
+    ],
+  }
+  const suggest = () => ({ spanishName: 'NEW RULE', category: '新规则' })
+  assert.equal(
+    refreshPreparationNames(saved, suggest, { replaceAutomatic: false }),
+    saved
+  )
+  const renamed = refreshPreparationNames(saved, suggest)
+  assert.equal(renamed.groups[0].spanishName, 'NEW RULE')
+  assert.equal(renamed.groups[0].category, '新规则')
+  assert.equal(renamed.groups[0].naming.spanishName.source, 'automatic')
+  const edited = structuredClone(saved)
+  edited.groups[0].spanishName = 'EDITED'
+  const preserved = refreshPreparationNames(edited, suggest, {
+    replaceAutomatic: false,
+  })
+  assert.deepEqual(preserved.groups[0].naming.spanishName, {
+    source: 'manual',
+    value: 'EDITED',
+  })
+})
+
 test('scanning derives names without mutating financial rows or allocating packing codes', () => {
   const snapshot = {
     accountId: 'local',

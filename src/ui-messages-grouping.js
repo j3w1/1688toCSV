@@ -88,24 +88,24 @@ export const GROUPING_MESSAGES = {
       zh: '合并同一订单和装箱月份中的完整所选商品组。各款式保留独立条码。',
       es: 'Une los grupos completos seleccionados de un mismo pedido y mes de embalaje. Sus variantes mantienen códigos de barras separados.',
     },
-  'Selected variants share one barcode within each affected group. Different groups and orders remain separate. Original prices, quantities and previous code reservations are kept.':
+  'Selected variants share one barcode within each affected group. Different groups and orders remain separate. Original prices and quantities are kept. Codes no longer in use become available.':
     {
-      zh: '每个受影响组中的所选款式共用一个条码。不同商品组和订单保持独立。保留原始价格、数量及旧代码的归属。',
-      es: 'Las variantes seleccionadas comparten un código de barras dentro de cada grupo afectado. Los grupos y pedidos permanecen separados. Se conservan precios, cantidades y reservas de códigos anteriores.',
+      zh: '每个受影响组中的所选款式共用一个条码。不同商品组和订单保持独立。保留原始价格和数量。不再使用的货号将可重新分配。',
+      es: 'Las variantes seleccionadas comparten un código de barras dentro de cada grupo afectado. Los grupos y pedidos permanecen separados. Se conservan los precios y cantidades originales. Los códigos que dejen de usarse quedarán disponibles.',
     },
-  'Each selected combined variant becomes one barcode per original source row. New endings respect existing code reservations. Other variants stay unchanged.':
+  'Each selected combined variant becomes one barcode per original source row. New endings avoid codes currently used by other products. Other variants stay unchanged.':
     {
-      zh: '所选合并款式按原始订单行拆分为独立条码。新后缀避开已保留的代码。其他款式不变。',
-      es: 'Cada variante combinada seleccionada recibe un código de barras por fila original. Los sufijos nuevos respetan los códigos reservados. Las demás variantes no cambian.',
+      zh: '所选合并款式按原始订单行拆分为独立条码。新后缀避开其他商品当前使用的货号。其他款式不变。',
+      es: 'Cada variante combinada seleccionada recibe un código de barras por fila original. Los nuevos sufijos evitan códigos que otros productos usan actualmente. Las demás variantes no cambian.',
     },
-  'Selected variants move into a new product group within each source order. Unselected variants keep their product code. Old issued codes remain reserved.':
+  'Selected variants move into a new product group within each source order. Unselected variants keep their product code. Codes no longer in use become available.':
     {
-      zh: '所选款式移到各原始订单内的新商品组。未选款式保留商品代码。旧代码仍保留原归属。',
-      es: 'Las variantes seleccionadas pasan a un nuevo grupo dentro de su pedido original. Las variantes no seleccionadas conservan su código de producto. Los códigos anteriores siguen reservados.',
+      zh: '所选款式移到各原始订单内的新商品组。未选款式保留商品代码。不再使用的货号将可重新分配。',
+      es: 'Las variantes seleccionadas pasan a un nuevo grupo dentro de su pedido original. Las variantes no seleccionadas conservan su código de producto. Los códigos que dejen de usarse quedarán disponibles.',
     },
-  'Selected groups in this order share the first product code and carton mark. Barcode endings may change to stay unique. Old issued codes remain reserved.':
+  'Selected groups in this order share the first product code and carton mark. Barcode endings may change to stay unique. Codes no longer in use become available.':
     {
-      zh: '本订单的所选组共用第一个商品代码和唛头。条码后缀可能调整以保持唯一。旧代码仍保留原归属。',
-      es: 'Los grupos seleccionados de este pedido comparten el primer código de producto y marca de caja. Los sufijos pueden cambiar para seguir siendo únicos. Los códigos anteriores siguen reservados.',
+      zh: '本订单的所选组共用第一个商品代码和唛头。条码后缀可能调整以保持唯一。不再使用的货号将可重新分配。',
+      es: 'Los grupos seleccionados de este pedido comparten el primer código de producto y marca de caja. Los sufijos pueden cambiar para seguir siendo únicos. Los códigos que dejen de usarse quedarán disponibles.',
     },
 }

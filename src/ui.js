@@ -154,6 +154,20 @@ export function element(tag, text, className) {
   return node
 }
 
+/** Opt long review dialogs into a fixed top action bar and one scrolling body. */
+export function pinDialogActions(dialog, actions) {
+  const heading = dialog.querySelector(':scope > h2')
+  const header = element('div', undefined, 'scroll-dialog-header')
+  const body = element('div', undefined, 'scroll-dialog-content')
+  dialog.classList.add('scroll-dialog')
+  actions.classList.add('scroll-dialog-actions')
+  if (heading) header.append(heading)
+  header.append(actions)
+  body.append(...dialog.childNodes)
+  dialog.append(header, body)
+  return body
+}
+
 export function confirmScope({
   action,
   count,

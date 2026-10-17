@@ -2,6 +2,27 @@
 @import './error-notice.css';
 @import './image-copy-dialog.css';
 @import './appearance-settings.css';
+@import './packing-review.css';
+
+.preparation-help-shortcut {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-block-start: 7px;
+  color: var(--muted);
+}
+.preparation-help-shortcut kbd {
+  padding: 2px 5px;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  background: var(--field);
+  color: var(--text);
+  font:
+    600 10px/1.3 ui-monospace,
+    monospace;
+  white-space: nowrap;
+}
 
 .excel-options-footer {
   display: flex;
@@ -1023,7 +1044,21 @@ tbody tr:hover {
   max-block-size: calc(100dvh - 32px);
   box-sizing: border-box;
   padding: 18px;
+  overflow: hidden;
+}
+.product-details-dialog[open] {
+  display: flex;
+  flex-direction: column;
+}
+.product-details-top {
+  flex: none;
+}
+.product-details-scroll {
+  min-block-size: 0;
   overflow: auto;
+  overscroll-behavior: contain;
+  padding: 3px 4px 2px;
+  scrollbar-gutter: stable;
 }
 .product-details-heading,
 .product-details-tools,
@@ -1287,6 +1322,63 @@ dialog::backdrop {
   border: 0;
   font-size: 23px;
   padding: 0 7px;
+}
+#order-details,
+#label-dialog,
+#activity-drawer {
+  box-sizing: border-box;
+  max-block-size: calc(100dvh - 24px);
+  padding: 18px;
+  overflow: hidden;
+}
+#order-details[open],
+#label-dialog[open],
+#activity-drawer[open] {
+  display: flex;
+  flex-direction: column;
+}
+#activity-drawer {
+  max-block-size: 100dvh;
+  block-size: 100dvh;
+}
+.detail-dialog-heading {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+  flex: none;
+  padding-block-end: 12px;
+}
+.detail-dialog-heading > :first-child {
+  min-inline-size: 0;
+}
+.detail-dialog-heading > form {
+  flex: none;
+  margin: 0;
+}
+.detail-dialog-heading .dialog-close {
+  float: none;
+}
+.detail-dialog-heading h2 {
+  margin: 0;
+  font-size: 18px;
+  overflow-wrap: anywhere;
+}
+#order-details-heading > h2 {
+  margin-block: 6px;
+}
+.detail-dialog-scroll {
+  min-block-size: 0;
+  overflow: auto;
+  overscroll-behavior: contain;
+  padding: 3px 4px 2px;
+  scrollbar-gutter: stable;
+}
+.label-dialog-tools {
+  flex: 1;
+}
+#label-content > h2 {
+  margin-block: 0 12px;
 }
 dialog h2 {
   font-size: 22px;
@@ -1890,9 +1982,10 @@ main > .stats {
 }
 .packing-launch button {
   justify-self: start;
-  min-height: 36px;
+  min-height: 30px;
   font-size: 12px;
-  padding: 8px 11px;
+  padding: 4px 9px;
+  border-radius: 6px;
 }
 .sheet-pane .filterbar {
   padding: 0 14px 8px;

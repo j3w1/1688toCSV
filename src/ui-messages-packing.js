@@ -1,4 +1,24 @@
 export const PACKING_MESSAGES = {
+  Packing: { zh: '装箱', es: 'Empaque' },
+  'In this packing': { zh: '在此装箱中', es: 'En este empaque' },
+  'Saved values from before this preparation session will be restored.': {
+    zh: '将恢复本次装箱准备开始前保存的值。',
+    es: 'Se restaurarán los valores guardados antes de esta sesión de preparación.',
+  },
+  'Newly prepared product: returns to unassigned.': {
+    zh: '新准备的商品：恢复为未分配。',
+    es: 'Producto recién preparado: vuelve a quedar sin asignar.',
+  },
+  'Shared group settings will return to their session-start values. This product stays in packing.':
+    {
+      zh: '共用的分组设置将恢复为本次准备开始时的值。此商品仍保留在装箱中。',
+      es: 'Los ajustes compartidos del grupo volverán a sus valores iniciales. Este producto permanece en el empaque.',
+    },
+  '{count} selected products will leave this packing. Their preparation edits from this session will be discarded, including saved edits. Previously prepared products return to their earlier values; newly prepared products become unassigned. Review any shared group changes below. Original order data is kept.':
+    {
+      zh: '将从此装箱中移除 {count} 个所选商品，并丢弃本次准备的修改，包括已保存的修改。此前已准备的商品恢复原值；新准备的商品恢复为未分配。请检查下方共用分组的变更。原始订单数据会保留。',
+      es: 'Se quitarán {count} productos de este empaque y se descartarán sus cambios de esta sesión, incluso los guardados. Los productos preparados anteriormente recuperarán sus valores previos; los nuevos quedarán sin asignar. Revisa los cambios compartidos del grupo. Se conservan los datos originales del pedido.',
+    },
   Arrange: { zh: '排序', es: 'Ordenar' },
   'Arrange packing': { zh: '装箱排序', es: 'Ordenar empaque' },
   'Arrange displayed orders': {
@@ -26,10 +46,10 @@ export const PACKING_MESSAGES = {
     zh: '{0} 件商品 · {1} 组',
     es: '{0} productos · {1} grupos',
   },
-  'Filter the packing orders shown below. Copy and backup use selected products in the displayed orders.':
+  'Filter the packing orders shown below. Copy uses selected products in these orders; backup includes the whole open preparation.':
     {
-      zh: '筛选下方显示的装箱订单。复制和备份仅包含所显示订单中选中的商品。',
-      es: 'Filtra los pedidos de embalaje que se muestran abajo. La copia y el respaldo incluyen los productos seleccionados de los pedidos visibles.',
+      zh: '筛选下方显示的装箱订单。复制使用这些订单中选中的商品；备份包含当前打开的整份备货。',
+      es: 'Filtra los pedidos mostrados abajo. Copiar usa los productos seleccionados de estos pedidos; el respaldo incluye toda la preparación abierta.',
     },
   'Style & details': { zh: '样式与详情', es: 'Estilo y detalles' },
   'Image color scheme': { zh: '图片配色', es: 'Paleta de la imagen' },
@@ -174,14 +194,6 @@ export const PACKING_MESSAGES = {
   'Product actions': {
     zh: '商品操作',
     es: 'Acciones del producto',
-  },
-  'Previously issued here. Current barcode:': {
-    zh: '曾在此使用。当前条码：',
-    es: 'Emitido aquí anteriormente. Código de barras actual:',
-  },
-  'Previously issued here. Current carton code:': {
-    zh: '曾在此使用。当前唛头货号：',
-    es: 'Emitido aquí anteriormente. Código de caja actual:',
   },
   'Product names: {0}': {
     zh: '商品名称：{0}',
@@ -467,10 +479,10 @@ export const PACKING_MESSAGES = {
       zh: '此订单所有唛头共用一个中文品类，例如“玻璃”。',
       es: 'Un nombre chino para todas las marcas de caja del pedido. Por ejemplo, 玻璃 significa vidrio.',
     },
-  'Open a packing backup. Missing orders and newer saved edits are restored; newer local edits and issued codes stay protected.':
+  'Open a packing backup. Restore missing orders and newer saved edits, preserve newer local edits, and check current code conflicts.':
     {
-      zh: '打开装箱备份，恢复缺失的订单和较新的备份更改；保留本地较新的更改和已分配货号。',
-      es: 'Abre una copia de empaque. Restaura pedidos faltantes y cambios más recientes de la copia; protege los cambios locales más nuevos y los códigos emitidos.',
+      zh: '打开装箱备份，恢复缺失的订单和较新的备份修改，保留本地较新的修改，并检查当前货号是否冲突。',
+      es: 'Abre una copia de empaque. Restaura los pedidos faltantes y los cambios guardados más recientes, conserva los cambios locales más nuevos y comprueba si hay conflictos con códigos en uso.',
     },
   'Open selected order': {
     zh: '打开所选订单',
@@ -536,19 +548,6 @@ export const PACKING_MESSAGES = {
     zh: '上一页规则',
     es: 'Reglas anteriores',
   },
-  'Previously issued here. Current barcode: {0}.': {
-    zh: '此前在此分配。当前条码货号：{0}。',
-    es: 'Se emitió aquí antes. Código de barras actual: {0}.',
-  },
-  'Previously issued here. Current carton code: {0}.': {
-    zh: '此前在此分配。当前唛头货号：{0}。',
-    es: 'Se emitió aquí antes. Código de caja actual: {0}.',
-  },
-  'Previously issued to a product that has been regrouped or removed. The reservation remains to prevent duplicate labels.':
-    {
-      zh: '此前分配给已重新分组或移除的商品。仍保留此货号，防止重复标签。',
-      es: 'Se emitió para un producto reagrupado o eliminado. Sigue reservado para evitar etiquetas duplicadas.',
-    },
   'Printed on the carton mark, for example 玻璃 for glass.': {
     zh: '印在唛头上，例如“玻璃”。',
     es: 'Se imprime en la marca de caja; por ejemplo, 玻璃 para vidrio.',
@@ -756,11 +755,6 @@ export const PACKING_MESSAGES = {
     zh: '{0} 张图片。每批保留原始清晰度和行顺序。',
     es: '{0} imágenes. Cada lote conserva la calidad original y el orden de las filas.',
   },
-  '{0} is already reserved. A code stays with the product it was first issued to, even after that product changes codes or is removed.':
-    {
-      zh: '{0} 已被保留。货号永久属于最初分配的商品，即使该商品更换货号或被移除。',
-      es: '{0} ya está reservado. Un código pertenece al producto que lo recibió primero, aunque luego cambie de código o se elimine.',
-    },
   '{0} selected products · {1} orders': {
     zh: '已选 {0} 件商品 · {1} 个订单',
     es: '{0} productos seleccionados · {1} pedidos',
@@ -890,14 +884,6 @@ export const PACKING_MESSAGES = {
   'Seller color: {source}': {
     zh: '卖家颜色：{source}',
     es: 'Color del vendedor: {source}',
-  },
-  'Previously used by this product': {
-    zh: '此商品曾使用的货号',
-    es: 'Códigos anteriores de este producto',
-  },
-  'Choose a previous code…': {
-    zh: '选择以前的货号…',
-    es: 'Elegir un código anterior…',
   },
   'Saved code': {
     zh: '已保存的货号',

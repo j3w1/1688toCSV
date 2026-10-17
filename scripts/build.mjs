@@ -51,6 +51,7 @@ for (const resource of [
   'image-copy-dialog.css',
   'appearance-settings.css',
   'packing.css',
+  'packing-review.css',
   'label-editor.css',
   'theme.js',
 ])
@@ -74,6 +75,7 @@ const resources = [
   'library.js',
   'theme.js',
   'packing.css',
+  'packing-review.css',
   'label-editor.css',
   'assets/casa-elida.png',
 ]

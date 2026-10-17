@@ -4,6 +4,12 @@
   flex-wrap: wrap;
   gap: 6px;
 }
+.compact-copy-actions > button {
+  min-block-size: 30px;
+  padding: 4px 8px;
+  font-size: 12px;
+  border-radius: 6px;
+}
 .copy-actions-trigger {
   gap: 6px;
 }
@@ -44,8 +50,8 @@
 .copy-actions-panel .copy-format-group > button {
   width: 100%;
   min-width: 0;
-  min-height: 32px;
-  padding: 6px 8px;
+  min-height: 28px;
+  padding: 4px 7px;
   border-color: transparent;
   background: transparent;
   justify-content: flex-start;

@@ -1,5 +1,13 @@
 const SNAPSHOT_VERSION = 1
 const BACKUP_FORMAT = '1688-order-library'
+const productAnnotationFields = [
+  ['productTags', 'productTagsUpdatedAt', 'productTagsPartialClocks'],
+  [
+    'packingExcludedEntryIds',
+    'packingExclusionsUpdatedAt',
+    'packingExclusionsPartialClocks',
+  ],
+]
 const decimalFields = [
   'price',
   'quantity',
@@ -306,6 +314,39 @@ function validateRecord(input) {
       input.productTagsUpdatedAt,
       'Product tags updatedAt'
     )
+  if (input.packingExcludedEntryIds !== undefined)
+    record.packingExcludedEntryIds = strings(
+      input.packingExcludedEntryIds,
+      'Packing excluded entry IDs'
+    ).map((entryId) => identifier(entryId, 'Packing excluded entry ID'))
+  if (input.packingExclusionsUpdatedAt !== undefined)
+    record.packingExclusionsUpdatedAt = date(
+      input.packingExclusionsUpdatedAt,
+      'Packing exclusions updatedAt'
+    )
+  for (const [field, clock, partial] of productAnnotationFields) {
+    if (input[partial] === undefined) continue
+    object(input[partial], 'Partial product annotation clocks')
+    record[partial] = Object.fromEntries(
+      Object.entries(input[partial]).map(([id, value]) => [
+        identifier(id, 'Partial product annotation entry ID'),
+        date(value, 'Partial product annotation timestamp'),
+      ])
+    )
+    if (
+      record[clock] &&
+      Object.values(record[partial]).some((value) => value <= record[clock])
+    )
+      throw new Error(
+        'Partial product annotation clocks must follow the complete annotation timestamp'
+      )
+    const ids =
+      field === 'productTags'
+        ? Object.keys(record[field] || {})
+        : record[field] || []
+    if (!record[clock] && ids.some((id) => !record[partial][id]))
+      throw new Error('Partial product annotations are missing an entry clock')
+  }
   if (record.lastCheckedAt < record.snapshot.observedAt)
     throw new Error('Order lastCheckedAt precedes its observation')
   if (record.changedAt > record.snapshot.observedAt)
@@ -418,6 +459,17 @@ function reconcile(snapshot, previous) {
       ...(previous?.productTagsUpdatedAt !== undefined
         ? { productTagsUpdatedAt: previous.productTagsUpdatedAt }
         : {}),
+      ...(previous?.packingExcludedEntryIds !== undefined
+        ? { packingExcludedEntryIds: previous.packingExcludedEntryIds }
+        : {}),
+      ...(previous?.packingExclusionsUpdatedAt !== undefined
+        ? { packingExclusionsUpdatedAt: previous.packingExclusionsUpdatedAt }
+        : {}),
+      ...Object.fromEntries(
+        productAnnotationFields
+          .filter(([, , partial]) => previous?.[partial] !== undefined)
+          .map(([, , partial]) => [partial, previous[partial]])
+      ),
       changedEntryIds: previous
         ? snapshot.items
             .filter(
@@ -432,6 +484,57 @@ function reconcile(snapshot, previous) {
       ),
     },
   }
+}
+
+/** Partial packing imports preserve known entries without claiming unknown clears. */
+export function mergeProductAnnotations(previous, incoming, next = previous) {
+  for (const [field, clock, partial] of productAnnotationFields) {
+    const previousClock = previous[clock] || ''
+    const incomingClock = incoming[clock] || ''
+    const completeClock =
+      incomingClock > previousClock ? incomingClock : previousClock
+    const isTags = field === 'productTags'
+    let value = structuredClone(previous[field] || (isTags ? {} : []))
+    let entryClocks = { ...previous[partial] }
+    let changed = false
+    const assignEntry = (source, id) => {
+      if (isTags) {
+        if (source[field]?.[id]?.length) value[id] = [...source[field][id]]
+        else delete value[id]
+      } else {
+        const ids = new Set(value)
+        if (source[field]?.includes(id)) ids.add(id)
+        else ids.delete(id)
+        value = [...ids]
+      }
+    }
+    if (incomingClock > previousClock) {
+      value = structuredClone(incoming[field] || (isTags ? {} : []))
+      entryClocks = {}
+      for (const [id, timestamp] of Object.entries(previous[partial] || {})) {
+        if (timestamp >= incomingClock) assignEntry(previous, id)
+        if (timestamp > incomingClock) entryClocks[id] = timestamp
+      }
+      changed = true
+    }
+    for (const [id, timestamp] of Object.entries(incoming[partial] || {})) {
+      const existing =
+        (entryClocks[id] || '') > completeClock
+          ? entryClocks[id]
+          : completeClock
+      if (timestamp <= existing) continue
+      assignEntry(incoming, id)
+      entryClocks[id] = timestamp
+      changed = true
+    }
+    if (!changed) continue
+    next = { ...next, [field]: value }
+    if (completeClock) next[clock] = completeClock
+    else delete next[clock]
+    if (Object.keys(entryClocks).length) next[partial] = entryClocks
+    else delete next[partial]
+  }
+  return next
 }
 
 function requested(request) {
@@ -469,7 +572,7 @@ async function transaction(database, stores, mode, run) {
 
 export function validateBackup(input) {
   object(input, 'Backup')
-  if (input.format !== BACKUP_FORMAT || ![1, 2].includes(input.version))
+  if (input.format !== BACKUP_FORMAT || ![1, 2, 3].includes(input.version))
     throw new Error('Unsupported order-library backup')
   date(input.exportedAt, 'exportedAt')
   if (!Array.isArray(input.orders) || !Array.isArray(input.history))
@@ -529,7 +632,8 @@ export function validateBackup(input) {
       records.length
     )
       throw new Error(`Backup contains duplicate ${label}`)
-  const state = mergePackingState(allocations, issuedCodes)
+  const originalState = mergePackingState(allocations, issuedCodes)
+  const state = activePackingState(preparations, allocations, issuedCodes)
   for (const preparation of preparations) {
     const key = JSON.stringify([preparation.accountId, preparation.orderId])
     const owner = current.get(key)
@@ -540,7 +644,7 @@ export function validateBackup(input) {
         (record) => JSON.stringify(keyFor(record.snapshot)) === key
       )
     )
-    validatePreparationReservations(preparation, state)
+    validatePreparationReservations(preparation, originalState)
   }
   const packingPreferences =
     input.packingPreferences == null
@@ -579,7 +683,20 @@ export function validateBackup(input) {
     !scopedOrderKeys ||
     scopedOrderKeys.has(JSON.stringify(keyFor(record.snapshot)))
   return {
-    orders: orders.filter(inPackingScope),
+    orders: orders
+      .filter(inPackingScope)
+      .map((record) =>
+        packingScope
+          ? selectPackingOrder(
+              record,
+              packingScope.orders.find(
+                (scope) =>
+                  scope.accountId === record.snapshot.accountId &&
+                  scope.orderId === record.snapshot.orderId
+              ).entryIds
+            )
+          : record
+      ),
     history: history.filter(inPackingScope),
     images,
     preparations: scopedPreparations,
@@ -620,7 +737,7 @@ function validatePreparationMembership(preparation, order, history) {
 /** Extension-origin IndexedDB is the only durable store for orders and import jobs. */
 export async function openDatabase({ name = '1688-order-library' } = {}) {
   const database = await new Promise((resolve, reject) => {
-    const request = globalThis.indexedDB.open(name, 2)
+    const request = globalThis.indexedDB.open(name, 3)
     let blocked = false
     request.onupgradeneeded = (event) => {
       const db = request.result
@@ -653,6 +770,13 @@ export async function openDatabase({ name = '1688-order-library' } = {}) {
         })
         db.createObjectStore('packingPreferences', { keyPath: 'id' })
       }
+      if (event.oldVersion < 3) {
+        const tx = request.transaction
+        void replaceActiveCodes(tx).catch((error) => {
+          reject(error)
+          tx.abort()
+        })
+      }
     }
     request.onsuccess = () => {
       if (blocked) request.result.close()
@@ -671,6 +795,29 @@ export async function openDatabase({ name = '1688-order-library' } = {}) {
   database.onversionchange = () => database.close()
   const read = (stores, run) => transaction(database, stores, 'readonly', run)
   const write = (stores, run) => transaction(database, stores, 'readwrite', run)
+
+  async function replaceActiveCodes(
+    tx,
+    allocationInputs,
+    incomingEvidence = []
+  ) {
+    const state = activePackingState(
+      await requested(tx.objectStore('preparations').getAll()),
+      allocationInputs ??
+        (await requested(tx.objectStore('packingAllocations').getAll())),
+      [
+        ...incomingEvidence,
+        ...(await requested(tx.objectStore('issuedCodes').getAll())),
+      ]
+    )
+    tx.objectStore('issuedCodes').clear()
+    tx.objectStore('packingAllocations').clear()
+    for (const entry of state.issuedCodes)
+      tx.objectStore('issuedCodes').put(entry)
+    for (const entry of state.allocations)
+      tx.objectStore('packingAllocations').put(entry)
+    return state
+  }
 
   async function packingPreferencesFor(tx) {
     const store = tx.objectStore('packingPreferences')
@@ -699,6 +846,26 @@ export async function openDatabase({ name = '1688-order-library' } = {}) {
     return new Date(
       Math.max(Date.now(), Date.parse(previous || 0) + 1)
     ).toISOString()
+  }
+
+  function annotationEditClock(record, field, ids) {
+    const [, clock, partial] = productAnnotationFields.find(
+      ([name]) => name === field
+    )
+    const previous = [
+      record[clock] || '',
+      ...Object.values(record[partial] || {}),
+    ]
+      .sort()
+      .at(-1)
+    const timestamp = nextEditTimestamp(previous)
+    if (record[partial] === undefined) return { [clock]: timestamp }
+    return {
+      [partial]: {
+        ...record[partial],
+        ...Object.fromEntries(ids.map((id) => [id, timestamp])),
+      },
+    }
   }
 
   async function syncTagCatalogs(
@@ -734,9 +901,16 @@ export async function openDatabase({ name = '1688-order-library' } = {}) {
     return next
   }
 
-  function refreshPreparedNames(tx, preparation, suggest) {
+  function refreshPreparedNames(
+    tx,
+    preparation,
+    suggest,
+    { replaceAutomatic = false } = {}
+  ) {
     if (!preparation) return false
-    const refreshed = refreshPreparationNames(preparation, suggest)
+    const refreshed = refreshPreparationNames(preparation, suggest, {
+      replaceAutomatic,
+    })
     if (refreshed === preparation) return false
     // Invalidate open drafts without promoting derived names over newer
     // authoring in a backup. updatedAt remains the user's edit timestamp.
@@ -747,7 +921,7 @@ export async function openDatabase({ name = '1688-order-library' } = {}) {
     return true
   }
 
-  async function refreshNames(tx, preferences) {
+  async function refreshNames(tx, preferences, options) {
     const suggest = createNameSuggester(preferences.vocabulary)
     let orders = 0
     let preparations = 0
@@ -765,7 +939,8 @@ export async function openDatabase({ name = '1688-order-library' } = {}) {
     for (const preparation of await requested(
       tx.objectStore('preparations').getAll()
     ))
-      if (refreshPreparedNames(tx, preparation, suggest)) preparations += 1
+      if (refreshPreparedNames(tx, preparation, suggest, options))
+        preparations += 1
     return { orders, preparations }
   }
 
@@ -797,6 +972,7 @@ export async function openDatabase({ name = '1688-order-library' } = {}) {
     )
     if (new Set(keys).size !== keys.length)
       throw new Error('Save each order preparation only once in a batch')
+    const selectedKeys = new Set(keys)
     const selectedOrderIds = new Set(drafts.map((draft) => draft.orderId))
     function checkpointScope(value, label) {
       if (typeof value === 'boolean')
@@ -820,14 +996,16 @@ export async function openDatabase({ name = '1688-order-library' } = {}) {
         let issuedCodes = await requested(
           tx.objectStore('issuedCodes').getAll()
         )
-        const results = []
-        for (let index = 0; index < drafts.length; index += 1) {
-          const draft = drafts[index]
-          const resetOrderDefaults = defaultOrderIds.has(draft.orderId)
-          const expectedRevision = expectedRevisions[index]
-          const key = [draft.accountId, draft.orderId]
-          const previous = await requested(store.get(key))
-          if ((previous?.revision ?? 0) !== expectedRevision) {
+        const previousPreparations = await requested(store.getAll())
+        const previousByKey = new Map(
+          previousPreparations.map((entry) => [
+            JSON.stringify([entry.accountId, entry.orderId]),
+            entry,
+          ])
+        )
+        for (const [index, draft] of drafts.entries()) {
+          const previous = previousByKey.get(keys[index])
+          if ((previous?.revision ?? 0) !== expectedRevisions[index]) {
             const error = new Error(
               'Preparation changed in another tab. Reload it before saving your edits.'
             )
@@ -835,6 +1013,34 @@ export async function openDatabase({ name = '1688-order-library' } = {}) {
             error.packingIssue = { orderId: draft.orderId }
             throw error
           }
+        }
+        // Reserve the complete final set of explicit codes before allocating blanks.
+        // This makes swaps and bulk edits atomic and ignores retired assignments.
+        const current = activePackingState(
+          [
+            ...previousPreparations.filter(
+              (entry) =>
+                !selectedKeys.has(
+                  JSON.stringify([entry.accountId, entry.orderId])
+                )
+            ),
+            ...drafts.map((draft) => ({
+              ...draft,
+              groups: draft.groups.filter((group) => group.baseCode),
+            })),
+          ],
+          allocations,
+          issuedCodes
+        )
+        allocations = current.allocations
+        issuedCodes = current.issuedCodes
+        const results = []
+        for (let index = 0; index < drafts.length; index += 1) {
+          const draft = drafts[index]
+          const resetOrderDefaults = defaultOrderIds.has(draft.orderId)
+          const expectedRevision = expectedRevisions[index]
+          const key = [draft.accountId, draft.orderId]
+          const previous = previousByKey.get(keys[index])
           const order = await requested(tx.objectStore('orders').get(key))
           if (!order)
             throw new Error('Save the source order before preparing labels')
@@ -883,29 +1089,10 @@ export async function openDatabase({ name = '1688-order-library' } = {}) {
               resetPreparationOrder(preparation, order.snapshot)
             )
           else {
-            const previousDefaults = preparation.defaultPacking
             preparation.defaultPacking = extendDefaultPacking(
               preparation,
               order.snapshot
             )
-            if (
-              JSON.stringify(previousDefaults) !==
-              JSON.stringify(preparation.defaultPacking)
-            ) {
-              const defaults = allocatePreparation(
-                {
-                  ...preparation,
-                  ...preparation.defaultPacking,
-                  defaultPacking: undefined,
-                  previousPacking: undefined,
-                },
-                result.allocations,
-                result.issuedCodes,
-                { snapshot: order.snapshot }
-              )
-              result.allocations = defaults.allocations
-              result.issuedCodes = defaults.issuedCodes
-            }
           }
           validatePreparationReservations(
             { ...preparation, revision: 1 },
@@ -917,6 +1104,8 @@ export async function openDatabase({ name = '1688-order-library' } = {}) {
         }
         // No writes occur until every draft and reservation has been checked.
         if (!preview) {
+          tx.objectStore('packingAllocations').clear()
+          tx.objectStore('issuedCodes').clear()
           for (const allocation of allocations)
             tx.objectStore('packingAllocations').put(allocation)
           for (const issued of issuedCodes)
@@ -1019,13 +1208,57 @@ export async function openDatabase({ name = '1688-order-library' } = {}) {
         const result = {
           ...order,
           productTags,
-          productTagsUpdatedAt: nextEditTimestamp(order.productTagsUpdatedAt),
+          ...annotationEditClock(order, 'productTags', [entryId]),
         }
         store.put(result)
         await syncTagCatalogs(tx, await packingPreferencesFor(tx), {
           previousRecords: [order],
           touch: true,
         })
+        return result
+      })
+    },
+
+    async setPackingExcluded(
+      orderId,
+      entryIds,
+      excluded,
+      { accountId = 'local' } = {}
+    ) {
+      identifier(orderId, 'Order ID')
+      const ids = strings(entryIds, 'Packing entry IDs').map((entryId) =>
+        identifier(entryId, 'Packing entry ID')
+      )
+      if (typeof excluded !== 'boolean')
+        throw new Error('Packing exclusion must be a boolean')
+      return write(['orders'], async (tx) => {
+        const store = tx.objectStore('orders')
+        const order = await requested(store.get([accountId, orderId]))
+        if (!order) throw new Error('Order was not found')
+        const currentIds = new Set(
+          order.snapshot.items.map((item) => item.entryId)
+        )
+        const excludedIds = new Set(order.packingExcludedEntryIds || [])
+        if (
+          ids.some(
+            (id) => !currentIds.has(id) && (excluded || !excludedIds.has(id))
+          )
+        )
+          throw new Error('Product was not found in this order')
+        let changed = false
+        for (const id of ids) {
+          if (excludedIds.has(id) === excluded) continue
+          if (excluded) excludedIds.add(id)
+          else excludedIds.delete(id)
+          changed = true
+        }
+        if (!changed) return order
+        const result = {
+          ...order,
+          packingExcludedEntryIds: [...excludedIds],
+          ...annotationEditClock(order, 'packingExcludedEntryIds', ids),
+        }
+        store.put(result)
         return result
       })
     },
@@ -1056,8 +1289,15 @@ export async function openDatabase({ name = '1688-order-library' } = {}) {
                     ])
                     .filter(([, tags]) => tags.length)
                 )
-                next.productTagsUpdatedAt = nextEditTimestamp(
-                  record.productTagsUpdatedAt
+                Object.assign(
+                  next,
+                  annotationEditClock(
+                    record,
+                    'productTags',
+                    entries
+                      .filter(([, tags]) => tags.includes(name))
+                      .map(([id]) => id)
+                  )
                 )
               }
             }
@@ -1120,8 +1360,12 @@ export async function openDatabase({ name = '1688-order-library' } = {}) {
               scope === 'product'
                 ? {
                     ...record,
-                    productTagsUpdatedAt: nextEditTimestamp(
-                      record.productTagsUpdatedAt
+                    ...annotationEditClock(
+                      record,
+                      'productTags',
+                      Object.entries(originals[index].productTags || {})
+                        .filter(([, tags]) => tags.includes(name))
+                        .map(([id]) => id)
                     ),
                   }
                 : record
@@ -1143,7 +1387,14 @@ export async function openDatabase({ name = '1688-order-library' } = {}) {
     async removeOrders(orderIds, { accountId = 'local' } = {}) {
       const ids = strings(orderIds, 'orderIds')
       return write(
-        ['orders', 'history', 'preparations', 'packingPreferences'],
+        [
+          'orders',
+          'history',
+          'preparations',
+          'packingPreferences',
+          'issuedCodes',
+          'packingAllocations',
+        ],
         async (tx) => {
           const previousRecords = []
           for (const id of ids) {
@@ -1165,6 +1416,7 @@ export async function openDatabase({ name = '1688-order-library' } = {}) {
             previousRecords,
             touch: true,
           })
+          await replaceActiveCodes(tx)
         }
       )
     },
@@ -1229,14 +1481,13 @@ export async function openDatabase({ name = '1688-order-library' } = {}) {
           }
           return {
             format: BACKUP_FORMAT,
-            version: 2,
+            version: 3,
             exportedAt: new Date().toISOString(),
             orders,
             history,
             images,
             preparations,
-            allocations,
-            issuedCodes,
+            ...activePackingState(preparations, allocations, issuedCodes),
             packingPreferences: preferences
               ? { value: preferences.value, updatedAt: preferences.updatedAt }
               : null,
@@ -1265,17 +1516,10 @@ export async function openDatabase({ name = '1688-order-library' } = {}) {
           const allocations = await requested(
             tx.objectStore('packingAllocations').getAll()
           )
-          const issuedCodes = await requested(
-            tx.objectStore('issuedCodes').getAll()
-          )
           const state = mergePackingState(
             [...allocations, ...backup.allocations],
-            [...issuedCodes, ...backup.issuedCodes]
+            []
           )
-          for (const allocation of state.allocations)
-            tx.objectStore('packingAllocations').put(allocation)
-          for (const issued of state.issuedCodes)
-            tx.objectStore('issuedCodes').put(issued)
           for (const incoming of backup.preparations) {
             const store = tx.objectStore('preparations')
             const previous = await requested(
@@ -1292,7 +1536,6 @@ export async function openDatabase({ name = '1688-order-library' } = {}) {
                 incoming,
                 scope.entryIds
               )
-              validatePreparationReservations(merged, state)
               if (merged !== previous) store.put(merged)
             } else if (!previous) store.put(incoming)
             else if (incoming.updatedAt > previous.updatedAt)
@@ -1304,10 +1547,18 @@ export async function openDatabase({ name = '1688-order-library' } = {}) {
               if (
                 JSON.stringify(preparationAuthoring(incoming)) !==
                 JSON.stringify(preparationAuthoring(previous))
-              )
-                throw new Error(
-                  'Backup conflict: preparation edits have the same timestamp'
-                )
+              ) {
+                if (isPackingPreparationSubset(previous, incoming))
+                  store.put({
+                    ...incoming,
+                    revision:
+                      Math.max(previous.revision, incoming.revision) + 1,
+                  })
+                else if (!isPackingPreparationSubset(incoming, previous))
+                  throw new Error(
+                    'Backup conflict: preparation edits have the same timestamp'
+                  )
+              }
             }
           }
           if (backup.packingPreferences) {
@@ -1319,7 +1570,14 @@ export async function openDatabase({ name = '1688-order-library' } = {}) {
               (!backup.packingScope &&
                 previous.updatedAt < backup.packingPreferences.updatedAt)
             )
-              store.put({ id: 'packing', ...backup.packingPreferences })
+              store.put({
+                id: 'packing',
+                ...backup.packingPreferences,
+                // Scoped artwork/tag defaults do not claim a complete Settings edit.
+                updatedAt: backup.packingScope
+                  ? '1970-01-01T00:00:00.000Z'
+                  : backup.packingPreferences.updatedAt,
+              })
           }
           let imported = 0
           let updated = 0
@@ -1338,19 +1596,10 @@ export async function openDatabase({ name = '1688-order-library' } = {}) {
                   updated += 1
                 }
               }
-              // Product annotations have their own edit clock; a later scrape
-              // cannot overwrite them, and an older backup cannot undo a clear.
-              if (
-                !backup.packingScope &&
-                incoming.productTagsUpdatedAt &&
-                incoming.productTagsUpdatedAt >
-                  (previous.productTagsUpdatedAt || '')
-              )
-                next = {
-                  ...next,
-                  productTags: incoming.productTags || {},
-                  productTagsUpdatedAt: incoming.productTagsUpdatedAt,
-                }
+              // A packing restore never replaces existing local annotations.
+              // Full restores fill partial observations without undoing newer edits.
+              if (!backup.packingScope)
+                next = mergeProductAnnotations(previous, incoming, next)
               if (next !== previous) orders.put(next)
               // An older backup's current version is still useful history.
               if (incoming.snapshot.observedAt < previous.snapshot.observedAt) {
@@ -1384,6 +1633,9 @@ export async function openDatabase({ name = '1688-order-library' } = {}) {
               await requested(history.index('order').getAll(key))
             )
           }
+          // Only the final merged preparations own codes. Old backups cannot
+          // revive retired reservations; current collisions abort the whole restore.
+          await replaceActiveCodes(tx, state.allocations, backup.issuedCodes)
           if (backup.packingScope) {
             // Newer local source/preparation data wins. Do not reopen a scope
             // whose selected rows have since disappeared from either record.
@@ -1428,10 +1680,14 @@ export async function openDatabase({ name = '1688-order-library' } = {}) {
               )
             }
           }
-          await refreshNames(
+          const preferences = await syncTagCatalogs(
             tx,
-            await syncTagCatalogs(tx, await packingPreferencesFor(tx))
+            await packingPreferencesFor(tx)
           )
+          // Packing carries exact prepared label values, not the global naming
+          // catalog that originally suggested them. Preserve that saved artwork.
+          if (!backup.packingScope)
+            await refreshNames(tx, preferences, { replaceAutomatic: true })
           return { imported, updated }
         }
       )
@@ -1524,7 +1780,7 @@ export async function openDatabase({ name = '1688-order-library' } = {}) {
               currentVariant,
             } = evidence
             const snapshot = reservation.ownerSnapshot
-            const entryIds = snapshot?.entryIds ?? evidence.entryIds ?? []
+            const entryIds = evidence.entryIds ?? snapshot?.entryIds ?? []
             const members = new Set(entryIds)
             const sourceTitle = [
               ...new Set(
@@ -1553,9 +1809,6 @@ export async function openDatabase({ name = '1688-order-library' } = {}) {
                 ),
               ].slice(0, 6)
             }
-            const activeEntries = new Set(
-              order?.snapshot.items.map((entry) => entry.entryId) || []
-            )
             const currentCode =
               kind === 'base'
                 ? currentGroup?.baseCode
@@ -1564,10 +1817,6 @@ export async function openDatabase({ name = '1688-order-library' } = {}) {
                     !currentVariant.needsSizeMapping
                   ? barcodeValue(currentGroup, currentVariant)
                   : ''
-            const currentMembership =
-              variant?.entryIds ||
-              group?.variants.flatMap((entry) => entry.entryIds) ||
-              []
             owners.push({
               kind,
               accountId,
@@ -1578,32 +1827,26 @@ export async function openDatabase({ name = '1688-order-library' } = {}) {
                 : {}),
               month: reservation.month,
               sellerId: reservation.sellerId,
-              status:
-                group &&
-                (kind === 'base' || variant) &&
-                currentCode === code &&
-                currentMembership.some((entryId) => activeEntries.has(entryId))
-                  ? 'active'
-                  : 'historical',
+              status: 'active',
               orderExists: Boolean(order),
               groupExists: Boolean(group),
               sellerName:
-                snapshot?.sellerName ||
                 order?.snapshot.sellerName ||
+                snapshot?.sellerName ||
                 reservation.sellerId,
               groupTitle:
+                currentGroup?.title ||
                 snapshot?.groupTitle ||
                 (evidence.recovered ? sourceTitle : evidenceGroup?.title) ||
                 '',
               spanishName:
-                snapshot?.spanishName ||
-                (!evidence.recovered && evidenceGroup?.spanishName) ||
+                currentGroup?.spanishName ?? snapshot?.spanishName ?? '',
+              category: currentGroup?.category ?? snapshot?.category ?? '',
+              variant:
+                currentVariant?.variant ??
+                snapshot?.variant ??
+                evidenceVariant?.variant ??
                 '',
-              category:
-                snapshot?.category ||
-                (!evidence.recovered && evidenceGroup?.category) ||
-                '',
-              variant: snapshot?.variant || evidenceVariant?.variant || '',
               entryIds,
               photos,
               currentCode: currentCode || '',
@@ -1697,7 +1940,16 @@ export async function openDatabase({ name = '1688-order-library' } = {}) {
             Math.max(Date.now(), Date.parse(previous?.updatedAt || 0) + 1)
           ).toISOString()
           store.put({ id: 'packing', value, updatedAt })
-          await refreshNames(tx, value)
+          // Seed rules and saved rules can have different property ordering.
+          // Compare their effective, validated values rather than raw records.
+          const previousVocabulary = validatePackingPreferences(
+            initializeVocabulary(validatePackingPreferences(previous?.value))
+          ).vocabulary
+          await refreshNames(tx, value, {
+            replaceAutomatic:
+              JSON.stringify(previousVocabulary) !==
+              JSON.stringify(value.vocabulary),
+          })
           return value
         }
       )
@@ -1762,7 +2014,9 @@ import { upgradeWorkspaceColors } from './appearance.js'
 import { lineGrossCents, moneyToCents } from './money.js'
 import { purchaseTimestamp } from './order-date.js'
 import {
+  isPackingPreparationSubset,
   mergePackingPreparation,
+  selectPackingOrder,
   selectPackingPreparation,
   validatePackingScope,
 } from './packing-backup.js'
@@ -1775,6 +2029,7 @@ import {
   refreshPreparationNames,
 } from './product-vocabulary.js'
 import {
+  activePackingState,
   allocatePreparation,
   barcodeValue,
   codeOwnerEvidence,

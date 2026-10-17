@@ -12,7 +12,12 @@ async function backup(extension) {
 async function setup(
   extension,
   count = 1,
-  { openFirstOnly = false, packingPositions = [] } = {}
+  {
+    openFirstOnly = false,
+    packingPositions = [],
+    withPreviousPacking = false,
+    sameSeller = false,
+  } = {}
 ) {
   const [source] = await extension.inspector.evaluate(
     `(${createDemoRecords.toString()})(document)`
@@ -23,6 +28,10 @@ async function setup(
     record.snapshot.sourceUrl = `https://air.1688.com/app/ctf-page/trade-order-detail/index.html?orderId=${record.snapshot.orderId}`
     record.snapshot.sellerName = `Synthetic history ${index ? 'a' : 'z'} store`
     record.snapshot.sellerMemberLogin = `synthetic-history-${index ? 'a' : 'z'}`
+    if (sameSeller) {
+      record.snapshot.sellerName = 'Synthetic history shared store'
+      record.snapshot.sellerMemberLogin = 'synthetic-history-shared'
+    }
     for (const [row, item] of record.snapshot.items.entries()) {
       item.title = row < 2 ? '合成玻璃罐' : '合成收纳盒'
       item.productNumber = row < 2 ? 'HISTORY-JAR' : 'HISTORY-BOX'
@@ -34,9 +43,15 @@ async function setup(
   const fixture = await extension.context.newPage()
   await fixture.goto(`${extension.origin}/unsupported`)
   const seeded = await fixture.evaluate(
-    async ({ records, origin, openFirstOnly, packingPositions }) => {
+    async ({
+      records,
+      origin,
+      openFirstOnly,
+      packingPositions,
+      withPreviousPacking,
+    }) => {
       const { openDatabase } = await import(`${origin}/src/database.js`)
-      const { createPreparation } = await import(
+      const { createPreparation, packingCheckpoint } = await import(
         `${origin}/src/packing-model.js`
       )
       const db = await openDatabase()
@@ -48,7 +63,7 @@ async function setup(
         history: [],
         images: [],
       })
-      await db.savePreparations(
+      const assigned = await db.savePreparations(
         records.map(({ snapshot }, index) => {
           const draft = createPreparation(snapshot, '2026-10')
           if (openFirstOnly && index === 0) draft.packingPosition = 0
@@ -61,9 +76,24 @@ async function setup(
           return draft
         })
       )
+      if (withPreviousPacking)
+        await db.savePreparations(
+          assigned.map((draft) => ({
+            ...draft,
+            previousPacking: packingCheckpoint(draft, {
+              includeDefaults: true,
+            }),
+          }))
+        )
       return db.exportBackup()
     },
-    { records, origin: extension.origin, openFirstOnly, packingPositions }
+    {
+      records,
+      origin: extension.origin,
+      openFirstOnly,
+      packingPositions,
+      withPreviousPacking,
+    }
   )
   await fixture.close()
   const restored = await extension.inspector.evaluate(
@@ -96,7 +126,7 @@ async function setup(
   await expect(view.locator('.preparation-group')).toHaveCount(
     (openFirstOnly ? 1 : count) * 2
   )
-  return { page, view, original: await backup(extension) }
+  return { page, view, baseline: seeded, original: await backup(extension) }
 }
 
 async function saved(view) {
@@ -159,11 +189,11 @@ test('category typing and code roundtrips remain undoable after every autosave',
     original.preparations[0].groups[0].variants.map((variant) => variant.id)
   )
   expect(final.orders).toEqual(original.orders)
-  expect(final.issuedCodes).toEqual(
-    expect.arrayContaining(original.issuedCodes)
+  expect(final.issuedCodes.map(({ code }) => code).sort()).toEqual(
+    original.issuedCodes.map(({ code }) => code).sort()
   )
   expect(final.issuedCodes.some((entry) => entry.code === 'CE26109901')).toBe(
-    true
+    false
   )
 })
 
@@ -234,9 +264,340 @@ test('size handling and reset remain reversible after their confirmed saves', as
   await travel(view, 'Redo')
   const final = await backup(extension)
   expect(groups(final)).toEqual(groups(reset))
-  expect(final.issuedCodes).toEqual(beforeReset.issuedCodes)
+  expect(final.issuedCodes.map(({ code }) => code).sort()).toEqual(
+    reset.issuedCodes.map(({ code }) => code).sort()
+  )
   expect(final.orders).toEqual(original.orders)
 })
+
+test('removing the final group filters the order picker and undo restores that order and its scoped rows', async ({
+  extension,
+}) => {
+  const { page, view, original, baseline } = await setup(extension, 2)
+  const firstId = original.preparations[0].orderId
+  const secondId = original.preparations[1].orderId
+  const picker = view.getByLabel('Show packing orders', { exact: true })
+  await picker.selectOption(firstId)
+  for (let groups = 2; groups > 0; groups--) {
+    const remove = view
+      .getByRole('button', { name: 'Remove group', exact: true })
+      .first()
+    await remove.focus()
+    await remove.click()
+    const review = page.getByRole('dialog', {
+      name: 'Remove from packing?',
+      exact: true,
+    })
+    await review
+      .getByRole('button', { name: 'Remove from packing', exact: true })
+      .click()
+    await saved(view)
+  }
+  await expect(picker.locator(`option[value="${firstId}"]`)).toHaveCount(0)
+  await expect(picker).toHaveValue(secondId)
+  await expect(view.locator('.packing-title')).toContainText(
+    '1 orders · 3 products'
+  )
+  await expect(view.locator('.packing-order-section')).toHaveCount(1)
+  await travel(view, 'Undo')
+  await expect(picker.locator(`option[value="${firstId}"]`)).toHaveCount(1)
+  await expect(picker).toHaveValue(firstId)
+  await expect(view.locator('.preparation-group')).toHaveCount(1)
+  await travel(view, 'Redo')
+  await expect(picker.locator(`option[value="${firstId}"]`)).toHaveCount(0)
+  await expect(picker).toHaveValue(secondId)
+  const after = await backup(extension)
+  expect(
+    after.preparations.find((draft) => draft.orderId === firstId).groups
+  ).toEqual(
+    baseline.preparations.find((draft) => draft.orderId === firstId).groups
+  )
+  expect(
+    after.preparations.find((draft) => draft.orderId === secondId).groups
+  ).toEqual(
+    original.preparations.find((draft) => draft.orderId === secondId).groups
+  )
+})
+
+test('removal reviews and discards saved session edits while retaining kept siblings and undo restores the complete edit', async ({
+  extension,
+}) => {
+  const { page, view, original, baseline } = await setup(extension)
+  const groupId = original.preparations[0].groups[0].id
+  const group = view.locator(`[data-group-id="${groupId}"]`)
+  await group.getByLabel('Product code', { exact: true }).fill('CE26109901')
+  await saved(view)
+  await group.getByLabel('Chinese category', { exact: true }).fill('陶瓷')
+  await saved(view)
+  await group
+    .locator('tr[data-variant-id]')
+    .nth(1)
+    .getByLabel('Material', { exact: true })
+    .fill('Cotton')
+  await saved(view)
+  const edited = await backup(extension)
+  const remove = group
+    .getByRole('button', { name: 'Remove product', exact: true })
+    .first()
+  await remove.focus()
+  await remove.click()
+  const review = page.getByRole('dialog', {
+    name: 'Remove from packing?',
+    exact: true,
+  })
+  await expect(review.locator('.packing-review-item')).toHaveCount(2)
+  await expect(review).toContainText('CE26109901')
+  await expect(review).toContainText(
+    original.preparations[0].groups[0].baseCode
+  )
+  await expect(review).toContainText('This product stays in packing')
+  await review.getByRole('button', { name: 'Cancel', exact: true }).click()
+  expect(groups(await backup(extension))).toEqual(groups(edited))
+  await remove.focus()
+  await remove.click()
+  await review
+    .getByRole('button', { name: 'Remove from packing', exact: true })
+    .click()
+  await saved(view)
+  await expect(group.locator('tr[data-variant-id]')).toHaveCount(1)
+  const removed = await backup(extension)
+  const savedGroup = removed.preparations[0].groups.find(
+    (entry) => entry.id === groupId
+  )
+  expect(savedGroup.baseCode).toBe(original.preparations[0].groups[0].baseCode)
+  expect(savedGroup.category).toBe(original.preparations[0].groups[0].category)
+  expect(savedGroup.variants[1].material).toBe('Cotton')
+  expect(savedGroup.variants[0]).toEqual(
+    baseline.preparations[0].groups[0].variants[0]
+  )
+  await travel(view, 'Undo')
+  await expect(group.locator('tr[data-variant-id]')).toHaveCount(2)
+  expect(groups(await backup(extension))).toEqual(groups(edited))
+  await travel(view, 'Redo')
+  await expect(group.locator('tr[data-variant-id]')).toHaveCount(1)
+  expect(groups(await backup(extension))).toEqual(groups(removed))
+})
+
+test('removal resolves a restored-code collision against its candidate and records one undoable action', async ({
+  extension,
+}) => {
+  const { page, view, original } = await setup(extension)
+  const [originalA, originalB] = original.preparations[0].groups
+  const groupA = view.locator(`[data-group-id="${originalA.id}"]`)
+  const groupB = view.locator(`[data-group-id="${originalB.id}"]`)
+  await groupA.getByLabel('Product code', { exact: true }).fill('CE26100105')
+  await saved(view)
+  await groupA.getByLabel('Chinese category', { exact: true }).fill('陶瓷')
+  await saved(view)
+  const beforeReuse = await backup(extension)
+  await groupB
+    .getByLabel('Product code', { exact: true })
+    .fill(originalA.baseCode)
+  await saved(view)
+  const beforeRemoval = await backup(extension)
+  const remove = groupA.getByRole('button', {
+    name: 'Remove group',
+    exact: true,
+  })
+  const review = page.getByRole('dialog', {
+    name: 'Remove from packing?',
+    exact: true,
+  })
+  const conflict = page.getByRole('dialog', {
+    name: 'Resolve code conflict',
+    exact: true,
+  })
+  async function requestRemoval() {
+    await remove.focus()
+    await remove.click()
+    await review
+      .getByRole('button', { name: 'Remove from packing', exact: true })
+      .click()
+    await expect(conflict).toBeVisible()
+  }
+  await requestRemoval()
+  await expect(
+    conflict.getByRole('button', { name: 'Keep saved version', exact: true })
+  ).toHaveCount(0)
+  await expect(
+    conflict.locator('.conflict-owner-card .conflict-occupied-code')
+  ).toHaveText(originalA.baseCode)
+  const correction = conflict.getByLabel('Product code', { exact: true })
+  await expect(correction).toHaveValue(originalA.baseCode)
+  await expect(conflict).toContainText(
+    'Removing these products would restore a code now assigned elsewhere'
+  )
+  expect((await backup(extension)).preparations).toEqual(
+    beforeRemoval.preparations
+  )
+  await conflict
+    .getByRole('button', { name: 'Cancel removal', exact: true })
+    .click()
+  await expect(conflict).toBeHidden()
+  await expect(groupA).toHaveCount(1)
+  expect((await backup(extension)).preparations).toEqual(
+    beforeRemoval.preparations
+  )
+  await requestRemoval()
+  await correction.fill('CE26100106')
+  await conflict
+    .getByRole('button', { name: 'Apply corrections', exact: true })
+    .click()
+  await expect(conflict).toBeHidden()
+  await saved(view)
+  await expect(groupA).toHaveCount(0)
+  await expect(view.locator('.packing-title')).toContainText(
+    '1 orders · 1 products'
+  )
+  const removed = await backup(extension)
+  const restoredA = removed.preparations[0].groups.find(
+    (group) => group.id === originalA.id
+  )
+  expect(restoredA.baseCode).toBe('CE26100106')
+  expect(restoredA.category).toBe(originalA.category)
+  expect(
+    removed.preparations[0].groups.find((group) => group.id === originalB.id)
+  ).toEqual(
+    beforeRemoval.preparations[0].groups.find(
+      (group) => group.id === originalB.id
+    )
+  )
+  await travel(view, 'Undo')
+  await expect(groupA).toHaveCount(1)
+  expect(groups(await backup(extension))).toEqual(groups(beforeRemoval))
+  await travel(view, 'Redo')
+  await expect(groupA).toHaveCount(0)
+  expect(groups(await backup(extension))).toEqual(groups(removed))
+  await travel(view, 'Undo')
+  await travel(view, 'Undo')
+  expect(groups(await backup(extension))).toEqual(groups(beforeReuse))
+  expect((await backup(extension)).orders).toEqual(original.orders)
+})
+
+test('an owning product revealed from a conflict retains its saved baseline when later removed', async ({
+  extension,
+}) => {
+  const { page, view, original } = await setup(extension, 2, {
+    openFirstOnly: true,
+    sameSeller: true,
+  })
+  const owner = original.preparations.find(
+    (draft) => draft.orderId === '7300000000000000001'
+  )
+  const owningGroup = owner.groups[0]
+  await view
+    .getByLabel('Product code', { exact: true })
+    .first()
+    .fill(owningGroup.baseCode)
+  await expect(view.locator('.preparation-save-status')).toContainText(
+    'Code conflict'
+  )
+  await view.getByRole('button', { name: 'Resolve', exact: true }).click()
+  const conflict = page.getByRole('dialog', {
+    name: 'Resolve code conflict',
+    exact: true,
+  })
+  await conflict
+    .getByRole('button', { name: 'Show owning product', exact: true })
+    .click()
+  await expect(conflict).toBeHidden()
+  const group = view.locator(`[data-group-id="${owningGroup.id}"]`)
+  await expect(group).toBeVisible()
+  // Resolve the original pending edit without reopening the preparation session.
+  await view
+    .locator('.preparation-actions')
+    .getByRole('button', { name: 'Reload saved version', exact: true })
+    .click()
+  await saved(view)
+  await group.getByLabel('Chinese category', { exact: true }).fill('陶瓷')
+  await saved(view)
+  const remove = group.getByRole('button', {
+    name: 'Remove group',
+    exact: true,
+  })
+  await remove.focus()
+  await remove.click()
+  const review = page.getByRole('dialog', {
+    name: 'Remove from packing?',
+    exact: true,
+  })
+  await expect(review).toContainText(
+    'Saved values from before this preparation session will be restored.'
+  )
+  await review
+    .getByRole('button', { name: 'Remove from packing', exact: true })
+    .click()
+  await saved(view)
+  await expect(group).toHaveCount(0)
+  const final = await backup(extension)
+  expect(
+    final.preparations.find((draft) => draft.orderId === owner.orderId).groups
+  ).toEqual(owner.groups)
+  expect(final.orders).toEqual(original.orders)
+})
+
+for (const action of ['Reset order and codes', 'Restore previous packing'])
+  test(`${action} and its undo preserve products excluded from this session`, async ({
+    extension,
+  }) => {
+    const { page, view, original } = await setup(extension, 1, {
+      withPreviousPacking: true,
+    })
+    const originalGroup = original.preparations[0].groups[0]
+    const group = view.locator(`[data-group-id="${originalGroup.id}"]`)
+    const keptVariant = originalGroup.variants[1]
+    const removedVariant = originalGroup.variants[0]
+    const removedRow = group.locator(`[data-variant-id="${removedVariant.id}"]`)
+    const remove = removedRow.getByRole('button', {
+      name: 'Remove product',
+      exact: true,
+    })
+    await remove.focus()
+    await remove.click()
+    await page
+      .getByRole('dialog', { name: 'Remove from packing?', exact: true })
+      .getByRole('button', { name: 'Remove from packing', exact: true })
+      .click()
+    await saved(view)
+    await expect(removedRow).toHaveCount(0)
+    await expect(group.locator('tr[data-variant-id]')).toHaveCount(1)
+    const base = group.getByLabel('Product code', { exact: true })
+    await base.fill('CE26109901')
+    await saved(view)
+    const edited = await backup(extension)
+    await view.getByRole('button', { name: action, exact: true }).click()
+    await page
+      .getByRole('dialog', { name: `${action}?`, exact: true })
+      .getByRole('button', { name: action, exact: true })
+      .click()
+    await saved(view)
+    await expect(base).toHaveValue(originalGroup.baseCode)
+    await expect(removedRow).toHaveCount(0)
+    await expect(
+      group.locator(`[data-variant-id="${keptVariant.id}"]`)
+    ).toHaveCount(1)
+    await expect(view.locator('.packing-title')).toContainText(
+      '1 orders · 2 products'
+    )
+    const restored = await backup(extension)
+    await travel(view, 'Undo')
+    await expect(base).toHaveValue('CE26109901')
+    await expect(removedRow).toHaveCount(0)
+    expect(groups(await backup(extension))).toEqual(groups(edited))
+    await travel(view, 'Redo')
+    await expect(base).toHaveValue(originalGroup.baseCode)
+    await expect(removedRow).toHaveCount(0)
+    expect(groups(await backup(extension))).toEqual(groups(restored))
+    // Undo all three operations: restore, text edit, and the original removal.
+    await travel(view, 'Undo')
+    await travel(view, 'Undo')
+    await expect(removedRow).toHaveCount(0)
+    await travel(view, 'Undo')
+    await expect(removedRow).toHaveCount(1)
+    await expect(view.locator('.packing-title')).toContainText(
+      '1 orders · 3 products'
+    )
+  })
 
 test('multi-order grouping is one undo step with stable reservation owners', async ({
   extension,

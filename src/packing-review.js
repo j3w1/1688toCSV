@@ -8,7 +8,71 @@ import {
   getLanguage,
   onLanguageChange,
 } from './i18n.js'
-import { element as el, enableLightDismiss, orderReference } from './ui.js'
+import {
+  element as el,
+  enableLightDismiss,
+  orderReference,
+  pinDialogActions,
+} from './ui.js'
+import { preparationHelp } from './preparation-help.js'
+
+/** A shared, explicitly labelled comparison; colour reinforces the words. */
+export function packingValueComparison(
+  values,
+  { beforeLabel = 'Before', afterLabel = 'After applying' } = {}
+) {
+  const table = el('div', undefined, 'packing-value-comparison')
+  for (const value of values) {
+    const row = el('div', undefined, 'packing-value-row')
+    if (value.label)
+      row.append(
+        el(
+          'strong',
+          isMessage(value.label) ? value.label : uiMessage(value.label),
+          'packing-value-label'
+        )
+      )
+    const same = String(value.before ?? '') === String(value.after ?? '')
+    row.dataset.changed = String(!same)
+    for (const [side, label] of [
+      ['before', beforeLabel],
+      ['after', afterLabel],
+    ]) {
+      const cell = el(
+        'div',
+        undefined,
+        `packing-value-cell packing-value-${side}`
+      )
+      cell.append(
+        el(
+          'span',
+          isMessage(label) ? label : uiMessage(label),
+          'packing-value-caption'
+        )
+      )
+      const content = el('div', undefined, 'packing-value-content')
+      const entries = Array.isArray(value[side]) ? value[side] : [value[side]]
+      for (const entry of entries.length ? entries : ['']) {
+        const text =
+          entry === undefined || entry === null || entry === ''
+            ? uiMessage('None')
+            : entry
+        const code = value.kind === 'code' && /^CE\d/i.test(String(text))
+        content.append(
+          el(
+            code ? 'code' : 'span',
+            text,
+            code ? 'ce-code' : 'packing-value-text'
+          )
+        )
+      }
+      cell.append(content)
+      row.append(cell)
+    }
+    table.append(row)
+  }
+  return table
+}
 
 /** Review exact frozen changes before any allocation, restore or recoding write. */
 export async function reviewPackingChanges({
@@ -16,10 +80,11 @@ export async function reviewPackingChanges({
   explanation,
   changes,
   proceed = 'Apply changes',
+  alternate,
   media,
   itemKind = 'groups',
 }) {
-  const modal = el('dialog', undefined, 'packing-review')
+  const modal = el('dialog', undefined, 'packing-review packing-change-dialog')
   bindAttribute(modal, 'aria-label', title)
   modal.append(
     el('h2', isMessage(title) ? title : uiMessage(title)),
@@ -41,21 +106,17 @@ export async function reviewPackingChanges({
       content.append(el('strong', change.name || uiMessage('Product group')))
       if (change.order) content.append(el('small', change.order))
       if (change.orderId) content.append(orderReference(change.orderId))
-      const codes = el('div', undefined, 'packing-review-codes')
-      codes.append(
-        el(
-          'code',
-          change.before || uiMessage('Not prepared'),
-          /^CE\d/i.test(change.before || '') ? 'ce-code' : undefined
-        ),
-        el('span', '→'),
-        el(
-          'code',
-          change.after || uiMessage('Next available code'),
-          /^CE\d/i.test(change.after || '') ? 'ce-code' : undefined
+      content.append(
+        packingValueComparison(
+          change.values || [
+            {
+              before: change.before || uiMessage('Not prepared'),
+              after: change.after || uiMessage('Next available code'),
+              kind: 'code',
+            },
+          ]
         )
       )
-      content.append(codes)
       if (change.detail)
         content.append(
           el(
@@ -99,8 +160,20 @@ export async function reviewPackingChanges({
       isMessage(proceed) ? proceed : uiMessage(proceed),
       'primary'
     )
-  actions.append(cancel, apply)
+  const secondary = alternate
+    ? el(
+        'button',
+        isMessage(alternate.label)
+          ? alternate.label
+          : uiMessage(alternate.label)
+      )
+    : null
+  if (secondary && alternate.help) preparationHelp(secondary, alternate.help)
+  actions.append(cancel)
+  if (secondary) actions.append(secondary)
+  actions.append(apply)
   modal.append(list, pages, actions)
+  pinDialogActions(modal, actions)
   enableLightDismiss(modal)
   document.body.append(modal)
   render()
@@ -111,6 +184,11 @@ export async function reviewPackingChanges({
       confirmed = true
       modal.close()
     }
+    if (secondary)
+      secondary.onclick = () => {
+        confirmed = alternate.value
+        modal.close()
+      }
     modal.onclose = () => {
       media?.forget(list)
       modal.remove()

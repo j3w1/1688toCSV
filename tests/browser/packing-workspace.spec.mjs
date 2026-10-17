@@ -1796,16 +1796,22 @@ test('compact preparation fits two product groups without hiding fields or clipp
   await expect(first.getByAltText('Barcode preview').first()).toBeVisible({
     timeout: 20_000,
   })
-  await dialog.evaluate((node) => {
-    node.scrollTop = 0
-  })
-  const bounds = await dialog.boundingBox()
-  const orderBounds = await dialog
-    .locator('.packing-order-section')
-    .first()
-    .boundingBox()
-  const firstBounds = await first.boundingBox()
-  const lastBounds = await groups.last().boundingBox()
+  // Read all compared bounds in one browser task so asynchronous preview
+  // completion cannot grow the workspace between separate measurements.
+  const { bounds, orderBounds, firstBounds, lastBounds, summary, mark } =
+    await dialog.evaluate((node) => {
+      node.scrollTop = 0
+      const cards = node.querySelectorAll('.preparation-group')
+      const rect = (element) => element.getBoundingClientRect().toJSON()
+      return {
+        bounds: rect(node),
+        orderBounds: rect(node.querySelector('.packing-order-section')),
+        firstBounds: rect(cards[0]),
+        lastBounds: rect(cards[cards.length - 1]),
+        summary: rect(cards[0].querySelector('.product-summary')),
+        mark: rect(cards[0].querySelector('.carton-preview')),
+      }
+    })
   // Full-page navigation sits above the order. Its own identity and tools must
   // still leave a compact lead-in to the product groups.
   expect(firstBounds.y - orderBounds.y).toBeLessThanOrEqual(140)
@@ -1813,8 +1819,6 @@ test('compact preparation fits two product groups without hiding fields or clipp
   expect(lastBounds.y + lastBounds.height).toBeLessThanOrEqual(
     bounds.y + bounds.height
   )
-  const summary = await first.locator('.product-summary').boundingBox()
-  const mark = await first.locator('.carton-preview').boundingBox()
   expect(summary.x + summary.width).toBeLessThanOrEqual(mark.x)
   expect(Math.abs(summary.y - mark.y)).toBeLessThanOrEqual(2)
   for (const group of await groups.all()) {
@@ -1887,7 +1891,12 @@ test('preparation selects groups and variant rows by range without changing edit
   const first = groups.first()
   const rows = first.locator('.variants tbody tr')
   const secondRow = groups.nth(1).locator('.variants tbody tr')
-  await expect(dialog.locator('input[type="checkbox"]')).toHaveCount(0)
+  await expect(groups.locator('input[type="checkbox"]')).toHaveCount(0)
+  await expect(dialog.getByLabel('Headers', { exact: true })).toHaveCount(1)
+  await expect(dialog.getByLabel('Headers', { exact: true })).toHaveAttribute(
+    'type',
+    'checkbox'
+  )
   await expect(first.getByRole('grid')).toHaveAttribute(
     'aria-multiselectable',
     'true'
@@ -2409,8 +2418,16 @@ for (const action of ['Copy Excel image', 'Copy group codes', 'Copy columns']) {
     expect(savedGroup.spanishName).toBe('FRASCO ACTUALIZADO')
     expect(savedGroup.category).toBe('新玻璃制品')
     expect(saved.orders).toEqual(original.orders)
-    for (const reservation of original.issuedCodes)
+    expect(
+      saved.issuedCodes.some((entry) => entry.code.startsWith(originalCode))
+    ).toBe(false)
+    for (const reservation of original.issuedCodes.filter(
+      (entry) => !entry.code.startsWith(originalCode)
+    ))
       expect(saved.issuedCodes).toContainEqual(reservation)
+    expect(
+      saved.issuedCodes.filter((entry) => entry.code.startsWith(latestCode))
+    ).toHaveLength(3)
     expect(extension.unexpectedRequests).toEqual([])
   })
 }
@@ -2967,7 +2984,7 @@ async function savePreparationAndRead(extension, dialog) {
   return packingBackup(extension)
 }
 
-test('combining, separating, splitting and merging preserve source rows and saved code ownership', async ({
+test('combining, separating, splitting and merging preserve source rows and current code ownership', async ({
   extension,
 }) => {
   const { page, record } = await openWorkspace(extension)
@@ -3062,8 +3079,8 @@ test('combining, separating, splitting and merging preserve source rows and save
   expect(separated.baseCode).toBe(originalCode)
   expect(backup.orders[0].snapshot).toEqual(record.snapshot)
 
-  // Combining retires the second barcode. A later separation must allocate a
-  // new suffix instead of reassigning that code to a newly created variant.
+  // Combining releases the second barcode. A later separation may reuse it
+  // for a new variant, while codes still assigned must remain unique.
   const retiredVariant = separated.variants[1]
   const retiredBarcode = `${originalCode}${retiredVariant.variantSuffix}${retiredVariant.sizeSuffix}`
   // Confirmed grouping starts a fresh row selection. Select both source rows.
@@ -3087,6 +3104,9 @@ test('combining, separating, splitting and merging preserve source rows and save
   expect(backup.preparations[0].groups[0].variants[0].entryIds).toEqual(
     sourceIds.slice(0, 2)
   )
+  expect(
+    backup.issuedCodes.some((issued) => issued.code === retiredBarcode)
+  ).toBe(false)
   await selectVariantRow(first.locator('.variants tbody tr').first())
   await expect(first.locator('.variants tbody tr')).toHaveAttribute(
     'aria-selected',
@@ -3104,16 +3124,27 @@ test('combining, separating, splitting and merging preserve source rows and save
   const separatedAgain = backup.preparations[0].groups[0].variants[1]
   expect(separatedAgain.id).not.toBe(retiredVariant.id)
   expect(separatedAgain.entryIds).toEqual([sourceIds[1]])
-  expect(separatedAgain.variantSuffix).toBe('B')
+  expect(separatedAgain.variantSuffix).toBe(retiredVariant.variantSuffix)
   expect(
     `${originalCode}${separatedAgain.variantSuffix}${separatedAgain.sizeSuffix}`
-  ).not.toBe(retiredBarcode)
+  ).toBe(retiredBarcode)
   expect(
-    backup.issuedCodes.some(
-      (issued) =>
-        issued.code === retiredBarcode && issued.variantId === retiredVariant.id
-    )
-  ).toBe(true)
+    backup.issuedCodes.filter((issued) => issued.code === retiredBarcode)
+  ).toEqual([
+    expect.objectContaining({
+      kind: 'barcode',
+      code: retiredBarcode,
+      groupId: originalGroup.id,
+      variantId: separatedAgain.id,
+    }),
+  ])
+  expect(
+    new Set(
+      backup.preparations[0].groups[0].variants.map(
+        (variant) => `${variant.variantSuffix}${variant.sizeSuffix}`
+      )
+    ).size
+  ).toBe(2)
   expect(backup.orders[0].snapshot).toEqual(record.snapshot)
 
   await selectVariantRow(first.locator('.variants tbody tr').nth(1))
@@ -3162,7 +3193,26 @@ test('combining, separating, splitting and merging preserve source rows and save
     backup.issuedCodes.some(
       (issued) => issued.kind === 'base' && issued.code === splitCode
     )
-  ).toBe(true)
+  ).toBe(false)
+  const currentBarcodes = final.groups.flatMap((group) =>
+    group.variants.map(
+      (variant) =>
+        `${group.baseCode}${variant.variantSuffix}${variant.sizeSuffix}`
+    )
+  )
+  expect(new Set(currentBarcodes).size).toBe(currentBarcodes.length)
+  expect(
+    backup.issuedCodes
+      .filter((issued) => issued.kind === 'barcode')
+      .map((issued) => issued.code)
+      .sort()
+  ).toEqual(currentBarcodes.sort())
+  expect(
+    backup.issuedCodes
+      .filter((issued) => issued.kind === 'base')
+      .map((issued) => issued.code)
+      .sort()
+  ).toEqual(final.groups.map((group) => group.baseCode).sort())
   expect(backup.orders[0].snapshot).toEqual(record.snapshot)
   await dialog.getByRole('button', { name: 'Orders', exact: true }).click()
   await expect(dialog).toBeHidden()
@@ -3179,7 +3229,7 @@ test('combining, separating, splitting and merging preserve source rows and save
   expect(extension.unexpectedRequests).toEqual([])
 })
 
-test('merging product groups across pages returns to a populated page without losing source rows or reserved codes', async ({
+test('merging product groups across pages preserves source rows and releases unused codes', async ({
   extension,
 }) => {
   const [record] = await extension.inspector.evaluate(
@@ -3282,7 +3332,30 @@ test('merging product groups across pages returns to a populated page without lo
     after.issuedCodes.some(
       (issued) => issued.kind === 'base' && issued.code === last.baseCode
     )
-  ).toBe(true)
+  ).toBe(false)
+  const currentBases = after.preparations[0].groups.map(
+    (group) => group.baseCode
+  )
+  const currentBarcodes = after.preparations[0].groups.flatMap((group) =>
+    group.variants.map(
+      (variant) =>
+        `${group.baseCode}${variant.variantSuffix}${variant.sizeSuffix}`
+    )
+  )
+  expect(new Set(currentBases).size).toBe(20)
+  expect(new Set(currentBarcodes).size).toBe(21)
+  expect(
+    after.issuedCodes
+      .filter((issued) => issued.kind === 'base')
+      .map((issued) => issued.code)
+      .sort()
+  ).toEqual(currentBases.sort())
+  expect(
+    after.issuedCodes
+      .filter((issued) => issued.kind === 'barcode')
+      .map((issued) => issued.code)
+      .sort()
+  ).toEqual(currentBarcodes.sort())
   await dialog
     .getByRole('button', { name: 'Clear selection', exact: true })
     .click()

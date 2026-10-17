@@ -144,7 +144,7 @@ function reordered(value, label) {
   return value === undefined ? {} : { manualReordered: value }
 }
 
-/** Code reservations survive edits and deletion; a conflict identifies its owner. */
+/** A duplicate current assignment identifies its owner. */
 export class CodeConflictError extends Error {
   constructor(existing, requested) {
     const otherVariant =
@@ -367,7 +367,7 @@ export function resetPreparationOrder(preparation, snapshot) {
   return draft
 }
 
-/** Saving this draft allocates a fresh unused code; old reservations remain. */
+/** Saving this draft allocates an available code against current assignments. */
 export function regeneratePreparationCode(preparation, groupId) {
   const draft = structuredClone(preparation)
   const group = draft.groups.find((entry) => entry.id === groupId)
@@ -1596,18 +1596,100 @@ export function validatePreparationReservations(preparation, state) {
     JSON.stringify(allocated.allocations) !== JSON.stringify(state.allocations)
   )
     throw new Error('Preparation is missing issued code reservations')
-  for (const checkpoint of [
-    preparation.defaultPacking,
-    preparation.previousPacking,
-    preparation.previousPacking?.defaults,
-  ].filter(Boolean))
-    validatePreparationReservations(
-      {
-        ...preparation,
-        ...checkpoint,
-        defaultPacking: undefined,
-        previousPacking: undefined,
-      },
-      state
-    )
+}
+
+/** Rebuild ownership from current assignments. Checkpoints never reserve codes. */
+export function activePackingState(
+  preparations,
+  allocations = [],
+  issuedCodes = []
+) {
+  // Keep seller/month slots stable, but discard item counters from retired codes.
+  const state = mergePackingState(allocations, [])
+  const months = new Map(
+    state.allocations.map((entry) => [
+      JSON.stringify([entry.accountId, entry.month]),
+      entry,
+    ])
+  )
+  for (const allocation of state.allocations)
+    for (const group of allocation.groups) group.nextItem = 1
+  const evidence = new Map()
+  for (const entry of issuedCodes) {
+    const key = JSON.stringify([entry.accountId, entry.kind, entry.code])
+    const owners = evidence.get(key) || []
+    owners.push(entry)
+    evidence.set(key, owners)
+  }
+  const current = []
+  for (const input of preparations) {
+    const preparation = validatePreparation(input)
+    for (const group of preparation.groups) {
+      if (!group.baseCode)
+        throw new Error(
+          'Saved preparation is missing allocated codes or revision'
+        )
+      const month = groupPackingMonth(preparation, group)
+      const key = JSON.stringify([preparation.accountId, month])
+      let allocation = months.get(key)
+      if (!allocation) {
+        allocation = { accountId: preparation.accountId, month, groups: [] }
+        months.set(key, allocation)
+        state.allocations.push(allocation)
+      }
+      const number = Number(group.baseCode.slice(6, 8))
+      let slot = allocation.groups.find((entry) => entry.number === number)
+      if (slot && slot.sellerId !== preparation.sellerId)
+        throw new Error('This monthly group belongs to another seller')
+      if (!slot) {
+        slot = { number, sellerId: preparation.sellerId, nextItem: 1 }
+        allocation.groups.push(slot)
+      }
+      slot.nextItem = Math.max(
+        slot.nextItem,
+        Number(group.baseCode.slice(8, 10)) + 1
+      )
+      const owner = {
+        accountId: preparation.accountId,
+        orderId: preparation.orderId,
+        groupId: group.id,
+        sellerId: preparation.sellerId,
+        month,
+      }
+      const entries = [
+        { ...owner, kind: 'base', code: group.baseCode },
+        ...group.variants
+          .filter((variant) => !variant.needsSizeMapping)
+          .map((variant) => ({
+            ...owner,
+            kind: 'barcode',
+            code: barcodeValue(group, variant),
+            variantId: variant.id,
+          })),
+      ]
+      for (const entry of entries) {
+        const previous = evidence
+          .get(JSON.stringify([entry.accountId, entry.kind, entry.code]))
+          ?.find((value) => value.ownerSnapshot && sameOwner(value, entry))
+        const variant = group.variants.find(
+          (value) => value.id === entry.variantId
+        )
+        const entryIds =
+          variant?.entryIds ?? group.variants.flatMap((value) => value.entryIds)
+        // Snapshot photos have no per-entry mapping. Retain them only when the
+        // membership is identical, so scoped backups cannot retain other rows.
+        const snapshot = previous?.ownerSnapshot
+        const sameMembers =
+          snapshot &&
+          snapshot.entryIds.length === entryIds.length &&
+          snapshot.entryIds.every((id) => entryIds.includes(id))
+        current.push(
+          sameMembers ? { ...entry, ownerSnapshot: snapshot } : entry
+        )
+      }
+    }
+  }
+  // Validate duplicates once for the complete final set; rebuilding must stay
+  // linear in product count rather than revalidating every growing prefix.
+  return mergePackingState(state.allocations, current)
 }

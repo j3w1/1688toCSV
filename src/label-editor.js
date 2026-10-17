@@ -95,8 +95,13 @@ export function mountLabelEditor(container, options) {
   copy.type = 'button'
   copy.disabled = true
   decorateIcon(copy, 'copy')
+  const actions = element('div', 'label-editor-actions')
+  actions.append(copy, status, resolve)
+  const actionHost = dialog?.querySelector('.label-dialog-tools')
+  if (actionHost) actionHost.append(actions)
+  else root.append(actions)
   preview.append(image)
-  root.append(preview, hint, status, errorDescription, resolve, copy)
+  root.append(preview, hint, errorDescription)
   container.append(root)
 
   function message(value, error = false) {
@@ -699,6 +704,7 @@ export function mountLabelEditor(container, options) {
       revision++
       resetCopyFeedback(copy)
       invalidatePreview()
+      actions.remove()
       root.remove()
     },
   }

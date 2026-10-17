@@ -236,7 +236,7 @@ export async function writeTable({ plain, html }) {
 }
 export async function labelClipboard(results) {
   if (!results.length) throw new Error('No labels are ready to copy.')
-  const images = await Promise.all(
+  const images = Promise.all(
     results.map(async (result) => ({
       ...result,
       data: await new Promise((resolve, reject) => {
@@ -247,8 +247,18 @@ export async function labelClipboard(results) {
       }),
     }))
   )
-  const html = `<table>${images.map((item) => `<tr style="height:${(item.heightMm * 72) / 25.4}pt"><td style="width:${(item.widthMm * 72) / 25.4}pt"><img src="${item.data}" width="${(item.widthMm * 96) / 25.4}" height="${(item.heightMm * 96) / 25.4}" style="width:${item.widthMm}mm;height:${item.heightMm}mm"></td></tr>`).join('')}</table>`
-  const formats = { 'text/html': new Blob([html], { type: 'text/html' }) }
+  // Keep the clipboard call in the click's user activation while data URLs
+  // are encoded. Excel still receives the label's physical dimensions.
+  const html = (async () => {
+    const items = await images
+    return new Blob(
+      [
+        `<table>${items.map((item) => `<tr style="height:${(item.heightMm * 72) / 25.4}pt"><td style="width:${(item.widthMm * 72) / 25.4}pt"><img src="${item.data}" width="${(item.widthMm * 96) / 25.4}" height="${(item.heightMm * 96) / 25.4}" style="width:${item.widthMm}mm;height:${item.heightMm}mm"></td></tr>`).join('')}</table>`,
+      ],
+      { type: 'text/html' }
+    )
+  })()
+  const formats = { 'text/html': html }
   if (results.length === 1) formats['image/png'] = results[0].blob
   await navigator.clipboard.write([new ClipboardItem(formats)])
 }

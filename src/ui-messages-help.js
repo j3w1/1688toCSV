@@ -319,10 +319,10 @@ export const HELP_MESSAGES = {
     es: 'Páginas de lista revisadas',
   },
   'Loading preview…': { zh: '正在加载预览…', es: 'Cargando vista previa…' },
-  'Merge a saved backup into this library, preserving newer edits and reserved codes.':
+  'Merge a saved backup into this library, preserving newer edits and checking current code conflicts.':
     {
-      zh: '将备份合并到当前订单库，保留较新的修改和已保留的编码。',
-      es: 'Incorpora una copia de seguridad a esta biblioteca, conservando las ediciones más recientes y los códigos reservados.',
+      zh: '将备份合并到当前订单库，保留较新的修改并检查当前货号是否冲突。',
+      es: 'Incorpora una copia de seguridad a esta biblioteca, conserva las ediciones más recientes y comprueba si hay conflictos con códigos en uso.',
     },
   'Moving to the next order': {
     zh: '正在转到下一订单',
@@ -378,10 +378,10 @@ export const HELP_MESSAGES = {
     zh: '仅刷新当前选择和筛选范围内的订单。',
     es: 'Actualiza solo los pedidos de la selección y los filtros actuales.',
   },
-  'Remove the selected orders from this browser. Issued CE codes stay reserved.':
+  'Remove the selected orders and their packing data from this browser. Their codes become available when no remaining product uses them.':
     {
-      zh: '从此浏览器删除所选订单。已分配的 CE 编码仍会保留。',
-      es: 'Elimina los pedidos seleccionados de este navegador. Los códigos CE emitidos siguen reservados.',
+      zh: '从此浏览器删除所选订单及其装箱数据。若其他商品未使用这些货号，货号将可重新分配。',
+      es: 'Elimina los pedidos seleccionados y sus datos de empaque de este navegador. Sus códigos quedarán disponibles si ningún producto restante los usa.',
     },
   'Remove this size rule when you save Settings.': {
     zh: '保存设置时删除此尺码规则。',
@@ -392,10 +392,10 @@ export const HELP_MESSAGES = {
       zh: '确定从此浏览器删除 {count} 个订单及其历史记录？可以使用已保存的备份恢复。',
       es: '¿Eliminar {count} pedidos y su historial de este navegador? Puedes recuperarlos con una copia de seguridad guardada.',
     },
-  'Save orders, packing edits, naming rules and reserved codes to a local file.':
+  'Save orders, packing edits, naming rules and current code assignments to a local file.':
     {
-      zh: '将订单、装箱修改、命名规则和保留编码保存到本地文件。',
-      es: 'Guarda pedidos, ediciones de empaque, reglas de nombres y códigos reservados en un archivo local.',
+      zh: '将订单、装箱修改、命名规则及当前货号分配保存到本地文件。',
+      es: 'Guarda pedidos, cambios de empaque, reglas de nombres y asignaciones actuales de códigos en un archivo local.',
     },
   'Saved orders and labels will stay in the library.': {
     zh: '已保存的订单和标签仍保留在订单库中。',

@@ -20,6 +20,7 @@ const paths = {
     'M3 10v11h18V10M2 6l2-4h16l2 4v4a3 3 0 0 1-5 2 3 3 0 0 1-5 0 3 3 0 0 1-5 0 3 3 0 0 1-5-2V6zM9 21v-6h6v6',
   packing: 'M3 7l9-5 9 5v11l-9 4-9-4zM3 7l9 5 9-5M12 12v10M7 5l10 5',
   refresh: 'M20 7a9 9 0 1 0 1 8M20 2v5h-5',
+  skip: 'M21 12a9 9 0 1 0-18 0 9 9 0 0 0 18 0M8 12h8',
   trash: 'M3 6h18M8 6V3h8v3M5 6l1 15h12l1-15M10 10v7m4-7v7',
   close: 'M6 6l12 12M18 6 6 18',
   download: 'M12 3v12m-5-5 5 5 5-5M4 16v5h16v-5',

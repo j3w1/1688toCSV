@@ -6,20 +6,22 @@ import { preparationHelp } from './preparation-help.js'
 export function photoCopyTile(
   photoButton,
   copyTask,
-  { disabled = false } = {}
+  {
+    disabled = false,
+    label = 'Copy image',
+    help = 'Copy the full-size product picture. Paste it into Excel or a message.',
+    onError,
+  } = {}
 ) {
   const tile = element('div', undefined, 'photo-copy-tile')
   const copy = element('button', undefined, 'photo-copy-button')
   copy.type = 'button'
   copy.disabled = disabled || !copyTask
-  decorateIcon(copy, 'copy', { iconOnly: true, label: 'Copy image' })
-  preparationHelp(
-    copy,
-    'Copy the full-size product picture. Paste it into Excel or a message.'
-  )
+  decorateIcon(copy, 'copy', { iconOnly: true, label })
+  preparationHelp(copy, help)
   copy.addEventListener('click', (event) => {
     event.stopPropagation()
-    void copied(copy, copyTask)
+    void copied(copy, copyTask, { onError })
   })
   copy.addEventListener('dblclick', (event) => event.stopPropagation())
   tile.append(photoButton, copy)

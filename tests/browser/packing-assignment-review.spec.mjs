@@ -93,7 +93,9 @@ test('one new product reviews its proposed code and helpers before saving; cance
   ])
     await expect(review).toContainText(value)
   const proposed = await review
-    .locator('.packing-review-codes code:last-child')
+    .locator(
+      '.packing-value-row:first-child .packing-value-after .packing-value-content'
+    )
     .textContent()
   expect(proposed).toMatch(/^CE2610\d{4}$/)
   expectPackingUnchanged(await backup(extension), before)
@@ -102,7 +104,9 @@ test('one new product reviews its proposed code and helpers before saving; cance
   expectPackingUnchanged(await backup(extension), before)
   await reviewSelection(page)
   await expect(
-    review.locator('.packing-review-codes code:last-child')
+    review.locator(
+      '.packing-value-row:first-child .packing-value-after .packing-value-content'
+    )
   ).toHaveText(proposed)
   await review
     .getByRole('button', { name: 'Assign codes and prepare', exact: true })
@@ -147,7 +151,9 @@ test('adding another source row of an existing product reviews only the unassign
   await expect(review.locator('.packing-review-item')).toHaveCount(1)
   await expect(review).toContainText('1 product rows · 1 variants')
   const nextCode = await review
-    .locator('.packing-review-codes code:last-child')
+    .locator(
+      '.packing-value-row:first-child .packing-value-after .packing-value-content'
+    )
     .textContent()
   expect(nextCode).not.toBe(original.baseCode)
   expectPackingUnchanged(await backup(extension), before)
@@ -195,7 +201,9 @@ test('seller-missing additions still require review and cancel neither opens pac
   await expect(review.locator('.packing-review-item')).toHaveCount(1)
   await expect(review).toContainText('1 selected product rows from 1 orders')
   await expect(
-    review.locator('.packing-review-codes code:last-child')
+    review.locator(
+      '.packing-value-row:first-child .packing-value-after .packing-value-content'
+    )
   ).toHaveText('Seller login required before assigning codes')
   expectPackingUnchanged(await backup(extension), before)
   await review.getByRole('button', { name: 'Cancel', exact: true }).click()

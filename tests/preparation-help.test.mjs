@@ -34,10 +34,16 @@ function setup(t) {
     configurable: true,
     writable: true,
   })
+  // LinkeDOM has no layout hit-testing; model the actual pointer target.
+  let pointerHit = document.body
+  document.elementFromPoint = () => pointerHit
   t.mock.timers.enable({ apis: ['setTimeout'] })
   const event = (target, type, properties = {}) => {
+    if (type === 'pointerover') pointerHit = target
+    if (type === 'pointerout')
+      pointerHit = properties.relatedTarget || document.body
     const event = new window.Event(type, { bubbles: true, cancelable: true })
-    Object.assign(event, properties)
+    Object.assign(event, { clientX: 40, clientY: 40 }, properties)
     target.dispatchEvent(event)
     return event
   }
@@ -156,5 +162,13 @@ test('noninteractive tooltip content does not retain hover after leaving its tri
   hover(button)
   const panel = hint()
   leave(button, panel)
+  assert.equal(hint(), null)
+})
+
+test('a control covered before the hover delay cannot show its tooltip', (t) => {
+  const { document, button, event, hint } = setup(t)
+  event(button, 'pointerover', { pointerType: 'mouse' })
+  document.elementFromPoint = () => document.body
+  t.mock.timers.tick(500)
   assert.equal(hint(), null)
 })

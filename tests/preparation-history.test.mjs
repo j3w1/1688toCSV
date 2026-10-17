@@ -8,6 +8,22 @@ import {
 
 const json = (name) => JSON.stringify({ groups: [{ spanishName: name }] })
 
+test('removal scope remains undoable when saved preparation values do not change', () => {
+  const history = createPreparationHistory()
+  const before = json('same saved values')
+  history.recordBatch([
+    {
+      orderId: 'one',
+      before,
+      after: before,
+      beforeScope: '["1","2"]',
+      afterScope: '["2"]',
+    },
+  ])
+  assert.deepEqual(history.undo().changes[0].scope, ['1', '2'])
+  assert.deepEqual(history.redo().changes[0].scope, ['2'])
+})
+
 test('consecutive typing coalesces and a group boundary preserves separate edits', () => {
   const history = createPreparationHistory()
   history.record('one', json(''), json('T'), 'name')

@@ -2,6 +2,21 @@ import { bindText, bindAttribute, message } from './i18n.js'
 import { decorateIcon, icon } from './icons.js'
 import { actionHelp } from './workspace-action-help.js'
 
+/** One format order for Orders and Preparation; only Preparation adds backup. */
+export function mountProductCopyActions(host, actions) {
+  const groups = [
+    ['Products', ['values', 'photos', 'cells']],
+    ['Packing', ['columns', 'codes']],
+    ['Labels & codes', ['barcodes', 'marks']],
+    ['Options', ['headers']],
+    ['Backup', ['backup']],
+  ].flatMap(([label, keys]) => {
+    const available = keys.map((key) => actions[key]).filter(Boolean)
+    return available.length ? [{ label, actions: available }] : []
+  })
+  return mountCopyActions(host, { image: actions.image, groups })
+}
+
 /** Move the existing actions into a native popover; their handlers stay intact. */
 export function mountCopyActions(
   host,

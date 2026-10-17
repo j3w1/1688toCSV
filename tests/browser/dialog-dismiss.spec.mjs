@@ -145,6 +145,25 @@ test('label backdrop saves a valid blurred edit, preserves Escape restore, and k
   await expect(
     label.getByRole('button', { name: 'Copy label', exact: true })
   ).toBeEnabled({ timeout: 20000 })
+  await page.setViewportSize({ width: 720, height: 430 })
+  const labelActions = label.locator('.detail-dialog-heading')
+  const labelBody = label.locator('#label-content')
+  const actionBounds = await labelActions.boundingBox()
+  expect(
+    await labelBody.evaluate((node) => node.scrollHeight > node.clientHeight)
+  ).toBe(true)
+  await labelBody.evaluate((node) => node.scrollTo(0, node.scrollHeight))
+  expect(await labelActions.boundingBox()).toEqual(actionBounds)
+  await expect(
+    labelActions.getByRole('button', { name: 'Copy label', exact: true })
+  ).toBeInViewport()
+  await expect(
+    labelActions.getByRole('button', {
+      name: 'Close label editor',
+      exact: true,
+    })
+  ).toBeInViewport()
+  await page.setViewportSize({ width: 1280, height: 900 })
   await spanish.fill('frasco transparente')
   await backdrop(page, label)
   await expect(label).not.toBeVisible({ timeout: 20000 })

@@ -169,6 +169,10 @@ test('the error popup opens the existing visual code resolver and clears after s
   await resolver
     .getByRole('button', { name: 'Use next available code', exact: true })
     .click()
+  await expect(resolver).toBeVisible()
+  await resolver
+    .getByRole('button', { name: 'Apply corrections', exact: true })
+    .click()
   await expect(resolver).toBeHidden()
   await expect(code).not.toHaveValue(conflicting)
   await expect(view.locator('.preparation-save-status')).toHaveText(
