@@ -316,9 +316,14 @@ test('an export in progress freezes its inputs, and Cancel or fractional quantit
   await expect(dialog.locator('.print-summary')).toHaveText(
     'Enter whole numbers from 0 to 9999.'
   )
-  await expect(quantity).toHaveAttribute('aria-invalid', '')
+  await expect(quantity).toHaveAttribute('aria-invalid', 'true')
+  await expect(exportButton).toBeDisabled()
+  // A value the native field accepts but the dialog rejects is marked too.
+  await quantity.fill('1e2')
+  await expect(quantity).toHaveAttribute('aria-invalid', 'true')
   await expect(exportButton).toBeDisabled()
   await quantity.fill('3')
+  await expect(quantity).not.toHaveAttribute('aria-invalid', /.*/)
   await expect(exportButton).toBeEnabled()
   // Hold the PDF image encoding so the export stays in progress.
   await page.evaluate(() => {
@@ -337,6 +342,15 @@ test('an export in progress freezes its inputs, and Cancel or fractional quantit
       }
     }
   })
+  await page.evaluate(() => {
+    window.exportSettled = new Promise((resolve) =>
+      document.addEventListener(
+        'print-export-settled',
+        (event) => resolve(event.detail),
+        { once: true }
+      )
+    )
+  })
   await exportButton.click()
   await expect(dialog.locator('.print-left > .print-status')).toContainText(
     'Preparing 1 of 1'
@@ -345,7 +359,10 @@ test('an export in progress freezes its inputs, and Cancel or fractional quantit
   await dialog.getByRole('button', { name: 'Cancel', exact: true }).click()
   await expect(dialog).toHaveCount(0)
   await page.evaluate(() => window.releaseEncoding())
-  await page.waitForTimeout(1500)
+  // Wait until the abandoned export has really finished, then check nothing saved.
+  expect(await page.evaluate(() => window.exportSettled)).toEqual({
+    saved: false,
+  })
   expect(
     await extension.inspector.evaluate(() => chrome.downloads.search({}))
   ).toHaveLength(0)

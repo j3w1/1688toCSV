@@ -556,8 +556,13 @@ export function openPrintDialog({
       const badQuantity = Number.isNaN(whole(quantities.get(key), 0))
       const badCap =
         !marks && layout.limitExtras && Number.isNaN(whole(caps.get(key), null))
-      cells.input.toggleAttribute('aria-invalid', badQuantity)
-      cells.cap?.toggleAttribute('aria-invalid', badCap)
+      // Explicit "true": the app rejects values the native input accepts (1e2).
+      for (const [field, bad] of [
+        [cells.input, badQuantity],
+        [cells.cap, badCap],
+      ])
+        if (bad) field?.setAttribute('aria-invalid', 'true')
+        else field?.removeAttribute('aria-invalid')
       invalid ||= badQuantity || badCap
     }
     try {
@@ -855,6 +860,12 @@ export function openPrintDialog({
       busy = false
       left.inert = false
       exportButton.disabled = !plan?.pages
+      // Observable end of every export attempt, saved or abandoned.
+      document.dispatchEvent(
+        new CustomEvent('print-export-settled', {
+          detail: { saved: Boolean(dialog.dataset.exported) && !closed },
+        })
+      )
     }
   }
 
