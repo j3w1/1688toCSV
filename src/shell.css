@@ -1398,3 +1398,22 @@ dialog.print-dialog.packing-review {
     max-inline-size: 360px;
   }
 }
+
+/* One notice when 1688 needs a sign-in or verification in the import tab. */
+.import-attention {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-2) var(--space-3);
+  margin: 0 0 var(--space-3);
+  padding: var(--space-2) var(--space-3);
+  border: 1px solid var(--warning-border);
+  border-radius: var(--radius-m);
+  background: var(--warning);
+  color: var(--warning-text);
+  font-size: var(--text-s);
+}
+.import-attention > span {
+  flex: 1 1 260px;
+  min-inline-size: 0;
+}

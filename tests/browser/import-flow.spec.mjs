@@ -1062,3 +1062,97 @@ test('detail hydration beyond 15 seconds uses the bounded import retry', async (
     .click()
   await assertImported(extension, library)
 })
+
+test('imports read orders in background tabs and never switch the visible tab', async ({
+  extension,
+}) => {
+  test.setTimeout(80_000)
+  const { list, library } = await setup(extension)
+  await list.bringToFront()
+  await extension.inspector.evaluate(() => {
+    globalThis.tabEvents = []
+    chrome.tabs.onActivated.addListener((info) =>
+      globalThis.tabEvents.push(['activated', info.tabId])
+    )
+    chrome.tabs.onCreated.addListener((tab) =>
+      globalThis.tabEvents.push(['created', tab.active])
+    )
+  })
+  await list
+    .getByRole('button', { name: 'Import selected', exact: true })
+    .click()
+  await list
+    .getByRole('button', { name: 'Import 2 selected orders', exact: true })
+    .click()
+  await expect(library.locator('#order-count')).toHaveText('2', {
+    timeout: 65_000,
+  })
+  const events = await extension.inspector.evaluate(() => globalThis.tabEvents)
+  // The reader tab was created in the background and nothing was activated.
+  expect(events.filter(([type]) => type === 'created')).toEqual([
+    ['created', false],
+  ])
+  expect(events.filter(([type]) => type === 'activated')).toEqual([])
+  expect(await list.evaluate(() => document.visibilityState)).toBe('visible')
+  expect(extension.unexpectedRequests).toEqual([])
+})
+
+test('a sign-in step pauses the import with one notice that opens the tab only on request', async ({
+  extension,
+}) => {
+  test.setTimeout(80_000)
+  const loginUrl = 'https://login.1688.test/member/signin.htm'
+  await extension.context.route('https://login.1688.test/**', (route) =>
+    route.fulfill({
+      contentType: 'text/html; charset=utf-8',
+      body: '<!doctype html><title>Synthetic sign-in</title><p>Sign in</p>',
+    })
+  )
+  const { list, library } = await setup(extension, {
+    beforeDetail: async () => {},
+  })
+  // The first order page sends the reader to a synthetic sign-in page.
+  await extension.context.route(
+    `${origin}/app/ctf-page/trade-order-detail/**`,
+    (route) =>
+      route.fulfill({
+        contentType: 'text/html; charset=utf-8',
+        body: `<!doctype html><script>location.replace(${JSON.stringify(loginUrl)})</script>`,
+      })
+  )
+  await list.bringToFront()
+  await extension.inspector.evaluate(() => {
+    globalThis.activations = []
+    chrome.tabs.onActivated.addListener((info) =>
+      globalThis.activations.push(info.tabId)
+    )
+  })
+  await list
+    .getByRole('button', { name: 'Import selected', exact: true })
+    .click()
+  await list
+    .getByRole('button', { name: 'Import 2 selected orders', exact: true })
+    .click()
+  const notice = library.locator('#import-attention')
+  await expect(notice).toBeVisible({ timeout: 65_000 })
+  await expect(notice).toContainText('needs a sign-in or verification')
+  await expect(library.locator('#import-attention')).toHaveCount(1)
+  expect(
+    await extension.inspector.evaluate(() => globalThis.activations)
+  ).toEqual([])
+  // The sign-in tab stays open for the owner and is opened only by the button.
+  const signIn = extension.context
+    .pages()
+    .find((page) => page.url() === loginUrl)
+  expect(signIn).toBeTruthy()
+  await library.locator('[data-action="open-attention-tab"]').click()
+  await expect
+    .poll(() =>
+      extension.inspector.evaluate(() => globalThis.activations.length)
+    )
+    .toBe(1)
+  const [activeTab] = await extension.inspector.evaluate(() =>
+    chrome.tabs.query({ active: true, url: 'https://login.1688.test/*' })
+  )
+  expect(activeTab?.url).toBe(loginUrl)
+})

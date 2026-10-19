@@ -619,6 +619,38 @@ test('closing source during scan and moving a detail tab to login pause safely',
   await s.controller.tick()
   assert.equal(s.jobs.get(job.id).state, 'paused')
   assert.match(s.jobs.get(job.id).error, /sign-in/)
+  // The workspace gets one notice pointing at the tab that needs the owner.
+  assert.deepEqual(
+    { ...s.jobs.get(job.id).attention, at: undefined },
+    { kind: 'sign-in', tabId: 42, orderId: '10001', at: undefined }
+  )
+  // Resuming clears the notice and keeps the existing resume behaviour.
+  s.setTab({ id: 42, url: url('10001'), status: 'complete' })
+  await s.controller.resume(job.id)
+  assert.equal(s.jobs.get(job.id).attention, null)
+  assert.equal(s.jobs.get(job.id).state, 'running')
+})
+
+test('an ordinary pause or failure sets no sign-in notice', async () => {
+  const s = setup()
+  const job = await s.controller.start({ scope: 'all', source })
+  await s.controller.tick()
+  await s.controller.pause(job.id)
+  assert.equal(s.jobs.get(job.id).attention, null)
+})
+
+test('a reader that the browser only allows visible is recorded for the workspace', async () => {
+  const s = setup([[row('10001')]], 1)
+  s.browser.openDetailTab = async (sourceUrl, jobId) => {
+    s.calls.push(['open', sourceUrl, jobId])
+    s.setTab({ id: 42, url: sourceUrl, status: 'complete' })
+    return { id: 42, visible: true }
+  }
+  const job = await s.controller.start({ scope: 'all', source })
+  await s.controller.tick()
+  await s.controller.tick()
+  assert.equal(s.jobs.get(job.id).workerTabId ?? 42, 42)
+  assert.equal(s.jobs.get(job.id).visibleReader, true)
 })
 test('refresh does not use old row counts as proof of current completeness', async () => {
   const s = setup()

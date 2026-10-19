@@ -90,11 +90,7 @@ const browser = {
         await chrome.tabs.update(existing.id, { url: `${url}${marker(id)}` })
       return existing.id
     }
-    const tab = await chrome.tabs.create({
-      url: `${url}${marker(id)}`,
-      active: true,
-    })
-    return tab.id
+    return createReaderTab(`${url}${marker(id)}`)
   },
   async navigateDetailTab(tabId, url, id) {
     const tab = await this.getDetailTab(tabId, id)
@@ -132,8 +128,11 @@ const browser = {
         'The browser did not provide the import tab URL. Refresh the order page, then resume.'
       )
     }
-    throw new Error(
-      'The import tab left its marked order page. Complete sign-in or verification, then resume.'
+    throw Object.assign(
+      new Error(
+        'The import tab left its marked order page. Complete sign-in or verification, then resume.'
+      ),
+      { attention: 'sign-in' }
     )
   },
   async closeDetailTab(tabId, id) {
@@ -190,6 +189,50 @@ async function pump() {
   } finally {
     pumping = false
   }
+}
+
+/**
+ * The import reader opens in the background so imports never take over the
+ * visible tab. Some embedded browsers reject extension-created background
+ * tabs; there the reader falls back to a visible tab and says so.
+ */
+async function createReaderTab(url) {
+  let tab
+  let visible = false
+  try {
+    // Open blank, then navigate: background tabs then load like any other
+    // navigation (and test harnesses attach before the order page loads).
+    tab = await chrome.tabs.create({ url: 'about:blank', active: false })
+    tab = await chrome.tabs.update(tab.id, { url })
+  } catch (error) {
+    if (!/active/i.test(error?.message || '')) throw error
+    tab = await chrome.tabs.create({ url, active: true })
+    visible = true
+  }
+  // A background reader must not be discarded to save memory mid-import.
+  try {
+    await chrome.tabs.update(tab.id, { autoDiscardable: false })
+  } catch {}
+  return { id: tab.id, visible }
+}
+
+/** Bring the tab that needs a sign-in or verification forward, on request only. */
+async function openAttentionTab(job) {
+  const tabId = job?.attention?.tabId
+  if (!Number.isInteger(tabId))
+    throw new Error('This import does not need a sign-in or verification.')
+  let tab
+  try {
+    tab = await chrome.tabs.get(tabId)
+  } catch {
+    throw new Error(
+      'The 1688 tab was closed. Resume the import to open the order again.'
+    )
+  }
+  await chrome.tabs.update(tabId, { active: true })
+  if (Number.isInteger(tab.windowId))
+    await chrome.windows?.update?.(tab.windowId, { focused: true })
+  return { tabId }
 }
 
 async function openLibrary() {
@@ -381,6 +424,8 @@ async function dispatch(message, sender, repository, controller) {
         orders: await repository.listOrders(),
         jobs: (await repository.listJobs()).map(importJobView),
       }
+    case 'IMPORT_ATTENTION_OPEN':
+      return openAttentionTab(await repository.getJob(message.jobId))
     case 'JOBS_QUERY':
       return { jobs: (await repository.listJobs()).map(importJobView) }
     case 'LIBRARY_HISTORY':

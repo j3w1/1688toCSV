@@ -1387,6 +1387,30 @@ export async function startLibrary(
       renderJobs()
     }
   })
+  $('import-attention-open').addEventListener('click', async () => {
+    try {
+      await send('IMPORT_ATTENTION_OPEN', {
+        jobId: $('import-attention').dataset.jobId,
+      })
+    } catch (error) {
+      showErrorNotice(error)
+    }
+  })
+  $('import-attention-resume').addEventListener('click', async (event) => {
+    const button = event.currentTarget
+    button.disabled = true
+    try {
+      await send('IMPORT_RESUME', {
+        jobId: $('import-attention').dataset.jobId,
+      })
+      ;({ jobs } = await send('JOBS_QUERY'))
+      renderJobs()
+    } catch (error) {
+      showErrorNotice(error)
+    } finally {
+      button.disabled = false
+    }
+  })
   function renderJobs() {
     const running = jobs.some((job) => job.state === 'running')
     updateOrderActions()
@@ -1432,10 +1456,20 @@ export async function startLibrary(
     bindAttribute(activityButton, 'aria-description', activityHelp)
     preparationHelp(activityButton, activityHelp)
     $('active-job').hidden = !active
+    // One notice for a sign-in or verification step; the importer never
+    // switches tabs by itself, so this button is the only way forward.
+    const attention = sorted.find(
+      (job) => job.state === 'paused' && job.attention && !job.dismissedAt
+    )
+    $('import-attention').hidden = !attention
+    $('import-attention').dataset.jobId = attention?.id || ''
     if (active) {
       const display = progressPresentation(active)
       $('active-job-text').textContent =
-        `${display.title} · ${display.meter} · ${display.counts}`
+        `${display.title} · ${display.meter} · ${display.counts}` +
+        (active.visibleReader
+          ? ` · ${t('This browser does not allow background import tabs, so the import tab is visible.')}`
+          : '')
       const bar = $('active-job-progress')
       bar.max = display.max || 1
       if (display.max) bar.value = display.value
@@ -1590,7 +1624,7 @@ export async function startLibrary(
               job.state === 'running'
                 ? uiMessage('Pausing import…')
                 : uiMessage(
-                    'Resuming import. One visible detail tab will read the remaining orders.'
+                    'Resuming import. A background tab reads the remaining orders.'
                   )
             )
             await send(
