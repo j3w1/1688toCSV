@@ -129,6 +129,9 @@ export function mountListToolbar(document, { readList, send }) {
     report('Import cancelled.')
     selected.focus()
   })
+  // Stable names for automation agents; see docs/automation.md.
+  confirmButton.dataset.action = 'confirm-import'
+  cancelButton.dataset.action = 'cancel-import'
   confirmation.addEventListener('keydown', (event) => {
     if (event.key === 'Escape') {
       hideConfirmation()
@@ -188,7 +191,8 @@ export function mountListToolbar(document, { readList, send }) {
     },
     'primary'
   )
-  button(nav, 'Open Workspace', async () => {
+  selected.dataset.action = 'import-selected'
+  const openWorkspace = button(nav, 'Open Workspace', async () => {
     address.hidden = false
     openHere.hidden = false
     try {
@@ -230,7 +234,7 @@ export function mountListToolbar(document, { readList, send }) {
       const pages = Math.ceil(list.total / list.pageSize)
       showConfirmation(
         `Import ${list.total.toLocaleString()} orders across ${pages} pages?`,
-        'This scans every page of the current filters, then reads each full order in a visible tab. For just a few orders, cancel and use Import selected.',
+        'This scans every page of the current filters, then reads each full order in a background tab. For just a few orders, cancel and use Import selected.',
         `Import all ${list.total.toLocaleString()} orders`,
         async () => {
           const current = readList()
@@ -293,6 +297,10 @@ export function mountListToolbar(document, { readList, send }) {
       )
     } else await resume()
   })
+  openWorkspace.dataset.action = 'open-workspace'
+  openHere.dataset.action = 'open-workspace-here'
+  all.dataset.action = 'import-all'
+  pause.dataset.action = 'pause-import'
   function releaseReport(url) {
     clearTimeout(reportFiles.get(url))
     reportFiles.delete(url)

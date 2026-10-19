@@ -28,6 +28,8 @@ import {
 import { createPdf, rgbImage } from './pdf-writer.js'
 import { canvasPage } from './print-canvas.js'
 import { createPrintStore } from './print-store.js'
+import { saveFile, announceExport } from './save-file.js'
+import { printSummary, summaryFileName } from './export-summary.js'
 
 /** Labels are rendered at 600 dpi inside the PDF; the preview uses 150 dpi. */
 const PDF_DPI = 600
@@ -48,22 +50,8 @@ export function printFileName(kind, productCount, now = new Date()) {
 }
 
 /** Offline download through a Blob URL and a temporary anchor. */
-function savePdf(bytes, filename) {
-  const url = URL.createObjectURL(
-    new Blob([bytes], { type: 'application/pdf' })
-  )
-  const anchor = el('a')
-  anchor.href = url
-  anchor.download = filename
-  anchor.hidden = true
-  document.body.append(anchor)
-  try {
-    anchor.click()
-  } finally {
-    anchor.remove()
-    setTimeout(() => URL.revokeObjectURL(url), 60000)
-  }
-}
+const savePdf = (bytes, filename) =>
+  saveFile(new Blob([bytes], { type: 'application/pdf' }), filename)
 
 async function decode(blob) {
   const bitmap = await createImageBitmap(blob)
@@ -158,7 +146,9 @@ export function openPrintDialog({
   bindAttribute(dialog, 'aria-label', uiMessage(title))
   const heading = el('h2', uiMessage(title))
   const cancel = el('button', uiMessage('Cancel'))
+  cancel.dataset.action = 'close-print-dialog'
   const exportButton = el('button', uiMessage('Export PDF'), 'primary')
+  exportButton.dataset.action = 'export-pdf'
   const actions = el('div', undefined, 'dialog-actions')
   actions.append(cancel, exportButton)
   dialog.append(heading, actions)
@@ -246,6 +236,7 @@ export function openPrintDialog({
   const deletePreset = el('button', uiMessage('Delete preset'))
   deletePreset.type = 'button'
   const calibrate = el('button', uiMessage('Calibration sheet'))
+  calibrate.dataset.action = 'print-calibration'
   calibrate.type = 'button'
   const presetRow = el('div', undefined, 'print-preset-row')
   presetRow.append(
@@ -811,6 +802,27 @@ export function openPrintDialog({
       if (closed) return
       const filename = printFileName(kind, state.plan.items.length)
       savePdf(bytes, filename)
+      // A small machine-readable summary sits next to every PDF.
+      const summary = printSummary({
+        kind,
+        file: filename,
+        pages: state.plan.pages,
+        perPage: marks ? 2 : state.grid.perPage,
+        items: state.plan.items.map((entry) => ({
+          code: entry.key,
+          name: itemByKey.get(entry.key)?.name || '',
+          requested: entry.requested,
+          extra: entry.extra ?? 0,
+          total: entry.total,
+        })),
+      })
+      saveFile(
+        new Blob([JSON.stringify(summary, null, 2)], {
+          type: 'application/json',
+        }),
+        summaryFileName(filename)
+      )
+      announceExport(summary.files)
       const cap = (key) => whole(state.caps.get(key), null)
       const recorded = store.recordJob({
         kind,
@@ -856,6 +868,7 @@ export function openPrintDialog({
     )
     const filename = printFileName('calibration', 0)
     savePdf(pdf.build(), filename)
+    announceExport([filename])
     bindText(
       status,
       uiMessage('PDF saved to your downloads: {0}', { 0: filename })

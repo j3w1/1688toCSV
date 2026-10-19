@@ -115,7 +115,17 @@ import {
   preparationOrderFields,
   writeTable,
   labelClipboard,
+  preparationGrid,
+  selectedPreparationColumns,
+  PREPARATION_COLUMN_PREFERENCE,
 } from './preparation-clipboard.js'
+import { createXlsx } from './xlsx-writer.js'
+import { saveFile, announceExport } from './save-file.js'
+import {
+  packingListFileName,
+  packingSummary,
+  summaryFileName,
+} from './export-summary.js'
 import { createPreparationColumnPicker } from './preparation-column-picker.js'
 import { presentOrderStatus } from './order-presentation.js'
 import { orderTagBadge } from './tag-picker.js'
@@ -3961,6 +3971,8 @@ export async function startPackingWorkspace({
       )
     )
     const selectionActions = el('div', undefined, 'packing-selection-actions')
+    selectAll.dataset.action = 'select-all-rows'
+    clear.dataset.action = 'clear-selection'
     selectionActions.append(selectAll, clear)
     copyScope = el('span', '', 'packing-help preparation-copy-scope')
     const imageCopy = button(uiMessage('Copy Excel image'), async (target) => {
@@ -4126,8 +4138,28 @@ export async function startPackingWorkspace({
         'Back up every group and product in this preparation, including other pages and orders. Selection does not limit the backup; removed products and unrelated library data are excluded.'
       )
     )
+    const exportList = button(
+      uiMessage('Export packing list'),
+      async (target) => {
+        const rows = scopedDrafts().flatMap((draft) =>
+          preparationCopyRows(draft, { selectedOnly: false })
+        )
+        if (!rows.length) return
+        await flushSaves()
+        exportPackingList(rows)
+      }
+    )
+    exportList.dataset.action = 'export-packing-list'
+    decorateIcon(exportList, 'download')
+    preparationHelp(
+      exportList,
+      uiMessage(
+        'Save the whole open packing list as an Excel file with your chosen columns, plus a small JSON summary of its orders, products and quantities.'
+      )
+    )
     const copyActions = el('div', undefined, 'packing-copy-actions')
     copyActionPanel = mountProductCopyActions(copyActions, {
+      exportList,
       image: imageCopy,
       values: sourceCopies[0],
       photos: sourceCopies[1],
@@ -4139,6 +4171,7 @@ export async function startPackingWorkspace({
       headers: headerChoice,
       backup,
     })
+    copyActionPanel.trigger.dataset.action = 'open-copy-menu'
     const grouping = el('div', undefined, 'packing-grouping-actions')
     const groupingDefinitions = [
       [
@@ -4190,6 +4223,7 @@ export async function startPackingWorkspace({
       symbol: 'packing',
       groups: [{ label: 'Selected products', actions: groupingActions }],
     })
+    groupingPanel.trigger.dataset.action = 'open-grouping-menu'
     groupingPanel.panel.classList.add('packing-grouping-panel')
     preparationHelp(
       groupingPanel.trigger,
@@ -4205,6 +4239,8 @@ export async function startPackingWorkspace({
       const target = button(uiMessage(label), () =>
         preparationAction(() => openPrint(kind, packingCopyRows()))
       )
+      target.dataset.action =
+        kind === 'mark' ? 'print-carton-marks' : 'print-labels'
       decorateIcon(target, symbol)
       return target
     })
@@ -4212,6 +4248,7 @@ export async function startPackingWorkspace({
       openRecentPrints()
     )
     recentPrints.classList.add('packing-recent-prints')
+    recentPrints.dataset.action = 'print-recent'
     decorateIcon(recentPrints, 'undo')
     printButtons.push(recentPrints)
     printPanel = mountCopyActions(printing, {
@@ -4221,6 +4258,7 @@ export async function startPackingWorkspace({
       symbol: 'barcode',
       groups: [{ label: 'Print', actions: printButtons }],
     })
+    printPanel.trigger.dataset.action = 'open-print-menu'
     preparationHelp(
       printPanel.trigger,
       uiMessage(
@@ -5724,6 +5762,51 @@ export async function startPackingWorkspace({
           sellerMemberLogin: record.snapshot.sellerMemberLogin,
         }))
     )
+  }
+  /** Packing list as .xlsx (chosen columns) plus its JSON summary. */
+  function exportPackingList(rows) {
+    const sizeClassifier = createSizeClassifier(preferences.sizeVocabulary)
+    const fields = rows.map((row) => preparationCopyFields(row, sizeClassifier))
+    let preference
+    try {
+      preference = JSON.parse(
+        localStorage.getItem(PREPARATION_COLUMN_PREFERENCE)
+      )
+    } catch {}
+    const grid = preparationGrid(
+      fields,
+      selectedPreparationColumns(preference),
+      t
+    )
+    const file = packingListFileName(fields.map((row) => row.sellerName))
+    saveFile(
+      new Blob(
+        [
+          createXlsx({
+            sheetName: t('Packing list'),
+            header: grid.titles,
+            rows: grid.values,
+            numeric: grid.numeric,
+          }),
+        ],
+        {
+          type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+        }
+      ),
+      file
+    )
+    const summary = packingSummary({ rows: fields, file })
+    saveFile(
+      new Blob([JSON.stringify(summary, null, 2)], {
+        type: 'application/json',
+      }),
+      summaryFileName(file)
+    )
+    announceExport(summary.files)
+    feedback(
+      uiMessage('Packing list saved to your downloads: {0}', { 0: file })
+    )
+    return summary
   }
   async function copyPreparation(rows = preparedRows()) {
     if (!rows.length) throw new Error('Select product rows to copy.')

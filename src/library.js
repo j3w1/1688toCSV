@@ -38,6 +38,7 @@ import { copyExcelImage } from './excel-image-copy.js'
 import { copySourceImages } from './source-image-copy.js'
 import { mountProductCopyActions, mountCopyActions } from './copy-actions.js'
 import { showErrorNotice, clearErrorNotice } from './error-notice.js'
+import { workspaceStatus } from './workspace-status.js'
 import { photoCopyTile } from './photo-copy.js'
 import { summarizeOrders, summarizeProductRows } from './order-summary.js'
 import { decorateIcon, icon } from './icons.js'
@@ -1065,6 +1066,8 @@ export async function startLibrary(
       if (!visible.has(order.orderId)) continue
       const card = node('div', undefined, 'order-card')
       card.setAttribute('role', 'option')
+      card.dataset.action = 'choose-order'
+      card.dataset.orderId = order.orderId
       bindAttribute(
         card,
         'aria-label',
@@ -1387,6 +1390,38 @@ export async function startLibrary(
       renderJobs()
     }
   })
+  // A readable status line for people and automation agents (docs/automation.md).
+  let lastExport = null
+  let lastStatusJob = null
+  document.addEventListener('workspace-export', (event) => {
+    lastExport = event.detail
+    renderStatus()
+  })
+  function renderStatus() {
+    const state = workspaceStatus({ jobs, lastExport })
+    // A newer import replaces an earlier export as the latest news.
+    if (state.status === 'importing' && state.job.id !== lastStatusJob) {
+      lastStatusJob = state.job.id
+      lastExport = null
+    }
+    const line = $('workspace-status')
+    line.dataset.status = state.status
+    line.dataset.files = JSON.stringify(state.files || [])
+    const text =
+      state.status === 'importing'
+        ? uiMessage('Status: importing · {0}', {
+            0: progressPresentation(state.job).counts,
+          })
+        : state.status === 'needs-sign-in'
+          ? uiMessage('Status: needs sign-in or verification')
+          : state.status === 'export-finished'
+            ? uiMessage('Status: export finished · {0}', {
+                0: state.files.join(', '),
+              })
+            : uiMessage('Status: idle')
+    bindText($('workspace-status-text'), text)
+    line.title = String(text)
+  }
   $('import-attention-open').addEventListener('click', async () => {
     try {
       await send('IMPORT_ATTENTION_OPEN', {
@@ -1463,6 +1498,7 @@ export async function startLibrary(
     )
     $('import-attention').hidden = !attention
     $('import-attention').dataset.jobId = attention?.id || ''
+    renderStatus()
     if (active) {
       const display = progressPresentation(active)
       $('active-job-text').textContent =
@@ -2137,7 +2173,7 @@ export async function startLibrary(
       })
     return target
   })
-  mountProductCopyActions($('orders-copy-actions'), {
+  const ordersCopyMenu = mountProductCopyActions($('orders-copy-actions'), {
     image: $('copy-excel-image'),
     values: $('copy-values'),
     photos: $('copy-images'),
@@ -2148,12 +2184,14 @@ export async function startLibrary(
     marks: labelCopies[1],
     headers: $('include-headers').closest('label'),
   })
+  ordersCopyMenu.trigger.dataset.action = 'open-copy-menu'
   const printButtons = [
     ['print-labels', 'Print labels…', 'barcode', 'barcode'],
     ['print-carton-marks', 'Print carton marks…', 'carton', 'mark'],
   ].map(([id, label, symbol, kind]) => {
     const target = node('button', uiMessage(label))
     target.id = id
+    target.dataset.action = id
     decorateIcon(target, symbol)
     target.disabled = true
     target.onclick = () => {
@@ -2166,6 +2204,7 @@ export async function startLibrary(
   })
   const recentPrints = node('button', uiMessage('Recent print jobs…'))
   recentPrints.id = 'print-recent'
+  recentPrints.dataset.action = 'print-recent'
   decorateIcon(recentPrints, 'undo')
   recentPrints.onclick = () => packing?.openRecentPrints()
   printButtons.push(recentPrints)
@@ -2176,6 +2215,7 @@ export async function startLibrary(
     symbol: 'barcode',
     groups: [{ label: 'Print', actions: printButtons }],
   })
+  printMenu.trigger.dataset.action = 'open-print-menu'
   preparationHelp(
     printMenu.trigger,
     uiMessage(

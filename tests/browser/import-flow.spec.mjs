@@ -1067,7 +1067,8 @@ test('imports read orders in background tabs and never switch the visible tab', 
   extension,
 }) => {
   test.setTimeout(80_000)
-  const { list, library } = await setup(extension)
+  // Slow synthetic pages keep the import running long enough to observe.
+  const { list, library } = await setup(extension, { delay: 2500 })
   await list.bringToFront()
   await extension.inspector.evaluate(() => {
     globalThis.tabEvents = []
@@ -1078,12 +1079,21 @@ test('imports read orders in background tabs and never switch the visible tab', 
       globalThis.tabEvents.push(['created', tab.active])
     )
   })
-  await list
-    .getByRole('button', { name: 'Import selected', exact: true })
-    .click()
-  await list
-    .getByRole('button', { name: 'Import 2 selected orders', exact: true })
-    .click()
+  // Agents use the stable data-action names (docs/automation.md).
+  for (const name of ['import-all', 'open-workspace'])
+    await expect(list.locator(`[data-action="${name}"]`)).toBeAttached()
+  await list.locator('[data-action="import-selected"]').click()
+  await expect(list.locator('[data-action="cancel-import"]')).toBeVisible()
+  await list.locator('[data-action="confirm-import"]').click()
+  await expect(library.locator('#workspace-status')).toHaveAttribute(
+    'data-status',
+    'importing',
+    { timeout: 10_000 }
+  )
+  await expect(library.locator('#workspace-status')).toContainText(
+    'Status: importing'
+  )
+  await expect(list.locator('[data-action="pause-import"]')).toBeVisible()
   await expect(library.locator('#order-count')).toHaveText('2', {
     timeout: 65_000,
   })
@@ -1094,6 +1104,10 @@ test('imports read orders in background tabs and never switch the visible tab', 
   ])
   expect(events.filter(([type]) => type === 'activated')).toEqual([])
   expect(await list.evaluate(() => document.visibilityState)).toBe('visible')
+  await expect(library.locator('#workspace-status')).toHaveAttribute(
+    'data-status',
+    'idle'
+  )
   expect(extension.unexpectedRequests).toEqual([])
 })
 
@@ -1127,15 +1141,16 @@ test('a sign-in step pauses the import with one notice that opens the tab only o
       globalThis.activations.push(info.tabId)
     )
   })
-  await list
-    .getByRole('button', { name: 'Import selected', exact: true })
-    .click()
-  await list
-    .getByRole('button', { name: 'Import 2 selected orders', exact: true })
-    .click()
+  // Agents use the stable data-action names (docs/automation.md).
+  await list.locator('[data-action="import-selected"]').click()
+  await list.locator('[data-action="confirm-import"]').click()
   const notice = library.locator('#import-attention')
   await expect(notice).toBeVisible({ timeout: 65_000 })
   await expect(notice).toContainText('needs a sign-in or verification')
+  await expect(library.locator('#workspace-status')).toHaveAttribute(
+    'data-status',
+    'needs-sign-in'
+  )
   await expect(library.locator('#import-attention')).toHaveCount(1)
   expect(
     await extension.inspector.evaluate(() => globalThis.activations)

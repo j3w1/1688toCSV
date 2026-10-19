@@ -197,6 +197,7 @@ test('packing copy formats remain selection-only and Escape dismisses them befor
     'Packing',
     'Labels & codes',
     'Options',
+    'Export',
     'Backup',
   ])
   await expect(trigger).toBeEnabled()

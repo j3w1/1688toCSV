@@ -1417,3 +1417,36 @@ dialog.print-dialog.packing-review {
   flex: 1 1 260px;
   min-inline-size: 0;
 }
+
+/* Readable status line for people and automation agents. */
+.workspace-status {
+  flex: 0 1 auto;
+  min-inline-size: 0;
+  max-inline-size: 260px;
+  margin: 0;
+  overflow: hidden;
+  color: var(--muted);
+  font-size: var(--text-xs);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.workspace-status[data-status='needs-sign-in'] {
+  color: var(--warning-text);
+  font-weight: 600;
+}
+.workspace-status[data-status='importing'],
+.workspace-status[data-status='export-finished'] {
+  color: var(--text);
+}
+@media (max-width: 1280px) {
+  .workspace-status {
+    max-inline-size: 160px;
+  }
+}
+@media (max-width: 900px) {
+  .workspace-status {
+    order: 4;
+    flex-basis: 100%;
+    max-inline-size: none;
+  }
+}

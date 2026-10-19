@@ -169,6 +169,10 @@ export async function reviewPackingChanges({
       )
     : null
   if (secondary && alternate.help) preparationHelp(secondary, alternate.help)
+  // Stable names whatever the visible wording (see docs/automation.md).
+  cancel.dataset.action = 'review-cancel'
+  apply.dataset.action = 'review-proceed'
+  if (secondary) secondary.dataset.action = `review-${alternate.value}`
   actions.append(cancel)
   if (secondary) actions.append(secondary)
   actions.append(apply)

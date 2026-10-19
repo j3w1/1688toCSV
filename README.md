@@ -171,6 +171,10 @@ Carton marks print two per A4, one in each half, with a cut guide in the middle.
 
 **Print… → Recent print jobs…** keeps the five most recent exports. To reprint exactly, print the saved PDF again. **Regenerate** builds a new PDF from current product data with the same quantities and settings, and notes that product data may have changed.
 
+## Automation
+
+An automation agent can run imports, packing-list exports and printing through stable `data-action` controls, read the workspace status line, and check a JSON summary saved next to every export. See [docs/automation.md](docs/automation.md).
+
 ## Keep your data
 
 Use **Settings → Data → Back up** for the complete library. **Copy… → Back up packing** in Preparation exports every group/product in the open preparation, including other pages and order filters; it works even with no selection. Removed products and unrelated orders, images, source history, allocations and global vocabularies are excluded. Complete source orders remain dependencies so monetary totals validate; only photos for the packing's products, current assignments, scoped restore checkpoints, label settings/logo and assigned tag colors travel with it. A photo-heavy packing can still produce a large file.

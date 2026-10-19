@@ -34,13 +34,19 @@
       >
         <button
           id="view-orders"
+          data-action="view-orders"
           type="button"
           data-i18n="Orders"
           aria-current="page"
         >
           Orders
         </button>
-        <button id="view-packing" type="button" data-i18n="Packing list">
+        <button
+          id="view-packing"
+          data-action="view-packing"
+          type="button"
+          data-i18n="Packing list"
+        >
           Packing list
         </button>
       </nav>
@@ -72,6 +78,15 @@
           ></span
         >
       </section>
+      <p
+        id="workspace-status"
+        class="workspace-status"
+        role="status"
+        data-status="idle"
+        data-files="[]"
+      >
+        <span id="workspace-status-text">Status: idle</span>
+      </p>
       <div class="top-actions">
         <a
           data-i18n="Open 1688 orders"
@@ -81,7 +96,7 @@
           rel="noreferrer"
           >Open 1688 orders</a
         >
-        <button id="activity-open">
+        <button id="activity-open" data-action="open-activity">
           <span data-i18n="Activity">Activity</span
           ><span id="activity-count"></span>
         </button>
@@ -395,10 +410,18 @@
               aria-atomic="true"
             ></section>
             <div class="row-selection-actions">
-              <button data-i18n="Select all rows" id="select-rows">
+              <button
+                data-i18n="Select all rows"
+                id="select-rows"
+                data-action="select-all-rows"
+              >
                 Select all rows
               </button>
-              <button data-i18n="Clear selection" id="clear-rows">
+              <button
+                data-i18n="Clear selection"
+                id="clear-rows"
+                data-action="clear-selection"
+              >
                 Clear selection
               </button>
             </div>
@@ -458,16 +481,25 @@
             <div class="packing-launch">
               <label
                 ><span data-i18n="Packing month">Packing month</span
-                ><input type="month" id="packing-month" required /></label
+                ><input
+                  type="month"
+                  id="packing-month"
+                  data-action="packing-month"
+                  required /></label
               ><button
                 data-i18n="Prepare packing list"
                 id="prepare-orders"
+                data-action="prepare-packing-list"
                 class="primary"
                 disabled
               >
                 Prepare packing list
               </button>
-              <button id="restore-packing" data-i18n="Restore packing">
+              <button
+                id="restore-packing"
+                data-action="restore-packing"
+                data-i18n="Restore packing"
+              >
                 Restore packing
               </button>
               <input

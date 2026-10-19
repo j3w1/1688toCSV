@@ -211,6 +211,16 @@ test('labels export print-ready A4 PDFs with proportional spares, caps, warnings
   )
   expect(await download.failure()).toBeNull()
   const pdf = (await readFile(await savedPath(extension, 0))).toString('latin1')
+  // Each PDF is followed by its machine-readable summary.
+  const labelSummary = JSON.parse(
+    await readFile(await savedPath(extension, 1), 'utf8')
+  )
+  expect(labelSummary).toMatchObject({
+    kind: 'labels',
+    pages: 1,
+    perPage: 70,
+    totals: { products: 2, requested: 60, printed: 70 },
+  })
   expect(pdf.startsWith('%PDF-1.4')).toBe(true)
   expect(pdf).toContain('/Count 1')
   expect(pdf).toContain('/MediaBox [0 0 595.276 841.89]')
@@ -228,7 +238,7 @@ test('labels export print-ready A4 PDFs with proportional spares, caps, warnings
   expect((await calibrating).suggestedFilename()).toMatch(
     /^CE-print-calibration-\d{4}-\d{2}-\d{2}\.pdf$/
   )
-  const sheet = (await readFile(await savedPath(extension, 1))).toString(
+  const sheet = (await readFile(await savedPath(extension, 2))).toString(
     'latin1'
   )
   expect(sheet).toContain('/Count 1')
@@ -276,7 +286,7 @@ test('labels export print-ready A4 PDFs with proportional spares, caps, warnings
   const markDownload = page.waitForEvent('download')
   await marks.getByRole('button', { name: 'Export PDF', exact: true }).click()
   expect(await (await markDownload).failure()).toBeNull()
-  const markPdf = (await readFile(await savedPath(extension, 2))).toString(
+  const markPdf = (await readFile(await savedPath(extension, 3))).toString(
     'latin1'
   )
   expect(markPdf).toContain('/Count 2')
