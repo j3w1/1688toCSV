@@ -270,7 +270,7 @@ if (args.has('--dry-run')) {
 const client = browser()
 await client.start()
 try {
-  // Wait up to two minutes for another agent's lease; never take over from the owner.
+  // Wait up to five minutes for another agent's lease; never take over from the owner.
   for (let attempt = 0; ; attempt++) {
     const lease = await client.call(
       'browser_lease',
@@ -282,8 +282,8 @@ try {
       { tolerate: 'lease_held' }
     )
     if (lease !== null) break
-    if (attempt === 1)
-      fail('the browser stayed busy for two minutes; try again later.', 2)
+    if (attempt === 4)
+      fail('the browser stayed busy for five minutes; try again later.', 2)
     step('Waiting for the browser lease')
     await client.call('browser_wait', {
       events: ['lease', 'control'],
