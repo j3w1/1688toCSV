@@ -2393,7 +2393,12 @@ for (const action of ['Copy Excel image', 'Copy group codes', 'Copy columns']) {
       expect(text.filter((value) => value === latestCode)).toHaveLength(2)
       expect(text).not.toContain(originalCode)
       expect(text).not.toContain(otherCode)
-      expect(text).toContain('新玻璃制品')
+      await test.info().attach('export-text-runs', {
+        body: JSON.stringify(text),
+        contentType: 'application/json',
+      })
+      // Canvas wrapping may split a custom category across text runs.
+      expect(text.join('')).toContain('新玻璃制品')
       expect(text.join('')).toContain('300 ml')
       expect(text.join('')).toContain('500 ml')
       expect(text.join('')).not.toContain('TEST-BOX')
