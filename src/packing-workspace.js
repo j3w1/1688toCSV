@@ -70,6 +70,7 @@ import {
 import { mountSizeVocabulary } from './size-vocabulary-settings.js'
 import { attachSearchSuggestions, searchMatcher } from './search-assistance.js'
 import { DEFAULT_LABEL_SETTINGS, renderLabel } from './labels.js'
+import { openPrintDialog } from './print-dialog.js'
 import { mountLabelEditor } from './label-editor.js'
 import {
   createPreparationHistory,
@@ -244,14 +245,13 @@ export async function startPackingWorkspace({
     copyActionPanel,
     arrangementPanel,
     groupingPanel,
+    printPanel,
     selectionToolbar,
     toolbarResize,
     backupButton,
     opening = false,
     labelOrderId
   let packingExclusionSaving = false
-  // The Packing list tab reopens the packing month without using the Orders selection.
-  let launchMonthOnly = false
   const variantPages = new Map()
   const materialFields = new Set()
   function packingItemActions(label, grip, remove) {
@@ -1245,6 +1245,8 @@ export async function startPackingWorkspace({
     copyActionPanel = null
     arrangementPanel?.destroy()
     arrangementPanel = null
+    printPanel?.destroy()
+    printPanel = null
     $('packing-view').hidden = true
     $('orders-view').hidden = false
     document.body.classList.remove('packing-active')
@@ -1585,7 +1587,9 @@ export async function startPackingWorkspace({
       packingRecord(row)?.packingExcludedEntryIds?.includes(row.entryId)
     )
   }
-  function launchCandidates(orderId, entryId) {
+  // `monthOnly` (the Packing list tab) reopens the packing month without
+  // using the Orders selection; every other caller keeps the selection.
+  function launchCandidates(orderId, entryId, { monthOnly = false } = {}) {
     if (orderId) {
       const source = getRecords().find(
         (record) => record.snapshot.orderId === orderId
@@ -1594,7 +1598,7 @@ export async function startPackingWorkspace({
         .filter((item) => !entryId || item.entryId === entryId)
         .map((item) => ({ ...item, orderId }))
     }
-    const selected = launchMonthOnly ? [] : getSelectedRows()
+    const selected = monthOnly ? [] : getSelectedRows()
     if (selected.length) return selected
     const result = []
     for (const record of getRecords()) {
@@ -1615,8 +1619,8 @@ export async function startPackingWorkspace({
     }
     return result
   }
-  function launchRows(orderId, entryId) {
-    return launchCandidates(orderId, entryId).filter(
+  function launchRows(orderId, entryId, options) {
+    return launchCandidates(orderId, entryId, options).filter(
       (row) => !isPackingExcluded(row)
     )
   }
@@ -1822,7 +1826,7 @@ export async function startPackingWorkspace({
       remove: () => host.remove(),
     }
   }
-  async function openPreparation(orderId, entryId) {
+  async function openPreparation(orderId, entryId, launch = {}) {
     if (opening || packingExclusionSaving) return
     if (preparationBusy)
       throw new Error(
@@ -1835,8 +1839,8 @@ export async function startPackingWorkspace({
     try {
       await yieldUI()
       await flushSaves()
-      const rows = launchRows(orderId, entryId)
-      if (!rows.length && launchCandidates(orderId, entryId).length)
+      const rows = launchRows(orderId, entryId, launch)
+      if (!rows.length && launchCandidates(orderId, entryId, launch).length)
         throw new Error(
           'All these products are skipped for packing. Choose Skipped on a product to include it.'
         )
@@ -4192,7 +4196,31 @@ export async function startPackingWorkspace({
         'Change grouping for selected products. Review affected photos and codes before applying. Orders are never merged together.'
       )
     )
-    output.append(copyScope, selectionActions, copyActions, grouping)
+    const printing = el('div', undefined, 'packing-print-actions')
+    const printButtons = [
+      ['Print labels…', 'barcode', 'barcode'],
+      ['Print carton marks…', 'carton', 'mark'],
+    ].map(([label, symbol, kind]) => {
+      const target = button(uiMessage(label), () =>
+        preparationAction(() => openPrint(kind, packingCopyRows()))
+      )
+      decorateIcon(target, symbol)
+      return target
+    })
+    printPanel = mountCopyActions(printing, {
+      label: 'Print…',
+      ariaLabel: 'More print formats',
+      panelLabel: 'Print formats',
+      symbol: 'barcode',
+      groups: [{ label: 'Print', actions: printButtons }],
+    })
+    preparationHelp(
+      printPanel.trigger,
+      uiMessage(
+        'Export print-ready A4 PDFs of labels or carton marks for the selected products.'
+      )
+    )
+    output.append(copyScope, selectionActions, copyActions, printing, grouping)
     host.append(commandBar, output)
     toolbarResize = new ResizeObserver(() => {
       document.documentElement.style.setProperty(
@@ -4315,6 +4343,8 @@ export async function startPackingWorkspace({
     arrangementPanel = null
     groupingPanel?.destroy()
     groupingPanel = null
+    printPanel?.destroy()
+    printPanel = null
     groupingButtons.clear()
     toolbarResize?.disconnect()
     for (const draft of drafts) checkpoint(null, draft)
@@ -5421,6 +5451,63 @@ export async function startPackingWorkspace({
       errorOptions: packingErrorOptions,
     })
   }
+  /** One entry per distinct label for the selected source rows. */
+  function printItems(kind, selectedRows) {
+    const selected = new Set(
+      selectedRows.map((row) => `${row.orderId}/${row.entryId}`)
+    )
+    const items = new Map()
+    for (const orderId of new Set(selectedRows.map((row) => row.orderId))) {
+      const record = getRecords().find(
+        (record) => record.snapshot.orderId === orderId
+      )
+      const prep = preparations.get(orderId)
+      if (!prep || !record) continue
+      const quantityOf = new Map(
+        record.snapshot.items.map((item) => [
+          item.entryId,
+          Math.max(0, Math.floor(Number(item.quantity)) || 0),
+        ])
+      )
+      for (const group of activeGroups(prep, record.snapshot)) {
+        const variants = group.variants.filter((variant) =>
+          variant.entryIds.some((id) => selected.has(`${orderId}/${id}`))
+        )
+        if (!variants.length) continue
+        for (const variant of kind === 'mark' ? [null] : variants) {
+          const model = outputModel(prep, group, variant, kind, false, true)
+          const units = (variant ? [variant] : [])
+            .flatMap((entry) => entry.entryIds)
+            .filter((id) => selected.has(`${orderId}/${id}`))
+            .reduce((sum, id) => sum + (quantityOf.get(id) || 0), 0)
+          const existing = items.get(model.code)
+          if (existing) existing.quantity += kind === 'mark' ? 0 : units
+          else
+            items.set(model.code, {
+              key: model.code,
+              code: model.code,
+              name: model.spanishName,
+              detail: model.category,
+              quantity: kind === 'mark' ? 1 : Math.max(1, units),
+              model,
+            })
+        }
+      }
+    }
+    return [...items.values()]
+  }
+  async function openPrint(kind, selectedRows) {
+    if (!selectedRows.length) throw new Error('Select prepared products first.')
+    await flushSaves()
+    const items = printItems(kind, selectedRows)
+    if (!items.length) throw new Error('Select prepared products first.')
+    openPrintDialog({
+      kind: kind === 'mark' ? 'marks' : 'labels',
+      items,
+      settings: structuredClone(settings()),
+      logoUrl: logoUrl(),
+    })
+  }
   function orderRows(rows) {
     const ranks = new Map()
     for (const [orderId, prep] of preparations) {
@@ -5609,7 +5696,20 @@ export async function startPackingWorkspace({
     edits.append(tabs)
     host.replaceChildren(el('h2', uiMessage('Settings')), edits)
     tabs.setAttribute('role', 'tablist')
-    tabs.setAttribute('aria-orientation', 'vertical')
+    // The tab list is a column on wide screens and a wrapping row on narrow ones.
+    const narrowSettings = matchMedia('(max-width: 760px)')
+    const orientTabs = () =>
+      tabs.setAttribute(
+        'aria-orientation',
+        narrowSettings.matches ? 'horizontal' : 'vertical'
+      )
+    orientTabs()
+    narrowSettings.addEventListener('change', orientTabs)
+    settingsDialog.addEventListener(
+      'close',
+      () => narrowSettings.removeEventListener('change', orientTabs),
+      { once: true }
+    )
     bindAttribute(tabs, 'aria-label', uiMessage('Settings sections'))
     function selectTab(id) {
       for (const tab of tabButtons) {
@@ -6270,13 +6370,10 @@ export async function startPackingWorkspace({
       if (!$('packing-view').hidden) showOrders()
     }
     packingTab.onclick = () => {
-      if (!$('packing-view').hidden) return
-      launchMonthOnly = true
-      openPreparation()
-        .catch((e) => feedback(e.message, true))
-        .finally(() => {
-          launchMonthOnly = false
-        })
+      if (!$('packing-view').hidden || opening) return
+      openPreparation(undefined, undefined, { monthOnly: true }).catch((e) =>
+        feedback(e.message, true)
+      )
     }
   }
   const restoreFile = $('restore-packing-file')
@@ -6325,6 +6422,8 @@ export async function startPackingWorkspace({
     preparedRows,
     copyLabels: (kind, rows) =>
       preparationAction(() => bulkLabels(kind, orderRows(rows))),
+    printLabels: (kind, rows) =>
+      preparationAction(() => openPrint(kind, orderRows(rows))),
     canCopyLabels: (rows) =>
       rows.length > 0 &&
       rows.every((row) => membership.has(`${row.orderId}/${row.entryId}`)),

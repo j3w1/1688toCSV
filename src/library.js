@@ -36,7 +36,7 @@ import { mergeOrderTags } from './order-tags.js'
 import { createRowSelection } from './row-selection.js'
 import { copyExcelImage } from './excel-image-copy.js'
 import { copySourceImages } from './source-image-copy.js'
-import { mountProductCopyActions } from './copy-actions.js'
+import { mountProductCopyActions, mountCopyActions } from './copy-actions.js'
 import { showErrorNotice, clearErrorNotice } from './error-notice.js'
 import { photoCopyTile } from './photo-copy.js'
 import { summarizeOrders, summarizeProductRows } from './order-summary.js'
@@ -947,7 +947,12 @@ export async function startLibrary(
     ])
       $(id).disabled =
         !rows.length || copyBusy || $(id).getAttribute('aria-busy') === 'true'
-    for (const id of ['copy-barcodes', 'copy-carton-marks']) {
+    for (const id of [
+      'copy-barcodes',
+      'copy-carton-marks',
+      'print-labels',
+      'print-carton-marks',
+    ]) {
       const target = $(id)
       if (target)
         target.disabled = copyBusy || !packing?.canCopyLabels(copyRows())
@@ -2068,6 +2073,35 @@ export async function startLibrary(
     marks: labelCopies[1],
     headers: $('include-headers').closest('label'),
   })
+  const printButtons = [
+    ['print-labels', 'Print labels…', 'barcode', 'barcode'],
+    ['print-carton-marks', 'Print carton marks…', 'carton', 'mark'],
+  ].map(([id, label, symbol, kind]) => {
+    const target = node('button', uiMessage(label))
+    target.id = id
+    decorateIcon(target, symbol)
+    target.disabled = true
+    target.onclick = () => {
+      const rows = copyRows()
+      if (copyBusy || !packing?.canCopyLabels(rows)) return
+      // Label validation errors carry their own resolve action.
+      packing.printLabels(kind, rows).catch((error) => showErrorNotice(error))
+    }
+    return target
+  })
+  const printMenu = mountCopyActions($('orders-print-actions'), {
+    label: 'Print…',
+    ariaLabel: 'More print formats',
+    panelLabel: 'Print formats',
+    symbol: 'barcode',
+    groups: [{ label: 'Print', actions: printButtons }],
+  })
+  preparationHelp(
+    printMenu.trigger,
+    uiMessage(
+      'Export print-ready A4 PDFs of labels or carton marks for the selected products.'
+    )
+  )
   $('copy-excel-image').addEventListener('click', () =>
     copyAction($('copy-excel-image'), async () => {
       if (copyBusy) return false

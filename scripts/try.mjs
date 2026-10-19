@@ -4,16 +4,15 @@
 // ~/.config/1688tocsv/try.json (see AGENTS.md); nothing here reads order data
 // beyond per-store record counts and import job states.
 import { spawn, spawnSync } from 'node:child_process'
-import {
-  cp,
-  mkdir,
-  readFile,
-  rename,
-  rm,
-  stat,
-  writeFile,
-} from 'node:fs/promises'
+import { cp, mkdir, readFile, rm, stat, writeFile } from 'node:fs/promises'
 import { homedir } from 'node:os'
+import {
+  checkIdentity,
+  readIdentity,
+  recoverStaging,
+  stagingPaths,
+  swapIn,
+} from './try-staging.mjs'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 
@@ -118,11 +117,19 @@ function browser() {
         .join('\n')
       if (tolerate && new RegExp(`"refused": "(${tolerate})"`).test(text))
         return null
-      if (message.error || message.result?.isError || /"refused"/.test(text))
+      if (message.error || message.result?.isError || /"refused"/.test(text)) {
+        // Print CE's own refusal code and message only, never page or extension payloads.
+        let refusal = {}
+        try {
+          refusal = JSON.parse(text)
+        } catch {}
         fail(
-          `CE Dev Browser ${name} refused: ${(text || JSON.stringify(message.error)).slice(0, 400)}`,
+          refusal.refused
+            ? `CE Dev Browser ${name} refused (${refusal.refused}): ${String(refusal.message || '').slice(0, 200)}`
+            : `CE Dev Browser ${name} returned an unexpected response.`,
           2
         )
+      }
       return text
     },
     stop: () => child.kill(),
@@ -199,17 +206,39 @@ async function registered(client) {
   return { loaded, errors: list.errors || {} }
 }
 
-const installedManifest = JSON.parse(
-  await readFile(path.join(installDir, 'manifest.json'), 'utf8')
-)
-if (installedManifest.name !== '1688toCSV')
-  fail(`${installDir} does not hold the 1688toCSV extension.`)
 await mkdir(stagingDir, { recursive: true })
 if ((await stat(stagingDir)).dev !== (await stat(path.dirname(installDir))).dev)
   fail(
     'stagingDir must be on the same filesystem as installDir for an atomic swap.'
   )
-const previous = path.join(stagingDir, 'previous')
+// Finish or undo an interrupted run before reading the installed build.
+try {
+  const recovered = await recoverStaging({ installDir, stagingDir })
+  if (recovered !== 'none')
+    step(
+      recovered === 'restored'
+        ? 'Recovered an interrupted run: the previous install is back in place.'
+        : 'Recovered an interrupted run: the new install stays, rollback updated.'
+    )
+} catch (error) {
+  fail(error.message)
+}
+let installed
+try {
+  installed = await readIdentity(installDir)
+} catch {
+  fail(`${installDir} has no readable manifest.json.`)
+}
+if (installed.name !== '1688toCSV')
+  fail(`${installDir} does not hold the 1688toCSV extension.`)
+const { previous } = stagingPaths(stagingDir)
+const verifyCandidate = async (directory) => {
+  try {
+    checkIdentity(await readIdentity(directory), installed)
+  } catch (error) {
+    fail(error.message)
+  }
+}
 
 let candidate
 if (args.has('--rollback')) {
@@ -218,6 +247,7 @@ if (args.has('--rollback')) {
   } catch {
     fail('no previously staged build to restore.')
   }
+  await verifyCandidate(previous)
   candidate = previous
 } else {
   if (!args.has('--quick'))
@@ -234,17 +264,11 @@ if (args.has('--rollback')) {
       cwd: root,
       encoding: 'utf8',
     }).stdout.trim() !== ''
-  const built = JSON.parse(
-    await readFile(path.join(root, 'dist/manifest.json'), 'utf8')
-  )
-  for (const key of ['name', 'key'])
-    if (JSON.stringify(built[key]) !== JSON.stringify(installedManifest[key]))
-      fail(
-        `manifest ${key} differs from the installed build; that could change the extension id.`
-      )
+  await verifyCandidate(path.join(root, 'dist'))
+  const built = (await readIdentity(path.join(root, 'dist'))).manifest
   if (
     JSON.stringify(built.permissions) !==
-    JSON.stringify(installedManifest.permissions)
+    JSON.stringify(installed.manifest.permissions)
   )
     console.warn(
       'try: permissions changed; Chrome may ask to re-enable the extension.'
@@ -301,23 +325,17 @@ try {
 
   // Swap complete folders; the browser only reads installDir on reload.
   step('Stage complete build')
-  const swap = path.join(stagingDir, `swap-${Date.now()}`)
-  await rename(installDir, swap)
-  try {
-    await rename(candidate, installDir)
-  } catch (error) {
-    await rename(swap, installDir)
-    throw error
-  }
-  await rm(previous, { recursive: true, force: true })
-  await rename(swap, previous)
+  await swapIn({ installDir, stagingDir, candidate })
 
   step('Reload through CE Dev Browser')
   await client.call('browser_extension', { action: 'reload', id: extensionId })
   const { loaded, errors } = await registered(client)
   if (!loaded?.enabled) fail('the reloaded extension is not enabled.', 3)
   if (Object.keys(errors).length)
-    fail(`the reloaded extension reports errors: ${JSON.stringify(errors)}`, 3)
+    fail(
+      `the reloaded extension reports ${Object.keys(errors).length} error group(s); read them with browser_extension logs.`,
+      3
+    )
   const after = await inspect(client, 'Library after')
   const changed = Object.keys({ ...before.counts, ...after.counts }).filter(
     (key) => before.counts[key] !== after.counts[key]
