@@ -103,7 +103,10 @@ async function backup(extension) {
 }
 
 async function prepareSelected(page, month = '2026-10') {
-  await page.getByLabel('Packing month', { exact: true }).fill(month)
+  await page
+    .locator('#orders-view')
+    .getByLabel('Packing month', { exact: true })
+    .fill(month)
   await page
     .getByRole('button', { name: 'Prepare packing list', exact: true })
     .click()
@@ -256,9 +259,9 @@ test('chosen size columns preserve source dimensions and separate saved barcode 
     'Size\tSize code\r\n300ml\t\r\n500ml\t\r\n\t'
   )
   await columns.getByRole('button', { name: 'Close', exact: true }).click()
-  // Native dialog close removes its controls in the queued close event.
-  // Wait before locating the workspace's identically named Packing month.
-  await expect(columns).toHaveCount(0)
+  // A role locator excludes a closed dialog before its queued cleanup runs.
+  // Wait for the DOM node, including its Packing month checkbox, to be removed.
+  await expect(page.locator('.preparation-column-dialog')).toHaveCount(0)
   await selectAllProducts(page)
   const view = await prepareSelected(page)
   await view
@@ -289,7 +292,7 @@ test('chosen size columns preserve source dimensions and separate saved barcode 
     expected
   )
   await columns.getByRole('button', { name: 'Close', exact: true }).click()
-  await expect(columns).toHaveCount(0)
+  await expect(page.locator('.preparation-column-dialog')).toHaveCount(0)
   await view.getByRole('button', { name: 'Orders', exact: true }).click()
   await page.reload()
   await revealCopyActions(page)

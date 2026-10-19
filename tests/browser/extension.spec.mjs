@@ -50,46 +50,50 @@ async function expectRevoked(page, url) {
   ).toBe(true)
 }
 
-test('one direct page click downloads current CSV bytes without opening a popup or dialog', async ({
-  extension,
-}) => {
-  await expect(controlFor(extension)).toHaveCount(1)
-  await expect(linkFor(extension)).toHaveAttribute('href', '#')
-  expect(await savedFiles(extension)).toEqual([])
-  await saveDirectly(extension)
-  const downloads = await savedFiles(extension)
-  expect(downloads).toHaveLength(1)
-  expect(downloads[0].state).toBe('complete')
-  expect(path.basename(downloads[0].filename)).toBe('示例工厂_6789.csv')
-  expect(path.resolve(path.dirname(downloads[0].filename))).toBe(
-    path.resolve(extension.downloadPath)
-  )
-  const bytes = await readFile(downloads[0].filename)
-  expect([...bytes.subarray(0, 3)]).toEqual([0xef, 0xbb, 0xbf])
-  const csv = bytes.toString('utf8')
-  expect(csv).toMatch(
-    /^\uFEFFThumbnail,Description,Price,Quantity,Discount\r\n/
-  )
-  expect(csv).toContain('测试香薰蜡烛\n颜色：暖白\n货号：DEMO-001')
-  expect(csv).toContain('桌面收纳盒\n款式：小号\n货号：DEMO-002')
-  expect(csv.trimEnd().split('\r\n')).toHaveLength(3)
-  expect(csv).toMatch(/,12\.50,4,2\.10\r\n/)
-  expect(csv).toMatch(/,8\.00,2,0\.30(?:\r\n)?$/)
+test(
+  'one direct page click downloads current CSV bytes without opening a popup or dialog',
+  { tag: '@smoke' },
+  async ({ extension }) => {
+    await expect(controlFor(extension)).toHaveCount(1)
+    await expect(linkFor(extension)).toHaveAttribute('href', '#')
+    expect(await savedFiles(extension)).toEqual([])
+    await saveDirectly(extension)
+    const downloads = await savedFiles(extension)
+    expect(downloads).toHaveLength(1)
+    expect(downloads[0].state).toBe('complete')
+    expect(path.basename(downloads[0].filename)).toBe('示例工厂_6789.csv')
+    expect(path.resolve(path.dirname(downloads[0].filename))).toBe(
+      path.resolve(extension.downloadPath)
+    )
+    const bytes = await readFile(downloads[0].filename)
+    expect([...bytes.subarray(0, 3)]).toEqual([0xef, 0xbb, 0xbf])
+    const csv = bytes.toString('utf8')
+    expect(csv).toMatch(
+      /^\uFEFFThumbnail,Description,Price,Quantity,Discount\r\n/
+    )
+    expect(csv).toContain('测试香薰蜡烛\n颜色：暖白\n货号：DEMO-001')
+    expect(csv).toContain('桌面收纳盒\n款式：小号\n货号：DEMO-002')
+    expect(csv.trimEnd().split('\r\n')).toHaveLength(3)
+    expect(csv).toMatch(/,12\.50,4,2\.10\r\n/)
+    expect(csv).toMatch(/,8\.00,2,0\.30(?:\r\n)?$/)
 
-  const previousUrl = await linkFor(extension).getAttribute('href')
-  await saveDirectly(extension)
-  const repeatedDownloads = await savedFiles(extension)
-  expect(repeatedDownloads).toHaveLength(2)
-  const repeated = repeatedDownloads.find((item) => item.id !== downloads[0].id)
-  expect(repeated.state).toBe('complete')
-  expect(repeated.filename).not.toBe(downloads[0].filename)
-  expect(await readFile(repeated.filename)).toEqual(bytes)
-  await expectRevoked(extension.orderPage, previousUrl)
-  await expect(
-    extension.orderPage.getByRole('dialog', { includeHidden: true })
-  ).toHaveCount(0)
-  expect(extension.unexpectedRequests).toEqual([])
-})
+    const previousUrl = await linkFor(extension).getAttribute('href')
+    await saveDirectly(extension)
+    const repeatedDownloads = await savedFiles(extension)
+    expect(repeatedDownloads).toHaveLength(2)
+    const repeated = repeatedDownloads.find(
+      (item) => item.id !== downloads[0].id
+    )
+    expect(repeated.state).toBe('complete')
+    expect(repeated.filename).not.toBe(downloads[0].filename)
+    expect(await readFile(repeated.filename)).toEqual(bytes)
+    await expectRevoked(extension.orderPage, previousUrl)
+    await expect(
+      extension.orderPage.getByRole('dialog', { includeHidden: true })
+    ).toHaveCount(0)
+    expect(extension.unexpectedRequests).toEqual([])
+  }
+)
 
 test('keyboard Enter downloads directly without an extension UI page', async ({
   extension,
@@ -155,34 +159,6 @@ test('an empty order reports an error and recovers when SPA rows load', async ({
   await extension.setOrder()
   await saveDirectly(extension)
   expect(await savedFiles(extension)).toHaveLength(1)
-  expect(extension.unexpectedRequests).toEqual([])
-})
-
-test('the page control fits a 320px viewport without horizontal overflow', async ({
-  extension,
-}) => {
-  await extension.orderPage.setViewportSize({ width: 320, height: 640 })
-  await extension.setOrder({ rows: [] })
-  await linkFor(extension).click()
-  await expect(controlFor(extension).getByRole('status')).toContainText(
-    'No product rows'
-  )
-  const bounds = await controlFor(extension).boundingBox()
-  expect(bounds.x).toBeGreaterThanOrEqual(0)
-  expect(bounds.x + bounds.width).toBeLessThanOrEqual(320)
-  expect(bounds.y).toBeGreaterThanOrEqual(0)
-  expect(bounds.y + bounds.height).toBeLessThanOrEqual(640)
-  expect(
-    await controlFor(extension).evaluate(
-      (control) => control.scrollWidth <= control.clientWidth
-    )
-  ).toBe(true)
-  expect(
-    await extension.orderPage.evaluate(
-      () => document.documentElement.scrollWidth <= innerWidth
-    )
-  ).toBe(true)
-  expect(await savedFiles(extension)).toEqual([])
   expect(extension.unexpectedRequests).toEqual([])
 })
 

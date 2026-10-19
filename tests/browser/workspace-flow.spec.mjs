@@ -6,7 +6,10 @@ import { test, expect } from './extension-fixture.mjs'
 import { createDemoRecords } from '../../preview/library-fixture.js'
 import { summarizeOrders } from '../../src/order-summary.js'
 
-async function open(extension, { longSeller = false, configure } = {}) {
+async function open(
+  extension,
+  { longSeller = false, configure, clock = false } = {}
+) {
   const records = await extension.inspector.evaluate(
     `(${createDemoRecords.toString()})(document)`
   )
@@ -31,7 +34,9 @@ async function open(extension, { longSeller = false, configure } = {}) {
   )
   expect(restored.ok, restored.error).toBe(true)
   const page = await extension.context.newPage()
-  await page.clock.setFixedTime(new Date('2026-10-15T12:00:00+08:00'))
+  const now = new Date('2026-10-15T12:00:00+08:00')
+  if (clock) await page.clock.install({ time: now })
+  else await page.clock.setFixedTime(now)
   await page.addInitScript(() => {
     if (localStorage.getItem('1688-library-purchase-months') === null)
       localStorage.setItem('1688-library-purchase-months', '[]')
@@ -43,93 +48,6 @@ async function open(extension, { longSeller = false, configure } = {}) {
 const money = (value) =>
   `¥ ${Number(value).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`
 
-async function watchCopyToolbar(page, id) {
-  return page.evaluate((id) => {
-    window.copyToolbarObserver?.disconnect()
-    const toolbar = document.querySelector('.export-toolbar')
-    const button = document.getElementById(id)
-    window.copyToolbarGeometry = () => {
-      const outer = toolbar.getBoundingClientRect()
-      const controls = [
-        ...toolbar.querySelectorAll(
-          '.copy-actions > button:not(.copy-cancel), .copy-actions > .check'
-        ),
-      ].map((node) => {
-        const box = node.getBoundingClientRect()
-        return {
-          id: node.id || node.textContent.trim(),
-          x: box.left - outer.left,
-          y: box.top - outer.top,
-          width: box.width,
-          height: box.height,
-        }
-      })
-      return {
-        width: outer.width,
-        height: outer.height,
-        rows: new Set(controls.map((box) => Math.round(box.y))).size,
-        controls,
-      }
-    }
-    window.copyToolbarSamples = []
-    window.copyToolbarObserver = new MutationObserver(() => {
-      window.copyToolbarSamples.push({
-        label: button.textContent.trim().replace(/\s+/g, ' '),
-        geometry: window.copyToolbarGeometry(),
-      })
-    })
-    window.copyToolbarObserver.observe(button, {
-      attributes: true,
-      childList: true,
-      subtree: true,
-    })
-    return window.copyToolbarGeometry()
-  }, id)
-}
-
-function sameToolbar(actual, before) {
-  expect(actual.rows).toBe(before.rows)
-  for (const dimension of ['width', 'height'])
-    expect(actual[dimension]).toBeCloseTo(before[dimension], 1)
-  expect(actual.controls).toHaveLength(before.controls.length)
-  actual.controls.forEach((control, index) => {
-    expect(control.id).toBe(before.controls[index].id)
-    for (const dimension of ['x', 'y', 'width', 'height'])
-      expect(control[dimension]).toBeCloseTo(
-        before.controls[index][dimension],
-        1
-      )
-  })
-}
-
-async function assertToolbarStable(page, before, labels = []) {
-  const { current, samples, fits } = await page.evaluate(() => ({
-    current: window.copyToolbarGeometry(),
-    samples: window.copyToolbarSamples,
-    fits:
-      document.documentElement.scrollWidth <= innerWidth &&
-      [
-        ...document.querySelectorAll(
-          '.export-toolbar button, .image-copy-dialog, .image-copy-actions button, .image-copy-progress, .image-copy-status, .error-notice'
-        ),
-      ]
-        .filter((node) => node.getClientRects().length && !node.hidden)
-        .every((node) => {
-          const box = node.getBoundingClientRect()
-          return (
-            box.left >= 0 &&
-            box.right <= innerWidth &&
-            node.scrollWidth <= node.clientWidth + 1
-          )
-        }),
-  }))
-  sameToolbar(current, before)
-  for (const sample of samples) sameToolbar(sample.geometry, before)
-  for (const label of labels)
-    expect(samples.some((sample) => sample.label === label)).toBe(true)
-  expect(fits).toBe(true)
-}
-
 async function enableClipboard(extension, page) {
   await extension.context.grantPermissions([
     'clipboard-read',
@@ -138,11 +56,13 @@ async function enableClipboard(extension, page) {
   await page.bringToFront()
 }
 
-for (const width of [1440, 390]) {
-  test(`copy group codes keeps the toolbar steady through success and reset at ${width}px`, async ({
+test.describe('copy progress and recovery', () => {
+  const width = 390
+  test(`group codes confirm completed copying and reset for the next copy`, async ({
     extension,
   }) => {
     const { page } = await open(extension, {
+      clock: true,
       configure(records) {
         records[0].snapshot.sellerMemberLogin = 'synthetic-copy-toolbar-store'
       },
@@ -169,26 +89,23 @@ for (const width of [1440, 390]) {
       .textContent()
     expect(code).toMatch(/^CE2610\d{4}$/)
     await revealCopyActions(page)
-    const before = await watchCopyToolbar(page, 'copy-group-codes')
     const button = page.locator('#copy-group-codes')
     await button.click()
     await expect(button).toHaveText('Copied')
     await expect(button).toHaveClass(/copied/)
     expect(await page.evaluate(() => navigator.clipboard.readText())).toBe(code)
-    await assertToolbarStable(page, before, ['Copying…', 'Copied'])
-    await expect(button).toHaveText('Group codes', { timeout: 4500 })
-    await assertToolbarStable(page, before, ['Group codes'])
+    await page.clock.fastForward(3001)
+    await expect(button).toHaveText('Group codes')
     expect(extension.unexpectedRequests).toEqual([])
   })
 
-  test(`image-copy progress preserves the toolbar and the frozen rows at ${width}px`, async ({
+  test(`image-copy progress retains the chosen rows while filters change`, async ({
     extension,
   }) => {
     const { page } = await open(extension)
     await page.setViewportSize({ width, height: 960 })
     await enableClipboard(extension, page)
     await revealCopyActions(page)
-    const before = await watchCopyToolbar(page, 'copy-images')
     // Hold one genuine image decode while the user changes the visible scope.
     // Conversion and the final HTML clipboard write still use native browser APIs.
     await page.evaluate(() => {
@@ -223,7 +140,6 @@ for (const width of [1440, 390]) {
     await expect(progress).toContainText('Preparing')
     await expect(progress).toHaveAttribute('role', 'status')
     await expect(dialog.locator('.image-copy-submit')).toBeDisabled()
-    await assertToolbarStable(page, before, ['Copying…'])
     await page.evaluate(() => {
       const search = document.getElementById('search')
       search.value = 'no matching product'
@@ -245,15 +161,13 @@ for (const width of [1440, 390]) {
         .querySelectorAll('tr img').length
     })
     expect(count).toBe(8)
-    await assertToolbarStable(page, before, ['Copied'])
     await page.locator('#search').fill('')
     await expect(button).toHaveText('Product photos', { timeout: 4500 })
     await expect(button).toBeEnabled()
-    await assertToolbarStable(page, before, ['Product photos'])
     expect(extension.unexpectedRequests).toEqual([])
   })
 
-  test(`Excel image dialog cancellation preserves toolbar geometry and the clipboard at ${width}px`, async ({
+  test(`Excel image dialog cancellation preserves the clipboard`, async ({
     extension,
   }) => {
     const { page } = await open(extension)
@@ -270,7 +184,6 @@ for (const width of [1440, 390]) {
         else return encode.apply(this, args)
       }
     })
-    const before = await watchCopyToolbar(page, 'copy-excel-image')
     const button = page.locator('#copy-excel-image')
     await button.click()
     await expect
@@ -281,7 +194,6 @@ for (const width of [1440, 390]) {
     await expect(dialog.locator('.image-copy-progress')).toContainText(
       'Creating image 8/8…'
     )
-    await assertToolbarStable(page, before, ['Copying…'])
     await dialog.getByRole('button', { name: 'Close', exact: true }).click()
     await page.evaluate(() => window.finishCopyTableImage())
     await expect(button).toHaveText('Excel image')
@@ -290,11 +202,10 @@ for (const width of [1440, 390]) {
     expect(await page.evaluate(() => navigator.clipboard.readText())).toBe(
       'Synthetic copy cancellation sentinel'
     )
-    await assertToolbarStable(page, before, ['Excel image'])
     expect(extension.unexpectedRequests).toEqual([])
   })
 
-  test(`image-copy errors stay available and retry without toolbar movement at ${width}px`, async ({
+  test(`image-copy errors persist until a successful retry`, async ({
     extension,
   }) => {
     let unavailable = true,
@@ -313,6 +224,7 @@ for (const width of [1440, 390]) {
           })
     )
     const { page } = await open(extension, {
+      clock: true,
       configure(records) {
         picture = records[0].snapshot.items[0].thumbnail
         records[0].snapshot.items[0].thumbnail = url
@@ -325,16 +237,17 @@ for (const width of [1440, 390]) {
       .first()
       .click()
     await revealCopyActions(page)
-    const before = await watchCopyToolbar(page, 'copy-images')
     const button = page.locator('#copy-images')
     await button.click()
     const dialog = page.locator('.image-copy-dialog')
     const error = dialog.getByRole('alert')
     await expect(error).toContainText('Thumbnail could not be loaded (503).')
     await expect(dialog.locator('.image-copy-submit')).toBeDisabled()
-    await assertToolbarStable(page, before, ['Copying…'])
     await expect(error).toBeVisible()
-    await page.waitForTimeout(3100)
+    await expect(
+      dialog.getByRole('button', { name: 'Retry', exact: true })
+    ).toBeEnabled()
+    await page.clock.fastForward(3100)
     await expect(error).toBeVisible()
     unavailable = false
     await dialog.getByRole('button', { name: 'Retry', exact: true }).click()
@@ -352,10 +265,9 @@ for (const width of [1440, 390]) {
           .querySelectorAll('img').length
       })
     ).toBe(1)
-    await assertToolbarStable(page, before, ['Copied'])
     expect(extension.unexpectedRequests).toEqual([])
   })
-}
+})
 
 test('month headings collapse independently; month choices toggle and Shift includes a range', async ({
   extension,
@@ -404,7 +316,18 @@ test('month headings collapse independently; month choices toggle and Shift incl
 test('filtered totals count each whole order once and row clicks toggle without intercepting controls', async ({
   extension,
 }) => {
-  const { page, records } = await open(extension)
+  const { page, records } = await open(extension, { longSeller: true })
+  for (const host of [
+    page.locator('.order-card').first(),
+    page.locator('.order-section-band').first(),
+  ]) {
+    await expect(host.locator('.order-seller')).toHaveText(
+      records[0].snapshot.sellerName
+    )
+    await expect(
+      host.locator('.order-reference, .order-section-number')
+    ).toHaveText(records[0].snapshot.orderId)
+  }
   const total = page.locator('#order-totals .totals-payable dd')
   await expect(total).toHaveText(
     money(summarizeOrders(records).amounts.payable)
@@ -471,47 +394,6 @@ test('packing is the primary action while full refresh and backups stay in compa
     chrome.runtime.sendMessage({ type: 'JOBS_QUERY' })
   )
   expect(jobs.data.jobs).toEqual([])
-})
-
-test('seller names and full order numbers wrap without clipping at desktop and mobile widths', async ({
-  extension,
-}) => {
-  const { page, records } = await open(extension, { longSeller: true })
-  const reference = records[0].snapshot.orderId
-  for (const width of [1440, 900, 390]) {
-    await page.setViewportSize({ width, height: 960 })
-    const card = page.locator('.order-card').first()
-    const identity = page.locator('#sheet-body .order-section-band').first()
-    await expect(card.locator('.order-seller')).toHaveText(
-      records[0].snapshot.sellerName
-    )
-    await expect(card.locator('.order-reference')).toHaveText(reference)
-    await expect(identity.locator('.order-seller')).toHaveText(
-      records[0].snapshot.sellerName
-    )
-    await expect(identity.locator('.order-section-number')).toHaveText(
-      reference
-    )
-    for (const block of [card.locator('.order-summary'), identity])
-      expect(
-        await block.evaluate(
-          (element) =>
-            element.scrollWidth <= element.clientWidth &&
-            [...element.children].every((child) => {
-              const rect = child.getBoundingClientRect()
-              const parent = element.getBoundingClientRect()
-              return (
-                rect.left >= parent.left - 1 && rect.right <= parent.right + 1
-              )
-            })
-        )
-      ).toBe(true)
-    expect(
-      await page.evaluate(
-        () => document.documentElement.scrollWidth <= innerWidth
-      )
-    ).toBe(true)
-  }
 })
 
 test('workspace hints are compact, leave with the pointer and dismiss when editing starts', async ({

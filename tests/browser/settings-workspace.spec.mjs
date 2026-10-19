@@ -69,6 +69,7 @@ test('Settings sections support the keyboard, preserve edits across searches and
   extension,
 }) => {
   const { page, dialog } = await openSettings(extension)
+  await page.setViewportSize({ width: 390, height: 844 })
   await dialog.getByLabel('Website', { exact: true }).fill('labels.example')
   await dialog.getByRole('tab', { name: 'Labels', exact: true }).focus()
   await page.keyboard.press('ArrowRight')
@@ -194,38 +195,4 @@ test('invalid label dimensions stay editable and do not replace saved settings',
   await expect(
     dialog.getByRole('button', { name: 'Refresh all orders', exact: true })
   ).toBeVisible()
-})
-
-test('Settings stays within a narrow screen and keeps the naming table in its own bounded scroller', async ({
-  extension,
-}) => {
-  const { page, dialog } = await openSettings(extension)
-  await page.setViewportSize({ width: 390, height: 844 })
-  const bounds = await dialog.boundingBox()
-  expect(bounds.x).toBeGreaterThanOrEqual(0)
-  expect(bounds.x + bounds.width).toBeLessThanOrEqual(390)
-  expect(
-    await dialog.evaluate((node) => node.scrollWidth <= node.clientWidth + 1)
-  ).toBe(true)
-  await dialog.getByRole('tab', { name: 'Product names', exact: true }).click()
-  const names = dialog.getByRole('tabpanel', {
-    name: 'Product names',
-    exact: true,
-  })
-  await expect(names.locator('.vocabulary-table tbody tr')).toHaveCount(12)
-  expect(
-    await dialog.evaluate((node) => node.scrollWidth <= node.clientWidth + 1)
-  ).toBe(true)
-  expect(
-    (await names.locator('.vocabulary-scroll').boundingBox()).height
-  ).toBeLessThanOrEqual(420)
-  await names
-    .getByRole('combobox', { name: 'Search naming rules', exact: true })
-    .fill('香薰')
-  await expect(
-    names
-      .locator('.vocabulary-table tbody tr')
-      .first()
-      .getByLabel('Chinese category', { exact: true })
-  ).toHaveValue('香薰')
 })

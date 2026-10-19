@@ -577,20 +577,28 @@ test('mixed selection skips a fee without generating codes and including it agai
     await rows.first().locator('.row-preparation').hover()
     await page
       .locator('.table-scroll')
-      .screenshot({ path: `work/packing-exclusion-${theme}.png` })
+      .screenshot({
+        path: test.info().outputPath(`packing-exclusion-${theme}.png`),
+      })
     await rows
       .first()
       .getByRole('button', { name: 'Skip packing', exact: true })
       .hover()
     await page
       .locator('.table-scroll')
-      .screenshot({ path: `work/packing-exclusion-skip-hover-${theme}.png` })
+      .screenshot({
+        path: test
+          .info()
+          .outputPath(`packing-exclusion-skip-hover-${theme}.png`),
+      })
   }
   await page.setViewportSize({ width: 520, height: 900 })
   await rows.first().hover()
   await page
     .locator('.table-scroll')
-    .screenshot({ path: 'work/packing-exclusion-narrow.png' })
+    .screenshot({
+      path: test.info().outputPath('packing-exclusion-narrow.png'),
+    })
   const controlSizes = () =>
     page.evaluate(() =>
       Object.fromEntries(
@@ -623,7 +631,9 @@ test('mixed selection skips a fee without generating codes and including it agai
     ).toBeVisible()
     await page
       .locator('.table-scroll')
-      .screenshot({ path: 'work/packing-exclusion-coarse.png' })
+      .screenshot({
+        path: test.info().outputPath('packing-exclusion-coarse.png'),
+      })
     const measurements = JSON.stringify({
       mouse: mouseSizes,
       coarse: await controlSizes(),
@@ -633,7 +643,7 @@ test('mixed selection skips a fee without generating codes and including it agai
       contentType: 'application/json',
     })
     await writeFile(
-      new URL('../../work/packing-control-sizes.json', import.meta.url),
+      test.info().outputPath('packing-control-sizes.json'),
       measurements
     )
   } finally {

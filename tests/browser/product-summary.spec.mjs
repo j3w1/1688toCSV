@@ -64,62 +64,64 @@ function metric(page, key) {
   )
 }
 
-test('selected product amounts update across pages, filtering, and selection clearing without prorating order totals', async ({
-  extension,
-}) => {
-  const page = await workspace(extension)
-  const rows = page.locator('#sheet-body tr[data-selection-key]')
-  await expect(metric(page, 'rows')).toHaveText('0')
-  await expect(metric(page, 'quantity')).toHaveText('0')
-  await expect(metric(page, 'gross')).toHaveText('¥ 0.00')
-  await expect(metric(page, 'after-discounts')).toHaveText('¥ 0.00')
-  await expect(page.locator('.selection-totals-context')).toContainText(
-    '107 rows · Quantity 319'
-  )
-  await rows.first().focus()
-  await page.keyboard.press('Control+a')
-  await expect(metric(page, 'rows')).toHaveText('107')
-  await expect(metric(page, 'quantity')).toHaveText('319')
-  await expect(metric(page, 'gross')).toHaveText('¥ 146.05')
-  await expect(metric(page, 'after-discounts')).toHaveText('¥ 142.90')
-  await page.locator('#next-page').click()
-  await expect(page.locator('#page-label')).toHaveText('2 / 2')
-  await expect(metric(page, 'rows')).toHaveText('107')
-  await expect(metric(page, 'after-discounts')).toHaveText('¥ 142.90')
-  await page.locator('#search').fill('Other synthetic')
-  await expect(page.locator('#selection-summary')).toContainText('2 rows')
-  await expect(metric(page, 'rows')).toHaveText('0')
-  await expect(page.locator('.selection-totals-context')).toContainText(
-    '2 rows · Quantity 4'
-  )
-  await rows.first().focus()
-  await page.keyboard.press('Control+a')
-  await expect(metric(page, 'gross')).toHaveText('¥ 40.00')
-  await expect(metric(page, 'after-discounts')).toHaveText('¥ 40.00')
-  await expect(page.locator('#order-totals .totals-payable dd')).toHaveText(
-    '¥ 38.00'
-  )
-  await page.locator('#search').fill('Other synthetic 1')
-  await expect(rows).toHaveCount(1)
-  await expect(metric(page, 'rows')).toHaveText('0')
-  await expect(page.locator('.selection-totals-context')).toContainText(
-    '1 rows · Quantity 2'
-  )
-  await expect(page.locator('.selection-totals-context')).toContainText(
-    'Complete matching orders: Quantity 4'
-  )
-  await rows.first().focus()
-  await page.keyboard.press('Space')
-  await expect(metric(page, 'rows')).toHaveText('1')
-  await expect(metric(page, 'gross')).toHaveText('¥ 20.00')
-  await page.keyboard.press('Escape')
-  await expect(metric(page, 'rows')).toHaveText('0')
-  await expect(metric(page, 'gross')).toHaveText('¥ 0.00')
-  await page.locator('#select-rows').click()
-  await expect(metric(page, 'rows')).toHaveText('1')
-  await page.locator('#clear-rows').click()
-  await expect(metric(page, 'quantity')).toHaveText('0')
-})
+test(
+  'selected product amounts update across pages, filtering, and selection clearing without prorating order totals',
+  { tag: '@smoke' },
+  async ({ extension }) => {
+    const page = await workspace(extension)
+    const rows = page.locator('#sheet-body tr[data-selection-key]')
+    await expect(metric(page, 'rows')).toHaveText('0')
+    await expect(metric(page, 'quantity')).toHaveText('0')
+    await expect(metric(page, 'gross')).toHaveText('¥ 0.00')
+    await expect(metric(page, 'after-discounts')).toHaveText('¥ 0.00')
+    await expect(page.locator('.selection-totals-context')).toContainText(
+      '107 rows · Quantity 319'
+    )
+    await rows.first().focus()
+    await page.keyboard.press('Control+a')
+    await expect(metric(page, 'rows')).toHaveText('107')
+    await expect(metric(page, 'quantity')).toHaveText('319')
+    await expect(metric(page, 'gross')).toHaveText('¥ 146.05')
+    await expect(metric(page, 'after-discounts')).toHaveText('¥ 142.90')
+    await page.locator('#next-page').click()
+    await expect(page.locator('#page-label')).toHaveText('2 / 2')
+    await expect(metric(page, 'rows')).toHaveText('107')
+    await expect(metric(page, 'after-discounts')).toHaveText('¥ 142.90')
+    await page.locator('#search').fill('Other synthetic')
+    await expect(page.locator('#selection-summary')).toContainText('2 rows')
+    await expect(metric(page, 'rows')).toHaveText('0')
+    await expect(page.locator('.selection-totals-context')).toContainText(
+      '2 rows · Quantity 4'
+    )
+    await rows.first().focus()
+    await page.keyboard.press('Control+a')
+    await expect(metric(page, 'gross')).toHaveText('¥ 40.00')
+    await expect(metric(page, 'after-discounts')).toHaveText('¥ 40.00')
+    await expect(page.locator('#order-totals .totals-payable dd')).toHaveText(
+      '¥ 38.00'
+    )
+    await page.locator('#search').fill('Other synthetic 1')
+    await expect(rows).toHaveCount(1)
+    await expect(metric(page, 'rows')).toHaveText('0')
+    await expect(page.locator('.selection-totals-context')).toContainText(
+      '1 rows · Quantity 2'
+    )
+    await expect(page.locator('.selection-totals-context')).toContainText(
+      'Complete matching orders: Quantity 4'
+    )
+    await rows.first().focus()
+    await page.keyboard.press('Space')
+    await expect(metric(page, 'rows')).toHaveText('1')
+    await expect(metric(page, 'gross')).toHaveText('¥ 20.00')
+    await page.keyboard.press('Escape')
+    await expect(metric(page, 'rows')).toHaveText('0')
+    await expect(metric(page, 'gross')).toHaveText('¥ 0.00')
+    await page.locator('#select-rows').click()
+    await expect(metric(page, 'rows')).toHaveText('1')
+    await page.locator('#clear-rows').click()
+    await expect(metric(page, 'quantity')).toHaveText('0')
+  }
+)
 
 test('selection summary translates live, keeps numbers exact and wraps at narrow widths', async ({
   extension,
