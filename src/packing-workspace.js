@@ -5474,6 +5474,12 @@ export async function startPackingWorkspace({
           detail: model.category,
           // Packing data records no carton count yet; marks default to one.
           known: null,
+          // Recent jobs find the product again by where it lives, not by code.
+          ref: {
+            orderId: prep.orderId,
+            groupId: group.id,
+            variantId: variant?.id ?? null,
+          },
           model,
         },
       }
@@ -5535,31 +5541,30 @@ export async function startPackingWorkspace({
     }
     return { items: [...items.values()], problems: [...problems.values()] }
   }
-  /** Current print entries for the given label codes, across all preparations. */
-  function printItemsForCodes(kind, codes) {
-    const wanted = new Set(codes)
-    const items = new Map()
-    const problems = new Map()
-    for (const [orderId, prep] of preparations) {
+  /** Current print entries at the job's product references (order, group, variant). */
+  function printItemsForRefs(kind, products) {
+    const items = []
+    const problems = []
+    for (const { ref } of products) {
+      if (!ref) continue
+      const prep = preparations.get(ref.orderId)
       const record = getRecords().find(
-        (record) => record.snapshot.orderId === orderId
+        (record) => record.snapshot.orderId === ref.orderId
       )
-      if (!record) continue
-      for (const group of activeGroups(prep, record.snapshot))
-        for (const variant of kind === 'mark' ? [null] : group.variants) {
-          const code =
-            kind === 'mark'
-              ? group.baseCode
-              : barcodeValue(group, { ...variant, needsSizeMapping: false })
-          if (!code || !wanted.has(code) || items.has(code)) continue
-          const { item, problem } = printEntry(prep, group, variant, kind)
-          if (item) {
-            items.set(code, item)
-            problems.delete(code)
-          } else problems.set(code, problem)
-        }
+      if (!prep || !record) continue
+      const group = activeGroups(prep, record.snapshot).find(
+        (entry) => entry.id === ref.groupId
+      )
+      const variant =
+        kind === 'mark'
+          ? null
+          : group?.variants.find((entry) => entry.id === ref.variantId)
+      if (!group || (kind !== 'mark' && !variant)) continue
+      const { item, problem } = printEntry(prep, group, variant, kind)
+      if (item) items.push(item)
+      else problems.push(problem)
     }
-    return { items: [...items.values()], problems: [...problems.values()] }
+    return { items, problems }
   }
   const publicProblems = (problems) =>
     problems.map(({ code, name, message }) => ({ code, name, message }))
@@ -5584,10 +5589,7 @@ export async function startPackingWorkspace({
   async function regeneratePrint(job) {
     await flushSaves()
     const kind = job.kind === 'marks' ? 'mark' : 'barcode'
-    const { items, problems } = printItemsForCodes(
-      kind,
-      job.products.map((product) => product.code)
-    )
+    const { items, problems } = printItemsForRefs(kind, job.products)
     const restored = restoreJob(job, items)
     if (!restored.items.length) {
       if (problems.length) throw problems[0].error
@@ -5607,6 +5609,7 @@ export async function startPackingWorkspace({
         missing: restored.missing.filter(
           (product) => !refused.has(product.code)
         ),
+        changed: restored.changed,
       },
     })
   }

@@ -285,3 +285,63 @@ test('labels export print-ready A4 PDFs with proportional spares, caps, warnings
   expect(markPdf.match(/ Do Q/g)).toHaveLength(3)
   expect(extension.unexpectedRequests).toEqual([])
 })
+
+test('an export in progress freezes its inputs, and Cancel or fractional quantities never export', async ({
+  extension,
+}) => {
+  const { page, rows } = await open(extension)
+  await page.locator('#packing-month').fill('2026-10')
+  await page.locator('#packing-month').blur()
+  await assign(page, rows, [0])
+  await page.locator('#orders-print-actions .copy-actions-trigger').click()
+  await page.locator('#print-labels').click()
+  const dialog = page.getByRole('dialog', { name: 'Print labels', exact: true })
+  const quantity = dialog.getByLabel(/^Quantity for /).first()
+  const exportButton = dialog.getByRole('button', {
+    name: 'Export PDF',
+    exact: true,
+  })
+  // A fractional quantity is refused rather than rounded down.
+  await quantity.fill('2.5')
+  await expect(dialog.locator('.print-summary')).toHaveText(
+    'Enter whole numbers from 0 to 9999.'
+  )
+  await expect(quantity).toHaveAttribute('aria-invalid', '')
+  await expect(exportButton).toBeDisabled()
+  await quantity.fill('3')
+  await expect(exportButton).toBeEnabled()
+  // Hold the PDF image encoding so the export stays in progress.
+  await page.evaluate(() => {
+    const Real = CompressionStream
+    const gate = new Promise((resolve) => (window.releaseEncoding = resolve))
+    window.CompressionStream = class {
+      constructor(format) {
+        const held = new TransformStream({
+          async transform(chunk, controller) {
+            await gate
+            controller.enqueue(chunk)
+          },
+        })
+        this.writable = held.writable
+        this.readable = held.readable.pipeThrough(new Real(format))
+      }
+    }
+  })
+  await exportButton.click()
+  await expect(dialog.locator('.print-left > .print-status')).toContainText(
+    'Preparing 1 of 1'
+  )
+  await expect(dialog.locator('.print-left')).toHaveAttribute('inert', '')
+  await dialog.getByRole('button', { name: 'Cancel', exact: true }).click()
+  await expect(dialog).toHaveCount(0)
+  await page.evaluate(() => window.releaseEncoding())
+  await page.waitForTimeout(1500)
+  expect(
+    await extension.inspector.evaluate(() => chrome.downloads.search({}))
+  ).toHaveLength(0)
+  await page.locator('#orders-print-actions .copy-actions-trigger').click()
+  await page.locator('#print-recent').click()
+  await expect(
+    page.getByRole('dialog', { name: 'Recent print jobs', exact: true })
+  ).toContainText('No recent print jobs yet.')
+})

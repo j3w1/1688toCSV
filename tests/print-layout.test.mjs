@@ -534,3 +534,58 @@ test('the preview and the PDF draw the same operations', () => {
   assert.match(text, /\/MediaBox \[0 0 595\.276 841\.89\]/)
   assert.match(text, /\/PrintScaling \/None/)
 })
+
+test('guides stay inside the 4 mm printable area after offsets and text counts as content', () => {
+  for (const layout of [
+    {},
+    { offsetXMm: -5, offsetYMm: 5 },
+    { offsetXMm: 5, offsetYMm: -5 },
+    { marginMm: 1 },
+  ]) {
+    const capacity = labelGrid(layout, label)
+    const plan = planLabels([{ key: 'CE1', quantity: 70 }], capacity, layout)
+    const ops = labelPageOps({ plan, grid: capacity, layout, page: 0 })
+    for (const op of ops.filter((entry) => entry.guide)) {
+      for (const x of [op.x1, op.x2])
+        assert.ok(x >= 4 - 1e-9 && x <= 206 + 1e-9, JSON.stringify(op))
+      for (const y of [op.y1, op.y2])
+        assert.ok(y >= 4 - 1e-9 && y <= 293 + 1e-9, JSON.stringify(op))
+    }
+    const caption = ops.find((op) => op.type === 'text')
+    if (caption) {
+      const [box] = contentBoxes([caption])
+      assert.ok(box.yMm + box.heightMm <= 293 + 1e-9, JSON.stringify(box))
+    }
+  }
+  // Default page: the caption sits inside the printable area, below the labels.
+  const capacity = labelGrid({}, label)
+  const plan = planLabels([{ key: 'CE1', quantity: 70 }], capacity)
+  const caption = labelPageOps({
+    plan,
+    grid: capacity,
+    layout: {},
+    page: 0,
+  }).find((op) => op.type === 'text')
+  const [box] = contentBoxes([caption])
+  assert.ok(box.yMm > 288.5 && box.yMm + box.heightMm <= 293 + 1e-9)
+  // A caption pushed toward the edge by the offset is reported as content.
+  const shiftedCaption = { ...caption, y: 295.5 }
+  assert.ok(edgeClearance(contentBoxes([shiftedCaption])) < 4)
+})
+
+test('carton cut guides and scissors stay inside the printable area', () => {
+  const slots = cartonSlots(mark)
+  const plan = planCartonMarks([{ key: 'M1', quantity: 2 }])
+  for (const layout of [{}, { offsetXMm: -5 }, { offsetXMm: 5 }]) {
+    const ops = markPageOps({ plan, slots, layout, page: 0 })
+    for (const op of ops.filter((entry) => entry.guide)) {
+      if (op.type === 'circle')
+        assert.ok(op.x - op.r >= 4 && op.x + op.r <= 206)
+      else
+        for (const x of [op.x1, op.x2])
+          assert.ok(x >= 4 - 1e-9 && x <= 206 + 1e-9)
+    }
+    for (const box of contentBoxes(ops))
+      assert.ok(box.yMm + box.heightMm <= 293 + 1e-9, JSON.stringify(box))
+  }
+})

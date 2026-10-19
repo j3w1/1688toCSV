@@ -43,6 +43,20 @@ function cleanPreset(input) {
   }
 }
 
+/** Where a product lives: its order, group and (for labels) variant ids. */
+function cleanRef(ref) {
+  const text = (value) =>
+    typeof value === 'string' && value && value.length <= 200 ? value : null
+  if (!ref || !text(ref.orderId) || !text(ref.groupId)) return null
+  return {
+    orderId: ref.orderId,
+    groupId: ref.groupId,
+    variantId: text(ref.variantId),
+  }
+}
+export const refKey = (ref) =>
+  ref ? `${ref.orderId}/${ref.groupId}/${ref.variantId ?? ''}` : ''
+
 function cleanJob(input) {
   if (!input || !['labels', 'marks'].includes(input.kind)) return null
   const products = Array.isArray(input.products)
@@ -51,6 +65,7 @@ function cleanJob(input) {
         .slice(0, 500)
         .map((product) => ({
           code: product.code,
+          ...(cleanRef(product.ref) ? { ref: cleanRef(product.ref) } : {}),
           name:
             typeof product.name === 'string' ? product.name.slice(0, 120) : '',
           quantity: Math.max(0, Math.floor(Number(product.quantity)) || 0),
@@ -166,24 +181,39 @@ export function createPrintStore(storage = safeStorage()) {
 }
 
 /**
- * Rebuild a recent job against current product data. `current` holds the
- * products found now (by code); quantities and caps come from the job.
+ * Rebuild a recent job against current product data. Products are found again
+ * by their order, group and variant, never by code alone: a released code can
+ * belong to another product now. `current` holds the entries found for the
+ * job's references (each with its `ref`); quantities and caps come from the job.
  */
 export function restoreJob(job, current) {
-  const byCode = new Map(current.map((item) => [item.code, item]))
-  const items = []
+  const byRef = new Map(current.map((item) => [refKey(item.ref), item]))
+  const items = new Map()
   const missing = []
+  const changed = []
   for (const product of job.products) {
-    const item = byCode.get(product.code)
+    const item = product.ref ? byRef.get(refKey(product.ref)) : undefined
     if (!item) {
       missing.push(product)
       continue
     }
-    items.push({
-      ...item,
-      quantity: product.quantity,
-      ...(product.cap === undefined ? {} : { cap: product.cap }),
-    })
+    if (item.code !== product.code)
+      changed.push({ from: product.code, to: item.code })
+    const existing = items.get(item.key)
+    if (existing) existing.quantity += product.quantity
+    else
+      items.set(item.key, {
+        ...item,
+        quantity: product.quantity,
+        ...(product.cap === undefined ? {} : { cap: product.cap }),
+      })
   }
-  return { items, missing, layout: job.layout, kind: job.kind, date: job.date }
+  return {
+    items: [...items.values()],
+    missing,
+    changed,
+    layout: job.layout,
+    kind: job.kind,
+    date: job.date,
+  }
 }

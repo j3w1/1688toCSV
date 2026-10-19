@@ -437,6 +437,22 @@ body > main {
   flex: none;
   white-space: nowrap;
 }
+/* Phones: the filters take their own rows instead of overflowing to the left. */
+@media (max-width: 760px) {
+  #orders-view .sheet-toolbar .filterbar {
+    flex-basis: 100%;
+    flex-wrap: wrap;
+    justify-content: flex-start;
+  }
+  #orders-view .sheet-toolbar .filterbar .search {
+    flex: 1 1 100%;
+    min-inline-size: 0;
+  }
+  #orders-view .sheet-toolbar .filterbar select {
+    flex: 1 1 auto;
+    max-inline-size: none;
+  }
+}
 #orders-view .order-totals {
   padding: var(--space-2) var(--space-4);
 }

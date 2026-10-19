@@ -75,9 +75,13 @@ export function createPdf({
           ops.push(`q ${matrix.map(format).join(' ')} cm /${name} Do Q`)
           return page
         },
+        /** A stroked segment; `dash` lengths are millimetres, like coordinates. */
         line(x1, y1, x2, y2, { gray = 0.6, widthPt = 0.25, dash = null } = {}) {
+          const pattern = dash
+            ? `[${dash.map((mm) => format(mm * POINTS_PER_MM)).join(' ')}] 0 d`
+            : '[] 0 d'
           ops.push(
-            `q ${format(gray)} G ${format(widthPt)} w ${dash ? `[${dash.map(format).join(' ')}] 0 d` : '[] 0 d'} ${x(x1)} ${y(y1)} m ${x(x2)} ${y(y2)} l S Q`
+            `q ${format(gray)} G ${format(widthPt)} w ${pattern} ${x(x1)} ${y(y1)} m ${x(x2)} ${y(y2)} l S Q`
           )
           return page
         },

@@ -63,3 +63,10 @@ test('RGB images are flattened onto white and captions stay ASCII-safe', async (
     'Carton 1 of 3 \\(x\\)\\\\'
   )
 })
+
+test('dash lengths are millimetres converted to points, like coordinates', () => {
+  const pdf = createPdf()
+  pdf.page().line(10, 10, 20, 10, { dash: [0.6, 1.6] })
+  const text = latin1(pdf.build())
+  assert.match(text, /\[1\.701 4\.535\] 0 d/)
+})

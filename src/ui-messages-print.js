@@ -161,6 +161,14 @@ export const PRINT_MESSAGES = {
       zh: '部分内容距纸边仅 {0} 毫米；大多数打印机至少需要 4 毫米。请减小偏移或增大页边距。',
       es: 'Parte del contenido queda a {0} mm del borde; la mayoría de las impresoras necesitan al menos 4 mm. Reduce los desplazamientos o aumenta el margen.',
     },
+  'Enter whole numbers from 0 to 9999.': {
+    zh: '请输入 0 到 9999 的整数。',
+    es: 'Introduce números enteros de 0 a 9999.',
+  },
+  '{0} now has the code {1}; its labels use the new code.': {
+    zh: '{0} 现在的编码是 {1}；标签使用新编码。',
+    es: '{0} ahora tiene el código {1}; sus etiquetas usan el código nuevo.',
+  },
   'Building PDF…': { zh: '正在生成 PDF…', es: 'Creando el PDF…' },
   'PDF saved to your downloads: {0}': {
     zh: 'PDF 已保存到下载文件夹：{0}',

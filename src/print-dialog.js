@@ -526,8 +526,9 @@ export function openPrintDialog({
     const extra = el('td', '', 'numeric')
     const total = el('td', '', 'numeric')
     const capCell = el('td', undefined, 'print-cap-column')
+    let cap = null
     if (!marks) {
-      const cap = numberInput(caps.get(item.key), {
+      cap = numberInput(caps.get(item.key), {
         min: 0,
         max: 9999,
         step: 1,
@@ -547,7 +548,7 @@ export function openPrintDialog({
     }
     row.append(name, requested, ...(marks ? [total] : [extra, capCell, total]))
     tbody.append(row)
-    cellsByKey.set(item.key, { extra, total })
+    cellsByKey.set(item.key, { extra, total, input, cap })
   }
   const footRow = el('tr')
   const footLabel = el('th', uiMessage('Total'))
@@ -569,20 +570,40 @@ export function openPrintDialog({
   let slots = null
   let renderToken = 0
   let busy = false
+  let closed = false
+  const closing = new AbortController()
+  // Quantities and caps are whole numbers; an empty quantity means none and an empty cap no limit.
+  const whole = (value, empty) => {
+    const text = String(value ?? '').trim()
+    if (!text) return empty
+    return /^\d{1,4}$/.test(text) ? Number(text) : NaN
+  }
 
   const itemByKey = new Map(items.map((item) => [item.key, item]))
   const currentItems = () =>
     items.map((item) => ({
       key: item.key,
-      quantity: quantities.get(item.key),
+      quantity: whole(quantities.get(item.key), 0),
       known: item.known,
-      cap: !marks && layout.limitExtras ? caps.get(item.key) : null,
+      cap:
+        !marks && layout.limitExtras ? whole(caps.get(item.key), null) : null,
     }))
 
-  const pageOps = (index) =>
+  const opsFor = (state, index) =>
     marks
-      ? markPageOps({ plan, slots, layout, page: index })
-      : labelPageOps({ plan, grid, layout, page: index })
+      ? markPageOps({
+          plan: state.plan,
+          slots: state.slots,
+          layout: state.layout,
+          page: index,
+        })
+      : labelPageOps({
+          plan: state.plan,
+          grid: state.grid,
+          layout: state.layout,
+          page: index,
+        })
+  const pageOps = (index) => opsFor({ plan, grid, slots, layout }, index)
 
   function warning(text) {
     const entry = el('li')
@@ -607,7 +628,17 @@ export function openPrintDialog({
     table.classList.toggle('print-caps', !marks && layout.limitExtras === true)
     warnings.replaceChildren()
     let error = ''
+    let invalid = false
+    for (const [key, cells] of cellsByKey) {
+      const badQuantity = Number.isNaN(whole(quantities.get(key), 0))
+      const badCap =
+        !marks && layout.limitExtras && Number.isNaN(whole(caps.get(key), null))
+      cells.input.toggleAttribute('aria-invalid', badQuantity)
+      cells.cap?.toggleAttribute('aria-invalid', badCap)
+      invalid ||= badQuantity || badCap
+    }
     try {
+      if (invalid) throw new Error('Enter whole numbers from 0 to 9999.')
       if (marks) {
         slots = cartonSlots(labelSize, layout)
         plan = planCartonMarks(currentItems(), layout)
@@ -648,6 +679,13 @@ export function openPrintDialog({
         uiMessage('Not printable: {0}. {1}', {
           0: problem.code || problem.name,
           1: uiMessage(problem.message),
+        })
+      )
+    for (const change of job?.changed || [])
+      warning(
+        uiMessage('{0} now has the code {1}; its labels use the new code.', {
+          0: change.from,
+          1: change.to,
         })
       )
     for (const product of job?.missing || [])
@@ -797,9 +835,12 @@ export function openPrintDialog({
     if (!plan?.pages || busy) return
     busy = true
     exportButton.disabled = true
+    // Freeze what is exported: edits wait until the PDF is saved or fails.
+    left.inert = true
+    const state = { plan, grid, slots, layout, caps: new Map(caps) }
     try {
-      const pages = Array.from({ length: plan.pages }, (_, index) =>
-        pageOps(index)
+      const pages = Array.from({ length: state.plan.pages }, (_, index) =>
+        opsFor(state, index)
       )
       const keys = [
         ...new Set(
@@ -816,30 +857,37 @@ export function openPrintDialog({
           status,
           uiMessage('Preparing {0} of {1}', { 0: index + 1, 1: keys.length })
         )
-        await ensureImages([key], PDF_DPI)
+        await ensureImages([key], PDF_DPI, closing.signal)
+        if (closed) return
         const full = images.get(`${key}@${PDF_DPI}`)
         names.set(key, pdf.addImage(await rgbImage(full.pixels)))
         // Full-resolution pixels are needed once; free them before the next label.
         full.bitmap.close?.()
         images.delete(`${key}@${PDF_DPI}`)
+        if (closed) return
       }
       bindText(status, uiMessage('Building PDF…'))
       for (const ops of pages) drawOps(pdf.page(), ops, (key) => names.get(key))
-      const filename = printFileName(kind, plan.items.length)
-      savePdf(pdf.build(), filename)
+      const bytes = pdf.build()
+      // Cancel or close while preparing means no download and no recent job.
+      if (closed) return
+      const filename = printFileName(kind, state.plan.items.length)
+      savePdf(bytes, filename)
+      const cap = (key) => whole(state.caps.get(key), null)
       store.recordJob({
         kind,
-        products: plan.items.map((entry) => ({
+        products: state.plan.items.map((entry) => ({
           code: entry.key,
           name: itemByKey.get(entry.key)?.name || '',
+          ref: itemByKey.get(entry.key)?.ref,
           quantity: entry.requested,
-          ...(marks || !layout.limitExtras || caps.get(entry.key) === ''
+          ...(marks || !state.layout.limitExtras || cap(entry.key) === null
             ? {}
-            : { cap: caps.get(entry.key) }),
+            : { cap: cap(entry.key) }),
         })),
-        layout,
-        pages: plan.pages,
-        total: plan.items.reduce((sum, entry) => sum + entry.total, 0),
+        layout: state.layout,
+        pages: state.plan.pages,
+        total: state.plan.items.reduce((sum, entry) => sum + entry.total, 0),
       })
       bindText(
         status,
@@ -847,9 +895,10 @@ export function openPrintDialog({
       )
       dialog.dataset.exported = filename
     } catch (error) {
-      bindText(status, uiMessage(error.message))
+      if (!closed) bindText(status, uiMessage(error.message))
     } finally {
       busy = false
+      left.inert = false
       exportButton.disabled = !plan?.pages
     }
   }
@@ -894,6 +943,8 @@ export function openPrintDialog({
   cancel.onclick = () => dialog.close()
   enableLightDismiss(dialog)
   dialog.addEventListener('close', () => {
+    closed = true
+    closing.abort()
     renderToken++
     for (const { bitmap } of images.values()) bitmap.close?.()
     images.clear()

@@ -389,11 +389,98 @@ export function cartonSlots(mark, layoutInput = {}) {
 // A page is a list of drawing operations: image, line, circle and text. The
 // preview canvas and the PDF writer both draw exactly these operations.
 
-const GUIDE = Object.freeze({ gray: 0.82, widthPt: 0.2, dash: [0.6, 1.6] })
-const CROP = Object.freeze({ gray: 0.6, widthPt: 0.25 })
+// Guides help cutting; they are clipped to the printable area and never
+// count as content. Dash lengths are millimetres, like every other length.
+const GUIDE = Object.freeze({
+  gray: 0.82,
+  widthPt: 0.2,
+  dash: [0.6, 1.6],
+  guide: true,
+})
+const CROP = Object.freeze({ gray: 0.6, widthPt: 0.25, guide: true })
+const SAFE = Object.freeze({
+  left: SAFE_EDGE_MM,
+  top: SAFE_EDGE_MM,
+  right: A4.widthMm - SAFE_EDGE_MM,
+  bottom: A4.heightMm - SAFE_EDGE_MM,
+})
 const BOUNDARY = Object.freeze({ gray: 0.35, widthPt: 0.6 })
 const CAPTION_PT = 5
-const MM_PER_CAPTION_CHAR = (CAPTION_PT * 0.5 * 25.4) / 72
+const MM_PER_PT = 25.4 / 72
+const MM_PER_CAPTION_CHAR = CAPTION_PT * 0.5 * MM_PER_PT
+// Helvetica proportions: about half an em per character, cap height 0.72 em
+// and descenders 0.22 em. Used to keep text inside the printable area.
+const textBox = (op) => {
+  const width = String(op.value).length * op.size * 0.5 * MM_PER_PT
+  const above = op.size * 0.72 * MM_PER_PT
+  const below = op.size * 0.22 * MM_PER_PT
+  const left =
+    op.align === 'center'
+      ? op.x - width / 2
+      : op.align === 'right'
+        ? op.x - width
+        : op.x
+  return {
+    xMm: left,
+    yMm: op.y - above,
+    widthMm: width,
+    heightMm: above + below,
+  }
+}
+/** The caption baseline inside the free band below `bottomMm`, or null when it does not fit. */
+function captionBaseline(bottomMm, offsetYMm) {
+  const free = A4.heightMm - bottomMm - offsetYMm
+  if (free < SAFE_EDGE_MM) return null
+  const above = CAPTION_PT * 0.72 * MM_PER_PT
+  const below = CAPTION_PT * 0.22 * MM_PER_PT
+  const lowest = SAFE.bottom - below - offsetYMm
+  const centred =
+    bottomMm + (SAFE.bottom - offsetYMm - bottomMm) / 2 + above / 2
+  const baseline = Math.min(lowest, centred)
+  return baseline - above >= bottomMm + 0.8 ? baseline : null
+}
+
+/** Clip a guide segment to the printable area (Liang-Barsky); null when nothing remains. */
+function clipGuide(op) {
+  if (op.type === 'circle')
+    return op.x - op.r >= SAFE.left &&
+      op.x + op.r <= SAFE.right &&
+      op.y - op.r >= SAFE.top &&
+      op.y + op.r <= SAFE.bottom
+      ? op
+      : null
+  const dx = op.x2 - op.x1
+  const dy = op.y2 - op.y1
+  let start = 0
+  let end = 1
+  for (const [p, q] of [
+    [-dx, op.x1 - SAFE.left],
+    [dx, SAFE.right - op.x1],
+    [-dy, op.y1 - SAFE.top],
+    [dy, SAFE.bottom - op.y1],
+  ]) {
+    if (Math.abs(p) < 1e-12) {
+      if (q < -1e-9) return null
+      continue
+    }
+    const t = q / p
+    if (p < 0) start = Math.max(start, t)
+    else end = Math.min(end, t)
+  }
+  if (end - start <= 1e-9 || Math.hypot(dx, dy) * (end - start) < 0.3)
+    return null
+  return {
+    ...op,
+    x1: op.x1 + start * dx,
+    y1: op.y1 + start * dy,
+    x2: op.x1 + end * dx,
+    y2: op.y1 + end * dy,
+  }
+}
+const finish = (ops, layout) =>
+  shifted(ops, layout.offsetXMm, layout.offsetYMm)
+    .map((op) => (op.guide ? clipGuide(op) : op))
+    .filter(Boolean)
 
 function shifted(ops, dx, dy) {
   if (!dx && !dy) return ops
@@ -558,8 +645,8 @@ export function labelPageOps({ plan, grid, layout: layoutInput, page }) {
   if (layout.guides && grid.cells.length) ops.push(...cutGuides(grid.cells))
   if (layout.boundaries) ops.push(...productBoundaries(grid, keys))
   const area = grid.cells.length ? bounds(grid.cells) : null
-  const free = area ? A4.heightMm - area.bottom - layout.offsetYMm : 0
-  if (layout.pageSummary && free >= SAFE_EDGE_MM)
+  const baseline = area ? captionBaseline(area.bottom, layout.offsetYMm) : null
+  if (layout.pageSummary && baseline !== null)
     ops.push(
       text(
         pageCaption(
@@ -568,11 +655,11 @@ export function labelPageOps({ plan, grid, layout: layoutInput, page }) {
           'print at 100% (Actual size)'
         ),
         A4.widthMm / 2,
-        area.bottom + free / 2 + 0.9,
+        baseline,
         { size: CAPTION_PT, gray: 0.5, align: 'center' }
       )
     )
-  return shifted(ops, layout.offsetXMm, layout.offsetYMm)
+  return finish(ops, layout)
 }
 
 /** Every operation for carton-mark page `page` (0-based), offsets applied. */
@@ -605,20 +692,24 @@ export function markPageOps({ plan, slots, layout: layoutInput, page }) {
   if (layout.guides) {
     const y = slots.cutYMm
     ops.push(
-      { type: 'circle', x: 4.2, y: y - 1.3, r: 0.9, gray: 0.5 },
-      { type: 'circle', x: 4.2, y: y + 1.3, r: 0.9, gray: 0.5 },
-      line(5, y - 0.9, 9.5, y + 0.6, { gray: 0.5, widthPt: 0.25 }),
-      line(5, y + 0.9, 9.5, y - 0.6, { gray: 0.5, widthPt: 0.25 }),
-      line(11, y, A4.widthMm - 4, y, {
+      { type: 'circle', x: 6, y: y - 1.3, r: 0.9, gray: 0.5, guide: true },
+      { type: 'circle', x: 6, y: y + 1.3, r: 0.9, gray: 0.5, guide: true },
+      line(6.8, y - 0.9, 11.3, y + 0.6, CROP),
+      line(6.8, y + 0.9, 11.3, y - 0.6, CROP),
+      line(12.8, y, A4.widthMm - SAFE_EDGE_MM, y, {
         gray: 0.6,
         widthPt: 0.3,
         dash: [2, 1.5],
+        guide: true,
       })
     )
   }
   const lowest = slots.slots[1]
-  const free = A4.heightMm - (lowest.yMm + lowest.heightMm) - layout.offsetYMm
-  if (layout.pageSummary && free >= SAFE_EDGE_MM)
+  const baseline = captionBaseline(
+    Math.max(lowest.yMm + lowest.heightMm, A4.heightMm - 12),
+    layout.offsetYMm
+  )
+  if (layout.pageSummary && baseline !== null)
     ops.push(
       text(
         pageCaption(
@@ -627,11 +718,11 @@ export function markPageOps({ plan, slots, layout: layoutInput, page }) {
           'print at 100% (Actual size)'
         ),
         A4.widthMm / 2,
-        A4.heightMm - Math.min(free, 8) / 2 + 0.9,
+        baseline,
         { size: CAPTION_PT, gray: 0.5, align: 'center' }
       )
     )
-  return shifted(ops, layout.offsetXMm, layout.offsetYMm)
+  return finish(ops, layout)
 }
 
 function ruler(ops, { x, y, lengthMm, vertical }) {
@@ -724,9 +815,29 @@ export function calibrationOps(layoutInput = {}, { presetName = '' } = {}) {
   return shifted(ops, layout.offsetXMm, layout.offsetYMm)
 }
 
-/** The content boxes on a page's operations, for the printable-area check. */
+/** Every printed box except guides: labels, marks, text and drawn rulers. */
 export const contentBoxes = (ops) =>
-  ops.filter((op) => op.type === 'image').map((op) => op.box)
+  ops
+    .filter((op) => !op.guide)
+    .map((op) =>
+      op.type === 'image'
+        ? op.box
+        : op.type === 'text'
+          ? textBox(op)
+          : op.type === 'circle'
+            ? {
+                xMm: op.x - op.r,
+                yMm: op.y - op.r,
+                widthMm: 2 * op.r,
+                heightMm: 2 * op.r,
+              }
+            : {
+                xMm: Math.min(op.x1, op.x2),
+                yMm: Math.min(op.y1, op.y2),
+                widthMm: Math.abs(op.x2 - op.x1),
+                heightMm: Math.abs(op.y2 - op.y1),
+              }
+    )
 
 /**
  * Draw operations on a page API with image(source, box, options), line, circle

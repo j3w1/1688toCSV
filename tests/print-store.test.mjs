@@ -111,13 +111,20 @@ test('recent jobs keep the five most recent exports across both types, newest fi
 })
 
 test('regenerating a job revalidates products against current data and keeps quantities and caps', () => {
+  const ref = (variantId) => ({ orderId: 'O1', groupId: 'G1', variantId })
   const job = {
     kind: 'labels',
     date: '2026-10-19T10:00:00.000Z',
     products: [
-      { code: 'CE26100101', name: 'VELA', quantity: 40, cap: 2 },
-      { code: 'CE26100102', name: 'DIFUSOR', quantity: 50 },
-      { code: 'CE26100199', name: 'GONE', quantity: 5 },
+      {
+        code: 'CE26100101',
+        name: 'VELA',
+        quantity: 40,
+        cap: 2,
+        ref: ref('V1'),
+      },
+      { code: 'CE26100102', name: 'DIFUSOR', quantity: 50, ref: ref('V2') },
+      { code: 'CE26100199', name: 'GONE', quantity: 5, ref: ref('V9') },
     ],
     layout: { spares: 'proportional', limitExtras: true },
   }
@@ -127,14 +134,14 @@ test('regenerating a job revalidates products against current data and keeps qua
       code: 'CE26100102',
       name: 'DIFUSOR AROMA',
       quantity: 24,
-      model: { code: 'CE26100102' },
+      ref: ref('V2'),
     },
     {
       key: 'CE26100101',
       code: 'CE26100101',
       name: 'VELA',
       quantity: 1,
-      model: { code: 'CE26100101' },
+      ref: ref('V1'),
     },
   ]
   const restored = restoreJob(job, current)
@@ -154,5 +161,48 @@ test('regenerating a job revalidates products against current data and keeps qua
     restored.missing.map((product) => product.code),
     ['CE26100199']
   )
+  assert.deepEqual(restored.changed, [])
   assert.equal(restored.layout.limitExtras, true)
+})
+
+test('regeneration finds products by order, group and variant, never by a reused code', () => {
+  const ref = (variantId) => ({ orderId: 'O1', groupId: 'G1', variantId })
+  const store = createPrintStore(memoryStorage())
+  const job = store.recordJob({
+    kind: 'labels',
+    date: '2026-10-19T10:00:00.000Z',
+    products: [
+      { code: 'CE26100101', name: 'VELA', quantity: 40, ref: ref('V1') },
+      { code: 'CE26100102', name: 'DIFUSOR', quantity: 10, ref: ref('V2') },
+      { code: 'CE26100103', name: 'OLD', quantity: 5 },
+    ],
+    layout: {},
+  })
+  assert.deepEqual(job.products[0].ref, ref('V1'))
+  assert.equal(job.products[2].ref, undefined)
+  const current = [
+    // CE26100101 was released and reused by another product elsewhere.
+    {
+      key: 'CE26100101',
+      code: 'CE26100101',
+      name: 'OTRO',
+      ref: { orderId: 'O9', groupId: 'G9', variantId: 'V9' },
+    },
+    // The original product now carries a new code.
+    { key: 'CE26100111', code: 'CE26100111', name: 'VELA', ref: ref('V1') },
+    { key: 'CE26100102', code: 'CE26100102', name: 'DIFUSOR', ref: ref('V2') },
+  ]
+  const restored = restoreJob(job, current)
+  assert.deepEqual(
+    restored.items.map((item) => [item.code, item.name, item.quantity]),
+    [
+      ['CE26100111', 'VELA', 40],
+      ['CE26100102', 'DIFUSOR', 10],
+    ]
+  )
+  assert.deepEqual(restored.changed, [{ from: 'CE26100101', to: 'CE26100111' }])
+  assert.deepEqual(
+    restored.missing.map((product) => product.code),
+    ['CE26100103']
+  )
 })
