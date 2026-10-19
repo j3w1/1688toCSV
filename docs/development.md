@@ -1,16 +1,17 @@
 # Development
 
-Use Windows-native Node.js 24 and the workflow in [AGENTS.md](../AGENTS.md). Edit sources, rebuild explicitly, then test the generated **dist** extension. There is no watch mode.
+Use Node.js 24 and the workflow in [AGENTS.md](../AGENTS.md): iterate locally with `npm run try`, and run full verification once at deploy. Edit sources, rebuild explicitly, then test the generated **dist** extension. There is no watch mode.
 
-| Command                               | Purpose                                                                        |
-| ------------------------------------- | ------------------------------------------------------------------------------ |
-| `npm run verify`                      | Source/docs checks, unit tests, production rebuild and isolated Chromium tests |
-| `npm run build` / `npm run build:dev` | Build the complete extension once into dist                                    |
-| `npm run test:browser`                | Test the current build with synthetic pages in a temporary profile             |
-| `npm run test:excel`                  | Windows Excel integration check in an unsaved workbook; restores the clipboard |
-| `npm run preview`                     | Synthetic preview; `/library.html` opens the workspace                         |
-| `npm run screenshots`                 | Regenerate workspace and label-editor images using synthetic data              |
-| `npm run check:docs`                  | Validate local links, screenshots and documented commands                      |
+| Command                               | Purpose                                                                                                                        |
+| ------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------ |
+| `npm run try`                         | Unit tests, development build, stage into the installed extension, reload it through CE Dev Browser and confirm library counts |
+| `npm run verify`                      | Source/docs checks, unit tests, production rebuild and isolated Chromium tests                                                 |
+| `npm run build` / `npm run build:dev` | Build the complete extension once into dist                                                                                    |
+| `npm run test:browser`                | Test the current build with synthetic pages in a temporary profile                                                             |
+| `npm run test:excel`                  | Windows Excel integration check in an unsaved workbook; restores the clipboard                                                 |
+| `npm run preview`                     | Synthetic preview; `/library.html` opens the workspace                                                                         |
+| `npm run screenshots`                 | Regenerate workspace and label-editor images using synthetic data                                                              |
+| `npm run check:docs`                  | Validate local links, screenshots and documented commands                                                                      |
 
 For UI changes, regenerate screenshots and check documentation after final verification. Keep the main README practical; record only necessary developer constraints here. Do not commit private orders, exports, captures, profiles or credentials.
 

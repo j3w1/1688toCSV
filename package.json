@@ -18,6 +18,7 @@
     "build": "node scripts/build.mjs",
     "build:dev": "node scripts/build.mjs --development",
     "build:prod": "npm run build",
+    "try": "node scripts/try.mjs",
     "check": "node scripts/check.mjs",
     "check:docs": "node scripts/check-docs.mjs",
     "test": "node --test tests/*.test.mjs",
