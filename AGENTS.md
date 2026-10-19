@@ -34,6 +34,12 @@ live outside the repository in `~/.config/1688tocsv/try.json`: `installDir` (the
 folder), `extensionId`, `browserMcp` (the CE Dev Browser MCP server command) and `stagingDir` (same
 filesystem as `installDir`). Never commit them. Do not add watch mode or leave rebuilding to the user.
 
+**Visual checks.** Owner rule (2026-10-19): "let the implementation agents or coordinator visually
+test using ce browser only if needed". Check changes with the fast tests and the automated Chromium
+tests first. Open the shared CE Dev Browser for a visual check only when nothing else can judge it,
+and keep it brief. Loading a ready build with `npm run try` for the owner to try stays part of the
+loop: load once per ready batch, not after every edit.
+
 **The owner's library.** The installed extension holds the owner's real orders. Always reload that
 same install so its id and storage stay. Never reset, re-import or restore it for testing. If the id
 ever has to change, first take a backup with the extension's own Backup, restore it into the new
