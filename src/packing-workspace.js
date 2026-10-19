@@ -250,6 +250,8 @@ export async function startPackingWorkspace({
     opening = false,
     labelOrderId
   let packingExclusionSaving = false
+  // The Packing list tab reopens the packing month without using the Orders selection.
+  let launchMonthOnly = false
   const variantPages = new Map()
   const materialFields = new Set()
   function packingItemActions(label, grip, remove) {
@@ -1592,7 +1594,7 @@ export async function startPackingWorkspace({
         .filter((item) => !entryId || item.entryId === entryId)
         .map((item) => ({ ...item, orderId }))
     }
-    const selected = getSelectedRows()
+    const selected = launchMonthOnly ? [] : getSelectedRows()
     if (selected.length) return selected
     const result = []
     for (const record of getRecords()) {
@@ -3635,8 +3637,6 @@ export async function startPackingWorkspace({
   }
   function renderPackingHeader(host) {
     const header = el('header', undefined, 'packing-view-header')
-    const back = button(uiMessage('Orders'), showOrders, 'text-button')
-    decorateIcon(back, 'previous')
     const heading = el('div', undefined, 'packing-title')
     const months = currentPackingMonths()
     heading.append(
@@ -3668,7 +3668,7 @@ export async function startPackingWorkspace({
       resolveButton,
       reloadPreparationButton
     )
-    header.append(back, heading, actions)
+    header.append(heading, actions)
     const commandBar = el('div', undefined, 'packing-command-bar')
     commandBar.append(header)
     const toolbar = el('div', undefined, 'packing-top-tools')
@@ -6237,6 +6237,47 @@ export async function startPackingWorkspace({
   monthInput.addEventListener('change', updateLaunchActions)
   $('prepare-orders').onclick = () =>
     openPreparation().catch((e) => feedback(e.message, true))
+  const ordersTab = $('view-orders')
+  const packingTab = $('view-packing')
+  if (ordersTab && packingTab) {
+    const syncTabs = () => {
+      const packing = !$('packing-view').hidden
+      if (packing) {
+        ordersTab.removeAttribute('aria-current')
+        packingTab.setAttribute('aria-current', 'page')
+      } else {
+        packingTab.removeAttribute('aria-current')
+        ordersTab.setAttribute('aria-current', 'page')
+      }
+    }
+    new MutationObserver(syncTabs).observe($('packing-view'), {
+      attributes: true,
+      attributeFilter: ['hidden'],
+    })
+    syncTabs()
+    preparationHelp(
+      ordersTab,
+      uiMessage('Return to Orders. Packing edits are saved first.')
+    )
+    preparationHelp(
+      packingTab,
+      uiMessage(
+        'Open the packing list for the packing month. Products already assigned to that month reopen; your product selection stays in Orders.'
+      )
+    )
+    ordersTab.onclick = () => {
+      if (!$('packing-view').hidden) showOrders()
+    }
+    packingTab.onclick = () => {
+      if (!$('packing-view').hidden) return
+      launchMonthOnly = true
+      openPreparation()
+        .catch((e) => feedback(e.message, true))
+        .finally(() => {
+          launchMonthOnly = false
+        })
+    }
+  }
   const restoreFile = $('restore-packing-file')
   const restore = $('restore-packing')
   decorateIcon(restore, 'upload')

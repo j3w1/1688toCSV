@@ -11,6 +11,7 @@
     <link rel="stylesheet" href="label-editor.css" />
     <link rel="stylesheet" href="copy-actions.css" />
     <link rel="stylesheet" href="code-design.css" />
+    <link rel="stylesheet" href="shell.css" />
     <script type="module" src="library.js"></script>
   </head>
   <body>
@@ -19,24 +20,62 @@
         ><img
           class="brand-mark"
           src="icons/icon48.png"
-          width="36"
-          height="36"
+          width="28"
+          height="28"
           alt=""
-        />
-        <span
-          ><span data-i18n="1688 Packing workspace">1688 Packing workspace</span
-          ><small data-i18n="Orders · packing · Excel"
-            >Orders · packing · Excel</small
-          ></span
+        /><span data-i18n="1688 Packing workspace"
+          >1688 Packing workspace</span
         ></a
       >
-      <span class="local-label"
-        ><i></i
-        ><span data-i18n="Stored in this browser"
-          >Stored in this browser</span
-        ></span
+      <nav
+        data-i18n-aria-label="Workspace views"
+        class="view-tabs"
+        aria-label="Workspace views"
       >
+        <button id="view-orders" type="button" aria-current="page">
+          <span data-i18n="Orders">Orders</span>
+        </button>
+        <button id="view-packing" type="button">
+          <span data-i18n="Packing list">Packing list</span>
+        </button>
+      </nav>
+      <section
+        data-i18n-aria-label="Library overview"
+        class="library-line"
+        aria-label="Library overview"
+      >
+        <span
+          ><b id="order-count">0</b>
+          <small data-i18n="Orders">Orders</small></span
+        >
+        <span
+          ><b id="product-count">0</b>
+          <small data-i18n="Product rows">Product rows</small></span
+        >
+        <span
+          ><b id="changed-count">0</b>
+          <small data-i18n="Updated orders">Updated orders</small></span
+        >
+        <span
+          ><small data-i18n="Last checked">Last checked</small>
+          <b id="checked-at">—</b></span
+        >
+        <span class="local-label"
+          ><i></i
+          ><span data-i18n="Stored in this browser"
+            >Stored in this browser</span
+          ></span
+        >
+      </section>
       <div class="top-actions">
+        <a
+          data-i18n="Open 1688 orders"
+          class="open-orders"
+          href="https://air.1688.com/app/ctf-page/trade-order-list/buyer-order-list.html?page=1&pageSize=10"
+          target="_blank"
+          rel="noreferrer"
+          >Open 1688 orders</a
+        >
         <button id="activity-open">
           <span data-i18n="Activity">Activity</span
           ><span id="activity-count"></span>
@@ -103,36 +142,6 @@
       </div>
     </header>
     <main>
-      <section
-        data-i18n-aria-label="Library overview"
-        class="stats"
-        aria-label="Library overview"
-      >
-        <div>
-          <span id="order-count">0</span
-          ><small data-i18n="Orders">Orders</small>
-        </div>
-        <div>
-          <span id="product-count">0</span
-          ><small data-i18n="Product rows">Product rows</small>
-        </div>
-        <div>
-          <span id="changed-count">0</span
-          ><small data-i18n="Updated orders">Updated orders</small>
-        </div>
-        <div>
-          <span id="checked-at">—</span
-          ><small data-i18n="Last checked">Last checked</small>
-        </div>
-        <a
-          data-i18n="Open 1688 orders"
-          class="open-orders"
-          href="https://air.1688.com/app/ctf-page/trade-order-list/buyer-order-list.html?page=1&pageSize=10"
-          target="_blank"
-          rel="noreferrer"
-          >Open 1688 orders</a
-        >
-      </section>
       <div id="active-job" class="active-job" hidden>
         <progress
           data-i18n-aria-label="Orders processed"
@@ -170,28 +179,33 @@
               aria-controls="order-list"
             />
           </div>
-          <details id="month-filter" class="month-filter">
-            <summary data-i18n="All purchase months" id="month-filter-label">
-              All purchase months
-            </summary>
-            <div class="month-picker">
+          <div
+            id="month-filter"
+            class="month-filter"
+            role="group"
+            aria-labelledby="month-filter-label"
+          >
+            <span
+              data-i18n="All purchase months"
+              id="month-filter-label"
+              class="month-filter-label"
+              >All purchase months</span
+            >
+            <div class="month-chips">
               <button
                 data-i18n="All months"
                 id="clear-months"
-                class="text-button"
+                class="month-choice month-all"
               >
                 All months
               </button>
-              <p data-i18n="Filter months. Shift-click for a range.">
-                Filter months. Shift-click for a range.
-              </p>
               <div
                 data-i18n-aria-label="Purchase months"
                 id="month-options"
                 aria-label="Purchase months"
               ></div>
             </div>
-          </details>
+          </div>
           <details class="date-range">
             <summary data-i18n="Purchase date range">
               Purchase date range
@@ -204,11 +218,6 @@
               ><input type="date" id="date-to"
             /></label>
           </details>
-          <div class="order-refresh">
-            <button data-i18n="Refresh orders" id="refresh-orders">
-              Refresh orders</button
-            ><span id="refresh-scope"></span>
-          </div>
           <div
             data-i18n-aria-label="Saved orders"
             id="order-list"
@@ -233,6 +242,11 @@
             </button>
           </div>
           <div class="pane-footer">
+            <div class="order-refresh">
+              <button data-i18n="Refresh orders" id="refresh-orders">
+                Refresh orders</button
+              ><span id="refresh-scope"></span>
+            </div>
             <button data-i18n="Remove selected" id="remove-orders">
               Remove selected
             </button>
@@ -247,98 +261,31 @@
             <div class="sheet-title-actions">
               <h2 data-i18n="All products" id="sheet-title">All products</h2>
               <p data-i18n="0 rows" id="selection-summary">0 rows</p>
-              <div class="export-toolbar copy-actions" id="orders-copy-actions">
-                <div
-                  data-i18n-aria-label="Copy selected product rows"
-                  class="copy-actions"
-                  aria-label="Copy selected product rows"
-                >
-                  <span data-i18n="Products" class="toolbar-caption"
-                    >Products</span
-                  ><button data-i18n="Copy values" id="copy-values">
-                    Copy values</button
-                  ><button data-i18n="Copy images" id="copy-images">
-                    Copy images</button
-                  ><button data-i18n="Copy to Excel" id="copy-excel">
-                    Copy to Excel</button
-                  ><button
-                    data-i18n="Copy Excel image"
-                    data-i18n-title="Copy selected rows as one picture in your workspace language"
-                    id="copy-excel-image"
-                    title="Copy selected rows as one picture in your workspace language"
-                  >
-                    Copy Excel image
-                  </button>
-                </div>
-                <div
-                  data-i18n-aria-label="Copy packing values"
-                  class="copy-actions"
-                  aria-label="Copy packing values"
-                >
-                  <span data-i18n="Packing" class="toolbar-caption"
-                    >Packing</span
-                  ><button
-                    data-i18n="Copy preparation columns"
-                    id="copy-preparation"
-                  >
-                    Copy preparation columns</button
-                  ><button data-i18n="Copy group codes" id="copy-group-codes">
-                    Copy group codes</button
-                  ><label class="check"
-                    ><input id="include-headers" type="checkbox" /><span
-                      data-i18n="Headers"
-                      >Headers</span
-                    ></label
-                  >
-                </div>
-              </div>
             </div>
-            <div class="packing-launch">
-              <label
-                ><span data-i18n="Packing month">Packing month</span
-                ><input type="month" id="packing-month" required /></label
-              ><button
-                data-i18n="Prepare packing list"
-                id="prepare-orders"
-                class="primary"
-                disabled
+            <div class="filterbar">
+              <label class="search"
+                ><span data-i18n="Search products and orders" class="sr-only"
+                  >Search products and orders</span
+                ><input
+                  data-i18n-placeholder="Search products, sellers or codes…"
+                  id="search"
+                  type="search"
+                  placeholder="Search products, sellers or codes…" /></label
+              ><label
+                ><span data-i18n="Order status" class="sr-only"
+                  >Order status</span
+                ><select id="status-filter">
+                  <option data-i18n="All statuses" value="">
+                    All statuses
+                  </option>
+                </select></label
+              ><label class="check"
+                ><input id="changes-only" type="checkbox" /><span
+                  data-i18n="Changed only"
+                  >Changed only</span
+                ></label
               >
-                Prepare packing list
-              </button>
-              <button id="restore-packing" data-i18n="Restore packing">
-                Restore packing
-              </button>
-              <input
-                id="restore-packing-file"
-                type="file"
-                accept=".json,application/json"
-                hidden
-                aria-label="Packing backup file"
-                data-i18n-aria-label="Packing backup file"
-              />
-              <p id="packing-scope" role="status"></p>
             </div>
-          </div>
-          <div class="filterbar">
-            <label class="search"
-              ><span data-i18n="Search products and orders" class="sr-only"
-                >Search products and orders</span
-              ><input
-                data-i18n-placeholder="Search products, sellers or codes…"
-                id="search"
-                type="search"
-                placeholder="Search products, sellers or codes…" /></label
-            ><label
-              ><span data-i18n="Order status" class="sr-only">Order status</span
-              ><select id="status-filter">
-                <option data-i18n="All statuses" value="">All statuses</option>
-              </select></label
-            ><label class="check"
-              ><input id="changes-only" type="checkbox" /><span
-                data-i18n="Changed only"
-                >Changed only</span
-              ></label
-            >
           </div>
           <section
             data-i18n-aria-label="Matching order totals"
@@ -346,14 +293,6 @@
             class="order-totals"
             aria-label="Matching order totals"
             aria-live="polite"
-          ></section>
-          <section
-            data-i18n-aria-label="Selected product totals"
-            id="product-selection-totals"
-            class="product-selection-totals"
-            aria-label="Selected product totals"
-            aria-live="polite"
-            aria-atomic="true"
           ></section>
           <div id="empty-state" class="empty-state">
             <span aria-hidden="true">▦</span>
@@ -395,14 +334,6 @@
             </table>
           </div>
           <div class="sheet-footer">
-            <div class="row-selection-actions">
-              <button data-i18n="Select all rows" id="select-rows">
-                Select all rows
-              </button>
-              <button data-i18n="Clear selection" id="clear-rows">
-                Clear selection
-              </button>
-            </div>
             <div>
               <button
                 data-i18n-aria-label="Previous product page"
@@ -421,6 +352,97 @@
             </div>
           </div>
         </section>
+        <div
+          data-i18n-aria-label="Selection and next step"
+          class="action-bar"
+          role="region"
+          aria-label="Selection and next step"
+        >
+          <section
+            data-i18n-aria-label="Selected product totals"
+            id="product-selection-totals"
+            class="product-selection-totals"
+            aria-label="Selected product totals"
+            aria-live="polite"
+            aria-atomic="true"
+          ></section>
+          <div class="row-selection-actions">
+            <button data-i18n="Select all rows" id="select-rows">
+              Select all rows
+            </button>
+            <button data-i18n="Clear selection" id="clear-rows">
+              Clear selection
+            </button>
+          </div>
+          <div class="export-toolbar copy-actions" id="orders-copy-actions">
+            <div
+              data-i18n-aria-label="Copy selected product rows"
+              class="copy-actions"
+              aria-label="Copy selected product rows"
+            >
+              <span data-i18n="Products" class="toolbar-caption">Products</span
+              ><button data-i18n="Copy values" id="copy-values">
+                Copy values</button
+              ><button data-i18n="Copy images" id="copy-images">
+                Copy images</button
+              ><button data-i18n="Copy to Excel" id="copy-excel">
+                Copy to Excel</button
+              ><button
+                data-i18n="Copy Excel image"
+                data-i18n-title="Copy selected rows as one picture in your workspace language"
+                id="copy-excel-image"
+                title="Copy selected rows as one picture in your workspace language"
+              >
+                Copy Excel image
+              </button>
+            </div>
+            <div
+              data-i18n-aria-label="Copy packing values"
+              class="copy-actions"
+              aria-label="Copy packing values"
+            >
+              <span data-i18n="Packing" class="toolbar-caption">Packing</span
+              ><button
+                data-i18n="Copy preparation columns"
+                id="copy-preparation"
+              >
+                Copy preparation columns</button
+              ><button data-i18n="Copy group codes" id="copy-group-codes">
+                Copy group codes</button
+              ><label class="check"
+                ><input id="include-headers" type="checkbox" /><span
+                  data-i18n="Headers"
+                  >Headers</span
+                ></label
+              >
+            </div>
+          </div>
+          <div class="packing-launch">
+            <label
+              ><span data-i18n="Packing month">Packing month</span
+              ><input type="month" id="packing-month" required /></label
+            ><button
+              data-i18n="Prepare packing list"
+              id="prepare-orders"
+              class="primary"
+              disabled
+            >
+              Prepare packing list
+            </button>
+            <button id="restore-packing" data-i18n="Restore packing">
+              Restore packing
+            </button>
+            <input
+              id="restore-packing-file"
+              type="file"
+              accept=".json,application/json"
+              hidden
+              aria-label="Packing backup file"
+              data-i18n-aria-label="Packing backup file"
+            />
+            <p id="packing-scope" role="status"></p>
+          </div>
+        </div>
       </div>
       <section
         data-i18n-aria-label="Prepare packing list"

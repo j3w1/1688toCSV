@@ -499,7 +499,7 @@ export async function startLibrary(
     ['theme-toggle', 'Switch between dark and light appearance.'],
     ['order-search', 'Find a seller, member login or full order number.'],
     [
-      'month-filter-label',
+      'month-filter',
       'Filter by purchase month. Shift-click filters a range. Starts with the current month, then remembers your filter.',
     ],
     ['date-from', 'Include orders purchased on or after this date.'],
@@ -1689,6 +1689,7 @@ export async function startLibrary(
         'aria-pressed',
         String(selectedMonths.has(button.dataset.month))
       )
+    $('clear-months').setAttribute('aria-pressed', String(!selectedMonths.size))
   }
   function renderMonthOptions() {
     const months = [

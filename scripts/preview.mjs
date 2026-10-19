@@ -90,6 +90,8 @@ export async function startPreview({ port = 0 } = {}) {
     'error-notice.css',
     'image-copy-dialog.css',
     'appearance-settings.css',
+    'packing-review.css',
+    'shell.css',
   ])
     assets.set(`/${css}`, [
       'text/css',
