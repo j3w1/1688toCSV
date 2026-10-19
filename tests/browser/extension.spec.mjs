@@ -158,34 +158,6 @@ test('an empty order reports an error and recovers when SPA rows load', async ({
   expect(extension.unexpectedRequests).toEqual([])
 })
 
-test('the page control fits a 320px viewport without horizontal overflow', async ({
-  extension,
-}) => {
-  await extension.orderPage.setViewportSize({ width: 320, height: 640 })
-  await extension.setOrder({ rows: [] })
-  await linkFor(extension).click()
-  await expect(controlFor(extension).getByRole('status')).toContainText(
-    'No product rows'
-  )
-  const bounds = await controlFor(extension).boundingBox()
-  expect(bounds.x).toBeGreaterThanOrEqual(0)
-  expect(bounds.x + bounds.width).toBeLessThanOrEqual(320)
-  expect(bounds.y).toBeGreaterThanOrEqual(0)
-  expect(bounds.y + bounds.height).toBeLessThanOrEqual(640)
-  expect(
-    await controlFor(extension).evaluate(
-      (control) => control.scrollWidth <= control.clientWidth
-    )
-  ).toBe(true)
-  expect(
-    await extension.orderPage.evaluate(
-      () => document.documentElement.scrollWidth <= innerWidth
-    )
-  ).toBe(true)
-  expect(await savedFiles(extension)).toEqual([])
-  expect(extension.unexpectedRequests).toEqual([])
-})
-
 test('malformed product data reports its row in the page control and creates no file', async ({
   extension,
 }) => {

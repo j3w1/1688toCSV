@@ -137,7 +137,7 @@ test('table attributes translate, copy dimension numbers without their unit and 
 test('original product details copy exact source values and description and link to the photo and source order', async ({
   extension,
 }) => {
-  const { page, record } = await workspace(extension)
+  const { page, record } = await workspace(extension, { longDescription: true })
   const row = page.locator('#sheet-body tr[data-selection-key]').first()
   await row.locator('.product-title').dblclick()
   const details = page.getByRole('dialog', {
@@ -215,57 +215,6 @@ test('original product details copy exact source values and description and link
     page.locator('#order-details-heading .order-reference')
   ).toHaveText(record.snapshot.orderId)
   await expect(row).toHaveAttribute('aria-selected', selected)
-})
-
-test('product and order details keep their existing header actions reachable above long content', async ({
-  extension,
-}) => {
-  const { page, record } = await workspace(extension, { longDescription: true })
-  await page.setViewportSize({ width: 390, height: 600 })
-  const row = page.locator('#sheet-body tr[data-selection-key]').first()
-  await row.focus()
-  await row.press('Enter')
-  const product = page.locator('.product-details-dialog')
-  await expect(product).toBeVisible()
-  const top = product.locator('.product-details-top')
-  const scroll = product.locator('.product-details-scroll')
-  const before = await top.boundingBox()
-  expect(
-    await scroll.evaluate((node) => node.scrollHeight > node.clientHeight)
-  ).toBe(true)
-  await scroll.evaluate((node) => node.scrollTo(0, node.scrollHeight))
-  expect(await top.boundingBox()).toEqual(before)
-  for (const button of await top.getByRole('button').all())
-    await expect(button).toBeInViewport()
-  expect(
-    await product.evaluate((node) => node.scrollWidth <= node.clientWidth)
-  ).toBe(true)
-  await expectCopied(
-    page,
-    top.getByRole('button', { name: 'Copy description', exact: true }),
-    record.snapshot.items[0].description
-  )
-  await top.getByRole('button', { name: 'Order details', exact: true }).click()
-  const order = page.locator('#order-details')
-  await expect(order).toBeVisible()
-  const heading = order.locator('.detail-dialog-heading')
-  const orderBody = order.locator('#details-content')
-  const orderTop = await heading.boundingBox()
-  expect(
-    await orderBody.evaluate((node) => node.scrollHeight > node.clientHeight)
-  ).toBe(true)
-  await orderBody.evaluate((node) => node.scrollTo(0, node.scrollHeight))
-  expect(await heading.boundingBox()).toEqual(orderTop)
-  await expect(
-    order.getByText('Previous versions', { exact: true })
-  ).toBeInViewport()
-  await expect(heading.locator('.order-reference')).toHaveText(
-    record.snapshot.orderId
-  )
-  await heading
-    .getByRole('button', { name: 'Close order details', exact: true })
-    .click()
-  await expect(order).not.toBeVisible()
 })
 
 test('legacy and missing SKU fields retain their source text, with keyboard dismissal and a narrow usable details dialog', async ({

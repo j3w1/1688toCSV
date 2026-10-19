@@ -17,8 +17,12 @@ test.beforeAll(async () => {
   helpSource = result.outputFiles[0].text
 })
 
-async function helpFixture(extension, { fallback = false } = {}) {
+async function helpFixture(
+  extension,
+  { fallback = false, clock = false } = {}
+) {
   const page = await extension.context.newPage()
+  if (clock) await page.clock.install()
   // Match the secure context of extension pages without running library code.
   await page.goto(`${extension.origin}/unsupported`)
   await page.setContent(`
@@ -226,7 +230,7 @@ for (const fallback of [false, true]) {
   test(`a ${fallback ? 'fallback' : 'native'} hint cannot consume Escape or reopen beneath another modal`, async ({
     extension,
   }) => {
-    const page = await helpFixture(extension, { fallback })
+    const page = await helpFixture(extension, { fallback, clock: true })
     await page.locator('#field input').focus()
     await expect(page.getByRole('tooltip')).toBeVisible()
     const remaining = await page.evaluate(() => {
@@ -275,7 +279,8 @@ for (const fallback of [false, true]) {
         .dispatchEvent(new PointerEvent('pointerenter'))
       document.querySelector('#photo').showModal()
     })
-    await page.waitForTimeout(450)
+    // Run the queued 500 ms hover callback while the other modal owns focus.
+    await page.clock.fastForward(501)
     await expect(page.locator('.preparation-help-popover')).toHaveCount(0)
     await page.keyboard.press('Escape')
     await expect(page.locator('#photo')).toHaveJSProperty('open', false)

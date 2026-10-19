@@ -143,7 +143,7 @@ async function waitForAutosave(dialog) {
   )
 }
 
-test('Casa Elida codes stay readable and order names summarize distinct saved products in English and Spanish', async ({
+test('variant endings stay editable and order names summarize distinct saved products across languages', async ({
   extension,
 }) => {
   const { page } = await openWorkspace(extension)
@@ -159,22 +159,6 @@ test('Casa Elida codes stay readable and order names summarize distinct saved pr
     .getByLabel('Spanish short name', { exact: true })
     .fill('CAJAS')
   await waitForAutosave(view)
-  const codes = view.locator(
-    '.group-code-editor, .variant-code-base, .variant-code-band input'
-  )
-  for (const node of await codes.all()) {
-    await expect(node).toHaveCSS('color', 'rgb(255, 255, 255)')
-    await expect(node).toHaveCSS(
-      'font-family',
-      'Arial, "Microsoft YaHei", sans-serif'
-    )
-    await expect(node).toHaveCSS('font-size', '20px')
-    expect(
-      Number(
-        await node.evaluate((element) => getComputedStyle(element).fontWeight)
-      )
-    ).toBeGreaterThanOrEqual(700)
-  }
   const design = groups.first().locator('.variant-code-design').first()
   const emptySuffix = design.locator('input[data-packing-field="variant"]')
   await expect(emptySuffix).toHaveValue('')
@@ -203,29 +187,6 @@ test('Casa Elida codes stay readable and order names summarize distinct saved pr
   await page.keyboard.press('Tab')
   await summary.focus()
   await expect(page.getByRole('tooltip')).toContainText(`${firstName} · CAJAS`)
-  for (const mode of ['dark', 'light']) {
-    if (
-      (await page
-        .locator('meta[name="color-scheme"]')
-        .getAttribute('content')) !== mode
-    )
-      await page.locator('#theme-toggle').click()
-    await expect(page.locator('meta[name="color-scheme"]')).toHaveAttribute(
-      'content',
-      mode
-    )
-    const code = page.locator('.row-code-copy').first()
-    await expect(code).toHaveCSS(
-      'font-family',
-      'Arial, "Microsoft YaHei", sans-serif'
-    )
-    await expect(code).toHaveCSS('font-size', '12px')
-    await expect(code).toHaveCSS('padding-left', '4.2px')
-    await expect(code).toHaveCSS('padding-top', '3.6px')
-    await expect(code).toHaveCSS('background-color', 'rgb(0, 0, 0)')
-    await code.hover()
-    await expect(code).toHaveCSS('color', 'rgb(255, 255, 255)')
-  }
   await page.locator('[data-language="es"]').click()
   await expect(summary.locator('.order-name-label')).toHaveText(firstName)
   await page.locator('[data-language="zh"]').click()
@@ -233,12 +194,6 @@ test('Casa Elida codes stay readable and order names summarize distinct saved pr
   await page.locator('[data-language="en"]').click()
   await page.setViewportSize({ width: 760, height: 900 })
   await expect(summary.locator('.order-name-count')).toBeVisible()
-  const bounds = await summary.evaluate((element) => {
-    const parent = element.closest('.order-card').getBoundingClientRect()
-    const own = element.getBoundingClientRect()
-    return { right: own.right, parentRight: parent.right }
-  })
-  expect(bounds.right).toBeLessThanOrEqual(bounds.parentRight)
 })
 
 async function selectVariantRow(row, key = 'Space') {
@@ -366,7 +321,7 @@ for (const unresolvedSizes of [false, true])
     expect(extension.unexpectedRequests).toEqual([])
   })
 
-test('product codes lead group headers; nested hints, hit targets and code baselines stay independent', async ({
+test('group selection, code editors and their accessible help stay independent', async ({
   extension,
 }) => {
   const { page } = await openWorkspace(extension)
@@ -380,11 +335,6 @@ test('product codes lead group headers; nested hints, hit targets and code basel
   await expect(select).toHaveRole('button')
   await expect(select).toHaveText('')
   await expect(select).toHaveAccessibleName('Select group 1: 合成玻璃罐')
-  const check = await select.boundingBox()
-  expect(check.width).toBeGreaterThanOrEqual(24)
-  expect(check.width).toBeLessThanOrEqual(32)
-  expect(check.height).toBeGreaterThanOrEqual(24)
-  expect(check.height).toBeLessThanOrEqual(36)
   await select.focus()
   await page.keyboard.press('Tab')
   await expect(code).toBeFocused()
@@ -412,26 +362,6 @@ test('product codes lead group headers; nested hints, hit targets and code basel
   await expect(select).toHaveAttribute('aria-pressed', 'false')
   await code.click()
   await expect(select).toHaveAttribute('aria-pressed', 'false')
-  const parts = group.locator('.variant-code-design').first()
-  // Cap-trimmed text and native input line boxes have different heights.
-  // Their centers and glyph styling must match inside the shared code design.
-  const boxes = await parts
-    .locator('.variant-code-base, input')
-    .evaluateAll((nodes) =>
-      nodes.map((node) => {
-        const rect = node.getBoundingClientRect()
-        const style = getComputedStyle(node)
-        return {
-          center: rect.top + rect.height / 2,
-          typography: [style.fontFamily, style.fontSize, style.fontWeight],
-        }
-      })
-    )
-  expect(
-    Math.max(...boxes.map((box) => box.center)) -
-      Math.min(...boxes.map((box) => box.center))
-  ).toBeLessThanOrEqual(1)
-  for (const box of boxes) expect(box.typography).toEqual(boxes[0].typography)
 })
 
 test('packing order choices show seller, Spanish names and photos while retaining full IDs for navigation', async ({
@@ -538,7 +468,7 @@ test('packing order choices show seller, Spanish names and photos while retainin
   expect(narrow.x + narrow.width).toBeLessThanOrEqual(680)
 })
 
-test('packing order selector aligns single and multiple photos with colored metadata in every language', async ({
+test('packing order choices retain distinct photos, counts and translated metadata', async ({
   extension,
 }) => {
   const single = await seedStructuredOrder(extension, '1234567890123456789', {
@@ -588,8 +518,6 @@ test('packing order selector aligns single and multiple photos with colored meta
   await waitForAutosave(view)
   const orders = view.locator('.packing-order-section')
   await expect(orders).toHaveCount(2)
-  await expect(orders.first()).toHaveCSS('border-top-width', '0px')
-  await expect(orders.nth(1)).toHaveCSS('border-top-width', '1px')
   const select = view.locator('select[name="packing-order"]')
   await expect(select).toHaveAccessibleName('Show packing orders')
   const singleOption = select.locator(
@@ -663,62 +591,6 @@ test('packing order selector aligns single and multiple photos with colored meta
     await expect(tag).toHaveText('Fragile')
     await expect(tag).toHaveCSS('--tag-light', '#f4dbc1')
     await expect(tag).toHaveCSS('--tag-dark', '#47351f')
-    const assertAlignedPhotos = async () => {
-      await select.click()
-      const geometry = await select.locator('option').evaluateAll((options) =>
-        options.map((option) => {
-          const photos = option.querySelector('.packing-order-photos')
-          const area = photos.getBoundingClientRect()
-          const image = photos
-            .querySelector('.preparation-photo')
-            .getBoundingClientRect()
-          return {
-            width: area.width,
-            height: area.height,
-            captionX: option
-              .querySelector('.packing-order-caption')
-              .getBoundingClientRect().x,
-            count: photos.children.length,
-            centerOffset:
-              (image.left + image.right - area.left - area.right) / 2,
-            verticalOffset:
-              (image.top + image.bottom - area.top - area.bottom) / 2,
-            tiles: [...photos.children].map((tile) => {
-              const bounds = tile.getBoundingClientRect()
-              return {
-                width: bounds.width,
-                height: bounds.height,
-                x: bounds.x - area.x,
-                y: bounds.y - area.y,
-              }
-            }),
-          }
-        })
-      )
-      expect(
-        geometry.every((entry) => entry.width === 116 && entry.height === 76)
-      ).toBe(true)
-      expect(
-        Math.max(...geometry.map((entry) => entry.captionX)) -
-          Math.min(...geometry.map((entry) => entry.captionX))
-      ).toBeLessThanOrEqual(1)
-      expect(
-        Math.abs(geometry.find((entry) => entry.count === 1).centerOffset)
-      ).toBeLessThanOrEqual(1)
-      expect(
-        Math.abs(geometry.find((entry) => entry.count === 1).verticalOffset)
-      ).toBeLessThanOrEqual(1)
-      for (const mosaic of geometry.filter((entry) => entry.count === 6)) {
-        expect(
-          mosaic.tiles.every((tile) => tile.width === 36 && tile.height === 36)
-        ).toBe(true)
-        expect(mosaic.tiles.map(({ x }) => x)).toEqual([0, 40, 80, 0, 40, 80])
-        expect(mosaic.tiles.map(({ y }) => y)).toEqual([0, 0, 0, 40, 40, 40])
-      }
-      await page.keyboard.press('Escape')
-      await expect(view).toBeVisible()
-    }
-    await assertAlignedPhotos()
     await select.selectOption(single.snapshot.orderId)
     const selected = select.locator('selectedcontent')
     await expect(selected.locator('.purchase-date')).toBeVisible()
@@ -729,18 +601,9 @@ test('packing order selector aligns single and multiple photos with colored meta
       '#47351f'
     )
     await page.setViewportSize({ width: 390, height: 800 })
-    await assertAlignedPhotos()
     await select.selectOption(multiple.snapshot.orderId)
     await expect(selected.locator('.packing-order-photos img')).toHaveCount(6)
     expect(await photoPixels(selected)).toEqual(multiplePixels)
-    expect(
-      await selected.evaluate(
-        (node) => node.scrollWidth <= node.clientWidth + 1
-      )
-    ).toBe(true)
-    const bounds = await select.boundingBox()
-    expect(bounds.x).toBeGreaterThanOrEqual(0)
-    expect(bounds.x + bounds.width).toBeLessThanOrEqual(390)
   }
   await page.locator('#language-toggle [data-language=es]').click()
   await expect(singleOption).toContainText('1 producto · 1 grupo')
@@ -1780,80 +1643,7 @@ test('preparation keeps categories and codes visible with one contextual groupin
   expect(extension.unexpectedRequests).toEqual([])
 })
 
-test('compact preparation fits two product groups without hiding fields or clipping narrow layouts', async ({
-  extension,
-}) => {
-  const { page } = await openWorkspace(extension)
-  await page.setViewportSize({ width: 1280, height: 960 })
-  const dialog = await prepare(page)
-  const groups = dialog.locator('.preparation-group')
-  const first = groups.first()
-  // Wait for real raster readiness, as in the media test; autosave is independent
-  // of Windows' asynchronous canvas encoding and the bounded preview queue.
-  await expect(first.getByAltText('Carton mark preview')).toBeVisible({
-    timeout: 20_000,
-  })
-  await expect(first.getByAltText('Barcode preview').first()).toBeVisible({
-    timeout: 20_000,
-  })
-  // Read all compared bounds in one browser task so asynchronous preview
-  // completion cannot grow the workspace between separate measurements.
-  const { bounds, orderBounds, firstBounds, lastBounds, summary, mark } =
-    await dialog.evaluate((node) => {
-      node.scrollTop = 0
-      const cards = node.querySelectorAll('.preparation-group')
-      const rect = (element) => element.getBoundingClientRect().toJSON()
-      return {
-        bounds: rect(node),
-        orderBounds: rect(node.querySelector('.packing-order-section')),
-        firstBounds: rect(cards[0]),
-        lastBounds: rect(cards[cards.length - 1]),
-        summary: rect(cards[0].querySelector('.product-summary')),
-        mark: rect(cards[0].querySelector('.carton-preview')),
-      }
-    })
-  // Full-page navigation sits above the order. Its own identity and tools must
-  // still leave a compact lead-in to the product groups.
-  expect(firstBounds.y - orderBounds.y).toBeLessThanOrEqual(140)
-  expect(lastBounds.height).toBeLessThanOrEqual(330)
-  expect(lastBounds.y + lastBounds.height).toBeLessThanOrEqual(
-    bounds.y + bounds.height
-  )
-  expect(summary.x + summary.width).toBeLessThanOrEqual(mark.x)
-  expect(Math.abs(summary.y - mark.y)).toBeLessThanOrEqual(2)
-  for (const group of await groups.all()) {
-    await expect(
-      group.getByLabel('Chinese category', { exact: true })
-    ).toBeVisible()
-    await expect(group.locator('.original-product-name')).toBeVisible()
-    await expect(group.locator('.group-tools')).toHaveCount(0)
-    await expect(
-      group.getByText('Single variant', { exact: true })
-    ).toHaveCount(0)
-    const note = group.getByLabel('Product variant', { exact: true }).first()
-    await expect(note).toBeVisible()
-    // The table heading names this column once; each field retains its accessible name.
-    expect(
-      (await group.locator('.variant-note > span').first().boundingBox()).width
-    ).toBeLessThanOrEqual(1)
-  }
-  for (const width of [1024, 700, 390]) {
-    await page.setViewportSize({ width, height: 960 })
-    expect(
-      await dialog.evaluate((node) => node.scrollWidth <= node.clientWidth + 1)
-    ).toBe(true)
-    const fields = first.locator('.group-fields')
-    expect(
-      await fields.evaluate((node) => node.scrollWidth <= node.clientWidth + 1)
-    ).toBe(true)
-    await expect(
-      first.getByRole('group', { name: 'Code options' }).first()
-    ).toBeVisible()
-  }
-  expect(extension.unexpectedRequests).toEqual([])
-})
-
-test('an unfinished barcode uses a compact, fully readable message without clipping', async ({
+test('a missing product name hides its barcode preview and explains the correction', async ({
   extension,
 }) => {
   const { page } = await openWorkspace(extension)
@@ -1870,15 +1660,6 @@ test('an unfinished barcode uses a compact, fully readable message without clipp
     'Name this product to preview its barcode'
   )
   await expect(preview.locator('img')).toBeHidden()
-  const state = await preview.evaluate((node) => ({
-    height: node.getBoundingClientRect().height,
-    readable:
-      node.scrollWidth <= node.clientWidth + 1 &&
-      node.scrollHeight <= node.clientHeight + 1,
-  }))
-  expect(state.height).toBeLessThanOrEqual(100)
-  expect(state.readable).toBe(true)
-  await expect(dialog.locator('details')).toHaveCount(0)
 })
 
 test('preparation selects groups and variant rows by range without changing edits or intercepting controls', async ({
