@@ -85,7 +85,7 @@ test('long change reviews keep every decision at the top while all products rema
     const body = await content.boundingBox()
     expect(before.y + before.height).toBeLessThanOrEqual(body.y)
     await dialog.screenshot({
-      path: `work/packing-review-actions-${width}.png`,
+      path: test.info().outputPath(`packing-review-actions-${width}.png`),
     })
     expect(
       await content.evaluate((node) => node.scrollHeight > node.clientHeight)

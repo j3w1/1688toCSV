@@ -121,7 +121,9 @@ for (const fallback of [false, true])
     await trigger.click()
     await expect(panel).toBeVisible()
     if (!fallback)
-      await page.screenshot({ path: 'work/copy-menu-orders-narrow.png' })
+      await page.screenshot({
+        path: test.info().outputPath('copy-menu-orders-narrow.png'),
+      })
     // Anchored placement can cover the search field. Use the page margin,
     // waiting for the queued fallback positioning before clicking outside.
     await expect
@@ -227,7 +229,9 @@ test('packing copy formats remain selection-only and Escape dismisses them befor
   await expect(trigger).toBeEnabled()
   await revealCopyActions(page)
   await expect(panel).toBeVisible()
-  await page.screenshot({ path: 'work/copy-menu-preparation-wide.png' })
+  await page.screenshot({
+    path: test.info().outputPath('copy-menu-preparation-wide.png'),
+  })
   await extension.context.grantPermissions([
     'clipboard-read',
     'clipboard-write',

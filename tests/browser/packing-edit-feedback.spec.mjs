@@ -123,7 +123,9 @@ for (const theme of ['dark', 'light']) {
       })
     for (const contrast of contrasts)
       expect(contrast).toBeGreaterThanOrEqual(4.5)
-    await dialog.screenshot({ path: `work/conflict-resolution-${theme}.png` })
+    await dialog.screenshot({
+      path: test.info().outputPath(`conflict-resolution-${theme}.png`),
+    })
     await page.setViewportSize({ width: 420, height: 780 })
     await expect
       .poll(() =>
@@ -137,7 +139,7 @@ for (const theme of ['dark', 'light']) {
       dialog.getByRole('button', { name: 'Apply corrections', exact: true })
     ).toBeInViewport()
     await dialog.screenshot({
-      path: `work/conflict-resolution-${theme}-narrow.png`,
+      path: test.info().outputPath(`conflict-resolution-${theme}-narrow.png`),
     })
     await dialog
       .getByRole('button', { name: 'Continue editing', exact: true })

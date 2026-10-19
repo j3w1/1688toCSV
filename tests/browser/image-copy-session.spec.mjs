@@ -645,7 +645,9 @@ test('Excel preview grows with expanded options while top copy controls remain v
       }
     })
   const collapsed = await measure()
-  await dialog.screenshot({ path: 'work/excel-copy-header-wide.png' })
+  await dialog.screenshot({
+    path: test.info().outputPath('excel-copy-header-wide.png'),
+  })
   await summary.click()
   await expect(style).toHaveJSProperty('open', true)
   await expect
@@ -703,9 +705,13 @@ test('Excel preview grows with expanded options while top copy controls remain v
     )
     .toBe(true)
   await expect(image).toHaveAttribute('src', source)
-  await dialog.screenshot({ path: 'work/excel-copy-preview-narrow.png' })
+  await dialog.screenshot({
+    path: test.info().outputPath('excel-copy-preview-narrow.png'),
+  })
   await content.evaluate((node) => node.scrollTo(0, 0))
-  await dialog.screenshot({ path: 'work/excel-copy-header-narrow.png' })
+  await dialog.screenshot({
+    path: test.info().outputPath('excel-copy-header-narrow.png'),
+  })
   await page.setViewportSize({ width: 1280, height: 760 })
   await expect
     .poll(async () => Math.abs((await measure()).bottomGap))

@@ -59,10 +59,12 @@ async function startFixtureServer() {
       '<!doctype html><html lang="en"><title>Synthetic order fixture</title><body></body></html>'
     )
   })
-  // Some Windows ephemeral ranges include ports that browsers refuse to load.
+  // Let the OS allocate a free port atomically for concurrent tests. Some
+  // Windows ephemeral ranges include ports that browsers refuse to load.
   for (let attempt = 0; attempt < 10; attempt++) {
     try {
-      server.listen(randomInt(49152, 65536), '127.0.0.1')
+      const port = process.platform === 'win32' ? randomInt(49152, 65536) : 0
+      server.listen(port, '127.0.0.1')
       await once(server, 'listening')
       break
     } catch (error) {
