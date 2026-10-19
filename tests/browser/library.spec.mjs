@@ -906,7 +906,6 @@ test('purchase dates group orders by month while separators stay out of copied v
   await expect(page.locator('#sheet-body tr.is-selected')).toHaveCount(5)
   await expect(orderBands.locator('[aria-selected]')).toHaveCount(0)
   await page.locator('#clear-rows').click()
-  await page.locator('#month-filter > summary').click()
   await page.locator('[data-month="2026-09"]').click()
   await expect(page.locator('.order-card')).toHaveCount(1)
   await expect(page.locator('#sheet-body tr[data-selection-key]')).toHaveCount(

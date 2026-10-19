@@ -363,7 +363,7 @@ test(
     expect(saved.preparations[0].groups[0].variants).toHaveLength(2)
     expect(saved.orders[0].snapshot.items).toHaveLength(3)
     await page.keyboard.press('Escape')
-    await view.getByRole('button', { name: 'Orders', exact: true }).click()
+    await view.page().locator('#view-orders').click()
     await expect(page.locator('#restore-packing')).toBeVisible()
     await expect(
       page.locator('#orders-copy-actions #restore-packing')
@@ -437,7 +437,7 @@ test('Orders packing restore rejects a full-library file without changing saved 
   extension,
 }) => {
   const { page, view } = await openPacking(extension)
-  await view.getByRole('button', { name: 'Orders', exact: true }).click()
+  await view.page().locator('#view-orders').click()
   const before = await backup(extension)
   await page.getByLabel('Packing backup file', { exact: true }).setInputFiles({
     name: 'full-library.json',

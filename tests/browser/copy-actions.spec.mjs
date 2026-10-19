@@ -92,13 +92,13 @@ for (const fallback of [false, true])
           )
           .map((node) => node.id || node.className)
       )
-    expect(order).toEqual([
-      'order-totals',
-      'product-selection-totals',
-      'table-scroll',
-    ])
+    expect(order).toEqual(['order-totals', 'table-scroll'])
+    // Selection totals and copy actions live in the bottom action bar.
     await expect(
-      page.locator('.sheet-toolbar .sheet-title-actions > #orders-copy-actions')
+      page.locator('.action-bar > #product-selection-totals')
+    ).toHaveCount(1)
+    await expect(
+      page.locator('.action-bar > #orders-copy-actions')
     ).toHaveCount(1)
     const trigger = page.locator('#orders-copy-actions .copy-actions-trigger')
     const panel = page.locator('#orders-copy-actions .copy-actions-panel')

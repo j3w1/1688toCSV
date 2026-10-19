@@ -60,7 +60,6 @@ test('order search combines seller, member login and order IDs with purchase fil
   await expect(page.locator('#sheet-body tr[data-selection-key]')).toHaveCount(
     3
   )
-  await page.locator('#month-filter > summary').click()
   await page.locator('[data-month="2026-09"]').click()
   await expect(page.locator('.order-card')).toHaveCount(0)
   await expect(page.locator('.order-search-empty')).toHaveText(

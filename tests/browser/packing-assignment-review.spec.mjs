@@ -123,7 +123,7 @@ test('one new product reviews its proposed code and helpers before saving; cance
   ).toEqual([record.snapshot.items[0].entryId])
   expect(saved.preparations[0].groups[0].baseCode).toBe(proposed)
   expect(saved.orders).toEqual(before.orders)
-  await view.getByRole('button', { name: 'Orders', exact: true }).click()
+  await view.page().locator('#view-orders').click()
   await page.locator('#prepare-orders').click()
   await expect(view).toBeVisible()
   await expect(review).toHaveCount(0)
@@ -141,7 +141,7 @@ test('adding another source row of an existing product reviews only the unassign
     .getByRole('button', { name: 'Assign codes and prepare', exact: true })
     .click()
   await expect(view).toBeVisible()
-  await view.getByRole('button', { name: 'Orders', exact: true }).click()
+  await view.page().locator('#view-orders').click()
   const before = await backup(extension)
   const original = before.preparations[0].groups[0]
   await rows.nth(1).focus()

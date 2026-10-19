@@ -187,7 +187,7 @@ test('each imported order appears immediately in purchase order without resettin
     await expect(packing.locator('.preparation-save-status')).toHaveText(
       'Saved automatically'
     )
-    await packing.getByRole('button', { name: 'Orders', exact: true }).click()
+    await packing.page().locator('#view-orders').click()
     // Preserve a real filter and an existing selection while the second order
     // commits. No page reload or import completion is needed to render it.
     const status = await library
@@ -366,7 +366,7 @@ test('missing sellers import products but require identification before label pr
     .getByLabel('Spanish short name', { exact: true })
     .first()
     .fill('PRODUCTO')
-  await dialog.getByRole('button', { name: 'Orders', exact: true }).click()
+  await dialog.page().locator('#view-orders').click()
   await expect(seller).toBeFocused()
   await expect(dialog.locator('.error-notice-message')).toContainText(
     'Enter the seller member login'
@@ -380,7 +380,7 @@ test('missing sellers import products but require identification before label pr
   await expect(
     library.getByRole('dialog', { name: 'Confirm operation', exact: true })
   ).not.toBeVisible()
-  await dialog.getByRole('button', { name: 'Orders', exact: true }).click()
+  await dialog.page().locator('#view-orders').click()
   await expect(dialog).not.toBeVisible()
   await library.locator('#prepare-orders').click()
   await library
@@ -399,7 +399,7 @@ test('missing sellers import products but require identification before label pr
   await library.reload()
   await library.locator('#prepare-orders').click()
   await expect(seller).toHaveValue('identified-synthetic-shop')
-  await dialog.getByRole('button', { name: 'Orders', exact: true }).click()
+  await dialog.page().locator('#view-orders').click()
   await library.getByRole('button', { name: 'Show all', exact: true }).click()
   await expandOrderMonths(library)
   await library.locator('.order-card-meta').nth(1).click()

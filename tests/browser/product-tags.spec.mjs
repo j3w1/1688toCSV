@@ -371,7 +371,7 @@ test('shared packing barcode edits tags per original product and saves typed tag
   expect(JSON.stringify(backup.data.preparations)).not.toContain(
     'First original'
   )
-  await view.getByRole('button', { name: 'Orders', exact: true }).click()
+  await view.page().locator('#view-orders').click()
   await expect(products.nth(0).locator('.product-row-tags')).toHaveText(
     'First original'
   )

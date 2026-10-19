@@ -82,7 +82,7 @@ test.describe('copy progress and recovery', () => {
     await expect(view.locator('.preparation-save-status')).toHaveText(
       'Saved automatically'
     )
-    await view.getByRole('button', { name: 'Orders', exact: true }).click()
+    await view.page().locator('#view-orders').click()
     const code = await page
       .locator('#sheet-body .row-code-copy')
       .first()
@@ -291,7 +291,6 @@ test('month headings collapse independently; month choices toggle and Shift incl
   )
   await september.click()
   await expect(page.locator('.order-card')).toHaveCount(1)
-  await page.locator('#month-filter > summary').click()
   await page.locator('[data-month="2026-09"]').click()
   await expect(page.locator('#sheet-body tr[data-selection-key]')).toHaveCount(
     2

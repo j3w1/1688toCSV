@@ -176,7 +176,7 @@ test('variant endings stay editable and order names summarize distinct saved pro
     design.locator('.variant-code-band input[data-packing-field="variant"]')
   ).toHaveCount(0)
   await waitForAutosave(view)
-  await view.getByRole('button', { name: 'Orders', exact: true }).click()
+  await view.page().locator('#view-orders').click()
   const summary = page.locator('.order-card .order-name-summary')
   await expect(summary.locator('.order-name-label')).toHaveText(firstName)
   // The first name is shared by two variants, but counts as one product name.
@@ -845,16 +845,18 @@ test('one sticky selection toolbar batches grouping safely across orders and sta
     const last = view.locator('.preparation-group').last()
     await last.evaluate((node) => node.scrollIntoView({ block: 'end' }))
     await expect(toolbar).toBeInViewport({ ratio: 1 })
+    // The toolbar is docked at the bottom of the viewport.
     const bounds = await toolbar.boundingBox()
-    expect(bounds.y).toBeGreaterThanOrEqual(0)
-    expect(bounds.y).toBeLessThanOrEqual(10)
+    expect(bounds.y + bounds.height).toBeLessThanOrEqual(720)
+    expect(bounds.y + bounds.height).toBeGreaterThanOrEqual(720 - 24)
+    expect(bounds.x).toBeGreaterThanOrEqual(0)
     expect(bounds.x + bounds.width).toBeLessThanOrEqual(width)
     const field = last.getByLabel('Spanish short name', { exact: true })
     await field.evaluate((node) => node.scrollIntoView({ block: 'center' }))
     await field.focus()
     const fieldBox = await field.boundingBox()
     const toolbarBox = await toolbar.boundingBox()
-    expect(fieldBox.y).toBeGreaterThanOrEqual(toolbarBox.y + toolbarBox.height)
+    expect(fieldBox.y + fieldBox.height).toBeLessThanOrEqual(toolbarBox.y)
     const mark = last.locator('.carton-preview')
     expect((await mark.boundingBox()).width).toBeLessThanOrEqual(100)
     await expect(mark.locator('strong')).toHaveCount(0)
@@ -907,7 +909,7 @@ test('structured products prepare, preserve edits and copy exact headerless sour
   await expect(
     variant.getByRole('textbox', { name: /^Size code / })
   ).toHaveValue(/xs/i)
-  await dialog.getByRole('button', { name: 'Orders', exact: true }).click()
+  await dialog.page().locator('#view-orders').click()
   await expect(page.locator('.row-code-copy')).toHaveText([
     baseCode,
     baseCode,
@@ -1023,7 +1025,7 @@ test('Excel image requires the selected carton category in both views and preser
     'keep-unfinished-category'
   )
   await images.getByRole('button', { name: 'Done', exact: true }).click()
-  await view.getByRole('button', { name: 'Orders', exact: true }).click()
+  await view.page().locator('#view-orders').click()
   await page.locator('#copy-excel-image').click()
   await expect(images.getByRole('alert')).toContainText(
     `(${code}) needs a Chinese category`
@@ -1048,7 +1050,7 @@ test('Copy Excel image freezes selected rows with current-language headings, sup
     .fill('FRASCO DE PRUEBA')
   await group.getByLabel('Chinese category', { exact: true }).fill('玻璃制品')
   await waitForAutosave(dialog)
-  await dialog.getByRole('button', { name: 'Orders', exact: true }).click()
+  await dialog.page().locator('#view-orders').click()
   const original = await packingBackup(extension)
   const rows = page.locator('#sheet-body tr[data-selection-key]')
   await rows.nth(0).locator('.product-title').click()
@@ -1197,10 +1199,8 @@ test('packing month defaults to the local current month, independently of persis
   await expect(page.locator('#sheet-body tr[data-selection-key]')).toHaveCount(
     0
   )
-  await page.locator('#month-filter-label').click()
   await page.locator('#month-options [data-month="2027-01"]').click()
   await page.locator('#month-options [data-month="2026-10"]').click()
-  await page.locator('#month-filter-label').click()
   await expect(page.locator('#sheet-body tr[data-selection-key]')).toHaveCount(
     3
   )
@@ -1218,7 +1218,7 @@ test('packing month defaults to the local current month, independently of persis
       .getByLabel('Product code', { exact: true })
   ).toHaveValue(/^CE2701\d{4}$/)
   const saved = await packingBackup(extension)
-  await view.getByRole('button', { name: 'Orders', exact: true }).click()
+  await view.page().locator('#view-orders').click()
 
   await month.fill('2027-02')
   await page
@@ -1488,7 +1488,7 @@ test('preparation shows product photos, zooms originals and opens saved labels f
     .locator('img[src^="blob:"]')
     .evaluateAll((images) => images.map((image) => image.src))
   expect(liveUrls.length).toBeGreaterThan(0)
-  await dialog.getByRole('button', { name: 'Orders', exact: true }).click()
+  await dialog.page().locator('#view-orders').click()
   await expect
     .poll(() =>
       page.evaluate(
@@ -2397,7 +2397,7 @@ test('Orders navigation preserves invalid edits and saves valid edits before cha
   await expect(
     page.getByRole('dialog', { name: 'Prepare packing list', exact: true })
   ).toHaveCount(0)
-  await view.getByRole('button', { name: 'Orders', exact: true }).click()
+  await view.page().locator('#view-orders').click()
   await expect(view).toBeVisible()
   await expect(view.locator('.preparation-save-status')).toContainText(
     'Not saved'
@@ -2408,7 +2408,7 @@ test('Orders navigation preserves invalid edits and saves valid edits before cha
     original.preparations
   )
   await code.fill(original.preparations[0].groups[0].baseCode)
-  await view.getByRole('button', { name: 'Orders', exact: true }).click()
+  await view.page().locator('#view-orders').click()
   await expect(view).toBeHidden()
   await expect(page.locator('#orders-view')).toBeVisible()
   const saved = await packingBackup(extension)
@@ -2447,7 +2447,7 @@ test('a conflicting autosave keeps its draft and reloads the saved version witho
     .fill('GUARDADO EN OTRA PESTANA')
   // The context clock also applies to new tabs. Closing flushes the second
   // tab's real write while the first tab retains its pending local draft.
-  await otherDialog.getByRole('button', { name: 'Orders', exact: true }).click()
+  await otherDialog.page().locator('#view-orders').click()
   await expect(otherDialog).not.toBeVisible()
   await page.clock.runFor(801)
   await expect(dialog.locator('.preparation-save-status')).toContainText(
@@ -2535,7 +2535,7 @@ test('label editor saves repeated text edits and copies barcode and carton image
     .first()
     .getByLabel('Product code', { exact: true })
     .inputValue()
-  await preparation.getByRole('button', { name: 'Orders', exact: true }).click()
+  await preparation.page().locator('#view-orders').click()
   await extension.context.grantPermissions([
     'clipboard-read',
     'clipboard-write',
@@ -2803,7 +2803,7 @@ test('combining, separating, splitting and merging preserve source rows and curr
     sourceIds.slice(0, 2)
   )
   expect(backup.orders[0].snapshot).toEqual(record.snapshot)
-  await dialog.getByRole('button', { name: 'Orders', exact: true }).click()
+  await dialog.page().locator('#view-orders').click()
   await expect(dialog).toBeHidden()
   await expect(page.locator('#orders-view')).toBeVisible()
   await expect(page.locator('#sheet-body tr[data-selection-key]')).toHaveCount(
@@ -3000,7 +3000,7 @@ test('combining, separating, splitting and merging preserve source rows and curr
       .sort()
   ).toEqual(final.groups.map((group) => group.baseCode).sort())
   expect(backup.orders[0].snapshot).toEqual(record.snapshot)
-  await dialog.getByRole('button', { name: 'Orders', exact: true }).click()
+  await dialog.page().locator('#view-orders').click()
   await expect(dialog).toBeHidden()
   await expect(page.locator('#orders-view')).toBeVisible()
   await page.reload()
@@ -3252,7 +3252,7 @@ test('selected rows limit barcode and carton output and cancel leaves the clipbo
 }) => {
   const { page } = await openWorkspace(extension, { previews: false })
   const view = await prepare(page)
-  await view.getByRole('button', { name: 'Orders', exact: true }).click()
+  await view.page().locator('#view-orders').click()
   await page
     .locator('#sheet-body tr[data-selection-key]')
     .nth(0)

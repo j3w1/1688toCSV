@@ -312,7 +312,7 @@ test('translated product details never rewrite saved label names or original ord
     .getByLabel('Chinese category', { exact: true })
     .first()
     .fill('手工类别')
-  await packing.getByRole('button', { name: 'Orders', exact: true }).click()
+  await packing.page().locator('#view-orders').click()
   await expect(packing).toBeHidden()
   const before = await backup(extension)
   expect(before.preparations[0].groups[0].spanishName).toBe('NOMBRE MANUAL')

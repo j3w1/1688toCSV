@@ -188,7 +188,7 @@ test('copy column choices and Headers survive copying, reopening and a page relo
   await view.getByRole('button', { name: 'Copy columns', exact: true }).click()
   await retainedChoices()
   await columns.getByRole('button', { name: 'Close', exact: true }).click()
-  await view.getByRole('button', { name: 'Orders', exact: true }).click()
+  await view.page().locator('#view-orders').click()
   await revealCopyActions(page)
   await expect(
     page.getByRole('checkbox', { name: 'Headers', exact: true })
@@ -293,7 +293,7 @@ test('chosen size columns preserve source dimensions and separate saved barcode 
   )
   await columns.getByRole('button', { name: 'Close', exact: true }).click()
   await expect(page.locator('.preparation-column-dialog')).toHaveCount(0)
-  await view.getByRole('button', { name: 'Orders', exact: true }).click()
+  await view.page().locator('#view-orders').click()
   await page.reload()
   await revealCopyActions(page)
   await page
@@ -481,9 +481,7 @@ test('Ctrl+A prepares every selected product across purchase months; preview Can
   await expect(
     page.getByRole('button', { name: 'Prepare packing list', exact: true })
   ).toBeDisabled()
-  await page.locator('#month-filter-label').click()
   await page.locator('#month-options [data-month="2026-09"]').click()
-  await page.locator('#month-filter-label').click()
   await expect(page.locator('#sheet-body tr[data-selection-key]')).toHaveCount(
     6
   )
@@ -587,7 +585,7 @@ test('Ctrl+A prepares every selected product across purchase months; preview Can
       includeHidden: true,
     })
   ).toBeEnabled()
-  await view.getByRole('button', { name: 'Orders', exact: true }).click()
+  await view.page().locator('#view-orders').click()
   await page.reload()
   await expect(page.locator('#month-filter-label')).toHaveText(
     '2 purchase months'
@@ -609,7 +607,7 @@ test('moving one selected source row previews its split and leaves all unselecte
   const view = await prepareSelected(page)
   const original = await backup(extension)
   const [oldJar, oldBox] = original.preparations[0].groups
-  await view.getByRole('button', { name: 'Orders', exact: true }).click()
+  await view.page().locator('#view-orders').click()
   await page
     .getByRole('button', { name: 'Clear selection', exact: true })
     .click()
@@ -670,7 +668,7 @@ test('moving one selected source row previews its split and leaves all unselecte
       original.issuedCodes.filter((code) => code.code === oldJar.baseCode)
     )
   )
-  await view.getByRole('button', { name: 'Orders', exact: true }).click()
+  await view.page().locator('#view-orders').click()
   await page
     .getByRole('button', { name: 'Clear selection', exact: true })
     .click()
@@ -767,9 +765,7 @@ test('keyboard group moves and pointer product moves persist and export in the d
 }) => {
   test.setTimeout(60000)
   const { page, records } = await openLibrary(extension, 2)
-  await page.locator('#month-filter-label').click()
   await page.locator('#month-options [data-month="2026-09"]').click()
-  await page.locator('#month-filter-label').click()
   await selectAllProducts(page)
   const view = await prepareSelected(page)
   const original = await backup(extension)
@@ -922,7 +918,7 @@ test('keyboard group moves and pointer product moves persist and export in the d
   expect(
     await page.evaluate(async () => (await navigator.clipboard.read())[0].types)
   ).toContain('image/png')
-  await view.getByRole('button', { name: 'Orders', exact: true }).click()
+  await view.page().locator('#view-orders').click()
   await page.reload()
   await page
     .getByRole('button', { name: 'Prepare packing list', exact: true })
@@ -962,7 +958,7 @@ test('reset order and codes retains current names while previous packing restore
     'Saved automatically'
   )
   const original = await backup(extension)
-  await view.getByRole('button', { name: 'Orders', exact: true }).click()
+  await view.page().locator('#view-orders').click()
   await page.getByLabel('Packing month', { exact: true }).fill('2026-12')
   await page
     .getByRole('button', { name: 'Prepare packing list', exact: true })
@@ -1185,7 +1181,7 @@ test('a month move mixed with an unidentified seller stops before changing any c
   const { page, records, view } = await openLibrary(extension, 2)
   await selectAllProducts(page)
   await prepareSelected(page)
-  await view.getByRole('button', { name: 'Orders', exact: true }).click()
+  await view.page().locator('#view-orders').click()
   const missing = structuredClone(records[1])
   missing.snapshot.sellerName = 'Seller unavailable'
   missing.snapshot.sellerMemberLogin = ''
@@ -1209,9 +1205,7 @@ test('a month move mixed with an unidentified seller stops before changing any c
   )
   expect(response.ok, response.error).toBe(true)
   await page.reload()
-  await page.locator('#month-filter-label').click()
   await page.locator('#month-options [data-month="2026-09"]').click()
-  await page.locator('#month-filter-label').click()
   await expect(page.locator('#sheet-body tr[data-selection-key]')).toHaveCount(
     6
   )
