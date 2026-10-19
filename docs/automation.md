@@ -18,7 +18,7 @@ Use synthetic or the owner's own data only as the owner directs; this guide desc
 | `open-workspace`      | Open Workspace                         | Opens the workspace in a new tab.                                            |
 | `open-workspace-here` | Open Workspace here                    | Opens the workspace in this tab when no import is running.                   |
 
-Imports read each order in a background tab, so the visible tab never changes. Keep the list page open until the import finishes.
+Imports read each order in a background tab (or, if the browser refuses that, a separate unfocused window), so the visible tab never changes. Keep the list page open until the import finishes.
 
 ### Workspace: Orders
 
@@ -63,34 +63,36 @@ Imports read each order in a background tab, so the visible tab never changes. K
 
 ### Import notices
 
-| `data-action`        | Accessible name   | Does                                                                                      |
-| -------------------- | ----------------- | ----------------------------------------------------------------------------------------- |
-| `open-attention-tab` | Open the 1688 tab | Brings the tab that needs a sign-in or verification forward. A person finishes that step. |
-| `resume-import`      | Resume import     | Resumes the paused import.                                                                |
+| `data-action`          | Accessible name   | Does                                                                                                                |
+| ---------------------- | ----------------- | ------------------------------------------------------------------------------------------------------------------- |
+| `open-attention-tab`   | Open the 1688 tab | Brings the tab that needs a sign-in or verification forward. A person finishes that step.                           |
+| `resume-import`        | Resume import     | Resumes the paused import.                                                                                          |
+| `allow-visible-reader` | Use a visible tab | Only in browsers that refuse background tabs and windows: lets this import read in a visible tab. A person decides. |
 
 ## Status line
 
 `#workspace-status` in the workspace header shows one state at a time, most urgent first. Read its `data-status` attribute; the text is for people.
 
-| `data-status`     | Means                                                                                                         |
-| ----------------- | ------------------------------------------------------------------------------------------------------------- |
-| `importing`       | An import is running. The text includes its progress.                                                         |
-| `needs-sign-in`   | An import paused because 1688 asked for a sign-in or verification. Use `open-attention-tab` and ask a person. |
-| `export-finished` | The latest export finished. `data-files` is a JSON array of the file names.                                   |
-| `idle`            | Nothing is running and nothing was exported since the workspace opened or the last import started.            |
+| `data-status`       | Means                                                                                                                 |
+| ------------------- | --------------------------------------------------------------------------------------------------------------------- |
+| `importing`         | An import is running. The text includes its progress.                                                                 |
+| `needs-sign-in`     | An import paused because 1688 asked for a sign-in or verification. Use `open-attention-tab` and ask a person.         |
+| `needs-visible-tab` | This browser refused a background tab and window for the import reader. A person decides with `allow-visible-reader`. |
+| `export-finished`   | The latest export finished. `data-files` is a JSON array of the file names.                                           |
+| `idle`              | Nothing is running and nothing was exported since the workspace opened or the last import started.                    |
 
 The sign-in need is shown once; the extension never switches tabs by itself.
 
 ## Export files
 
-Files download through the browser's normal download folder with predictable names (dates are local `YYYY-MM-DD`):
+Files download through the browser's normal download folder. Names are predictable and carry the local date and time (`YYYY-MM-DD-HHMMSS`), so every export has its own files and the browser never renames one; a second export within the same second gets `-2`. The status line and the summary always name the files actually saved:
 
-| Export       | File                                                                     | Summary            |
-| ------------ | ------------------------------------------------------------------------ | ------------------ |
-| Packing list | `packing-list-2026-10-19-<seller>.xlsx`, or `…-<n>-sellers.xlsx`         | same name, `.json` |
-| Labels       | `CE-labels-2026-10-19-<n>-products.pdf` (`-1-product.pdf` for one)       | same name, `.json` |
-| Carton marks | `CE-carton-marks-2026-10-19-<n>-products.pdf` (`-1-product.pdf` for one) | same name, `.json` |
-| Calibration  | `CE-print-calibration-2026-10-19.pdf`                                    | none               |
+| Export       | File                                                                            | Summary            |
+| ------------ | ------------------------------------------------------------------------------- | ------------------ |
+| Packing list | `packing-list-2026-10-19-153012-<seller>.xlsx`, or `…-<n>-sellers.xlsx`         | same name, `.json` |
+| Labels       | `CE-labels-2026-10-19-153012-<n>-products.pdf` (`-1-product.pdf` for one)       | same name, `.json` |
+| Carton marks | `CE-carton-marks-2026-10-19-153012-<n>-products.pdf` (`-1-product.pdf` for one) | same name, `.json` |
+| Calibration  | `CE-print-calibration-2026-10-19-153012.pdf`                                    | none               |
 
 The packing list uses the columns chosen in **Copy → Chosen columns** and one row per product, like **Copy values**.
 
@@ -103,8 +105,8 @@ Each summary is JSON:
   "kind": "packing-list",
   "exportedAt": "2026-10-19T10:00:00.000Z",
   "files": [
-    "packing-list-2026-10-19-Habitat.xlsx",
-    "packing-list-2026-10-19-Habitat.json"
+    "packing-list-2026-10-19-153012-Habitat.xlsx",
+    "packing-list-2026-10-19-153012-Habitat.json"
   ],
   "orders": [{ "orderId": "…", "seller": "…" }],
   "products": [{ "orderId": "…", "code": "CE…", "name": "…", "quantity": 40 }],
@@ -112,7 +114,7 @@ Each summary is JSON:
 }
 ```
 
-Label and carton-mark summaries use `"kind": "labels"` or `"carton-marks"` and list `pages`, `perPage`, and per product `code`, `name`, `requested`, `extra` (labels only) and `total`, with `totals.requested` and `totals.printed`.
+Label and carton-mark summaries use `"kind": "labels"` or `"carton-marks"` and list `pages`, `perPage`, the source `orders` (`orderId`, `seller`), and per product `code`, `name`, `orders` (order IDs), `requested`, `extra` (labels only) and `total`, with `totals.orders`, `totals.requested` and `totals.printed`. Quantities are JSON numbers, or decimal strings when beyond 2^53.
 
 ## Typical run
 

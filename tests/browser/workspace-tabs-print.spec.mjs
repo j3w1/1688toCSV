@@ -207,7 +207,7 @@ test('labels export print-ready A4 PDFs with proportional spares, caps, warnings
   await dialog.getByRole('button', { name: 'Export PDF', exact: true }).click()
   const download = await downloading
   expect(download.suggestedFilename()).toMatch(
-    /^CE-labels-\d{4}-\d{2}-\d{2}-2-products\.pdf$/
+    /^CE-labels-\d{4}-\d{2}-\d{2}-\d{6}-2-products\.pdf$/
   )
   expect(await download.failure()).toBeNull()
   const pdf = (await readFile(await savedPath(extension, 0))).toString('latin1')
@@ -236,7 +236,7 @@ test('labels export print-ready A4 PDFs with proportional spares, caps, warnings
     .getByRole('button', { name: 'Calibration sheet', exact: true })
     .click()
   expect((await calibrating).suggestedFilename()).toMatch(
-    /^CE-print-calibration-\d{4}-\d{2}-\d{2}\.pdf$/
+    /^CE-print-calibration-\d{4}-\d{2}-\d{2}-\d{6}\.pdf$/
   )
   const sheet = (await readFile(await savedPath(extension, 2))).toString(
     'latin1'

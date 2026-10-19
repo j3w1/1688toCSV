@@ -1414,11 +1414,13 @@ export async function startLibrary(
           })
         : state.status === 'needs-sign-in'
           ? uiMessage('Status: needs sign-in or verification')
-          : state.status === 'export-finished'
-            ? uiMessage('Status: export finished · {0}', {
-                0: state.files.join(', '),
-              })
-            : uiMessage('Status: idle')
+          : state.status === 'needs-visible-tab'
+            ? uiMessage('Status: needs permission for a visible import tab')
+            : state.status === 'export-finished'
+              ? uiMessage('Status: export finished · {0}', {
+                  0: state.files.join(', '),
+                })
+              : uiMessage('Status: idle')
     bindText($('workspace-status-text'), text)
     line.title = String(text)
   }
@@ -1429,6 +1431,21 @@ export async function startLibrary(
       })
     } catch (error) {
       showErrorNotice(error)
+    }
+  })
+  $('import-attention-allow').addEventListener('click', async (event) => {
+    const button = event.currentTarget
+    button.disabled = true
+    try {
+      await send('IMPORT_ALLOW_VISIBLE', {
+        jobId: $('import-attention').dataset.jobId,
+      })
+      ;({ jobs } = await send('JOBS_QUERY'))
+      renderJobs()
+    } catch (error) {
+      showErrorNotice(error)
+    } finally {
+      button.disabled = false
     }
   })
   $('import-attention-resume').addEventListener('click', async (event) => {
@@ -1498,6 +1515,21 @@ export async function startLibrary(
     )
     $('import-attention').hidden = !attention
     $('import-attention').dataset.jobId = attention?.id || ''
+    // A browser without background tabs asks for a visible reader instead.
+    const visibleRequest = attention?.attention?.kind === 'visible-reader'
+    bindText(
+      $('import-attention-text'),
+      visibleRequest
+        ? uiMessage(
+            'This browser does not allow background import tabs. Use a visible import tab for this import? It will switch to that tab while it reads.'
+          )
+        : uiMessage(
+            '1688 needs a sign-in or verification in the import tab. Open that tab, finish the step, then resume.'
+          )
+    )
+    $('import-attention-allow').hidden = !visibleRequest
+    $('import-attention-open').hidden = visibleRequest
+    $('import-attention-resume').hidden = visibleRequest
     renderStatus()
     if (active) {
       const display = progressPresentation(active)

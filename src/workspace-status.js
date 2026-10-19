@@ -14,7 +14,14 @@ export function workspaceStatus({ jobs = [], lastExport = null } = {}) {
   const attention = jobs.find(
     (job) => job.state === 'paused' && job.attention && !job.dismissedAt
   )
-  if (attention) return { status: 'needs-sign-in', job: attention }
+  if (attention)
+    return {
+      status:
+        attention.attention.kind === 'visible-reader'
+          ? 'needs-visible-tab'
+          : 'needs-sign-in',
+      job: attention,
+    }
   if (lastExport?.files?.length)
     return {
       status: 'export-finished',

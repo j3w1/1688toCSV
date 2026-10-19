@@ -120,7 +120,7 @@ import {
   PREPARATION_COLUMN_PREFERENCE,
 } from './preparation-clipboard.js'
 import { createXlsx } from './xlsx-writer.js'
-import { saveFile, announceExport } from './save-file.js'
+import { saveFile, announceExport, uniqueFileName } from './save-file.js'
 import {
   packingListFileName,
   packingSummary,
@@ -5567,10 +5567,16 @@ export async function startPackingWorkspace({
             .filter((id) => selected.has(`${orderId}/${id}`))
             .reduce((sum, id) => sum + (quantityOf.get(id) || 0), 0)
           const existing = items.get(item.code)
-          if (existing) existing.quantity += kind === 'mark' ? 0 : units
-          else
+          const source = { orderId, seller: record.snapshot.sellerName || '' }
+          if (existing) {
+            existing.quantity += kind === 'mark' ? 0 : units
+            if (!existing.orders.some((entry) => entry.orderId === orderId))
+              existing.orders.push(source)
+          } else
             items.set(item.code, {
               ...item,
+              // Every source order of this label, for the export summary.
+              orders: [source],
               quantity:
                 kind === 'mark' ? (item.known ?? 1) : Math.max(1, units),
             })
@@ -5599,7 +5605,13 @@ export async function startPackingWorkspace({
           : group?.variants.find((entry) => entry.id === ref.variantId)
       if (!group || (kind !== 'mark' && !variant)) continue
       const { item, problem } = printEntry(prep, group, variant, kind)
-      if (item) items.push(item)
+      if (item)
+        items.push({
+          ...item,
+          orders: [
+            { orderId: ref.orderId, seller: record.snapshot.sellerName || '' },
+          ],
+        })
       else problems.push(problem)
     }
     return { items, problems }
@@ -5778,7 +5790,9 @@ export async function startPackingWorkspace({
       selectedPreparationColumns(preference),
       t
     )
-    const file = packingListFileName(fields.map((row) => row.sellerName))
+    const file = uniqueFileName(
+      packingListFileName(fields.map((row) => row.sellerName))
+    )
     saveFile(
       new Blob(
         [

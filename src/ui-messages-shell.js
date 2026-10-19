@@ -13,6 +13,10 @@ export const SHELL_MESSAGES = {
     zh: '状态：需要登录或验证',
     es: 'Estado: requiere inicio de sesión o verificación',
   },
+  'Status: needs permission for a visible import tab': {
+    zh: '状态：需要允许使用可见的导入标签页',
+    es: 'Estado: requiere permiso para una pestaña de importación visible',
+  },
   'Status: export finished · {0}': {
     zh: '状态：导出完成 · {0}',
     es: 'Estado: exportación terminada · {0}',

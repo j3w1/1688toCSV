@@ -109,7 +109,9 @@ test('an agent prepares, exports and prints through stable data-action controls'
   let files = await downloads(extension, 2)
   const xlsx = files.find((file) => file.filename.endsWith('.xlsx'))
   const summaryFile = files.find((file) => file.filename.endsWith('.json'))
-  expect(xlsx.filename).toMatch(/packing-list-\d{4}-\d{2}-\d{2}-[^/]+\.xlsx$/)
+  expect(xlsx.filename).toMatch(
+    /packing-list-\d{4}-\d{2}-\d{2}-\d{6}-[^/]+\.xlsx$/
+  )
   expect(summaryFile.filename).toBe(xlsx.filename.replace(/\.xlsx$/, '.json'))
   const workbook = await readFile(xlsx.filename)
   expect(workbook.subarray(0, 2).toString('latin1')).toBe('PK')
@@ -148,11 +150,61 @@ test('an agent prepares, exports and prints through stable data-action controls'
   expect(labelSummary.pages).toBe(Math.ceil(labelSummary.totals.requested / 70))
   expect(labelSummary.totals.printed).toBe(labelSummary.pages * 70)
   await expect(status(page)).toContainText(labelSummary.files[0])
+  // The summary names the source orders of every product.
+  expect(labelSummary.orders).toEqual([
+    { orderId: '900000000000000003', seller: expect.any(String) },
+  ])
+  expect(
+    labelSummary.products.every(
+      (product) => product.orders.join() === '900000000000000003'
+    )
+  ).toBe(true)
+  // Exporting again saves a new pair under the names the summary and status
+  // announce; the browser never renames it behind their back.
+  const base = (file) => file.filename.split('/').at(-1)
+  await page.waitForTimeout(1100)
+  await page.locator('[data-action="export-pdf"]').click()
+  files = await downloads(extension, 6)
+  const repeatSummaryFile = files
+    .slice(4)
+    .find((file) => file.filename.endsWith('.json'))
+  const repeatSummary = JSON.parse(
+    await readFile(repeatSummaryFile.filename, 'utf8')
+  )
+  expect(repeatSummary.files).toEqual(files.slice(4).map(base))
+  expect(repeatSummary.files[0]).not.toBe(labelSummary.files[0])
+  await expect(status(page)).toHaveAttribute(
+    'data-files',
+    JSON.stringify(repeatSummary.files)
+  )
+  // A failed attempt after a success reports that nothing was saved.
+  await page.evaluate(() => {
+    window.exportSettled = new Promise((resolve) =>
+      document.addEventListener(
+        'print-export-settled',
+        (event) => resolve(event.detail),
+        { once: true }
+      )
+    )
+    window.RealCompressionStream = CompressionStream
+    window.CompressionStream = class {
+      constructor() {
+        throw new Error('Synthetic encoder failure')
+      }
+    }
+  })
+  await page.locator('[data-action="export-pdf"]').click()
+  expect(await page.evaluate(() => window.exportSettled)).toEqual({
+    saved: false,
+  })
+  await page.evaluate(() => {
+    window.CompressionStream = window.RealCompressionStream
+  })
   await page.locator('[data-action="close-print-dialog"]').click()
   await action(page, 'open-print-menu').click()
   await action(page, 'print-carton-marks').click()
   await page.locator('[data-action="export-pdf"]').click()
-  files = await downloads(extension, 6)
+  files = await downloads(extension, 8)
   const markPdf = files.find((file) =>
     /CE-carton-marks-.*\.pdf$/.test(file.filename)
   )
@@ -160,6 +212,9 @@ test('an agent prepares, exports and prints through stable data-action controls'
     await readFile(markPdf.filename.replace(/\.pdf$/, '.json'), 'utf8')
   )
   expect(markSummary).toMatchObject({ kind: 'carton-marks', perPage: 2 })
+  expect(markSummary.orders.map((entry) => entry.orderId)).toEqual([
+    '900000000000000003',
+  ])
   await page.locator('[data-action="close-print-dialog"]').click()
   // The other documented controls are present and need no hover or drag.
   for (const name of [

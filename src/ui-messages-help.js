@@ -127,6 +127,17 @@ export const HELP_MESSAGES = {
       zh: '1688 需要在导入标签页中登录或验证。打开该标签页完成后再继续。',
       es: '1688 necesita un inicio de sesión o una verificación en la pestaña de importación. Ábrela, completa el paso y luego reanuda.',
     },
+  'This browser does not allow background import tabs. Use a visible import tab for this import? It will switch to that tab while it reads.':
+    {
+      zh: '这个浏览器不允许后台导入标签页。这次导入要使用可见的导入标签页吗？读取时会切换到该标签页。',
+      es: 'Este navegador no permite pestañas de importación en segundo plano. ¿Usar una pestaña visible para esta importación? Cambiará a esa pestaña mientras lee.',
+    },
+  'This browser does not allow background import tabs. Allow a visible import tab to continue.':
+    {
+      zh: '这个浏览器不允许后台导入标签页。允许使用可见的导入标签页才能继续。',
+      es: 'Este navegador no permite pestañas de importación en segundo plano. Permite una pestaña visible para continuar.',
+    },
+  'Use a visible tab': { zh: '使用可见标签页', es: 'Usar una pestaña visible' },
   'Open the 1688 tab': {
     zh: '打开 1688 标签页',
     es: 'Abrir la pestaña de 1688',

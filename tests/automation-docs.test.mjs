@@ -19,6 +19,7 @@ test('docs/automation.md and the source agree on data-action names', async () =>
             'data-status',
             'importing',
             'needs-sign-in',
+            'needs-visible-tab',
             'export-finished',
             'idle',
           ].includes(name)

@@ -3,9 +3,27 @@
 
 export const SUMMARY_FORMAT = '1688-export-summary'
 
+const pad = (value) => String(value).padStart(2, '0')
+
 export function exportDate(now = new Date()) {
-  const pad = (value) => String(value).padStart(2, '0')
   return `${now.getFullYear()}-${pad(now.getMonth() + 1)}-${pad(now.getDate())}`
+}
+
+/**
+ * Local date and time, 2026-10-19-153012: every export gets its own name, so
+ * a download folder that already holds an earlier export never makes the
+ * browser rename the new file behind the summary's back.
+ */
+export function exportStamp(now = new Date()) {
+  return `${exportDate(now)}-${pad(now.getHours())}${pad(now.getMinutes())}${pad(now.getSeconds())}`
+}
+
+/** CE-labels-2026-10-19-153012-3-products.pdf and the carton-mark and calibration forms. */
+export function printFileName(kind, productCount, now = new Date()) {
+  if (kind === 'calibration')
+    return `CE-print-calibration-${exportStamp(now)}.pdf`
+  const prefix = kind === 'marks' ? 'CE-carton-marks' : 'CE-labels'
+  return `${prefix}-${exportStamp(now)}-${productCount}-${productCount === 1 ? 'product' : 'products'}.pdf`
 }
 
 /** A file-name-safe part: letters and digits in any script, joined by hyphens. */
@@ -18,12 +36,12 @@ export function fileSlug(text, limit = 40) {
     .replace(/-+$/g, '')
 }
 
-/** packing-list-2026-10-19-seller.xlsx, or packing-list-2026-10-19-3-sellers.xlsx. */
+/** packing-list-2026-10-19-153012-seller.xlsx, or …-3-sellers.xlsx. */
 export function packingListFileName(sellers, now = new Date()) {
   const unique = [
     ...new Set(sellers.map((seller) => String(seller || '').trim())),
   ]
-  const date = exportDate(now)
+  const date = exportStamp(now)
   if (unique.length === 1)
     return `packing-list-${date}-${fileSlug(unique[0]) || 'seller'}.xlsx`
   return `packing-list-${date}-${unique.length}-sellers.xlsx`
@@ -33,9 +51,31 @@ export function packingListFileName(sellers, now = new Date()) {
 export const summaryFileName = (fileName) =>
   `${String(fileName).replace(/\.[A-Za-z0-9]+$/, '')}.json`
 
-const whole = (value) => {
-  const parsed = Number(value)
-  return Number.isFinite(parsed) ? parsed : 0
+/**
+ * Quantities stay exact: whole numbers become JSON numbers while safe and
+ * decimal strings beyond that; totals add with BigInt.
+ */
+function exactQuantity(value) {
+  const text = String(value ?? '').trim()
+  if (/^\d+$/.test(text)) {
+    const big = BigInt(text)
+    return big <= BigInt(Number.MAX_SAFE_INTEGER) ? Number(big) : big.toString()
+  }
+  const parsed = Number(text)
+  return Number.isFinite(parsed) && parsed >= 0 ? parsed : 0
+}
+function exactTotal(values) {
+  if (
+    values.every(
+      (value) => Number.isInteger(value) || typeof value === 'string'
+    )
+  ) {
+    const total = values.reduce((sum, value) => sum + BigInt(value), 0n)
+    return total <= BigInt(Number.MAX_SAFE_INTEGER)
+      ? Number(total)
+      : total.toString()
+  }
+  return values.reduce((sum, value) => sum + Number(value), 0)
 }
 
 /** Which orders, products and quantities a packing-list export holds. */
@@ -56,7 +96,7 @@ export function packingSummary({
       orderId: row.orderId,
       code: row.barcode || row.baseCode || '',
       name: row.spanishName || '',
-      quantity: whole(row.quantity),
+      quantity: exactQuantity(row.quantity),
     })
   }
   return {
@@ -70,7 +110,7 @@ export function packingSummary({
     totals: {
       orders: orders.size,
       products: products.length,
-      quantity: products.reduce((sum, product) => sum + product.quantity, 0),
+      quantity: exactTotal(products.map((product) => product.quantity)),
     },
   }
 }
@@ -84,9 +124,18 @@ export function printSummary({
   perPage,
   exportedAt = new Date().toISOString(),
 }) {
+  const orders = new Map()
+  for (const item of items)
+    for (const source of item.orders || [])
+      if (!orders.has(source.orderId))
+        orders.set(source.orderId, {
+          orderId: source.orderId,
+          seller: source.seller || '',
+        })
   const products = items.map((item) => ({
     code: item.code,
     name: item.name || '',
+    orders: (item.orders || []).map((source) => source.orderId),
     requested: item.requested,
     ...(kind === 'labels' ? { extra: item.extra } : {}),
     total: item.total,
@@ -99,8 +148,10 @@ export function printSummary({
     files: [file, summaryFileName(file)],
     pages,
     perPage,
+    orders: [...orders.values()],
     products,
     totals: {
+      orders: orders.size,
       products: products.length,
       requested: products.reduce((sum, product) => sum + product.requested, 0),
       printed: products.reduce((sum, product) => sum + product.total, 0),

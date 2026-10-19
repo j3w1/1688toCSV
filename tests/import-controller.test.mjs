@@ -772,3 +772,46 @@ test('job progress does not report library changes before a successful save', as
   await s.controller.tick()
   assert.equal(s.calls.filter(([type]) => type === 'changed').length, 1)
 })
+
+test('a sign-in redirect during the final read attempt pauses with the notice, not a failure', async () => {
+  const s = setup([[row('10001')]], 1)
+  const job = await s.controller.start({ scope: 'all', source })
+  await s.controller.tick()
+  await s.controller.tick()
+  // The read fails because 1688 sent the reader to its sign-in page.
+  s.browser.readDetail = async () => {
+    s.setTab({ id: 42, url: 'https://login.1688.com/', status: 'complete' })
+    throw Object.assign(new Error('The order page is not ready.'), {
+      retryable: true,
+    })
+  }
+  s.advance(100000)
+  await s.controller.tick()
+  const paused = s.jobs.get(job.id)
+  assert.equal(paused.state, 'paused')
+  assert.equal(paused.attention?.kind, 'sign-in')
+  assert.equal(paused.orders[0].state, 'pending')
+})
+
+test('a sign-in redirect on the last allowed read attempt also pauses with the notice', async () => {
+  const s = setup([[row('10001')]], 1)
+  const job = await s.controller.start({ scope: 'all', source })
+  await s.controller.tick()
+  await s.controller.tick()
+  let reads = 0
+  s.browser.readDetail = async () => {
+    reads++
+    // The first two reads fail while the page hydrates; the third finds sign-in.
+    if (reads === 3)
+      s.setTab({ id: 42, url: 'https://login.1688.com/', status: 'complete' })
+    throw Object.assign(new Error('The order page is not ready.'), {
+      retryable: true,
+    })
+  }
+  for (let attempt = 0; attempt < 3; attempt++) await s.controller.tick()
+  const paused = s.jobs.get(job.id)
+  assert.equal(reads, 3)
+  assert.equal(paused.state, 'paused')
+  assert.equal(paused.attention?.kind, 'sign-in')
+  assert.equal(paused.orders[0].state, 'pending')
+})

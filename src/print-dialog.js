@@ -28,28 +28,21 @@ import {
 import { createPdf, rgbImage } from './pdf-writer.js'
 import { canvasPage } from './print-canvas.js'
 import { createPrintStore } from './print-store.js'
-import { saveFile, announceExport } from './save-file.js'
-import { printSummary, summaryFileName } from './export-summary.js'
+import { saveFile, announceExport, uniqueFileName } from './save-file.js'
+import {
+  printSummary,
+  summaryFileName,
+  printFileName,
+} from './export-summary.js'
 
 /** Labels are rendered at 600 dpi inside the PDF; the preview uses 150 dpi. */
 const PDF_DPI = 600
 const PREVIEW_DPI = 150
 const PREVIEW_PX_PER_MM = 3
 
-function localDate(now = new Date()) {
-  const pad = (value) => String(value).padStart(2, '0')
-  return `${now.getFullYear()}-${pad(now.getMonth() + 1)}-${pad(now.getDate())}`
-}
+/** File names such as CE-labels-2026-10-19-153012-3-products.pdf. */
+export { printFileName }
 
-/** File names such as CE-labels-2026-10-19-3-products.pdf. */
-export function printFileName(kind, productCount, now = new Date()) {
-  if (kind === 'calibration')
-    return `CE-print-calibration-${localDate(now)}.pdf`
-  const prefix = kind === 'marks' ? 'CE-carton-marks' : 'CE-labels'
-  return `${prefix}-${localDate(now)}-${productCount}-${productCount === 1 ? 'product' : 'products'}.pdf`
-}
-
-/** Offline download through a Blob URL and a temporary anchor. */
 const savePdf = (bytes, filename) =>
   saveFile(new Blob([bytes], { type: 'application/pdf' }), filename)
 
@@ -767,6 +760,7 @@ export function openPrintDialog({
 
   async function exportPdf() {
     if (!plan?.pages || busy) return
+    let saved = false
     busy = true
     exportButton.disabled = true
     // Freeze what is exported: edits wait until the PDF is saved or fails.
@@ -805,8 +799,11 @@ export function openPrintDialog({
       const bytes = pdf.build()
       // Cancel or close while preparing means no download and no recent job.
       if (closed) return
-      const filename = printFileName(kind, state.plan.items.length)
+      const filename = uniqueFileName(
+        printFileName(kind, state.plan.items.length)
+      )
       savePdf(bytes, filename)
+      saved = true
       // A small machine-readable summary sits next to every PDF.
       const summary = printSummary({
         kind,
@@ -816,6 +813,7 @@ export function openPrintDialog({
         items: state.plan.items.map((entry) => ({
           code: entry.key,
           name: itemByKey.get(entry.key)?.name || '',
+          orders: itemByKey.get(entry.key)?.orders || [],
           requested: entry.requested,
           extra: entry.extra ?? 0,
           total: entry.total,
@@ -863,7 +861,7 @@ export function openPrintDialog({
       // Observable end of every export attempt, saved or abandoned.
       document.dispatchEvent(
         new CustomEvent('print-export-settled', {
-          detail: { saved: Boolean(dialog.dataset.exported) && !closed },
+          detail: { saved },
         })
       )
     }
@@ -877,7 +875,7 @@ export function openPrintDialog({
       calibrationOps(layout, { presetName: preset?.name || '' }),
       () => null
     )
-    const filename = printFileName('calibration', 0)
+    const filename = uniqueFileName(printFileName('calibration', 0))
     savePdf(pdf.build(), filename)
     announceExport([filename])
     bindText(

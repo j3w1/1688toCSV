@@ -217,8 +217,12 @@ export function restoreJob(job, current) {
     if (item.code !== product.code)
       changed.push({ from: product.code, to: item.code })
     const existing = items.get(item.key)
-    if (existing) existing.quantity += product.quantity
-    else
+    if (existing) {
+      existing.quantity += product.quantity
+      for (const source of item.orders || [])
+        if (!existing.orders?.some((entry) => entry.orderId === source.orderId))
+          existing.orders = [...(existing.orders || []), source]
+    } else
       items.set(item.key, {
         ...item,
         quantity: product.quantity,
