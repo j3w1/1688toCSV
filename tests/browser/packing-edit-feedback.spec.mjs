@@ -222,70 +222,76 @@ async function backup(extension) {
   return response.data
 }
 
-test('a product can reuse its first code after a saved code change and a workspace reload', async ({
-  extension,
-}) => {
-  const { page, view } = await openPacking(extension)
-  const initial = await backup(extension)
-  const first = initial.preparations[0].groups[0]
-  const group = view.locator(`[data-group-id="${first.id}"]`)
-  const code = group.getByLabel('Product code', { exact: true })
-  const variantIds = first.variants.map((variant) => variant.id)
-  const alternate = 'CE26100109'
-  // 0102 already belongs to the second fixture product; use a free code so
-  // this exercises same-product reuse, rather than stealing another's code.
-  for (const value of [alternate, first.baseCode]) {
-    await code.fill(value)
-    await expect
-      .poll(
-        async () => (await backup(extension)).preparations[0].groups[0].baseCode
-      )
-      .toBe(value)
-    await expect(code).not.toHaveAttribute('aria-invalid', 'true')
-    await expect(view.locator('.preparation-save-status')).toHaveText(
-      'Saved automatically'
-    )
-  }
-  await page.reload()
-  await page
-    .getByRole('button', { name: 'Prepare packing list', exact: true })
-    .click()
-  await expect(group).toBeVisible()
-  for (const value of [alternate, first.baseCode]) {
-    await code.fill(value)
-    await expect
-      .poll(
-        async () => (await backup(extension)).preparations[0].groups[0].baseCode
-      )
-      .toBe(value)
-    await expect(code).not.toHaveAttribute('aria-invalid', 'true')
-    await expect(view.locator('.preparation-save-status')).toHaveText(
-      'Saved automatically'
-    )
-  }
-  const final = await backup(extension)
-  expect(final.preparations[0].groups[0].id).toBe(first.id)
-  expect(
-    final.preparations[0].groups[0].variants.map((variant) => variant.id)
-  ).toEqual(variantIds)
-  expect(final.issuedCodes).toEqual(expect.arrayContaining(initial.issuedCodes))
-  expect(final.orders).toEqual(initial.orders)
-  for (const base of [first.baseCode]) {
-    for (const variant of first.variants) {
-      expect(final.issuedCodes).toContainEqual(
-        expect.objectContaining({
-          kind: 'barcode',
-          code: `${base}${variant.variantSuffix}${variant.sizeSuffix}`,
-          groupId: first.id,
-          variantId: variant.id,
-        })
+test(
+  'a product can reuse its first code after a saved code change and a workspace reload',
+  { tag: '@smoke' },
+  async ({ extension }) => {
+    const { page, view } = await openPacking(extension)
+    const initial = await backup(extension)
+    const first = initial.preparations[0].groups[0]
+    const group = view.locator(`[data-group-id="${first.id}"]`)
+    const code = group.getByLabel('Product code', { exact: true })
+    const variantIds = first.variants.map((variant) => variant.id)
+    const alternate = 'CE26100109'
+    // 0102 already belongs to the second fixture product; use a free code so
+    // this exercises same-product reuse, rather than stealing another's code.
+    for (const value of [alternate, first.baseCode]) {
+      await code.fill(value)
+      await expect
+        .poll(
+          async () =>
+            (await backup(extension)).preparations[0].groups[0].baseCode
+        )
+        .toBe(value)
+      await expect(code).not.toHaveAttribute('aria-invalid', 'true')
+      await expect(view.locator('.preparation-save-status')).toHaveText(
+        'Saved automatically'
       )
     }
+    await page.reload()
+    await page
+      .getByRole('button', { name: 'Prepare packing list', exact: true })
+      .click()
+    await expect(group).toBeVisible()
+    for (const value of [alternate, first.baseCode]) {
+      await code.fill(value)
+      await expect
+        .poll(
+          async () =>
+            (await backup(extension)).preparations[0].groups[0].baseCode
+        )
+        .toBe(value)
+      await expect(code).not.toHaveAttribute('aria-invalid', 'true')
+      await expect(view.locator('.preparation-save-status')).toHaveText(
+        'Saved automatically'
+      )
+    }
+    const final = await backup(extension)
+    expect(final.preparations[0].groups[0].id).toBe(first.id)
+    expect(
+      final.preparations[0].groups[0].variants.map((variant) => variant.id)
+    ).toEqual(variantIds)
+    expect(final.issuedCodes).toEqual(
+      expect.arrayContaining(initial.issuedCodes)
+    )
+    expect(final.orders).toEqual(initial.orders)
+    for (const base of [first.baseCode]) {
+      for (const variant of first.variants) {
+        expect(final.issuedCodes).toContainEqual(
+          expect.objectContaining({
+            kind: 'barcode',
+            code: `${base}${variant.variantSuffix}${variant.sizeSuffix}`,
+            groupId: first.id,
+            variantId: variant.id,
+          })
+        )
+      }
+    }
+    expect(
+      final.issuedCodes.some((code) => code.code.startsWith(alternate))
+    ).toBe(false)
   }
-  expect(
-    final.issuedCodes.some((code) => code.code.startsWith(alternate))
-  ).toBe(false)
-})
+)
 
 async function downloadPacking(extension, page, view) {
   const downloaded = page.waitForEvent('download')
@@ -308,80 +314,84 @@ async function downloadPacking(extension, page, view) {
   return readFile(downloads[0].filename)
 }
 
-test('packing backup includes the whole remaining session without selection and restores from Orders without recoding', async ({
-  extension,
-}) => {
-  const { page, view, record } = await openPacking(extension)
-  await expect(
-    view.getByLabel('Packing backup file', { exact: true })
-  ).toHaveCount(0)
-  const remove = view
-    .locator('.preparation-group')
-    .last()
-    .getByRole('button', { name: 'Remove group', exact: true })
-  await remove.focus()
-  await remove.click()
-  const removal = page.getByRole('dialog', {
-    name: 'Remove from packing?',
-    exact: true,
-  })
-  await removal
-    .getByRole('button', { name: 'Remove from packing', exact: true })
-    .click()
-  await expect(removal).toBeHidden()
-  await expect(view.locator('.variants tbody tr')).toHaveCount(2)
-  const clear = view.getByRole('button', {
-    name: 'Clear selection',
-    exact: true,
-  })
-  if (await clear.isEnabled()) await clear.click()
-  await expect(clear).toBeDisabled()
-  await expect(
-    view.locator('.variants tbody tr[aria-selected="true"]')
-  ).toHaveCount(0)
-  const save = view.getByRole('button', {
-    name: 'Back up packing',
-    exact: true,
-    includeHidden: true,
-  })
-  await expect(save).toBeEnabled()
-  const before = await backup(extension)
-  const content = await downloadPacking(extension, page, view)
-  const saved = JSON.parse(content)
-  expect(saved.packingScope.mode).toBe('selection')
-  expect(saved.packingScope.orders[0].entryIds).toEqual(
-    record.snapshot.items.slice(0, 2).map((item) => item.entryId)
-  )
-  expect(saved.preparations[0].groups).toHaveLength(1)
-  expect(saved.preparations[0].groups[0].variants).toHaveLength(2)
-  expect(saved.orders[0].snapshot.items).toHaveLength(3)
-  await page.keyboard.press('Escape')
-  await view.getByRole('button', { name: 'Orders', exact: true }).click()
-  await expect(page.locator('#restore-packing')).toBeVisible()
-  await expect(
-    page.locator('#orders-copy-actions #restore-packing')
-  ).toHaveCount(0)
-  await page.getByLabel('Packing backup file', { exact: true }).setInputFiles({
-    name: 'packing.json',
-    mimeType: 'application/json',
-    buffer: content,
-  })
-  const review = page.getByRole('dialog', {
-    name: 'Restore packing backup?',
-    exact: true,
-  })
-  await expect(review).toBeVisible()
-  await review
-    .getByRole('button', { name: 'Restore packing', exact: true })
-    .click()
-  await expect(review).toBeHidden()
-  await expect(view.locator('.preparation-group')).toHaveCount(1)
-  await expect(view.locator('.variants tbody tr')).toHaveCount(2)
-  const after = await backup(extension)
-  expect(after.preparations).toEqual(before.preparations)
-  expect(after.issuedCodes).toEqual(before.issuedCodes)
-  expect(after.orders).toEqual(before.orders)
-})
+test(
+  'packing backup includes the whole remaining session without selection and restores from Orders without recoding',
+  { tag: '@smoke' },
+  async ({ extension }) => {
+    const { page, view, record } = await openPacking(extension)
+    await expect(
+      view.getByLabel('Packing backup file', { exact: true })
+    ).toHaveCount(0)
+    const remove = view
+      .locator('.preparation-group')
+      .last()
+      .getByRole('button', { name: 'Remove group', exact: true })
+    await remove.focus()
+    await remove.click()
+    const removal = page.getByRole('dialog', {
+      name: 'Remove from packing?',
+      exact: true,
+    })
+    await removal
+      .getByRole('button', { name: 'Remove from packing', exact: true })
+      .click()
+    await expect(removal).toBeHidden()
+    await expect(view.locator('.variants tbody tr')).toHaveCount(2)
+    const clear = view.getByRole('button', {
+      name: 'Clear selection',
+      exact: true,
+    })
+    if (await clear.isEnabled()) await clear.click()
+    await expect(clear).toBeDisabled()
+    await expect(
+      view.locator('.variants tbody tr[aria-selected="true"]')
+    ).toHaveCount(0)
+    const save = view.getByRole('button', {
+      name: 'Back up packing',
+      exact: true,
+      includeHidden: true,
+    })
+    await expect(save).toBeEnabled()
+    const before = await backup(extension)
+    const content = await downloadPacking(extension, page, view)
+    const saved = JSON.parse(content)
+    expect(saved.packingScope.mode).toBe('selection')
+    expect(saved.packingScope.orders[0].entryIds).toEqual(
+      record.snapshot.items.slice(0, 2).map((item) => item.entryId)
+    )
+    expect(saved.preparations[0].groups).toHaveLength(1)
+    expect(saved.preparations[0].groups[0].variants).toHaveLength(2)
+    expect(saved.orders[0].snapshot.items).toHaveLength(3)
+    await page.keyboard.press('Escape')
+    await view.getByRole('button', { name: 'Orders', exact: true }).click()
+    await expect(page.locator('#restore-packing')).toBeVisible()
+    await expect(
+      page.locator('#orders-copy-actions #restore-packing')
+    ).toHaveCount(0)
+    await page
+      .getByLabel('Packing backup file', { exact: true })
+      .setInputFiles({
+        name: 'packing.json',
+        mimeType: 'application/json',
+        buffer: content,
+      })
+    const review = page.getByRole('dialog', {
+      name: 'Restore packing backup?',
+      exact: true,
+    })
+    await expect(review).toBeVisible()
+    await review
+      .getByRole('button', { name: 'Restore packing', exact: true })
+      .click()
+    await expect(review).toBeHidden()
+    await expect(view.locator('.preparation-group')).toHaveCount(1)
+    await expect(view.locator('.variants tbody tr')).toHaveCount(2)
+    const after = await backup(extension)
+    expect(after.preparations).toEqual(before.preparations)
+    expect(after.issuedCodes).toEqual(before.issuedCodes)
+    expect(after.orders).toEqual(before.orders)
+  }
+)
 
 test('packing backup includes orders on other pages and outside the display filter', async ({
   extension,
