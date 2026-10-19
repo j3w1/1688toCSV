@@ -8,30 +8,29 @@ import { element as el, enableLightDismiss, pinDialogActions } from './ui.js'
 import { renderLabel } from './labels.js'
 import {
   A4,
+  SAFE_EDGE_MM,
+  OFFSET_LIMIT_MM,
+  DEFAULT_PRESET,
   labelGrid,
   planLabels,
   planCartonMarks,
   cartonSlots,
-  normalizePrintLayout,
+  normalizeLabelLayout,
+  normalizeMarkLayout,
+  labelPageOps,
+  markPageOps,
+  calibrationOps,
+  contentBoxes,
+  edgeClearance,
+  drawOps,
 } from './print-layout.js'
 import { createPdf, rgbImage } from './pdf-writer.js'
+import { createPrintStore } from './print-store.js'
 
-const LAYOUT_KEY = '1688-print-layout'
-const MARKS_KEY = '1688-print-marks'
-const PREVIEW_PX_PER_MM = 2
-
-function load(key) {
-  try {
-    return JSON.parse(localStorage.getItem(key) || '{}') || {}
-  } catch {
-    return {}
-  }
-}
-function save(key, value) {
-  try {
-    localStorage.setItem(key, JSON.stringify(value))
-  } catch {}
-}
+/** Labels are rendered at 600 dpi inside the PDF; the preview uses 150 dpi. */
+const PDF_DPI = 600
+const PREVIEW_DPI = 150
+const PREVIEW_PX_PER_MM = 3
 
 function localDate(now = new Date()) {
   const pad = (value) => String(value).padStart(2, '0')
@@ -40,10 +39,13 @@ function localDate(now = new Date()) {
 
 /** File names such as CE-labels-2026-10-19-3-products.pdf. */
 export function printFileName(kind, productCount, now = new Date()) {
+  if (kind === 'calibration')
+    return `CE-print-calibration-${localDate(now)}.pdf`
   const prefix = kind === 'marks' ? 'CE-carton-marks' : 'CE-labels'
   return `${prefix}-${localDate(now)}-${productCount}-${productCount === 1 ? 'product' : 'products'}.pdf`
 }
 
+/** Offline download through a Blob URL and a temporary anchor. */
 function savePdf(bytes, filename) {
   const url = URL.createObjectURL(
     new Blob([bytes], { type: 'application/pdf' })
@@ -118,69 +120,15 @@ function choice(name, options, current) {
   return { group, value: () => inputs.find((input) => input.checked)?.value }
 }
 
-/** Draw label-sheet guidance: crop marks in the margins and dotted cut lines. */
-function labelGuides(draw, grid, layout) {
-  if (!layout.guides || grid.sheet === 'precut' || !grid.cells.length) return
-  const xs = [...new Set(grid.cells.flatMap((c) => [c.xMm, c.xMm + c.widthMm]))]
-  const ys = [
-    ...new Set(grid.cells.flatMap((c) => [c.yMm, c.yMm + c.heightMm])),
-  ]
-  const left = Math.min(...xs)
-  const right = Math.max(...xs)
-  const top = Math.min(...ys)
-  const bottom = Math.max(...ys)
-  for (const x of xs) {
-    draw.line(x, top, x, bottom, { gray: 0.82, widthPt: 0.2, dash: [0.6, 1.6] })
-    if (top > 2) draw.line(x, Math.max(0.5, top - 4), x, top - 1, { gray: 0.6 })
-    if (A4.heightMm - bottom > 2)
-      draw.line(x, bottom + 1, x, Math.min(A4.heightMm - 0.5, bottom + 4), {
-        gray: 0.6,
-      })
-  }
-  for (const y of ys) {
-    draw.line(left, y, right, y, { gray: 0.82, widthPt: 0.2, dash: [0.6, 1.6] })
-    if (left > 2)
-      draw.line(Math.max(0.5, left - 4), y, left - 1, y, { gray: 0.6 })
-    if (A4.widthMm - right > 2)
-      draw.line(right + 1, y, Math.min(A4.widthMm - 0.5, right + 4), y, {
-        gray: 0.6,
-      })
-  }
-}
-
-/** A 10 mm calibration bar and a short caption along the bottom edge. */
-function calibration(draw, caption, bottomSpaceMm, yMm = A4.heightMm - 2.2) {
-  if (bottomSpaceMm < 3) return
-  draw.line(8, yMm, 18, yMm, { gray: 0.45, widthPt: 0.3 })
-  draw.line(8, yMm - 0.8, 8, yMm + 0.8, { gray: 0.45, widthPt: 0.3 })
-  draw.line(18, yMm - 0.8, 18, yMm + 0.8, { gray: 0.45, widthPt: 0.3 })
-  draw.text('10 mm', 19.5, yMm + 0.9, { size: 5, gray: 0.5 })
-  draw.text(caption, A4.widthMm - 8, yMm + 0.9, {
-    size: 5,
-    gray: 0.5,
-    align: 'right',
-  })
-}
-
-/** A dashed cut line at mid-page with a small scissors mark at its start. */
-function cutLine(draw, yMm) {
-  draw.circle(4.2, yMm - 1.3, 0.9, { gray: 0.5 })
-  draw.circle(4.2, yMm + 1.3, 0.9, { gray: 0.5 })
-  draw.line(5, yMm - 0.9, 9.5, yMm + 0.6, { gray: 0.5 })
-  draw.line(5, yMm + 0.9, 9.5, yMm - 0.6, { gray: 0.5 })
-  draw.line(11, yMm, A4.widthMm - 4, yMm, {
-    gray: 0.6,
-    widthPt: 0.3,
-    dash: [2, 1.5],
-  })
-}
-
-/** Canvas drawing with the PDF page API, for the page-1 preview. */
-function canvasPage(context, images) {
+/** Canvas drawing with the PDF page API, at PREVIEW_PX_PER_MM. */
+function canvasPage(context) {
   const k = PREVIEW_PX_PER_MM
+  const shade = (gray) => {
+    const value = Math.round(gray * 255)
+    return `rgb(${value},${value},${value})`
+  }
   const api = {
-    image(key, box, { rotate = false } = {}) {
-      const image = images.get(key)
+    image(image, box, { rotate = false } = {}) {
       if (!image) {
         context.fillStyle = '#eee'
         context.fillRect(
@@ -209,9 +157,8 @@ function canvasPage(context, images) {
     },
     line(x1, y1, x2, y2, { gray = 0.6, widthPt = 0.25, dash = null } = {}) {
       context.save()
-      const value = Math.round(gray * 255)
-      context.strokeStyle = `rgb(${value},${value},${value})`
-      context.lineWidth = Math.max(0.6, (widthPt / 72) * 25.4 * k)
+      context.strokeStyle = shade(gray)
+      context.lineWidth = Math.max(0.5, (widthPt / 72) * 25.4 * k)
       context.setLineDash(dash ? dash.map((d) => d * k) : [])
       context.beginPath()
       context.moveTo(x1 * k, y1 * k)
@@ -222,8 +169,7 @@ function canvasPage(context, images) {
     },
     circle(cx, cy, r, { gray = 0.6 } = {}) {
       context.save()
-      const value = Math.round(gray * 255)
-      context.strokeStyle = `rgb(${value},${value},${value})`
+      context.strokeStyle = shade(gray)
       context.lineWidth = 0.6
       context.beginPath()
       context.arc(cx * k, cy * k, r * k, 0, Math.PI * 2)
@@ -233,9 +179,8 @@ function canvasPage(context, images) {
     },
     text(value, x, y, { size = 6, gray = 0.45, align = 'left' } = {}) {
       context.save()
-      const shade = Math.round(gray * 255)
-      context.fillStyle = `rgb(${shade},${shade},${shade})`
-      context.font = `${Math.max(7, (size / 72) * 25.4 * k)}px Helvetica, Arial, sans-serif`
+      context.fillStyle = shade(gray)
+      context.font = `${(size / 72) * 25.4 * k}px Helvetica, Arial, sans-serif`
       context.textAlign = align
       context.fillText(String(value), x * k, y * k)
       context.restore()
@@ -245,30 +190,41 @@ function canvasPage(context, images) {
   return api
 }
 
+const formatDate = (iso) =>
+  new Date(iso).toLocaleString(getLocale(), {
+    day: 'numeric',
+    month: 'short',
+    hour: '2-digit',
+    minute: '2-digit',
+  })
+
 /**
  * Print labels or carton marks for the selected products on A4 pages.
- * `items`: [{ key, code, name, detail, quantity, model }] with one entry per
- * distinct label; `settings`/`logoUrl` are the label settings in use.
+ * `items`: [{ key, code, name, detail, quantity, known?, cap?, model }], one
+ * per distinct label. `problems`: products the label validation refused.
+ * `job`: a recent job being regenerated, with its `missing` products.
  */
-export function openPrintDialog({ kind, items, settings, logoUrl }) {
+export function openPrintDialog({
+  kind,
+  items,
+  problems = [],
+  settings,
+  logoUrl,
+  job = null,
+  store = createPrintStore(),
+}) {
   const marks = kind === 'marks'
-  const stored = marks ? load(MARKS_KEY) : load(LAYOUT_KEY)
-  let layout = normalizePrintLayout(stored)
-  let numbering = marks ? stored.numbering !== false : false
-  let fillExtra = marks ? stored.fillExtra === true : false
+  const normalize = marks ? normalizeMarkLayout : normalizeLabelLayout
+  let layout = normalize(job?.layout ?? store.layout(kind))
   const quantities = new Map(items.map((item) => [item.key, item.quantity]))
+  const caps = new Map(items.map((item) => [item.key, item.cap ?? '']))
   const labelSize = settings[marks ? 'mark' : 'barcode']
+  let page = 0
 
+  const title = marks ? 'Print carton marks' : 'Print labels'
   const dialog = el('dialog', undefined, 'print-dialog packing-review')
-  bindAttribute(
-    dialog,
-    'aria-label',
-    uiMessage(marks ? 'Print carton marks' : 'Print labels')
-  )
-  const heading = el(
-    'h2',
-    uiMessage(marks ? 'Print carton marks' : 'Print labels')
-  )
+  bindAttribute(dialog, 'aria-label', uiMessage(title))
+  const heading = el('h2', uiMessage(title))
   const cancel = el('button', uiMessage('Cancel'))
   const exportButton = el('button', uiMessage('Export PDF'), 'primary')
   const actions = el('div', undefined, 'dialog-actions')
@@ -276,158 +232,264 @@ export function openPrintDialog({ kind, items, settings, logoUrl }) {
   dialog.append(heading, actions)
   const body = pinDialogActions(dialog, actions)
 
-  const layoutPane = el('div', undefined, 'print-settings')
+  const left = el('div', undefined, 'print-left')
+  if (job) {
+    const note = el('p', undefined, 'print-note')
+    bindText(
+      note,
+      uiMessage(
+        'Regenerated from the print job of {0}. Product data may have changed since; check the preview before printing.',
+        { 0: () => formatDate(job.date) }
+      )
+    )
+    left.append(note)
+  }
   const summary = el('p', undefined, 'print-summary')
   summary.setAttribute('role', 'status')
-  const status = el('p', undefined, 'print-status')
-  status.setAttribute('role', 'status')
+  const warnings = el('ul', undefined, 'print-warnings')
+  warnings.setAttribute('aria-live', 'polite')
+  const table = el('table', undefined, 'print-counts')
+  const settingsPane = el('div', undefined, 'print-settings')
   const advice = el(
     'p',
-    uiMessage('Print at 100% (Actual size). The preview shows page 1.'),
+    uiMessage('Print at 100% (Actual size).'),
     'print-advice'
   )
-  const table = el('table', undefined, 'print-counts')
+  const status = el('p', undefined, 'print-status')
+  status.setAttribute('role', 'status')
+  const tableScroll = el('div', undefined, 'print-table-scroll')
+  tableScroll.append(table)
+  left.append(summary, warnings, tableScroll, settingsPane, advice, status)
+
+  const pageLabel = el('span', undefined, 'print-page-label')
+  const previous = el('button', undefined, 'icon-button print-page-previous')
+  previous.textContent = '‹'
+  bindAttribute(previous, 'aria-label', uiMessage('Previous page'))
+  bindAttribute(previous, 'title', uiMessage('Previous page'))
+  const next = el('button', undefined, 'icon-button print-page-next')
+  next.textContent = '›'
+  bindAttribute(next, 'aria-label', uiMessage('Next page'))
+  bindAttribute(next, 'title', uiMessage('Next page'))
+  const pager = el('div', undefined, 'print-pager')
+  pager.append(previous, pageLabel, next)
+  const pageContents = el('p', undefined, 'print-page-contents')
   const preview = el('canvas', undefined, 'print-preview')
   preview.width = A4.widthMm * PREVIEW_PX_PER_MM
   preview.height = A4.heightMm * PREVIEW_PX_PER_MM
-  bindAttribute(preview, 'aria-label', uiMessage('Page 1 preview'))
   preview.setAttribute('role', 'img')
+  bindAttribute(
+    preview,
+    'aria-label',
+    uiMessage('Page {0} preview', { 0: () => page + 1 })
+  )
+  const previewStatus = el('p', undefined, 'print-status')
+  previewStatus.setAttribute('role', 'status')
   const previewPane = el('div', undefined, 'print-preview-pane')
-  previewPane.append(preview)
+  previewPane.append(pager, pageContents, preview, previewStatus)
   const columns = el('div', undefined, 'print-columns')
-  const left = el('div', undefined, 'print-left')
-  left.append(summary, layoutPane, table, advice, status)
   columns.append(left, previewPane)
   body.append(columns)
 
-  // Settings controls.
-  const quality = el('select')
-  for (const [value, label] of [
-    [300, '300 dpi'],
-    [600, '600 dpi (sharper, larger file)'],
-  ]) {
-    const option = el('option', uiMessage(label))
-    option.value = String(value)
-    quality.append(option)
-  }
-  quality.value = String(layout.dpi)
-  const controls = []
-  if (marks) {
-    const numberBox = check('Number cartons (Carton 1 of 3)', numbering)
-    const extraBox = check(
-      'Fill an odd last half with an extra copy',
-      fillExtra
+  // Paper: presets, margin and printer offsets, shared by labels and marks.
+  const presetSelect = el('select')
+  bindAttribute(presetSelect, 'aria-label', uiMessage('A4 preset'))
+  const margin = numberInput(layout.marginMm, { min: 0, max: 30, step: 0.5 })
+  const offsetX = numberInput(layout.offsetXMm, {
+    min: -OFFSET_LIMIT_MM,
+    max: OFFSET_LIMIT_MM,
+    step: 0.1,
+  })
+  const offsetY = numberInput(layout.offsetYMm, {
+    min: -OFFSET_LIMIT_MM,
+    max: OFFSET_LIMIT_MM,
+    step: 0.1,
+  })
+  const presetName = el('input')
+  presetName.type = 'text'
+  presetName.maxLength = 40
+  bindAttribute(presetName, 'placeholder', uiMessage('Preset name'))
+  bindAttribute(presetName, 'aria-label', uiMessage('Preset name'))
+  const savePreset = el('button', uiMessage('Save preset'))
+  savePreset.type = 'button'
+  const deletePreset = el('button', uiMessage('Delete preset'))
+  deletePreset.type = 'button'
+  const calibrate = el('button', uiMessage('Calibration sheet'))
+  calibrate.type = 'button'
+  const presetRow = el('div', undefined, 'print-preset-row')
+  presetRow.append(
+    field('A4 preset', presetSelect),
+    presetName,
+    savePreset,
+    deletePreset
+  )
+  const paperFields = el('div', undefined, 'print-grid-fields')
+  paperFields.append(
+    field(marks ? 'Safe margin (mm)' : 'Margin (mm)', margin),
+    field('Offset X (mm)', offsetX),
+    field('Offset Y (mm)', offsetY)
+  )
+  const paper = el('fieldset', undefined, 'print-fieldset')
+  const calibrateHint = el(
+    'p',
+    uiMessage(
+      'Print the calibration sheet once per printer, measure it and enter the offsets.'
+    ),
+    'print-hint'
+  )
+  paper.append(
+    el('legend', uiMessage('Paper and printer')),
+    presetRow,
+    paperFields,
+    calibrateHint,
+    calibrate
+  )
+
+  function renderPresets() {
+    const presets = store.presets()
+    const matching = presets.find(
+      (preset) =>
+        preset.id === layout.preset &&
+        preset.marginMm === layout.marginMm &&
+        preset.offsetXMm === layout.offsetXMm &&
+        preset.offsetYMm === layout.offsetYMm
     )
-    layoutPane.append(
-      el('p', uiMessage('Two carton marks per A4, cut in half.'), 'print-hint'),
-      numberBox.wrapper,
-      extraBox.wrapper,
-      field('Quality', quality)
-    )
-    controls.push(() => {
-      numbering = numberBox.input.checked
-      fillExtra = extraBox.input.checked
+    const options = presets.map((preset) => {
+      const option = el(
+        'option',
+        preset.id === DEFAULT_PRESET.id ? uiMessage(preset.name) : preset.name
+      )
+      option.value = preset.id
+      return option
     })
-  } else {
-    const sheet = choice(
-      'print-sheet',
-      [
-        ['plain', 'Plain paper (cut with guides)'],
-        ['precut', 'Pre-cut label sheet'],
-      ],
-      layout.sheet
-    )
-    const margin = numberInput(layout.marginMm, { min: 0, max: 30 })
-    const gapX = numberInput(layout.gapXMm, { min: 0, max: 20 })
-    const gapY = numberInput(layout.gapYMm, { min: 0, max: 20 })
-    const rotate = check('Turn labels when more fit', layout.rotate !== false)
-    const plain = el('div', undefined, 'print-grid-fields')
-    plain.append(
-      field('Margin (mm)', margin),
-      field('Horizontal gap (mm)', gapX),
-      field('Vertical gap (mm)', gapY),
-      rotate.wrapper
-    )
-    const pre = layout.precut
-    const precutInputs = {
-      columns: numberInput(pre.columns, { min: 1, max: 30, step: 1 }),
-      rows: numberInput(pre.rows, { min: 1, max: 60, step: 1 }),
-      offsetXMm: numberInput(pre.offsetXMm, { min: 0, max: 100, step: 0.1 }),
-      offsetYMm: numberInput(pre.offsetYMm, { min: 0, max: 150, step: 0.1 }),
-      pitchXMm: numberInput(pre.pitchXMm, { min: 5, max: 210, step: 0.1 }),
-      pitchYMm: numberInput(pre.pitchYMm, { min: 5, max: 297, step: 0.1 }),
+    if (!matching) {
+      const custom = el('option', uiMessage('Custom (not saved)'))
+      custom.value = ''
+      options.push(custom)
     }
-    const precut = el('div', undefined, 'print-grid-fields')
-    precut.append(
-      field('Columns', precutInputs.columns),
-      field('Rows', precutInputs.rows),
-      field('First label left (mm)', precutInputs.offsetXMm),
-      field('First label top (mm)', precutInputs.offsetYMm),
-      field('Horizontal pitch (mm)', precutInputs.pitchXMm),
-      field('Vertical pitch (mm)', precutInputs.pitchYMm)
+    presetSelect.replaceChildren(...options)
+    presetSelect.value = matching ? matching.id : ''
+    deletePreset.hidden = !matching || matching.id === DEFAULT_PRESET.id
+  }
+  presetSelect.addEventListener('change', () => {
+    const preset = store
+      .presets()
+      .find((entry) => entry.id === presetSelect.value)
+    if (!preset) return
+    margin.value = String(preset.marginMm)
+    offsetX.value = String(preset.offsetXMm)
+    offsetY.value = String(preset.offsetYMm)
+    layout = { ...layout, preset: preset.id }
+    update()
+  })
+  savePreset.addEventListener('click', () => {
+    try {
+      const preset = store.savePreset({
+        name: presetName.value,
+        marginMm: margin.value,
+        offsetXMm: offsetX.value,
+        offsetYMm: offsetY.value,
+      })
+      layout = { ...layout, preset: preset.id }
+      presetName.value = ''
+      update()
+      bindText(status, uiMessage('Preset saved: {0}', { 0: preset.name }))
+    } catch (error) {
+      bindText(status, uiMessage(error.message))
+    }
+  })
+  deletePreset.addEventListener('click', () => {
+    store.deletePreset(presetSelect.value)
+    layout = { ...layout, preset: '' }
+    update()
+  })
+
+  const controls = []
+  const kindFields = el('fieldset', undefined, 'print-fieldset print-options')
+  let capsBox = null
+  if (marks) {
+    const numbering = check('Number cartons (Carton 1 of 3)', layout.numbering)
+    const extra = check(
+      'Fill an odd last half with an extra copy',
+      layout.fillExtra
+    )
+    const guides = check('Cut guide', layout.guides)
+    const pageSummary = check('Page summary line', layout.pageSummary)
+    kindFields.append(
+      el('legend', uiMessage('Two carton marks per A4, cut in half.')),
+      numbering.wrapper,
+      extra.wrapper,
+      guides.wrapper,
+      pageSummary.wrapper
+    )
+    controls.push(() => ({
+      numbering: numbering.input.checked,
+      fillExtra: extra.input.checked,
+      guides: guides.input.checked,
+      pageSummary: pageSummary.input.checked,
+    }))
+    settingsPane.append(kindFields, paper)
+  } else {
+    const guides = check('Cut guides', layout.guides)
+    const pageSummary = check('Page summary line', layout.pageSummary)
+    const boundaries = check('Mark where products change', layout.boundaries)
+    kindFields.append(
+      el('legend', uiMessage('Sheet')),
+      guides.wrapper,
+      pageSummary.wrapper,
+      boundaries.wrapper
     )
     const spares = choice(
       'print-spares',
       [
+        ['proportional', 'Share by quantity (recommended)'],
         ['equal', 'Share equally'],
-        ['proportional', 'Share by quantity'],
         ['blank', 'Leave blank'],
       ],
       layout.spares
     )
-    const newRow = check('Start each product on a new row', layout.newRow)
-    const guides = check('Cut guides', layout.guides)
+    capsBox = check(
+      'Limit extra copies per product',
+      layout.limitExtras ||
+        items.some((item) => item.cap !== undefined && item.cap !== '')
+    )
+    const gapX = numberInput(layout.gapXMm, { min: 0, max: 20 })
+    const gapY = numberInput(layout.gapYMm, { min: 0, max: 20 })
+    const gaps = el('div', undefined, 'print-grid-fields')
+    gaps.append(
+      field('Horizontal gap (mm)', gapX),
+      field('Vertical gap (mm)', gapY)
+    )
+    const advanced = el('details', undefined, 'print-advanced')
+    const advancedSummary = el('summary', uiMessage('Advanced'))
     const spareSet = el('fieldset', undefined, 'print-fieldset')
     spareSet.append(
       el('legend', uiMessage('Spare places on the last page')),
-      spares.group
+      spares.group,
+      capsBox.wrapper
     )
-    const sheetSet = el('fieldset', undefined, 'print-fieldset')
-    sheetSet.append(
-      el('legend', uiMessage('Sheet')),
-      sheet.group,
-      plain,
-      precut
-    )
-    layoutPane.append(
-      sheetSet,
-      spareSet,
-      newRow.wrapper,
-      guides.wrapper,
-      field('Quality', quality)
-    )
-    controls.push(() => {
-      layout = normalizePrintLayout({
-        sheet: sheet.value(),
-        marginMm: margin.value,
-        gapXMm: gapX.value,
-        gapYMm: gapY.value,
-        rotate: rotate.input.checked ? 'auto' : false,
-        spares: spares.value(),
-        newRow: newRow.input.checked,
-        guides: guides.input.checked,
-        dpi: Number(quality.value),
-        precut: Object.fromEntries(
-          Object.entries(precutInputs).map(([key, input]) => [key, input.value])
-        ),
-      })
-      plain.hidden = layout.sheet === 'precut'
-      precut.hidden = layout.sheet !== 'precut'
-    })
-    plain.hidden = layout.sheet === 'precut'
-    precut.hidden = layout.sheet !== 'precut'
+    advanced.append(advancedSummary, spareSet, gaps)
+    advanced.open = layout.spares !== 'proportional' || capsBox.input.checked
+    controls.push(() => ({
+      guides: guides.input.checked,
+      pageSummary: pageSummary.input.checked,
+      boundaries: boundaries.input.checked,
+      spares: spares.value(),
+      limitExtras: capsBox.input.checked,
+      gapXMm: gapX.value,
+      gapYMm: gapY.value,
+    }))
+    settingsPane.append(kindFields, paper, advanced)
   }
-  controls.push(() => {
-    layout = { ...layout, dpi: Number(quality.value) === 600 ? 600 : 300 }
-  })
 
   // Quantities table.
   const thead = el('thead')
   const headRow = el('tr')
+  const capHead = el('th', uiMessage('Max extra'), 'print-cap-column')
   for (const label of marks
-    ? ['Product', 'Marks', 'Total']
-    : ['Product', 'Requested', 'Spares', 'Total'])
+    ? ['Product', 'Cartons', 'Total']
+    : ['Product', 'Requested', 'Extra'])
     headRow.append(el('th', uiMessage(label)))
+  if (!marks) headRow.append(capHead, el('th', uiMessage('Total')))
   thead.append(headRow)
   const tbody = el('tbody')
   const tfoot = el('tfoot')
@@ -436,9 +498,19 @@ export function openPrintDialog({ kind, items, settings, logoUrl }) {
   for (const item of items) {
     const row = el('tr')
     const name = el('td')
-    const code = el('code', item.code, 'ce-code')
-    name.append(code, el('span', item.name || '', 'print-name'))
+    name.append(
+      el('code', item.code, 'ce-code'),
+      el('span', item.name || '', 'print-name')
+    )
     if (item.detail) name.append(el('small', item.detail))
+    if (marks && item.known !== undefined && item.known !== null)
+      name.append(
+        el(
+          'small',
+          uiMessage('Recorded cartons: {0}', { 0: item.known }),
+          'print-known'
+        )
+      )
     const input = numberInput(item.quantity, { min: 0, max: 9999, step: 1 })
     bindAttribute(
       input,
@@ -451,17 +523,44 @@ export function openPrintDialog({ kind, items, settings, logoUrl }) {
     })
     const requested = el('td')
     requested.append(input)
-    const spares = el('td', '', 'numeric')
+    const extra = el('td', '', 'numeric')
     const total = el('td', '', 'numeric')
-    row.append(name, requested, ...(marks ? [] : [spares]), total)
+    const capCell = el('td', undefined, 'print-cap-column')
+    if (!marks) {
+      const cap = numberInput(caps.get(item.key), {
+        min: 0,
+        max: 9999,
+        step: 1,
+      })
+      cap.value = String(caps.get(item.key))
+      bindAttribute(
+        cap,
+        'aria-label',
+        uiMessage('Max extra for {0}', { 0: item.code })
+      )
+      bindAttribute(cap, 'placeholder', uiMessage('No limit'))
+      cap.addEventListener('input', () => {
+        caps.set(item.key, cap.value)
+        update()
+      })
+      capCell.append(cap)
+    }
+    row.append(name, requested, ...(marks ? [total] : [extra, capCell, total]))
     tbody.append(row)
-    cellsByKey.set(item.key, { spares, total })
+    cellsByKey.set(item.key, { extra, total })
   }
   const footRow = el('tr')
   const footLabel = el('th', uiMessage('Total'))
+  const footRequested = el('td', '', 'numeric')
+  const footExtra = el('td', '', 'numeric')
+  const footCap = el('td', '', 'print-cap-column')
   const footTotal = el('td', '', 'numeric')
-  footLabel.colSpan = marks ? 2 : 3
-  footRow.append(footLabel, footTotal)
+  footRow.append(
+    footLabel,
+    ...(marks
+      ? [footRequested, footTotal]
+      : [footRequested, footExtra, footCap, footTotal])
+  )
   tfoot.append(footRow)
 
   const images = new Map()
@@ -471,24 +570,47 @@ export function openPrintDialog({ kind, items, settings, logoUrl }) {
   let renderToken = 0
   let busy = false
 
-  function currentItems() {
-    return items.map((item) => ({
+  const itemByKey = new Map(items.map((item) => [item.key, item]))
+  const currentItems = () =>
+    items.map((item) => ({
       key: item.key,
       quantity: quantities.get(item.key),
+      known: item.known,
+      cap: !marks && layout.limitExtras ? caps.get(item.key) : null,
     }))
+
+  const pageOps = (index) =>
+    marks
+      ? markPageOps({ plan, slots, layout, page: index })
+      : labelPageOps({ plan, grid, layout, page: index })
+
+  function warning(text) {
+    const entry = el('li')
+    bindText(entry, text)
+    warnings.append(entry)
   }
 
   function update() {
-    for (const read of controls) read()
-    save(
-      marks ? MARKS_KEY : LAYOUT_KEY,
-      marks ? { dpi: layout.dpi, numbering, fillExtra } : layout
+    const read = controls.reduce(
+      (value, control) => ({ ...value, ...control() }),
+      {}
     )
+    layout = normalize({
+      ...layout,
+      ...read,
+      marginMm: margin.value,
+      offsetXMm: offsetX.value,
+      offsetYMm: offsetY.value,
+    })
+    store.saveLayout(kind, layout)
+    renderPresets()
+    table.classList.toggle('print-caps', !marks && layout.limitExtras === true)
+    warnings.replaceChildren()
     let error = ''
     try {
       if (marks) {
-        slots = cartonSlots(labelSize)
-        plan = planCartonMarks(currentItems(), { fillExtra })
+        slots = cartonSlots(labelSize, layout)
+        plan = planCartonMarks(currentItems(), layout)
       } else {
         grid = labelGrid(layout, labelSize)
         if (!grid.perPage)
@@ -499,46 +621,121 @@ export function openPrintDialog({ kind, items, settings, logoUrl }) {
       error = issue.message
       plan = null
     }
+    page = Math.min(page, Math.max(0, (plan?.pages || 1) - 1))
     const locale = getLocale()
+    const count = (value) => () => value.toLocaleString(locale)
     if (error) bindText(summary, uiMessage(error))
     else if (marks)
       bindText(
         summary,
         uiMessage('2 carton marks per A4 · Pages: {0} · Marks: {1}', {
-          0: () => plan.pages.toLocaleString(locale),
-          1: () =>
-            plan.items
-              .reduce((sum, item) => sum + item.total, 0)
-              .toLocaleString(locale),
+          0: count(plan.pages),
+          1: count(plan.items.reduce((sum, item) => sum + item.total, 0)),
         })
       )
     else
       bindText(
         summary,
         uiMessage('{0} labels per A4 ({1} × {2}) · Pages: {3}', {
-          0: () => grid.perPage.toLocaleString(locale),
+          0: count(grid.perPage),
           1: grid.columns,
           2: grid.rows,
-          3: () => plan.pages.toLocaleString(locale),
+          3: count(plan.pages),
         })
       )
+    for (const problem of problems)
+      warning(
+        uiMessage('Not printable: {0}. {1}', {
+          0: problem.code || problem.name,
+          1: uiMessage(problem.message),
+        })
+      )
+    for (const product of job?.missing || [])
+      warning(
+        uiMessage('No longer found: {0}. It is left out.', { 0: product.code })
+      )
+    if (plan && !marks) {
+      if (grid.rotated)
+        warning(uiMessage('Labels are turned 90° because more fit that way.'))
+      if (plan.excess)
+        warning(
+          uiMessage(
+            '{0} extra labels for {1} requested ({2}% more). Lower the quantities or leave the spares blank under Advanced.',
+            {
+              0: count(plan.excess.extras),
+              1: count(plan.excess.requested),
+              2: plan.excess.percent,
+            }
+          )
+        )
+      if (plan.blanks > 0 && plan.pages)
+        warning(
+          uiMessage('{0} places on the last page stay blank.', {
+            0: count(plan.blanks),
+          })
+        )
+    }
+    if (plan && marks) {
+      for (const mismatch of plan.mismatches)
+        warning(
+          uiMessage(
+            '{0}: {1} cartons entered, {2} recorded in the packing data.',
+            {
+              0: mismatch.key,
+              1: mismatch.requested,
+              2: mismatch.known,
+            }
+          )
+        )
+      if (plan.blankHalf) warning(uiMessage('The last half page stays blank.'))
+    }
+    if (plan?.pages) {
+      let clearance = Infinity
+      for (let index = 0; index < plan.pages; index++)
+        clearance = Math.min(
+          clearance,
+          edgeClearance(contentBoxes(pageOps(index)))
+        )
+      if (clearance < SAFE_EDGE_MM - 1e-9)
+        warning(
+          uiMessage(
+            'Some content is {0} mm from the paper edge; most printers need at least 4 mm. Reduce the offsets or increase the margin.',
+            {
+              0: () =>
+                Math.max(0, clearance).toLocaleString(locale, {
+                  maximumFractionDigits: 1,
+                }),
+            }
+          )
+        )
+    }
+    warnings.hidden = !warnings.children.length
+
     const byKey = new Map((plan?.items || []).map((item) => [item.key, item]))
+    let requested = 0
+    let extra = 0
     let total = 0
     for (const [key, cells] of cellsByKey) {
       const entry = byKey.get(key)
-      cells.spares.textContent = entry && entry.spares ? `+${entry.spares}` : ''
+      cells.extra.textContent = entry?.extra ? `+${entry.extra}` : ''
       cells.total.textContent = entry ? String(entry.total) : '0'
+      requested += entry?.requested || 0
+      extra += entry?.extra || 0
       total += entry?.total || 0
     }
+    footRequested.textContent = String(requested)
+    footExtra.textContent = extra ? `+${extra}` : ''
     footTotal.textContent = String(total)
     exportButton.disabled = busy || !plan?.pages
+    dialog.dataset.pages = String(plan?.pages || 0)
     void drawPreview()
   }
 
   async function ensureImages(keys, dpi, signal) {
-    const missing = keys.filter((key) => key && !images.has(`${key}@${dpi}`))
-    for (const key of missing) {
-      const item = items.find((entry) => entry.key === key)
+    for (const key of keys.filter(
+      (key) => key && !images.has(`${key}@${dpi}`)
+    )) {
+      const item = itemByKey.get(key)
       const result = await renderLabel({
         ...item.model,
         settings: { ...settings, dpi },
@@ -549,79 +746,50 @@ export function openPrintDialog({ kind, items, settings, logoUrl }) {
     }
   }
 
-  function pageEntries(page) {
-    if (!plan) return []
-    if (marks) return plan.sequence.slice(page * 2, page * 2 + 2)
-    return plan.sequence.slice(page * grid.perPage, (page + 1) * grid.perPage)
-  }
-
-  function drawPage(draw, page, keyFor) {
-    if (marks) {
-      const entries = pageEntries(page)
-      for (const [index, entry] of entries.entries()) {
-        if (!entry) continue
-        const slot = slots.slots[index]
-        draw.image(keyFor(entry.key), slot, { rotate: slots.rotated })
-        if (numbering && entry.number)
-          draw.text(
-            `Carton ${entry.number} of ${entry.of}`,
-            A4.widthMm / 2,
-            Math.min(
-              slot.yMm + slot.heightMm + 6,
-              (index + 1) * slots.cutYMm - 2
-            ),
-            { size: 9, gray: 0.25, align: 'center' }
-          )
-      }
-      cutLine(draw, slots.cutYMm)
-      calibration(
-        draw,
-        `CE carton marks - page ${page + 1} of ${plan.pages} - print at 100% (Actual size)`,
-        4
-      )
-      return
-    }
-    for (const [index, key] of pageEntries(page).entries())
-      if (key)
-        draw.image(keyFor(key), grid.cells[index], { rotate: grid.rotated })
-    labelGuides(draw, grid, layout)
-    const bottom = Math.max(
-      ...grid.cells.map((cell) => cell.yMm + cell.heightMm)
-    )
-    calibration(
-      draw,
-      `CE labels - page ${page + 1} of ${plan.pages} - print at 100% (Actual size)`,
-      A4.heightMm - bottom
-    )
-  }
-
   async function drawPreview() {
     const token = ++renderToken
     const context = preview.getContext('2d')
+    const pages = plan?.pages || 0
+    previous.disabled = page <= 0
+    next.disabled = page >= pages - 1
+    bindText(
+      pageLabel,
+      pages ? uiMessage('Page {0} of {1}', { 0: page + 1, 1: pages }) : ''
+    )
+    const runs = plan?.pageSummaries?.[page] || []
+    bindText(
+      pageContents,
+      runs.length
+        ? () =>
+            runs
+              .map(
+                (run) => `${run.key} × ${run.count.toLocaleString(getLocale())}`
+              )
+              .join(' · ')
+        : ''
+    )
     try {
-      if (!plan?.pages) {
-        context.fillStyle = '#fff'
-        context.fillRect(0, 0, preview.width, preview.height)
-        return
-      }
+      context.fillStyle = '#fff'
+      context.fillRect(0, 0, preview.width, preview.height)
+      if (!pages) return
+      const ops = pageOps(page)
       const keys = [
-        ...new Set(
-          pageEntries(0)
-            .map((entry) => (marks ? entry?.key : entry))
-            .filter(Boolean)
-        ),
+        ...new Set(ops.filter((op) => op.type === 'image').map((op) => op.key)),
       ]
-      await ensureImages(keys, 150)
+      await ensureImages(keys, PREVIEW_DPI)
       if (token !== renderToken) return
       context.fillStyle = '#fff'
       context.fillRect(0, 0, preview.width, preview.height)
-      const bitmaps = new Map(
-        keys.map((key) => [key, images.get(`${key}@150`).bitmap])
+      drawOps(
+        canvasPage(context),
+        ops,
+        (key) => images.get(`${key}@${PREVIEW_DPI}`)?.bitmap
       )
-      drawPage(canvasPage(context, bitmaps), 0, (key) => key)
-      bindText(status, '')
+      preview.dataset.ops = String(ops.length)
+      bindText(previewStatus, '')
     } catch (error) {
-      if (token === renderToken) bindText(status, uiMessage(error.message))
+      if (token === renderToken)
+        bindText(previewStatus, uiMessage(error.message))
     }
   }
 
@@ -630,11 +798,15 @@ export function openPrintDialog({ kind, items, settings, logoUrl }) {
     busy = true
     exportButton.disabled = true
     try {
+      const pages = Array.from({ length: plan.pages }, (_, index) =>
+        pageOps(index)
+      )
       const keys = [
         ...new Set(
-          plan.sequence
-            .map((entry) => (marks ? entry?.key : entry))
-            .filter(Boolean)
+          pages
+            .flat()
+            .filter((op) => op.type === 'image')
+            .map((op) => op.key)
         ),
       ]
       const pdf = createPdf({ title: marks ? 'CE carton marks' : 'CE labels' })
@@ -644,19 +816,31 @@ export function openPrintDialog({ kind, items, settings, logoUrl }) {
           status,
           uiMessage('Preparing {0} of {1}', { 0: index + 1, 1: keys.length })
         )
-        await ensureImages([key], layout.dpi)
-        names.set(
-          key,
-          pdf.addImage(
-            await rgbImage(images.get(`${key}@${layout.dpi}`).pixels)
-          )
-        )
+        await ensureImages([key], PDF_DPI)
+        const full = images.get(`${key}@${PDF_DPI}`)
+        names.set(key, pdf.addImage(await rgbImage(full.pixels)))
+        // Full-resolution pixels are needed once; free them before the next label.
+        full.bitmap.close?.()
+        images.delete(`${key}@${PDF_DPI}`)
       }
       bindText(status, uiMessage('Building PDF…'))
-      for (let page = 0; page < plan.pages; page++)
-        drawPage(pdf.page(), page, (key) => names.get(key))
+      for (const ops of pages) drawOps(pdf.page(), ops, (key) => names.get(key))
       const filename = printFileName(kind, plan.items.length)
       savePdf(pdf.build(), filename)
+      store.recordJob({
+        kind,
+        products: plan.items.map((entry) => ({
+          code: entry.key,
+          name: itemByKey.get(entry.key)?.name || '',
+          quantity: entry.requested,
+          ...(marks || !layout.limitExtras || caps.get(entry.key) === ''
+            ? {}
+            : { cap: caps.get(entry.key) }),
+        })),
+        layout,
+        pages: plan.pages,
+        total: plan.items.reduce((sum, entry) => sum + entry.total, 0),
+      })
       bindText(
         status,
         uiMessage('PDF saved to your downloads: {0}', { 0: filename })
@@ -670,8 +854,42 @@ export function openPrintDialog({ kind, items, settings, logoUrl }) {
     }
   }
 
-  layoutPane.addEventListener('input', update)
-  layoutPane.addEventListener('change', update)
+  function exportCalibration() {
+    const pdf = createPdf({ title: 'CE print calibration' })
+    const preset = store.presets().find((entry) => entry.id === layout.preset)
+    drawOps(
+      pdf.page(),
+      calibrationOps(layout, { presetName: preset?.name || '' }),
+      () => null
+    )
+    const filename = printFileName('calibration', 0)
+    savePdf(pdf.build(), filename)
+    bindText(
+      status,
+      uiMessage('PDF saved to your downloads: {0}', { 0: filename })
+    )
+    dialog.dataset.exported = filename
+  }
+
+  settingsPane.addEventListener('input', (event) => {
+    if (event.target === presetName || event.target === presetSelect) return
+    if ([margin, offsetX, offsetY].includes(event.target))
+      layout = { ...layout, preset: '' }
+    update()
+  })
+  settingsPane.addEventListener('change', (event) => {
+    if (event.target === presetSelect || event.target === presetName) return
+    update()
+  })
+  previous.onclick = () => {
+    page = Math.max(0, page - 1)
+    void drawPreview()
+  }
+  next.onclick = () => {
+    page = Math.min((plan?.pages || 1) - 1, page + 1)
+    void drawPreview()
+  }
+  calibrate.onclick = () => exportCalibration()
   exportButton.onclick = () => void exportPdf()
   cancel.onclick = () => dialog.close()
   enableLightDismiss(dialog)
@@ -683,6 +901,84 @@ export function openPrintDialog({ kind, items, settings, logoUrl }) {
   })
   document.body.append(dialog)
   update()
+  dialog.showModal()
+  return dialog
+}
+
+/** The five most recent exports; choosing one regenerates it from current data. */
+export function openRecentPrintJobs({
+  store = createPrintStore(),
+  onRegenerate,
+}) {
+  const dialog = el('dialog', undefined, 'print-recent-dialog packing-review')
+  bindAttribute(dialog, 'aria-label', uiMessage('Recent print jobs'))
+  const heading = el('h2', uiMessage('Recent print jobs'))
+  const close = el('button', uiMessage('Close'))
+  const actions = el('div', undefined, 'dialog-actions')
+  actions.append(close)
+  dialog.append(heading, actions)
+  const body = pinDialogActions(dialog, actions)
+  const jobs = store.recentJobs()
+  body.append(
+    el(
+      'p',
+      uiMessage(
+        'An exact reprint is the saved PDF printed again. Regenerate builds a new PDF from current product data.'
+      ),
+      'print-hint'
+    )
+  )
+  const status = el('p', undefined, 'print-status')
+  status.setAttribute('role', 'status')
+  if (!jobs.length)
+    body.append(el('p', uiMessage('No recent print jobs yet.'), 'print-empty'))
+  const list = el('ul', undefined, 'print-recent-list')
+  for (const job of jobs) {
+    const row = el('li')
+    const what = el('div')
+    const kindLabel = el(
+      'strong',
+      uiMessage(job.kind === 'marks' ? 'Carton marks' : 'Labels')
+    )
+    const when = el('span')
+    bindText(when, () => formatDate(job.date))
+    const detail = el('small')
+    bindText(
+      detail,
+      uiMessage('{0} products · {1}', {
+        0: job.products.length,
+        1: () =>
+          job.products
+            .slice(0, 4)
+            .map((product) => `${product.code} × ${product.quantity}`)
+            .join(', ') + (job.products.length > 4 ? '…' : ''),
+      })
+    )
+    what.append(kindLabel, when, detail)
+    const regenerate = el('button', uiMessage('Regenerate'))
+    bindAttribute(
+      regenerate,
+      'aria-label',
+      uiMessage('Regenerate the print job of {0}', {
+        0: () => formatDate(job.date),
+      })
+    )
+    regenerate.onclick = async () => {
+      try {
+        await onRegenerate(job)
+        dialog.close()
+      } catch (error) {
+        bindText(status, uiMessage(error.message))
+      }
+    }
+    row.append(what, regenerate)
+    list.append(row)
+  }
+  body.append(list, status)
+  close.onclick = () => dialog.close()
+  enableLightDismiss(dialog)
+  dialog.addEventListener('close', () => dialog.remove())
+  document.body.append(dialog)
   dialog.showModal()
   return dialog
 }

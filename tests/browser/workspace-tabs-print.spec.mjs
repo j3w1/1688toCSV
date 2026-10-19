@@ -140,7 +140,7 @@ test('selected amounts stay visible in the action bar on narrow screens', async 
   }
 })
 
-test('labels and carton marks export print-ready A4 PDFs with the computed counts', async ({
+test('labels export print-ready A4 PDFs with proportional spares, caps, warnings, calibration and recent jobs', async ({
   extension,
 }) => {
   const { page, rows } = await open(extension)
@@ -155,27 +155,54 @@ test('labels and carton marks export print-ready A4 PDFs with the computed count
   const dialog = page.getByRole('dialog', { name: 'Print labels', exact: true })
   const quantities = dialog.getByLabel(/^Quantity for /)
   const totals = dialog.locator('.print-counts tbody td:last-child')
+  const warnings = dialog.locator('.print-warnings')
   await quantities.first().fill('80')
   await quantities.nth(1).fill('30')
-  // 110 labels need two pages; the 30 spare places are shared equally.
+  // 110 labels need two pages; 30 spares are shared by quantity: 22 + 8.
   await expect(dialog.locator('.print-summary')).toHaveText(
     '70 labels per A4 (5 × 14) · Pages: 2'
   )
-  await expect(totals).toHaveText(['95', '45'])
-  await dialog
-    .getByLabel(/^Quantity for /)
-    .first()
-    .fill('40')
-  await dialog
-    .getByLabel(/^Quantity for /)
-    .nth(1)
-    .fill('20')
+  await expect(totals).toHaveText(['102', '38'])
+  await expect(warnings).toContainText(
+    '30 extra labels for 110 requested (27% more)'
+  )
+  await expect(dialog.locator('.print-page-label')).toHaveText('Page 1 of 2')
+  await dialog.getByRole('button', { name: 'Next page', exact: true }).click()
+  await expect(dialog.locator('.print-page-label')).toHaveText('Page 2 of 2')
+  await expect(dialog.locator('.print-page-contents')).toContainText('× 32')
+  await quantities.first().fill('40')
+  await quantities.nth(1).fill('20')
   await expect(dialog.locator('.print-summary')).toHaveText(
     '70 labels per A4 (5 × 14) · Pages: 1'
   )
-  await expect(totals).toHaveText(['45', '25'])
-  await dialog.getByLabel('Share by quantity', { exact: true }).check()
+  await expect(dialog.locator('.print-page-label')).toHaveText('Page 1 of 1')
   await expect(totals).toHaveText(['47', '23'])
+  await expect(warnings).toBeHidden()
+  // Secondary modes and caps live under Advanced.
+  await dialog.getByText('Advanced', { exact: true }).click()
+  await dialog.getByLabel('Share equally', { exact: true }).check()
+  await expect(totals).toHaveText(['45', '25'])
+  await dialog.getByLabel('Leave blank', { exact: true }).check()
+  await expect(totals).toHaveText(['40', '20'])
+  await expect(warnings).toContainText('10 places on the last page stay blank.')
+  await dialog
+    .getByLabel('Share by quantity (recommended)', { exact: true })
+    .check()
+  await dialog
+    .getByLabel('Limit extra copies per product', { exact: true })
+    .check()
+  await dialog
+    .getByLabel(/^Max extra for /)
+    .first()
+    .fill('2')
+  await expect(totals).toHaveText(['42', '28'])
+  // Offsets move everything; content closer than 4 mm to an edge is flagged.
+  await dialog.getByLabel('Offset X (mm)', { exact: true }).fill('1.5')
+  await expect(warnings).toContainText(
+    'Some content is 3.5 mm from the paper edge'
+  )
+  await dialog.getByLabel('Offset X (mm)', { exact: true }).fill('0')
+  await expect(warnings).toBeHidden()
   const downloading = page.waitForEvent('download')
   await dialog.getByRole('button', { name: 'Export PDF', exact: true }).click()
   const download = await downloading
@@ -187,9 +214,48 @@ test('labels and carton marks export print-ready A4 PDFs with the computed count
   expect(pdf.startsWith('%PDF-1.4')).toBe(true)
   expect(pdf).toContain('/Count 1')
   expect(pdf).toContain('/MediaBox [0 0 595.276 841.89]')
+  expect(pdf).toContain('/PrintScaling /None')
   expect(pdf.match(/\/Subtype \/Image/g)).toHaveLength(2)
   expect(pdf.match(/ Do Q/g)).toHaveLength(70)
+  expect(pdf).toMatch(
+    /\(CE labels - page 1 of 1 - CE\d+ x42 - CE\d+ x28 - print at 100% \\\(Actual size\\\)\) Tj/
+  )
+  // The calibration sheet uses the same offsets and downloads on its own.
+  const calibrating = page.waitForEvent('download')
+  await dialog
+    .getByRole('button', { name: 'Calibration sheet', exact: true })
+    .click()
+  expect((await calibrating).suggestedFilename()).toMatch(
+    /^CE-print-calibration-\d{4}-\d{2}-\d{2}\.pdf$/
+  )
+  const sheet = (await readFile(await savedPath(extension, 1))).toString(
+    'latin1'
+  )
+  expect(sheet).toContain('/Count 1')
+  expect(sheet).toContain('(CE print calibration) Tj')
   await dialog.getByRole('button', { name: 'Cancel', exact: true }).click()
+
+  // A recent job regenerates from current data with its quantities and caps.
+  await page.locator('#orders-print-actions .copy-actions-trigger').click()
+  await page.locator('#print-recent').click()
+  const recent = page.getByRole('dialog', {
+    name: 'Recent print jobs',
+    exact: true,
+  })
+  await expect(recent.locator('.print-recent-list > li')).toHaveCount(1)
+  await recent
+    .getByRole('button', { name: /^Regenerate the print job of / })
+    .click()
+  const again = page.getByRole('dialog', { name: 'Print labels', exact: true })
+  await expect(again.locator('.print-note')).toContainText(
+    'Product data may have changed since'
+  )
+  await expect(again.getByLabel(/^Quantity for /).first()).toHaveValue('40')
+  await expect(again.locator('.print-counts tbody td:last-child')).toHaveText([
+    '42',
+    '28',
+  ])
+  await again.getByRole('button', { name: 'Cancel', exact: true }).click()
 
   await page.locator('#orders-print-actions .copy-actions-trigger').click()
   await page.locator('#print-carton-marks').click()
@@ -204,10 +270,13 @@ test('labels and carton marks export print-ready A4 PDFs with the computed count
   await expect(marks.locator('.print-summary')).toHaveText(
     '2 carton marks per A4 · Pages: 2 · Marks: 3'
   )
+  await expect(marks.locator('.print-warnings')).toContainText(
+    'The last half page stays blank.'
+  )
   const markDownload = page.waitForEvent('download')
   await marks.getByRole('button', { name: 'Export PDF', exact: true }).click()
   expect(await (await markDownload).failure()).toBeNull()
-  const markPdf = (await readFile(await savedPath(extension, 1))).toString(
+  const markPdf = (await readFile(await savedPath(extension, 2))).toString(
     'latin1'
   )
   expect(markPdf).toContain('/Count 2')

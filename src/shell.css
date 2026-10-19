@@ -1111,8 +1111,19 @@ dialog.print-dialog.packing-review {
 }
 .print-left {
   display: grid;
+  grid-template-columns: minmax(0, 1fr);
   gap: var(--space-3);
   min-inline-size: 0;
+}
+.print-table-scroll {
+  min-inline-size: 0;
+  overflow-x: auto;
+}
+.print-dialog .print-options {
+  display: flex;
+  flex-wrap: wrap;
+  column-gap: var(--space-5);
+  row-gap: 0;
 }
 .print-summary {
   margin: 0;
@@ -1141,11 +1152,18 @@ dialog.print-dialog.packing-review {
   flex-wrap: wrap;
   gap: var(--space-1) var(--space-4);
 }
+/* Dialog labels default to spaced blocks; print controls sit in compact rows. */
+.print-dialog :is(.print-check, .print-field) {
+  margin: 0;
+}
 .print-check {
   display: inline-flex;
   align-items: center;
   gap: 6px;
   font-size: var(--text-m);
+}
+.print-dialog .print-fieldset > .print-check {
+  justify-self: start;
 }
 .print-grid-fields {
   display: grid;
@@ -1153,7 +1171,7 @@ dialog.print-dialog.packing-review {
   gap: var(--space-2) var(--space-3);
   align-items: end;
 }
-.print-field {
+.print-dialog .print-field {
   display: grid;
   gap: 2px;
   color: var(--muted);
@@ -1207,7 +1225,7 @@ dialog.print-dialog.packing-review {
   color: var(--muted);
 }
 .print-counts input {
-  inline-size: 84px;
+  inline-size: 96px;
   min-block-size: 30px;
   padding: 2px 6px;
   border: 1px solid var(--border);
@@ -1215,6 +1233,9 @@ dialog.print-dialog.packing-review {
   background: var(--field);
   color: var(--text);
   font-variant-numeric: tabular-nums;
+}
+.print-counts .print-cap-column input::placeholder {
+  font-size: var(--text-xs);
 }
 .print-counts .numeric,
 .print-counts tfoot td {
@@ -1238,6 +1259,119 @@ dialog.print-dialog.packing-review {
   border-radius: 2px;
   background: #fff;
   box-shadow: var(--shadow-1);
+}
+.print-note {
+  margin: 0;
+  padding: var(--space-2) var(--space-3);
+  border: 1px solid var(--control-accent);
+  border-radius: var(--radius-m);
+  background: var(--selected);
+  font-size: var(--text-s);
+}
+.print-warnings {
+  display: grid;
+  gap: 4px;
+  margin: 0;
+  padding: var(--space-2) var(--space-3) var(--space-2) var(--space-5);
+  border: 1px solid var(--warning-border);
+  border-radius: var(--radius-m);
+  background: var(--warning);
+  color: var(--warning-text);
+  font-size: var(--text-s);
+}
+.print-counts .print-cap-column {
+  display: none;
+}
+.print-counts.print-caps .print-cap-column {
+  display: table-cell;
+}
+.print-counts .print-known {
+  color: var(--muted);
+}
+.print-preset-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: end;
+  gap: var(--space-2);
+}
+.print-preset-row > .print-field {
+  flex: none;
+}
+.print-preset-row > input {
+  flex: 1 1 140px;
+  min-inline-size: 0;
+  min-block-size: 32px;
+  padding: 4px var(--space-2);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-s);
+  background: var(--field);
+  color: var(--text);
+}
+.print-preset-row > button,
+.print-fieldset > button {
+  min-block-size: 32px;
+  justify-self: start;
+}
+.print-advanced > summary {
+  margin: 0;
+  color: var(--muted);
+  font-size: var(--text-s);
+  cursor: pointer;
+}
+.print-advanced[open] {
+  display: grid;
+  gap: var(--space-2);
+}
+.print-pager {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-2);
+  margin-block-end: var(--space-1);
+  font-size: var(--text-s);
+  font-variant-numeric: tabular-nums;
+}
+.print-pager button {
+  inline-size: 32px;
+  min-block-size: 32px;
+  padding: 0;
+  font-size: var(--text-l);
+}
+.print-page-contents {
+  margin: 0 0 var(--space-2);
+  color: var(--muted);
+  font-size: var(--text-xs);
+  overflow-wrap: anywhere;
+}
+.print-recent-dialog.packing-review {
+  inline-size: min(640px, calc(100vw - 24px));
+}
+.print-recent-list {
+  display: grid;
+  gap: var(--space-2);
+  margin: var(--space-3) 0 0;
+  padding: 0;
+  list-style: none;
+}
+.print-recent-list > li {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-3);
+  padding: var(--space-2) var(--space-3);
+  border: 1px solid var(--divider);
+  border-radius: var(--radius-m);
+}
+.print-recent-list > li > div {
+  display: grid;
+  gap: 2px;
+  min-inline-size: 0;
+}
+.print-recent-list small {
+  overflow: hidden;
+  color: var(--muted);
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 @media (max-width: 860px) {
   .print-columns {

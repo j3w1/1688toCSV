@@ -70,7 +70,8 @@ import {
 import { mountSizeVocabulary } from './size-vocabulary-settings.js'
 import { attachSearchSuggestions, searchMatcher } from './search-assistance.js'
 import { DEFAULT_LABEL_SETTINGS, renderLabel } from './labels.js'
-import { openPrintDialog } from './print-dialog.js'
+import { openPrintDialog, openRecentPrintJobs } from './print-dialog.js'
+import { restoreJob } from './print-store.js'
 import { mountLabelEditor } from './label-editor.js'
 import {
   createPreparationHistory,
@@ -4207,6 +4208,12 @@ export async function startPackingWorkspace({
       decorateIcon(target, symbol)
       return target
     })
+    const recentPrints = button(uiMessage('Recent print jobs…'), () =>
+      openRecentPrints()
+    )
+    recentPrints.classList.add('packing-recent-prints')
+    decorateIcon(recentPrints, 'undo')
+    printButtons.push(recentPrints)
     printPanel = mountCopyActions(printing, {
       label: 'Print…',
       ariaLabel: 'More print formats',
@@ -5451,12 +5458,43 @@ export async function startPackingWorkspace({
       errorOptions: packingErrorOptions,
     })
   }
+  /** A print entry for one label, or the label validation's refusal. */
+  function printEntry(prep, group, variant, kind) {
+    const code =
+      kind === 'mark'
+        ? group.baseCode
+        : barcodeValue(group, { ...variant, needsSizeMapping: false })
+    try {
+      const model = outputModel(prep, group, variant, kind, false, true)
+      return {
+        item: {
+          key: model.code,
+          code: model.code,
+          name: model.spanishName,
+          detail: model.category,
+          // Packing data records no carton count yet; marks default to one.
+          known: null,
+          model,
+        },
+      }
+    } catch (error) {
+      return {
+        problem: {
+          code,
+          name: variant?.spanishName || group.spanishName || '',
+          message: error.message,
+          error,
+        },
+      }
+    }
+  }
   /** One entry per distinct label for the selected source rows. */
   function printItems(kind, selectedRows) {
     const selected = new Set(
       selectedRows.map((row) => `${row.orderId}/${row.entryId}`)
     )
     const items = new Map()
+    const problems = new Map()
     for (const orderId of new Set(selectedRows.map((row) => row.orderId))) {
       const record = getRecords().find(
         (record) => record.snapshot.orderId === orderId
@@ -5475,37 +5513,106 @@ export async function startPackingWorkspace({
         )
         if (!variants.length) continue
         for (const variant of kind === 'mark' ? [null] : variants) {
-          const model = outputModel(prep, group, variant, kind, false, true)
+          const { item, problem } = printEntry(prep, group, variant, kind)
+          if (problem) {
+            problems.set(problem.code, problem)
+            continue
+          }
           const units = (variant ? [variant] : [])
             .flatMap((entry) => entry.entryIds)
             .filter((id) => selected.has(`${orderId}/${id}`))
             .reduce((sum, id) => sum + (quantityOf.get(id) || 0), 0)
-          const existing = items.get(model.code)
+          const existing = items.get(item.code)
           if (existing) existing.quantity += kind === 'mark' ? 0 : units
           else
-            items.set(model.code, {
-              key: model.code,
-              code: model.code,
-              name: model.spanishName,
-              detail: model.category,
-              quantity: kind === 'mark' ? 1 : Math.max(1, units),
-              model,
+            items.set(item.code, {
+              ...item,
+              quantity:
+                kind === 'mark' ? (item.known ?? 1) : Math.max(1, units),
             })
         }
       }
     }
-    return [...items.values()]
+    return { items: [...items.values()], problems: [...problems.values()] }
   }
+  /** Current print entries for the given label codes, across all preparations. */
+  function printItemsForCodes(kind, codes) {
+    const wanted = new Set(codes)
+    const items = new Map()
+    const problems = new Map()
+    for (const [orderId, prep] of preparations) {
+      const record = getRecords().find(
+        (record) => record.snapshot.orderId === orderId
+      )
+      if (!record) continue
+      for (const group of activeGroups(prep, record.snapshot))
+        for (const variant of kind === 'mark' ? [null] : group.variants) {
+          const code =
+            kind === 'mark'
+              ? group.baseCode
+              : barcodeValue(group, { ...variant, needsSizeMapping: false })
+          if (!code || !wanted.has(code) || items.has(code)) continue
+          const { item, problem } = printEntry(prep, group, variant, kind)
+          if (item) {
+            items.set(code, item)
+            problems.delete(code)
+          } else problems.set(code, problem)
+        }
+    }
+    return { items: [...items.values()], problems: [...problems.values()] }
+  }
+  const publicProblems = (problems) =>
+    problems.map(({ code, name, message }) => ({ code, name, message }))
   async function openPrint(kind, selectedRows) {
     if (!selectedRows.length) throw new Error('Select prepared products first.')
     await flushSaves()
-    const items = printItems(kind, selectedRows)
-    if (!items.length) throw new Error('Select prepared products first.')
+    const { items, problems } = printItems(kind, selectedRows)
+    if (!items.length) {
+      // The validation error carries its own way to fix the product.
+      if (problems.length) throw problems[0].error
+      throw new Error('Select prepared products first.')
+    }
     openPrintDialog({
       kind: kind === 'mark' ? 'marks' : 'labels',
       items,
+      problems: publicProblems(problems),
       settings: structuredClone(settings()),
       logoUrl: logoUrl(),
+    })
+  }
+  /** Rebuild a recent export from current product data. */
+  async function regeneratePrint(job) {
+    await flushSaves()
+    const kind = job.kind === 'marks' ? 'mark' : 'barcode'
+    const { items, problems } = printItemsForCodes(
+      kind,
+      job.products.map((product) => product.code)
+    )
+    const restored = restoreJob(job, items)
+    if (!restored.items.length) {
+      if (problems.length) throw problems[0].error
+      throw new Error(
+        'None of the products in this print job can be found any more.'
+      )
+    }
+    const refused = new Set(problems.map((problem) => problem.code))
+    openPrintDialog({
+      kind: job.kind,
+      items: restored.items,
+      problems: publicProblems(problems),
+      settings: structuredClone(settings()),
+      logoUrl: logoUrl(),
+      job: {
+        ...job,
+        missing: restored.missing.filter(
+          (product) => !refused.has(product.code)
+        ),
+      },
+    })
+  }
+  function openRecentPrints() {
+    openRecentPrintJobs({
+      onRegenerate: (job) => preparationAction(() => regeneratePrint(job)),
     })
   }
   function orderRows(rows) {
@@ -6424,6 +6531,7 @@ export async function startPackingWorkspace({
       preparationAction(() => bulkLabels(kind, orderRows(rows))),
     printLabels: (kind, rows) =>
       preparationAction(() => openPrint(kind, orderRows(rows))),
+    openRecentPrints,
     canCopyLabels: (rows) =>
       rows.length > 0 &&
       rows.every((row) => membership.has(`${row.orderId}/${row.entryId}`)),

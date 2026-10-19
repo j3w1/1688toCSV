@@ -109,7 +109,7 @@ The Products table also shows the saved packing material, or a confident source 
 <a href="screenshots/product-details.png"><img src="screenshots/product-details.png" alt="Synthetic original product details with copyable source values and photo" width="480" /></a>
 </details>
 
-Filter one or more purchase months; **Shift-click** filters a month range. Click a month heading to collapse its orders. The current month starts expanded. Seller/order search, product search, status and date filters update the summary above the products table: it counts each complete matching order once, including its shipping and order discounts.
+Filter one or more purchase months; **Shift-click** filters a month range. Month chips use short names; the seven most recent months are shown, and **+N months** shows the rest. Click a month heading to collapse its orders. The current month starts expanded. Seller/order search, product search, status and date filters update the summary above the products table: it counts each complete matching order once, including its shipping and order discounts.
 
 Orders, Products, Product names, Size codes and Product colors searches offer local suggestions. Use **↑/↓** and **Enter** to choose one, or **Escape** to dismiss suggestions. Text searches tolerate a small spelling mistake in longer Latin words and ignore accents; IDs, codes, measurements and Chinese text require the characters you type to match literally, including partial searches. Products search also includes recognized translated attributes and saved materials. Nothing is sent to a search or translation service.
 
@@ -158,6 +158,18 @@ Carton previews sit beside each group's names in a compact 100px-wide area, with
 <details><summary>Copy batches without leaving the preview</summary>
 <a href="screenshots/copy-label-batches.png"><img src="screenshots/copy-label-batches.png" alt="Synthetic carton-mark previews with batch navigation and a copy action in one popup" width="640" /></a>
 </details>
+
+## Print labels and carton marks
+
+Select prepared products, then choose **Print… → Print labels…** or **Print carton marks…** in Orders or in the packing toolbar. The dialog lists each product with an editable quantity and shows labels per A4, pages, and the requested, extra and final counts. The preview shows every page with its products; use the arrows to move between pages. **Export PDF** downloads the file offline, named like `CE-labels-2026-10-19-3-products.pdf`. Print it at **100% (Actual size)**.
+
+Labels use the barcode size from **Settings → Labels** (40 × 20 mm gives 70 per A4 with 5 mm margins). They turn 90° only when that fits more. Requested quantities always print, on as few pages as possible, with each product kept together in the selected order. Spare places on the last page are shared by quantity: 40 and 50 labels at 100 per page print 44 and 56. A warning appears when extras are more than 25% of the request. **Advanced** offers sharing equally, leaving spares blank, a maximum number of extras per product, and gaps between labels. Cut guides, a small per-page summary line and optional marks where products change never cover barcodes or text.
+
+Carton marks print two per A4, one in each half, with a cut guide in the middle. Each product starts at one carton (packing data records no carton count yet). Optional **Carton n of N** numbering and an extra copy for an odd last half are available.
+
+**Calibration sheet** prints rulers (10 mm and 100 mm on both axes) and two reference crosses. Measure them, enter **Offset X/Y** (−5 to +5 mm) and save the margin and offsets as a named A4 preset. Labels and carton marks remember their own settings. A warning appears when content would land closer than 4 mm to a paper edge.
+
+**Print… → Recent print jobs…** keeps the five most recent exports. To reprint exactly, print the saved PDF again. **Regenerate** builds a new PDF from current product data with the same quantities and settings, and notes that product data may have changed.
 
 ## Keep your data
 

@@ -2124,6 +2124,11 @@ export async function startLibrary(
     }
     return target
   })
+  const recentPrints = node('button', uiMessage('Recent print jobs…'))
+  recentPrints.id = 'print-recent'
+  decorateIcon(recentPrints, 'undo')
+  recentPrints.onclick = () => packing?.openRecentPrints()
+  printButtons.push(recentPrints)
   const printMenu = mountCopyActions($('orders-print-actions'), {
     label: 'Print…',
     ariaLabel: 'More print formats',
