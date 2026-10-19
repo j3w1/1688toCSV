@@ -464,8 +464,19 @@ body > main {
 .action-bar .selection-totals-grid dd {
   font-size: var(--text-m);
 }
+.action-bar .product-selection-totals {
+  max-inline-size: 400px;
+}
 .action-bar .selection-totals-context {
-  display: none;
+  display: block;
+  margin: 2px 0 0;
+  overflow: hidden;
+  font-size: 10px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.action-bar .selection-totals-context > span + span::before {
+  content: ' · ';
 }
 .action-bar .row-selection-actions {
   display: flex;
@@ -961,4 +972,12 @@ html:has(body.packing-active) {
     grid-row: 4;
     padding: var(--space-3);
   }
+}
+
+/* Dialogs share one frame: lifted surface and a softened backdrop. */
+dialog {
+  box-shadow: var(--shadow-2);
+}
+dialog::backdrop {
+  backdrop-filter: blur(2px);
 }
