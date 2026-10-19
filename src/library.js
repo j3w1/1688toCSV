@@ -476,6 +476,8 @@ export async function startLibrary(
     ['refresh-all', 'refresh'],
     ['refresh-orders', 'refresh'],
     ['remove-orders', 'trash', true],
+    ['select-rows', 'check', true],
+    ['clear-rows', 'close', true],
     ['backup', 'download'],
     ['restore', 'upload'],
   ])
@@ -1696,6 +1698,17 @@ export async function startLibrary(
       )
     $('clear-months').setAttribute('aria-pressed', String(!selectedMonths.size))
   }
+  // Recent months stay visible as chips; older ones open on demand.
+  const visibleMonths = 7
+  let monthsExpanded = false
+  const shortMonth = (month) =>
+    month === 'unknown'
+      ? t('Date unavailable')
+      : new Intl.DateTimeFormat(getLocale(), {
+          month: 'short',
+          year: 'numeric',
+          timeZone: 'UTC',
+        }).format(new Date(`${month}-01T00:00:00Z`))
   function renderMonthOptions() {
     const months = [
       ...new Set([
@@ -1706,9 +1719,30 @@ export async function startLibrary(
     ]
       .sort()
       .reverse()
+    const shown = monthsExpanded
+      ? months
+      : months.filter(
+          (month, index) => index < visibleMonths || selectedMonths.has(month)
+        )
+    const hidden = months.length - shown.length
+    const more = node('button', undefined, 'month-choice month-more')
+    bindText(
+      more,
+      monthsExpanded
+        ? uiMessage('Fewer months')
+        : uiMessage('+{0} months', { 0: hidden })
+    )
+    more.setAttribute('aria-expanded', String(monthsExpanded))
+    more.addEventListener('click', () => {
+      monthsExpanded = !monthsExpanded
+      renderMonthOptions()
+    })
     $('month-options').replaceChildren(
-      ...months.map((month) => {
-        const button = node('button', monthLabel(month), 'month-choice')
+      ...shown.map((month) => {
+        const button = node('button', undefined, 'month-choice')
+        bindText(button, () => shortMonth(month))
+        bindAttribute(button, 'aria-label', () => monthLabel(month))
+        bindAttribute(button, 'title', () => monthLabel(month))
         button.dataset.month = month
         button.addEventListener('click', (event) => {
           if (event.shiftKey && monthAnchor && months.includes(monthAnchor)) {
@@ -1732,7 +1766,8 @@ export async function startLibrary(
           render()
         })
         return button
-      })
+      }),
+      ...(hidden || monthsExpanded ? [more] : [])
     )
     updateMonthFilter()
   }

@@ -363,93 +363,101 @@
           role="region"
           aria-label="Selection and next step"
         >
-          <section
-            data-i18n-aria-label="Selected product totals"
-            id="product-selection-totals"
-            class="product-selection-totals"
-            aria-label="Selected product totals"
-            aria-live="polite"
-            aria-atomic="true"
-          ></section>
-          <div class="row-selection-actions">
-            <button data-i18n="Select all rows" id="select-rows">
-              Select all rows
-            </button>
-            <button data-i18n="Clear selection" id="clear-rows">
-              Clear selection
-            </button>
-          </div>
-          <div class="export-toolbar copy-actions" id="orders-copy-actions">
-            <div
-              data-i18n-aria-label="Copy selected product rows"
-              class="copy-actions"
-              aria-label="Copy selected product rows"
-            >
-              <span data-i18n="Products" class="toolbar-caption">Products</span
-              ><button data-i18n="Copy values" id="copy-values">
-                Copy values</button
-              ><button data-i18n="Copy images" id="copy-images">
-                Copy images</button
-              ><button data-i18n="Copy to Excel" id="copy-excel">
-                Copy to Excel</button
-              ><button
-                data-i18n="Copy Excel image"
-                data-i18n-title="Copy selected rows as one picture in your workspace language"
-                id="copy-excel-image"
-                title="Copy selected rows as one picture in your workspace language"
-              >
-                Copy Excel image
+          <div class="action-bar-selection">
+            <section
+              data-i18n-aria-label="Selected product totals"
+              id="product-selection-totals"
+              class="product-selection-totals"
+              aria-label="Selected product totals"
+              aria-live="polite"
+              aria-atomic="true"
+            ></section>
+            <div class="row-selection-actions">
+              <button data-i18n="Select all rows" id="select-rows">
+                Select all rows
+              </button>
+              <button data-i18n="Clear selection" id="clear-rows">
+                Clear selection
               </button>
             </div>
-            <div
-              data-i18n-aria-label="Copy packing values"
-              class="copy-actions"
-              aria-label="Copy packing values"
-            >
-              <span data-i18n="Packing" class="toolbar-caption">Packing</span
-              ><button
-                data-i18n="Copy preparation columns"
-                id="copy-preparation"
-              >
-                Copy preparation columns</button
-              ><button data-i18n="Copy group codes" id="copy-group-codes">
-                Copy group codes</button
-              ><label class="check"
-                ><input id="include-headers" type="checkbox" /><span
-                  data-i18n="Headers"
-                  >Headers</span
-                ></label
-              >
-            </div>
           </div>
-          <div
-            class="export-toolbar copy-actions"
-            id="orders-print-actions"
-          ></div>
-          <div class="packing-launch">
-            <label
-              ><span data-i18n="Packing month">Packing month</span
-              ><input type="month" id="packing-month" required /></label
-            ><button
-              data-i18n="Prepare packing list"
-              id="prepare-orders"
-              class="primary"
-              disabled
-            >
-              Prepare packing list
-            </button>
-            <button id="restore-packing" data-i18n="Restore packing">
-              Restore packing
-            </button>
-            <input
-              id="restore-packing-file"
-              type="file"
-              accept=".json,application/json"
-              hidden
-              aria-label="Packing backup file"
-              data-i18n-aria-label="Packing backup file"
-            />
-            <p id="packing-scope" role="status"></p>
+          <div class="action-bar-actions">
+            <div class="action-bar-export">
+              <div class="export-toolbar copy-actions" id="orders-copy-actions">
+                <div
+                  data-i18n-aria-label="Copy selected product rows"
+                  class="copy-actions"
+                  aria-label="Copy selected product rows"
+                >
+                  <span data-i18n="Products" class="toolbar-caption"
+                    >Products</span
+                  ><button data-i18n="Copy values" id="copy-values">
+                    Copy values</button
+                  ><button data-i18n="Copy images" id="copy-images">
+                    Copy images</button
+                  ><button data-i18n="Copy to Excel" id="copy-excel">
+                    Copy to Excel</button
+                  ><button
+                    data-i18n="Copy Excel image"
+                    data-i18n-title="Copy selected rows as one picture in your workspace language"
+                    id="copy-excel-image"
+                    title="Copy selected rows as one picture in your workspace language"
+                  >
+                    Copy Excel image
+                  </button>
+                </div>
+                <div
+                  data-i18n-aria-label="Copy packing values"
+                  class="copy-actions"
+                  aria-label="Copy packing values"
+                >
+                  <span data-i18n="Packing" class="toolbar-caption"
+                    >Packing</span
+                  ><button
+                    data-i18n="Copy preparation columns"
+                    id="copy-preparation"
+                  >
+                    Copy preparation columns</button
+                  ><button data-i18n="Copy group codes" id="copy-group-codes">
+                    Copy group codes</button
+                  ><label class="check"
+                    ><input id="include-headers" type="checkbox" /><span
+                      data-i18n="Headers"
+                      >Headers</span
+                    ></label
+                  >
+                </div>
+              </div>
+              <div
+                class="export-toolbar copy-actions"
+                id="orders-print-actions"
+              ></div>
+            </div>
+            <div class="packing-launch">
+              <label
+                ><span data-i18n="Packing month">Packing month</span
+                ><input type="month" id="packing-month" required /></label
+              ><button
+                data-i18n="Prepare packing list"
+                id="prepare-orders"
+                class="primary"
+                disabled
+              >
+                Prepare packing list
+              </button>
+              <button id="restore-packing" data-i18n="Restore packing">
+                Restore packing
+              </button>
+              <input
+                id="restore-packing-file"
+                type="file"
+                accept=".json,application/json"
+                hidden
+                aria-label="Packing backup file"
+                data-i18n-aria-label="Packing backup file"
+              />
+              <p id="packing-scope" role="status"></p>
+            </div>
           </div>
         </div>
       </div>

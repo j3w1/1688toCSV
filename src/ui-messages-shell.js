@@ -2,6 +2,8 @@
 export const SHELL_MESSAGES = {
   'Workspace views': { zh: '工作区视图', es: 'Vistas del espacio de trabajo' },
   'Packing list': { zh: '装箱清单', es: 'Lista de empaque' },
+  'Fewer months': { zh: '收起月份', es: 'Menos meses' },
+  '+{0} months': { zh: '另外 {0} 个月', es: '+{0} meses' },
   'Selection and next step': {
     zh: '所选商品与下一步',
     es: 'Selección y siguiente paso',

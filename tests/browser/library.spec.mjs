@@ -51,7 +51,7 @@ async function confirmOperation(page, name) {
 }
 
 async function openCopyFormats(page) {
-  const panel = page.locator('#orders-view .copy-actions-panel')
+  const panel = page.locator('#orders-copy-actions .copy-actions-panel')
   if (!(await panel.isVisible()))
     await page
       .getByRole('button', { name: 'More copy formats', exact: true })

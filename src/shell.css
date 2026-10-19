@@ -25,7 +25,7 @@ body > .topbar {
   top: 0;
   z-index: 30;
   display: flex;
-  flex-wrap: wrap;
+  flex-wrap: nowrap;
   align-items: center;
   gap: var(--space-4);
   min-block-size: var(--topbar-height);
@@ -37,7 +37,9 @@ body > .topbar {
   display: flex;
   align-items: center;
   gap: 10px;
-  flex: none;
+  flex: 0 1 auto;
+  min-inline-size: 28px;
+  overflow: hidden;
   color: inherit;
   font-size: var(--text-l);
   font-weight: 680;
@@ -86,15 +88,40 @@ body > .topbar {
   }
 }
 
+/* The library line takes the space left between the tabs and the actions and
+   drops its least important items first, whatever the language. */
 .library-line {
   display: flex;
-  flex-wrap: wrap;
+  flex: 1 1 0;
+  flex-wrap: nowrap;
+  justify-content: flex-end;
   align-items: baseline;
   gap: 2px var(--space-3);
   min-inline-size: 0;
-  margin-inline-start: auto;
+  overflow: hidden;
+  container-type: inline-size;
   color: var(--muted);
   font-size: var(--text-s);
+}
+@container (max-width: 720px) {
+  .library-line .local-label {
+    display: none;
+  }
+}
+@container (max-width: 560px) {
+  .library-line > span:nth-child(3) {
+    display: none;
+  }
+}
+@container (max-width: 400px) {
+  .library-line > span:nth-child(4) {
+    display: none;
+  }
+}
+@container (max-width: 230px) {
+  .library-line > span:nth-child(2) {
+    display: none;
+  }
 }
 .library-line > span {
   display: inline-flex;
@@ -201,18 +228,17 @@ body > main {
   padding: var(--space-3) var(--space-5) var(--space-6);
 }
 
-@media (max-width: 1360px) {
-  .library-line .local-label {
-    display: none;
+@media (max-width: 1280px) {
+  .top-actions .open-orders {
+    font-size: 0;
+    gap: 0;
+  }
+  .top-actions .open-orders .ui-icon {
+    margin: 0;
   }
 }
 @media (max-width: 1180px) {
   .topbar .brand > span {
-    display: none;
-  }
-}
-@media (max-width: 1100px) {
-  .library-line > span:nth-child(3) {
     display: none;
   }
 }
@@ -227,8 +253,8 @@ body > main {
   }
   .library-line {
     order: 3;
-    inline-size: 100%;
-    margin-inline-start: 0;
+    flex-basis: 100%;
+    justify-content: flex-start;
   }
 }
 @media (max-width: 760px) {
@@ -286,24 +312,23 @@ body > main {
   gap: var(--space-1);
   padding: 0 var(--space-3) var(--space-2);
 }
+/* The chips show the filter state; the label stays for assistive technology. */
 .month-filter-label {
-  color: var(--muted);
-  font-size: var(--text-xs);
+  position: absolute;
+  inline-size: 1px;
+  block-size: 1px;
+  overflow: hidden;
+  clip-path: inset(50%);
+  white-space: nowrap;
 }
 .month-chips {
   display: flex;
+  flex-wrap: wrap;
   min-inline-size: 0;
   gap: 6px;
-  overflow-x: auto;
-  padding-block-end: 2px;
-  scrollbar-width: thin;
 }
 .month-chips #month-options {
-  display: flex;
-  flex-wrap: nowrap;
-  gap: 6px;
-  max-block-size: none;
-  overflow: visible;
+  display: contents;
 }
 #orders-view .month-choice {
   flex: none;
@@ -312,6 +337,11 @@ body > main {
   border-radius: 14px;
   font-size: var(--text-s);
   font-weight: 600;
+}
+#orders-view .month-more {
+  border-style: dashed;
+  color: var(--muted);
+  font-weight: 500;
 }
 #orders-view .month-choice[aria-pressed='true'] {
   background: var(--selected);
@@ -387,13 +417,25 @@ body > main {
 #orders-view .sheet-toolbar .filterbar {
   display: flex;
   flex: 1 1 440px;
+  flex-wrap: nowrap;
   min-inline-size: 0;
   justify-content: flex-end;
+  align-items: center;
   gap: var(--space-2);
   padding: 0;
 }
 #orders-view .sheet-toolbar .filterbar .search {
   flex: 0 1 360px;
+  min-inline-size: 140px;
+}
+#orders-view .sheet-toolbar .filterbar select {
+  flex: 0 1 auto;
+  min-inline-size: 0;
+  max-inline-size: 200px;
+}
+#orders-view .sheet-toolbar .filterbar .check {
+  flex: none;
+  white-space: nowrap;
 }
 #orders-view .order-totals {
   padding: var(--space-2) var(--space-4);
@@ -451,20 +493,60 @@ body > main {
   bottom: var(--space-3);
   z-index: 20;
   grid-column: 1 / -1;
+  /* Two groups: selection, then the actions. When both do not fit on one row,
+     in any language, the actions group moves to a second row as one unit. */
   display: flex;
   flex-wrap: wrap;
   align-items: center;
-  gap: var(--space-2) var(--space-3);
+  gap: var(--space-2) var(--space-4);
   padding: 10px var(--space-3) 10px var(--space-4);
   border: 1px solid var(--border);
   border-radius: 14px;
   background: var(--surface);
   box-shadow: var(--shadow-2);
 }
+.action-bar-selection {
+  display: flex;
+  flex: 1 1 auto;
+  align-items: center;
+  gap: var(--space-3);
+  min-inline-size: 0;
+}
+.action-bar-actions {
+  display: flex;
+  flex: 0 1 auto;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  align-items: center;
+  gap: var(--space-2) var(--space-3);
+  min-inline-size: 0;
+  margin-inline-start: auto;
+}
 .action-bar .product-selection-totals {
+  flex: 0 1 auto;
+  min-inline-size: 0;
+  max-inline-size: 460px;
   padding: 0;
   background: transparent;
-  min-inline-size: 0;
+}
+.action-bar .row-selection-actions {
+  display: flex;
+  flex: none;
+  gap: 2px;
+}
+.action-bar-export {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+}
+.action-bar .packing-launch {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-2);
+  padding-inline-start: var(--space-3);
+  border-inline-start: 1px solid var(--divider);
 }
 .action-bar .selection-totals-grid {
   display: flex;
@@ -474,15 +556,17 @@ body > main {
 .action-bar .selection-totals-grid > div {
   display: grid;
   gap: 0;
+  min-inline-size: 0;
 }
 .action-bar .selection-totals-grid dt {
+  overflow: hidden;
   font-size: var(--text-xs);
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 .action-bar .selection-totals-grid dd {
   font-size: var(--text-m);
-}
-.action-bar .product-selection-totals {
-  max-inline-size: 400px;
+  white-space: nowrap;
 }
 .action-bar .selection-totals-context {
   display: block;
@@ -495,22 +579,10 @@ body > main {
 .action-bar .selection-totals-context > span + span::before {
   content: ' · ';
 }
-.action-bar .row-selection-actions {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 2px;
-  min-inline-size: 0;
-}
-.action-bar .export-toolbar {
-  margin-inline-start: auto;
-}
 .action-bar .row-selection-actions button {
-  min-block-size: 32px;
-  padding: 4px var(--space-2);
   border-color: transparent;
   background: transparent;
   color: var(--muted);
-  font-size: var(--text-s);
 }
 .action-bar .export-toolbar {
   padding: 0;
@@ -522,19 +594,12 @@ body > main {
   font-size: var(--text-m);
   border-radius: var(--radius-m);
 }
-.action-bar .packing-launch {
-  display: flex;
-  flex-wrap: nowrap;
-  align-items: center;
-  gap: var(--space-2);
-  padding-inline-start: var(--space-3);
-  border-inline-start: 1px solid var(--divider);
-}
 .action-bar .packing-launch label {
   display: grid;
   gap: 1px;
   font-size: var(--text-xs);
   color: var(--muted);
+  white-space: nowrap;
 }
 .action-bar .packing-launch input {
   max-inline-size: 160px;
@@ -586,37 +651,30 @@ body > main {
 .action-bar #packing-scope:empty {
   display: none;
 }
+/* Two rows: selection on top, copy/print and the next step underneath. */
 @media (max-width: 1100px) {
   #orders-view.workspace {
     grid-template-columns: 260px minmax(0, 1fr);
-  }
-  .action-bar .packing-launch {
-    padding-inline-start: 0;
-    border-inline-start: 0;
   }
 }
 @media (max-width: 760px) {
   #orders-view.workspace {
     grid-template-columns: minmax(0, 1fr);
   }
+  /* On phones the bar would cover most rows; it follows the table instead. */
   .action-bar {
-    bottom: var(--space-2);
+    position: static;
     padding: var(--space-2);
   }
-  .action-bar .row-selection-actions {
-    flex-wrap: wrap;
-  }
-  .action-bar .row-selection-actions button {
-    white-space: normal;
+  .action-bar-actions {
+    flex: 1 1 100%;
+    justify-content: flex-start;
   }
   .action-bar .packing-launch {
-    flex-wrap: wrap;
-  }
-  .action-bar .product-selection-totals {
-    max-inline-size: 100%;
+    padding-inline-start: 0;
+    border-inline-start: 0;
   }
 }
-
 /* Change reviews (assign, move, remove, group): one compact row per product.
    Each change reads "label: before → after"; the Before/After captions stay
    in the DOM for assistive technology. */
@@ -810,10 +868,28 @@ body.packing-active #packing-view {
 }
 #packing-view .packing-top-tools {
   flex: 1 1 520px;
+  flex-wrap: nowrap;
   justify-content: flex-end;
+  min-inline-size: 0;
+  container-type: inline-size;
+}
+#packing-view .packing-top-tools > button,
+#packing-view .packing-top-tools > .packing-arrange {
+  flex: none;
+}
+/* Long labels (Spanish) turn the order button into an icon before anything wraps. */
+@container (max-width: 680px) {
+  #packing-view .open-selected-order {
+    font-size: 0;
+    gap: 0;
+  }
+  #packing-view .open-selected-order .ui-icon {
+    margin: 0;
+  }
 }
 #packing-view .packing-top-tools .packing-order-picker {
   flex: 1 1 320px;
+  min-inline-size: 0;
   max-inline-size: 520px;
   min-block-size: 40px;
   border: 1px solid var(--divider);
