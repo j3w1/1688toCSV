@@ -5609,6 +5609,7 @@ export async function startPackingWorkspace({
     edits.append(tabs)
     host.replaceChildren(el('h2', uiMessage('Settings')), edits)
     tabs.setAttribute('role', 'tablist')
+    tabs.setAttribute('aria-orientation', 'vertical')
     bindAttribute(tabs, 'aria-label', uiMessage('Settings sections'))
     function selectTab(id) {
       for (const tab of tabButtons) {
@@ -5652,9 +5653,9 @@ export async function startPackingWorkspace({
           ? 0
           : event.key === 'End'
             ? tabButtons.length - 1
-            : event.key === 'ArrowRight'
+            : event.key === 'ArrowRight' || event.key === 'ArrowDown'
               ? (current + 1) % tabButtons.length
-              : event.key === 'ArrowLeft'
+              : event.key === 'ArrowLeft' || event.key === 'ArrowUp'
                 ? (current + tabButtons.length - 1) % tabButtons.length
                 : -1
       if (index < 0) return
