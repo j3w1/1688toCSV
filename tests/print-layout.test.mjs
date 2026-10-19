@@ -16,6 +16,8 @@ import {
   edgeClearance,
   pageCaption,
   drawOps,
+  nextOffset,
+  numberingFits,
 } from '../src/print-layout.js'
 import { createPdf } from '../src/pdf-writer.js'
 
@@ -587,5 +589,55 @@ test('carton cut guides and scissors stay inside the printable area', () => {
     }
     for (const box of contentBoxes(ops))
       assert.ok(box.yMm + box.heightMm <= 293 + 1e-9, JSON.stringify(box))
+  }
+})
+
+test('recalibration adjusts the current offset instead of replacing it', () => {
+  assert.equal(nextOffset(0, 21), -1)
+  assert.equal(nextOffset(2, 22), 0)
+  assert.equal(nextOffset(-1, 19.4), -0.4)
+  assert.equal(nextOffset(4, 12), 5)
+  const ops = calibrationOps({ offsetXMm: 2 })
+  const texts = ops.filter((op) => op.type === 'text').map((op) => op.value)
+  assert.ok(
+    texts.some((value) =>
+      value.includes('New offset X = current X + 20 - measured')
+    )
+  )
+  assert.ok(texts.some((value) => value.includes('X +2.0 mm')))
+  // With X +2.0 applied, an ideal printer puts the reference line at 22 mm and the rule gives 0.
+  const vertical = ops.find(
+    (op) => op.type === 'line' && op.x1 === op.x2 && op.gray === 0.1
+  )
+  assert.equal(vertical.x1, 22)
+  assert.equal(nextOffset(2, vertical.x1), 0)
+})
+
+test('carton numbering is left out when it cannot fit below the mark', () => {
+  const plan = planCartonMarks([{ key: 'M1', quantity: 2 }])
+  const big = cartonSlots({ widthMm: 200, heightMm: 138.5 })
+  assert.equal(numberingFits(big), false)
+  const ops = markPageOps({ plan, slots: big, layout: {}, page: 0 })
+  assert.equal(
+    ops.filter((op) => op.type === 'text' && op.value.startsWith('Carton'))
+      .length,
+    0
+  )
+  const normal = cartonSlots(mark)
+  assert.equal(numberingFits(normal), true)
+  const placed = markPageOps({
+    plan,
+    slots: normal,
+    layout: {},
+    page: 0,
+  }).filter((op) => op.type === 'text' && op.value.startsWith('Carton'))
+  assert.equal(placed.length, 2)
+  for (const [index, op] of placed.entries()) {
+    const [box] = contentBoxes([op])
+    const slot = normal.slots[index]
+    assert.ok(
+      box.yMm >= slot.yMm + slot.heightMm,
+      'numbering stays below its mark'
+    )
   }
 })

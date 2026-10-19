@@ -345,3 +345,61 @@ test('an export in progress freezes its inputs, and Cancel or fractional quantit
     page.getByRole('dialog', { name: 'Recent print jobs', exact: true })
   ).toContainText('No recent print jobs yet.')
 })
+
+test('expanding older purchase months keeps keyboard focus on the toggle', async ({
+  extension,
+}) => {
+  const base = await extension.inspector.evaluate(
+    `(${createDemoRecords.toString()})(document)`
+  )
+  // Nine synthetic orders in nine different purchase months.
+  const orders = Array.from({ length: 9 }, (_, index) => {
+    const record = structuredClone(base[index % base.length])
+    const month = String(10 - index).padStart(2, '0')
+    record.snapshot.orderId = `90000000000000010${index}`
+    record.snapshot.sourceUrl = record.snapshot.sourceUrl.replace(
+      /orderId=\d+/,
+      `orderId=${record.snapshot.orderId}`
+    )
+    record.snapshot.purchasedAt = `2026-${month}-05T10:00:00+08:00`
+    return record
+  })
+  const restored = await extension.inspector.evaluate(
+    (records) =>
+      chrome.runtime.sendMessage({
+        type: 'BACKUP_RESTORE',
+        backup: {
+          format: '1688-order-library',
+          version: 1,
+          exportedAt: new Date().toISOString(),
+          orders: records,
+          history: [],
+          images: [],
+        },
+      }),
+    orders
+  )
+  expect(restored.ok, restored.error).toBe(true)
+  const page = await extension.context.newPage()
+  await page.addInitScript(() =>
+    localStorage.setItem('1688-library-purchase-months', '[]')
+  )
+  await page.goto(`${extension.extensionBaseUrl}/library.html`)
+  await expect(page.locator('#order-count')).toHaveText('9')
+  const more = page.locator('#month-options .month-more')
+  await expect(more).toHaveText('+2 months')
+  await expect(
+    page.locator('#month-options .month-choice:not(.month-more)')
+  ).toHaveCount(7)
+  await more.focus()
+  await page.keyboard.press('Enter')
+  await expect(
+    page.locator('#month-options .month-choice:not(.month-more)')
+  ).toHaveCount(9)
+  await expect(more).toHaveText('Fewer months')
+  await expect(more).toBeFocused()
+  await expect(more).toHaveAttribute('aria-expanded', 'true')
+  await page.keyboard.press('Enter')
+  await expect(more).toHaveText('+2 months')
+  await expect(more).toBeFocused()
+})

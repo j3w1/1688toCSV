@@ -2,6 +2,8 @@
 // and the PDF. Everything here is pure: quantities in, page drawings out. All
 // lengths are millimetres from the top-left corner of the page.
 
+import { captionText } from './pdf-writer.js'
+
 export const A4 = Object.freeze({ widthMm: 210, heightMm: 297 })
 /** Content closer than this to a paper edge may not print. */
 export const SAFE_EDGE_MM = 4
@@ -411,7 +413,7 @@ const MM_PER_CAPTION_CHAR = CAPTION_PT * 0.5 * MM_PER_PT
 // Helvetica proportions: about half an em per character, cap height 0.72 em
 // and descenders 0.22 em. Used to keep text inside the printable area.
 const textBox = (op) => {
-  const width = String(op.value).length * op.size * 0.5 * MM_PER_PT
+  const width = captionText(op.value).length * op.size * 0.5 * MM_PER_PT
   const above = op.size * 0.72 * MM_PER_PT
   const below = op.size * 0.22 * MM_PER_PT
   const left =
@@ -662,6 +664,24 @@ export function labelPageOps({ plan, grid, layout: layoutInput, page }) {
   return finish(ops, layout)
 }
 
+const NUMBER_PT = 7
+/**
+ * The baseline for "Carton n of N" below the mark in half `index`, or null
+ * when the band between the mark and the cut line (or printable bottom) is
+ * too small: numbering never overlaps the mark.
+ */
+function numberingBaseline(slots, index) {
+  const slot = slots.slots[index]
+  const above = NUMBER_PT * 0.72 * MM_PER_PT
+  const below = NUMBER_PT * 0.22 * MM_PER_PT
+  const baseline = slot.yMm + slot.heightMm + 1.5 + above
+  const limit = index === 0 ? slots.cutYMm - 1.5 : SAFE.bottom
+  return baseline + below <= limit ? baseline : null
+}
+/** Whether carton numbering fits below marks of this size in both halves. */
+export const numberingFits = (slots) =>
+  numberingBaseline(slots, 0) !== null && numberingBaseline(slots, 1) !== null
+
 /** Every operation for carton-mark page `page` (0-based), offsets applied. */
 export function markPageOps({ plan, slots, layout: layoutInput, page }) {
   const layout = normalizeMarkLayout(layoutInput)
@@ -676,16 +696,18 @@ export function markPageOps({ plan, slots, layout: layoutInput, page }) {
       box: slot,
       rotate: slots.rotated,
     })
-    if (layout.numbering && entry.number)
+    const baseline = numberingBaseline(slots, index)
+    if (layout.numbering && entry.number && baseline !== null)
       ops.push(
         text(
           `Carton ${entry.number} of ${entry.of}`,
           A4.widthMm / 2,
-          Math.min(
-            slot.yMm + slot.heightMm + 5,
-            (index + 1) * slots.cutYMm - SAFE_EDGE_MM - 1
-          ),
-          { size: 7, gray: 0.4, align: 'center' }
+          baseline,
+          {
+            size: NUMBER_PT,
+            gray: 0.4,
+            align: 'center',
+          }
         )
       )
   }
@@ -706,7 +728,12 @@ export function markPageOps({ plan, slots, layout: layoutInput, page }) {
   }
   const lowest = slots.slots[1]
   const baseline = captionBaseline(
-    Math.max(lowest.yMm + lowest.heightMm, A4.heightMm - 12),
+    Math.max(
+      lowest.yMm +
+        lowest.heightMm +
+        (layout.numbering && numberingBaseline(slots, 1) !== null ? 6 : 0),
+      A4.heightMm - 12
+    ),
     layout.offsetYMm
   )
   if (layout.pageSummary && baseline !== null)
@@ -751,6 +778,10 @@ function cross(ops, x, y) {
   ops.push(line(x - 4, y, x + 4, y, style), line(x, y - 4, x, y + 4, style))
 }
 
+/** The corrected offset after measuring a 20 mm reference printed at the current offset. */
+export const nextOffset = (currentMm, measuredMm, targetMm = 20) =>
+  offset(Number(currentMm) + targetMm - Number(measuredMm))
+
 const signed = (value) =>
   `${value >= 0 ? '+' : '-'}${Math.abs(value).toFixed(1)}`
 
@@ -774,19 +805,19 @@ export function calibrationOps(layoutInput = {}, { presetName = '' } = {}) {
     52
   )
   say(
-    '2. Measure from the left paper edge to the vertical line of the top-left cross:',
+    '2. Measure from the left paper edge to the vertical line of the top-left cross',
     58
   )
   say(
-    '   it should be 20 mm. Offset X = 20 minus what you measure (21 mm -> X -1.0).',
+    '   (target 20 mm). New offset X = current X + 20 - measured; X is printed below.',
     63
   )
   say(
-    '3. Measure from the top paper edge to its horizontal line: it should be 20 mm.',
+    '3. Do the same from the top paper edge to its horizontal line for offset Y.',
     69
   )
   say(
-    '   Offset Y = 20 minus what you measure. Save the offsets as a preset.',
+    '   Example: current X +2.0, measured 22 mm -> new X +0.0. Save them as a preset.',
     74
   )
   say(

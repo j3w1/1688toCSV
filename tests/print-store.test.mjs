@@ -5,6 +5,7 @@ import {
   restoreJob,
   PRINT_KEYS,
   RECENT_LIMIT,
+  RECENT_PRODUCT_LIMIT,
 } from '../src/print-store.js'
 
 function memoryStorage() {
@@ -61,13 +62,17 @@ test('named A4 presets start with the fixed default and replace by name', () => 
     offsetXMm: 0.8,
     offsetYMm: -9,
   })
-  assert.deepEqual(office, {
-    id: 'preset-office-hp',
-    name: 'Office HP',
-    marginMm: 6,
-    offsetXMm: 0.8,
-    offsetYMm: -5,
-  })
+  assert.match(office.id, /^preset-/)
+  assert.deepEqual(
+    { ...office, id: undefined },
+    {
+      id: undefined,
+      name: 'Office HP',
+      marginMm: 6,
+      offsetXMm: 0.8,
+      offsetYMm: -5,
+    }
+  )
   store.savePreset({
     name: 'Office HP',
     marginMm: 5,
@@ -205,4 +210,53 @@ test('regeneration finds products by order, group and variant, never by a reused
     restored.missing.map((product) => product.code),
     ['CE26100103']
   )
+})
+
+test('distinct non-Latin preset names stay distinct; the same name replaces in place', () => {
+  const store = createPrintStore(memoryStorage())
+  const office = store.savePreset({
+    name: '办公室',
+    marginMm: 5,
+    offsetXMm: 0.5,
+  })
+  const storeroom = store.savePreset({ name: '仓库', marginMm: 6 })
+  assert.notEqual(office.id, storeroom.id)
+  assert.deepEqual(
+    store.presets().map((preset) => preset.name),
+    ['A4 · 5 mm', '办公室', '仓库']
+  )
+  const again = store.savePreset({ name: '办公室', marginMm: 7 })
+  assert.equal(again.id, office.id)
+  assert.deepEqual(
+    store.presets().map((preset) => [preset.name, preset.marginMm]),
+    [
+      ['A4 · 5 mm', 5],
+      ['仓库', 6],
+      ['办公室', 7],
+    ]
+  )
+})
+
+test('an export with more products than history can hold is not kept rather than kept incomplete', () => {
+  const store = createPrintStore(memoryStorage())
+  const products = (count) =>
+    Array.from({ length: count }, (_, index) => ({
+      code: `CE${String(index).padStart(8, '0')}`,
+      quantity: 1,
+    }))
+  assert.equal(
+    store.recordJob({
+      kind: 'labels',
+      products: products(RECENT_PRODUCT_LIMIT + 1),
+      layout: {},
+    }),
+    null
+  )
+  assert.equal(store.recentJobs().length, 0)
+  const kept = store.recordJob({
+    kind: 'labels',
+    products: products(RECENT_PRODUCT_LIMIT),
+    layout: {},
+  })
+  assert.equal(kept.products.length, RECENT_PRODUCT_LIMIT)
 })

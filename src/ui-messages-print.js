@@ -169,6 +169,15 @@ export const PRINT_MESSAGES = {
     zh: '{0} 现在的编码是 {1}；标签使用新编码。',
     es: '{0} ahora tiene el código {1}; sus etiquetas usan el código nuevo.',
   },
+  'Carton numbers do not fit below marks of this size and are left out.': {
+    zh: '这个尺寸的箱唛下方放不下箱号，已省略。',
+    es: 'Los números de caja no caben debajo de marcas de este tamaño y se omiten.',
+  },
+  'PDF saved to your downloads: {0}. It has too many products to keep in recent jobs.':
+    {
+      zh: 'PDF 已保存到下载文件夹：{0}。商品太多，未保存到最近的打印任务。',
+      es: 'PDF guardado en tus descargas: {0}. Tiene demasiados productos para guardarlo en impresiones recientes.',
+    },
   'Building PDF…': { zh: '正在生成 PDF…', es: 'Creando el PDF…' },
   'PDF saved to your downloads: {0}': {
     zh: 'PDF 已保存到下载文件夹：{0}',

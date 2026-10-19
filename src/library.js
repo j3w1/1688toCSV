@@ -1734,8 +1734,14 @@ export async function startLibrary(
     )
     more.setAttribute('aria-expanded', String(monthsExpanded))
     more.addEventListener('click', () => {
+      const focused = document.activeElement === more
       monthsExpanded = !monthsExpanded
       renderMonthOptions()
+      // The toggle is re-created; keep keyboard focus on its replacement.
+      if (focused)
+        $('month-options')
+          .querySelector('.month-more')
+          ?.focus({ preventScroll: true })
     })
     $('month-options').replaceChildren(
       ...shown.map((month) => {

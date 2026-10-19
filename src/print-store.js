@@ -13,6 +13,8 @@ export const PRINT_KEYS = Object.freeze({
   recent: '1688-print-recent',
 })
 export const RECENT_LIMIT = 5
+/** Larger exports are not kept in history rather than kept incomplete. */
+export const RECENT_PRODUCT_LIMIT = 500
 const PRESET_LIMIT = 20
 
 function safeStorage() {
@@ -26,6 +28,10 @@ function safeStorage() {
 const normalize = (kind, value) =>
   kind === 'marks' ? normalizeMarkLayout(value) : normalizeLabelLayout(value)
 
+// Ids never derive from the name: any two distinct names stay distinct presets.
+const newPresetId = () =>
+  `preset-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`
+
 function cleanPreset(input) {
   const name = String(input?.name ?? '')
     .trim()
@@ -33,9 +39,7 @@ function cleanPreset(input) {
   if (!name) return null
   const layout = normalizeLabelLayout(input)
   return {
-    id: String(
-      input.id || `preset-${name.toLowerCase().replace(/[^a-z0-9]+/g, '-')}`
-    ).slice(0, 64),
+    id: String(input.id || newPresetId()).slice(0, 64),
     name,
     marginMm: layout.marginMm,
     offsetXMm: layout.offsetXMm,
@@ -59,10 +63,14 @@ export const refKey = (ref) =>
 
 function cleanJob(input) {
   if (!input || !['labels', 'marks'].includes(input.kind)) return null
+  if (
+    !Array.isArray(input.products) ||
+    input.products.length > RECENT_PRODUCT_LIMIT
+  )
+    return null
   const products = Array.isArray(input.products)
     ? input.products
         .filter((product) => typeof product?.code === 'string' && product.code)
-        .slice(0, 500)
         .map((product) => ({
           code: product.code,
           ...(cleanRef(product.ref) ? { ref: cleanRef(product.ref) } : {}),
@@ -126,7 +134,16 @@ export function createPrintStore(storage = safeStorage()) {
     },
     /** Save or replace a named preset; returns it. */
     savePreset(input) {
-      const preset = cleanPreset(input)
+      const name = String(input?.name ?? '').trim()
+      // Saving under an existing name replaces that preset and keeps its id.
+      const existing = store
+        .presets()
+        .slice(1)
+        .find((entry) => entry.name === name)
+      const preset = cleanPreset({
+        ...input,
+        id: existing?.id ?? newPresetId(),
+      })
       if (!preset) throw new Error('Name the preset first.')
       if (
         preset.name === DEFAULT_PRESET.name ||

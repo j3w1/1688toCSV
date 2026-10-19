@@ -23,8 +23,10 @@ import {
   contentBoxes,
   edgeClearance,
   drawOps,
+  numberingFits,
 } from './print-layout.js'
 import { createPdf, rgbImage } from './pdf-writer.js'
+import { canvasPage } from './print-canvas.js'
 import { createPrintStore } from './print-store.js'
 
 /** Labels are rendered at 600 dpi inside the PDF; the preview uses 150 dpi. */
@@ -118,76 +120,6 @@ function choice(name, options, current) {
     return input
   })
   return { group, value: () => inputs.find((input) => input.checked)?.value }
-}
-
-/** Canvas drawing with the PDF page API, at PREVIEW_PX_PER_MM. */
-function canvasPage(context) {
-  const k = PREVIEW_PX_PER_MM
-  const shade = (gray) => {
-    const value = Math.round(gray * 255)
-    return `rgb(${value},${value},${value})`
-  }
-  const api = {
-    image(image, box, { rotate = false } = {}) {
-      if (!image) {
-        context.fillStyle = '#eee'
-        context.fillRect(
-          box.xMm * k,
-          box.yMm * k,
-          box.widthMm * k,
-          box.heightMm * k
-        )
-        return api
-      }
-      context.save()
-      if (rotate) {
-        context.translate(box.xMm * k, (box.yMm + box.heightMm) * k)
-        context.rotate(-Math.PI / 2)
-        context.drawImage(image, 0, 0, box.heightMm * k, box.widthMm * k)
-      } else
-        context.drawImage(
-          image,
-          box.xMm * k,
-          box.yMm * k,
-          box.widthMm * k,
-          box.heightMm * k
-        )
-      context.restore()
-      return api
-    },
-    line(x1, y1, x2, y2, { gray = 0.6, widthPt = 0.25, dash = null } = {}) {
-      context.save()
-      context.strokeStyle = shade(gray)
-      context.lineWidth = Math.max(0.5, (widthPt / 72) * 25.4 * k)
-      context.setLineDash(dash ? dash.map((d) => d * k) : [])
-      context.beginPath()
-      context.moveTo(x1 * k, y1 * k)
-      context.lineTo(x2 * k, y2 * k)
-      context.stroke()
-      context.restore()
-      return api
-    },
-    circle(cx, cy, r, { gray = 0.6 } = {}) {
-      context.save()
-      context.strokeStyle = shade(gray)
-      context.lineWidth = 0.6
-      context.beginPath()
-      context.arc(cx * k, cy * k, r * k, 0, Math.PI * 2)
-      context.stroke()
-      context.restore()
-      return api
-    },
-    text(value, x, y, { size = 6, gray = 0.45, align = 'left' } = {}) {
-      context.save()
-      context.fillStyle = shade(gray)
-      context.font = `${(size / 72) * 25.4 * k}px Helvetica, Arial, sans-serif`
-      context.textAlign = align
-      context.fillText(String(value), x * k, y * k)
-      context.restore()
-      return api
-    },
-  }
-  return api
 }
 
 const formatDate = (iso) =>
@@ -726,6 +658,12 @@ export function openPrintDialog({
           )
         )
       if (plan.blankHalf) warning(uiMessage('The last half page stays blank.'))
+      if (layout.numbering && !numberingFits(slots))
+        warning(
+          uiMessage(
+            'Carton numbers do not fit below marks of this size and are left out.'
+          )
+        )
     }
     if (plan?.pages) {
       let clearance = Infinity
@@ -819,7 +757,7 @@ export function openPrintDialog({
       context.fillStyle = '#fff'
       context.fillRect(0, 0, preview.width, preview.height)
       drawOps(
-        canvasPage(context),
+        canvasPage(context, PREVIEW_PX_PER_MM),
         ops,
         (key) => images.get(`${key}@${PREVIEW_DPI}`)?.bitmap
       )
@@ -874,7 +812,7 @@ export function openPrintDialog({
       const filename = printFileName(kind, state.plan.items.length)
       savePdf(bytes, filename)
       const cap = (key) => whole(state.caps.get(key), null)
-      store.recordJob({
+      const recorded = store.recordJob({
         kind,
         products: state.plan.items.map((entry) => ({
           code: entry.key,
@@ -891,7 +829,12 @@ export function openPrintDialog({
       })
       bindText(
         status,
-        uiMessage('PDF saved to your downloads: {0}', { 0: filename })
+        recorded
+          ? uiMessage('PDF saved to your downloads: {0}', { 0: filename })
+          : uiMessage(
+              'PDF saved to your downloads: {0}. It has too many products to keep in recent jobs.',
+              { 0: filename }
+            )
       )
       dialog.dataset.exported = filename
     } catch (error) {

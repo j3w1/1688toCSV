@@ -11,13 +11,26 @@ function format(value) {
   return Object.is(rounded, -0) ? '0' : String(rounded)
 }
 
-/** WinAnsi-safe caption text: printable ASCII only, PDF string escapes applied. */
-export function pdfText(value) {
+/** The caption text that prints: printable ASCII only, single spaces. */
+export function captionText(value) {
   return String(value)
     .replace(/[^\x20-\x7e]/g, '')
     .replace(/ {2,}/g, ' ')
     .trim()
-    .replace(/[\\()]/g, (character) => `\\${character}`)
+}
+
+/** WinAnsi-safe caption text with PDF string escapes applied. */
+export function pdfText(value) {
+  return captionText(value).replace(/[\\()]/g, (character) => `\\${character}`)
+}
+
+/**
+ * Left edge (mm) of a caption anchored at xMm. Helvetica averages about half
+ * an em per character; the PDF and the preview both use this one rule.
+ */
+export function captionLeftMm(value, xMm, size, align = 'left') {
+  const width = (captionText(value).length * size * 0.5) / POINTS_PER_MM
+  return xMm - (align === 'right' ? width : align === 'center' ? width / 2 : 0)
 }
 
 async function deflate(bytes) {
@@ -108,11 +121,7 @@ export function createPdf({
         text(value, xMm, yMm, { size = 6, gray = 0.45, align = 'left' } = {}) {
           const text = pdfText(value)
           if (!text) return page
-          // Helvetica averages about half an em per character; captions only.
-          const width = text.length * size * 0.5
-          const left =
-            xMm * POINTS_PER_MM -
-            (align === 'right' ? width : align === 'center' ? width / 2 : 0)
+          const left = captionLeftMm(value, xMm, size, align) * POINTS_PER_MM
           ops.push(
             `BT /F1 ${format(size)} Tf ${format(gray)} g ${format(left)} ${y(yMm)} Td (${text}) Tj ET`
           )
