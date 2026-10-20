@@ -8,6 +8,80 @@ const values = (inputs) =>
   inputs.evaluateAll((nodes) => nodes.map((input) => input.value))
 
 for (const kind of ['labels', 'marks']) {
+  test(`${kind} +5 stays inside each quantity field and increments only its row safely`, async ({
+    extension,
+  }) => {
+    const { page, dialog } = await openPrintDialogFixture(extension, { kind })
+    const quantities = dialog.getByLabel(/^Quantity for /)
+    const buttons = dialog.locator('[data-action="add-five-print-quantity"]')
+    await expect(buttons).toHaveCount(3)
+    const first = buttons.first()
+    await expect(first).toHaveAccessibleName(
+      'Add 5 to requested quantity for CE26100101'
+    )
+    await first.hover()
+    await expect(dialog.getByRole('tooltip')).toContainText(
+      'The preview updates immediately; the maximum is 9999.'
+    )
+    await first.click()
+    await first.click()
+    expect(await values(quantities)).toEqual(['11', '3', '0'])
+    await expect(dialog.locator('.print-quantity-preview')).toHaveText(
+      'Total requested: 14 → 28'
+    )
+    await expect(first).toBeFocused()
+    await page.keyboard.press('Enter')
+    expect(await values(quantities)).toEqual(['16', '3', '0'])
+    await quantities.first().fill('23')
+    await quantities.first().press('ArrowUp')
+    await first.click()
+    expect(await values(quantities)).toEqual(['29', '3', '0'])
+    await quantities.nth(2).fill('')
+    await buttons.nth(2).click()
+    expect(await values(quantities)).toEqual(['29', '3', '5'])
+    for (const invalid of ['2.5', '1e2', '-1', '10000']) {
+      await quantities.nth(1).fill(invalid)
+      await expect(buttons.nth(1)).toBeDisabled()
+      const before = await values(quantities)
+      await buttons.nth(1).dispatchEvent('click')
+      expect(await values(quantities)).toEqual(before)
+    }
+    await quantities.nth(1).fill('3')
+    await quantities.first().fill('9994')
+    await expect(first).toBeEnabled()
+    await first.click()
+    await expect(quantities.first()).toHaveValue('9999')
+    await expect(first).toBeDisabled()
+    await first.dispatchEvent('click')
+    await expect(quantities.first()).toHaveValue('9999')
+    await quantities.first().fill('9995')
+    await expect(first).toBeDisabled()
+    await quantities.first().fill('9')
+    const inputBox = await quantities.first().boundingBox()
+    const buttonBox = await first.boundingBox()
+    expect(inputBox.width).toBe(72)
+    expect(inputBox.height).toBe(28)
+    expect(buttonBox.x).toBeGreaterThanOrEqual(inputBox.x)
+    expect(buttonBox.y).toBeGreaterThanOrEqual(inputBox.y)
+    expect(buttonBox.x + buttonBox.width).toBeLessThanOrEqual(
+      inputBox.x + inputBox.width
+    )
+    expect(buttonBox.y + buttonBox.height).toBeLessThanOrEqual(
+      inputBox.y + inputBox.height
+    )
+    await page.evaluate(() => Print.setLanguage('es', { persist: false }))
+    await expect(first).toHaveAccessibleName(
+      'Sumar 5 a la cantidad solicitada de CE26100101'
+    )
+    await first.click()
+    await expect(quantities.first()).toHaveCount(0) // the English accessible name has translated
+    await expect(
+      dialog.locator('.print-quantity-input input').first()
+    ).toHaveValue('14')
+    await dialog.locator('[data-action="close-print-dialog"]').click()
+    await page.close()
+  })
+
   test(`${kind} adjusts all requested quantities with a preview, custom factors and atomic validation`, async ({
     extension,
   }) => {

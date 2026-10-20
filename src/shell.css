@@ -1339,6 +1339,41 @@ dialog.print-dialog.packing-review {
   font-variant-numeric: tabular-nums;
   font-size: var(--text-s);
 }
+.print-quantity-input {
+  position: relative;
+  inline-size: 72px;
+}
+.print-dialog .print-quantity-input input {
+  padding-inline-end: 28px;
+  appearance: textfield;
+}
+.print-quantity-input input::-webkit-inner-spin-button,
+.print-quantity-input input::-webkit-outer-spin-button {
+  appearance: none;
+  margin: 0;
+}
+.print-dialog .print-quantity-add {
+  position: absolute;
+  inset-inline-end: 3px;
+  inset-block-start: 3px;
+  inline-size: 23px;
+  block-size: 22px;
+  min-inline-size: 0;
+  min-block-size: 0;
+  margin: 0;
+  padding: 0;
+  border: 0;
+  border-radius: 4px;
+  background: var(--selected);
+  color: var(--accent-text);
+  font-size: var(--text-xs);
+  font-weight: 600;
+  line-height: 1;
+}
+.print-dialog .print-quantity-add:hover:enabled {
+  background: var(--control-accent);
+  color: var(--on-accent);
+}
 .print-counts .print-cap-column input::placeholder {
   font-size: var(--text-xs);
 }

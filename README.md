@@ -163,6 +163,8 @@ Carton previews sit beside each group's names in a compact 100px-wide area, with
 
 ## Print labels and carton marks
 
+Use the tiny **+5** inside a requested-quantity field to add five to that product immediately. It works for labels and carton marks, keeps the row compact, and stops before exceeding 9999.
+
 Both print dialogs have an **Adjust quantities** bar. Choose **Multiply** or **Divide**, enter a whole-number **Factor** (1–9999), review the before/after requested total, then choose **Apply to all** (or press Enter in Factor). This changes every requested quantity in the dialog; source packing quantities and per-product extra-copy limits stay intact. Division rounds each product up to a whole copy, and zero stays zero. The result names any product that would exceed 9999 and applies nothing until that issue is corrected. Extra label copies and page totals are recalculated after applying.
 
 Select prepared products, then choose **Print… → Print labels…** or **Print carton marks…** in Orders or in the packing toolbar. The compact quantity table shows each product and the requested, extra and final counts. Hover or focus controls for an explanation of their effect, including the spare-label choices under **Advanced**. The preview shows every page with its products; use the arrows to move between pages. Scroll to zoom around the pointer, drag to pan, or use **−**, **+** and **Fit page**. With the preview focused, arrows pan, **+/−** zoom and **0** fits the page. Preview zoom does not change PDF dimensions. **Export PDF** downloads the file offline, named like `CE-labels-2026-10-19-153012-3-products.pdf` (date and time), with a JSON summary of its products and orders next to it. Print it at **100% (Actual size)**.

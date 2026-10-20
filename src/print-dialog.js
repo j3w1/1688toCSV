@@ -645,7 +645,30 @@ export function openPrintDialog({
       )
     )
     const requested = el('td')
-    requested.append(input)
+    const quantityInput = el('div', undefined, 'print-quantity-input')
+    const addFive = el('button', '+5', 'print-quantity-add')
+    addFive.type = 'button'
+    addFive.dataset.action = 'add-five-print-quantity'
+    bindAttribute(
+      addFive,
+      'aria-label',
+      uiMessage('Add 5 to requested quantity for {0}', { 0: item.code })
+    )
+    preparationHelp(
+      addFive,
+      uiMessage(
+        'Add 5 to this product’s requested quantity. The preview updates immediately; the maximum is 9999.'
+      )
+    )
+    addFive.addEventListener('click', () => {
+      if (busy || closed) return
+      const value = whole(quantities.get(item.key), 0)
+      if (!Number.isInteger(value) || value > 9994) return
+      input.value = String(value + 5)
+      input.dispatchEvent(new Event('input', { bubbles: true }))
+    })
+    quantityInput.append(input, addFive)
+    requested.append(quantityInput)
     const extra = el('td', '', 'numeric')
     const total = el('td', '', 'numeric')
     const capCell = el('td', undefined, 'print-cap-column')
@@ -677,7 +700,7 @@ export function openPrintDialog({
     }
     row.append(name, requested, ...(marks ? [total] : [extra, capCell, total]))
     tbody.append(row)
-    cellsByKey.set(item.key, { extra, total, input, cap })
+    cellsByKey.set(item.key, { extra, total, input, cap, addFive })
   }
   const footRow = el('tr')
   const footLabel = el('th', uiMessage('Total'))
@@ -865,7 +888,9 @@ export function openPrintDialog({
     let error = ''
     let invalid = false
     for (const [key, cells] of cellsByKey) {
-      const badQuantity = Number.isNaN(whole(quantities.get(key), 0))
+      const quantity = whole(quantities.get(key), 0)
+      const badQuantity = Number.isNaN(quantity)
+      cells.addFive.disabled = busy || badQuantity || quantity > 9994
       const badCap =
         !marks && layout.limitExtras && Number.isNaN(whole(caps.get(key), null))
       // Explicit "true": the app rejects values the native input accepts (1e2).

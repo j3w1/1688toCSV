@@ -332,6 +332,15 @@ export const PRINT_MESSAGES = {
     },
   'No limit': { zh: '不限', es: 'Sin límite' },
   'Quantity for {0}': { zh: '{0} 的数量', es: 'Cantidad de {0}' },
+  'Add 5 to requested quantity for {0}': {
+    zh: '{0} 的所需数量加 5',
+    es: 'Sumar 5 a la cantidad solicitada de {0}',
+  },
+  'Add 5 to this product’s requested quantity. The preview updates immediately; the maximum is 9999.':
+    {
+      zh: '将此商品的所需数量加 5。预览会立即更新；最大值为 9999。',
+      es: 'Suma 5 a la cantidad solicitada de este producto. La vista previa se actualiza de inmediato; el máximo es 9999.',
+    },
   'Max extra for {0}': { zh: '{0} 最多额外份数', es: 'Extra máx. de {0}' },
   'Recorded cartons: {0}': {
     zh: '已记录箱数：{0}',
