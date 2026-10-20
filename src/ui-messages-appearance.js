@@ -15,18 +15,19 @@ export const APPEARANCE_MESSAGES = {
       es: 'Configura el contenido compartido, las medidas de impresión y el logotipo de tus códigos de barras y marcas de caja.',
     },
   'Reset all label and tag colors': {
-    zh: '重置全部标签颜色',
-    es: 'Restablecer todos los colores',
+    zh: '重置全部状态与标签颜色',
+    es: 'Restablecer colores de estados y etiquetas',
   },
-  'Apply the recommended colors to every status, date, activity label and custom tag in both modes. Save settings to keep them.':
+  'Reset status, date and activity label colors here, plus order and product tag colors in Tags, in both modes. Save settings to apply.':
     {
-      zh: '为两种模式下的所有状态、日期、活动和自定义标签应用推荐颜色。保存设置后生效。',
-      es: 'Aplica los colores recomendados a todos los estados, fechas, actividades y etiquetas personalizadas en ambos modos. Guarda los ajustes para conservarlos.',
+      zh: '重置此处的状态、日期和活动颜色，以及“标签”中的订单和商品标签颜色，适用于两种模式。保存设置后生效。',
+      es: 'Restablece los colores de estados, fechas y actividades de esta sección, y los de pedidos y productos en Etiquetas, en ambos modos. Guarda los ajustes para aplicarlos.',
     },
-  'Recommended colors are shown below. Save settings to apply.': {
-    zh: '下方已显示推荐颜色。保存设置后生效。',
-    es: 'Los colores recomendados se muestran abajo. Guarda los ajustes para aplicarlos.',
-  },
+  'Recommended label colors are shown here and tag colors in Tags. Save settings to apply.':
+    {
+      zh: '此处已显示推荐的状态颜色，推荐标签颜色可在“标签”中查看。保存设置后生效。',
+      es: 'Aquí se muestran los colores recomendados de estados, y en Etiquetas los de pedidos y productos. Guarda los ajustes para aplicarlos.',
+    },
   Appearance: { zh: '外观', es: 'Apariencia' },
   'Workspace appearance': { zh: '工作区外观', es: 'Apariencia del espacio' },
   'Choose an orange-inspired palette for each mode. The header toggle switches between your light and dark palettes.':

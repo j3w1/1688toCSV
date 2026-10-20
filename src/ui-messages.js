@@ -23,6 +23,18 @@ import { SUMMARY_MESSAGES } from './ui-messages-summary.js'
 
 // Explicit interface messages only; original seller, product and label values are never translated.
 export const UI_MESSAGES = {
+  'Preparing compressed backup…': {
+    zh: '正在准备压缩备份…',
+    es: 'Preparando copia comprimida…',
+  },
+  'The backup image archive is incomplete or invalid.': {
+    zh: '备份中的图片归档不完整或无效。',
+    es: 'El archivo de imágenes de la copia está incompleto o no es válido.',
+  },
+  'The compressed backup is damaged or incomplete.': {
+    zh: '压缩备份已损坏或不完整。',
+    es: 'La copia comprimida está dañada o incompleta.',
+  },
   'The underline identifies the four-digit product number. CE and year/month stay together; code values are unchanged.':
     {
       zh: '下划线标出四位商品编号。CE 与年月保持相连；编码值不变。',

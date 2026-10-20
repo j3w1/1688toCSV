@@ -1,6 +1,7 @@
 import { test, expect } from './extension-fixture.mjs'
 import { createDemoRecords } from '../../preview/library-fixture.js'
-import { readFile, stat, writeFile } from 'node:fs/promises'
+import { readFile, writeFile } from 'node:fs/promises'
+import { readBackupFile } from '../../src/backup-file.js'
 import { copyCurrentImageBatch } from './copy-actions-helpers.mjs'
 
 async function seed(extension, configure) {
@@ -880,8 +881,33 @@ test('large image backups restore and export without runtime message limits', as
   )
   expect(downloads).toHaveLength(1)
   expect(downloads[0].state).toBe('complete')
-  expect((await stat(downloads[0].filename)).size).toBeGreaterThan(
-    64 * 1024 * 1024
+  expect(download.suggestedFilename()).toMatch(/\.json\.gz$/)
+  const compressed = await readFile(downloads[0].filename)
+  expect(compressed.length).toBeLessThan(buffer.byteLength / 10)
+  const exported = await readBackupFile(new Blob([compressed]))
+  expect(exported.orders).toHaveLength(records.length)
+  expect(exported.images).toHaveLength(37)
+  for (const savedImage of exported.images)
+    expect(savedImage.dataUrl).toBe(dataUrl)
+
+  const compressedPath = testInfo.outputPath('synthetic-backup.json.gz')
+  await writeFile(compressedPath, compressed)
+  await page.locator('#backup-file').setInputFiles(compressedPath)
+  await expect(page.locator('#feedback')).toContainText('Backup restored')
+  await expect(page.locator('#sheet-body tr[data-selection-key]')).toHaveCount(
+    8
+  )
+
+  const corrupt = Buffer.from(compressed)
+  corrupt[corrupt.length - 1] ^= 0xff
+  const corruptPath = testInfo.outputPath('corrupt-backup.json.gz')
+  await writeFile(corruptPath, corrupt)
+  await page.locator('#backup-file').setInputFiles(corruptPath)
+  await expect(page.locator('.error-notice')).toContainText(
+    'compressed backup is damaged'
+  )
+  await expect(page.locator('#sheet-body tr[data-selection-key]')).toHaveCount(
+    8
   )
 })
 

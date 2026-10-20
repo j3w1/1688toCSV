@@ -127,6 +127,35 @@ test('store cards keep IDs in details, show minimal charges and copy WeChat with
   await expect(cards.locator('.order-card-charges')).toHaveCount(1)
   const copy = nativeCard.locator('.store-wechat-copy')
   await expect(copy).toHaveAccessibleName('Copy WeChat ID')
+  await expect(copy.locator('.ui-icon')).toHaveAttribute('aria-hidden', 'true')
+  await expect(copy.locator('.ui-icon')).toHaveCSS('width', '13px')
+  for (const width of [1280, 375]) {
+    await page.setViewportSize({ width, height: 960 })
+    const withCopy = await nativeCard.evaluate((card) => ({
+      title: card.querySelector('.order-card-identity').getBoundingClientRect()
+        .height,
+      card: card.getBoundingClientRect().height,
+      copy: card.querySelector('.store-wechat-copy').getBoundingClientRect()
+        .height,
+      seller: card
+        .querySelector('.order-details-trigger')
+        .getBoundingClientRect().height,
+    }))
+    expect(withCopy.copy).toBe(16)
+    expect(withCopy.copy).toBeLessThanOrEqual(withCopy.seller)
+    await copy.evaluate((button) => {
+      button.style.display = 'none'
+    })
+    const withoutCopy = await nativeCard.evaluate((card) => ({
+      title: card.querySelector('.order-card-identity').getBoundingClientRect()
+        .height,
+      card: card.getBoundingClientRect().height,
+    }))
+    expect(withCopy.title).toBe(withoutCopy.title)
+    expect(withCopy.card).toBe(withoutCopy.card)
+    await copy.evaluate((button) => button.style.removeProperty('display'))
+  }
+  await page.setViewportSize({ width: 1280, height: 960 })
   await copy.click()
   await expect(copy).toHaveClass(/copied/)
   expect(await page.evaluate(() => navigator.clipboard.readText())).toBe(
@@ -144,6 +173,11 @@ test('store cards keep IDs in details, show minimal charges and copy WeChat with
   await expect(details.locator('input[name="store-name"]')).toHaveCount(0)
   await expect(details.getByLabel('WeChat ID', { exact: true })).toHaveValue(
     'Native_Wechat_88'
+  )
+  await expect(details.locator('.store-wechat-copy')).toHaveCSS('width', '24px')
+  await expect(details.locator('.store-wechat-copy .ui-icon')).toHaveCSS(
+    'width',
+    '18px'
   )
   await details
     .getByRole('button', { name: 'Close order details', exact: true })

@@ -357,10 +357,10 @@ export const HELP_MESSAGES = {
     es: 'Páginas de lista revisadas',
   },
   'Loading preview…': { zh: '正在加载预览…', es: 'Cargando vista previa…' },
-  'Merge a saved backup into this library, preserving newer edits and checking current code conflicts.':
+  'Restore a compressed .json.gz or older .json backup, preserving newer edits and checking current code conflicts.':
     {
-      zh: '将备份合并到当前订单库，保留较新的修改并检查当前货号是否冲突。',
-      es: 'Incorpora una copia de seguridad a esta biblioteca, conserva las ediciones más recientes y comprueba si hay conflictos con códigos en uso.',
+      zh: '恢复压缩的 .json.gz 或旧版 .json 备份，保留较新的修改并检查当前货号是否冲突。',
+      es: 'Restaura una copia comprimida .json.gz o una anterior .json, conserva las ediciones más recientes y comprueba los códigos en uso.',
     },
   'Moving to the next order': {
     zh: '正在转到下一订单',
@@ -430,10 +430,10 @@ export const HELP_MESSAGES = {
       zh: '确定从此浏览器删除 {count} 个订单及其历史记录？可以使用已保存的备份恢复。',
       es: '¿Eliminar {count} pedidos y su historial de este navegador? Puedes recuperarlos con una copia de seguridad guardada.',
     },
-  'Save orders, packing edits, naming rules and current code assignments to a local file.':
+  'Save a compressed backup with each picture stored once. Keeps orders, packing edits, history, settings and original photos.':
     {
-      zh: '将订单、装箱修改、命名规则及当前货号分配保存到本地文件。',
-      es: 'Guarda pedidos, cambios de empaque, reglas de nombres y asignaciones actuales de códigos en un archivo local.',
+      zh: '保存压缩备份，每张图片仅存储一次。保留订单、装箱修改、历史记录、设置和原始照片。',
+      es: 'Guarda una copia comprimida con cada imagen una sola vez. Conserva pedidos, cambios de empaque, historial, ajustes y fotos originales.',
     },
   'Saved orders and labels will stay in the library.': {
     zh: '已保存的订单和标签仍保留在订单库中。',

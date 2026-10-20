@@ -56,7 +56,7 @@ test('tag picker ranks keyboard choices and Settings randomizes colors or remove
   extension,
 }) => {
   const page = await openWorkspace(extension)
-  let dialog = await settings(page, 'Appearance')
+  let dialog = await settings(page, 'Tags')
   let catalog = dialog.locator('[data-tag-scope=order]')
   for (const name of ['Fragile', 'Fragile sale', 'Spare']) {
     await catalog.getByLabel('New order tag', { exact: true }).fill(name)
@@ -64,23 +64,24 @@ test('tag picker ranks keyboard choices and Settings randomizes colors or remove
       .getByRole('button', { name: 'Create tag', exact: true })
       .click()
   }
-  const oldLabel = await dialog
-    .getByLabel('Dates · Dark', { exact: true })
-    .inputValue()
   const oldTag = await catalog
     .getByLabel('Fragile background · Dark', { exact: true })
+    .inputValue()
+  await catalog
+    .getByRole('button', { name: 'Randomize Fragile colors', exact: true })
+    .click()
+  const newTag = await catalog
+    .getByLabel('Fragile background · Dark', { exact: true })
+    .inputValue()
+  await dialog.getByRole('tab', { name: 'Appearance', exact: true }).click()
+  const oldLabel = await dialog
+    .getByLabel('Dates · Dark', { exact: true })
     .inputValue()
   await dialog
     .getByRole('button', { name: 'Randomize Dates colors', exact: true })
     .click()
-  await catalog
-    .getByRole('button', { name: 'Randomize Fragile colors', exact: true })
-    .click()
   const newLabel = await dialog
     .getByLabel('Dates · Dark', { exact: true })
-    .inputValue()
-  const newTag = await catalog
-    .getByLabel('Fragile background · Dark', { exact: true })
     .inputValue()
   expect(newLabel).not.toBe(oldLabel)
   expect(newTag).not.toBe(oldTag)
@@ -121,6 +122,7 @@ test('tag picker ranks keyboard choices and Settings randomizes colors or remove
   await expect(dialog.getByLabel('Dates · Dark', { exact: true })).toHaveValue(
     newLabel
   )
+  await dialog.getByRole('tab', { name: 'Tags', exact: true }).click()
   await expect(
     catalog.getByLabel('Fragile background · Dark', { exact: true })
   ).toHaveValue(newTag)
@@ -184,6 +186,7 @@ test('settings keeps tabs and save visible while reset-all previews recommended 
   await dialog
     .getByLabel('Awaiting payment · Dark', { exact: true })
     .fill('#abcdef')
+  await dialog.getByRole('tab', { name: 'Tags', exact: true }).click()
   await dialog
     .getByLabel('New order tag', { exact: true })
     .fill('Keep this name')
@@ -197,6 +200,16 @@ test('settings keeps tabs and save visible while reset-all previews recommended 
   await dialog
     .getByLabel('Keep this name text · Dark', { exact: true })
     .fill('#fedcba')
+  const products = dialog.locator('[data-tag-scope=product]')
+  await products
+    .getByLabel('New product tag', { exact: true })
+    .fill('Product draft')
+  await products
+    .getByRole('button', { name: 'Create tag', exact: true })
+    .click()
+  await products
+    .getByLabel('Product draft background · Dark', { exact: true })
+    .fill('#654321')
   await save(dialog)
   dialog = await settings(page, 'Appearance')
   await dialog
@@ -208,19 +221,23 @@ test('settings keeps tabs and save visible while reset-all previews recommended 
   await expect(
     dialog.getByLabel('Awaiting payment · Dark', { exact: true })
   ).not.toHaveValue('#abcdef')
+  await expect(dialog.getByLabel('Dark palette', { exact: true })).toHaveValue(
+    'terracotta'
+  )
+  await expect(dialog.locator('.appearance-reset-status')).toContainText(
+    'tag colors in Tags'
+  )
+  await expect(dialog.locator('.appearance-sample-labels')).toHaveCount(2)
+  await dialog.getByRole('tab', { name: 'Tags', exact: true }).click()
   await expect(
     dialog.getByLabel('Keep this name background · Light', { exact: true })
   ).not.toHaveValue('#123456')
   await expect(
     dialog.getByLabel('Keep this name text · Dark', { exact: true })
   ).not.toHaveValue('#fedcba')
-  await expect(dialog.getByLabel('Dark palette', { exact: true })).toHaveValue(
-    'terracotta'
-  )
-  await expect(dialog.locator('.appearance-reset-status')).toContainText(
-    'Recommended colors'
-  )
-  await expect(dialog.locator('.appearance-sample-labels')).toHaveCount(2)
+  await expect(
+    products.getByLabel('Product draft background · Dark', { exact: true })
+  ).not.toHaveValue('#654321')
   for (const width of [1280, 375]) {
     await page.setViewportSize({ width, height: 800 })
     for (const tab of [
@@ -228,6 +245,8 @@ test('settings keeps tabs and save visible while reset-all previews recommended 
       'Product names',
       'Size codes',
       'Product colors',
+      'Materials',
+      'Tags',
       'Appearance',
       'Data',
     ]) {
@@ -252,20 +271,114 @@ test('settings keeps tabs and save visible while reset-all previews recommended 
   }
   await save(dialog)
   await page.reload()
-  dialog = await settings(page, 'Appearance')
+  dialog = await settings(page, 'Tags')
   await expect(
     dialog.getByLabel('Keep this name text · Dark', { exact: true })
   ).not.toHaveValue('#fedcba')
+  await dialog.getByRole('tab', { name: 'Appearance', exact: true }).click()
   await expect(dialog.getByLabel('Dark palette', { exact: true })).toHaveValue(
     'terracotta'
   )
+})
+
+test('Tags keeps both catalogs separate from Appearance and preserves drafts through tab, language and failed-save changes', async ({
+  extension,
+}) => {
+  const page = await openWorkspace(extension)
+  await settings(page, 'Tags')
+  const dialog = page.locator('#settings-dialog')
+  const appearance = dialog.locator('#settings-panel-appearance')
+  const tags = dialog.locator('#settings-panel-tags')
+  await expect(appearance.locator('[data-tag-scope]')).toHaveCount(0)
+  await expect(tags.locator('[data-tag-scope]')).toHaveCount(2)
+  for (const [scope, name] of [
+    ['order', 'Draft order'],
+    ['product', 'Draft product'],
+  ]) {
+    const catalog = tags.locator(`[data-tag-scope=${scope}]`)
+    await catalog.getByLabel(`New ${scope} tag`, { exact: true }).fill(name)
+    await catalog
+      .getByRole('button', { name: 'Create tag', exact: true })
+      .click()
+  }
+  await tags
+    .getByLabel('Draft order background · Dark', { exact: true })
+    .fill('#123456')
+  await page.setViewportSize({ width: 1280, height: 900 })
+  await tags.getByRole('heading', { name: 'Tags', exact: true }).hover()
+  await dialog.screenshot({ path: 'work/settings-tags.png' })
+  await tags
+    .getByRole('button', { name: 'Rename tag Draft order', exact: true })
+    .click()
+  const name = tags.locator('.order-tag-name-input')
+  await name.fill('Renamed draft order')
+  await dialog.getByRole('tab', { name: 'Appearance', exact: true }).click()
+  await appearance
+    .getByLabel('Dark palette', { exact: true })
+    .selectOption('terracotta')
+  const other = await extension.context.newPage()
+  await other.goto(`${extension.extensionBaseUrl}/library.html`)
+  for (const [language, tabName, heading, helper] of [
+    [
+      'es',
+      'Etiquetas',
+      'Etiquetas de productos',
+      'Renombrar o eliminar etiquetas guardadas',
+    ],
+    ['zh', '标签', '商品标签', '重命名和删除已保存的标签'],
+  ]) {
+    await other.locator(`#language-toggle [data-language=${language}]`).click()
+    const tab = dialog.getByRole('tab', { name: tabName, exact: true })
+    await expect(tab).toBeVisible()
+    await tab.click()
+    await expect(
+      tags.getByRole('heading', { name: heading, exact: true })
+    ).toBeVisible()
+    await expect(tags).toContainText(helper)
+    await expect(name).toHaveValue('Renamed draft order')
+  }
+  await other.locator('#language-toggle [data-language=en]').click()
+  await name.fill('')
+  await dialog.getByRole('tab', { name: 'Appearance', exact: true }).click()
+  await dialog
+    .getByRole('button', { name: 'Save settings', exact: true })
+    .click()
+  await expect(
+    dialog.getByRole('tab', { name: 'Tags', exact: true })
+  ).toHaveAttribute('aria-selected', 'true')
+  await expect(name).toHaveAttribute('aria-invalid', 'true')
+  await expect(name).toHaveValue('')
+  await expect(
+    tags.getByLabel('Draft order background · Dark', { exact: true })
+  ).toHaveValue('#123456')
+  await expect(
+    appearance.getByLabel('Dark palette', { exact: true })
+  ).toHaveValue('terracotta')
+  await dialog.locator('.error-notice-close').click()
+  await name.fill('Renamed draft order')
+  await save(dialog)
+  const backup = await extension.inspector.evaluate(() =>
+    chrome.runtime.sendMessage({ type: 'BACKUP_EXPORT' })
+  )
+  expect(backup.data.packingPreferences.value.orderTags).toHaveLength(1)
+  expect(backup.data.packingPreferences.value.orderTags[0]).toMatchObject({
+    name: 'Renamed draft order',
+    colors: { dark: '#123456' },
+  })
+  expect(
+    backup.data.packingPreferences.value.productTags.map((tag) => tag.name)
+  ).toEqual(['Draft product'])
+  expect(backup.data.packingPreferences.value.appearance.darkTheme).toBe(
+    'terracotta'
+  )
+  await other.close()
 })
 
 test('reusable tags can be created in Settings and order details, autosave on close, search and keep mode colors', async ({
   extension,
 }) => {
   const page = await openWorkspace(extension)
-  let dialog = await settings(page, 'Appearance')
+  let dialog = await settings(page, 'Tags')
   await dialog
     .getByLabel('New order tag', { exact: true })
     .fill('Display stock')
@@ -335,7 +448,7 @@ test('reusable tags can be created in Settings and order details, autosave on cl
   await page
     .getByRole('button', { name: 'Close order details', exact: true })
     .click()
-  dialog = await settings(page, 'Appearance')
+  dialog = await settings(page, 'Tags')
   await expect(
     dialog.getByLabel('Locally created background · Dark', { exact: true })
   ).toBeVisible()
@@ -368,7 +481,7 @@ test('Settings renames both tag catalogs everywhere, rejects duplicates and reta
     .getByRole('button', { name: 'Close product details', exact: true })
     .click()
   await expect(dialog).toHaveCount(0)
-  dialog = await settings(page, 'Appearance')
+  dialog = await settings(page, 'Tags')
   for (const scope of ['order', 'product']) {
     const catalog = dialog.locator(`[data-tag-scope=${scope}]`)
     await catalog
@@ -382,7 +495,7 @@ test('Settings renames both tag catalogs everywhere, rejects duplicates and reta
       .click()
   }
   await save(dialog)
-  dialog = await settings(page, 'Appearance')
+  dialog = await settings(page, 'Tags')
   const orderCatalog = dialog.locator('[data-tag-scope=order]')
   const oldColors = await orderCatalog
     .locator('[data-tag-name=Fragile] .order-tag-badge')
@@ -513,15 +626,15 @@ test('Settings locks all edits during delayed validation and unlocks them after 
   extension,
 }) => {
   const page = await openWorkspace(extension)
-  let dialog = await settings(page, 'Appearance')
+  let dialog = await settings(page, 'Tags')
   let catalog = dialog.locator('[data-tag-scope=order]')
   await catalog.getByLabel('New order tag', { exact: true }).fill('Unused')
   await catalog.getByRole('button', { name: 'Create tag', exact: true }).click()
   await save(dialog)
-  dialog = await settings(page, 'Appearance')
+  dialog = await settings(page, 'Tags')
   await dialog.getByRole('tab', { name: 'Labels', exact: true }).click()
   await dialog.getByLabel('Website', { exact: true }).fill('validation.example')
-  await dialog.getByRole('tab', { name: 'Appearance', exact: true }).click()
+  await dialog.getByRole('tab', { name: 'Tags', exact: true }).click()
   catalog = dialog.locator('[data-tag-scope=order]')
   await catalog
     .getByRole('button', { name: 'Rename tag Unused', exact: true })
@@ -598,12 +711,12 @@ test('Settings cannot dismiss a pending tag rename and preserves its draft after
   extension,
 }) => {
   const page = await openWorkspace(extension)
-  let dialog = await settings(page, 'Appearance')
+  let dialog = await settings(page, 'Tags')
   let catalog = dialog.locator('[data-tag-scope=product]')
   await catalog.getByLabel('New product tag', { exact: true }).fill('Original')
   await catalog.getByRole('button', { name: 'Create tag', exact: true }).click()
   await save(dialog)
-  dialog = await settings(page, 'Appearance')
+  dialog = await settings(page, 'Tags')
   catalog = dialog.locator('[data-tag-scope=product]')
   await page.evaluate(() => {
     window.holdTagRename = true
@@ -735,7 +848,7 @@ test('custom tag foreground colors persist, Auto restores readable text and comp
   extension,
 }) => {
   const page = await openWorkspace(extension)
-  let dialog = await settings(page, 'Appearance')
+  let dialog = await settings(page, 'Tags')
   await dialog
     .getByLabel('New order tag', { exact: true })
     .fill('Display stock')
@@ -802,7 +915,7 @@ test('custom tag foreground colors persist, Auto restores readable text and comp
   await expect(badge).toHaveCSS('color', 'rgb(84, 50, 16)')
   await page.getByRole('button', { name: 'Switch to light theme' }).click()
   await expect(badge).toHaveCSS('color', 'rgb(255, 238, 221)')
-  dialog = await settings(page, 'Appearance')
+  dialog = await settings(page, 'Tags')
   await expect(
     dialog.getByLabel('Display stock text · Light', { exact: true })
   ).toHaveValue('#ffeedd')

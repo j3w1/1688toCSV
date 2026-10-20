@@ -1,4 +1,9 @@
 export const ORDER_TAG_MESSAGES = {
+  'Create, rename and color order and product tags. Renaming and deleting saved tags updates them everywhere; other edits apply when you save settings.':
+    {
+      zh: '创建、重命名订单和商品标签，并设置颜色。重命名和删除已保存的标签会立即更新所有关联；其他更改在保存设置后生效。',
+      es: 'Crea, renombra y cambia los colores de las etiquetas de pedidos y productos. Renombrar o eliminar etiquetas guardadas actualiza todas sus asignaciones; los demás cambios se aplican al guardar los ajustes.',
+    },
   'Saving settings…': {
     zh: '正在保存设置…',
     es: 'Guardando ajustes…',

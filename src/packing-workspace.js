@@ -61,6 +61,7 @@ import {
 } from './color-vocabulary.js'
 import { mountColorVocabulary } from './color-vocabulary-settings.js'
 import { mountAppearanceSettings } from './appearance-settings.js'
+import { downloadBackup, readBackupFile } from './backup-file.js'
 import { applyAppearance, labelColorKey } from './appearance.js'
 import { openImageCopyDialog, imageBatchPlans } from './image-copy-dialog.js'
 import {
@@ -152,6 +153,7 @@ import {
 } from './carton-details.js'
 import { presentOrderStatus } from './order-presentation.js'
 import { orderTagBadge } from './tag-picker.js'
+import { mountOrderTagSettings, mountTagSettings } from './order-tags-ui.js'
 
 const $ = (id) => document.getElementById(id)
 const monthLabel = (month) =>
@@ -4468,14 +4470,10 @@ export async function startPackingWorkspace({
           })),
         }
       )
-      const url = URL.createObjectURL(
-        new Blob([JSON.stringify(backup)], { type: 'application/json' })
+      await downloadBackup(
+        backup,
+        `1688-packing-${months.length === 1 ? months[0] : 'mixed-months'}`
       )
-      const a = el('a')
-      a.href = url
-      a.download = `1688-packing-${months.length === 1 ? months[0] : 'mixed-months'}.json`
-      a.click()
-      setTimeout(() => URL.revokeObjectURL(url), 60000)
       feedback(uiMessage('Packing backup saved'))
     })
     backupButton = backup
@@ -4625,7 +4623,7 @@ export async function startPackingWorkspace({
   }
   async function restorePackingFile(file) {
     await flushSaves()
-    const input = JSON.parse(await file.text())
+    const input = await readBackupFile(file)
     const backup = validateBackup(input)
     const scope = backup.packingScope
     if (!scope)
@@ -6413,6 +6411,7 @@ export async function startPackingWorkspace({
       ['sizes', 'Size codes', 'packing'],
       ['colors', 'Product colors', 'image'],
       ['materials', 'Materials', 'packing'],
+      ['tags', 'Tags', 'tag'],
       ['appearance', 'Appearance', 'sun'],
       ['data', 'Data', 'download'],
     ]) {
@@ -6819,14 +6818,7 @@ export async function startPackingWorkspace({
       panels.get('settings-panel-materials'),
       value
     )
-    const appearance = mountAppearanceSettings(
-      panels.get('settings-panel-appearance'),
-      value,
-      getRecords().flatMap((record) => record.tags || []),
-      {
-        existingProductTags: getRecords().flatMap((record) =>
-          Object.values(record.productTags || {}).flat()
-        ),
+    const tagOptions = {
         getTagUsage: (name, scope) => repository.getTagUsage(name, { scope }),
         renameTag: async (name, nextName, scope) => {
           const catalog = `${scope}Tags`
@@ -6860,10 +6852,41 @@ export async function startPackingWorkspace({
           await changed({ reload: true })
           channel?.postMessage('preferences')
         },
-      }
+      },
+      tagPanel = panels.get('settings-panel-tags')
+    tagPanel.append(
+      el('h3', uiMessage('Tags')),
+      el(
+        'p',
+        uiMessage(
+          'Create, rename and color order and product tags. Renaming and deleting saved tags updates them everywhere; other edits apply when you save settings.'
+        ),
+        'packing-help'
+      )
+    )
+    const tagSettings = [
+      mountOrderTagSettings(
+        tagPanel,
+        value,
+        getRecords().flatMap((record) => record.tags || []),
+        tagOptions
+      ),
+      mountTagSettings(tagPanel, value, {
+        ...tagOptions,
+        scope: 'product',
+        existingNames: getRecords().flatMap((record) =>
+          Object.values(record.productTags || {}).flat()
+        ),
+      }),
+    ]
+    const appearance = mountAppearanceSettings(
+      panels.get('settings-panel-appearance'),
+      value,
+      { onColorsReset: () => tagSettings.forEach((tags) => tags.refresh()) }
     )
     const guardDismissal = (event) => {
-      if (saving || appearance.pending) event.preventDefault()
+      if (saving || tagSettings.some((tags) => tags.pending))
+        event.preventDefault()
     }
     settingsDialog.oncancel = guardDismissal
     settingsDialog.onsubmit = guardDismissal
@@ -6883,7 +6906,7 @@ export async function startPackingWorkspace({
       saveHelp = el(
         'span',
         uiMessage(
-          'Save label settings, product names, sizes, colors, materials and appearance.'
+          'Save label settings, product names, sizes, colors, materials, tags and appearance.'
         ),
         'packing-help'
       )
@@ -6904,9 +6927,9 @@ export async function startPackingWorkspace({
           try {
             await flushSaves()
             try {
-              await appearance.flush()
+              for (const tags of tagSettings) await tags.flush()
             } catch (error) {
-              selectTab('settings-panel-appearance')
+              selectTab('settings-panel-tags')
               throw error
             }
             try {
@@ -6973,7 +6996,7 @@ export async function startPackingWorkspace({
             bindText(
               saveHelp,
               uiMessage(
-                'Save label settings, product names, sizes, colors, materials and appearance.'
+                'Save label settings, product names, sizes, colors, materials, tags and appearance.'
               )
             )
             host.querySelector('[aria-invalid="true"]')?.focus()

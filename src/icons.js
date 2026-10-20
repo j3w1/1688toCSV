@@ -32,6 +32,7 @@ const paths = {
   chevron: 'm7 10 5 5 5-5',
   search: 'M10 3a7 7 0 1 0 0 14 7 7 0 0 0 0-14M15 15l6 6',
   text: 'M4 5h16M12 5v15M8 20h8',
+  tag: 'M20 12l-8 8-9-9V3h8zM7 7h.01',
   plus: 'M12 5v14M5 12h14',
   previous: 'm14 5-7 7 7 7',
   next: 'm10 5 7 7-7 7',

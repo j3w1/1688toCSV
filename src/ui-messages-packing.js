@@ -816,8 +816,8 @@ export const PACKING_MESSAGES = {
     es: 'Restaurar empaque anterior',
   },
   Labels: {
-    zh: '标签',
-    es: 'Etiquetas',
+    zh: '打印标签',
+    es: 'Etiquetas de impresión',
   },
   'Product names': {
     zh: '商品名称',

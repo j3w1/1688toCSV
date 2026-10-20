@@ -12,6 +12,7 @@ import {
 } from './i18n.js'
 import { copyTable, copySingleImage, pngThumbnail } from './clipboard.js'
 import { openDatabase, storeIdentity } from './database.js'
+import { downloadBackup, readBackupFile } from './backup-file.js'
 import {
   confirmScope,
   copied,
@@ -626,11 +627,11 @@ export async function startLibrary(
     ],
     [
       'backup',
-      'Save orders, packing edits, naming rules and current code assignments to a local file.',
+      'Save a compressed backup with each picture stored once. Keeps orders, packing edits, history, settings and original photos.',
     ],
     [
       'restore',
-      'Merge a saved backup into this library, preserving newer edits and checking current code conflicts.',
+      'Restore a compressed .json.gz or older .json backup, preserving newer edits and checking current code conflicts.',
     ],
     [
       'pause-active',
@@ -2800,13 +2801,20 @@ export async function startLibrary(
     feedback(uiMessage('Selected orders removed from the library.'))
   })
   action('backup', async () => {
-    await packing?.flush()
-    const backup = await send('BACKUP_EXPORT')
-    downloadJson(
-      backup,
-      `1688-orders-${new Date().toISOString().slice(0, 10)}.json`
-    )
-    feedback(uiMessage('Backup requested. Check your downloads.'))
+    const target = $('backup')
+    target.disabled = true
+    try {
+      feedback(uiMessage('Preparing compressed backup…'))
+      await packing?.flush()
+      const backup = await send('BACKUP_EXPORT')
+      await downloadBackup(
+        backup,
+        `1688-orders-${new Date().toISOString().slice(0, 10)}`
+      )
+      feedback(uiMessage('Backup requested. Check your downloads.'))
+    } finally {
+      target.disabled = false
+    }
   })
   action('restore', () => $('backup-file').click())
   $('import-store-sheet').addEventListener('click', () => {
@@ -2839,7 +2847,7 @@ export async function startLibrary(
     try {
       const file = $('backup-file').files[0]
       if (!file) return
-      await send('BACKUP_RESTORE', { backup: JSON.parse(await file.text()) })
+      await send('BACKUP_RESTORE', { backup: await readBackupFile(file) })
       await refresh()
       feedback(uiMessage('Backup restored. Existing notes were preserved.'))
     } catch (error) {

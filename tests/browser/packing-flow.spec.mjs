@@ -6,6 +6,7 @@ import { test, expect } from './extension-fixture.mjs'
 import { createDemoRecords } from '../../preview/library-fixture.js'
 import { UI_MESSAGES } from '../../src/ui-messages.js'
 import { readFile } from 'node:fs/promises'
+import { readBackupFile } from '../../src/backup-file.js'
 
 const codeOwners = (codes) =>
   codes
@@ -1075,14 +1076,16 @@ test('reset order and codes retains current names while previous packing restore
     .getByRole('button', { name: 'Back up packing', exact: true })
     .click()
   const download = await downloading
-  expect(download.suggestedFilename()).toBe('1688-packing-2026-10.json')
+  expect(download.suggestedFilename()).toBe('1688-packing-2026-10.json.gz')
   expect(await download.failure()).toBeNull()
   const files = await extension.inspector.evaluate(() =>
     chrome.downloads.search({})
   )
   expect(files).toHaveLength(1)
   expect(files[0].state).toBe('complete')
-  const exported = JSON.parse(await readFile(files[0].filename, 'utf8'))
+  const exported = await readBackupFile(
+    new Blob([await readFile(files[0].filename)])
+  )
   expect(exported.packingScope.months).toEqual(['2026-10'])
   expect(exported.preparations).toEqual(restored.preparations)
   // Scoped backups carry current ownership only, without redundant owner

@@ -1,9 +1,9 @@
 export const MATERIAL_MESSAGES = {
   Materials: { zh: '材质', es: 'Materiales' },
-  'Save label settings, product names, sizes, colors, materials and appearance.':
+  'Save label settings, product names, sizes, colors, materials, tags and appearance.':
     {
-      zh: '保存标签设置、商品名称、尺寸、颜色、材质和外观。',
-      es: 'Guardar la configuración de etiquetas, nombres de productos, tamaños, colores, materiales y apariencia.',
+      zh: '保存打印标签设置、商品名称、尺寸、颜色、材质、自定义标签与外观。',
+      es: 'Guarda la impresión de etiquetas, nombres, tallas, colores, materiales, etiquetas y apariencia.',
     },
   'Material rules': { zh: '材质规则', es: 'Reglas de materiales' },
   'Search material rules': {

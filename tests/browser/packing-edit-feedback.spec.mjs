@@ -1,4 +1,5 @@
 import { test, expect } from './extension-fixture.mjs'
+import { readBackupFile } from '../../src/backup-file.js'
 import { createDemoRecords } from '../../preview/library-fixture.js'
 import { readFile } from 'node:fs/promises'
 
@@ -361,7 +362,7 @@ test(
     await expect(save).toBeEnabled()
     const before = await backup(extension)
     const content = await downloadPacking(extension, page, view)
-    const saved = JSON.parse(content)
+    const saved = await readBackupFile(new Blob([content]))
     expect(saved.packingScope.mode).toBe('selection')
     expect(saved.packingScope.orders[0].entryIds).toEqual(
       record.snapshot.items.slice(0, 2).map((item) => item.entryId)
@@ -378,8 +379,8 @@ test(
     await page
       .getByLabel('Packing backup file', { exact: true })
       .setInputFiles({
-        name: 'packing.json',
-        mimeType: 'application/json',
+        name: 'packing.json.gz',
+        mimeType: 'application/gzip',
         buffer: content,
       })
     const review = page.getByRole('dialog', {
@@ -419,7 +420,7 @@ test('packing backup includes orders on other pages and outside the display filt
     .getByRole('button', { name: 'Clear selection', exact: true })
     .click()
   const content = await downloadPacking(extension, page, view)
-  const saved = JSON.parse(content)
+  const saved = await readBackupFile(new Blob([content]))
   expect(saved.packingScope.orders).toHaveLength(11)
   expect(saved.preparations).toHaveLength(11)
   expect(saved.preparations.flatMap((draft) => draft.groups)).toHaveLength(22)

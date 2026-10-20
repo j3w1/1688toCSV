@@ -2,7 +2,6 @@ import { element as el } from './ui.js'
 import { message as m, bindAttribute, bindText } from './i18n.js'
 import { decorateIcon } from './icons.js'
 import { preparationHelp } from './preparation-help.js'
-import { mountOrderTagSettings, mountTagSettings } from './order-tags-ui.js'
 import {
   THEME_PALETTES,
   UI_LABEL_COLORS,
@@ -14,12 +13,7 @@ import {
 } from './appearance.js'
 
 /** Settings edits remain a draft until the shared Save settings action succeeds. */
-export function mountAppearanceSettings(
-  host,
-  value,
-  existingTags = [],
-  options = {}
-) {
+export function mountAppearanceSettings(host, value, { onColorsReset } = {}) {
   value.appearance = normalizeAppearance(value.appearance)
   const title = el('h3', m('Workspace appearance'))
   const help = el(
@@ -234,41 +228,29 @@ export function mountAppearanceSettings(
   preparationHelp(
     reset,
     m(
-      'Apply the recommended colors to every status, date, activity label and custom tag in both modes. Save settings to keep them.'
+      'Reset status, date and activity label colors here, plus order and product tag colors in Tags, in both modes. Save settings to apply.'
     )
   )
   themeSection.append(title, help, modes)
   colorHeader.append(heading, reset)
   colorsSection.append(colorHeader, description, resetStatus, table)
   host.append(themeSection, colorsSection)
-  const tags = mountOrderTagSettings(host, value, existingTags, options)
-  const productTags = mountTagSettings(host, value, {
-    ...options,
-    scope: 'product',
-    existingNames: options.existingProductTags || [],
-  })
   reset.onclick = () => {
     const next = resetWorkspaceColors(value)
     value.appearance = next.appearance
     value.orderTags = next.orderTags
     value.productTags = next.productTags
     renderLabels()
-    tags.refresh()
-    productTags.refresh()
+    onColorsReset?.()
     bindText(
       resetStatus,
-      m('Recommended colors are shown below. Save settings to apply.')
+      m(
+        'Recommended label colors are shown here and tag colors in Tags. Save settings to apply.'
+      )
     )
   }
   renderLabels()
   return {
     validate: () => normalizeAppearance(value.appearance),
-    get pending() {
-      return tags.pending || productTags.pending
-    },
-    async flush() {
-      await tags.flush()
-      await productTags.flush()
-    },
   }
 }

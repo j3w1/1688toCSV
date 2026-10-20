@@ -70,6 +70,10 @@ test('Settings keeps the same frame, navigation and save position across every s
 }) => {
   const { page, dialog } = await openSettings(extension)
   const tabs = dialog.getByRole('tab')
+  await expect(tabs).toHaveCount(8)
+  await expect(
+    dialog.getByRole('tab', { name: 'Tags', exact: true })
+  ).toBeVisible()
   const footer = dialog.locator('.settings-footer')
   for (const viewport of [
     { width: 1440, height: 1000 },

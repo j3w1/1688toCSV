@@ -568,9 +568,24 @@ h2 {
   color: var(--success-text);
   vertical-align: middle;
 }
-.store-wechat-copy .ui-icon {
+.store-contact-controls .store-wechat-copy > .ui-icon {
   inline-size: 18px;
   block-size: 18px;
+}
+.order-card .store-wechat-copy {
+  align-self: center;
+  flex: 0 0 16px;
+  inline-size: 16px;
+  min-inline-size: 16px;
+  block-size: 16px;
+  min-block-size: 16px;
+  padding: 1px;
+  border-radius: 3px;
+}
+.order-card .store-wechat-copy > .ui-icon {
+  inline-size: 13px;
+  block-size: 13px;
+  margin: 0;
 }
 .order-card-meta .purchase-date,
 .order-card-meta .order-status {
