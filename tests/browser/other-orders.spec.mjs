@@ -1,6 +1,7 @@
 import { readFile } from 'node:fs/promises'
 import { test, expect } from './extension-fixture.mjs'
 import { createDemoRecords } from '../../preview/library-fixture.js'
+import { otherOrderSnapshot } from '../../src/other-orders.js'
 
 const documentFor = (reference = 'EXT-SYNTHETIC-1') => ({
   format: '1688-order-entry',
@@ -236,9 +237,11 @@ test('JSON entry, invalid/duplicate refusal and concurrent creates preserve the 
     mimeType: 'application/json',
     buffer: Buffer.from(JSON.stringify(bad)),
   })
-  await expect(page.locator('.other-order-error')).toContainText(
+  await expect(page.locator('.other-order-error')).toHaveAttribute(
+    'data-field',
     'products.1.quantity'
   )
+  await expect(page.locator('.other-order-error')).toContainText('Product 2')
   await expect(action(page, 'other-order-supplier')).toHaveValue('Draft stays')
   expect((await orders(extension)).orders).toEqual([])
   await action(page, 'other-order-cancel').click()
@@ -337,4 +340,221 @@ test('manual field errors keep the draft and dialog actions fit a narrow viewpor
       .evaluate((node) => node.scrollWidth <= node.clientWidth)
   ).toBe(true)
   await action(page, 'other-order-cancel').click()
+})
+
+test('backup reference uniqueness uses the final reconciled state and rolls back stale collisions', async ({
+  extension,
+}) => {
+  const page = await extension.context.newPage()
+  await page.goto(`${extension.origin}/unsupported`)
+  const makeRecord = (reference, id, now) => {
+    const snapshot = otherOrderSnapshot(documentFor(reference), { id, now })
+    return {
+      snapshot,
+      revision: 1,
+      changedAt: now,
+      lastCheckedAt: now,
+      notes: '',
+      tags: [],
+      changedEntryIds: [],
+      removedEntryIds: [],
+    }
+  }
+  const a = makeRecord(
+    'REF-X',
+    '99000000000000000001',
+    '2026-10-20T02:00:00.000Z'
+  )
+  const stale = makeRecord(
+    'REF-Z',
+    a.snapshot.orderId,
+    '2026-10-20T01:00:00.000Z'
+  )
+  const newer = makeRecord(
+    'REF-Z',
+    a.snapshot.orderId,
+    '2026-10-20T03:00:00.000Z'
+  )
+  const c = makeRecord(
+    'REF-X',
+    '99000000000000000003',
+    '2026-10-20T01:00:00.000Z'
+  )
+  const results = await page.evaluate(
+    async ({ a, stale, newer, c }) => {
+      const { openDatabase, validateBackup } = await import('/src/database.js')
+      const backup = (orders) => ({
+        format: '1688-order-library',
+        version: 1,
+        exportedAt: '2026-10-20T04:00:00.000Z',
+        orders,
+        history: [],
+        images: [],
+      })
+      const results = []
+      for (const [label, incoming] of [
+        ['stale-collision', [stale, c]],
+        ['newer-control', [newer, c]],
+        [
+          'stale-distinct-control',
+          [stale, { ...c, snapshot: { ...c.snapshot, reference: 'REF-Y' } }],
+        ],
+      ]) {
+        const db = await openDatabase({
+          name: `synthetic-reference-${label}-${crypto.randomUUID()}`,
+        })
+        await db.restoreBackup(backup([a]))
+        const before = await db.exportBackup()
+        let error = null
+        try {
+          await db.restoreBackup(backup(incoming))
+        } catch (failure) {
+          error = failure.message
+        }
+        const after = await db.exportBackup()
+        const unchanged = [
+          'orders',
+          'history',
+          'images',
+          'preparations',
+          'allocations',
+          'issuedCodes',
+          'packingPreferences',
+        ].every(
+          (key) => JSON.stringify(before[key]) === JSON.stringify(after[key])
+        )
+        let backupError = null
+        try {
+          validateBackup(after)
+        } catch (failure) {
+          backupError = failure.message
+        }
+        results.push({
+          label,
+          error,
+          unchanged,
+          backupError,
+          references: after.orders
+            .map((record) => record.snapshot.reference)
+            .sort(),
+        })
+        db.close()
+      }
+      return results
+    },
+    { a, stale, newer, c }
+  )
+  expect(results[0]).toMatchObject({
+    label: 'stale-collision',
+    error: expect.stringContaining('already exists'),
+    unchanged: true,
+    backupError: null,
+    references: ['REF-X'],
+  })
+  expect(results[1]).toMatchObject({
+    error: null,
+    backupError: null,
+    references: ['REF-X', 'REF-Z'],
+  })
+  expect(results[2]).toMatchObject({
+    error: null,
+    backupError: null,
+    references: ['REF-X', 'REF-Y'],
+  })
+  expect(extension.unexpectedRequests).toEqual([])
+})
+
+test('corrupt inline photos are refused by file entry, the manual picker, storage and restore', async ({
+  extension,
+}) => {
+  const page = await open(extension)
+  const payload = documentFor('EXT-CORRUPT')
+  payload.products[0].photo = 'data:image/png;base64,iVBORw0KGgo='
+  await action(page, 'add-other-order').click()
+  await action(page, 'other-order-supplier').fill('Draft retained')
+  await page.locator('[data-action="other-order-file"]').setInputFiles({
+    name: 'corrupt-photo.json',
+    mimeType: 'application/json',
+    buffer: Buffer.from(JSON.stringify(payload)),
+  })
+  await expect(page.locator('.other-order-error')).toContainText('decodable')
+  await expect(page.locator('.other-order-error')).toHaveAttribute(
+    'data-field',
+    'products.0.photo'
+  )
+  await expect(action(page, 'other-order-supplier')).toHaveValue(
+    'Draft retained'
+  )
+  await action(page, 'other-order-photo').setInputFiles({
+    name: 'corrupt.png',
+    mimeType: 'image/png',
+    buffer: Buffer.from('iVBORw0KGgo=', 'base64'),
+  })
+  await expect(page.locator('.other-order-error')).toContainText('decodable')
+  await expect(page.locator('.other-order-product img')).toBeHidden()
+  const rejected = await extension.inspector.evaluate(
+    (order) =>
+      chrome.runtime.sendMessage({ type: 'OTHER_ORDER_CREATE', order }),
+    payload
+  )
+  expect(rejected.ok).toBe(false)
+  expect(rejected.error).toContain('products.0.photo')
+  expect((await orders(extension)).orders).toEqual([])
+  const created = await extension.inspector.evaluate(
+    (order) =>
+      chrome.runtime.sendMessage({ type: 'OTHER_ORDER_CREATE', order }),
+    documentFor('EXT-KEEP')
+  )
+  expect(created.ok, created.error).toBe(true)
+  const before = await orders(extension),
+    corrupt = structuredClone(before)
+  corrupt.orders[0].snapshot.items[0].thumbnail = payload.products[0].photo
+  const restored = await extension.inspector.evaluate(
+    (backup) => chrome.runtime.sendMessage({ type: 'BACKUP_RESTORE', backup }),
+    corrupt
+  )
+  expect(restored.ok).toBe(false)
+  expect(restored.error).toContain('decodable')
+  const after = await orders(extension)
+  expect(after.orders).toEqual(before.orders)
+  expect(after.history).toEqual(before.history)
+  expect(extension.unexpectedRequests).toEqual([])
+})
+
+test('validation errors translate field labels and reasons while retaining machine paths and source values', async ({
+  extension,
+}) => {
+  const page = await open(extension)
+  for (const [language, label, reason] of [
+    ['es', 'Cantidad', 'entero positivo'],
+    ['zh', '数量', '正整数'],
+  ]) {
+    await page.evaluate(
+      (language) => localStorage.setItem('1688-workspace-language', language),
+      language
+    )
+    await page.reload()
+    await action(page, 'add-other-order').click()
+    await action(page, 'other-order-supplier').fill('Synthetic supplier')
+    await action(page, 'other-order-reference').fill('EXT-LANGUAGE')
+    await action(page, 'other-order-description').fill('Source description')
+    await action(page, 'other-order-quantity').fill('0')
+    await action(page, 'other-order-unit-price').fill('2')
+    await action(page, 'other-order-save').click()
+    await expect(page.locator('.other-order-error')).toContainText(label)
+    await expect(page.locator('.other-order-error')).toContainText(reason)
+    await expect(page.locator('.other-order-error')).toHaveAttribute(
+      'data-field',
+      'products.0.quantity'
+    )
+    await expect(action(page, 'other-order-quantity')).toHaveAttribute(
+      'aria-invalid',
+      'true'
+    )
+    await expect(action(page, 'other-order-description')).toHaveValue(
+      'Source description'
+    )
+    await action(page, 'other-order-cancel').click()
+  }
+  expect((await orders(extension)).orders).toEqual([])
 })

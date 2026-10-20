@@ -1,14 +1,40 @@
-import { message, t } from './i18n.js'
+import { message, bindText, t } from './i18n.js'
 import { element, enableLightDismiss, pinDialogActions } from './ui.js'
 import {
   OTHER_ORDER_FORMAT,
   OTHER_ORDER_FILE_LIMIT,
-  OTHER_ORDER_PHOTO_LIMIT,
+  OTHER_ORDER_PHOTO_FILE_LIMIT,
   OTHER_ORDER_PRODUCT_LIMIT,
   validateOtherOrder,
-  validateOtherPhoto,
+  validateOtherPhotoDecoded,
   parseOtherOrderFile,
 } from './other-orders.js'
+
+function fieldLabel(field) {
+  const product = field.match(/^products\.(\d+)(?:\.(\w+))?$/)
+  const labels = {
+    supplier: 'Supplier',
+    reference: 'Order reference',
+    date: 'Order date',
+    products: 'Products',
+    description: 'Description',
+    specs: 'Specs',
+    quantity: 'Quantity',
+    unitPrice: 'Unit price (CNY)',
+    photo: 'Photo (optional)',
+    format: 'Order file format',
+    file: 'Order JSON file',
+    order: 'Order',
+  }
+  if (product)
+    return message('Product {0} · {1}', {
+      0: Number(product[1]) + 1,
+      1: labels[product[2]]
+        ? message(labels[product[2]])
+        : product[2] || message('Products'),
+    })
+  return labels[field] ? message(labels[field]) : field
+}
 
 export function openOtherOrderDialog({ save }) {
   const dialog = element('dialog', undefined, 'other-order-dialog')
@@ -60,13 +86,28 @@ export function openOtherOrderDialog({ save }) {
     return result
   }
   const showError = (failure) => {
-    error.textContent = t(failure.message)
+    const parsed = failure.message.match(/^([^\s:]+): (.+)$/s)
+    const path = failure.field || parsed?.[1]
+    const reason = failure.reason || parsed?.[2]
+    if (path && reason) {
+      bindText(
+        error,
+        message('Other order · {0}: {1}', {
+          0: fieldLabel(path),
+          1: () => t(reason),
+        })
+      )
+      error.dataset.field = path
+    } else {
+      bindText(error, message(failure.message))
+      delete error.dataset.field
+    }
     error.hidden = false
     for (const control of form.querySelectorAll('[aria-invalid]'))
       control.removeAttribute('aria-invalid')
-    const control = [...form.querySelectorAll('[data-field]')].find(
-      (input) => input.dataset.field === failure.field
-    )
+    const control = [
+      ...form.querySelectorAll('input[data-field], textarea[data-field]'),
+    ].find((input) => input.dataset.field === path)
     control?.setAttribute('aria-invalid', 'true')
     control?.focus()
   }
@@ -135,7 +176,7 @@ export function openOtherOrderDialog({ save }) {
         if (!file) return
         setBusy(true)
         try {
-          if (file.size > OTHER_ORDER_PHOTO_LIMIT * 0.74)
+          if (file.size > OTHER_ORDER_PHOTO_FILE_LIMIT)
             throw new Error('Photo must be smaller than 1.4 MB')
           const bytes = new Uint8Array(await file.arrayBuffer())
           let binary = ''
@@ -143,7 +184,7 @@ export function openOtherOrderDialog({ save }) {
             binary += String.fromCharCode(
               ...bytes.subarray(offset, offset + 8192)
             )
-          row.photo = validateOtherPhoto(
+          row.photo = await validateOtherPhotoDecoded(
             `data:${file.type};base64,${btoa(binary)}`,
             `products.${index}.photo`
           )
@@ -191,6 +232,11 @@ export function openOtherOrderDialog({ save }) {
       if (selected.size > OTHER_ORDER_FILE_LIMIT)
         throw new Error('Order file must be smaller than 8 MB')
       const order = parseOtherOrderFile(await selected.text())
+      for (const [index, product] of order.products.entries())
+        await validateOtherPhotoDecoded(
+          product.photo,
+          `products.${index}.photo`
+        )
       supplier.value = order.supplier
       reference.value = order.reference
       date.value = order.date

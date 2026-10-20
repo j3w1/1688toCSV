@@ -3,10 +3,11 @@ import { centsToMoney, lineGrossCents, normalizePrice } from './money.js'
 export const OTHER_ORDER_FORMAT = '1688-order-entry'
 export const OTHER_ORDER_FILE_LIMIT = 8_000_000
 export const OTHER_ORDER_PHOTO_LIMIT = 2_000_000
+export const OTHER_ORDER_PHOTO_FILE_LIMIT = 1_400_000
 export const OTHER_ORDER_PRODUCT_LIMIT = 200
 
 function invalid(field, reason) {
-  throw Object.assign(new Error(`${field}: ${reason}`), { field })
+  throw Object.assign(new Error(`${field}: ${reason}`), { field, reason })
 }
 
 function record(value, fields, field) {
@@ -49,6 +50,43 @@ export function validateOtherPhoto(value, field = 'photo') {
   return value
 }
 
+/** Decode only validated inline bytes, before opening any storage transaction. */
+export async function validateOtherPhotoDecoded(value, field = 'photo') {
+  const photo = validateOtherPhoto(value, field)
+  if (!photo) return ''
+  const [header, encoded] = photo.split(',')
+  const bytes = Uint8Array.from(atob(encoded), (letter) => letter.charCodeAt(0))
+  let bitmap
+  try {
+    bitmap = await createImageBitmap(
+      new Blob([bytes], { type: header.slice(5, header.indexOf(';')) })
+    )
+    if (
+      !bitmap.width ||
+      !bitmap.height ||
+      bitmap.width > 8192 ||
+      bitmap.height > 8192 ||
+      bitmap.width * bitmap.height > 16_777_216
+    )
+      invalid(
+        field,
+        'must be no larger than 8192 pixels per side and 16 megapixels'
+      )
+  } catch (error) {
+    if (error.field === field) throw error
+    invalid(field, 'must be a decodable raster image')
+  } finally {
+    bitmap?.close()
+  }
+  return photo
+}
+
+export async function validateOtherSnapshotPhotos(snapshot) {
+  if (snapshot.source !== 'other') return
+  for (const [index, item] of snapshot.items.entries())
+    await validateOtherPhotoDecoded(item.thumbnail, `products.${index}.photo`)
+}
+
 /** Shared manual/file validation. This function never writes or fetches anything. */
 export function validateOtherOrder(input) {
   record(
@@ -76,6 +114,8 @@ export function validateOtherOrder(input) {
     input.products.length > OTHER_ORDER_PRODUCT_LIMIT
   )
     invalid('products', `must contain 1–${OTHER_ORDER_PRODUCT_LIMIT} products`)
+  if (JSON.stringify(input).length > OTHER_ORDER_FILE_LIMIT)
+    invalid('order', 'must not exceed 8 MB')
   const products = input.products.map((product, index) => {
     const field = `products.${index}`
     record(
@@ -109,8 +149,6 @@ export function validateOtherOrder(input) {
       photo: validateOtherPhoto(product.photo, `${field}.photo`),
     }
   })
-  if (JSON.stringify(input).length > OTHER_ORDER_FILE_LIMIT)
-    invalid('order', 'must not exceed 8 MB')
   return {
     format: OTHER_ORDER_FORMAT,
     version: 1,
@@ -193,6 +231,20 @@ export function otherOrderDuplicateKey(snapshot) {
     canonical(snapshot.sellerName),
     canonical(snapshot.reference),
   ])
+}
+
+/** One invariant for creation, a backup's own records and the final merged state. */
+export function assertUniqueOtherReferences(
+  records,
+  message = 'An other-source order with this supplier and reference already exists'
+) {
+  const seen = new Set()
+  for (const { snapshot } of records) {
+    if (snapshot.source !== 'other') continue
+    const key = otherOrderDuplicateKey(snapshot)
+    if (seen.has(key)) throw new Error(message)
+    seen.add(key)
+  }
 }
 
 /** Read existing evidence; never stamp a guessed source onto legacy records. */

@@ -1,7 +1,8 @@
 import {
   otherOrderSnapshot,
-  otherOrderDuplicateKey,
   validateOtherPhoto,
+  validateOtherSnapshotPhotos,
+  assertUniqueOtherReferences,
 } from './other-orders.js'
 
 const SNAPSHOT_VERSION = 1
@@ -624,20 +625,15 @@ export function validateBackup(input) {
   if (new Set(images.map((image) => image.url)).size !== images.length)
     throw new Error('Backup contains duplicate cached images')
   const current = new Map()
-  const otherReferences = new Set()
   for (const record of orders) {
     const key = JSON.stringify(keyFor(record.snapshot))
     if (current.has(key)) throw new Error('Backup contains duplicate order IDs')
     current.set(key, record)
-    if (record.snapshot.source === 'other') {
-      const reference = otherOrderDuplicateKey(record.snapshot)
-      if (otherReferences.has(reference))
-        throw new Error(
-          'Backup contains duplicate other-source supplier references'
-        )
-      otherReferences.add(reference)
-    }
   }
+  assertUniqueOtherReferences(
+    orders,
+    'Backup contains duplicate other-source supplier references'
+  )
   const historyKeys = new Set()
   for (const record of history) {
     const owner = current.get(JSON.stringify(keyFor(record.snapshot)))
@@ -1173,20 +1169,11 @@ export async function openDatabase({ name = '1688-order-library' } = {}) {
   return {
     async createOtherOrder(input) {
       const snapshot = validateSnapshot(otherOrderSnapshot(input))
+      await validateOtherSnapshotPhotos(snapshot)
       return write(['orders', 'packingPreferences'], async (tx) => {
         const orders = tx.objectStore('orders')
         const existing = await requested(orders.getAll())
-        if (
-          existing.some(
-            (record) =>
-              record.snapshot.source === 'other' &&
-              otherOrderDuplicateKey(record.snapshot) ===
-                otherOrderDuplicateKey(snapshot)
-          )
-        )
-          throw new Error(
-            'An other-source order with this supplier and reference already exists'
-          )
+        assertUniqueOtherReferences([...existing, { snapshot }])
         if (await requested(orders.getKey(keyFor(snapshot))))
           throw new Error(
             'The new internal order ID is already used; try again'
@@ -1586,6 +1573,8 @@ export async function openDatabase({ name = '1688-order-library' } = {}) {
       // Validate every record before opening a write transaction. A malformed
       // trailing record must never leave a partially restored library.
       const backup = validateBackup(input)
+      for (const record of [...backup.orders, ...backup.history])
+        await validateOtherSnapshotPhotos(record.snapshot)
       return write(
         [
           'orders',
@@ -1599,36 +1588,6 @@ export async function openDatabase({ name = '1688-order-library' } = {}) {
         async (tx) => {
           const orders = tx.objectStore('orders')
           const history = tx.objectStore('history')
-          const localOrders = await requested(orders.getAll())
-          const incomingIds = new Set(
-            backup.orders.map((record) =>
-              JSON.stringify(keyFor(record.snapshot))
-            )
-          )
-          const references = new Map(
-            localOrders
-              .filter(
-                (record) =>
-                  record.snapshot.source === 'other' &&
-                  !incomingIds.has(JSON.stringify(keyFor(record.snapshot)))
-              )
-              .map((record) => [
-                otherOrderDuplicateKey(record.snapshot),
-                record.snapshot.orderId,
-              ])
-          )
-          for (const incoming of backup.orders) {
-            if (incoming.snapshot.source !== 'other') continue
-            const reference = otherOrderDuplicateKey(incoming.snapshot)
-            if (
-              references.has(reference) &&
-              references.get(reference) !== incoming.snapshot.orderId
-            )
-              throw new Error(
-                'An other-source order with this supplier and reference already exists'
-              )
-            references.set(reference, incoming.snapshot.orderId)
-          }
           const allocations = await requested(
             tx.objectStore('packingAllocations').getAll()
           )
@@ -1725,6 +1684,9 @@ export async function openDatabase({ name = '1688-order-library' } = {}) {
               }
             }
           }
+          // Reconciliation can keep a newer local snapshot. Validate the actual
+          // final records, not a projection which assumes incoming ids replace it.
+          assertUniqueOtherReferences(await requested(orders.getAll()))
           for (const record of backup.history) {
             const key = [...keyFor(record.snapshot), record.snapshot.observedAt]
             if (!(await requested(history.getKey(key)))) history.put(record)
