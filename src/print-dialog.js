@@ -191,46 +191,66 @@ export function openPrintDialog({
   const tableScroll = el('div', undefined, 'print-table-scroll')
   tableScroll.append(table)
   const quantitySection = el('div', undefined, 'print-quantity-section')
-  let doubleQuantities, halveQuantities, quantityReason
-  if (marks) {
-    const toolbar = el('div', undefined, 'print-quantity-toolbar')
-    const scope = el('span', uiMessage('All carton quantities'))
-    const actions = el('div', undefined, 'print-quantity-actions')
-    actions.setAttribute('role', 'group')
-    bindAttribute(actions, 'aria-label', uiMessage('All carton quantities'))
-    doubleQuantities = el('button', '×2')
-    halveQuantities = el('button', '÷2')
-    doubleQuantities.dataset.action = 'double-carton-quantities'
-    halveQuantities.dataset.action = 'halve-carton-quantities'
-    for (const [target, label, help] of [
-      [
-        doubleQuantities,
-        'Double all carton quantities',
-        'Multiply every carton quantity in this dialog by two. All counts must stay at or below 9999.',
-      ],
-      [
-        halveQuantities,
-        'Halve all carton quantities',
-        'Divide every carton quantity in this dialog by two, rounding odd counts up. Zero stays zero.',
-      ],
-    ]) {
-      target.type = 'button'
-      bindAttribute(target, 'aria-label', uiMessage(label))
-      preparationHelp(target, uiMessage(help))
-    }
-    actions.append(doubleQuantities, halveQuantities)
-    toolbar.append(scope, actions)
-    const hint = el(
-      'p',
-      uiMessage(
-        'Applies to every product below. Halving rounds odd counts up; zero stays zero.'
-      ),
-      'print-hint'
-    )
-    quantityReason = el('p', undefined, 'print-hint print-quantity-reason')
-    quantityReason.setAttribute('role', 'status')
-    quantitySection.append(toolbar, hint, quantityReason)
+  const toolbar = el('div', undefined, 'print-quantity-toolbar')
+  toolbar.setAttribute('role', 'group')
+  bindAttribute(
+    toolbar,
+    'aria-label',
+    uiMessage('Adjust all requested quantities')
+  )
+  const quantityHeading = el('div', undefined, 'print-quantity-heading')
+  const quantityPreview = el('output', undefined, 'print-quantity-preview')
+  quantityPreview.setAttribute('aria-live', 'polite')
+  quantityHeading.append(
+    el('strong', uiMessage('Adjust quantities')),
+    quantityPreview
+  )
+  const quantityControls = el('div', undefined, 'print-quantity-actions')
+  const quantityOperation = el('select')
+  bindAttribute(quantityOperation, 'aria-label', uiMessage('Operation'))
+  for (const [value, text] of [
+    ['multiply', '× Multiply'],
+    ['divide', '÷ Divide'],
+  ]) {
+    const option = el('option', uiMessage(text))
+    option.value = value
+    quantityOperation.append(option)
   }
+  const quantityFactor = numberInput(2, { min: 1, max: 9999, step: 1 })
+  bindAttribute(quantityFactor, 'aria-label', uiMessage('Factor'))
+  const applyQuantities = el(
+    'button',
+    undefined,
+    'print-quantity-apply primary'
+  )
+  applyQuantities.type = 'button'
+  applyQuantities.dataset.action = 'apply-print-quantities'
+  const arrow = el('span', '→', 'print-quantity-apply-icon')
+  arrow.setAttribute('aria-hidden', 'true')
+  applyQuantities.append(arrow, el('span', uiMessage('Apply to all')))
+  preparationHelp(
+    applyQuantities,
+    uiMessage(
+      'Apply the chosen operation to every requested quantity below. Only this print dialog changes; packing quantities and extra-copy limits stay unchanged.'
+    )
+  )
+  quantityControls.append(
+    field(
+      'Operation',
+      quantityOperation,
+      'Multiply increases requested quantities; Divide reduces them, rounding up to whole copies. Zero stays zero.'
+    ),
+    field(
+      'Factor',
+      quantityFactor,
+      'Enter a whole number from 1 to 9999. For example, multiply by 3 for three copies per requested item, or divide by 2 to halve the quantities.'
+    ),
+    applyQuantities
+  )
+  toolbar.append(quantityHeading, quantityControls)
+  const quantityReason = el('p', undefined, 'print-hint print-quantity-reason')
+  quantityReason.setAttribute('role', 'status')
+  quantitySection.append(toolbar, quantityReason)
   quantitySection.append(tableScroll)
   left.append(summary, warnings, quantitySection, settingsPane, advice, status)
 
@@ -688,33 +708,111 @@ export function openPrintDialog({
     if (!text) return empty
     return /^\d{1,4}$/.test(text) ? Number(text) : NaN
   }
-  function adjustCartons(operation) {
-    if (!marks || busy || closed) return
+  function quantityAdjustment() {
+    const factor = whole(quantityFactor.value, NaN)
+    if (!Number.isInteger(factor) || factor < 1)
+      return {
+        error: uiMessage('Enter a whole factor from 1 to 9999.'),
+        field: quantityFactor,
+      }
     const values = [...quantities].map(([key, value]) => [key, whole(value, 0)])
-    // Validate every result before changing any input, so a blocked bulk action
-    // cannot leave a partially changed table or silently clamp a count.
+    const invalid = values.find(([, value]) => !Number.isInteger(value))
+    if (invalid)
+      return {
+        error: uiMessage('{0}: enter a requested quantity from 0 to 9999.', {
+          0: invalid[0],
+        }),
+        field: cellsByKey.get(invalid[0]).input,
+      }
+    const divide = quantityOperation.value === 'divide'
     const changed = values.map(([key, value]) => [
       key,
-      operation === 'double' ? value * 2 : Math.ceil(value / 2),
+      divide ? Math.ceil(value / factor) : value * factor,
     ])
-    if (changed.some(([, value]) => !Number.isInteger(value) || value > 9999))
+    const overflow = changed.find(([, value]) => value > 9999)
+    if (overflow)
+      return {
+        error: uiMessage(
+          '{0} would become {1}, above the 9999 limit. Lower the factor or requested quantity.',
+          { 0: overflow[0], 1: overflow[1] }
+        ),
+        field: quantityFactor,
+      }
+    return {
+      changed,
+      before: values.reduce((sum, [, value]) => sum + value, 0),
+      after: changed.reduce((sum, [, value]) => sum + value, 0),
+      differs: changed.some(([, value], index) => value !== values[index][1]),
+      rounded: divide && values.some(([, value]) => value % factor !== 0),
+      factor,
+      divide,
+    }
+  }
+  function updateQuantityControls() {
+    const adjustment = quantityAdjustment()
+    applyQuantities.disabled =
+      busy || (!adjustment.error && !adjustment.differs)
+    if (adjustment.field === quantityFactor)
+      quantityFactor.setAttribute('aria-invalid', 'true')
+    else quantityFactor.removeAttribute('aria-invalid')
+    toolbar.classList.toggle('has-error', Boolean(adjustment.error))
+    bindText(
+      quantityPreview,
+      adjustment.error
+        ? ''
+        : uiMessage('Total requested: {0} → {1}', {
+            0: () => adjustment.before.toLocaleString(getLocale()),
+            1: () => adjustment.after.toLocaleString(getLocale()),
+          })
+    )
+    bindText(
+      quantityReason,
+      adjustment.error ||
+        uiMessage(
+          !adjustment.differs
+            ? 'No quantities would change.'
+            : adjustment.divide
+              ? 'Division rounds each product up to a whole copy; zero stays zero.'
+              : 'Applies to all requested quantities. Extra copies are recalculated separately.'
+        )
+    )
+  }
+  applyQuantities.addEventListener('click', () => {
+    if (busy || closed) return
+    const adjustment = quantityAdjustment()
+    if (adjustment.error) {
+      updateQuantityControls()
+      adjustment.field.focus()
       return
-    for (const [key, value] of changed) {
+    }
+    if (!adjustment.differs) return
+    // Validate the entire change first; an overflowing product must never
+    // leave any other product partially updated.
+    for (const [key, value] of adjustment.changed) {
       quantities.set(key, value)
       cellsByKey.get(key).input.value = String(value)
     }
     update()
     bindText(
-      status,
-      uiMessage(
-        operation === 'double'
-          ? 'All carton quantities doubled.'
-          : 'All carton quantities halved.'
-      )
+      quantityReason,
+      uiMessage('Applied {0}{1} to all requested quantities: {2} → {3}.{4}', {
+        0: adjustment.divide ? '÷' : '×',
+        1: adjustment.factor,
+        2: () => adjustment.before.toLocaleString(getLocale()),
+        3: () => adjustment.after.toLocaleString(getLocale()),
+        4: adjustment.rounded
+          ? uiMessage(' Non-whole results were rounded up.')
+          : '',
+      })
     )
-  }
-  doubleQuantities?.addEventListener('click', () => adjustCartons('double'))
-  halveQuantities?.addEventListener('click', () => adjustCartons('halve'))
+  })
+  quantityOperation.addEventListener('change', updateQuantityControls)
+  quantityFactor.addEventListener('input', updateQuantityControls)
+  quantityFactor.addEventListener('keydown', (event) => {
+    if (event.key !== 'Enter') return
+    event.preventDefault()
+    applyQuantities.click()
+  })
 
   const itemByKey = new Map(items.map((item) => [item.key, item]))
   const currentItems = () =>
@@ -779,23 +877,7 @@ export function openPrintDialog({
         else field?.removeAttribute('aria-invalid')
       invalid ||= badQuantity || badCap
     }
-    if (marks) {
-      const overflow = [...quantities.values()].some(
-        (value) => whole(value, 0) > 4999
-      )
-      doubleQuantities.disabled = busy || invalid || overflow
-      halveQuantities.disabled = busy || invalid
-      bindText(
-        quantityReason,
-        invalid
-          ? uiMessage('Enter whole numbers from 0 to 9999.')
-          : overflow
-            ? uiMessage(
-                'Doubling would exceed 9999. Lower the carton quantities first.'
-              )
-            : ''
-      )
-    }
+    updateQuantityControls()
     try {
       if (invalid) throw new Error('Enter whole numbers from 0 to 9999.')
       if (marks) {

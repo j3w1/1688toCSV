@@ -1145,23 +1145,52 @@ dialog.print-dialog.packing-review {
   min-inline-size: 0;
   gap: var(--space-1);
 }
-.print-quantity-toolbar,
-.print-quantity-actions {
+.print-quantity-toolbar {
   display: flex;
   flex-wrap: wrap;
   align-items: center;
   gap: var(--space-2);
-}
-.print-quantity-toolbar {
   justify-content: space-between;
-  font-size: var(--text-s);
-  font-weight: 600;
+  padding: var(--space-2);
+  border: 1px solid var(--divider);
+  border-radius: var(--radius-m);
+  background: var(--field);
 }
-.print-quantity-actions > button {
-  min-inline-size: 38px;
-  min-block-size: 28px;
-  padding: 2px 8px;
-  font-size: var(--text-m);
+.print-quantity-heading {
+  display: grid;
+  flex: 1 1 140px;
+  gap: 4px;
+  font-size: var(--text-s);
+}
+.print-quantity-preview {
+  color: var(--accent-text);
+  font-size: var(--text-xs);
+  font-variant-numeric: tabular-nums;
+}
+.print-quantity-actions {
+  display: grid;
+  flex: 1 1 300px;
+  grid-template-columns: minmax(0, 1fr) 64px auto;
+  align-items: end;
+  gap: 6px;
+  min-inline-size: 0;
+}
+.print-dialog .print-quantity-apply {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  min-block-size: 32px;
+  padding: 4px 10px;
+  font-size: var(--text-s);
+  white-space: normal;
+}
+.print-quantity-apply-icon {
+  font-size: 17px;
+  line-height: 1;
+}
+.print-quantity-section:has(.has-error) .print-quantity-reason {
+  color: var(--danger-text);
 }
 .print-quantity-reason:empty {
   display: none;

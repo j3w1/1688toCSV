@@ -7,77 +7,103 @@ import {
 const values = (inputs) =>
   inputs.evaluateAll((nodes) => nodes.map((input) => input.value))
 
-test('carton bulk controls update every count, round halves up and refuse invalid or overflowing doubles atomically', async ({
-  extension,
-}) => {
-  const { page, dialog } = await openPrintDialogFixture(extension)
-  const quantities = dialog.locator('.print-counts tbody input')
-  const twice = dialog.getByRole('button', {
-    name: 'Double all carton quantities',
-    exact: true,
-  })
-  const half = dialog.getByRole('button', {
-    name: 'Halve all carton quantities',
-    exact: true,
-  })
-  await expect(twice).toHaveText('×2')
-  await expect(half).toHaveText('÷2')
-  await twice.click()
-  expect(await values(quantities)).toEqual(['2', '6', '0'])
-  await expect(twice).toBeFocused()
-  await expect(dialog.locator('.print-summary')).toHaveText(
-    '2 carton marks per A4 · Pages: 4 · Marks: 8'
-  )
-  await half.focus()
-  await page.keyboard.press('Enter')
-  expect(await values(quantities)).toEqual(['1', '3', '0'])
-  await expect(half).toBeFocused()
-  await quantities.first().fill('3')
-  await quantities.nth(1).fill('5')
-  await half.click()
-  expect(await values(quantities)).toEqual(['2', '3', '0'])
-  await expect(dialog.locator('.print-page-label')).toHaveText('Page 1 of 3')
+for (const kind of ['labels', 'marks']) {
+  test(`${kind} adjusts all requested quantities with a preview, custom factors and atomic validation`, async ({
+    extension,
+  }) => {
+    const { page, dialog } = await openPrintDialogFixture(extension, { kind })
+    const quantities = dialog.getByLabel(/^Quantity for /)
+    const operation = dialog.getByLabel('Operation', { exact: true })
+    const factor = dialog.getByLabel('Factor', { exact: true })
+    const apply = dialog.getByRole('button', {
+      name: 'Apply to all',
+      exact: true,
+    })
+    const preview = dialog.locator('.print-quantity-preview')
+    const reason = dialog.locator('.print-quantity-reason')
+    const exportButton = dialog.getByRole('button', {
+      name: 'Export PDF',
+      exact: true,
+    })
+    let cap
+    if (kind === 'labels') {
+      await dialog.locator('.print-advanced > summary').click()
+      await dialog
+        .getByLabel('Limit extra copies per product', { exact: true })
+        .check()
+      cap = dialog.getByLabel('Max extra for CE26100101', { exact: true })
+      await cap.fill('4')
+    }
+    await expect(preview).toHaveText('Total requested: 4 → 8')
+    await factor.fill('3')
+    await expect(preview).toHaveText('Total requested: 4 → 12')
+    expect(await values(quantities)).toEqual(['1', '3', '0'])
+    // Enter in Factor applies exactly once and leaves the editor focused.
+    await factor.press('Enter')
+    await expect(factor).toBeFocused()
+    expect(await values(quantities)).toEqual(['3', '9', '0'])
+    await expect(reason).toHaveText(
+      'Applied ×3 to all requested quantities: 4 → 12.'
+    )
+    await operation.selectOption('divide')
+    await factor.fill('2')
+    await expect(preview).toHaveText('Total requested: 12 → 7')
+    await apply.click()
+    expect(await values(quantities)).toEqual(['2', '5', '0'])
+    await expect(reason).toContainText('Non-whole results were rounded up.')
+    await factor.fill('3')
+    await apply.click()
+    expect(await values(quantities)).toEqual(['1', '2', '0'])
+    if (cap) await expect(cap).toHaveValue('4')
+    await factor.fill('1')
+    await expect(apply).toBeDisabled()
+    await expect(reason).toHaveText('No quantities would change.')
 
-  for (const invalid of ['2.5', '1e2', '-1', '10000']) {
-    await quantities.nth(1).fill(invalid)
-    await expect(quantities.nth(1)).toHaveAttribute('aria-invalid', 'true')
-    await expect(twice).toBeDisabled()
-    await expect(half).toBeDisabled()
-    const before = await values(quantities)
-    // The handler is guarded too: no partial mutation even if a caller
-    // dispatches an event directly at a disabled control.
-    await twice.dispatchEvent('click')
-    await half.dispatchEvent('click')
-    expect(await values(quantities)).toEqual(before)
-    await expect(
-      dialog.getByRole('button', { name: 'Export PDF', exact: true })
-    ).toBeDisabled()
-  }
-  await quantities.first().fill('5000')
-  await quantities.nth(1).fill('3')
-  await expect(twice).toBeDisabled()
-  await expect(half).toBeEnabled()
-  await expect(dialog.locator('.print-quantity-reason')).toHaveText(
-    'Doubling would exceed 9999. Lower the carton quantities first.'
-  )
-  await twice.dispatchEvent('click')
-  expect(await values(quantities)).toEqual(['5000', '3', '0'])
-  await half.click()
-  expect(await values(quantities)).toEqual(['2500', '2', '0'])
-  await expect(twice).toBeEnabled()
-  await twice.click()
-  expect(await values(quantities)).toEqual(['5000', '4', '0'])
-  await quantities.first().fill('')
-  await quantities.nth(1).fill('0')
-  await half.click()
-  expect(await values(quantities)).toEqual(['0', '0', '0'])
-  await expect(
-    dialog.getByRole('button', { name: 'Export PDF', exact: true })
-  ).toBeDisabled()
-  await dialog.getByRole('button', { name: 'Cancel', exact: true }).click()
-  await expect(page.locator('#launch')).toBeFocused()
-  await page.close()
-})
+    await quantities.first().fill('5000')
+    await quantities.nth(1).fill('3')
+    await operation.selectOption('multiply')
+    await factor.fill('2')
+    await expect(reason).toContainText('CE26100101 would become 10000')
+    await apply.click()
+    await expect(factor).toBeFocused()
+    expect(await values(quantities)).toEqual(['5000', '3', '0'])
+    // An unapplied calculator error does not invalidate current print quantities.
+    await expect(exportButton).toBeEnabled()
+    await operation.selectOption('divide')
+    await apply.click()
+    expect(await values(quantities)).toEqual(['2500', '2', '0'])
+    for (const invalid of ['2.5', '1e2', '-1', '10000']) {
+      await quantities.nth(1).fill(invalid)
+      await expect(quantities.nth(1)).toHaveAttribute('aria-invalid', 'true')
+      const before = await values(quantities)
+      await apply.click()
+      expect(await values(quantities)).toEqual(before)
+      await expect(quantities.nth(1)).toBeFocused()
+      await expect(reason).toContainText(
+        'CE26100102: enter a requested quantity'
+      )
+      await expect(exportButton).toBeDisabled()
+    }
+    await quantities.nth(1).fill('2')
+    for (const invalid of ['', '0', '2.5', '1e2', '-1', '10000']) {
+      await factor.fill(invalid)
+      await apply.click()
+      await expect(factor).toBeFocused()
+      await expect(factor).toHaveAttribute('aria-invalid', 'true')
+      await expect(reason).toHaveText('Enter a whole factor from 1 to 9999.')
+      expect(await values(quantities)).toEqual(['2500', '2', '0'])
+    }
+    await factor.fill('2')
+    await expect(factor).not.toHaveAttribute('aria-invalid')
+    await quantities.first().fill('')
+    await quantities.nth(1).fill('0')
+    await expect(apply).toBeDisabled()
+    await expect(exportButton).toBeDisabled()
+    await dialog.getByRole('button', { name: 'Cancel', exact: true }).click()
+    await expect(page.locator('#launch')).toBeFocused()
+    await page.close()
+  })
+}
 
 for (const kind of ['labels', 'marks']) {
   test(`${kind} counts stay compact without desktop horizontal scrolling and preset fields align responsively`, async ({
@@ -85,7 +111,7 @@ for (const kind of ['labels', 'marks']) {
   }) => {
     const { page, dialog } = await openPrintDialogFixture(extension, { kind })
     if (kind === 'labels') {
-      await expect(dialog.locator('.print-quantity-actions')).toHaveCount(0)
+      await expect(dialog.locator('.print-quantity-actions')).toHaveCount(1)
       await dialog.locator('.print-advanced > summary').click()
       await dialog
         .getByLabel('Limit extra copies per product', { exact: true })
@@ -179,23 +205,21 @@ test('print helpers explain visual changes on hover and keyboard focus and trans
   await expect(dialog).toHaveJSProperty('open', true)
   await dialog.locator('[data-action="close-print-dialog"]').click()
 
-  for (const [language, scope, halveLabel, help] of [
-    [
-      'es',
-      'Todas las cantidades de cajas',
-      'Reducir a la mitad todas las cantidades de cajas',
-      'redondeando las impares hacia arriba',
-    ],
-    ['zh', '所有箱唛数量', '所有箱唛数量减半', '奇数向上取整'],
+  for (const [language, scope, applyLabel, help] of [
+    ['es', 'Ajustar cantidades', 'Aplicar a todos', 'redondea hacia arriba'],
+    ['zh', '调整数量', '应用于全部', '向上取整'],
   ]) {
     dialog = await showPrintDialog(page, { language })
-    await expect(dialog.locator('.print-quantity-toolbar > span')).toHaveText(
+    await expect(dialog.locator('.print-quantity-heading > strong')).toHaveText(
       scope
     )
-    const halve = dialog.getByRole('button', { name: halveLabel, exact: true })
-    await halve.hover()
+    const apply = dialog.getByRole('button', { name: applyLabel, exact: true })
+    await dialog
+      .locator('.print-quantity-actions select')
+      .selectOption('divide')
+    await dialog.locator('.print-quantity-actions .print-field').first().hover()
     await expect(dialog.getByRole('tooltip')).toContainText(help)
-    await halve.click()
+    await apply.click()
     expect(await values(dialog.locator('.print-counts tbody input'))).toEqual([
       '1',
       '2',

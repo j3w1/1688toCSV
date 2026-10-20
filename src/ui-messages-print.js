@@ -126,44 +126,68 @@ export const PRINT_MESSAGES = {
   Extra: { zh: '额外', es: 'Extra' },
   'Max extra': { zh: '最多额外', es: 'Extra máx.' },
   Cartons: { zh: '箱数', es: 'Cajas' },
-  'All carton quantities': {
-    zh: '所有箱唛数量',
-    es: 'Todas las cantidades de cajas',
+  'Adjust all requested quantities': {
+    zh: '调整全部所需数量',
+    es: 'Ajustar todas las cantidades solicitadas',
   },
-  'Double all carton quantities': {
-    zh: '所有箱唛数量乘以二',
-    es: 'Duplicar todas las cantidades de cajas',
+  'Adjust quantities': { zh: '调整数量', es: 'Ajustar cantidades' },
+  Operation: { zh: '运算', es: 'Operación' },
+  Factor: { zh: '倍数', es: 'Factor' },
+  '× Multiply': { zh: '× 乘以', es: '× Multiplicar' },
+  '÷ Divide': { zh: '÷ 除以', es: '÷ Dividir' },
+  'Apply to all': { zh: '应用于全部', es: 'Aplicar a todos' },
+  'Total requested: {0} → {1}': {
+    zh: '所需总数：{0} → {1}',
+    es: 'Total solicitado: {0} → {1}',
   },
-  'Halve all carton quantities': {
-    zh: '所有箱唛数量减半',
-    es: 'Reducir a la mitad todas las cantidades de cajas',
+  'No quantities would change.': {
+    zh: '数量不会改变。',
+    es: 'Ninguna cantidad cambiaría.',
   },
-  'Applies to every product below. Halving rounds odd counts up; zero stays zero.':
+  'Enter a whole factor from 1 to 9999.': {
+    zh: '请输入 1 到 9999 的整数倍数。',
+    es: 'Introduce un factor entero de 1 a 9999.',
+  },
+  '{0}: enter a requested quantity from 0 to 9999.': {
+    zh: '{0}：请输入 0 到 9999 的所需数量。',
+    es: '{0}: introduce una cantidad solicitada de 0 a 9999.',
+  },
+  '{0} would become {1}, above the 9999 limit. Lower the factor or requested quantity.':
     {
-      zh: '应用于下方所有商品。减半时奇数向上取整，零保持为零。',
-      es: 'Se aplica a todos los productos de abajo. Al dividir, las cantidades impares se redondean hacia arriba; el cero sigue siendo cero.',
+      zh: '{0} 将变为 {1}，超过 9999 的上限。请减小倍数或所需数量。',
+      es: '{0} pasaría a {1}, por encima del límite de 9999. Reduce el factor o la cantidad solicitada.',
     },
-  'Doubling would exceed 9999. Lower the carton quantities first.': {
-    zh: '乘以二后会超过 9999。请先减少箱唛数量。',
-    es: 'Al duplicar se superaría 9999. Reduce primero las cantidades de cajas.',
+  'Division rounds each product up to a whole copy; zero stays zero.': {
+    zh: '除法会将每个商品的结果向上取整；零保持为零。',
+    es: 'La división redondea cada producto hacia arriba a una copia entera; el cero sigue siendo cero.',
   },
-  'All carton quantities doubled.': {
-    zh: '所有箱唛数量已乘以二。',
-    es: 'Se han duplicado todas las cantidades de cajas.',
-  },
-  'All carton quantities halved.': {
-    zh: '所有箱唛数量已减半。',
-    es: 'Se han reducido a la mitad todas las cantidades de cajas.',
-  },
-  'Multiply every carton quantity in this dialog by two. All counts must stay at or below 9999.':
+  'Applies to all requested quantities. Extra copies are recalculated separately.':
     {
-      zh: '将此对话框中的所有箱唛数量乘以二。每个数量都必须不超过 9999。',
-      es: 'Multiplica por dos todas las cantidades de cajas de este diálogo. Ninguna puede superar 9999.',
+      zh: '应用于全部所需数量。额外份数会单独重新计算。',
+      es: 'Se aplica a todas las cantidades solicitadas. Las copias extra se recalculan por separado.',
     },
-  'Divide every carton quantity in this dialog by two, rounding odd counts up. Zero stays zero.':
+  'Applied {0}{1} to all requested quantities: {2} → {3}.{4}': {
+    zh: '已将全部所需数量{0}{1}：{2} → {3}。{4}',
+    es: 'Se aplicó {0}{1} a todas las cantidades solicitadas: {2} → {3}.{4}',
+  },
+  ' Non-whole results were rounded up.': {
+    zh: '非整数结果已向上取整。',
+    es: ' Los resultados no enteros se redondearon hacia arriba.',
+  },
+  'Multiply increases requested quantities; Divide reduces them, rounding up to whole copies. Zero stays zero.':
     {
-      zh: '将此对话框中的所有箱唛数量除以二，奇数向上取整。零保持为零。',
-      es: 'Divide por dos todas las cantidades de cajas de este diálogo, redondeando las impares hacia arriba. El cero sigue siendo cero.',
+      zh: '乘法增加所需数量；除法减少数量并向上取整。零保持为零。',
+      es: 'Multiplicar aumenta las cantidades solicitadas; dividir las reduce y redondea hacia arriba a copias enteras. El cero sigue siendo cero.',
+    },
+  'Enter a whole number from 1 to 9999. For example, multiply by 3 for three copies per requested item, or divide by 2 to halve the quantities.':
+    {
+      zh: '请输入 1 到 9999 的整数。例如，乘以 3 为每个所需商品打印三份，除以 2 将数量减半。',
+      es: 'Introduce un entero de 1 a 9999. Por ejemplo, multiplica por 3 para tres copias por artículo solicitado o divide entre 2 para reducir las cantidades a la mitad.',
+    },
+  'Apply the chosen operation to every requested quantity below. Only this print dialog changes; packing quantities and extra-copy limits stay unchanged.':
+    {
+      zh: '将所选运算应用于下方全部所需数量。只修改此打印对话框；打包数量和额外份数上限保持不变。',
+      es: 'Aplica la operación elegida a cada cantidad solicitada de abajo. Solo cambia este diálogo de impresión; las cantidades de empaque y los límites de copias extra se mantienen.',
     },
   'Save every preview page as an A4 PDF, plus a JSON summary. Print the PDF at 100% (Actual size).':
     {
