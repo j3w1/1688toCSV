@@ -487,7 +487,7 @@ export async function startLibrary(
   preparationHelp(
     $('orders-heading'),
     uiMessage(
-      'Click to select or deselect. Shift-click for a range; Ctrl-click adds orders. Use Details or press Enter for order details, tags and notes. Click a month heading to expand or collapse it.'
+      'Click to select or deselect. Shift-click for a range; Ctrl-click adds orders. Click the store name or press Enter for order details, tags and notes. Click a month heading to expand or collapse it.'
     )
   )
   preparationHelp(
@@ -1077,18 +1077,39 @@ export async function startLibrary(
       preparationHelp(
         card,
         uiMessage(
-          'Click to select or deselect. Shift-click selects a range. Use Details or press Enter for order details, tags and notes.'
+          'Click to select or deselect. Shift-click selects a range. Click the store name or press Enter for order details, tags and notes.'
         )
       )
       const summary = node('div', undefined, 'order-summary')
       summary.id = `order-summary-${order.orderId}`
       const identity = node('div', undefined, 'order-card-identity')
-      identity.append(
-        copyTextButton(order.sellerName, {
-          label: 'Copy store name',
-          className: 'order-seller',
+      const details = node(
+        'button',
+        order.sellerName,
+        'order-seller order-details-trigger'
+      )
+      details.type = 'button'
+      bindAttribute(
+        details,
+        'aria-label',
+        uiMessage('{0}: {1}', {
+          0: order.sellerName,
+          1: uiMessage('Details for order {0}', { 0: order.orderId }),
         })
       )
+      details.setAttribute('aria-haspopup', 'dialog')
+      details.setAttribute('aria-controls', 'order-details')
+      preparationHelp(
+        details,
+        uiMessage(
+          'View order details, tags and notes without changing your selection.'
+        )
+      )
+      details.addEventListener('click', (event) => {
+        event.stopPropagation()
+        void openDetails(record).catch((error) => feedback(error.message, true))
+      })
+      identity.append(details)
       const productNames = packing?.orderNames(order.orderId) || []
       if (getLanguage() !== 'zh' && productNames.length) {
         const names = node('span', undefined, 'order-name-summary spanish-name')
@@ -1131,26 +1152,6 @@ export async function startLibrary(
         )
         meta.append(tags)
       }
-      const details = node('button', uiMessage('Details'), 'order-card-details')
-      details.type = 'button'
-      bindAttribute(
-        details,
-        'aria-label',
-        uiMessage('Details for order {0}', { 0: order.orderId })
-      )
-      details.setAttribute('aria-haspopup', 'dialog')
-      details.setAttribute('aria-controls', 'order-details')
-      preparationHelp(
-        details,
-        uiMessage(
-          'View order details, tags and notes without changing your selection.'
-        )
-      )
-      details.addEventListener('click', (event) => {
-        event.stopPropagation()
-        void openDetails(record).catch((error) => feedback(error.message, true))
-      })
-      meta.append(details)
       summary.append(reference, meta)
       card.append(summary)
       orderSelection.bind(card, order.orderId)
@@ -1219,7 +1220,7 @@ export async function startLibrary(
       if (previousOrder !== row.orderId) {
         const heading = node('tr', undefined, `order-section-heading ${tone}`)
         const cell = node('th')
-        cell.colSpan = 6
+        cell.colSpan = 7
         sectionId = `order-section-${row.orderId}`
         cell.id = sectionId
         const band = node('div', undefined, 'order-section-band')
@@ -1344,7 +1345,8 @@ export async function startLibrary(
         pair.append(node('dt', uiMessage('Material')), value)
         attributes.append(pair)
       }
-      packing?.decorateRow(description, row)
+      const capacity = node('td', undefined, 'numeric pack-size-cell')
+      packing?.decorateRow(description, row, capacity)
       const assignedTags = row.record.productTags?.[row.entryId] || []
       if (assignedTags.length) {
         const tags = node('div', undefined, 'product-row-tags')
@@ -1373,6 +1375,7 @@ export async function startLibrary(
         thumb,
         description,
         node('td', amount(row.price), 'numeric price-cell'),
+        discount,
         node(
           'td',
           Number(row.quantity).toLocaleString(getLocale(), {
@@ -1380,7 +1383,7 @@ export async function startLibrary(
           }),
           'numeric quantity-cell'
         ),
-        discount
+        capacity
       )
       body.append(tr)
     }

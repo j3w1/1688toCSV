@@ -16,7 +16,7 @@ export function cartonBreakdownMessage(result) {
 /** Capacity belongs to a source product, including products not yet prepared. */
 export function mountCartonCapacity(host, { quantity, value, onSave }) {
   const control = el('div', undefined, 'carton-capacity')
-  const label = el('label', message('Units per carton'))
+  const label = el('label', message('Pack size'), 'sr-only')
   const input = el('input')
   input.type = 'number'
   input.min = '1'
@@ -27,25 +27,25 @@ export function mountCartonCapacity(host, { quantity, value, onSave }) {
   input.value = value ?? ''
   bindAttribute(input, 'placeholder', '—')
   label.htmlFor = input.id
-  label.append(input)
-  const summary = el('span', undefined, 'carton-capacity-summary')
-  const status = el('span', undefined, 'carton-capacity-status')
+  const summary = el('span', undefined, 'carton-capacity-summary sr-only')
+  summary.id = `${input.id}-summary`
+  const status = el('span', undefined, 'carton-capacity-status sr-only')
   status.setAttribute('role', 'status')
   status.id = `${input.id}-status`
-  input.setAttribute('aria-describedby', status.id)
+  input.setAttribute('aria-describedby', `${summary.id} ${status.id}`)
   preparationHelp(
-    label,
+    input,
     message(
       'Units packed inside one full carton. Leave blank if unknown. Saves automatically; leftovers need packing review. This does not change the ordered quantity.'
     )
   )
-  control.append(label, summary, status)
+  control.append(label, input, summary, status)
   host.append(control)
   let saved = value ?? null
   let timer, work
   const parse = () => {
     if (input.validity?.badInput)
-      throw new Error('Units per carton must be a positive whole number')
+      throw new Error('Pack size must be a positive whole number')
     return normalizeUnitsPerCarton(input.value)
   }
   const dirty = () => {
@@ -70,6 +70,7 @@ export function mountCartonCapacity(host, { quantity, value, onSave }) {
   }
   const failure = (error) => {
     input.setAttribute('aria-invalid', 'true')
+    control.dataset.state = 'error'
     bindText(status, message(error.message))
   }
   const flush = async () => {
@@ -87,11 +88,13 @@ export function mountCartonCapacity(host, { quantity, value, onSave }) {
       throw error
     }
     input.removeAttribute('aria-invalid')
+    control.dataset.state = 'saving'
     bindText(status, message('Saving…'))
     work = onSave(next)
     try {
       await work
       saved = next
+      control.dataset.state = 'saved'
       bindText(status, message('Saved'))
     } catch (error) {
       failure(error)
@@ -103,12 +106,23 @@ export function mountCartonCapacity(host, { quantity, value, onSave }) {
   }
   input.addEventListener('input', () => {
     input.removeAttribute('aria-invalid')
+    delete control.dataset.state
     bindText(status, '')
     showSummary()
     clearTimeout(timer)
-    timer = setTimeout(() => void flush().catch(() => {}), 450)
+    timer = setTimeout(() => {
+      // Let incomplete native number drafts remain quiet until blur or Enter.
+      // Valid edits still save without requiring another interaction.
+      try {
+        parse()
+      } catch {
+        return
+      }
+      void flush().catch(() => {})
+    }, 450)
   })
   input.addEventListener('change', () => void flush().catch(() => {}))
+  input.addEventListener('blur', () => void flush().catch(() => {}))
   input.addEventListener('keydown', (event) => {
     if (event.key !== 'Enter' || event.isComposing) return
     event.preventDefault()
@@ -133,12 +147,12 @@ export function mountCartonCapacity(host, { quantity, value, onSave }) {
 
 export function cartonCapacityReadout(item, capacity) {
   const row = el('div', undefined, 'carton-capacity carton-capacity-readout')
-  row.append(el('span', message('Units per carton')))
+  row.append(el('span', message('Pack size')))
   row.append(
     capacity == null
       ? el('span', '—')
       : copyTextButton(String(capacity), {
-          label: message('Copy units per carton'),
+          label: message('Copy pack size'),
         })
   )
   if (capacity != null)

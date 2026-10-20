@@ -55,6 +55,8 @@ const units = {
   inch: ['inch', 1],
   in: ['inch', 1],
   英寸: ['inch', 1],
+  '"': ['inch', 1],
+  '′′': ['inch', 1],
   // 寸 can be a nominal seller size. Compare like units without assuming its
   // conversion to centimetres or to an international inch.
   寸: ['cun', 1],

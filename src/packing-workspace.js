@@ -42,6 +42,7 @@ import {
   configureMaterialVocabulary,
 } from './material-vocabulary.js'
 import { mountMaterialVocabulary } from './material-vocabulary-settings.js'
+import { openStoreSpreadsheetGuide } from './store-spreadsheet-guide.js'
 import { cartonBreakdown } from './carton-packing.js'
 import {
   mountCartonCapacity,
@@ -4948,6 +4949,9 @@ export async function startPackingWorkspace({
         uiMessage('Variants for {0}', { 0: group.spanishName || group.title })
       )
       table.setAttribute('aria-multiselectable', 'true')
+      const columns = el('colgroup')
+      for (let column = 0; column < 4; column++) columns.append(el('col'))
+      table.append(columns)
       for (const label of [
         'Product actions',
         'Photo',
@@ -5170,6 +5174,7 @@ export async function startPackingWorkspace({
             true
           )
         note.classList.add('variant-note')
+        note.querySelector('textarea').rows = 1
         note.firstChild.replaceWith(
           el('span', uiMessage('Product variant'), 'visually-hidden')
         )
@@ -5182,9 +5187,8 @@ export async function startPackingWorkspace({
             )
           )
         )
-        description.append(noteRow)
         if (items.length > 1)
-          description.append(
+          noteRow.append(
             el(
               'small',
               uiMessage('{0} source rows', { 0: items.length }),
@@ -5198,8 +5202,11 @@ export async function startPackingWorkspace({
         )
         renderSourceAttributes(sourceAttributes, items)
         sourceAttributeFields.add({ host: sourceAttributes, items })
-        description.append(sourceAttributes)
-        description.append(materialControl(draft, [variant], 'Material'))
+        const attributes = el('div', undefined, 'variant-product-attributes')
+        attributes.append(
+          sourceAttributes,
+          materialControl(draft, [variant], 'Material')
+        )
         if (variant.size) {
           const sourceSize = el(
             'small',
@@ -5209,7 +5216,7 @@ export async function startPackingWorkspace({
           sourceSize.append(
             copyTextButton(variant.size, { label: uiMessage('Copy size') })
           )
-          description.append(
+          attributes.append(
             preparationHelp(
               sourceSize,
               uiMessage(
@@ -5218,14 +5225,7 @@ export async function startPackingWorkspace({
             )
           )
         }
-        const cartonUnits =
-          getRecords().find(
-            (record) => record.snapshot.orderId === draft.orderId
-          )?.unitsPerCarton || {}
-        for (const item of items)
-          description.append(
-            cartonCapacityReadout(item, cartonUnits[item.entryId])
-          )
+        description.append(attributes)
         const facts = el('dl', undefined, 'variant-order-facts')
         const prices = [
           ...new Set(items.map((item) => normalizePrice(item.price))),
@@ -5268,7 +5268,8 @@ export async function startPackingWorkspace({
           fact.append(el('dt', uiMessage(label)), amount)
           facts.append(fact)
         }
-        description.append(
+        const factsLine = el('div', undefined, 'variant-facts')
+        factsLine.append(
           preparationHelp(
             facts,
             items.length > 1
@@ -5281,6 +5282,15 @@ export async function startPackingWorkspace({
                 )
           )
         )
+        const cartonUnits =
+          getRecords().find(
+            (record) => record.snapshot.orderId === draft.orderId
+          )?.unitsPerCarton || {}
+        for (const item of items)
+          factsLine.append(
+            cartonCapacityReadout(item, cartonUnits[item.entryId])
+          )
+        description.append(factsLine)
         const codeOptions = el('fieldset', undefined, 'variant-code-options')
         bindAttribute(codeOptions, 'aria-label', uiMessage('Code options'))
         const codeReadout = el(
@@ -5408,7 +5418,9 @@ export async function startPackingWorkspace({
           codeOptions.append(
             el('small', uiMessage('Choose a size code'), 'needs-preparation')
           )
-        details.append(description, codeOptions)
+        const heading = el('div', undefined, 'variant-heading')
+        heading.append(codeOptions, noteRow)
+        details.append(heading, description)
         option.append(details)
         row.append(photoCell, option)
         const output = el('td')
@@ -6516,6 +6528,17 @@ export async function startPackingWorkspace({
     }
     settingsDialog.oncancel = guardDismissal
     settingsDialog.onsubmit = guardDismissal
+    if (!data.querySelector('.store-import-guide-launch')) {
+      const guide = button('Store spreadsheet guide', openStoreSpreadsheetGuide)
+      guide.classList.add('store-import-guide-launch')
+      preparationHelp(
+        guide,
+        uiMessage(
+          'Check import markers, filenames and review rules. This format guide does not import files or change your library.'
+        )
+      )
+      data.querySelector('.settings-data-actions').append(guide)
+    }
     panels.get('settings-panel-data').append(data)
     const footer = el('div', undefined, 'settings-footer'),
       saveHelp = el(
@@ -6819,7 +6842,7 @@ export async function startPackingWorkspace({
         ),
       ]
     },
-    decorateRow(host, row) {
+    decorateRow(host, row, capacityHost = host) {
       for (const [key, entry] of cartonFields)
         if (!entry.input.isConnected && !entry.dirty()) cartonFields.delete(key)
       const matched = membership.get(`${row.orderId}/${row.entryId}`),
@@ -6887,10 +6910,10 @@ export async function startPackingWorkspace({
           quantity: row.quantity,
           value: record?.unitsPerCarton?.[row.entryId],
         })
-        host.append(existing.control)
+        capacityHost.append(existing.control)
         return
       }
-      const carton = mountCartonCapacity(host, {
+      const carton = mountCartonCapacity(capacityHost, {
         quantity: row.quantity,
         value: record?.unitsPerCarton?.[row.entryId],
         onSave: async (value) => {

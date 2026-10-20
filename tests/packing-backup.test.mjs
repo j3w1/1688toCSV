@@ -495,7 +495,7 @@ test('carton capacity survives full backup validation and rejects malformed save
   ]) {
     const invalid = structuredClone(backup)
     invalid.orders[0].unitsPerCarton = unitsPerCarton
-    assert.throws(() => validateBackup(invalid), /Units per carton/)
+    assert.throws(() => validateBackup(invalid), /Pack size/)
   }
 })
 

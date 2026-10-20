@@ -642,7 +642,7 @@ export function openPrintDialog({
               ? uiMessage(
                   'Carton count unknown. Enter the actual count manually.'
                 )
-              : uiMessage('Units per carton: {0} · {1}', {
+              : uiMessage('Pack size: {0} · {1}', {
                   0: entry.unitsPerCarton,
                   1: cartonBreakdownMessage(entry),
                 }),
@@ -1065,7 +1065,7 @@ export function openPrintDialog({
         warning(
           uiMessage(
             itemByKey.get(mismatch.key)?.cartonPacking
-              ? '{0}: {1} cartons entered, {2} calculated from units per carton.'
+              ? '{0}: {1} cartons entered, {2} calculated from pack size.'
               : '{0}: {1} cartons entered, {2} recorded in the packing data.',
             {
               0: mismatch.key,

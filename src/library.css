@@ -524,13 +524,6 @@ h2 {
 .order-card-meta > .order-card-tags {
   display: contents;
 }
-.order-card-details {
-  margin-inline-start: auto;
-  min-block-size: 24px;
-  min-inline-size: 24px;
-  padding: 2px 6px;
-  font-size: 10.5px;
-}
 .order-card-reference {
   display: grid;
   grid-template-columns: minmax(0, 1fr) max-content;
@@ -807,6 +800,67 @@ tbody tr:hover {
 }
 #sheet-body .discount-cell {
   color: var(--muted);
+}
+.pack-size-heading,
+#sheet-body .pack-size-cell {
+  inline-size: 7ch;
+  padding-inline: 6px 12px;
+}
+#sheet-body .pack-size-cell .carton-capacity {
+  position: relative;
+  display: inline-flex;
+  margin: 0;
+  vertical-align: middle;
+}
+#sheet-body .pack-size-cell input {
+  inline-size: 7ch;
+  min-block-size: 26px;
+  padding: 2px 3px;
+  border: 1px solid transparent;
+  border-block-end-color: var(--border);
+  border-radius: 3px;
+  background: transparent;
+  color: var(--quantity-text);
+  font: inherit;
+  font-variant-numeric: tabular-nums;
+  text-align: end;
+  appearance: textfield;
+}
+#sheet-body .pack-size-cell input::-webkit-inner-spin-button,
+#sheet-body .pack-size-cell input::-webkit-outer-spin-button {
+  margin: 0;
+  appearance: none;
+}
+#sheet-body .pack-size-cell input:hover,
+#sheet-body .pack-size-cell input:focus-visible {
+  background: var(--field);
+}
+#sheet-body .pack-size-cell input:focus-visible {
+  outline: 2px solid var(--focus);
+  outline-offset: 1px;
+}
+#sheet-body .pack-size-cell input[aria-invalid='true'] {
+  border-block-end-color: var(--danger-text);
+}
+#sheet-body .pack-size-cell [data-state='saved'] input:not(:focus-visible) {
+  border-block-end-color: var(--success-text);
+}
+#sheet-body .pack-size-cell [data-state='error'] .carton-capacity-status {
+  position: absolute;
+  z-index: 2;
+  inset-block-start: calc(100% + 3px);
+  inset-inline-end: 0;
+  clip: auto;
+  inline-size: max-content;
+  max-inline-size: 190px;
+  block-size: auto;
+  padding: 4px 6px;
+  border-radius: 4px;
+  background: var(--danger);
+  color: var(--danger-text);
+  box-shadow: 0 2px 8px #0002;
+  white-space: normal;
+  text-align: start;
 }
 .thumb-cell {
   width: 90px;
@@ -2055,6 +2109,204 @@ button.copyable-text:hover {
   min-inline-size: 0;
   max-inline-size: 100%;
   font-weight: 600;
+}
+.order-details-trigger {
+  min-block-size: 0;
+  padding: 0;
+  border: 0;
+  border-radius: 2px;
+  background: transparent;
+  color: var(--text);
+  font: inherit;
+  line-height: inherit;
+  text-align: start;
+  white-space: normal;
+  overflow-wrap: anywhere;
+  text-decoration: underline;
+  text-decoration-color: var(--border);
+  text-underline-offset: 3px;
+}
+.order-details-trigger:hover {
+  color: var(--text);
+  background: transparent;
+  text-decoration-color: var(--text);
+}
+.store-import-guide-launch {
+  font-size: 12px;
+}
+.store-import-guide {
+  box-sizing: border-box;
+  inline-size: min(740px, calc(100% - 24px));
+  max-inline-size: 740px;
+  block-size: min(600px, calc(100dvh - 24px));
+  max-block-size: calc(100dvh - 24px);
+  padding: 16px;
+  overflow: hidden;
+}
+.store-import-guide[open] {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+.store-import-guide-heading {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  flex: none;
+}
+.store-import-guide-heading h2 {
+  margin: 0;
+  font-size: 17px;
+}
+.store-import-guide-heading > .icon-button {
+  inline-size: 26px;
+  min-inline-size: 26px;
+  min-block-size: 26px;
+  padding: 4px;
+  border: 0;
+  background: transparent;
+}
+.store-import-guide-content {
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+  gap: 10px;
+  min-block-size: 0;
+  overflow: hidden;
+  font-size: 12px;
+  line-height: 1.5;
+}
+.store-import-guide p {
+  margin: 0;
+  font-size: inherit;
+}
+.store-import-guide-intro {
+  color: var(--muted);
+}
+.store-import-guide-tabs {
+  display: flex;
+  flex-wrap: wrap;
+  flex: none;
+  gap: 3px;
+  border-block-end: 1px solid var(--border);
+}
+.store-import-guide-tabs > button {
+  min-block-size: 29px;
+  padding: 4px 8px;
+  border: 0;
+  border-block-end: 2px solid transparent;
+  border-radius: 4px 4px 0 0;
+  background: transparent;
+  font-size: 12px;
+  font-weight: 550;
+}
+.store-import-guide-tabs > [aria-selected='true'] {
+  border-block-end-color: var(--control-accent);
+  background: var(--hover);
+  color: var(--text);
+}
+.store-import-guide-panels {
+  flex: 1;
+  min-block-size: 0;
+  overflow: hidden;
+}
+.store-import-guide-panel {
+  box-sizing: border-box;
+  block-size: 100%;
+  padding: 2px 6px 6px 2px;
+  overflow: auto;
+  overscroll-behavior: contain;
+  scrollbar-gutter: stable;
+}
+.store-import-rule + .store-import-rule {
+  margin-block-start: 16px;
+}
+.store-import-rule h3 {
+  margin: 0 0 4px;
+  font-size: 12.5px;
+  color: var(--text);
+}
+.store-import-rule p,
+.store-import-rule li {
+  color: var(--muted);
+}
+.store-import-rule ol {
+  margin: 8px 0 0;
+  padding-inline-start: 20px;
+}
+.store-import-rule li + li {
+  margin-block-start: 5px;
+}
+.store-import-filenames {
+  margin: 10px 0 0;
+}
+.store-import-filenames > div + div {
+  margin-block-start: 8px;
+}
+.store-import-filenames dt {
+  margin-block-end: 3px;
+  color: var(--text);
+  font-size: 11px;
+}
+.store-import-filenames dd {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 5px 9px;
+  margin: 0;
+}
+.store-import-guide button.store-import-token {
+  display: inline-block;
+  min-block-size: 0;
+  padding: 1px 4px;
+  border-radius: 3px;
+  background: var(--field);
+  color: var(--text);
+  font:
+    600 12px/1.5 ui-monospace,
+    monospace;
+  overflow-wrap: anywhere;
+}
+.store-import-guide button.store-import-token:hover {
+  background: var(--hover);
+}
+.store-import-marker-table {
+  min-inline-size: 0;
+  min-width: 0;
+  inline-size: 100%;
+  margin-block-start: 8px;
+  font-size: 12px;
+}
+.store-import-marker-table th,
+.store-import-marker-table td {
+  padding: 6px 7px;
+  vertical-align: top;
+  white-space: normal;
+}
+.store-import-marker-table th {
+  font-size: 11px;
+}
+.store-import-marker-table .store-import-marker-values {
+  inline-size: 100px;
+}
+.store-import-marker-values > button {
+  margin-block-end: 3px;
+  margin-inline-end: 3px;
+}
+.store-import-marker-table strong,
+.store-import-marker-table td > span {
+  display: block;
+}
+.store-import-marker-table td > span {
+  margin-block-start: 2px;
+  color: var(--muted);
+}
+.store-import-total-example {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 9px;
+  padding-block-start: 9px;
 }
 .order-name-summary {
   display: inline-flex;

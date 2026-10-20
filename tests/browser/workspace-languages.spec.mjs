@@ -142,7 +142,7 @@ for (const language of ['en', 'es', 'zh']) {
   })
 }
 
-test('source identities copy directly without changing selection, layout, or opening details', async ({
+test('source identities copy directly and the card store name opens details without changing selection or layout', async ({
   extension,
 }) => {
   const { page, record } = await openWorkspace(extension)
@@ -174,6 +174,10 @@ test('source identities copy directly without changing selection, layout, or ope
   await expect(card).toHaveAttribute('aria-selected', 'false')
   await card.locator('.order-seller').click()
   await expect(card).toHaveAttribute('aria-selected', 'false')
+  const details = page.locator('#order-details')
+  await expect(details).toBeVisible()
+  await expect(rows.first()).toHaveAttribute('aria-selected', 'true')
+  await details.getByRole('button', { name: 'Close order details' }).click()
   await card.locator('.order-reference').dblclick()
   await expect(page.locator('#order-details')).not.toBeVisible()
   await expect(rows.first()).toHaveAttribute('aria-selected', 'true')

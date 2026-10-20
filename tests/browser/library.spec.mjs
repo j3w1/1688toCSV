@@ -481,7 +481,7 @@ test('filters and explicit product selections determine copy scope', async ({
     1
   )
 })
-test('order cards select across their full surface and offer Details without changing selection', async ({
+test('order cards select across their full surface and open details from the store heading without changing selection', async ({
   extension,
 }) => {
   await seed(extension, (records) => {
@@ -553,10 +553,12 @@ test('order cards select across their full surface and offer Details without cha
   const selectedOrder = await cards.nth(1).getAttribute('data-selection-key')
   const selectedProduct = await product.getAttribute('data-selection-key')
   const detailsButton = card.getByRole('button', {
-    name: /^Details for order /,
+    name: /Details for order /,
   })
   await expect(detailsButton).toBeVisible()
-  await expect(detailsButton).toHaveText('Details')
+  await expect(detailsButton).toHaveClass(/order-seller/)
+  await expect(detailsButton).not.toHaveText('Details')
+  await expect(card.locator('.order-card-details')).toHaveCount(0)
   await detailsButton.click()
   await expect(details).toBeVisible()
   await expect(details.locator('#order-details-heading')).toContainText(

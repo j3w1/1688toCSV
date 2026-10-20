@@ -322,12 +322,12 @@ function validateRecord(input) {
       'Product tags updatedAt'
     )
   if (input.unitsPerCarton !== undefined) {
-    object(input.unitsPerCarton, 'Units per carton')
+    object(input.unitsPerCarton, 'Pack size')
     record.unitsPerCarton = Object.fromEntries(
       Object.entries(input.unitsPerCarton).map(([entryId, value]) => {
-        identifier(entryId, 'Units per carton entry ID')
+        identifier(entryId, 'Pack size entry ID')
         if (!Number.isSafeInteger(value) || value < 1)
-          throw new Error('Units per carton must be a positive whole number')
+          throw new Error('Pack size must be a positive whole number')
         return [entryId, value]
       })
     )
@@ -335,7 +335,7 @@ function validateRecord(input) {
   if (input.unitsPerCartonUpdatedAt !== undefined)
     record.unitsPerCartonUpdatedAt = date(
       input.unitsPerCartonUpdatedAt,
-      'Units per carton updatedAt'
+      'Pack size updatedAt'
     )
   if (input.packingExcludedEntryIds !== undefined)
     record.packingExcludedEntryIds = strings(
@@ -1240,7 +1240,7 @@ export async function openDatabase({ name = '1688-order-library' } = {}) {
       { accountId = 'local' } = {}
     ) {
       identifier(orderId, 'Order ID')
-      identifier(entryId, 'Units per carton entry ID')
+      identifier(entryId, 'Pack size entry ID')
       const capacity = normalizeUnitsPerCarton(value)
       return write(['orders'], async (tx) => {
         const store = tx.objectStore('orders')

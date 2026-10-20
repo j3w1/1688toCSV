@@ -50,9 +50,13 @@ Imports read each order in a background tab (or, if the browser refuses that, a 
 | `open-print-menu`     | More print formats  | Opens the Print menu.                                                      |
 | `open-grouping-menu`  | Grouping tools      | Opens the grouping menu.                                                   |
 
+### Store spreadsheet format guide
+
+**Settings → Data → Store spreadsheet guide** opens documentation only. Its keyboard-operated tabs cover filenames, exact copyable markers and proposed validation rules. It never reads a spreadsheet or writes to the library. Close it or press Escape to return to Settings with the current draft intact.
+
 ### Print menu and dialog (both views)
 
-Products rows expose a **Units per carton** spinbutton. Valid changes autosave after a short idle or on blur/Enter; invalid input keeps the last saved value. Preparation shows the stored capacity read-only with a copyable value. The chosen-columns key is `unitsPerCarton`. Exact source-row divisions initialize carton-mark counts; remainders or a partly unknown code group require an explicit count and the **Carton count reviewed for CODE** checkbox. Changing that count resets review. Export stays disabled until affected rows are reviewed. Fully unknown groups retain a clearly manual starting count.
+Products rows expose a compact **Pack size** spinbutton in its own column beside **Quantity**; **Price** and **Discount** are adjacent. The field stores units inside one full carton. Valid changes autosave after a short idle or on blur/Enter; invalid drafts are reported on blur/Enter and keep the last saved value. Preparation shows the stored capacity read-only with a copyable value beside its other numeric facts. The chosen-columns key remains `unitsPerCarton`. Exact source-row divisions initialize carton-mark counts; remainders or a partly unknown code group require an explicit count and the **Carton count reviewed for CODE** checkbox. Changing that count resets review. Export stays disabled until affected rows are reviewed. Fully unknown groups retain a clearly manual starting count.
 
 The compact checkmark button retains the accessible name **Apply to all** and the `apply-print-quantities` action. Paper and layout inputs update without blur. The print canvas exposes `data-preview-state` as `loading`, `ready`, `empty` or `error`; `aria-busy` is present while it renders. Dashed safe-area outlines are a separate SVG overlay and are not part of exported artwork. Fitted viewers disable horizontal scrolling; zoomed viewers keep native scrolling and panning.
 

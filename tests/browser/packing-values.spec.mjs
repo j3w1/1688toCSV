@@ -5,7 +5,11 @@ import { centsToMoney, lineGrossCents, moneyToCents } from '../../src/money.js'
 
 const productRows = (page) => page.locator('#sheet-body tr[data-selection-key]')
 
-async function seedOrder(extension, quantities = ['40', '24', '80']) {
+async function seedOrder(
+  extension,
+  quantities = ['40', '24', '80'],
+  capacities = []
+) {
   const [record] = await extension.inspector.evaluate(
     `(${createDemoRecords.toString()})(document)`
   )
@@ -26,6 +30,12 @@ async function seedOrder(extension, quantities = ['40', '24', '80']) {
     item.description = `${item.title}\n${item.skuProperties[0].raw}\n货号：${item.productNumber}`
     item.price = ['12.3450', '18.900', '8.20'][index]
     item.quantity = quantities[index]
+  }
+  if (capacities.length) {
+    record.unitsPerCarton = Object.fromEntries(
+      order.items.map((item, index) => [item.entryId, capacities[index]])
+    )
+    record.unitsPerCartonUpdatedAt = order.observedAt
   }
   const gross = order.items.reduce(
     (sum, item) => sum + lineGrossCents(item.price, item.quantity),
@@ -83,8 +93,8 @@ async function prepare(page) {
   return view
 }
 
-async function openPacking(extension, quantities) {
-  const record = await seedOrder(extension, quantities)
+async function openPacking(extension, quantities, capacities) {
+  const record = await seedOrder(extension, quantities, capacities)
   const page = await extension.context.newPage()
   await page.clock.setFixedTime(new Date('2026-10-15T04:00:00Z'))
   await page.goto(`${extension.extensionBaseUrl}/library.html`)
@@ -172,6 +182,101 @@ test('packing rows show exact source unit prices and quantities as read-only fac
       )
       .toBeLessThanOrEqual(1)
   }
+  expect(extension.unexpectedRequests).toEqual([])
+})
+
+test('preparation keeps facts compact and read-only beside a visible label editor at wide and narrow widths', async ({
+  extension,
+}) => {
+  const { page, view } = await openPacking(extension, undefined, [10, 8, 10])
+  const row = view.locator('tr[data-variant-id]').first()
+  const facts = row.locator('.variant-facts')
+  const capacity = facts.locator('.carton-capacity-readout')
+  await expect(capacity).toContainText('10')
+  await expect(capacity).toContainText('4 full cartons')
+  await expect(capacity.locator('input, textarea')).toHaveCount(0)
+  await expect(
+    row.locator('.variant-source-attributes .product-attributes')
+  ).toBeVisible()
+  await expect(
+    row.locator('.variant-heading .variant-code-options')
+  ).toBeVisible()
+  const copyQuantity = facts.getByRole('button', {
+    name: 'Copy quantity: 40',
+    exact: true,
+  })
+  await expect(copyQuantity).toHaveCSS('padding', '0px')
+  await expect(copyQuantity).toHaveCSS('min-height', '0px')
+
+  await page.setViewportSize({ width: 1440, height: 1000 })
+  const quantityBox = await row.locator('.variant-quantity').boundingBox()
+  const packBox = await capacity.boundingBox()
+  expect(Math.abs(packBox.y - quantityBox.y)).toBeLessThanOrEqual(5)
+  expect(packBox.x).toBeGreaterThan(quantityBox.x + quantityBox.width)
+  const rowBounds = await row.boundingBox()
+  expect(rowBounds.height).toBeLessThanOrEqual(148)
+  const widths = await row
+    .locator(':scope > td')
+    .evaluateAll((cells) =>
+      cells.map((cell) => cell.getBoundingClientRect().width)
+    )
+  expect(widths[0]).toBeLessThanOrEqual(58)
+  expect(widths[1]).toBeLessThanOrEqual(96)
+  expect(widths[2]).toBeGreaterThan(rowBounds.width * 0.55)
+  expect(widths[3]).toBeLessThanOrEqual(176)
+
+  for (const width of [1440, 768, 390]) {
+    await page.setViewportSize({ width, height: 1000 })
+    const editor = row.getByRole('button', {
+      name: 'Edit barcode',
+      exact: true,
+    })
+    const carton = view.locator('.carton-preview').first()
+    await expect(editor).toBeVisible()
+    await expect(carton).toBeVisible()
+    const within = await row.evaluate((node) => {
+      const bounds = node.getBoundingClientRect()
+      return [...node.querySelectorAll('td')].every((cell) => {
+        const value = cell.getBoundingClientRect()
+        return value.left >= bounds.left - 1 && value.right <= bounds.right + 1
+      })
+    })
+    expect(within).toBe(true)
+    for (const control of [editor, carton]) {
+      const bounds = await control.boundingBox()
+      expect(bounds.x).toBeGreaterThanOrEqual(0)
+      expect(bounds.x + bounds.width).toBeLessThanOrEqual(width)
+    }
+    await expect
+      .poll(() =>
+        page.evaluate(
+          () =>
+            document.documentElement.scrollWidth -
+            document.documentElement.clientWidth
+        )
+      )
+      .toBeLessThanOrEqual(1)
+  }
+  await page.setViewportSize({ width: 1440, height: 1000 })
+  await expect(
+    view.locator('.preparation-label-preview img:visible')
+  ).toHaveCount(5)
+  await page.screenshot({ path: 'work/compact-preparation-wide.png' })
+  await page.setViewportSize({ width: 390, height: 1000 })
+  await view.locator('.preparation-group').first().screenshot({
+    path: 'work/compact-preparation-narrow.png',
+  })
+  await page.setViewportSize({ width: 1440, height: 1000 })
+  await page.evaluate(() => {
+    navigator.clipboard.writeText = async (text) => {
+      window.compactPreparationCopy = text
+    }
+  })
+  await copyQuantity.click()
+  await expect
+    .poll(() => page.evaluate(() => window.compactPreparationCopy))
+    .toBe('40')
+  await expect(copyQuantity).toContainText('Copied')
   expect(extension.unexpectedRequests).toEqual([])
 })
 

@@ -5,8 +5,8 @@ export const CARTON_MESSAGES = {
     es: 'Cantidad de cajas desconocida. Indica la cantidad real manualmente.',
   },
   Unknown: { zh: '未知', es: 'Desconocido' },
-  'Units per carton': { zh: '每箱件数', es: 'Unidades por caja' },
-  'Copy units per carton': {
+  'Pack size': { zh: '每箱件数', es: 'Unidades/caja' },
+  'Copy pack size': {
     zh: '复制每箱件数',
     es: 'Copiar unidades por caja',
   },
@@ -14,7 +14,7 @@ export const CARTON_MESSAGES = {
     zh: '箱数未知',
     es: 'Cantidad de cajas desconocida',
   },
-  'Units per carton must be a positive whole number': {
+  'Pack size must be a positive whole number': {
     zh: '每箱件数必须为正整数',
     es: 'Las unidades por caja deben ser un número entero positivo',
   },
@@ -28,9 +28,9 @@ export const CARTON_MESSAGES = {
       zh: '一个整箱内的商品件数。不确定时留空。自动保存；余量需要确认装箱方式。不会更改订购数量。',
       es: 'Unidades dentro de una caja completa. Déjalo vacío si no lo sabes. Se guarda automáticamente; los sobrantes requieren revisión. No cambia la cantidad pedida.',
     },
-  'Units per carton: {0} · {1}': {
+  'Pack size: {0} · {1}': {
     zh: '每箱件数：{0} · {1}',
-    es: 'Unidades por caja: {0} · {1}',
+    es: 'Unidades/caja: {0} · {1}',
   },
   'Carton count reviewed': { zh: '箱数已确认', es: 'Cantidad revisada' },
   'Carton count reviewed for {0}': {
@@ -51,7 +51,7 @@ export const CARTON_MESSAGES = {
     zh: '计算箱数：{0}',
     es: 'Cajas calculadas: {0}',
   },
-  '{0}: {1} cartons entered, {2} calculated from units per carton.': {
+  '{0}: {1} cartons entered, {2} calculated from pack size.': {
     zh: '{0}：输入了 {1} 箱，根据每箱件数计算为 {2} 箱。',
     es: '{0}: se indicaron {1} cajas; se calcularon {2} según las unidades por caja.',
   },

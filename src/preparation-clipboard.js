@@ -26,7 +26,7 @@ export const preparationColumns = [
   ['spanishName', 'Spanish description', 'Codes & packing'],
   ['chineseCategory', 'Chinese category', 'Codes & packing'],
   ['material', 'Material', 'Codes & packing'],
-  ['unitsPerCarton', 'Units per carton', 'Codes & packing'],
+  ['unitsPerCarton', 'Pack size', 'Codes & packing'],
   ['title', 'Product title', 'Product details'],
   ['description', 'Description', 'Product details'],
   ['productNumber', 'Seller product code', 'Product details'],

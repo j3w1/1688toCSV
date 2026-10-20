@@ -15,6 +15,7 @@ import { EXCLUSION_MESSAGES } from './ui-messages-exclusions.js'
 import { SHELL_MESSAGES } from './ui-messages-shell.js'
 import { PRINT_MESSAGES } from './ui-messages-print.js'
 import { CARTON_MESSAGES } from './ui-messages-cartons.js'
+import { STORE_IMPORT_MESSAGES } from './ui-messages-store-import.js'
 
 // Explicit interface messages only; original seller, product and label values are never translated.
 export const UI_MESSAGES = {
@@ -31,6 +32,7 @@ export const UI_MESSAGES = {
   ...SHELL_MESSAGES,
   ...PRINT_MESSAGES,
   ...CARTON_MESSAGES,
+  ...STORE_IMPORT_MESSAGES,
   ...REVIEW_MESSAGES,
   Sizes: { zh: '尺寸', es: 'Tallas' },
   'Size handling': { zh: '尺寸处理', es: 'Tratamiento de tallas' },
