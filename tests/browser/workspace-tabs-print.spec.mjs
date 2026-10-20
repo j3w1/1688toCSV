@@ -373,22 +373,32 @@ test('an export in progress freezes its inputs, and Cancel or fractional quantit
   ).toContainText('No recent print jobs yet.')
 })
 
-test('expanding older purchase months keeps keyboard focus on the toggle', async ({
+test('purchase months show four newest choices and preserve expanded, selected and range behavior', async ({
   extension,
 }) => {
   const base = await extension.inspector.evaluate(
     `(${createDemoRecords.toString()})(document)`
   )
-  // Nine synthetic orders in nine different purchase months.
-  const orders = Array.from({ length: 9 }, (_, index) => {
+  // Sparse purchase dates should show actual purchases, without filling gaps.
+  const purchaseMonths = [
+    '2026-10',
+    '2026-08',
+    '2026-06',
+    '2026-05',
+    '2026-03',
+    '2026-01',
+    '2025-11',
+    '2025-09',
+    '2025-07',
+  ]
+  const orders = purchaseMonths.map((month, index) => {
     const record = structuredClone(base[index % base.length])
-    const month = String(10 - index).padStart(2, '0')
     record.snapshot.orderId = `90000000000000010${index}`
     record.snapshot.sourceUrl = record.snapshot.sourceUrl.replace(
       /orderId=\d+/,
       `orderId=${record.snapshot.orderId}`
     )
-    record.snapshot.purchasedAt = `2026-${month}-05T10:00:00+08:00`
+    record.snapshot.purchasedAt = `${month}-05T10:00:00+08:00`
     return record
   })
   const restored = await extension.inspector.evaluate(
@@ -408,25 +418,65 @@ test('expanding older purchase months keeps keyboard focus on the toggle', async
   )
   expect(restored.ok, restored.error).toBe(true)
   const page = await extension.context.newPage()
-  await page.addInitScript(() =>
-    localStorage.setItem('1688-library-purchase-months', '[]')
-  )
+  await page.clock.setFixedTime(new Date('2026-11-15T04:00:00Z'))
+  await page.addInitScript(() => {
+    if (localStorage.getItem('1688-library-purchase-months') === null)
+      localStorage.setItem('1688-library-purchase-months', '[]')
+  })
   await page.goto(`${extension.extensionBaseUrl}/library.html`)
   await expect(page.locator('#order-count')).toHaveText('9')
   const more = page.locator('#month-options .month-more')
-  await expect(more).toHaveText('+2 months')
-  await expect(
-    page.locator('#month-options .month-choice:not(.month-more)')
-  ).toHaveCount(7)
+  const monthChoices = page.locator('#month-options [data-month]')
+  const shownMonths = () =>
+    monthChoices.evaluateAll((buttons) =>
+      buttons.map((button) => button.dataset.month)
+    )
+  await expect(page.locator('#clear-months')).toHaveText('All months')
+  await expect(more).toHaveText('+5 months')
+  expect(await shownMonths()).toEqual(purchaseMonths.slice(0, 4))
   await more.focus()
   await page.keyboard.press('Enter')
-  await expect(
-    page.locator('#month-options .month-choice:not(.month-more)')
-  ).toHaveCount(9)
+  expect(await shownMonths()).toEqual(purchaseMonths)
   await expect(more).toHaveText('Fewer months')
   await expect(more).toBeFocused()
   await expect(more).toHaveAttribute('aria-expanded', 'true')
   await page.keyboard.press('Enter')
-  await expect(more).toHaveText('+2 months')
+  await expect(more).toHaveText('+5 months')
   await expect(more).toBeFocused()
+
+  await more.click()
+  await page.locator('#month-options [data-month="2025-11"]').click()
+  await more.click()
+  expect(await shownMonths()).toEqual([
+    ...purchaseMonths.slice(0, 4),
+    '2025-11',
+  ])
+  await expect(more).toHaveText('+4 months')
+  await page.locator('#month-options [data-month="2026-05"]').click()
+  await page.locator('#month-options [data-month="2026-10"]').click({
+    modifiers: ['Shift'],
+  })
+  const selectedMonths = () =>
+    page
+      .locator('#month-options [data-month][aria-pressed=true]')
+      .evaluateAll((buttons) => buttons.map((button) => button.dataset.month))
+  expect(await selectedMonths()).toEqual([
+    ...purchaseMonths.slice(0, 4),
+    '2025-11',
+  ])
+  await expect(page.locator('#month-filter-label')).toHaveText(
+    '5 purchase months'
+  )
+  await page.reload()
+  await expect
+    .poll(selectedMonths)
+    .toEqual([...purchaseMonths.slice(0, 4), '2025-11'])
+  await page.locator('#clear-months').click()
+  await expect(page.locator('#clear-months')).toHaveAttribute(
+    'aria-pressed',
+    'true'
+  )
+  expect(await shownMonths()).toEqual(purchaseMonths.slice(0, 4))
+  await expect(more).toHaveText('+5 months')
+  expect(extension.unexpectedRequests).toEqual([])
 })

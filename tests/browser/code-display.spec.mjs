@@ -102,7 +102,7 @@ test('workspace uses white hairlines on product digits across readouts and nativ
   ).toEqual({
     color: 'rgb(255, 255, 255)',
     height: '1px',
-    transform: 'matrix(1, 0, 0, 0.25, 0, 0)',
+    transform: 'matrix(1, 0, 0, 0.35, 0, 0)',
   })
   await expect(badge.locator('[data-code-part="prefix-period"]')).toHaveCSS(
     'text-decoration-line',
@@ -132,7 +132,7 @@ test('workspace uses white hairlines on product digits across readouts and nativ
   )
   expect(
     await input.evaluate((node) => getComputedStyle(node).backgroundSize)
-  ).toMatch(/ 0\.25px$/)
+  ).toMatch(/ 0\.35px$/)
   await expect(input).toHaveAttribute('aria-label', 'Product code')
   await input.focus()
   await expect(input).toHaveCSS('color', 'rgb(255, 255, 255)')

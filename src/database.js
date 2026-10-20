@@ -1,11 +1,18 @@
 const SNAPSHOT_VERSION = 1
 const BACKUP_FORMAT = '1688-order-library'
 const productAnnotationFields = [
-  ['productTags', 'productTagsUpdatedAt', 'productTagsPartialClocks'],
+  ['productTags', 'productTagsUpdatedAt', 'productTagsPartialClocks', 'map'],
+  [
+    'unitsPerCarton',
+    'unitsPerCartonUpdatedAt',
+    'unitsPerCartonPartialClocks',
+    'map',
+  ],
   [
     'packingExcludedEntryIds',
     'packingExclusionsUpdatedAt',
     'packingExclusionsPartialClocks',
+    'list',
   ],
 ]
 const decimalFields = [
@@ -314,6 +321,22 @@ function validateRecord(input) {
       input.productTagsUpdatedAt,
       'Product tags updatedAt'
     )
+  if (input.unitsPerCarton !== undefined) {
+    object(input.unitsPerCarton, 'Units per carton')
+    record.unitsPerCarton = Object.fromEntries(
+      Object.entries(input.unitsPerCarton).map(([entryId, value]) => {
+        identifier(entryId, 'Units per carton entry ID')
+        if (!Number.isSafeInteger(value) || value < 1)
+          throw new Error('Units per carton must be a positive whole number')
+        return [entryId, value]
+      })
+    )
+  }
+  if (input.unitsPerCartonUpdatedAt !== undefined)
+    record.unitsPerCartonUpdatedAt = date(
+      input.unitsPerCartonUpdatedAt,
+      'Units per carton updatedAt'
+    )
   if (input.packingExcludedEntryIds !== undefined)
     record.packingExcludedEntryIds = strings(
       input.packingExcludedEntryIds,
@@ -324,7 +347,7 @@ function validateRecord(input) {
       input.packingExclusionsUpdatedAt,
       'Packing exclusions updatedAt'
     )
-  for (const [field, clock, partial] of productAnnotationFields) {
+  for (const [field, clock, partial, kind] of productAnnotationFields) {
     if (input[partial] === undefined) continue
     object(input[partial], 'Partial product annotation clocks')
     record[partial] = Object.fromEntries(
@@ -341,9 +364,7 @@ function validateRecord(input) {
         'Partial product annotation clocks must follow the complete annotation timestamp'
       )
     const ids =
-      field === 'productTags'
-        ? Object.keys(record[field] || {})
-        : record[field] || []
+      kind === 'map' ? Object.keys(record[field] || {}) : record[field] || []
     if (!record[clock] && ids.some((id) => !record[partial][id]))
       throw new Error('Partial product annotations are missing an entry clock')
   }
@@ -453,22 +474,11 @@ function reconcile(snapshot, previous) {
       lastCheckedAt: snapshot.observedAt,
       notes: previous?.notes ?? '',
       tags: previous?.tags ?? [],
-      ...(previous?.productTags !== undefined
-        ? { productTags: previous.productTags }
-        : {}),
-      ...(previous?.productTagsUpdatedAt !== undefined
-        ? { productTagsUpdatedAt: previous.productTagsUpdatedAt }
-        : {}),
-      ...(previous?.packingExcludedEntryIds !== undefined
-        ? { packingExcludedEntryIds: previous.packingExcludedEntryIds }
-        : {}),
-      ...(previous?.packingExclusionsUpdatedAt !== undefined
-        ? { packingExclusionsUpdatedAt: previous.packingExclusionsUpdatedAt }
-        : {}),
       ...Object.fromEntries(
         productAnnotationFields
-          .filter(([, , partial]) => previous?.[partial] !== undefined)
-          .map(([, , partial]) => [partial, previous[partial]])
+          .flatMap(([field, clock, partial]) => [field, clock, partial])
+          .filter((field) => previous?.[field] !== undefined)
+          .map((field) => [field, previous[field]])
       ),
       changedEntryIds: previous
         ? snapshot.items
@@ -488,18 +498,22 @@ function reconcile(snapshot, previous) {
 
 /** Partial packing imports preserve known entries without claiming unknown clears. */
 export function mergeProductAnnotations(previous, incoming, next = previous) {
-  for (const [field, clock, partial] of productAnnotationFields) {
+  for (const [field, clock, partial, kind] of productAnnotationFields) {
     const previousClock = previous[clock] || ''
     const incomingClock = incoming[clock] || ''
     const completeClock =
       incomingClock > previousClock ? incomingClock : previousClock
-    const isTags = field === 'productTags'
-    let value = structuredClone(previous[field] || (isTags ? {} : []))
+    const isMap = kind === 'map'
+    let value = structuredClone(previous[field] || (isMap ? {} : []))
     let entryClocks = { ...previous[partial] }
     let changed = false
     const assignEntry = (source, id) => {
-      if (isTags) {
-        if (source[field]?.[id]?.length) value[id] = [...source[field][id]]
+      if (isMap) {
+        if (
+          Object.hasOwn(source[field] || {}, id) &&
+          (!Array.isArray(source[field][id]) || source[field][id].length)
+        )
+          value[id] = structuredClone(source[field][id])
         else delete value[id]
       } else {
         const ids = new Set(value)
@@ -509,7 +523,7 @@ export function mergeProductAnnotations(previous, incoming, next = previous) {
       }
     }
     if (incomingClock > previousClock) {
-      value = structuredClone(incoming[field] || (isTags ? {} : []))
+      value = structuredClone(incoming[field] || (isMap ? {} : []))
       entryClocks = {}
       for (const [id, timestamp] of Object.entries(previous[partial] || {})) {
         if (timestamp >= incomingClock) assignEntry(previous, id)
@@ -1219,6 +1233,43 @@ export async function openDatabase({ name = '1688-order-library' } = {}) {
       })
     },
 
+    async setUnitsPerCarton(
+      orderId,
+      entryId,
+      value,
+      { accountId = 'local' } = {}
+    ) {
+      identifier(orderId, 'Order ID')
+      identifier(entryId, 'Units per carton entry ID')
+      const capacity = normalizeUnitsPerCarton(value)
+      return write(['orders'], async (tx) => {
+        const store = tx.objectStore('orders')
+        const order = await requested(store.get([accountId, orderId]))
+        if (!order) throw new Error('Order was not found')
+        if (
+          !order.snapshot.items.some((item) => item.entryId === entryId) &&
+          !Object.hasOwn(order.unitsPerCarton || {}, entryId)
+        )
+          throw new Error('Product was not found in this order')
+        if (
+          (order.unitsPerCarton?.[entryId] ?? null) === capacity &&
+          (order.unitsPerCartonUpdatedAt ||
+            order.unitsPerCartonPartialClocks?.[entryId])
+        )
+          return order
+        const unitsPerCarton = { ...order.unitsPerCarton }
+        if (capacity === null) delete unitsPerCarton[entryId]
+        else unitsPerCarton[entryId] = capacity
+        const result = {
+          ...order,
+          unitsPerCarton,
+          ...annotationEditClock(order, 'unitsPerCarton', [entryId]),
+        }
+        store.put(result)
+        return result
+      })
+    },
+
     async setPackingExcluded(
       orderId,
       entryIds,
@@ -1596,10 +1647,26 @@ export async function openDatabase({ name = '1688-order-library' } = {}) {
                   updated += 1
                 }
               }
-              // A packing restore never replaces existing local annotations.
+              // Packing restores merge selected capacity observations. Existing
+              // local tags/exclusions retain their established restore policy.
               // Full restores fill partial observations without undoing newer edits.
-              if (!backup.packingScope)
-                next = mergeProductAnnotations(previous, incoming, next)
+              next = mergeProductAnnotations(
+                previous,
+                backup.packingScope
+                  ? Object.fromEntries(
+                      productAnnotationFields
+                        .filter(([field]) => field === 'unitsPerCarton')
+                        .flatMap(([field, clock, partial]) => [
+                          field,
+                          clock,
+                          partial,
+                        ])
+                        .filter((field) => incoming[field] !== undefined)
+                        .map((field) => [field, incoming[field]])
+                    )
+                  : incoming,
+                next
+              )
               if (next !== previous) orders.put(next)
               // An older backup's current version is still useful history.
               if (incoming.snapshot.observedAt < previous.snapshot.observedAt) {
@@ -2013,6 +2080,7 @@ import {
 import { upgradeWorkspaceColors } from './appearance.js'
 import { lineGrossCents, moneyToCents } from './money.js'
 import { purchaseTimestamp } from './order-date.js'
+import { normalizeUnitsPerCarton } from './carton-packing.js'
 import {
   isPackingPreparationSubset,
   mergePackingPreparation,

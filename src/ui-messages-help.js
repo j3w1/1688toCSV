@@ -20,16 +20,20 @@ export const HELP_MESSAGES = {
       zh: '点击商品行可选中或取消选中。按住 Shift 点击可选择连续行，按住 Ctrl 点击可追加选择。按钮和图片独立操作。',
       es: 'Haz clic en una fila para seleccionarla o deseleccionarla. Mayús + clic selecciona un rango; Ctrl + clic añade filas. Los botones y las fotos funcionan por separado.',
     },
-  'Click to select or deselect. Shift-click for a range; Ctrl-click adds orders. Double-click or Enter opens details. Click a month heading to expand or collapse it.':
+  'Click to select or deselect. Shift-click for a range; Ctrl-click adds orders. Use Details or press Enter for order details, tags and notes. Click a month heading to expand or collapse it.':
     {
-      zh: '点击可选中或取消选中。按住 Shift 点击可选择连续订单，按住 Ctrl 点击可追加选择。双击或按 Enter 查看详情。点击月份标题可展开或收起。',
-      es: 'Haz clic para seleccionar o deseleccionar. Mayús + clic selecciona un rango; Ctrl + clic añade pedidos. Haz doble clic o pulsa Enter para ver los detalles. Haz clic en el mes para expandirlo o contraerlo.',
+      zh: '点击可选中或取消选中。按住 Shift 点击可选择连续订单，按住 Ctrl 点击可追加选择。点击“详情”或按 Enter 可查看订单详情、标签和备注。点击月份标题可展开或收起。',
+      es: 'Haz clic para seleccionar o deseleccionar. Mayús + clic selecciona un rango; Ctrl + clic añade pedidos. Usa Detalles o pulsa Enter para ver los datos, etiquetas y notas del pedido. Haz clic en el mes para expandirlo o contraerlo.',
     },
-  'Click to select or deselect. Shift-click selects a range. Double-click opens order details.':
+  'Click to select or deselect. Shift-click selects a range. Use Details or press Enter for order details, tags and notes.':
     {
-      zh: '点击可选中或取消选中。按住 Shift 点击可选择连续行，双击可查看订单详情。',
-      es: 'Haz clic para seleccionar o deseleccionar. Mayús + clic selecciona un rango. Haz doble clic para ver los detalles del pedido.',
+      zh: '点击可选中或取消选中。按住 Shift 点击可选择连续行。点击“详情”或按 Enter 可查看订单详情、标签和备注。',
+      es: 'Haz clic para seleccionar o deseleccionar. Mayús + clic selecciona un rango. Usa Detalles o pulsa Enter para ver los datos, etiquetas y notas del pedido.',
     },
+  'View order details, tags and notes without changing your selection.': {
+    zh: '查看订单详情、标签和备注，不改变当前选择。',
+    es: 'Consulta los datos, etiquetas y notas del pedido sin cambiar tu selección.',
+  },
   'Copy the full-size product picture. Paste it into Excel or a message.': {
     zh: '复制商品原图，可粘贴到 Excel 或消息中。',
     es: 'Copia la foto del producto en tamaño completo y pégala en Excel o en un mensaje.',

@@ -26,6 +26,7 @@ export const preparationColumns = [
   ['spanishName', 'Spanish description', 'Codes & packing'],
   ['chineseCategory', 'Chinese category', 'Codes & packing'],
   ['material', 'Material', 'Codes & packing'],
+  ['unitsPerCarton', 'Units per carton', 'Codes & packing'],
   ['title', 'Product title', 'Product details'],
   ['description', 'Description', 'Product details'],
   ['productNumber', 'Seller product code', 'Product details'],
@@ -76,6 +77,7 @@ export const DEFAULT_PREPARATION_COLUMNS = [
 export const PREPARATION_COLUMN_PREFERENCE = '1688-packing-copy-columns'
 const columnKeys = preparationColumns.map(([key]) => key)
 const numericFields = new Set([
+  'unitsPerCarton',
   'price',
   'quantity',
   'discount',
@@ -123,6 +125,7 @@ export function preparationOrderFields(row, record = row.record) {
   if (!order) return {}
   const totals = order.totals || {}
   return {
+    unitsPerCarton: record.unitsPerCarton?.[row.entryId] ?? '',
     orderDate: order.purchasedAt || '',
     orderStatus: order.status || '',
     sellerName: order.sellerUnavailable ? '' : order.sellerName || '',

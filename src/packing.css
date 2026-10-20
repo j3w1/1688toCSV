@@ -2462,3 +2462,56 @@ html:has(body.packing-active) {
     gap: 3px;
   }
 }
+.carton-capacity {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 3px 8px;
+  margin-block-start: 5px;
+  color: var(--muted);
+  font-size: 11px;
+}
+.carton-capacity label {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  margin: 0;
+  font-size: inherit;
+}
+.carton-capacity input {
+  box-sizing: border-box;
+  inline-size: 68px;
+  min-block-size: 26px;
+  margin: 0;
+  padding: 3px 5px;
+  color: var(--quantity-text, var(--text));
+  font: inherit;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  background: var(--field);
+}
+.carton-capacity input[aria-invalid='true'],
+.carton-capacity input[aria-invalid='true'] ~ .carton-capacity-status {
+  color: var(--danger-text);
+  border-color: var(--danger-text);
+}
+.carton-capacity-summary,
+.carton-capacity-readout small {
+  font-size: 10px;
+}
+.carton-capacity-status {
+  font-size: 10px;
+}
+.carton-capacity-readout .copyable-text {
+  color: var(--quantity-text, var(--text));
+  font-weight: 600;
+}
+.variants .product-attributes {
+  margin-block: 3px;
+  font-size: 11px;
+}
+.variants .source-size .copyable-text,
+.variants .variant-order-facts .copyable-text {
+  color: inherit;
+  font: inherit;
+}

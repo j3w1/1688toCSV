@@ -60,7 +60,18 @@ test('order search combines seller, member login and order IDs with purchase fil
   await expect(page.locator('#sheet-body tr[data-selection-key]')).toHaveCount(
     3
   )
+  const suggestions = page.locator('.order-search > .search-suggestions')
+  await expect(suggestions).toBeVisible()
+  const [suggestionBounds, monthBounds] = await Promise.all([
+    suggestions.boundingBox(),
+    page.locator('#month-filter').boundingBox(),
+  ])
+  expect(suggestionBounds.y + suggestionBounds.height).toBeLessThanOrEqual(
+    monthBounds.y
+  )
   await page.locator('[data-month="2026-09"]').click()
+  await expect(search).toHaveAttribute('aria-expanded', 'false')
+  await expect(search).toHaveValue('  HABITAT  ')
   await expect(page.locator('.order-card')).toHaveCount(0)
   await expect(page.locator('.order-search-empty')).toHaveText(
     'No orders match these filters.'

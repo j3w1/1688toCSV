@@ -4,7 +4,7 @@
 .packing-review-codes code.ce-code,
 .row-preparation .row-code-copy.ce-code,
 .preparation-workspace .preparation-group input.group-code-editor.ce-code {
-  --ce-code-reading-weight: 0.25;
+  --ce-code-reading-weight: 0.35;
   display: inline-block;
   box-sizing: border-box;
   inline-size: fit-content;
@@ -82,7 +82,7 @@ input.ce-code,
   height: 1px;
   background: #fff;
   /* Scaling avoids text-decoration's whole-device-pixel minimum. */
-  transform: scaleY(var(--ce-code-reading-weight, 0.25));
+  transform: scaleY(var(--ce-code-reading-weight, 0.35));
   pointer-events: none;
 }
 input.ce-code.ce-code-input-readable,
@@ -92,7 +92,7 @@ input.ce-code.ce-code-input-readable,
   background-image: linear-gradient(#fff, #fff);
   background-repeat: no-repeat;
   background-size: var(--ce-code-underline-width)
-    calc(1px * var(--ce-code-reading-weight, 0.25));
+    calc(1px * var(--ce-code-reading-weight, 0.35));
   background-position: calc(50% + var(--ce-code-underline-shift))
     calc(50% + 0.48em);
 }

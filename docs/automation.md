@@ -52,6 +52,8 @@ Imports read each order in a background tab (or, if the browser refuses that, a 
 
 ### Print menu and dialog (both views)
 
+Products rows expose a **Units per carton** spinbutton. Valid changes autosave after a short idle or on blur/Enter; invalid input keeps the last saved value. Preparation shows the stored capacity read-only with a copyable value. The chosen-columns key is `unitsPerCarton`. Exact source-row divisions initialize carton-mark counts; remainders or a partly unknown code group require an explicit count and the **Carton count reviewed for CODE** checkbox. Changing that count resets review. Export stays disabled until affected rows are reviewed. Fully unknown groups retain a clearly manual starting count.
+
 The compact checkmark button retains the accessible name **Apply to all** and the `apply-print-quantities` action. Paper and layout inputs update without blur. The print canvas exposes `data-preview-state` as `loading`, `ready`, `empty` or `error`; `aria-busy` is present while it renders. Dashed safe-area outlines are a separate SVG overlay and are not part of exported artwork. Fitted viewers disable horizontal scrolling; zoomed viewers keep native scrolling and panning.
 
 Each requested-quantity field also has an `increment-print-quantity` button named **Add N to requested quantity for CODE**. It adds five for labels or one for carton marks, treats an empty field as zero, and refuses invalid values or results above 9999. It never changes another row or exports a file.

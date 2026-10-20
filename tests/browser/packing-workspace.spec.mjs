@@ -1075,19 +1075,43 @@ test('Copy Excel image freezes selected rows with current-language headings, sup
   ])
   await page.evaluate(async () => {
     await navigator.clipboard.writeText('clipboard-before-image')
-    globalThis.tableImageDrawing = { text: [], runs: [], images: 0 }
+    globalThis.tableImageDrawing = { text: [], runs: [], badges: [], images: 0 }
     const fillText = CanvasRenderingContext2D.prototype.fillText
     CanvasRenderingContext2D.prototype.fillText = function (text, ...args) {
       if (this.canvas.width > 2000) {
+        const bounds = this.measureText(text)
         globalThis.tableImageDrawing.text.push(String(text))
         globalThis.tableImageDrawing.runs.push({
           text: String(text),
           x: args[0],
           y: args[1],
           font: this.font,
+          color: this.fillStyle,
+          width: bounds.width,
+          ascent: bounds.actualBoundingBoxAscent,
+          descent: bounds.actualBoundingBoxDescent,
         })
       }
       return fillText.call(this, text, ...args)
+    }
+    const roundRect = CanvasRenderingContext2D.prototype.roundRect
+    CanvasRenderingContext2D.prototype.roundRect = function (
+      x,
+      y,
+      width,
+      height,
+      radius
+    ) {
+      if (this.canvas.width > 2000)
+        globalThis.tableImageDrawing.badges.push({
+          x,
+          y,
+          width,
+          height,
+          radius,
+          color: this.fillStyle,
+        })
+      return roundRect.call(this, x, y, width, height, radius)
     }
     const drawImage = CanvasRenderingContext2D.prototype.drawImage
     CanvasRenderingContext2D.prototype.drawImage = function (...args) {
@@ -1132,19 +1156,31 @@ test('Copy Excel image freezes selected rows with current-language headings, sup
   expect(headings).toBe(
     'No. Photo Product description Carton mark Barcode code Category & material Unit price (CNY) Quantity Carton dimensions Weight (kg) Carton no.'
   )
-  // Only the barcode column draws text for the base. The merged carton image
-  // already contains its code and has no redundant text caption underneath.
-  expect(drawing.text.filter((value) => value === base)).toHaveLength(2)
-  for (const suffix of ['S', 'L']) {
-    const suffixRun = drawing.runs.find((run) => run.text === suffix)
-    expect(suffixRun.font).toMatch(/^(?:700|bold) /)
-    expect(
-      drawing.runs.some(
-        (run) =>
-          run.text === base && run.y === suffixRun.y && run.x < suffixRun.x
-      )
-    ).toBe(true)
+  // Codes, including their endings, draw as one centered badge per variant.
+  // The merged carton artwork has no redundant text caption beneath it.
+  expect(drawing.text).not.toContain(base)
+  const codeRuns = drawing.runs.filter((run) => /^CE\d/.test(run.text)),
+    badges = drawing.badges.filter((badge) =>
+      /^#(?:000|000000)$/i.test(badge.color)
+    )
+  expect(codeRuns.map((run) => run.text)).toEqual([`${base}S`, `${base}L`])
+  expect(badges).toHaveLength(2)
+  for (const [index, run] of codeRuns.entries()) {
+    const badge = badges[index]
+    expect(run.font).toMatch(/^(?:700|bold) (?:1[2-7])px /)
+    expect(run.color).toMatch(/^#(?:fff|ffffff)$/i)
+    expect(badge.radius).toBeGreaterThan(0)
+    expect(run.x).toBeGreaterThan(badge.x)
+    expect(run.x + run.width).toBeLessThan(badge.x + badge.width)
+    expect(run.y - run.ascent).toBeGreaterThan(badge.y)
+    expect(run.y + run.descent).toBeLessThan(badge.y + badge.height)
+    expect(run.x + run.width / 2).toBeCloseTo(badge.x + badge.width / 2, 5)
+    expect(run.y + (run.descent - run.ascent) / 2).toBeCloseTo(
+      badge.y + badge.height / 2,
+      5
+    )
   }
+  expect(codeRuns[0].y).toBeLessThan(codeRuns[1].y)
   expect(drawing.text).not.toContain('西班牙语品名')
   expect(drawing.text).not.toContain('优惠（元）')
   expect(drawing.text).not.toContain('FRASCO DE PRUEBA')
@@ -2094,10 +2130,18 @@ for (const action of ['Copy Excel image', 'Copy group codes', 'Copy columns']) {
     await page.evaluate(async () => {
       await navigator.clipboard.writeText('pending-packing-export')
       window.frozenPackingText = []
+      window.frozenPackingRuns = []
       const fillText = CanvasRenderingContext2D.prototype.fillText
       CanvasRenderingContext2D.prototype.fillText = function (text, ...args) {
-        if (this.canvas.width > 2000)
+        if (this.canvas.width > 2000) {
           window.frozenPackingText.push(String(text))
+          window.frozenPackingRuns.push({
+            text: String(text),
+            y: args[1],
+            color: this.fillStyle,
+            font: this.font,
+          })
+        }
         return fillText.call(this, text, ...args)
       }
     })
@@ -2180,9 +2224,20 @@ for (const action of ['Copy Excel image', 'Copy group codes', 'Copy columns']) {
         view.getByRole('button', { name: 'Copied', exact: true })
       ).toBeVisible()
       const text = await page.evaluate(() => window.frozenPackingText)
-      // The carton artwork and barcode base contain the code; the redundant
-      // caption beneath the carton image is deliberately absent.
-      expect(text.filter((value) => value === latestCode)).toHaveLength(2)
+      // Full barcode payloads retain the click's selected variants and latest
+      // saved base. The carton artwork has no separate text caption.
+      expect(text).not.toContain(latestCode)
+      const runs = await page.evaluate(() => window.frozenPackingRuns),
+        codeRuns = runs.filter((run) => /^CE\d/.test(run.text))
+      expect(codeRuns.map((run) => run.text)).toEqual([
+        `${latestCode}S`,
+        `${latestCode}L`,
+      ])
+      for (const run of codeRuns) {
+        expect(run.font).toMatch(/^(?:700|bold) (?:1[2-7])px /)
+        expect(run.color).toMatch(/^#(?:fff|ffffff)$/i)
+      }
+      expect(codeRuns[0].y).toBeLessThan(codeRuns[1].y)
       expect(text).not.toContain(originalCode)
       expect(text).not.toContain(otherCode)
       await test.info().attach('export-text-runs', {

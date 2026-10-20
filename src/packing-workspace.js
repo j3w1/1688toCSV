@@ -36,7 +36,18 @@ import {
   createNameSuggester,
   refreshPreparationNames,
 } from './product-vocabulary.js'
-import { suggestMaterial, translateMaterial } from './material-vocabulary.js'
+import {
+  suggestMaterial,
+  translateMaterial,
+  configureMaterialVocabulary,
+} from './material-vocabulary.js'
+import { mountMaterialVocabulary } from './material-vocabulary-settings.js'
+import { cartonBreakdown } from './carton-packing.js'
+import {
+  mountCartonCapacity,
+  cartonCapacityReadout,
+} from './carton-packing-ui.js'
+import { createProductDescription } from './product-details.js'
 import {
   setCodeText,
   decorateCodeInput,
@@ -101,9 +112,8 @@ import {
   clearErrorNotice,
   clearErrorNotices,
 } from './error-notice.js'
-import { validateBackup } from './database.js'
+import { validateBackup, mergeProductAnnotations } from './database.js'
 import { createPackingBackup } from './packing-backup.js'
-import { colorHints } from './color-hints.js'
 import { normalizePrice } from './money.js'
 import {
   element as el,
@@ -270,6 +280,22 @@ export async function startPackingWorkspace({
   let packingExclusionSaving = false
   const variantPages = new Map()
   const materialFields = new Set()
+  const sourceAttributeFields = new Set()
+  const cartonFields = new Map()
+  function renderSourceAttributes(host, items) {
+    host.replaceChildren()
+    for (const item of [
+      ...new Map(items.map((item) => [item.description, item])).values(),
+    ]) {
+      const source = createProductDescription(item)
+      source.querySelector('.product-title')?.remove()
+      for (const field of source.querySelectorAll(
+        '[data-attribute="material"], [data-attribute="size"]'
+      ))
+        field.remove()
+      host.append(source)
+    }
+  }
   function packingItemActions(label, grip, remove) {
     const host = el('div', undefined, 'packing-item-actions')
     host.setAttribute('role', 'group')
@@ -280,6 +306,10 @@ export async function startPackingWorkspace({
   }
   let syncPackingOrderPicker = () => {}
   onLanguageChange(() => {
+    for (const entry of sourceAttributeFields) {
+      if (!entry.host.isConnected) sourceAttributeFields.delete(entry)
+      else renderSourceAttributes(entry.host, entry.items)
+    }
     for (const entry of materialFields) {
       if (!entry.input.isConnected) materialFields.delete(entry)
       else if (entry.input !== document.activeElement && !entry.dirty())
@@ -960,6 +990,10 @@ export async function startPackingWorkspace({
     updateSaveStatus()
   }
   async function flushSaves() {
+    for (const [key, entry] of cartonFields) {
+      await entry.flush()
+      if (!entry.input.isConnected) cartonFields.delete(key)
+    }
     clearTimeout(saveTimer)
     while (saveWork) await saveWork
     if (!pendingSaves.size) return
@@ -1321,7 +1355,12 @@ export async function startPackingWorkspace({
     true
   )
   addEventListener('beforeunload', (event) => {
-    if (!pendingSaves.size && !saveWork) return
+    if (
+      !pendingSaves.size &&
+      !saveWork &&
+      ![...cartonFields.values()].some((field) => field.dirty())
+    )
+      return
     event.preventDefault()
     event.returnValue = ''
   })
@@ -1331,6 +1370,7 @@ export async function startPackingWorkspace({
     )
     preferences = await repository.getPackingPreferences()
     configureColorVocabulary(preferences.colorVocabulary)
+    configureMaterialVocabulary(preferences.materialVocabulary)
     applyAppearance(preferences.appearance)
     suggestions = new Map()
     for (const record of getRecords())
@@ -1351,8 +1391,11 @@ export async function startPackingWorkspace({
   await reload()
   channel?.addEventListener('message', async ({ data }) => {
     try {
-      if (data === 'preferences') await changed({ reload: true })
-      else {
+      if (data === 'preferences' || data === 'carton-capacity') {
+        await changed({ reload: true })
+        if (data === 'carton-capacity' && !$('packing-view').hidden)
+          renderPreparation()
+      } else {
         await reload()
         changed()
       }
@@ -4405,6 +4448,7 @@ export async function startPackingWorkspace({
     resetButtons.clear()
     detachPreparationSelection()
     materialFields.clear()
+    sourceAttributeFields.clear()
     const host = $('preparation-content')
     host.replaceChildren()
     renderPackingHeader(host)
@@ -5147,21 +5191,40 @@ export async function startPackingWorkspace({
               'variant-source-count'
             )
           )
-        const colors = colorHints(items)
-        if (colors.childElementCount) description.append(colors)
+        const sourceAttributes = el(
+          'div',
+          undefined,
+          'variant-source-attributes'
+        )
+        renderSourceAttributes(sourceAttributes, items)
+        sourceAttributeFields.add({ host: sourceAttributes, items })
+        description.append(sourceAttributes)
         description.append(materialControl(draft, [variant], 'Material'))
-        if (variant.size)
+        if (variant.size) {
+          const sourceSize = el(
+            'small',
+            uiMessage('Order size: {0}', { 0: '' }),
+            'source-size'
+          )
+          sourceSize.append(
+            copyTextButton(variant.size, { label: uiMessage('Copy size') })
+          )
           description.append(
             preparationHelp(
-              el(
-                'small',
-                uiMessage('Order size: {0}', { 0: variant.size }),
-                'source-size'
-              ),
+              sourceSize,
               uiMessage(
                 'From the order. Helps you choose a size code; this measurement is not printed.'
               )
             )
+          )
+        }
+        const cartonUnits =
+          getRecords().find(
+            (record) => record.snapshot.orderId === draft.orderId
+          )?.unitsPerCarton || {}
+        for (const item of items)
+          description.append(
+            cartonCapacityReadout(item, cartonUnits[item.entryId])
           )
         const facts = el('dl', undefined, 'variant-order-facts')
         const prices = [
@@ -5185,8 +5248,23 @@ export async function startPackingWorkspace({
         ]) {
           const fact = el('div', undefined, className)
           const amount = el('dd')
-          if (typeof value === 'function') bindText(amount, value)
-          else amount.textContent = value
+          if (className === 'variant-quantity') {
+            const copy = copyTextButton(String(quantity), {
+              label: uiMessage('Copy quantity'),
+            })
+            const display = el('span')
+            bindText(display, value)
+            copy.firstChild.replaceWith(display)
+            amount.append(copy)
+          } else {
+            for (const [index, price] of prices.entries()) {
+              if (index) amount.append(' / ')
+              amount.append(
+                '¥ ',
+                copyTextButton(price, { label: uiMessage('Copy price') })
+              )
+            }
+          }
           fact.append(el('dt', uiMessage(label)), amount)
           facts.append(fact)
         }
@@ -5506,21 +5584,54 @@ export async function startPackingWorkspace({
     })
   }
   /** A print entry for one label, or the label validation's refusal. */
-  function printEntry(prep, group, variant, kind) {
+  function printEntry(prep, group, variant, kind, selectedIds) {
     const code =
       kind === 'mark'
         ? group.baseCode
         : barcodeValue(group, { ...variant, needsSizeMapping: false })
     try {
       const model = outputModel(prep, group, variant, kind, false, true)
+      let cartonPacking
+      if (kind === 'mark') {
+        const record = getRecords().find(
+          (entry) => entry.snapshot.orderId === prep.orderId
+        )
+        const ids = new Set(
+          group.variants
+            .flatMap((entry) => entry.entryIds)
+            .filter(
+              (id) => !selectedIds || selectedIds.has(`${prep.orderId}/${id}`)
+            )
+        )
+        const rows = (record?.snapshot.items || [])
+          .filter((item) => ids.has(item.entryId))
+          .map((item) => ({
+            entryId: item.entryId,
+            ...cartonBreakdown(
+              item.quantity,
+              record.unitsPerCarton?.[item.entryId]
+            ),
+          }))
+        const hasCapacity = rows.some((row) => row.unitsPerCarton !== null)
+        const exact =
+          rows.length > 0 && rows.every((row) => row.status === 'exact')
+        const total = rows.reduce((sum, row) => sum + (row.fullCartons || 0), 0)
+        cartonPacking = {
+          rows,
+          exact: exact && Number.isSafeInteger(total),
+          total,
+          requiresReview:
+            hasCapacity && (!exact || !Number.isSafeInteger(total)),
+        }
+      }
       return {
         item: {
           key: model.code,
           code: model.code,
           name: model.spanishName,
           detail: model.category,
-          // Packing data records no carton count yet; marks default to one.
-          known: null,
+          known: cartonPacking?.exact ? cartonPacking.total : null,
+          ...(cartonPacking ? { cartonPacking } : {}),
           // Recent jobs find the product again by where it lives, not by code.
           ref: {
             orderId: prep.orderId,
@@ -5566,7 +5677,13 @@ export async function startPackingWorkspace({
         )
         if (!variants.length) continue
         for (const variant of kind === 'mark' ? [null] : variants) {
-          const { item, problem } = printEntry(prep, group, variant, kind)
+          const { item, problem } = printEntry(
+            prep,
+            group,
+            variant,
+            kind,
+            selected
+          )
           if (problem) {
             problems.set(problem.code, problem)
             continue
@@ -5587,7 +5704,11 @@ export async function startPackingWorkspace({
               // Every source order of this label, for the export summary.
               orders: [source],
               quantity:
-                kind === 'mark' ? (item.known ?? 1) : Math.max(1, units),
+                kind === 'mark'
+                  ? item.cartonPacking?.requiresReview
+                    ? ''
+                    : (item.known ?? 1)
+                  : Math.max(1, units),
             })
         }
       }
@@ -5940,6 +6061,7 @@ export async function startPackingWorkspace({
       ['names', 'Product names', 'text'],
       ['sizes', 'Size codes', 'packing'],
       ['colors', 'Product colors', 'image'],
+      ['materials', 'Materials', 'packing'],
       ['appearance', 'Appearance', 'sun'],
       ['data', 'Data', 'download'],
     ]) {
@@ -6342,6 +6464,10 @@ export async function startPackingWorkspace({
       panels.get('settings-panel-colors'),
       value
     )
+    const materialRules = mountMaterialVocabulary(
+      panels.get('settings-panel-materials'),
+      value
+    )
     const appearance = mountAppearanceSettings(
       panels.get('settings-panel-appearance'),
       value,
@@ -6395,7 +6521,7 @@ export async function startPackingWorkspace({
       saveHelp = el(
         'span',
         uiMessage(
-          'Save label settings, product names, sizes, colors and appearance.'
+          'Save label settings, product names, sizes, colors, materials and appearance.'
         ),
         'packing-help'
       )
@@ -6438,6 +6564,16 @@ export async function startPackingWorkspace({
               throw error
             }
             value.appearance = appearance.validate()
+            try {
+              value.materialVocabulary = materialRules.validate()
+            } catch (error) {
+              selectTab('settings-panel-materials')
+              panels
+                .get('settings-panel-materials')
+                .querySelector('[aria-invalid="true"]')
+                ?.focus()
+              throw error
+            }
             value.settings.vocabularyInitialized = true
             // Validate geometry with a representative render before accepting settings.
             await renderLabel({
@@ -6475,7 +6611,7 @@ export async function startPackingWorkspace({
             bindText(
               saveHelp,
               uiMessage(
-                'Save label settings, product names, sizes, colors and appearance.'
+                'Save label settings, product names, sizes, colors, materials and appearance.'
               )
             )
             host.querySelector('[aria-invalid="true"]')?.focus()
@@ -6635,6 +6771,7 @@ export async function startPackingWorkspace({
   }
   return {
     reload,
+    flush: flushSaves,
     preparedRows,
     copyLabels: (kind, rows) =>
       preparationAction(() => bulkLabels(kind, orderRows(rows))),
@@ -6683,6 +6820,8 @@ export async function startPackingWorkspace({
       ]
     },
     decorateRow(host, row) {
+      for (const [key, entry] of cartonFields)
+        if (!entry.input.isConnected && !entry.dirty()) cartonFields.delete(key)
       const matched = membership.get(`${row.orderId}/${row.entryId}`),
         bar = el('div', undefined, 'row-preparation')
       const excluded = isPackingExcluded(row)
@@ -6740,6 +6879,37 @@ export async function startPackingWorkspace({
       for (const control of bar.querySelectorAll('.packing-launch-row'))
         control.disabled = opening || packingExclusionSaving
       host.append(bar)
+      const record = packingRecord(row)
+      const cartonKey = `${record?.snapshot.accountId || 'local'}/${row.orderId}/${row.entryId}`
+      const existing = cartonFields.get(cartonKey)
+      if (existing) {
+        existing.update({
+          quantity: row.quantity,
+          value: record?.unitsPerCarton?.[row.entryId],
+        })
+        host.append(existing.control)
+        return
+      }
+      const carton = mountCartonCapacity(host, {
+        quantity: row.quantity,
+        value: record?.unitsPerCarton?.[row.entryId],
+        onSave: async (value) => {
+          const saved = await repository.setUnitsPerCarton(
+            row.orderId,
+            row.entryId,
+            value,
+            { accountId: record?.snapshot.accountId || 'local' }
+          )
+          const currentRecord = packingRecord(row)
+          if (!currentRecord) return
+          Object.assign(
+            currentRecord,
+            mergeProductAnnotations(currentRecord, saved)
+          )
+          channel?.postMessage('carton-capacity')
+        },
+      })
+      cartonFields.set(cartonKey, carton)
     },
   }
 }

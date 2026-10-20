@@ -7,6 +7,7 @@ import {
 import { element as el, enableLightDismiss, pinDialogActions } from './ui.js'
 import { renderLabel } from './labels.js'
 import { preparationHelp } from './preparation-help.js'
+import { cartonBreakdownMessage } from './carton-packing-ui.js'
 import { enableImageNavigation } from './image-copy-dialog.js'
 import {
   A4,
@@ -632,15 +633,39 @@ export function openPrintDialog({
       el('span', item.name || '', 'print-name')
     )
     if (item.detail) name.append(el('small', item.detail))
+    if (marks && item.cartonPacking) {
+      for (const entry of item.cartonPacking.rows)
+        name.append(
+          el(
+            'small',
+            entry.unitsPerCarton == null
+              ? uiMessage(
+                  'Carton count unknown. Enter the actual count manually.'
+                )
+              : uiMessage('Units per carton: {0} · {1}', {
+                  0: entry.unitsPerCarton,
+                  1: cartonBreakdownMessage(entry),
+                }),
+            'print-carton-breakdown'
+          )
+        )
+    }
     if (marks && item.known !== undefined && item.known !== null)
       name.append(
         el(
           'small',
-          uiMessage('Recorded cartons: {0}', { 0: item.known }),
+          uiMessage(
+            item.cartonPacking
+              ? 'Calculated cartons: {0}'
+              : 'Recorded cartons: {0}',
+            { 0: item.known }
+          ),
           'print-known'
         )
       )
     const input = numberInput(item.quantity, { min: 0, max: 9999, step: 1 })
+    if (item.quantity === '') input.value = ''
+    let review
     bindAttribute(
       input,
       'aria-label',
@@ -648,6 +673,7 @@ export function openPrintDialog({
     )
     input.addEventListener('input', () => {
       quantities.set(item.key, input.value)
+      if (review) review.checked = false
       update()
     })
     preparationHelp(
@@ -687,6 +713,22 @@ export function openPrintDialog({
     })
     quantityInput.append(input, increment)
     requested.append(quantityInput)
+    if (marks && item.cartonPacking?.requiresReview) {
+      const confirm = check(
+        'Reviewed',
+        false,
+        'Confirm the actual carton count, including any partial or mixed cartons. Loose units are never silently assigned to another box.'
+      )
+      confirm.wrapper.classList.add('print-carton-review')
+      review = confirm.input
+      bindAttribute(
+        review,
+        'aria-label',
+        uiMessage('Carton count reviewed for {0}', { 0: item.code })
+      )
+      review.addEventListener('change', update)
+      requested.append(confirm.wrapper)
+    }
     const extra = el('td', '', 'numeric')
     const total = el('td', '', 'numeric')
     const capCell = el('td', undefined, 'print-cap-column')
@@ -718,7 +760,7 @@ export function openPrintDialog({
     }
     row.append(name, requested, ...(marks ? [total] : [extra, capCell, total]))
     tbody.append(row)
-    cellsByKey.set(item.key, { extra, total, input, cap, increment })
+    cellsByKey.set(item.key, { extra, total, input, cap, increment, review })
   }
   const footRow = el('tr')
   const footLabel = el('th', uiMessage('Total'))
@@ -833,6 +875,7 @@ export function openPrintDialog({
     for (const [key, value] of adjustment.changed) {
       quantities.set(key, value)
       cellsByKey.get(key).input.value = String(value)
+      if (cellsByKey.get(key).review) cellsByKey.get(key).review.checked = false
     }
     update()
     bindText(
@@ -1007,10 +1050,23 @@ export function openPrintDialog({
         )
     }
     if (plan && marks) {
+      if (
+        [...cellsByKey.values()].some(
+          (cells) =>
+            cells.review && (!cells.review.checked || !cells.input.value.trim())
+        )
+      )
+        warning(
+          uiMessage(
+            'Review loose units and enter the actual carton count. Confirm each affected product before exporting.'
+          )
+        )
       for (const mismatch of plan.mismatches)
         warning(
           uiMessage(
-            '{0}: {1} cartons entered, {2} recorded in the packing data.',
+            itemByKey.get(mismatch.key)?.cartonPacking
+              ? '{0}: {1} cartons entered, {2} calculated from units per carton.'
+              : '{0}: {1} cartons entered, {2} recorded in the packing data.',
             {
               0: mismatch.key,
               1: mismatch.requested,
@@ -1063,7 +1119,13 @@ export function openPrintDialog({
     footRequested.textContent = String(requested)
     footExtra.textContent = extra ? `+${extra}` : ''
     footTotal.textContent = String(total)
-    exportButton.disabled = busy || !plan?.pages
+    exportButton.disabled =
+      busy ||
+      !plan?.pages ||
+      [...cellsByKey.values()].some(
+        (cells) =>
+          cells.review && (!cells.review.checked || !cells.input.value.trim())
+      )
     dialog.dataset.pages = String(plan?.pages || 0)
     void drawPreview()
   }
@@ -1168,7 +1230,7 @@ export function openPrintDialog({
   }
 
   async function exportPdf() {
-    if (!plan?.pages || busy) return
+    if (!plan?.pages || busy || exportButton.disabled) return
     let saved = false
     busy = true
     exportButton.disabled = true

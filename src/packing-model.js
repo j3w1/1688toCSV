@@ -10,7 +10,10 @@ import {
   resolvePendingSizeMappings,
   validateSizeVocabulary,
 } from './size-vocabulary.js'
-import { suggestMaterial } from './material-vocabulary.js'
+import {
+  suggestMaterial,
+  validateMaterialVocabulary,
+} from './material-vocabulary.js'
 import { validateColorVocabulary } from './color-vocabulary.js'
 import { normalizeAppearance } from './appearance.js'
 import { normalizeOrderTags, normalizeTags } from './order-tags.js'
@@ -1183,6 +1186,13 @@ export function validatePackingPreferences(input = {}) {
     ),
     ...(input.colorVocabulary !== undefined
       ? { colorVocabulary: validateColorVocabulary(input.colorVocabulary) }
+      : {}),
+    ...(input.materialVocabulary !== undefined
+      ? {
+          materialVocabulary: validateMaterialVocabulary(
+            input.materialVocabulary
+          ),
+        }
       : {}),
     ...(input.appearance !== undefined
       ? { appearance: normalizeAppearance(input.appearance) }

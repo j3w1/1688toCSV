@@ -155,12 +155,17 @@ export function selectPackingOrder(order, ids) {
     result.productTags = Object.fromEntries(
       Object.entries(result.productTags).filter(([id]) => selected.has(id))
     )
+  if (result.unitsPerCarton)
+    result.unitsPerCarton = Object.fromEntries(
+      Object.entries(result.unitsPerCarton).filter(([id]) => selected.has(id))
+    )
   if (result.packingExcludedEntryIds)
     result.packingExcludedEntryIds = result.packingExcludedEntryIds.filter(
       (id) => selected.has(id)
     )
   for (const [clock, partial] of [
     ['productTagsUpdatedAt', 'productTagsPartialClocks'],
+    ['unitsPerCartonUpdatedAt', 'unitsPerCartonPartialClocks'],
     ['packingExclusionsUpdatedAt', 'packingExclusionsPartialClocks'],
   ])
     if (order[clock] || order[partial]) {

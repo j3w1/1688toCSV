@@ -941,7 +941,11 @@ test('color-rule validation identifies the offending rule and settings remain us
     dialog.getByRole('tab', { name: 'Product colors', exact: true })
   ).toHaveAttribute('aria-selected', 'true')
   await expect(dialog.locator('[aria-invalid=true]')).toBeFocused()
-  await expect(dialog.locator('.appearance-validation')).toContainText('黑色')
+  await expect(
+    dialog
+      .getByRole('tabpanel', { name: 'Product colors', exact: true })
+      .locator('.appearance-validation')
+  ).toContainText('黑色')
   await dialog
     .locator('[data-color-rule=white]')
     .getByLabel('Seller color names', { exact: true })

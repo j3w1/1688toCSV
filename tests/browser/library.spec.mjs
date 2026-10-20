@@ -481,7 +481,7 @@ test('filters and explicit product selections determine copy scope', async ({
     1
   )
 })
-test('order cards select across their full surface, range-select and open details only on double-click or Enter', async ({
+test('order cards select across their full surface and offer Details without changing selection', async ({
   extension,
 }) => {
   await seed(extension, (records) => {
@@ -547,6 +547,34 @@ test('order cards select across their full surface, range-select and open detail
   await cards.nth(1).locator('.order-card-meta').click()
   await expect(page.locator('.order-card[aria-selected=true]')).toHaveCount(1)
   await expect(cards.nth(1)).toHaveAttribute('aria-selected', 'true')
+
+  const product = page.locator('#sheet-body tr[data-selection-key]').first()
+  await product.locator('td.price-cell').click()
+  const selectedOrder = await cards.nth(1).getAttribute('data-selection-key')
+  const selectedProduct = await product.getAttribute('data-selection-key')
+  const detailsButton = card.getByRole('button', {
+    name: /^Details for order /,
+  })
+  await expect(detailsButton).toBeVisible()
+  await expect(detailsButton).toHaveText('Details')
+  await detailsButton.click()
+  await expect(details).toBeVisible()
+  await expect(details.locator('#order-details-heading')).toContainText(
+    await card.getAttribute('data-order-id')
+  )
+  await expect(page.locator('.order-card[aria-selected=true]')).toHaveCount(1)
+  await expect(
+    page.locator(`.order-card[data-selection-key="${selectedOrder}"]`)
+  ).toHaveAttribute('aria-selected', 'true')
+  await expect(
+    page.locator(`#sheet-body tr[data-selection-key="${selectedProduct}"]`)
+  ).toHaveAttribute('aria-selected', 'true')
+  await close.click()
+  await expect(detailsButton).toBeFocused()
+  await detailsButton.press('Enter')
+  await expect(details).toBeVisible()
+  await close.click()
+  await expect(detailsButton).toBeFocused()
 
   await card.locator('.order-card-meta').dblclick()
   await expect(details).toBeVisible()

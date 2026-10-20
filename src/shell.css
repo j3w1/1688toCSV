@@ -1688,3 +1688,21 @@ dialog.print-dialog.packing-review {
     max-inline-size: none;
   }
 }
+.print-counts .print-carton-review {
+  display: flex;
+  align-items: center;
+  gap: 3px;
+  max-inline-size: 90px;
+  margin-block-start: 4px;
+  font-size: 10px;
+  white-space: normal;
+}
+.print-dialog .print-counts .print-carton-review input[type='checkbox'] {
+  flex: none;
+  inline-size: 12px;
+  block-size: 12px;
+  margin: 0;
+}
+.print-carton-breakdown {
+  color: var(--muted);
+}

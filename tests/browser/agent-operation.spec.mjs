@@ -1,4 +1,5 @@
 import { readFile } from 'node:fs/promises'
+import { basename } from 'node:path'
 import { test, expect } from './extension-fixture.mjs'
 import { createDemoRecords } from '../../preview/library-fixture.js'
 
@@ -123,8 +124,8 @@ test('an agent prepares, exports and prints through stable data-action controls'
     totals: { orders: 1, products: 3 },
   })
   expect(summary.files).toEqual([
-    xlsx.filename.split('/').at(-1),
-    summaryFile.filename.split('/').at(-1),
+    basename(xlsx.filename),
+    basename(summaryFile.filename),
   ])
   expect(summary.orders).toEqual([
     { orderId: '900000000000000003', seller: expect.any(String) },
@@ -161,7 +162,7 @@ test('an agent prepares, exports and prints through stable data-action controls'
   ).toBe(true)
   // Exporting again saves a new pair under the names the summary and status
   // announce; the browser never renames it behind their back.
-  const base = (file) => file.filename.split('/').at(-1)
+  const base = (file) => basename(file.filename)
   await page.waitForTimeout(1100)
   await page.locator('[data-action="export-pdf"]').click()
   files = await downloads(extension, 6)

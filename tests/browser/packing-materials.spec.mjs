@@ -155,7 +155,7 @@ test('packing product details activate by double-click and Enter without changin
   const row = view.locator('.variants tbody tr').first()
   const scope = view.locator('.preparation-copy-scope')
   await expect(scope).toHaveText('3 selected products · 1 orders')
-  await row.locator('.variant-price dd').dblclick()
+  await row.dispatchEvent('dblclick')
   const dialog = page.getByRole('dialog', {
     name: 'Original product details',
     exact: true,

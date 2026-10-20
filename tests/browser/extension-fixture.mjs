@@ -25,6 +25,7 @@ async function startFixtureServer() {
     if (
       [
         '/src/database.js',
+        '/src/carton-packing.js',
         '/src/packing-model.js',
         '/src/packing-grouping.js',
         '/src/packing-backup.js',

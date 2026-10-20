@@ -487,7 +487,7 @@ export async function startLibrary(
   preparationHelp(
     $('orders-heading'),
     uiMessage(
-      'Click to select or deselect. Shift-click for a range; Ctrl-click adds orders. Double-click or Enter opens details. Click a month heading to expand or collapse it.'
+      'Click to select or deselect. Shift-click for a range; Ctrl-click adds orders. Use Details or press Enter for order details, tags and notes. Click a month heading to expand or collapse it.'
     )
   )
   preparationHelp(
@@ -1077,7 +1077,7 @@ export async function startLibrary(
       preparationHelp(
         card,
         uiMessage(
-          'Click to select or deselect. Shift-click selects a range. Double-click opens order details.'
+          'Click to select or deselect. Shift-click selects a range. Use Details or press Enter for order details, tags and notes.'
         )
       )
       const summary = node('div', undefined, 'order-summary')
@@ -1131,6 +1131,26 @@ export async function startLibrary(
         )
         meta.append(tags)
       }
+      const details = node('button', uiMessage('Details'), 'order-card-details')
+      details.type = 'button'
+      bindAttribute(
+        details,
+        'aria-label',
+        uiMessage('Details for order {0}', { 0: order.orderId })
+      )
+      details.setAttribute('aria-haspopup', 'dialog')
+      details.setAttribute('aria-controls', 'order-details')
+      preparationHelp(
+        details,
+        uiMessage(
+          'View order details, tags and notes without changing your selection.'
+        )
+      )
+      details.addEventListener('click', (event) => {
+        event.stopPropagation()
+        void openDetails(record).catch((error) => feedback(error.message, true))
+      })
+      meta.append(details)
       summary.append(reference, meta)
       card.append(summary)
       orderSelection.bind(card, order.orderId)
@@ -1801,7 +1821,7 @@ export async function startLibrary(
     $('clear-months').setAttribute('aria-pressed', String(!selectedMonths.size))
   }
   // Recent months stay visible as chips; older ones open on demand.
-  const visibleMonths = 7
+  const visibleMonths = 4
   let monthsExpanded = false
   const shortMonth = (month) =>
     month === 'unknown'
@@ -1812,19 +1832,19 @@ export async function startLibrary(
           timeZone: 'UTC',
         }).format(new Date(`${month}-01T00:00:00Z`))
   function renderMonthOptions() {
-    const months = [
-      ...new Set([
-        currentMonth,
-        ...selectedMonths,
-        ...records.map(({ snapshot }) => purchaseMonth(snapshot)),
-      ]),
-    ]
-      .sort()
-      .reverse()
+    const newestFirst = (a, b) =>
+      a === 'unknown' ? 1 : b === 'unknown' ? -1 : b.localeCompare(a)
+    const availableMonths = [
+      ...new Set(records.map(({ snapshot }) => purchaseMonth(snapshot))),
+    ].sort(newestFirst)
+    const recentMonths = new Set(availableMonths.slice(0, visibleMonths))
+    const months = [...new Set([...availableMonths, ...selectedMonths])].sort(
+      newestFirst
+    )
     const shown = monthsExpanded
       ? months
       : months.filter(
-          (month, index) => index < visibleMonths || selectedMonths.has(month)
+          (month) => recentMonths.has(month) || selectedMonths.has(month)
         )
     const hidden = months.length - shown.length
     const more = node('button', undefined, 'month-choice month-more')
@@ -2335,7 +2355,7 @@ export async function startLibrary(
     orderSelection.reset()
     productSelection.reset()
     page = orderPage = 0
-    updateMonthFilter()
+    renderMonthOptions()
     render()
   })
   action('activity-open', () => {
@@ -2375,6 +2395,7 @@ export async function startLibrary(
     feedback(uiMessage('Selected orders removed from the library.'))
   })
   action('backup', async () => {
+    await packing?.flush()
     const backup = await send('BACKUP_EXPORT')
     downloadJson(
       backup,

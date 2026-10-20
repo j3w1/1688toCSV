@@ -476,6 +476,103 @@ test('partial annotation metadata is validated and survives backup validation', 
   }
 })
 
+test('carton capacity survives full backup validation and rejects malformed saved values', () => {
+  const { backup } = fixture()
+  Object.assign(backup.orders[0], {
+    unitsPerCarton: { 1: 10, 2: 20 },
+    unitsPerCartonUpdatedAt: backup.exportedAt,
+  })
+  assert.deepEqual(validateBackup(backup).orders, backup.orders)
+  for (const unitsPerCarton of [
+    [],
+    { bad: 10 },
+    { 1: 0 },
+    { 1: -1 },
+    { 1: 1.5 },
+    { 1: '10' },
+    { 1: null },
+    { 1: Number.MAX_SAFE_INTEGER + 1 },
+  ]) {
+    const invalid = structuredClone(backup)
+    invalid.orders[0].unitsPerCarton = unitsPerCarton
+    assert.throws(() => validateBackup(invalid), /Units per carton/)
+  }
+})
+
+test('packing capacity backup clips entries and clocks while full restore preserves newer clears', () => {
+  const { backup } = fixture()
+  const clock = backup.exportedAt
+  const later = '2026-10-06T12:00:00.000Z'
+  Object.assign(backup.orders[0], {
+    unitsPerCarton: { 1: 10, 2: 20, 3: 30 },
+    unitsPerCartonUpdatedAt: clock,
+  })
+  const scoped = createPackingBackup(backup, selection())
+  const partial = validateBackup(scoped).orders[0]
+  assert.deepEqual(partial.unitsPerCarton, { 2: 20 })
+  assert.deepEqual(partial.unitsPerCartonPartialClocks, { 2: clock })
+  assert.equal(partial.unitsPerCartonUpdatedAt, undefined)
+  assert.deepEqual(
+    mergeProductAnnotations(partial, backup.orders[0]),
+    backup.orders[0]
+  )
+  const cleared = {
+    ...partial,
+    unitsPerCarton: {},
+    unitsPerCartonPartialClocks: { 2: later },
+  }
+  const completed = mergeProductAnnotations(cleared, backup.orders[0])
+  assert.deepEqual(completed.unitsPerCarton, { 1: 10, 3: 30 })
+  assert.equal(completed.unitsPerCartonUpdatedAt, clock)
+  assert.deepEqual(completed.unitsPerCartonPartialClocks, { 2: later })
+  const clearedBackup = createPackingBackup(
+    { ...backup, orders: [completed] },
+    selection(['1', '2'])
+  )
+  assert.deepEqual(clearedBackup.orders[0].unitsPerCartonPartialClocks, {
+    1: clock,
+    2: later,
+  })
+  assert.deepEqual(clearedBackup.orders[0].unitsPerCarton, { 1: 10 })
+  assert.deepEqual(validateBackup(clearedBackup).orders, clearedBackup.orders)
+  assert.equal(mergeProductAnnotations(completed, partial), completed)
+  const merged = mergeProductAnnotations(
+    backup.orders[0],
+    clearedBackup.orders[0]
+  )
+  assert.deepEqual(merged.unitsPerCarton, { 1: 10, 3: 30 })
+  const newest = {
+    ...backup.orders[0],
+    unitsPerCartonUpdatedAt: '2026-10-07T12:00:00.000Z',
+  }
+  assert.equal(
+    mergeProductAnnotations(completed, newest).unitsPerCartonPartialClocks,
+    undefined
+  )
+})
+
+test('capacity partial clocks must cover every saved value and follow the complete clock', () => {
+  const { backup } = fixture()
+  Object.assign(backup.orders[0], {
+    unitsPerCarton: { 2: 10 },
+    unitsPerCartonPartialClocks: { 2: backup.exportedAt },
+  })
+  assert.deepEqual(validateBackup(backup).orders, backup.orders)
+  for (const value of [
+    [],
+    {},
+    { 2: 'yesterday' },
+    { bad: backup.exportedAt },
+  ]) {
+    const invalid = structuredClone(backup)
+    invalid.orders[0].unitsPerCartonPartialClocks = value
+    assert.throws(() => validateBackup(invalid), /Partial product annotation/)
+  }
+  const invalid = structuredClone(backup)
+  invalid.orders[0].unitsPerCartonUpdatedAt = backup.exportedAt
+  assert.throws(() => validateBackup(invalid), /must follow/)
+})
+
 test('same-time preparation completion accepts exact subsets but rejects changed shared authoring', () => {
   const { preparation } = fixture()
   const partial = selectPackingPreparation(preparation, ['2'])

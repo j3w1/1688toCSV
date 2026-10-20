@@ -432,7 +432,10 @@ test('chosen columns search, keyboard selection and paste order persist with tra
     .click()
   await expect(
     columns.locator('.preparation-column-groups input:checked')
-  ).toHaveCount(45)
+  ).toHaveCount(46)
+  await expect(
+    columns.getByRole('checkbox', { name: 'Units per carton', exact: true })
+  ).toBeChecked()
   expect(extension.unexpectedRequests).toEqual([])
 })
 
@@ -888,6 +891,7 @@ test('keyboard group moves and pointer product moves persist and export in the d
           text: String(text),
           y: args[1],
           color: this.fillStyle,
+          font: this.font,
         })
       return fillText.call(this, text, ...args)
     }
@@ -902,18 +906,15 @@ test('keyboard group moves and pointer product moves persist and export in the d
   await expect(image).toHaveText('Copied')
   await expect(image).toHaveAttribute('data-icon', 'check')
   const imageRuns = await page.evaluate(() => packingImageRuns)
-  for (const code of [box.baseCode, jar.baseCode]) {
-    const runs = imageRuns.filter((run) => run.text === code)
-    expect(runs.length).toBeGreaterThan(0)
-    expect(runs.every((run) => run.color === '#1d4ed8')).toBe(true)
-  }
-  expect(imageRuns.find((run) => run.text === box.baseCode).y).toBeLessThan(
-    imageRuns.find((run) => run.text === jar.baseCode).y
+  const codeRuns = imageRuns.filter((run) => /^CE\d/.test(run.text))
+  // Each barcode is one complete white, bold payload in the displayed row order.
+  expect(codeRuns.map((run) => run.text)).toEqual(
+    expected.map(([, barcode]) => barcode)
   )
-  for (const group of second.groups) {
-    const runs = imageRuns.filter((run) => run.text === group.baseCode)
-    expect(runs.length).toBeGreaterThan(0)
-    expect(runs.every((run) => run.color !== '#1d4ed8')).toBe(true)
+  for (const [index, run] of codeRuns.entries()) {
+    expect(run.color).toMatch(/^#(?:fff|ffffff)$/i)
+    expect(run.font).toMatch(/^(?:700|bold) (?:1[2-7])px /)
+    if (index) expect(run.y).toBeGreaterThan(codeRuns[index - 1].y)
   }
   expect(
     await page.evaluate(async () => (await navigator.clipboard.read())[0].types)
