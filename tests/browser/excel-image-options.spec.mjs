@@ -730,7 +730,10 @@ test('image columns reorder, persist across copying and reload, and use the sele
   await expect(dialog.locator('.image-copy-status')).toBeHidden()
   for (const key of preference.selected)
     await dialog.locator(`[data-column="${key}"] .excel-column-toggle`).click()
-  await expect(dialog.locator('.image-copy-submit')).toBeEnabled()
+  // Copy enables only after the preview re-renders, which is slower on hosted runners.
+  await expect(dialog.locator('.image-copy-submit')).toBeEnabled({
+    timeout: 20_000,
+  })
   await expect(dialog.locator('.image-copy-status')).toBeVisible()
   await expect(dialog.getByRole('alert')).toHaveCount(0)
   expect(

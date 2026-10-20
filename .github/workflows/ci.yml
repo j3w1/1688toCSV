@@ -61,6 +61,14 @@ jobs:
           node-version: 24
           cache: npm
       - run: npm ci
+      # The real-canvas regression tests in npm test launch Chromium.
+      - name: Cache the pinned Playwright browser
+        uses: actions/cache@v6
+        with:
+          path: ~/.cache/ms-playwright
+          key: ${{ runner.os }}-${{ runner.arch }}-playwright-${{ hashFiles('package-lock.json') }}
+      - name: Install Chromium and system dependencies
+        run: npx playwright install --with-deps --no-shell chromium
       - name: Verify source, documentation, regression tests and complete build
         run: npm run check && npm run check:docs && npm test && npm run build
 
