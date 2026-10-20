@@ -92,18 +92,8 @@ export function showErrorNotice(
     const values = element('div')
     if (context.seller) values.append(element('div', String(context.seller)))
     if (context.orderId) values.append(orderReference(context.orderId))
-    if (context.code) {
-      const plain = scope.closest(
-        '.label-dialog, .label-editor, .code-conflict-dialog, .print-dialog, .image-copy-dialog'
-      )
-      values.append(
-        element(
-          'code',
-          String(context.code),
-          plain ? 'ce-code ce-code-plain' : 'ce-code'
-        )
-      )
-    }
+    if (context.code)
+      values.append(element('code', String(context.code), 'ce-code'))
     if (context.variant) values.append(element('div', String(context.variant)))
     identity.append(values)
     content.append(identity)

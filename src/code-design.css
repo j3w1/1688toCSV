@@ -72,10 +72,29 @@ input.ce-code,
 }
 .ce-code-part[data-code-part='product'] {
   text-decoration-line: underline;
-  text-decoration-color: var(--accent, #edaa70);
-  text-decoration-thickness: 1px;
+  text-decoration-color: #fff;
+  text-decoration-thickness: 0.5px;
   text-underline-offset: 0.12em;
   text-decoration-skip-ink: none;
+}
+input.ce-code.ce-code-input-readable,
+.preparation-workspace
+  .preparation-group
+  input.group-code-editor.ce-code-input-readable {
+  background-image: linear-gradient(#fff, #fff);
+  background-repeat: no-repeat;
+  background-size: var(--ce-code-underline-width) 0.5px;
+  background-position: calc(50% + var(--ce-code-underline-shift))
+    calc(50% + 0.48em);
+}
+@supports (height: 1cap) {
+  input.ce-code.ce-code-input-readable,
+  .preparation-workspace
+    .preparation-group
+    input.group-code-editor.ce-code-input-readable {
+    background-position: calc(50% + var(--ce-code-underline-shift))
+      calc(50% + 0.5cap + 0.12em);
+  }
 }
 .variant-code-design {
   --ce-code-size: 20px;

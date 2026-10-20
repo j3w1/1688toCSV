@@ -28,3 +28,43 @@ export function setCodeText(element, value) {
   )
   return true
 }
+
+const inputReaders = new WeakMap()
+const inputMeasurers = new WeakMap()
+
+export function refreshCodeInput(input) {
+  inputReaders.get(input)?.()
+}
+
+/** Paint behind the original native value; never wrap, hide or replace it. */
+export function decorateCodeInput(input) {
+  if (inputReaders.has(input)) return input
+  const doc = input.ownerDocument
+  const refresh = () => {
+    const parts = codeParts(input.value)
+    const readable = Boolean(parts && input.isConnected)
+    input.classList.toggle('ce-code-input-readable', readable)
+    if (!readable) return
+    let context = inputMeasurers.get(doc)
+    if (!context) {
+      context = doc.createElement('canvas').getContext('2d')
+      inputMeasurers.set(doc, context)
+    }
+    const style = doc.defaultView.getComputedStyle(input)
+    context.font = `${style.fontWeight} ${style.fontSize} ${style.fontFamily}`
+    context.fontKerning = 'none'
+    const prefix = context.measureText(parts[0]).width
+    const product = context.measureText(parts[1]).width
+    const full = context.measureText(input.value).width
+    input.style.setProperty('--ce-code-underline-width', `${product}px`)
+    input.style.setProperty(
+      '--ce-code-underline-shift',
+      `${prefix + product / 2 - full / 2}px`
+    )
+  }
+  for (const event of ['input', 'change', 'blur'])
+    input.addEventListener(event, refresh)
+  inputReaders.set(input, refresh)
+  doc.defaultView.requestAnimationFrame(refresh)
+  return input
+}

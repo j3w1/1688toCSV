@@ -615,7 +615,7 @@ export function openPrintDialog({
     const row = el('tr')
     const name = el('td')
     name.append(
-      el('code', item.code, 'ce-code ce-code-plain'),
+      el('code', item.code, 'ce-code'),
       el('span', item.name || '', 'print-name')
     )
     if (item.detail) name.append(el('small', item.detail))
@@ -1083,7 +1083,7 @@ export function openPrintDialog({
       ...runs.map((run) => {
         const part = el('span', undefined, 'print-page-run')
         part.append(
-          el('code', run.key, 'ce-code ce-code-plain'),
+          el('code', run.key, 'ce-code'),
           el('span', `× ${run.count.toLocaleString(getLocale())}`)
         )
         return part

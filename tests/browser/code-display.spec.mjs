@@ -2,7 +2,7 @@ import { build } from 'esbuild'
 import { fileURLToPath } from 'node:url'
 import { test, expect } from './extension-fixture.mjs'
 
-test('workspace underlines only the product number without gaps, changing copy values or decorating previews and editors', async ({
+test('workspace uses white hairlines on product digits across readouts and native fields without altering codes or artwork', async ({
   extension,
 }) => {
   const page = await extension.context.newPage()
@@ -21,7 +21,7 @@ test('workspace underlines only the product number without gaps, changing copy v
   }
   const script = await build({
     stdin: {
-      contents: `export { element, copyTextButton } from './src/ui.js'; export { applyCodeDesign } from './src/code-design.js'; export { showErrorNotice } from './src/error-notice.js';`,
+      contents: `export { element, copyTextButton } from './src/ui.js'; export { applyCodeDesign } from './src/code-design.js'; export { decorateCodeInput, refreshCodeInput } from './src/code-display.js'; export { showErrorNotice } from './src/error-notice.js';`,
       resolveDir: root,
     },
     bundle: true,
@@ -36,13 +36,10 @@ test('workspace underlines only the product number without gaps, changing copy v
     host.append(CodeUI.element('code', 'CE26103102', 'ce-code plain-badge'))
     host.append(CodeUI.element('code', 'CE26103102ALS', 'ce-code ending-badge'))
     host.append(CodeUI.element('output', 'CE26103102', 'ce-code output-badge'))
-    host.append(
-      CodeUI.element(
-        'code',
-        'CE26103102',
-        'ce-code ce-code-plain preview-badge'
-      )
-    )
+    const raw = document.createElement('code')
+    raw.className = 'ce-code raw-reference'
+    raw.textContent = 'CE26103102'
+    host.append(raw)
     host.append(
       CodeUI.copyTextButton('CE26103102', {
         className: 'ce-code',
@@ -59,6 +56,7 @@ test('workspace underlines only the product number without gaps, changing copy v
     input.value = 'CE26103102'
     input.setAttribute('aria-label', 'Product code')
     host.append(input)
+    CodeUI.decorateCodeInput(input)
   })
   const badge = page.locator('.plain-badge')
   await expect(badge.locator('.ce-code-part')).toHaveText(['CE2610', '3102'])
@@ -96,6 +94,14 @@ test('workspace underlines only the product number without gaps, changing copy v
     'text-decoration-line',
     'underline'
   )
+  await expect(badge.locator('[data-code-part="product"]')).toHaveCSS(
+    'text-decoration-color',
+    'rgb(255, 255, 255)'
+  )
+  await expect(badge.locator('[data-code-part="product"]')).toHaveCSS(
+    'text-decoration-thickness',
+    '0.5px'
+  )
   await expect(badge.locator('[data-code-part="prefix-period"]')).toHaveCSS(
     'text-decoration-line',
     'none'
@@ -104,7 +110,7 @@ test('workspace underlines only the product number without gaps, changing copy v
     'text-decoration-line',
     'none'
   )
-  const preview = page.locator('.preview-badge')
+  const preview = page.locator('.raw-reference')
   await expect(preview.locator('.ce-code-part')).toHaveCount(0)
   const [shown, plain] = await Promise.all([
     badge.boundingBox(),
@@ -118,6 +124,14 @@ test('workspace underlines only the product number without gaps, changing copy v
   expect(await page.evaluate(() => window.copies)).toEqual(['CE26103102'])
   const input = page.getByRole('textbox', { name: 'Product code', exact: true })
   await expect(page.locator('.ce-code-reading')).toHaveCount(0)
+  await expect(input).toHaveCSS(
+    'background-image',
+    'linear-gradient(rgb(255, 255, 255), rgb(255, 255, 255))'
+  )
+  expect(
+    await input.evaluate((node) => getComputedStyle(node).backgroundSize)
+  ).toMatch(/ 0\.5px$/)
+  await expect(input).toHaveAttribute('aria-label', 'Product code')
   await input.focus()
   await expect(input).toHaveCSS('color', 'rgb(255, 255, 255)')
   await input.fill('CE26103109')
@@ -127,6 +141,13 @@ test('workspace underlines only the product number without gaps, changing copy v
   await page.locator('#leave').click()
   await expect(input).toHaveCSS('color', 'rgb(255, 255, 255)')
   await expect(input).toHaveCSS('text-decoration-line', 'none')
+  await expect(input).toHaveCSS('background-image', 'none')
+  await input.evaluate((node) => {
+    node.value = 'CE26103110'
+    CodeUI.refreshCodeInput(node)
+  })
+  await expect(input).toHaveClass(/ce-code-input-readable/)
+  await expect(input).toHaveValue('CE26103110')
   await page.evaluate(() => {
     const editor = document.createElement('section')
     editor.className = 'label-editor'
@@ -137,6 +158,8 @@ test('workspace underlines only the product number without gaps, changing copy v
     })
   })
   await expect(page.locator('.label-editor code')).toHaveText('CE26103102')
-  await expect(page.locator('.label-editor .ce-code-part')).toHaveCount(0)
+  await expect(
+    page.locator('.label-editor [data-code-part="product"]')
+  ).toHaveText('3102')
   await page.close()
 })

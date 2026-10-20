@@ -18,6 +18,7 @@ import {
 } from './labels.js'
 import { showErrorNotice, clearErrorNotice } from './error-notice.js'
 import { applyCodeDesign } from './code-design.js'
+import { setCodeText } from './code-display.js'
 import { decorateIcon } from './icons.js'
 import { copied, resetCopyFeedback } from './ui.js'
 
@@ -187,7 +188,7 @@ export function mountLabelEditor(container, options) {
     if (!codeParts && !codeInput) return
     if (codeParts) {
       model.code = `${model.baseCode}${model.variantSuffix}${model.sizeSuffix}`
-      composedCode.value = model.code
+      setCodeText(composedCode, model.code)
     }
     // Use the same glyph geometry as the PNG. Empty ending controls sit beside
     // the printed band, so a placeholder never shifts the visible CE code.

@@ -142,7 +142,9 @@ test('individual barcode and carton images keep their exact bytes and Excel labe
     expect(expected[0]).not.toBe(expected[1])
     const codes = await dialog.locator('figcaption .ce-code').allTextContents()
     expect(new Set(codes).size).toBe(2)
-    await expect(dialog.locator('.ce-code-part')).toHaveCount(0)
+    await expect(
+      dialog.locator('figcaption [data-code-part="product"]')
+    ).toHaveCount(2)
     const before = await page.evaluate(() => individualImageWrites.length)
     for (const index of [0, 1]) {
       const button = dialog.locator('.photo-copy-button').nth(index)

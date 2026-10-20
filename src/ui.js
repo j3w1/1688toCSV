@@ -156,7 +156,6 @@ export function element(tag, text, className) {
   if (className) node.className = className
   if (
     node.classList.contains('ce-code') &&
-    !node.classList.contains('ce-code-plain') &&
     typeof text === 'string' &&
     setCodeText(node, text)
   )

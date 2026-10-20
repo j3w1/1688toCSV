@@ -13,7 +13,9 @@ for (const kind of ['labels', 'marks']) {
     extension,
   }) => {
     const { page, dialog } = await openPrintDialogFixture(extension, { kind })
-    await expect(dialog.locator('.ce-code-part')).toHaveCount(0)
+    await expect(dialog.locator('tbody [data-code-part="product"]')).toHaveText(
+      ['0101', '0102', '0103']
+    )
     const quantities = dialog.getByLabel(/^Quantity for /)
     const buttons = dialog.locator('[data-action="increment-print-quantity"]')
     await expect(buttons).toHaveCount(3)

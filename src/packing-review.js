@@ -19,11 +19,7 @@ import { preparationHelp } from './preparation-help.js'
 /** A shared, explicitly labelled comparison; colour reinforces the words. */
 export function packingValueComparison(
   values,
-  {
-    beforeLabel = 'Before',
-    afterLabel = 'After applying',
-    plainCodes = false,
-  } = {}
+  { beforeLabel = 'Before', afterLabel = 'After applying' } = {}
 ) {
   const table = el('div', undefined, 'packing-value-comparison')
   for (const value of values) {
@@ -66,9 +62,7 @@ export function packingValueComparison(
           el(
             code ? 'code' : 'span',
             text,
-            code
-              ? `ce-code${plainCodes ? ' ce-code-plain' : ''}`
-              : 'packing-value-text'
+            code ? 'ce-code' : 'packing-value-text'
           )
         )
       }

@@ -38,6 +38,11 @@ import {
 } from './product-vocabulary.js'
 import { suggestMaterial, translateMaterial } from './material-vocabulary.js'
 import {
+  setCodeText,
+  decorateCodeInput,
+  refreshCodeInput,
+} from './code-display.js'
+import {
   getItemColorHints,
   configureColorVocabulary,
 } from './color-vocabulary.js'
@@ -3071,6 +3076,7 @@ export async function startPackingWorkspace({
     function showProposal(message) {
       for (const [input, read] of editorReads) {
         input.value = read()
+        refreshCodeInput(input)
         input.removeAttribute('aria-invalid')
         input.removeAttribute('aria-errormessage')
       }
@@ -3240,7 +3246,6 @@ export async function startPackingWorkspace({
           packingValueComparison(values, {
             beforeLabel: 'Saved value',
             afterLabel: 'Proposed value',
-            plainCodes: true,
           })
         )
       }
@@ -3273,6 +3278,7 @@ export async function startPackingWorkspace({
         () => entry.baseCode
       )
       baseInput.classList.add('ce-code')
+      decorateCodeInput(baseInput)
       for (const variant of entry.variants) {
         const before = old?.variants.find((item) => item.id === variant.id)
         if (
@@ -3348,7 +3354,7 @@ export async function startPackingWorkspace({
         el('small', owner.sellerName),
         orderReference(owner.orderId),
         ...(owner.variant ? [el('p', owner.variant)] : []),
-        el('code', code, 'ce-code ce-code-plain conflict-occupied-code'),
+        el('code', code, 'ce-code conflict-occupied-code'),
         el('p', uiMessage('This code is currently assigned here.'))
       )
       const owningGroupId =
@@ -4719,6 +4725,7 @@ export async function startPackingWorkspace({
       productInput.setAttribute('autocorrect', 'off')
       productInput.spellcheck = false
       productInput.size = 12
+      decorateCodeInput(productInput)
       productInput.addEventListener('input', () => {
         group.baseCode = productInput.value.toUpperCase()
       })
@@ -5224,7 +5231,8 @@ export async function startPackingWorkspace({
             () =>
               `${group.baseCode || t('Product code')}${variant.variantSuffix}${variant.sizeSuffix}`
           )
-          bindText(codeBase, () => group.baseCode || t('Assigning code…'))
+          if (group.baseCode) setCodeText(codeBase, group.baseCode)
+          else bindText(codeBase, uiMessage('Assigning code…'))
         }
         updateCodeReadout()
         productInput.addEventListener('input', updateCodeReadout)

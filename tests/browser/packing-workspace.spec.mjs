@@ -331,6 +331,17 @@ test('group selection, code editors and their accessible help stay independent',
     code = title.getByLabel('Product code', { exact: true }),
     select = title.locator('.group-select')
   await expect(code).toHaveValue(/^CE2610\d{4}$/)
+  await expect(code).toHaveClass(/ce-code-input-readable/)
+  await expect(code).toHaveCSS(
+    'background-image',
+    'linear-gradient(rgb(255, 255, 255), rgb(255, 255, 255))'
+  )
+  await expect(
+    group.locator('.variant-code-base [data-code-part="product"]').first()
+  ).toHaveText((await code.inputValue()).slice(6, 10))
+  await group.screenshot({
+    path: test.info().outputPath('packing-code-hairlines.png'),
+  })
   await expect(group.getByLabel('Product code', { exact: true })).toHaveCount(1)
   await expect(select).toHaveRole('button')
   await expect(select).toHaveText('')
@@ -2562,7 +2573,9 @@ test('label editor saves repeated text edits and copies barcode and carton image
     label.getByRole('heading', { name: 'Barcode label' })
   ).toBeVisible()
   await expect(code).toHaveText(`${baseCode}S`)
-  await expect(label.locator('.ce-code-part')).toHaveCount(0)
+  await expect(code.locator('[data-code-part="product"]')).toHaveText(
+    baseCode.slice(6, 10)
+  )
   await expect(variantCode).toHaveValue('')
   await expect(sizeCode).toHaveValue('S')
   await expect(spanish).toHaveValue('FRASCO')

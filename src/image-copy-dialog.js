@@ -498,7 +498,7 @@ export function openImageCopyDialog({
                 element(
                   'span',
                   item.label,
-                  item.codeLabel ? 'ce-code ce-code-plain' : undefined
+                  item.codeLabel ? 'ce-code' : undefined
                 )
               )
               figure.append(caption)
