@@ -96,6 +96,9 @@ export async function startPreview({ port = 0 } = {}) {
   for (const css of [
     'store-import.css',
     'order-charges.css',
+    'operations.css',
+    'payment-links.css',
+    'repeat-products.css',
     'packing.css',
     'label-editor.css',
     'photo-viewer.css',

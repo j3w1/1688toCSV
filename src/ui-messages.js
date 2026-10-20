@@ -20,9 +20,31 @@ import { STORE_DETAILS_MESSAGES } from './ui-messages-store-details.js'
 import { PHOTO_TAG_MESSAGES } from './ui-messages-photo-tags.js'
 import { ORDER_CHARGE_MESSAGES } from './ui-messages-order-charges.js'
 import { SUMMARY_MESSAGES } from './ui-messages-summary.js'
+import { OPERATIONS_MESSAGES } from './ui-messages-operations.js'
+import { PAYMENT_LINK_MESSAGES } from './ui-messages-payment-links.js'
+import { REPEAT_PRODUCT_MESSAGES } from './ui-messages-repeat-products.js'
 
 // Explicit interface messages only; original seller, product and label values are never translated.
 export const UI_MESSAGES = {
+  ...OPERATIONS_MESSAGES,
+  ...PAYMENT_LINK_MESSAGES,
+  ...REPEAT_PRODUCT_MESSAGES,
+  'Linked payment source. Unlink the payment before including this row in packing.':
+    {
+      zh: '此商品行是已关联的付款来源。请先解除付款关联，再将此行加入装箱。',
+      es: 'Esta fila es un pago vinculado. Desvincula el pago antes de incluirla en el embalaje.',
+    },
+  'Unlink this order’s payments before deleting it. The payment sources will stay in the library.':
+    {
+      zh: '删除前请先解除此订单的付款关联。付款来源订单将保留在库中。',
+      es: 'Desvincula los pagos de este pedido antes de eliminarlo. Los pedidos de pago permanecerán en la biblioteca.',
+    },
+  'Linked payment': { zh: '已关联付款', es: 'Pago vinculado' },
+  'This payment is allocated to another purchase. Source totals are counted once.':
+    {
+      zh: '此付款已分摊至其他采购。原始总额只计算一次。',
+      es: 'Este pago está asignado a otra compra. Los importes originales se cuentan una sola vez.',
+    },
   'Preparing compressed backup…': {
     zh: '正在准备压缩备份…',
     es: 'Preparando copia comprimida…',

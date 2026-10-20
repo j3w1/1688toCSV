@@ -6,6 +6,9 @@ import {
   orderCostAdjustments,
   additionalChargesTotal,
 } from './order-charges.js'
+import { paymentCostAdjustments } from './payment-links.js'
+import { resolveOperations } from './operations-workflow.js'
+import { t } from './i18n.js'
 
 const escape = (value) =>
   String(value ?? '').replace(
@@ -60,6 +63,8 @@ export const preparationColumns = [
   ['effectiveAmount', 'Amount with charges', 'Amounts'],
   ['additionalCharge', 'Added cost', 'Amounts'],
   ['additionalChargeReasons', 'Additional charge reasons', 'Amounts'],
+  ['linkedPaymentCharge', 'Linked cost', 'Amounts'],
+  ['linkedPaymentReasons', 'Linked cost reasons', 'Amounts'],
   ['orderAdditionalCharges', 'Additional order costs', 'Order & supplier'],
   ['orderId', 'Order number', 'Order & supplier'],
   ['orderDate', 'Purchase date', 'Order & supplier'],
@@ -76,6 +81,7 @@ export const preparationColumns = [
   ['orderCustomization', 'Order customization service', 'Order & supplier'],
   ['orderRedPacket', 'Order red-packet discount', 'Order & supplier'],
   ['productTags', 'Product tags', 'Tags & links'],
+  ['productFeatures', 'Product features', 'Product details'],
   ['orderTags', 'Order tags', 'Tags & links'],
   ['orderNotes', 'Order notes', 'Tags & links'],
   ['orderUrl', 'Order link', 'Tags & links'],
@@ -97,6 +103,7 @@ const numericFields = new Set([
   'effectiveUnitPrice',
   'effectiveAmount',
   'additionalCharge',
+  'linkedPaymentCharge',
   'orderAdditionalCharges',
   'cartons',
   'cartonWeight',
@@ -147,16 +154,32 @@ export function selectedPreparationColumns(preference) {
 }
 
 /** Snapshot metadata is copied per source entry, never inferred from another row. */
-export function preparationOrderFields(row, record = row.record) {
+export function preparationOrderFields(
+  row,
+  record = row.record,
+  { records, costs } = {}
+) {
   const order = record?.snapshot
   if (!order) return {}
   const totals = order.totals || {}
   const carton = productCartonDetails(row, record)
-  const costs = record.additionalCharges?.length
-    ? orderCostAdjustments(record).get(row.entryId)
-    : {}
+  const cost =
+    costs?.get(row.entryId) ||
+    (records
+      ? paymentCostAdjustments(record, records).get(row.entryId)
+      : record.additionalCharges?.length
+        ? orderCostAdjustments(record).get(row.entryId)
+        : {})
+  const features = resolveOperations(record, row.entryId).effective.features
   return {
-    ...costs,
+    ...cost,
+    linkedPaymentReasons: cost?.linkedPaymentReasons?.join(' · ') || '',
+    productFeatures: [
+      features.lighting && t('Lighting'),
+      features.rotation && t('Rotation'),
+    ]
+      .filter(Boolean)
+      .join(' · '),
     additionalChargeReasons: (record.additionalCharges || [])
       .map((charge) => `${charge.reason} (¥${charge.amount})`)
       .join(' · '),

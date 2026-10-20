@@ -50,7 +50,7 @@ export function createProductDescription(item) {
 /** Original source stays read-only; optional local product tags save separately. */
 export function openProductDetails(
   item,
-  { loadPhoto, onPhoto, onOrder, copyPhoto, tags, carton }
+  { loadPhoto, onPhoto, onOrder, onOperations, copyPhoto, tags, carton }
 ) {
   const source = productAttributes(item)
   const dialog = el('dialog', undefined, 'product-details-dialog')
@@ -105,6 +105,14 @@ export function openProductDetails(
   order.addEventListener('click', () => void closeDetails(onOrder))
   order.disabled = !onOrder
   tools.append(copyAll, order)
+  if (onOperations) {
+    const operations = decorateIcon(
+      el('button', message('Operations')),
+      'check'
+    )
+    operations.addEventListener('click', () => void closeDetails(onOperations))
+    tools.append(operations)
+  }
   const top = el('div', undefined, 'product-details-top')
   top.append(heading, tools)
   const content = el('div', undefined, 'product-details-scroll')

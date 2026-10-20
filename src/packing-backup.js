@@ -6,6 +6,7 @@ import {
   mergeVariantMaterials,
 } from './packing-model.js'
 import { preparationAuthoring } from './product-vocabulary.js'
+import { paymentSourceDependencies } from './payment-links.js'
 
 const key = (entry) =>
   JSON.stringify([entry.accountId ?? 'local', entry.orderId])
@@ -110,9 +111,61 @@ export function validatePackingScope(input, orders, preparations) {
   if (
     input.mode === 'selection' &&
     orders.some((order) => !seen.has(key(order.snapshot)))
-  )
-    throw new Error('Packing backup contains an unselected source order')
-  return { mode: 'selection', months, orders: scope }
+  ) {
+    // Financial source orders are dependencies, never additional packing scope.
+    if (!Array.isArray(input.dependencies))
+      throw new Error('Packing backup contains an unselected source order')
+  }
+  let dependencies
+  if (input.dependencies !== undefined) {
+    if (!Array.isArray(input.dependencies))
+      throw new Error('Packing backup dependencies must be an array')
+    const actual = paymentSourceDependencies(orders, scope)
+    const actualKeys = new Set(actual.map((order) => key(order.snapshot)))
+    const declared = new Set()
+    dependencies = input.dependencies.map((dependency) => {
+      if (
+        !dependency ||
+        typeof dependency.orderId !== 'string' ||
+        !/^[1-9]\d*$/.test(dependency.orderId) ||
+        (dependency.accountId !== undefined &&
+          (typeof dependency.accountId !== 'string' ||
+            !dependency.accountId.trim()))
+      )
+        throw new Error(
+          'Packing backup contains an invalid financial dependency'
+        )
+      const dependencyKey = key(dependency)
+      if (
+        seen.has(dependencyKey) ||
+        declared.has(dependencyKey) ||
+        !actualKeys.has(dependencyKey)
+      )
+        throw new Error(
+          'Packing backup contains an unrelated or duplicate financial dependency'
+        )
+      declared.add(dependencyKey)
+      return {
+        accountId: dependency.accountId || 'local',
+        orderId: dependency.orderId,
+      }
+    })
+    if (
+      actualKeys.size !== declared.size ||
+      (input.mode === 'selection' &&
+        orders.some(
+          (order) =>
+            !seen.has(key(order.snapshot)) && !declared.has(key(order.snapshot))
+        ))
+    )
+      throw new Error('Packing backup is missing a financial source dependency')
+  }
+  return {
+    mode: 'selection',
+    months,
+    orders: scope,
+    ...(dependencies?.length ? { dependencies } : {}),
+  }
 }
 
 function selectedGroups(groups, selected) {
@@ -155,6 +208,10 @@ export function selectPackingOrder(order, ids) {
     result.productTags = Object.fromEntries(
       Object.entries(result.productTags).filter(([id]) => selected.has(id))
     )
+  if (result.productWorkflow)
+    result.productWorkflow = Object.fromEntries(
+      Object.entries(result.productWorkflow).filter(([id]) => selected.has(id))
+    )
   if (result.unitsPerCarton)
     result.unitsPerCarton = Object.fromEntries(
       Object.entries(result.unitsPerCarton).filter(([id]) => selected.has(id))
@@ -169,6 +226,7 @@ export function selectPackingOrder(order, ids) {
     )
   for (const [clock, partial] of [
     ['productTagsUpdatedAt', 'productTagsPartialClocks'],
+    ['productWorkflowUpdatedAt', 'productWorkflowPartialClocks'],
     ['unitsPerCartonUpdatedAt', 'unitsPerCartonPartialClocks'],
     ['cartonDetailsUpdatedAt', 'cartonDetailsPartialClocks'],
     ['packingExclusionsUpdatedAt', 'packingExclusionsPartialClocks'],
@@ -228,11 +286,18 @@ export function createPackingBackup(backup, selection) {
   const selected = new Map(
     scope.orders.map((order) => [key(order), order.entryIds])
   )
-  const orders = backup.orders
+  const selectedOrders = backup.orders
     .filter((order) => selected.has(key(order.snapshot)))
     .map((order) =>
       selectPackingOrder(order, selected.get(key(order.snapshot)))
     )
+  const dependencies = paymentSourceDependencies(backup.orders, selectedOrders)
+  if (dependencies.length)
+    scope.dependencies = dependencies.map(({ snapshot }) => ({
+      accountId: snapshot.accountId || 'local',
+      orderId: snapshot.orderId,
+    }))
+  const orders = [...selectedOrders, ...structuredClone(dependencies)]
   const preparations = backup.preparations
     .filter((preparation) => selected.has(key(preparation)))
     .map((preparation) =>
@@ -242,7 +307,7 @@ export function createPackingBackup(backup, selection) {
     orders.flatMap((order) =>
       order.snapshot.items
         .filter((item) =>
-          selected.get(key(order.snapshot)).includes(item.entryId)
+          selected.get(key(order.snapshot))?.includes(item.entryId)
         )
         .flatMap((item) => [item.thumbnail, ...(item.photos || [])])
     )

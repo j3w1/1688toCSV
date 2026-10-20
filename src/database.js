@@ -1,6 +1,33 @@
 const SNAPSHOT_VERSION = 1
 const BACKUP_FORMAT = '1688-order-library'
+import {
+  OPERATIONS_METADATA_FIELDS,
+  validateOperationsMetadata,
+  mergeOperations,
+  latestStoreWorkflow,
+  mergeStoreWorkflow,
+} from './operations-workflow.js'
+import { createOperationsRepository } from './operations-repository.js'
+import {
+  validatePaymentLinks,
+  mergePaymentLinks,
+  validatePaymentGraph,
+  paymentSourceDependencies,
+} from './payment-links.js'
+import { createPaymentLinksRepository } from './payment-links-repository.js'
+import {
+  validateSharedProducts,
+  assertSharedPreparationEdit,
+  repeatProductStoreIdentity,
+} from './repeat-products.js'
+import { createRepeatProductsRepository } from './repeat-products-repository.js'
 const productAnnotationFields = [
+  [
+    'productWorkflow',
+    'productWorkflowUpdatedAt',
+    'productWorkflowPartialClocks',
+    'map',
+  ],
   ['productTags', 'productTagsUpdatedAt', 'productTagsPartialClocks', 'map'],
   [
     'unitsPerCarton',
@@ -376,11 +403,7 @@ export function normalizeStoreWechat(value) {
 
 /** Source names are editable display data, never proof of a shared store. */
 export function storeIdentity(snapshot) {
-  const spreadsheet = snapshot.sourceType === 'spreadsheet'
-  const id = spreadsheet ? snapshot.store?.key : snapshot.sellerMemberLogin
-  return typeof id === 'string' && id.trim()
-    ? JSON.stringify([spreadsheet ? 'spreadsheet' : '1688', id.trim()])
-    : null
+  return repeatProductStoreIdentity(snapshot)
 }
 
 export function mergeStoreWechat(previous, incoming, next = previous) {
@@ -425,6 +448,16 @@ function validateRecord(input) {
     changedEntryIds: strings(input.changedEntryIds, 'changedEntryIds'),
     removedEntryIds: strings(input.removedEntryIds, 'removedEntryIds'),
   }
+  Object.assign(record, validateOperationsMetadata(input))
+  if (input.paymentLinks !== undefined)
+    record.paymentLinks = validatePaymentLinks(input.paymentLinks)
+  if (input.paymentLinksUpdatedAt !== undefined)
+    record.paymentLinksUpdatedAt = date(
+      input.paymentLinksUpdatedAt,
+      'Payment links updatedAt'
+    )
+  if (record.paymentLinks?.length && !record.paymentLinksUpdatedAt)
+    throw new Error('Payment links require an update timestamp')
   if (input.storeWechat !== undefined) {
     const id = normalizeStoreWechat(input.storeWechat)
     if (id) record.storeWechat = id
@@ -627,6 +660,11 @@ function reconcile(snapshot, previous) {
       lastCheckedAt: snapshot.observedAt,
       notes: previous?.notes ?? '',
       tags: previous?.tags ?? [],
+      ...Object.fromEntries(
+        [...OPERATIONS_METADATA_FIELDS, 'paymentLinks', 'paymentLinksUpdatedAt']
+          .filter((field) => previous?.[field] !== undefined)
+          .map((field) => [field, previous[field]])
+      ),
       ...(previous?.storeWechat ? { storeWechat: previous.storeWechat } : {}),
       ...(previous?.storeWechatUpdatedAt
         ? { storeWechatUpdatedAt: previous.storeWechatUpdatedAt }
@@ -780,6 +818,7 @@ export function validateBackup(input) {
       throw new Error('Backup contains duplicate history entries')
     historyKeys.add(key)
   }
+  validatePaymentGraph(orders)
   if (input.version === 1)
     return {
       orders,
@@ -810,6 +849,7 @@ export function validateBackup(input) {
     )
       throw new Error(`Backup contains duplicate ${label}`)
   const originalState = mergePackingState(allocations, issuedCodes)
+  validateSharedProducts(preparations, { orders, issuedCodes })
   const state = activePackingState(preparations, allocations, issuedCodes)
   for (const preparation of preparations) {
     const key = JSON.stringify([preparation.accountId, preparation.orderId])
@@ -861,9 +901,17 @@ export function validateBackup(input) {
     scopedOrderKeys.has(JSON.stringify(keyFor(record.snapshot)))
   return {
     orders: orders
-      .filter(inPackingScope)
+      .filter(
+        (record) =>
+          inPackingScope(record) ||
+          packingScope?.dependencies?.some(
+            (entry) =>
+              entry.accountId === record.snapshot.accountId &&
+              entry.orderId === record.snapshot.orderId
+          )
+      )
       .map((record) =>
-        packingScope
+        packingScope && inPackingScope(record)
           ? selectPackingOrder(
               record,
               packingScope.orders.find(
@@ -1039,10 +1087,9 @@ export async function openDatabase({ name = '1688-order-library' } = {}) {
   }
 
   async function inheritStoreWechat(tx, record) {
-    return mergeStoreWechat(
-      record,
-      latestStoreWechat([record, ...(await sameStoreOrders(tx, record))])
-    )
+    const siblings = [record, ...(await sameStoreOrders(tx, record))]
+    const contact = mergeStoreWechat(record, latestStoreWechat(siblings))
+    return mergeStoreWorkflow(contact, latestStoreWorkflow(siblings))
   }
 
   async function shareRestoredWechat(tx) {
@@ -1066,6 +1113,11 @@ export async function openDatabase({ name = '1688-order-library' } = {}) {
       )
       if (!contact) continue
       const next = mergeStoreWechat(record, contact)
+      if (next !== record) store.put(next)
+    }
+    for (const record of await requested(store.getAll())) {
+      const siblings = await sameStoreOrders(tx, record)
+      const next = mergeStoreWorkflow(record, latestStoreWorkflow(siblings))
       if (next !== record) store.put(next)
     }
   }
@@ -1253,10 +1305,22 @@ export async function openDatabase({ name = '1688-order-library' } = {}) {
       preview = false,
       preserveNaming = false,
       cartonMeasurements = [],
+      expectedSnapshots = [],
+      allowSharedProductEdits = false,
     } = {}
   ) {
     if (!Array.isArray(inputs) || !inputs.length)
       throw new Error('Choose at least one order to prepare')
+    if (!Array.isArray(expectedSnapshots))
+      throw new Error('Expected source observations must be an array')
+    for (const expected of expectedSnapshots) {
+      object(expected, 'Expected source observation')
+      string(expected.accountId, 'Expected buyer account', { empty: false })
+      identifier(expected.orderId, 'Expected source order ID')
+      date(expected.observedAt, 'Expected source observation timestamp')
+      if (expected.productFeatures !== undefined)
+        object(expected.productFeatures, 'Expected product features')
+    }
     const drafts = inputs.map(validatePreparation)
     if (
       !Array.isArray(expectedRevisions) ||
@@ -1323,6 +1387,32 @@ export async function openDatabase({ name = '1688-order-library' } = {}) {
           tx.objectStore('issuedCodes').getAll()
         )
         const previousPreparations = await requested(store.getAll())
+        for (const expected of expectedSnapshots) {
+          const order = await requested(
+            tx.objectStore('orders').get([expected.accountId, expected.orderId])
+          )
+          if (!order || order.snapshot.observedAt !== expected.observedAt)
+            throw new Error(
+              'The source order changed. Review the linked products again.'
+            )
+          for (const [entryId, features] of Object.entries(
+            expected.productFeatures || {}
+          )) {
+            const signature = (value) =>
+              JSON.stringify(
+                Object.entries(value || {}).sort(([a], [b]) =>
+                  a.localeCompare(b)
+                )
+              )
+            if (
+              signature(order.productWorkflow?.[entryId]?.features) !==
+              signature(features)
+            )
+              throw new Error(
+                'The source order changed. Review the linked products again.'
+              )
+          }
+        }
         const previousByKey = new Map(
           previousPreparations.map((entry) => [
             JSON.stringify([entry.accountId, entry.orderId]),
@@ -1331,6 +1421,8 @@ export async function openDatabase({ name = '1688-order-library' } = {}) {
         )
         for (const [index, draft] of drafts.entries()) {
           const previous = previousByKey.get(keys[index])
+          if (!allowSharedProductEdits)
+            assertSharedPreparationEdit(previous, draft, previousPreparations)
           if ((previous?.revision ?? 0) !== expectedRevisions[index]) {
             const error = new Error(
               'Preparation changed in another tab. Reload it before saving your edits.'
@@ -1345,6 +1437,18 @@ export async function openDatabase({ name = '1688-order-library' } = {}) {
           measurementResults.push(
             await cartonMeasurementResult(tx, orderId, accountId, edits)
           )
+        validateSharedProducts(
+          [
+            ...previousPreparations.filter(
+              (entry) =>
+                !selectedKeys.has(
+                  JSON.stringify([entry.accountId, entry.orderId])
+                )
+            ),
+            ...drafts,
+          ],
+          { orders: await requested(tx.objectStore('orders').getAll()) }
+        )
         // Reserve the complete final set of explicit codes before allocating blanks.
         // This makes swaps and bulk edits atomic and ignores retired assignments.
         const current = activePackingState(
@@ -1451,6 +1555,32 @@ export async function openDatabase({ name = '1688-order-library' } = {}) {
   }
 
   return {
+    ...createOperationsRepository({
+      read,
+      write,
+      requested,
+      nextEditTimestamp,
+      storeIdentity,
+      sameStoreOrders,
+      syncTagCatalogs,
+      packingPreferencesFor,
+      annotationEditClock,
+    }),
+    ...createPaymentLinksRepository({
+      read,
+      write,
+      requested,
+      nextEditTimestamp,
+      annotationEditClock,
+    }),
+    ...createRepeatProductsRepository({
+      read,
+      write,
+      requested,
+      savePreparations,
+      replaceActiveCodes,
+      storeIdentity,
+    }),
     async importStoreOrder(input) {
       const random = new Uint32Array(2)
       crypto.getRandomValues(random)
@@ -1674,6 +1804,7 @@ export async function openDatabase({ name = '1688-order-library' } = {}) {
               suggest
             )
             orders.put(result.order)
+            validatePaymentGraph(await requested(orders.getAll()))
             refreshPreparedNames(
               tx,
               await requested(
@@ -1834,6 +1965,7 @@ export async function openDatabase({ name = '1688-order-library' } = {}) {
           ...annotationEditClock(order, 'packingExcludedEntryIds', ids),
         }
         store.put(result)
+        validatePaymentGraph(await requested(store.getAll()))
         return result
       })
     },
@@ -1972,6 +2104,28 @@ export async function openDatabase({ name = '1688-order-library' } = {}) {
           'images',
         ],
         async (tx) => {
+          const allOrders = await requested(tx.objectStore('orders').getAll())
+          const removed = new Set(ids)
+          for (const record of allOrders)
+            if (
+              record.snapshot.accountId === accountId &&
+              removed.has(record.snapshot.orderId)
+            )
+              if (
+                (record.paymentLinks || []).some(
+                  (link) => !removed.has(link.sourceOrderId)
+                )
+              )
+                throw new Error(
+                  'Unlink this order’s payments before deleting it. The payment sources will stay in the library.'
+                )
+          validatePaymentGraph(
+            allOrders.filter(
+              (record) =>
+                record.snapshot.accountId !== accountId ||
+                !removed.has(record.snapshot.orderId)
+            )
+          )
           const previousRecords = []
           const deletedRecords = []
           for (const id of ids) {
@@ -2064,6 +2218,16 @@ export async function openDatabase({ name = '1688-order-library' } = {}) {
             tx.objectStore('packingPreferences').get('packing')
           )
           if (includedIds) {
+            const dependencies = paymentSourceDependencies(
+              orders,
+              orders.filter(
+                (entry) =>
+                  entry.snapshot.accountId === accountId &&
+                  includedIds.has(entry.snapshot.orderId)
+              )
+            )
+            for (const record of dependencies)
+              includedIds.add(record.snapshot.orderId)
             const included = (entry) =>
               entry.accountId === accountId && includedIds.has(entry.orderId)
             orders = orders.filter((entry) => included(entry.snapshot))
@@ -2215,7 +2379,11 @@ export async function openDatabase({ name = '1688-order-library' } = {}) {
                   ? Object.fromEntries(
                       productAnnotationFields
                         .filter(([field]) =>
-                          ['unitsPerCarton', 'cartonDetails'].includes(field)
+                          [
+                            'unitsPerCarton',
+                            'cartonDetails',
+                            'productWorkflow',
+                          ].includes(field)
                         )
                         .flatMap(([field, clock, partial]) => [
                           field,
@@ -2230,6 +2398,8 @@ export async function openDatabase({ name = '1688-order-library' } = {}) {
               )
               next = mergeAdditionalCharges(previous, incoming, next)
               next = mergeStoreWechat(previous, incoming, next)
+              next = mergeOperations(previous, incoming, next)
+              next = mergePaymentLinks(previous, incoming, next)
               if (next !== previous) orders.put(next)
               // An older backup's current version is still useful history.
               if (incoming.snapshot.observedAt < previous.snapshot.observedAt) {
@@ -2240,6 +2410,12 @@ export async function openDatabase({ name = '1688-order-library' } = {}) {
             }
           }
           await shareRestoredWechat(tx)
+          const mergedOrders = await requested(orders.getAll())
+          validatePaymentGraph(mergedOrders)
+          validateSharedProducts(
+            await requested(tx.objectStore('preparations').getAll()),
+            { orders: mergedOrders }
+          )
           for (const record of backup.history) {
             const key = [...keyFor(record.snapshot), record.snapshot.observedAt]
             if (!(await requested(history.getKey(key)))) history.put(record)
@@ -2279,6 +2455,12 @@ export async function openDatabase({ name = '1688-order-library' } = {}) {
                 await requested(tx.objectStore('preparations').get(key))
               )
             }
+            for (const dependency of backup.packingScope.dependencies || [])
+              restoredOrders.push(
+                await requested(
+                  orders.get([dependency.accountId, dependency.orderId])
+                )
+              )
             try {
               // Local preparations legitimately retain unselected products.
               validatePackingScope(
@@ -2375,115 +2557,122 @@ export async function openDatabase({ name = '1688-order-library' } = {}) {
         async (tx) => {
           const owners = []
           for (const kind of ['base', 'barcode']) {
-            const reservation = await requested(
+            const activeReservation = await requested(
               tx.objectStore('issuedCodes').get([accountId, kind, code])
             )
-            if (!reservation) continue
-            const key = [accountId, reservation.orderId]
-            const preparation = await requested(
-              tx.objectStore('preparations').get(key)
-            )
-            const order = await requested(tx.objectStore('orders').get(key))
-            const barcodeReservations =
-              kind === 'base'
-                ? await requested(
-                    tx
-                      .objectStore('issuedCodes')
-                      .getAll(
-                        globalThis.IDBKeyRange.bound(
-                          [accountId, 'barcode', code],
-                          [accountId, 'barcode', `${code}\uffff`]
+            if (!activeReservation) continue
+            for (const reservation of codeReservationMembers(
+              activeReservation
+            )) {
+              const key = [accountId, reservation.orderId]
+              const preparation = await requested(
+                tx.objectStore('preparations').get(key)
+              )
+              const order = await requested(tx.objectStore('orders').get(key))
+              const barcodeReservations =
+                kind === 'base'
+                  ? await requested(
+                      tx
+                        .objectStore('issuedCodes')
+                        .getAll(
+                          globalThis.IDBKeyRange.bound(
+                            [accountId, 'barcode', code],
+                            [accountId, 'barcode', `${code}\uffff`]
+                          )
                         )
-                      )
-                  )
-                : []
-            const evidence = codeOwnerEvidence(
-              reservation,
-              preparation,
-              barcodeReservations
-            )
-            const {
-              group,
-              variant,
-              evidenceGroup,
-              evidenceVariant,
-              currentGroup,
-              currentVariant,
-            } = evidence
-            const snapshot = reservation.ownerSnapshot
-            const entryIds = evidence.entryIds ?? snapshot?.entryIds ?? []
-            const members = new Set(entryIds)
-            const sourceTitle = [
-              ...new Set(
-                order?.snapshot.items
-                  .filter((item) => members.has(item.entryId))
-                  .map((item) => item.title || item.description)
-                  .filter(Boolean) || []
-              ),
-            ].join(' · ')
-            let photos = snapshot?.photos || []
-            if (!photos.length && order) {
-              const records = [
-                order,
-                ...(await requested(
-                  tx.objectStore('history').index('order').getAll(key)
-                )),
-              ]
-              photos = [
+                    )
+                  : []
+              const evidence = codeOwnerEvidence(
+                reservation,
+                preparation,
+                barcodeReservations
+              )
+              const {
+                group,
+                variant,
+                evidenceGroup,
+                evidenceVariant,
+                currentGroup,
+                currentVariant,
+              } = evidence
+              const snapshot = reservation.ownerSnapshot
+              const entryIds = evidence.entryIds ?? snapshot?.entryIds ?? []
+              const members = new Set(entryIds)
+              const sourceTitle = [
                 ...new Set(
-                  records.flatMap((record) =>
-                    record.snapshot.items
-                      .filter((item) => members.has(item.entryId))
-                      .map((item) => item.thumbnail)
-                      .filter(Boolean)
-                  )
+                  order?.snapshot.items
+                    .filter((item) => members.has(item.entryId))
+                    .map((item) => item.title || item.description)
+                    .filter(Boolean) || []
                 ),
-              ].slice(0, 6)
+              ].join(' · ')
+              let photos = snapshot?.photos || []
+              if (!photos.length && order) {
+                const records = [
+                  order,
+                  ...(await requested(
+                    tx.objectStore('history').index('order').getAll(key)
+                  )),
+                ]
+                photos = [
+                  ...new Set(
+                    records.flatMap((record) =>
+                      record.snapshot.items
+                        .filter((item) => members.has(item.entryId))
+                        .map((item) => item.thumbnail)
+                        .filter(Boolean)
+                    )
+                  ),
+                ].slice(0, 6)
+              }
+              const currentCode =
+                kind === 'base'
+                  ? currentGroup?.baseCode
+                  : currentGroup &&
+                      currentVariant &&
+                      !currentVariant.needsSizeMapping
+                    ? barcodeValue(currentGroup, currentVariant)
+                    : ''
+              owners.push({
+                kind,
+                accountId,
+                orderId: reservation.orderId,
+                groupId: reservation.groupId,
+                ...(reservation.variantId
+                  ? { variantId: reservation.variantId }
+                  : {}),
+                month: reservation.month,
+                sellerId: reservation.sellerId,
+                status: 'active',
+                orderExists: Boolean(order),
+                groupExists: Boolean(group),
+                sellerName:
+                  order?.snapshot.sellerName ||
+                  snapshot?.sellerName ||
+                  reservation.sellerId,
+                groupTitle:
+                  currentGroup?.title ||
+                  snapshot?.groupTitle ||
+                  (evidence.recovered ? sourceTitle : evidenceGroup?.title) ||
+                  '',
+                spanishName:
+                  currentGroup?.spanishName ?? snapshot?.spanishName ?? '',
+                category: currentGroup?.category ?? snapshot?.category ?? '',
+                variant:
+                  currentVariant?.variant ??
+                  snapshot?.variant ??
+                  evidenceVariant?.variant ??
+                  '',
+                entryIds,
+                photos,
+                currentCode: currentCode || '',
+                currentBaseCode: currentGroup?.baseCode || '',
+                currentGroupId: currentGroup?.id || '',
+                ...(activeReservation.sharedProductId
+                  ? { sharedProductId: activeReservation.sharedProductId }
+                  : {}),
+              })
             }
-            const currentCode =
-              kind === 'base'
-                ? currentGroup?.baseCode
-                : currentGroup &&
-                    currentVariant &&
-                    !currentVariant.needsSizeMapping
-                  ? barcodeValue(currentGroup, currentVariant)
-                  : ''
-            owners.push({
-              kind,
-              accountId,
-              orderId: reservation.orderId,
-              groupId: reservation.groupId,
-              ...(reservation.variantId
-                ? { variantId: reservation.variantId }
-                : {}),
-              month: reservation.month,
-              sellerId: reservation.sellerId,
-              status: 'active',
-              orderExists: Boolean(order),
-              groupExists: Boolean(group),
-              sellerName:
-                order?.snapshot.sellerName ||
-                snapshot?.sellerName ||
-                reservation.sellerId,
-              groupTitle:
-                currentGroup?.title ||
-                snapshot?.groupTitle ||
-                (evidence.recovered ? sourceTitle : evidenceGroup?.title) ||
-                '',
-              spanishName:
-                currentGroup?.spanishName ?? snapshot?.spanishName ?? '',
-              category: currentGroup?.category ?? snapshot?.category ?? '',
-              variant:
-                currentVariant?.variant ??
-                snapshot?.variant ??
-                evidenceVariant?.variant ??
-                '',
-              entryIds,
-              photos,
-              currentCode: currentCode || '',
-              currentBaseCode: currentGroup?.baseCode || '',
-              currentGroupId: currentGroup?.id || '',
-            })
           }
           return { code, owners }
         }
@@ -2680,6 +2869,7 @@ import {
   allocatePreparation,
   barcodeValue,
   codeOwnerEvidence,
+  codeReservationMembers,
   extendDefaultPacking,
   mergePackingState,
   packingCheckpoint,

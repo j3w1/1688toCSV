@@ -33,6 +33,18 @@ const paths = {
   search: 'M10 3a7 7 0 1 0 0 14 7 7 0 0 0 0-14M15 15l6 6',
   text: 'M4 5h16M12 5v15M8 20h8',
   tag: 'M20 12l-8 8-9-9V3h8zM7 7h.01',
+  link: 'M10 13a5 5 0 0 0 7 0l4-4a5 5 0 0 0-7-7l-2 2M14 11a5 5 0 0 0-7 0l-4 4a5 5 0 0 0 7 7l2-2',
+  clock: 'M21 12a9 9 0 1 0-18 0 9 9 0 0 0 18 0M12 7v5l3 2',
+  printer: 'M6 8V3h12v5M6 17H3V9h18v8h-3M6 14h12v7H6zM17 11h.01',
+  truck:
+    'M1 5h14v12H1zM15 9h4l4 4v4h-8M8 18a2 2 0 1 1-4 0 2 2 0 0 1 4 0M21 18a2 2 0 1 1-4 0 2 2 0 0 1 4 0',
+  warehouse: 'M3 9l9-6 9 6v12H3zM7 21V11h10v10M7 15h10M7 18h10',
+  warning: 'M12 3 23 21H1zM12 9v5M12 17h.01',
+  lightbulb: 'M8 16a7 7 0 1 1 8 0l-1 2H9zM9 21h6M12 3V1',
+  rotation: 'M20 8a9 9 0 1 0 1 8M20 3v5h-5M8 12h8',
+  more: 'M4 12h.01M12 12h.01M20 12h.01',
+  refund:
+    'M4 8a9 9 0 1 1-1 8M4 3v5h5M15 9h-4a2 2 0 0 0 0 4h2a2 2 0 0 1 0 4H9M12 7v12',
   plus: 'M12 5v14M5 12h14',
   previous: 'm14 5-7 7 7 7',
   next: 'm10 5 7 7-7 7',

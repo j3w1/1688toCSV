@@ -248,7 +248,18 @@ test('small order links open their own order without changing selection', async 
     selectionBefore
   )
   await page.keyboard.press('Escape')
-  await expect(page.locator('#order-list .order-source-link')).toHaveCount(3)
+  // Cards keep long order references inside store details. Their compact
+  // store-name trigger still gives access to the exact source order.
+  await expect(page.locator('#order-list .order-source-link')).toHaveCount(0)
+  const card = page.locator(`#order-list [data-order-id="${expectedId}"]`)
+  await card.locator('.order-details-trigger').click()
+  await expect(
+    page.locator('#order-details .order-source-link')
+  ).toHaveAttribute('href', new RegExp(`orderId=${expectedId}$`))
+  await page
+    .locator('#order-details')
+    .getByRole('button', { name: 'Close order details', exact: true })
+    .click()
   await expect(page.locator('#sheet-body .order-source-link')).toHaveCount(3)
 })
 

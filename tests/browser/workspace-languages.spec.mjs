@@ -177,16 +177,17 @@ test('source identities copy directly and the card store name opens details with
   const details = page.locator('#order-details')
   await expect(details).toBeVisible()
   await expect(rows.first()).toHaveAttribute('aria-selected', 'true')
-  await details.getByRole('button', { name: 'Close order details' }).click()
-  await card.locator('.order-reference').dblclick()
-  await expect(page.locator('#order-details')).not.toBeVisible()
+  await expect(card.locator('.order-reference')).toHaveCount(0)
+  await details.locator('.order-reference').dblclick()
+  await expect(details).toBeVisible()
   await expect(rows.first()).toHaveAttribute('aria-selected', 'true')
   await expect(shop.locator('.copy-text-feedback')).toBeHidden()
-  await card.locator('.order-reference').focus()
+  await details.locator('.order-reference').focus()
   await page.keyboard.press('Enter')
   expect(await page.evaluate(() => navigator.clipboard.readText())).toBe(
     record.snapshot.orderId
   )
+  await details.getByRole('button', { name: 'Close order details' }).click()
   await expect(card).toHaveAttribute('aria-selected', 'false')
 })
 

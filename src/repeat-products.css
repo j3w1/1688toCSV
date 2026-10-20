@@ -1,0 +1,74 @@
+.repeat-product-button {
+  inline-size: 24px;
+  block-size: 24px;
+  min-block-size: 24px;
+  min-inline-size: 24px;
+  padding: 3px;
+  flex: none;
+}
+.repeat-product-button > svg {
+  inline-size: 16px;
+  block-size: 16px;
+}
+.repeat-product-button[data-linked='true'] {
+  color: var(--accent);
+  background: var(--surface);
+}
+dialog.repeat-product-dialog {
+  inline-size: min(760px, calc(100vw - 24px));
+  max-inline-size: 760px;
+}
+.repeat-product-choice {
+  display: grid;
+  gap: 6px;
+  font-size: 12px;
+  margin-block: 12px;
+}
+.repeat-product-choice select {
+  min-inline-size: 0;
+  inline-size: 100%;
+}
+.repeat-product-preview {
+  display: grid;
+  gap: 10px;
+}
+.repeat-product-source {
+  display: flex;
+  align-items: start;
+  gap: 10px;
+  padding-block: 10px;
+  border-block-start: 1px solid var(--border);
+}
+.repeat-product-source > img,
+.repeat-product-source > .photo-button {
+  inline-size: 64px;
+  block-size: 64px;
+  flex: none;
+}
+.repeat-product-source > div {
+  display: grid;
+  gap: 5px;
+  min-inline-size: 0;
+  flex: 1;
+}
+.repeat-product-source small {
+  color: var(--muted);
+  overflow-wrap: anywhere;
+}
+.repeat-product-confirm {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  margin-block-start: 14px;
+  font-size: 12px;
+}
+.repeat-product-error {
+  color: var(--danger-text);
+}
+@media (max-width: 600px) {
+  .repeat-product-source > img,
+  .repeat-product-source > .photo-button {
+    inline-size: 44px;
+    block-size: 44px;
+  }
+}

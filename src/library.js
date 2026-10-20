@@ -32,6 +32,10 @@ import { createPhotoViewer } from './photo-viewer.js'
 import { openStoreImportDialog } from './store-import-dialog.js'
 import { productCartonDetails } from './carton-details.js'
 import { mountOrderCharges } from './order-charges-ui.js'
+import { mountOperationsStrip, openOperationsDialog } from './operations-ui.js'
+import { mountPaymentLinks } from './payment-links-ui.js'
+import { paymentCostAdjustments, paymentLinksTotal } from './payment-links.js'
+import { centsToMoney, moneyToCents } from './money.js'
 import {
   orderCostAdjustments,
   additionalChargesTotal,
@@ -275,17 +279,20 @@ export async function startLibrary(
     productTagDefinitions = [],
     productDetailsEditor,
     annotationEditor,
-    chargeEditor
+    chargeEditor,
+    paymentEditor
   const annotationDrafts = new Map()
   async function flushOrderDetails() {
     if (annotationEditor) await annotationEditor.flush()
     if (chargeEditor) await chargeEditor.flush()
+    if (paymentEditor) await paymentEditor.flush()
   }
   addEventListener('beforeunload', (event) => {
     if (
       !annotationEditor?.dirty() &&
       !productDetailsEditor?.dirty() &&
-      !chargeEditor?.dirty()
+      !chargeEditor?.dirty() &&
+      !paymentEditor?.dirty()
     )
       return
     event.preventDefault()
@@ -303,6 +310,7 @@ export async function startLibrary(
       annotationEditor?.destroy()
       annotationEditor = undefined
       chargeEditor = undefined
+      paymentEditor = undefined
     } catch {
       annotationEditor?.section
         .querySelector('.annotation-footer button')
@@ -352,6 +360,34 @@ export async function startLibrary(
     selectedRows = new Set(),
     preparedImages = new Map(),
     loadingImages = new Map()
+  async function editOperations(record, entryId) {
+    await packing?.flush()
+    const store = repository || (await openDatabase())
+    const fresh = await store.getOrder(record.snapshot.orderId, {
+      accountId: record.snapshot.accountId,
+    })
+    if (!fresh) throw new Error('Order was not found')
+    return openOperationsDialog({
+      record: fresh,
+      entryId,
+      records,
+      repository: store,
+      onSaved: refresh,
+    })
+  }
+  function operationsStrip(host, record, entryId) {
+    const controller = mountOperationsStrip(host, {
+      record,
+      entryId,
+      onEdit: () => {
+        void (async () => {
+          const saved = await editOperations(record, entryId)
+          if (saved && host.isConnected) controller.update(saved)
+        })().catch((error) => feedback(error.message, true))
+      },
+    })
+    return controller
+  }
   function showProductDetails(row, { sourceItems = [row] } = {}) {
     const record =
       records.find(
@@ -360,6 +396,13 @@ export async function startLibrary(
           (!row.record || accountId === row.record.accountId)
       ) || row.record
     const details = openProductDetails(row, {
+      onOperations: record
+        ? () => {
+            void editOperations(record, row.entryId).catch((error) =>
+              feedback(error.message, true)
+            )
+          }
+        : undefined,
       carton: record
         ? {
             value: productCartonDetails(row, record),
@@ -1227,6 +1270,35 @@ export async function startLibrary(
       identity.append(details)
       const contact = wechatCopyButton(record.storeWechat)
       if (contact) identity.append(contact)
+      operationsStrip(identity, record)
+      const receiving = records.filter((target) =>
+        target.paymentLinks?.some(
+          (link) => link.sourceOrderId === order.orderId
+        )
+      )
+      if (receiving.length) {
+        const linked = decorateIcon(node('button'), 'link', {
+          iconOnly: true,
+          label: uiMessage('Linked payment'),
+        })
+        linked.classList.add('operations-payment-source', 'operations-state')
+        linked.querySelector('svg')?.classList.add('operations-icon')
+        preparationHelp(
+          linked,
+          uiMessage(
+            'This payment is allocated to another purchase. Source totals are counted once.'
+          )
+        )
+        linked.onclick = (event) => {
+          event.stopPropagation()
+          void openDetails(receiving[0]).catch((error) =>
+            feedback(error.message, true)
+          )
+        }
+        const paymentStrip = node('span', undefined, 'operations-strip')
+        paymentStrip.append(linked)
+        identity.append(paymentStrip)
+      }
       const productNames = packing?.orderNames(order.orderId) || []
       if (getLanguage() !== 'zh' && productNames.length) {
         const names = node('span', undefined, 'order-name-summary spanish-name')
@@ -1253,7 +1325,10 @@ export async function startLibrary(
           'order-products'
         )
       )
-      const charges = additionalChargesTotal(record)
+      const charges = centsToMoney(
+        moneyToCents(additionalChargesTotal(record)) +
+          moneyToCents(paymentLinksTotal(record))
+      )
       if (charges !== '0.00') {
         const costs = node('button', `+¥${charges}`, 'order-card-charges')
         costs.type = 'button'
@@ -1265,7 +1340,10 @@ export async function startLibrary(
         preparationHelp(
           costs,
           uiMessage('Additional order charges: {0}. Click to edit.', {
-            0: record.additionalCharges
+            0: [
+              ...(record.additionalCharges || []),
+              ...(record.paymentLinks || []),
+            ]
               .map((charge) => `${charge.reason} (¥${charge.amount})`)
               .join(' · '),
           })
@@ -1366,12 +1444,26 @@ export async function startLibrary(
         },
       ])
     )
+    const linkedOrders = new Set(
+      records.flatMap((record) =>
+        record.paymentLinks?.length
+          ? [
+              record.snapshot.orderId,
+              ...record.paymentLinks.map((link) => link.sourceOrderId),
+            ]
+          : []
+      )
+    )
     const adjustedCosts = new Map(
       records
-        .filter((record) => record.additionalCharges?.length)
+        .filter(
+          (record) =>
+            record.additionalCharges?.length ||
+            linkedOrders.has(record.snapshot.orderId)
+        )
         .map((record) => [
           record.snapshot.orderId,
-          orderCostAdjustments(record),
+          paymentCostAdjustments(record, records),
         ])
     )
     for (const [index, row] of pageRows.entries()) {
@@ -1419,6 +1511,7 @@ export async function startLibrary(
             'order-section-count'
           )
         )
+        operationsStrip(band, row.record)
         cell.append(band)
         heading.append(cell)
         body.append(heading)
@@ -1522,6 +1615,11 @@ export async function startLibrary(
         kg: weight,
         cbm: volume,
       })
+      operationsStrip(
+        description.querySelector('.row-preparation') || description,
+        row.record,
+        row.entryId
+      )
       const assignedTags = row.record.productTags?.[row.entryId] || []
       if (assignedTags.length) {
         const tags = node('div', undefined, 'product-row-tags')
@@ -1547,7 +1645,11 @@ export async function startLibrary(
         )
       const priceCell = node('td', amount(row.price), 'numeric price-cell')
       const adjustment = adjustedCosts.get(row.orderId)?.get(row.entryId)
-      if (adjustment && adjustment.additionalCharge !== '0.00') {
+      if (
+        adjustment &&
+        (Number(adjustment.additionalCharge) ||
+          Number(adjustment.linkedPaymentNet))
+      ) {
         const effective = node(
           'strong',
           `→ ${amount(adjustment.effectiveUnitPrice)}`,
@@ -1557,7 +1659,12 @@ export async function startLibrary(
           effective,
           uiMessage(
             'Includes ¥{0} of additional order charges. The source unit price stays unchanged.',
-            { 0: adjustment.additionalCharge }
+            {
+              0: centsToMoney(
+                moneyToCents(adjustment.additionalCharge || '0.00') +
+                  moneyToCents(adjustment.linkedPaymentNet || '0.00')
+              ),
+            }
           )
         )
         priceCell.append(effective)
@@ -2390,6 +2497,34 @@ export async function startLibrary(
     const storeOrdersBar = node('div', undefined, 'store-orders-bar')
     storeOrdersBar.append(allStoreOrders)
     content.append(storeOrdersBar)
+    const operationTools = node('div', undefined, 'store-operations-tools')
+    const editWorkflow = decorateIcon(
+      node('button', uiMessage('Operations')),
+      'check'
+    )
+    operationTools.append(editWorkflow)
+    const detailsOperations = operationsStrip(operationTools, record)
+    editWorkflow.onclick = () => {
+      void (async () => {
+        const saved = await editOperations(record)
+        if (saved && operationTools.isConnected) detailsOperations.update(saved)
+      })().catch((error) => feedback(error.message, true))
+    }
+    content.append(operationTools)
+    paymentEditor = mountPaymentLinks(content, {
+      record,
+      records,
+      onSave: async (links, options) => {
+        await packing?.flush()
+        const store = repository || (await openDatabase())
+        const result = await store.setPaymentLinks(order.orderId, links, {
+          ...options,
+          accountId: order.accountId,
+        })
+        await refresh()
+        return { record: result, records }
+      },
+    })
     chargeEditor = mountOrderCharges(content, {
       record,
       onSave: async (charges) => {

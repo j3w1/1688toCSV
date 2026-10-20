@@ -1363,6 +1363,9 @@ export function openPrintDialog({
           code: entry.key,
           name: itemByKey.get(entry.key)?.name || '',
           ref: itemByKey.get(entry.key)?.ref,
+          ...(itemByKey.get(entry.key)?.refs
+            ? { refs: itemByKey.get(entry.key).refs }
+            : {}),
           quantity: entry.requested,
           ...(marks || !state.layout.limitExtras || cap(entry.key) === null
             ? {}

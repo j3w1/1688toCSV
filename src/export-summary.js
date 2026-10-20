@@ -98,6 +98,7 @@ const packingDetailFields = [
   'sourceAmount',
   'effectiveAmount',
   'additionalCharge',
+  'linkedPaymentCharge',
 ]
 
 /** Which orders, products and quantities a packing-list export holds. */
@@ -156,6 +157,12 @@ export function packingSummary({
         : {}),
       ...(row.additionalChargeReasons
         ? { additionalChargeReasons: String(row.additionalChargeReasons) }
+        : {}),
+      ...(row.linkedPaymentReasons
+        ? { linkedPaymentReasons: String(row.linkedPaymentReasons) }
+        : {}),
+      ...(row.productFeatures
+        ? { productFeatures: String(row.productFeatures) }
         : {}),
     })
   }

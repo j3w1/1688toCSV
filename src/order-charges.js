@@ -52,30 +52,35 @@ export function additionalChargesTotal(record) {
   )
 }
 
-function unitPrice(price, charge, quantity) {
+export function costAdjustedUnitPrice(price, charge, quantity) {
   const [whole, fractionPart = ''] = price.split('.')
   const precision = Math.max(8, fractionPart.length)
   const scale = 10n ** BigInt(precision),
     units = decimalParts(quantity)
   const source = BigInt(whole + fractionPart.padEnd(precision, '0'))
+  const divisor = units.units * 100n
+  if (!divisor) return price
+  const delta = charge * scale * units.scale
   const rounded =
     source +
-    (charge * scale * units.scale + units.units * 50n) / (units.units * 100n)
-  const fraction = String(rounded % scale)
+    (delta < 0n
+      ? -((-delta + divisor / 2n) / divisor)
+      : (delta + divisor / 2n) / divisor)
+  const absolute = rounded < 0n ? -rounded : rounded
+  const fraction = String(absolute % scale)
     .padStart(precision, '0')
     .replace(/0+$/, '')
     .padEnd(2, '0')
-  return `${rounded / scale}.${fraction}`
+  return `${rounded < 0n ? '-' : ''}${absolute / scale}.${fraction}`
 }
 
-/** Allocate whole-order costs once; views select from these exact source-row shares. */
-export function orderCostAdjustments(record) {
-  const items = record.snapshot.items
-  const total = moneyToCents(additionalChargesTotal(record))
-  const source = items.map(
-    (item) =>
-      grossCents(item.price, item.quantity) - moneyToCents(item.discount)
-  )
+export function productNetCents(item) {
+  return grossCents(item.price, item.quantity) - moneyToCents(item.discount)
+}
+
+/** Deterministic cent allocation shared by manual charges and linked payments. */
+export function allocateCostCents(items, total) {
+  const source = items.map(productNetCents)
   if (source.some((amount) => amount < 0n))
     throw new Error('Product net amounts cannot be negative')
   let weights = source
@@ -115,15 +120,27 @@ export function orderCostAdjustments(record) {
     remaining--
   }
   return new Map(
-    items.map((item, index) => {
-      const amount = source[index],
-        additionalCharge = shares[index].amount
+    items.map((item, index) => [item.entryId, shares[index].amount])
+  )
+}
+
+/** Allocate whole-order costs once; views select from these exact source-row shares. */
+export function orderCostAdjustments(record) {
+  const items = record.snapshot.items
+  const shares = allocateCostCents(
+    items,
+    moneyToCents(additionalChargesTotal(record))
+  )
+  return new Map(
+    items.map((item) => {
+      const amount = productNetCents(item),
+        additionalCharge = shares.get(item.entryId)
       return [
         item.entryId,
         {
           sourceUnitPrice: item.price,
           effectiveUnitPrice: additionalCharge
-            ? unitPrice(item.price, additionalCharge, item.quantity)
+            ? costAdjustedUnitPrice(item.price, additionalCharge, item.quantity)
             : item.price,
           sourceAmount: centsToMoney(amount),
           effectiveAmount: centsToMoney(amount + additionalCharge),

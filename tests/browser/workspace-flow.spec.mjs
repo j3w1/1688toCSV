@@ -323,10 +323,11 @@ test('filtered totals count each whole order once and row clicks toggle without 
     await expect(host.locator('.order-seller')).toHaveText(
       records[0].snapshot.sellerName
     )
-    await expect(
-      host.locator('.order-reference, .order-section-number')
-    ).toHaveText(records[0].snapshot.orderId)
   }
+  await expect(page.locator('.order-card .order-reference')).toHaveCount(0)
+  await expect(
+    page.locator('.order-section-band .order-section-number').first()
+  ).toHaveText(records[0].snapshot.orderId)
   const total = page.locator('#order-totals .totals-payable dd')
   await expect(total).toHaveText(
     money(summarizeOrders(records).amounts.payable)

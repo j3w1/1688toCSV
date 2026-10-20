@@ -87,6 +87,17 @@ import {
   suggestPriceSizeMappings,
 } from './size-vocabulary.js'
 import { mountSizeVocabulary } from './size-vocabulary-settings.js'
+import { mountRepeatProductControl } from './repeat-products-ui.js'
+import {
+  mountOperationsStrip,
+  openOperationsDialog,
+  openOperationsMigrationDialog,
+} from './operations-ui.js'
+import { paymentCostAdjustments } from './payment-links.js'
+import {
+  combineRepeatCartonPacking,
+  sharedVariantSources,
+} from './repeat-products.js'
 import { attachSearchSuggestions, searchMatcher } from './search-assistance.js'
 import { DEFAULT_LABEL_SETTINGS, renderLabel } from './labels.js'
 import { openPrintDialog, openRecentPrintJobs } from './print-dialog.js'
@@ -153,6 +164,7 @@ import {
 } from './carton-details.js'
 import { presentOrderStatus } from './order-presentation.js'
 import { orderTagBadge } from './tag-picker.js'
+import { assignedTagNames, reconcileTagCatalog } from './order-tags.js'
 import { mountOrderTagSettings, mountTagSettings } from './order-tags-ui.js'
 
 const $ = (id) => document.getElementById(id)
@@ -1860,9 +1872,50 @@ export async function startPackingWorkspace({
         (!row.record || record.accountId === row.record.accountId)
     )
   }
+  let linkedPaymentRecords,
+    linkedPaymentRows = new Set()
+  function isLinkedPaymentSource(row) {
+    const records = getRecords()
+    if (linkedPaymentRecords !== records) {
+      linkedPaymentRecords = records
+      linkedPaymentRows = new Set()
+      const sources = new Map(
+        records.map((record) => [
+          JSON.stringify([
+            record.snapshot.accountId || 'local',
+            record.snapshot.orderId,
+          ]),
+          record,
+        ])
+      )
+      for (const record of records)
+        for (const link of record.paymentLinks || []) {
+          const accountId = record.snapshot.accountId || 'local'
+          const source = sources.get(
+            JSON.stringify([accountId, link.sourceOrderId])
+          )
+          const ids =
+            link.sourceEntryId === undefined
+              ? (source?.snapshot.items || []).map((item) => item.entryId)
+              : [link.sourceEntryId]
+          for (const id of ids)
+            linkedPaymentRows.add(
+              JSON.stringify([accountId, link.sourceOrderId, id])
+            )
+        }
+    }
+    return linkedPaymentRows.has(
+      JSON.stringify([
+        packingRecord(row)?.snapshot.accountId || 'local',
+        row.orderId,
+        row.entryId,
+      ])
+    )
+  }
   function isPackingExcluded(row) {
     return Boolean(
-      packingRecord(row)?.packingExcludedEntryIds?.includes(row.entryId)
+      packingRecord(row)?.packingExcludedEntryIds?.includes(row.entryId) ||
+      isLinkedPaymentSource(row)
     )
   }
   // `monthOnly` (the Packing list tab) reopens the packing month without
@@ -1946,6 +1999,7 @@ export async function startPackingWorkspace({
     }
   }
   function packingExclusionAction(row, excluded) {
+    const linkedPayment = isLinkedPaymentSource(row)
     const toggle = button(
       uiMessage(excluded ? 'Skipped' : 'Skip packing'),
       (control) => changePackingExclusion(row, !excluded, control),
@@ -1954,8 +2008,17 @@ export async function startPackingWorkspace({
     toggle.type = 'button'
     toggle.dataset.orderId = row.orderId
     toggle.dataset.entryId = row.entryId
-    toggle.disabled = opening || packingExclusionSaving
-    if (excluded)
+    toggle.dataset.linkedPayment = String(linkedPayment)
+    toggle.disabled = opening || packingExclusionSaving || linkedPayment
+    if (linkedPayment)
+      bindAttribute(
+        toggle,
+        'aria-label',
+        uiMessage(
+          'Linked payment source. Unlink the payment before including this row in packing.'
+        )
+      )
+    else if (excluded)
       bindAttribute(
         toggle,
         'aria-label',
@@ -1965,9 +2028,11 @@ export async function startPackingWorkspace({
     preparationHelp(
       toggle,
       uiMessage(
-        excluded
-          ? 'Skipped when preparing packing. Click to include this product again; saved codes and product data are kept.'
-          : 'Skip this product whenever packing is prepared. Saved codes and product data are kept. You can include it again here.'
+        linkedPayment
+          ? 'Linked payment source. Unlink the payment before including this row in packing.'
+          : excluded
+            ? 'Skipped when preparing packing. Click to include this product again; saved codes and product data are kept.'
+            : 'Skip this product whenever packing is prepared. Saved codes and product data are kept. You can include it again here.'
       )
     )
     toggle.addEventListener('click', (event) => event.stopPropagation())
@@ -2676,6 +2741,55 @@ export async function startPackingWorkspace({
     historySaved.set(result.orderId, result)
     historyRestores.delete(result.orderId)
     checkpoints.set(result.orderId, preparationHistorySnapshot(result))
+  }
+  function repeatProductControl(host, prep, group) {
+    if (!group.baseCode || !repository.getRepeatProductCandidates) return
+    mountRepeatProductControl(host, {
+      source: {
+        accountId: prep.accountId,
+        orderId: prep.orderId,
+        groupId: group.id,
+      },
+      linked: Boolean(group.sharedProductId),
+      repository,
+      media,
+      beforeOpen: flushSaves,
+      onSaved: async (results) => {
+        for (const result of results) {
+          acceptDraft(result)
+          // Linking changes several orders; older per-order Undo cannot split it.
+          history.clear(result.orderId)
+        }
+        await reload()
+        if (!$('packing-view').hidden) renderPreparation()
+        await changed()
+        channel?.postMessage('changed')
+      },
+      onError: (error) => feedback(error.message, true),
+    })
+  }
+  function operationsStrip(host, record, entryId) {
+    if (!record) return
+    mountOperationsStrip(host, {
+      record,
+      entryId,
+      onEdit: () => {
+        void (async () => {
+          await flushSaves()
+          await openOperationsDialog({
+            record,
+            entryId,
+            records: getRecords(),
+            repository,
+            onSaved: async () => {
+              await changed({ reload: true })
+              if (!$('packing-view').hidden) renderPreparation()
+              channel?.postMessage('changed')
+            },
+          })
+        })().catch((error) => feedback(error.message, true))
+      },
+    })
   }
   async function reviewPriceSizes(orderId, groupId) {
     await flushSaves()
@@ -4833,9 +4947,10 @@ export async function startPackingWorkspace({
         className
       )
     }
-    const source = getRecords().find(
+    const orderRecord = getRecords().find(
       ({ snapshot }) => snapshot.orderId === draft.orderId
-    )?.snapshot
+    )
+    const source = orderRecord?.snapshot
     const orderHeader = el('header', undefined, 'packing-order-header')
     orderHeader.append(
       reorderHandle({
@@ -4877,6 +4992,7 @@ export async function startPackingWorkspace({
         { label: uiMessage('Copy store name') }
       )
     )
+    operationsStrip(sellerHeading, orderRecord)
     identity.append(sellerHeading)
     const orderNumber = el('span', undefined, 'packing-order-number')
     orderNumber.append(
@@ -5111,6 +5227,7 @@ export async function startPackingWorkspace({
           )
         )
       )
+      repeatProductControl(title, draft, group)
       const removeGroup = orderButton('Remove group', () =>
         removePackingProducts(
           draft,
@@ -5531,10 +5648,23 @@ export async function startPackingWorkspace({
         }
         description.append(attributes)
         const facts = el('dl', undefined, 'variant-order-facts')
+        const sharedItems = group.sharedProductId
+          ? sharedVariantSources(
+              [...preparations.values()],
+              getRecords(),
+              group.sharedProductId,
+              variant.sharedVariantId,
+              { accountId: draft.accountId }
+            )
+              .filter((entry) =>
+                scopeEntries.get(entry.orderId)?.has(entry.item.entryId)
+              )
+              .map((entry) => entry.item)
+          : items
         const prices = [
-          ...new Set(items.map((item) => normalizePrice(item.price))),
+          ...new Set(sharedItems.map((item) => normalizePrice(item.price))),
         ]
-        const quantity = items.reduce(
+        const quantity = sharedItems.reduce(
           (sum, item) => sum + BigInt(item.quantity),
           0n
         )
@@ -5544,10 +5674,10 @@ export async function startPackingWorkspace({
             prices.map((price) => `¥ ${price}`).join(' / ') || '—',
             'variant-price',
           ],
-          ...(items.length > 1
+          ...(sharedItems.length > 1
             ? [
                 [
-                  'Quantity',
+                  group.sharedProductId ? 'Combined quantity' : 'Quantity',
                   () => quantity.toLocaleString(getLocale()),
                   'variant-quantity',
                 ],
@@ -5580,10 +5710,10 @@ export async function startPackingWorkspace({
         factsLine.append(
           preparationHelp(
             facts,
-            items.length > 1
+            sharedItems.length > 1
               ? uiMessage(
                   'Source unit prices and combined quantity from {0} order rows. Discounts are not subtracted here.',
-                  { 0: items.length }
+                  { 0: sharedItems.length }
                 )
               : uiMessage(
                   'Source unit price and ordered quantity. Discounts are not subtracted here.'
@@ -5768,6 +5898,10 @@ export async function startPackingWorkspace({
           )
         const heading = el('div', undefined, 'variant-heading')
         heading.append(codeOptions, noteRow)
+        const workflow = el('span', undefined, 'variant-workflow')
+        for (const item of items)
+          operationsStrip(workflow, cartonRecord, item.entryId)
+        heading.append(workflow)
         details.append(heading, description)
         option.append(details)
         row.append(photoCell, option, measurementCell)
@@ -5853,12 +5987,14 @@ export async function startPackingWorkspace({
   }
 
   async function bulkLabels(kind, selectedRows) {
+    selectedRows = selectedRows.filter((row) => !isLinkedPaymentSource(row))
     const selected = new Set(
       selectedRows.map((row) => `${row.orderId}/${row.entryId}`)
     )
     if (!selected.size) return
     await flushSaves()
     const models = []
+    const seenCodes = new Set()
     for (const orderId of new Set(selectedRows.map((row) => row.orderId))) {
       const record = getRecords().find(
         (record) => record.snapshot.orderId === orderId
@@ -5870,9 +6006,12 @@ export async function startPackingWorkspace({
           variant.entryIds.some((id) => selected.has(`${orderId}/${id}`))
         )
         if (!variants.length) continue
-        for (const variant of kind === 'mark' ? [null] : variants)
+        for (const variant of kind === 'mark' ? [null] : variants) {
+          const model = outputModel(prep, group, variant, kind, false, true)
+          if (seenCodes.has(model.code)) continue
+          seenCodes.add(model.code)
           models.push({
-            model: outputModel(prep, group, variant, kind, false, true),
+            model,
             location: {
               orderId,
               groupId: group.id,
@@ -5880,6 +6019,7 @@ export async function startPackingWorkspace({
               labelKind: kind,
             },
           })
+        }
       }
     }
     if (!models.length) throw new Error('No active labels to copy.')
@@ -5978,6 +6118,12 @@ export async function startPackingWorkspace({
             orderId: prep.orderId,
             groupId: group.id,
             variantId: variant?.id ?? null,
+            entryIds: (variant ? [variant] : group.variants)
+              .flatMap((entry) => entry.entryIds)
+              .filter(
+                (entryId) =>
+                  !selectedIds || selectedIds.has(`${prep.orderId}/${entryId}`)
+              ),
           },
           model,
         },
@@ -5995,6 +6141,7 @@ export async function startPackingWorkspace({
   }
   /** One entry per distinct label for the selected source rows. */
   function printItems(kind, selectedRows) {
+    selectedRows = selectedRows.filter((row) => !isLinkedPaymentSource(row))
     const selected = new Set(
       selectedRows.map((row) => `${row.orderId}/${row.entryId}`)
     )
@@ -6036,7 +6183,22 @@ export async function startPackingWorkspace({
           const existing = items.get(item.code)
           const source = { orderId, seller: record.snapshot.sellerName || '' }
           if (existing) {
-            existing.quantity += kind === 'mark' ? 0 : units
+            existing.refs.push(item.ref)
+            if (kind === 'mark') {
+              existing.cartonSources.push({
+                orderId,
+                packing: item.cartonPacking,
+              })
+              existing.cartonPacking = combineRepeatCartonPacking(
+                existing.cartonSources
+              )
+              existing.known = existing.cartonPacking.exact
+                ? existing.cartonPacking.total
+                : null
+              existing.quantity = existing.cartonPacking.requiresReview
+                ? ''
+                : (existing.known ?? 1)
+            } else existing.quantity += units
             if (!existing.orders.some((entry) => entry.orderId === orderId))
               existing.orders.push(source)
           } else
@@ -6044,6 +6206,10 @@ export async function startPackingWorkspace({
               ...item,
               // Every source order of this label, for the export summary.
               orders: [source],
+              refs: [item.ref],
+              ...(kind === 'mark'
+                ? { cartonSources: [{ orderId, packing: item.cartonPacking }] }
+                : {}),
               quantity:
                 kind === 'mark'
                   ? item.cartonPacking?.requiresReview
@@ -6058,34 +6224,42 @@ export async function startPackingWorkspace({
   }
   /** Current print entries at the job's product references (order, group, variant). */
   function printItemsForRefs(kind, products) {
-    const items = []
-    const problems = []
-    for (const { ref } of products) {
-      if (!ref) continue
-      const prep = preparations.get(ref.orderId)
-      const record = getRecords().find(
-        (record) => record.snapshot.orderId === ref.orderId
-      )
-      if (!prep || !record) continue
-      const group = activeGroups(prep, record.snapshot).find(
-        (entry) => entry.id === ref.groupId
-      )
-      const variant =
-        kind === 'mark'
-          ? null
-          : group?.variants.find((entry) => entry.id === ref.variantId)
-      if (!group || (kind !== 'mark' && !variant)) continue
-      const { item, problem } = printEntry(prep, group, variant, kind)
-      if (item)
-        items.push({
-          ...item,
-          orders: [
-            { orderId: ref.orderId, seller: record.snapshot.sellerName || '' },
-          ],
-        })
-      else problems.push(problem)
+    const rows = []
+    const seen = new Set()
+    for (const product of products) {
+      for (const ref of product.refs || (product.ref ? [product.ref] : [])) {
+        const prep = preparations.get(ref.orderId)
+        const record = getRecords().find(
+          (record) => record.snapshot.orderId === ref.orderId
+        )
+        if (!prep || !record) continue
+        const group = activeGroups(prep, record.snapshot).find(
+          (entry) => entry.id === ref.groupId
+        )
+        const variant =
+          kind === 'mark'
+            ? null
+            : group?.variants.find((entry) => entry.id === ref.variantId)
+        if (!group || (kind !== 'mark' && !variant)) continue
+        const ids = new Set(
+          (variant ? [variant] : group.variants).flatMap(
+            (entry) => entry.entryIds
+          )
+        )
+        for (const item of record.snapshot.items) {
+          const sourceKey = `${ref.orderId}/${item.entryId}`
+          if (
+            ids.has(item.entryId) &&
+            (!ref.entryIds || ref.entryIds.includes(item.entryId)) &&
+            !seen.has(sourceKey)
+          ) {
+            seen.add(sourceKey)
+            rows.push({ ...item, orderId: ref.orderId })
+          }
+        }
+      }
     }
-    return { items, problems }
+    return printItems(kind, rows)
   }
   const publicProblems = (problems) =>
     problems.map(({ code, name, message }) => ({ code, name, message }))
@@ -6167,13 +6341,29 @@ export async function startPackingWorkspace({
     )
   }
   function preparedRows(rows = getRows()) {
+    const allRecords = getRecords()
     const records = new Map(
-      getRecords().map((record) => [record.snapshot.orderId, record])
+      allRecords.map((record) => [record.snapshot.orderId, record])
     )
+    const costOrders = new Set(
+      allRecords.flatMap((record) => [
+        ...(record.additionalCharges?.length || record.paymentLinks?.length
+          ? [record.snapshot.orderId]
+          : []),
+        ...(record.paymentLinks || []).map((link) => link.sourceOrderId),
+      ])
+    )
+    const costs = new Map()
     return orderRows(rows).map((row) => {
+      const record = records.get(row.orderId) || row.record
+      if (record && costOrders.has(row.orderId) && !costs.has(row.orderId))
+        costs.set(row.orderId, paymentCostAdjustments(record, allRecords))
       row = {
         ...row,
-        ...preparationOrderFields(row, records.get(row.orderId) || row.record),
+        ...preparationOrderFields(row, record, {
+          records: costOrders.has(row.orderId) ? allRecords : undefined,
+          costs: costs.get(row.orderId),
+        }),
       }
       const match = membership.get(`${row.orderId}/${row.entryId}`)
       if (!match) {
@@ -6200,6 +6390,12 @@ export async function startPackingWorkspace({
         spanishName: match.variant.spanishName || match.group.spanishName,
         chineseCategory: match.group.category,
         groupId: match.group.id,
+        ...(match.group.sharedProductId
+          ? {
+              sharedProductId: match.group.sharedProductId,
+              sharedVariantId: match.variant.sharedVariantId,
+            }
+          : {}),
         variantDescription: match.variant.variant,
         sourceSize: match.variant.size,
         variantSuffix: match.variant.variantSuffix,
@@ -6267,6 +6463,16 @@ export async function startPackingWorkspace({
         'additionalChargeReasons',
       ])
         if (!columns.includes(key)) columns.push(key)
+    if (fields.some((row) => Number(row.linkedPaymentCharge) > 0))
+      for (const key of [
+        'effectiveUnitPrice',
+        'linkedPaymentCharge',
+        'effectiveAmount',
+        'linkedPaymentReasons',
+      ])
+        if (!columns.includes(key)) columns.push(key)
+    if (fields.some((row) => row.productFeatures))
+      if (!columns.includes('productFeatures')) columns.push('productFeatures')
     const grid = preparationGrid(fields, columns, t)
     const file = uniqueFileName(
       packingListFileName(fields.map((row) => row.sellerName))
@@ -6864,6 +7070,39 @@ export async function startPackingWorkspace({
         'packing-help'
       )
     )
+    const reviewTags = button(
+      uiMessage('Review operational tags'),
+      async () => {
+        await flushSaves()
+        await openOperationsMigrationDialog({
+          records: await repository.listOrders(),
+          repository,
+          onSaved: async () => {
+            await changed({ reload: true })
+            channel?.postMessage('preferences')
+            const latest = await repository.getPackingPreferences()
+            for (const scope of ['order', 'product']) {
+              const catalog = `${scope}Tags`
+              value[catalog] = reconcileTagCatalog(
+                value[catalog],
+                assignedTagNames(getRecords(), scope),
+                {
+                  previous: latest[catalog],
+                  baseline: tagCatalogBaseline[catalog],
+                  scope,
+                }
+              )
+              tagCatalogBaseline[catalog] = structuredClone(
+                latest[catalog] || []
+              )
+            }
+            tagSettings.forEach((tags) => tags.refresh())
+          },
+        })
+      }
+    )
+    decorateIcon(reviewTags, 'more')
+    tagPanel.append(reviewTags)
     const tagSettings = [
       mountOrderTagSettings(
         tagPanel,
@@ -7020,7 +7259,7 @@ export async function startPackingWorkspace({
     for (const control of document.querySelectorAll(
       '.packing-launch-row, .packing-exclusion-toggle'
     ))
-      control.disabled = busy
+      control.disabled = busy || control.dataset.linkedPayment === 'true'
     const launchHelp = packingExclusionSaving
       ? uiMessage('Saving packing selection…')
       : skipped && !rows.length
@@ -7218,6 +7457,7 @@ export async function startPackingWorkspace({
         })
         bindAttribute(copy, 'aria-label', uiMessage('Copy code'))
         bar.append(copy)
+        repeatProductControl(bar, matched.prep, matched.group)
         const name = matched.variant.spanishName || matched.group.spanishName
         if (name) bar.append(el('span', name, 'spanish-name'))
         if (matched.group.category)

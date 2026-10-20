@@ -1,6 +1,7 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
 import { mergeProductAnnotations, validateBackup } from '../src/database.js'
+import { paymentSourceEvidence } from '../src/payment-links.js'
 import {
   upgradeWorkspaceColors,
   WORKSPACE_COLOR_REVISION,
@@ -99,6 +100,61 @@ function fixture() {
 const selection = (entryIds = ['2']) => ({
   months: ['2026-10'],
   orders: [{ orderId: '1001', entryIds }],
+})
+
+test('packing backups retain complete linked payment sources without adding their packing scope', () => {
+  const { backup } = fixture()
+  const target = backup.orders[0]
+  const source = structuredClone(target)
+  source.snapshot.orderId = '1002'
+  source.snapshot.sourceUrl = source.snapshot.sourceUrl.replace('1001', '1002')
+  source.productWorkflow = {
+    1: { features: { lighting: true } },
+    3: { features: { rotation: true } },
+  }
+  source.productWorkflowUpdatedAt = '2026-10-02T12:00:00.000Z'
+  source.packingExcludedEntryIds = ['1', '2', '3']
+  source.packingExclusionsUpdatedAt = '2026-10-02T12:00:00.000Z'
+  target.paymentLinks = [
+    {
+      id: 'synthetic-payment',
+      sourceOrderId: '1002',
+      amount: '30.00',
+      reason: 'Recorded service payment',
+      targetEntryIds: ['1', '2', '3'],
+      reviewedAt: '2026-10-02T12:00:00.000Z',
+      sourceEvidence: paymentSourceEvidence(source),
+    },
+  ]
+  target.paymentLinksUpdatedAt = '2026-10-02T12:00:00.000Z'
+  backup.orders.push(source)
+  const partial = createPackingBackup(backup, selection())
+  assert.deepEqual(partial.packingScope.orders, [
+    { accountId: 'local', orderId: '1001', entryIds: ['2'] },
+  ])
+  assert.deepEqual(partial.packingScope.dependencies, [
+    { accountId: 'local', orderId: '1002' },
+  ])
+  assert.deepEqual(
+    partial.orders.find((record) => record.snapshot.orderId === '1002'),
+    source
+  )
+  assert.equal(partial.preparations.length, 1)
+  assert.doesNotThrow(() => validateBackup(partial))
+  const missing = structuredClone(partial)
+  missing.packingScope.dependencies = []
+  assert.throws(() => validateBackup(missing), /financial source dependency/)
+  const dangling = structuredClone(partial)
+  dangling.orders = dangling.orders.filter(
+    (record) => record.snapshot.orderId !== '1002'
+  )
+  assert.throws(() => validateBackup(dangling), /source order was not found/)
+  const unrelated = structuredClone(partial)
+  const extra = structuredClone(source)
+  extra.snapshot.orderId = '1003'
+  extra.snapshot.sourceUrl = extra.snapshot.sourceUrl.replace('1002', '1003')
+  unrelated.orders.push(extra)
+  assert.throws(() => validateBackup(unrelated), /financial source dependency/)
 })
 const members = (preparation) =>
   preparation.groups.flatMap((group) =>

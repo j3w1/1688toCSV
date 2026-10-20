@@ -5,6 +5,7 @@ import {
 import { test, expect } from './extension-fixture.mjs'
 import { createDemoRecords } from '../../preview/library-fixture.js'
 import { UI_MESSAGES } from '../../src/ui-messages.js'
+import { preparationColumns } from '../../src/preparation-clipboard.js'
 import { readFile } from 'node:fs/promises'
 import { readBackupFile } from '../../src/backup-file.js'
 
@@ -433,7 +434,7 @@ test('chosen columns search, keyboard selection and paste order persist with tra
     .click()
   await expect(
     columns.locator('.preparation-column-groups input:checked')
-  ).toHaveCount(58)
+  ).toHaveCount(preparationColumns.length)
   await expect(
     columns.getByRole('checkbox', { name: 'Pcs/box', exact: true })
   ).toBeChecked()

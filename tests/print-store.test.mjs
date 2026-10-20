@@ -17,6 +17,71 @@ function memoryStorage() {
   }
 }
 
+test('recent shared labels retain every source reference and refuse a partial or split recovery', () => {
+  const storage = memoryStorage()
+  const store = createPrintStore(storage)
+  const refs = [
+    { orderId: '101', groupId: 'original', variantId: 'red', entryIds: ['1'] },
+    {
+      orderId: '102',
+      groupId: 'repeat',
+      variantId: 'red-repeat',
+      entryIds: ['1'],
+    },
+  ]
+  const job = store.recordJob({
+    kind: 'labels',
+    products: [{ code: 'CE26100101AS', quantity: 30, ref: refs[0], refs }],
+  })
+  assert.deepEqual(job.products[0].refs, refs)
+  assert.deepEqual(
+    createPrintStore(storage).recentJobs()[0].products[0].refs,
+    refs
+  )
+  const item = {
+    key: 'CE26100101AS',
+    code: 'CE26100101AS',
+    ref: refs[0],
+    refs,
+    orders: [{ orderId: '101' }, { orderId: '102' }],
+  }
+  const restored = restoreJob(job, [item])
+  assert.equal(restored.items.length, 1)
+  assert.equal(restored.items[0].quantity, 30)
+  assert.equal(restored.items[0].refs.length, 2)
+  const partial = restoreJob(job, [{ ...item, refs: [refs[1]], ref: refs[1] }])
+  assert.equal(partial.items.length, 0)
+  assert.equal(partial.missing.length, 1)
+  const split = restoreJob(job, [
+    { ...item, refs: [refs[0]] },
+    {
+      ...item,
+      key: 'CE26100102AS',
+      code: 'CE26100102AS',
+      ref: refs[1],
+      refs: [refs[1]],
+    },
+  ])
+  assert.equal(split.items.length, 0)
+  assert.equal(split.missing.length, 1)
+})
+
+test('a shared print job that exceeds source-reference history capacity is refused whole', () => {
+  const store = createPrintStore(memoryStorage())
+  const refs = Array.from({ length: RECENT_PRODUCT_LIMIT + 1 }, (_, index) => ({
+    orderId: String(index + 1),
+    groupId: 'synthetic',
+    variantId: 'a',
+  }))
+  assert.equal(
+    store.recordJob({
+      kind: 'labels',
+      products: [{ code: 'CE26100101AS', quantity: 30, ref: refs[0], refs }],
+    }),
+    null
+  )
+})
+
 test('recent jobs retain the output language independently of later workspace changes', () => {
   const storage = memoryStorage()
   const store = createPrintStore(storage)
