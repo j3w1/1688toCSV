@@ -85,6 +85,66 @@ test('a packing-list summary lists its orders, products, quantities and files', 
   assert.deepEqual(summary.totals, { orders: 2, products: 3, quantity: 64 })
 })
 
+test('packing summaries preserve optional carton and additional-cost evidence as exact strings', () => {
+  const rows = [
+    {
+      orderId: '9001',
+      sellerName: 'Synthetic store',
+      quantity: '3',
+      cartons: '2',
+      cartonWeight: '10.50',
+      cartonVolume: '0.105',
+      cartonLength: '70',
+      cartonWidth: '50',
+      cartonHeight: '30',
+      storeNumber: '04321',
+      sourceUnitPrice: '10.00',
+      effectiveUnitPrice: '10.335',
+      sourceAmount: '30.00',
+      effectiveAmount: '31.00',
+      additionalCharge: '1.00',
+      additionalChargeReasons: 'Unloading (¥3.00)',
+      orderAdditionalCharges: '3.00',
+    },
+    {
+      orderId: '9001',
+      sellerName: 'Synthetic store',
+      quantity: '7',
+      sourceUnitPrice: '10.00',
+      effectiveUnitPrice: '10.28571429',
+      sourceAmount: '70.00',
+      effectiveAmount: '72.00',
+      additionalCharge: '2.00',
+      additionalChargeReasons: 'Unloading (¥3.00)',
+      orderAdditionalCharges: '3.00',
+    },
+  ]
+  const summary = packingSummary({ file: 'synthetic.xlsx', rows })
+  assert.equal(summary.orders.length, 1)
+  assert.equal(summary.orders[0].orderAdditionalCharges, '3.00')
+  assert.equal(summary.orders[0].additionalChargeReasons, 'Unloading (¥3.00)')
+  assert.equal(summary.orders[0].storeNumber, '04321')
+  assert.equal(summary.products[0].cartonVolume, '0.105')
+  assert.equal(summary.products[0].cartonWeight, '10.50')
+  assert.equal(summary.products[0].effectiveUnitPrice, '10.335')
+  assert.equal(summary.products[1].effectiveUnitPrice, '10.28571429')
+  assert.equal(summary.products[1].effectiveAmount, '72.00')
+  assert.equal('cartonWeight' in summary.products[1], false)
+  assert.deepEqual(summary.totals, { orders: 1, products: 2, quantity: 10 })
+  const invalid = structuredClone(rows)
+  invalid[0].effectiveAmount = 'incorrect'
+  assert.throws(
+    () => packingSummary({ file: 'synthetic.xlsx', rows: invalid }),
+    /Invalid effectiveAmount/
+  )
+  invalid[0].effectiveAmount = '31.00'
+  invalid[1].orderAdditionalCharges = '4.00'
+  assert.throws(
+    () => packingSummary({ file: 'synthetic.xlsx', rows: invalid }),
+    /Inconsistent order additional charges/
+  )
+})
+
 test('label and carton-mark summaries carry pages, counts and files', () => {
   const labels = printSummary({
     kind: 'labels',

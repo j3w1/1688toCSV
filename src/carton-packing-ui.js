@@ -16,7 +16,7 @@ export function cartonBreakdownMessage(result) {
 /** Capacity belongs to a source product, including products not yet prepared. */
 export function mountCartonCapacity(host, { quantity, value, onSave }) {
   const control = el('div', undefined, 'carton-capacity')
-  const label = el('label', message('Pack size'), 'sr-only')
+  const label = el('label', message('Pcs/box'), 'sr-only')
   const input = el('input')
   input.type = 'number'
   input.min = '1'
@@ -45,7 +45,7 @@ export function mountCartonCapacity(host, { quantity, value, onSave }) {
   let timer, work
   const parse = () => {
     if (input.validity?.badInput)
-      throw new Error('Pack size must be a positive whole number')
+      throw new Error('Pcs/box must be a positive whole number')
     return normalizeUnitsPerCarton(input.value)
   }
   const dirty = () => {
@@ -147,12 +147,12 @@ export function mountCartonCapacity(host, { quantity, value, onSave }) {
 
 export function cartonCapacityReadout(item, capacity) {
   const row = el('div', undefined, 'carton-capacity carton-capacity-readout')
-  row.append(el('span', message('Pack size')))
+  row.append(el('span', message('Pcs/box')))
   row.append(
     capacity == null
       ? el('span', '—')
       : copyTextButton(String(capacity), {
-          label: message('Copy pack size'),
+          label: message('Copy Pcs/box'),
         })
   )
   if (capacity != null)

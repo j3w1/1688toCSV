@@ -159,6 +159,10 @@ export function selectPackingOrder(order, ids) {
     result.unitsPerCarton = Object.fromEntries(
       Object.entries(result.unitsPerCarton).filter(([id]) => selected.has(id))
     )
+  if (result.cartonDetails)
+    result.cartonDetails = Object.fromEntries(
+      Object.entries(result.cartonDetails).filter(([id]) => selected.has(id))
+    )
   if (result.packingExcludedEntryIds)
     result.packingExcludedEntryIds = result.packingExcludedEntryIds.filter(
       (id) => selected.has(id)
@@ -166,6 +170,7 @@ export function selectPackingOrder(order, ids) {
   for (const [clock, partial] of [
     ['productTagsUpdatedAt', 'productTagsPartialClocks'],
     ['unitsPerCartonUpdatedAt', 'unitsPerCartonPartialClocks'],
+    ['cartonDetailsUpdatedAt', 'cartonDetailsPartialClocks'],
     ['packingExclusionsUpdatedAt', 'packingExclusionsPartialClocks'],
   ])
     if (order[clock] || order[partial]) {
@@ -239,9 +244,15 @@ export function createPackingBackup(backup, selection) {
         .filter((item) =>
           selected.get(key(order.snapshot)).includes(item.entryId)
         )
-        .map((item) => item.thumbnail)
+        .flatMap((item) => [item.thumbnail, ...(item.photos || [])])
     )
   )
+  // Full source rows are retained to reconcile money. Local originals have no
+  // remote fallback, so keep every original referenced by those dependencies.
+  for (const order of orders)
+    for (const item of order.snapshot.items)
+      for (const url of [item.thumbnail, ...(item.photos || [])])
+        if (url?.startsWith('local-image:')) urls.add(url)
   return {
     format: '1688-order-library',
     version: 3,

@@ -27,6 +27,7 @@ await build({
     'list-content': 'src/list-content.js',
     background: 'src/background.js',
     library: 'src/library.js',
+    'store-workbook-worker': 'src/store-workbook-worker.js',
   },
   outdir: output,
   bundle: true,
@@ -44,6 +45,8 @@ await cp(path.join(root, 'src/assets'), path.join(output, 'assets'), {
 for (const resource of [
   'library.html',
   'library.css',
+  'store-import.css',
+  'order-charges.css',
   'photo-viewer.css',
   'copy-actions.css',
   'code-design.css',
@@ -62,6 +65,9 @@ await writeFile(
   JSON.stringify(manifest, null, 2) + '\n'
 )
 const resources = [
+  'store-workbook-worker.js',
+  'store-import.css',
+  'order-charges.css',
   ...Object.values(manifest.icons),
   ...manifest.content_scripts.flatMap((script) => script.js),
   manifest.background.service_worker,

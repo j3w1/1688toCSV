@@ -5,6 +5,7 @@ import { decorateIcon } from './icons.js'
 import { photoCopyTile } from './photo-copy.js'
 import { preparationHelp } from './preparation-help.js'
 import { mountProductTags } from './product-tags-ui.js'
+import { mountCartonDetails } from './carton-details-ui.js'
 
 /** Display helpers never rewrite the source row or the values exported to Excel. */
 export function createProductDescription(item) {
@@ -49,7 +50,7 @@ export function createProductDescription(item) {
 /** Original source stays read-only; optional local product tags save separately. */
 export function openProductDetails(
   item,
-  { loadPhoto, onPhoto, onOrder, copyPhoto, tags }
+  { loadPhoto, onPhoto, onOrder, copyPhoto, tags, carton }
 ) {
   const source = productAttributes(item)
   const dialog = el('dialog', undefined, 'product-details-dialog')
@@ -112,7 +113,10 @@ export function openProductDetails(
     identity.append(
       copyTextButton(item.sellerName, { label: 'Copy store name' })
     )
-  if (item.orderId) identity.append(orderReference(item.orderId))
+  if (item.orderId)
+    identity.append(
+      orderReference(item.orderId, { sourceType: item.sourceType })
+    )
   const body = el('div', undefined, 'product-details-body')
   const data = el('div', undefined, 'product-details-data')
   const title = el('h3')
@@ -134,6 +138,7 @@ export function openProductDetails(
   add('单价', item.price)
   add('数量', item.quantity)
   data.append(title, fields)
+  if (carton) mountCartonDetails(data, carton)
   if (item.thumbnail) {
     const photoColumn = el('div', undefined, 'product-details-photo')
     const photoButton = el('button', undefined, 'product-photo-button')

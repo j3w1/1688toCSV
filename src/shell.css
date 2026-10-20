@@ -258,6 +258,12 @@ body > main {
   }
 }
 @media (max-width: 760px) {
+  .top-actions #import-store-sheet {
+    inline-size: 32px;
+    min-inline-size: 32px;
+    padding: 4px;
+    font-size: 0;
+  }
   .view-tabs button {
     padding-inline: 10px;
   }

@@ -11,26 +11,36 @@ import {
 import { element as el } from './ui.js'
 import { icon } from './icons.js'
 import { preparationHelp } from './preparation-help.js'
+import {
+  productPhotoGallery,
+  squareProductPhoto,
+  DEFAULT_PHOTO_EDIT,
+} from './product-photo.js'
 
-export function createPhotoViewer(loadImage) {
+export function createPhotoViewer(loadImage, { onEdit } = {}) {
   let current = null
 
-  async function open(item, availableItems = []) {
+  async function open(item, availableItems = [], photoIndex = 0) {
     current?.close()
-    let gallery = availableItems.filter((entry) => entry.thumbnail)
+    let gallery = productPhotoGallery(availableItems)
     // Packing photos retain their source objects. Table rows are recreated on
     // filtering, so only their full order/entry pair is a safe fallback.
-    let index = gallery.indexOf(item)
+    let index = gallery.findIndex(
+      (entry) => entry.photoSource === item && entry.photoIndex === photoIndex
+    )
     if (index < 0 && item.orderId && item.entryId)
       index = gallery.findIndex(
         (entry) =>
-          entry.orderId === item.orderId && entry.entryId === item.entryId
+          entry.orderId === item.orderId &&
+          entry.entryId === item.entryId &&
+          entry.photoIndex === photoIndex
       )
     // Evidence/review photos outside the active product scope remain standalone.
     if (index < 0) {
-      gallery = [item]
+      gallery = productPhotoGallery([item])
       index = 0
-    } else gallery[index] = item
+    }
+    if (!gallery.length) return
     const modal = el('dialog', undefined, 'product-photo-dialog')
     current = modal
     bindAttribute(modal, 'aria-label', uiMessage('Product photo'))
@@ -57,6 +67,164 @@ export function createPhotoViewer(loadImage) {
       next = el('button', undefined, 'photo-gallery-button'),
       counter = el('span', undefined, 'photo-gallery-count'),
       events = new AbortController()
+    const editButton = el('button', uiMessage('Adjust photo')),
+      editor = el('section', undefined, 'product-photo-editor'),
+      mode = el('select'),
+      background = el('input'),
+      apply = el('button', uiMessage('Save photo')),
+      reset = el('button', uiMessage('Reset photo')),
+      cancelEdit = el('button', uiMessage('Cancel'))
+    let editing = false,
+      originalData,
+      editingVersion = 0,
+      draftEdit = { ...DEFAULT_PHOTO_EDIT }
+    let savingPhoto = false
+    editor.hidden = true
+    const sliders = {}
+    const editControl = (label, control) => {
+      const field = el('div'),
+        caption = el('label', uiMessage(label))
+      control.id = `photo-edit-${crypto.randomUUID()}`
+      caption.htmlFor = control.id
+      field.append(caption, control)
+      editor.append(field)
+    }
+    mode.append(
+      new Option(t('Fit inside square'), 'contain'),
+      new Option(t('Fill square (crop)'), 'cover')
+    )
+    editControl('Canvas fit', mode)
+    for (const [key, label, min, max, step] of [
+      ['scale', 'Image size', 0.1, 4, 0.05],
+      ['x', 'Horizontal position', -1, 1, 0.01],
+      ['y', 'Vertical position', -1, 1, 0.01],
+    ]) {
+      const input = el('input')
+      input.type = 'range'
+      input.min = min
+      input.max = max
+      input.step = step
+      sliders[key] = input
+      editControl(label, input)
+      input.addEventListener('input', () => {
+        draftEdit[key] = Number(input.value)
+        void renderEdit()
+      })
+    }
+    background.type = 'color'
+    editControl('Canvas background', background)
+    const editActions = el('div', undefined, 'product-photo-editor-actions')
+    editActions.append(reset, cancelEdit, apply)
+    editor.append(editActions)
+    mode.onchange = () => {
+      draftEdit.fit = mode.value
+      void renderEdit()
+    }
+    background.oninput = () => {
+      draftEdit.background = background.value
+      void renderEdit()
+    }
+    const setEditorControls = () => {
+      mode.value = draftEdit.fit
+      background.value = draftEdit.background
+      for (const [key, input] of Object.entries(sliders))
+        input.value = draftEdit[key]
+    }
+    async function displayPhoto(data, isCurrent = () => true) {
+      const loaded = el('img')
+      loaded.draggable = false
+      loaded.alt = caption.textContent || t('Product')
+      loaded.src = data
+      await loaded.decode()
+      if (!modal.open || !isCurrent()) return
+      image.replaceWith(loaded)
+      image = loaded
+      image.style.width = `${image.naturalWidth}px`
+      image.style.height = `${image.naturalHeight}px`
+      ready = true
+      fitted = true
+      x = y = 0
+      resize()
+    }
+    async function renderEdit() {
+      if (!originalData) return
+      const version = ++editingVersion
+      apply.disabled = true
+      try {
+        const result = await squareProductPhoto(originalData, draftEdit)
+        if (version !== editingVersion || !modal.open || !editing) return
+        await displayPhoto(result, () => version === editingVersion && editing)
+        if (version === editingVersion && editing) apply.disabled = false
+      } catch (error) {
+        bindText(status, uiMessage(error.message))
+      }
+    }
+    editButton.onclick = () => {
+      if (!originalData) return
+      editing = true
+      editor.hidden = false
+      editButton.hidden = true
+      draftEdit = {
+        ...DEFAULT_PHOTO_EDIT,
+        ...gallery[index].photoEdits?.[gallery[index].photoIndex],
+      }
+      setEditorControls()
+      void renderEdit()
+      bindText(
+        status,
+        uiMessage('Adjust the square canvas. The original photo is kept.')
+      )
+    }
+    reset.onclick = () => {
+      draftEdit = { ...DEFAULT_PHOTO_EDIT }
+      setEditorControls()
+      void renderEdit()
+    }
+    cancelEdit.onclick = () => {
+      editing = false
+      editor.hidden = true
+      void showPhoto(index)
+    }
+    apply.onclick = async () => {
+      if (savingPhoto) return
+      savingPhoto = true
+      apply.disabled = true
+      for (const control of editor.querySelectorAll('input,select,button'))
+        control.disabled = true
+      previous.disabled = next.disabled = true
+      const selected = gallery[index],
+        edit = { ...draftEdit }
+      try {
+        const thumbnail = await squareProductPhoto(originalData, edit)
+        await onEdit(selected.photoSource, {
+          photoIndex: selected.photoIndex,
+          thumbnail,
+          edit,
+          originalPhoto: selected.originalPhoto,
+        })
+        selected.photoSource.photos ||= [selected.originalPhoto]
+        if (selected.photoIndex === 0)
+          selected.photoSource.thumbnail = thumbnail
+        selected.photoSource.photoEdits = {
+          ...selected.photoSource.photoEdits,
+          [selected.photoIndex]: edit,
+        }
+        selected.photoEdits = selected.photoSource.photoEdits
+        editing = false
+        editor.hidden = true
+        editButton.hidden = false
+        bindText(status, uiMessage('Photo saved. Original preserved.'))
+      } catch (error) {
+        bindText(status, uiMessage(error.message))
+      } finally {
+        savingPhoto = false
+        for (const control of editor.querySelectorAll('input,select,button'))
+          control.disabled = false
+        previous.disabled = index === 0
+        next.disabled = index === gallery.length - 1
+        apply.disabled = false
+      }
+    }
     let image = el('img'),
       loadVersion = 0
     bindAttribute(close, 'aria-label', uiMessage('Close product photo'))
@@ -166,7 +334,9 @@ export function createPhotoViewer(loadImage) {
       if (pointerId !== undefined && viewport.hasPointerCapture(pointerId))
         viewport.releasePointerCapture(pointerId)
     }
-    close.onclick = () => modal.close()
+    close.onclick = () => {
+      if (!savingPhoto) modal.close()
+    }
     previous.onclick = () => void showPhoto(index - 1)
     next.onclick = () => void showPhoto(index + 1)
     minus.onclick = () => zoomTo(scale / 1.5)
@@ -200,6 +370,10 @@ export function createPhotoViewer(loadImage) {
       resize()
     })
     listen(modal, 'cancel', async (event) => {
+      if (savingPhoto) {
+        event.preventDefault()
+        return
+      }
       if (document.fullscreenElement === frame) {
         event.preventDefault()
         try {
@@ -264,6 +438,7 @@ export function createPhotoViewer(loadImage) {
     listen(viewport, 'pointercancel', stopDrag)
     listen(viewport, 'lostpointercapture', stopDrag)
     listen(modal, 'keydown', (event) => {
+      if (savingPhoto) return
       if (
         event.defaultPrevented ||
         event.isComposing ||
@@ -297,10 +472,19 @@ export function createPhotoViewer(loadImage) {
     observer.observe(viewport)
     for (const button of [minus, plus, fit, actual]) button.disabled = true
     navigation.append(previous, counter, next)
-    actions.append(minus, value, plus, fit, actual, fullscreen, navigation)
+    actions.append(
+      minus,
+      value,
+      plus,
+      fit,
+      actual,
+      fullscreen,
+      editButton,
+      navigation
+    )
     heading.append(title, caption)
     viewport.append(image)
-    frame.append(close, heading, actions, viewport, status)
+    frame.append(close, heading, actions, editor, viewport, status)
     modal.append(frame)
     document.body.append(modal)
     modal.onclose = () => {
@@ -316,10 +500,22 @@ export function createPhotoViewer(loadImage) {
     modal.showModal()
     close.focus()
     async function showPhoto(position) {
-      if (position < 0 || position >= gallery.length || !modal.open) return
+      if (
+        savingPhoto ||
+        position < 0 ||
+        position >= gallery.length ||
+        !modal.open
+      )
+        return
       const version = ++loadVersion,
         selected = gallery[position]
       index = position
+      editing = false
+      editingVersion++
+      editor.hidden = true
+      originalData = undefined
+      editButton.hidden = !onEdit
+      editButton.disabled = true
       stopDrag()
       ready = false
       image.hidden = true
@@ -347,13 +543,23 @@ export function createPhotoViewer(loadImage) {
       for (const button of [minus, plus, fit, actual]) button.disabled = true
       bindText(status, uiMessage('Loading original image…'))
       try {
-        const data = await loadImage(selected.thumbnail)
+        const data = await loadImage(
+          selected.originalPhoto || selected.thumbnail
+        )
+        if (!modal.open || version !== loadVersion) return
+        originalData = data
+        const displayData = selected.photoEdits?.[selected.photoIndex]
+          ? await squareProductPhoto(
+              data,
+              selected.photoEdits[selected.photoIndex]
+            )
+          : data
         if (!modal.open || version !== loadVersion) return
         const loaded = el('img')
         loaded.draggable = false
         if (sourceName) loaded.alt = sourceName
         else bindAttribute(loaded, 'alt', uiMessage('Product'))
-        loaded.src = data
+        loaded.src = displayData
         await loaded.decode()
         if (!modal.open || version !== loadVersion) return
         image.replaceWith(loaded)
@@ -365,6 +571,7 @@ export function createPhotoViewer(loadImage) {
         x = y = 0
         for (const button of [plus, fit, actual]) button.disabled = false
         resize()
+        editButton.disabled = false
         bindText(
           status,
           uiMessage(

@@ -195,9 +195,14 @@ export function createPreparation(
   const groups = new Map()
   const candidates = new Map()
   const variantKeys = new Map()
+  const sourceEndings = new Map()
   for (const item of snapshot.items) {
     const title = (item.title || item.description).trim()
-    let group = groups.get(title)
+    // Spreadsheet group markers are authoritative even when names repeat or
+    // descriptions differ. A marker is source identity, never an assigned code.
+    const groupKey =
+      snapshot.sourceType === 'spreadsheet' ? item.sourceGroup : title
+    let group = groups.get(groupKey)
     if (!group) {
       const suggestion = suggest(title)
       group = {
@@ -209,14 +214,21 @@ export function createPreparation(
         naming: automaticNaming(suggestion),
         variants: [],
       }
-      groups.set(title, group)
+      groups.set(groupKey, group)
     }
-    const { size, variantProperties, variant } = sizeClassifier.extract(item)
+    const extracted = sizeClassifier.extract(item)
+    const size = item.sourceSize || extracted.size
+    const variant = item.sourceVariant || extracted.variant
+    const variantProperties = extracted.variantProperties
     // Only identical complete attribute sets suggest a shared variant. No source
     // row or amount is combined; entry IDs remain individually addressable.
     const attributes = (entries) =>
       entries.map((property) => [property.label.trim(), property.value.trim()])
-    const key = JSON.stringify([title, attributes(variantProperties), size])
+    const variantIdentity =
+      snapshot.sourceType === 'spreadsheet' && item.sourceVariant
+        ? [['variant', item.sourceVariant]]
+        : attributes(variantProperties)
+    const key = JSON.stringify([groupKey, variantIdentity, size])
     const existing = candidates.get(key)
     if (existing) existing.entryIds.push(item.entryId)
     else {
@@ -230,10 +242,12 @@ export function createPreparation(
         needsSizeMapping: false,
       }
       candidates.set(key, candidate)
-      variantKeys.set(
-        candidate.id,
-        JSON.stringify(attributes(variantProperties))
-      )
+      variantKeys.set(candidate.id, JSON.stringify(variantIdentity))
+      if (snapshot.sourceType === 'spreadsheet')
+        sourceEndings.set(candidate.id, {
+          variant: item.sourceVariant,
+          size: item.sourceSize,
+        })
       group.variants.push(candidate)
     }
   }
@@ -247,9 +261,10 @@ export function createPreparation(
     )
     for (const [index, variant] of group.variants.entries()) {
       variant.variantSuffix =
-        variants.length > 1
+        sourceEndings.get(variant.id)?.variant ||
+        (variants.length > 1
           ? letters(variants.indexOf(variantKeys.get(variant.id)))
-          : ''
+          : '')
       variant.sizeSuffix = sizeSuggestions[index].sizeSuffix
       variant.needsSizeMapping = sizeSuggestions[index].needsSizeMapping
     }

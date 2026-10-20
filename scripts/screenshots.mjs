@@ -23,6 +23,22 @@ try {
   await page.getByRole('button', { name: 'Switch to light theme' }).click()
   await page.screenshot({ path: 'screenshots/order-library.png' })
   await page.getByRole('button', { name: 'Switch to dark theme' }).click()
+  await page
+    .getByRole('button', { name: 'Import spreadsheet', exact: true })
+    .click()
+  const spreadsheetImport = page.getByRole('dialog', {
+    name: 'Import store spreadsheet',
+    exact: true,
+  })
+  await spreadsheetImport
+    .getByRole('tab', { name: 'Import markers', exact: true })
+    .click()
+  await spreadsheetImport.screenshot({
+    path: 'screenshots/store-spreadsheet-import.png',
+  })
+  await spreadsheetImport
+    .getByRole('button', { name: 'Close import', exact: true })
+    .click()
   const product = page.locator('#sheet-body tr[data-selection-key]').nth(1)
   await product.focus()
   await product.press('Enter')

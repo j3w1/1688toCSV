@@ -46,10 +46,10 @@ test('capacities autosave before assignment, copy in preparation and require rev
     'Price',
     'Discount',
     'Quantity',
-    'Pack size',
+    'Pcs/box',
   ])
   const capacity = (i) =>
-    rows.nth(i).getByRole('spinbutton', { name: 'Pack size', exact: true })
+    rows.nth(i).getByRole('spinbutton', { name: 'Pcs/box', exact: true })
   await expect(rows.nth(0).locator('.pack-size-cell input')).toBeVisible()
   await expect(rows.nth(0).locator('.description-cell input')).toHaveCount(0)
   await expect(rows.nth(0).locator('.carton-capacity-summary')).toBeHidden()
@@ -135,7 +135,7 @@ test('capacities autosave before assignment, copy in preparation and require rev
   const packing = page.locator('#packing-view')
   await expect(packing).toBeVisible()
   await expect(
-    packing.getByRole('spinbutton', { name: 'Pack size', exact: true })
+    packing.getByRole('spinbutton', { name: 'Pcs/box', exact: true })
   ).toHaveCount(0)
   await expect(packing.locator('.carton-capacity-readout')).toHaveCount(3)
   await expect(
@@ -148,7 +148,7 @@ test('capacities autosave before assignment, copy in preparation and require rev
   })
   const first = packing.locator('.variants tbody tr').first()
   await first
-    .getByRole('button', { name: 'Copy pack size: 10', exact: true })
+    .getByRole('button', { name: 'Copy Pcs/box: 10', exact: true })
     .click()
   await expect.poll(() => page.evaluate(() => window.capacityCopied)).toBe('10')
   await first
@@ -280,9 +280,9 @@ test('a shared carton code sums exact capacities per product and never guesses w
   await print.getByRole('button', { name: 'Cancel', exact: true }).click()
   await page.keyboard.press('Escape')
   const row = page.locator('#sheet-body tr[data-selection-key]').nth(2)
-  await row.getByRole('spinbutton', { name: 'Pack size', exact: true }).fill('')
+  await row.getByRole('spinbutton', { name: 'Pcs/box', exact: true }).fill('')
   await row
-    .getByRole('spinbutton', { name: 'Pack size', exact: true })
+    .getByRole('spinbutton', { name: 'Pcs/box', exact: true })
     .press('Enter')
   await expect(row.locator('.carton-capacity-status')).toHaveText('Saved')
   await page.locator('#prepare-orders').click()
@@ -347,7 +347,7 @@ test('capacity changes refresh an already open preparation and its next print co
   const field = editor
     .locator('#sheet-body tr[data-selection-key]')
     .first()
-    .getByRole('spinbutton', { name: 'Pack size', exact: true })
+    .getByRole('spinbutton', { name: 'Pcs/box', exact: true })
   await expect(field).toHaveValue('10')
   await field.fill('20')
   await field.press('Enter')

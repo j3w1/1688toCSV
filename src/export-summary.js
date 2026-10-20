@@ -78,6 +78,28 @@ function exactTotal(values) {
   return values.reduce((sum, value) => sum + Number(value), 0)
 }
 
+function exactAmount(value, field) {
+  if (value === undefined || value === null || value === '') return undefined
+  const text = String(value).trim()
+  if (!/^\d+(?:\.\d+)?$/.test(text))
+    throw new Error(`Invalid ${field} in export summary`)
+  return text
+}
+
+const packingDetailFields = [
+  'cartons',
+  'cartonWeight',
+  'cartonVolume',
+  'cartonLength',
+  'cartonWidth',
+  'cartonHeight',
+  'sourceUnitPrice',
+  'effectiveUnitPrice',
+  'sourceAmount',
+  'effectiveAmount',
+  'additionalCharge',
+]
+
 /** Which orders, products and quantities a packing-list export holds. */
 export function packingSummary({
   rows,
@@ -92,11 +114,49 @@ export function packingSummary({
         orderId: row.orderId,
         seller: row.sellerName || '',
       })
+    const order = orders.get(row.orderId)
+    if (
+      row.storeNumber !== undefined &&
+      row.storeNumber !== null &&
+      String(row.storeNumber).trim()
+    )
+      order.storeNumber = String(row.storeNumber)
+    const orderCosts = exactAmount(
+      row.orderAdditionalCharges,
+      'orderAdditionalCharges'
+    )
+    if (orderCosts !== undefined && /[1-9]/.test(orderCosts)) {
+      if (
+        order.orderAdditionalCharges !== undefined &&
+        order.orderAdditionalCharges !== orderCosts
+      )
+        throw new Error(
+          'Inconsistent order additional charges in export summary'
+        )
+      order.orderAdditionalCharges = orderCosts
+      if (row.additionalChargeReasons)
+        order.additionalChargeReasons = String(row.additionalChargeReasons)
+    }
+    const details = Object.fromEntries(
+      packingDetailFields.flatMap((field) => {
+        const value = exactAmount(row[field], field)
+        return value === undefined ? [] : [[field, value]]
+      })
+    )
     products.push({
       orderId: row.orderId,
       code: row.barcode || row.baseCode || '',
       name: row.spanishName || '',
       quantity: exactQuantity(row.quantity),
+      ...details,
+      ...(row.storeNumber !== undefined &&
+      row.storeNumber !== null &&
+      String(row.storeNumber).trim()
+        ? { storeNumber: String(row.storeNumber) }
+        : {}),
+      ...(row.additionalChargeReasons
+        ? { additionalChargeReasons: String(row.additionalChargeReasons) }
+        : {}),
     })
   }
   return {

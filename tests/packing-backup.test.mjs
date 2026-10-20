@@ -105,6 +105,47 @@ const members = (preparation) =>
     group.variants.flatMap((variant) => variant.entryIds)
   )
 
+test('scoped backup retains every local original referenced by full source dependencies', () => {
+  const { backup } = fixture()
+  const localUrls = ['a', 'b', 'c'].map(
+    (char) => `local-image:${char.repeat(64)}`
+  )
+  backup.orders[0].snapshot.items.forEach((item, index) => {
+    item.photos = [localUrls[index]]
+  })
+  backup.images.push(
+    ...localUrls.map((url) => ({
+      url,
+      dataUrl: 'data:image/png;base64,AAAA',
+      storedAt: backup.exportedAt,
+    }))
+  )
+  const unrelated = `local-image:${'d'.repeat(64)}`
+  backup.images.push({
+    url: unrelated,
+    dataUrl: 'data:image/png;base64,AAAA',
+    storedAt: backup.exportedAt,
+  })
+  const scoped = createPackingBackup(backup, selection(['2']))
+  assert.deepEqual(
+    scoped.images
+      .filter((image) => image.url.startsWith('local-image:'))
+      .map((image) => image.url),
+    localUrls
+  )
+  assert.equal(
+    scoped.images.some((image) => image.url === unrelated),
+    false
+  )
+  assert.equal(
+    scoped.images.some(
+      (image) => image.url === backup.orders[0].snapshot.items[0].thumbnail
+    ),
+    false
+  )
+  assert.deepEqual(members(scoped.preparations[0]), ['2'])
+})
+
 test('packing backup contains only selected prepared products and checkpoints, with full money dependencies', () => {
   const { backup } = fixture()
   const original = structuredClone(backup)
@@ -495,7 +536,7 @@ test('carton capacity survives full backup validation and rejects malformed save
   ]) {
     const invalid = structuredClone(backup)
     invalid.orders[0].unitsPerCarton = unitsPerCarton
-    assert.throws(() => validateBackup(invalid), /Pack size/)
+    assert.throws(() => validateBackup(invalid), /Pcs\/box/)
   }
 })
 

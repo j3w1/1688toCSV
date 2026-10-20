@@ -432,9 +432,9 @@ test('chosen columns search, keyboard selection and paste order persist with tra
     .click()
   await expect(
     columns.locator('.preparation-column-groups input:checked')
-  ).toHaveCount(46)
+  ).toHaveCount(58)
   await expect(
-    columns.getByRole('checkbox', { name: 'Pack size', exact: true })
+    columns.getByRole('checkbox', { name: 'Pcs/box', exact: true })
   ).toBeChecked()
   expect(extension.unexpectedRequests).toEqual([])
 })

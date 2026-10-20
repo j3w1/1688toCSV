@@ -22,7 +22,19 @@ export async function startPreview({ port = 0 } = {}) {
     write: false,
     format: 'esm',
   })
+  const workbookWorker = await build({
+    absWorkingDir: root,
+    entryPoints: ['src/store-workbook-worker.js'],
+    bundle: true,
+    write: false,
+    format: 'iife',
+    target: 'chrome120',
+  })
   const assets = new Map([
+    [
+      '/store-workbook-worker.js',
+      ['text/javascript', workbookWorker.outputFiles[0].contents],
+    ],
     [
       '/icons/icon48.png',
       ['image/png', await readFile(path.join(root, 'icons/icon48.png'))],
@@ -82,6 +94,8 @@ export async function startPreview({ port = 0 } = {}) {
     ],
   ])
   for (const css of [
+    'store-import.css',
+    'order-charges.css',
     'packing.css',
     'label-editor.css',
     'photo-viewer.css',

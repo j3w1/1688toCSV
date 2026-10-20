@@ -1,4 +1,365 @@
 export const STORE_IMPORT_MESSAGES = {
+  'The source photo changed. Reopen the photo before editing it.': {
+    zh: '来源照片已更改。请重新打开照片后再编辑。',
+    es: 'La foto original cambió. Vuelve a abrirla antes de editar.',
+  },
+  'Copy store number': { zh: '复制门店号', es: 'Copiar número de tienda' },
+  'The order was imported. Close this window and reopen the workspace to refresh the table.':
+    {
+      zh: '订单已导入。请关闭此窗口并重新打开工作区以刷新表格。',
+      es: 'El pedido se importó. Cierra esta ventana y vuelve a abrir el espacio de trabajo para actualizar la tabla.',
+    },
+  'Skipped rows': { zh: '跳过行数', es: 'Filas omitidas' },
+  box: { zh: '箱', es: 'caja' },
+  'Import spreadsheet': { zh: '导入表格', es: 'Importar Excel' },
+  'Source spreadsheet': { zh: '来源表格', es: 'Archivo Excel original' },
+  'Store number': { zh: '门店号', es: 'Número de tienda' },
+  'Save store name': { zh: '保存门店名称', es: 'Guardar nombre de tienda' },
+  'View all {0} orders from this store': {
+    zh: '查看此门店的全部 {0} 个订单',
+    es: 'Ver los {0} pedidos de esta tienda',
+  },
+  'Import a marked store spreadsheet. Review pictures, quantities, prices and purchase date before saving a new order.':
+    {
+      zh: '导入已添加标记的门店表格。保存新订单前核对照片、数量、价格和购买日期。',
+      es: 'Importa un Excel de tienda con marcadores. Revisa las fotos, las cantidades, los precios y la fecha antes de guardar un pedido nuevo.',
+    },
+  'Enter a number.': { zh: '请输入数字。', es: 'Introduce un número.' },
+  'Enter one number, not a calculation or dimensions.': {
+    zh: '请输入单个数字，不要填写算式或尺寸组合。',
+    es: 'Introduce un solo número, no una operación ni varias medidas.',
+  },
+  'Use a decimal point and valid thousands separators.': {
+    zh: '请使用小数点及正确的千位分隔符。',
+    es: 'Usa un punto decimal y separadores de miles válidos.',
+  },
+  'Enter one unambiguous number; optional units may follow it.': {
+    zh: '请输入一个明确的数字，后面可附单位。',
+    es: 'Introduce un número inequívoco; puedes añadir la unidad.',
+  },
+  'Enter a positive number.': {
+    zh: '请输入正数。',
+    es: 'Introduce un número positivo.',
+  },
+  'Enter a nonnegative number.': {
+    zh: '请输入不小于零的数字。',
+    es: 'Introduce un número mayor o igual a cero.',
+  },
+  'Enter a positive whole number within the supported range.': {
+    zh: '请输入支持范围内的正整数。',
+    es: 'Introduce un entero positivo dentro del rango admitido.',
+  },
+  'Use a variant letter, size, combined letters (abcd), or letters with a size (abs).':
+    {
+      zh: '请填写款式字母、尺寸、组合字母（abcd），或字母加尺寸（abs）。',
+      es: 'Usa una letra de variante, una talla, varias letras (abcd) o letras con una talla (abs).',
+    },
+  'Choose a worksheet from this workbook.': {
+    zh: '请从此工作簿中选择工作表。',
+    es: 'Elige una hoja de este libro.',
+  },
+  'Add the required {marker} marker to the marker row.': {
+    zh: '请在标记行添加必填标记 {marker}。',
+    es: 'Añade el marcador obligatorio {marker} a la fila de marcadores.',
+  },
+  'Add perbox, qty, or both to the marker row.': {
+    zh: '请在标记行添加 perbox、qty，或同时添加两者。',
+    es: 'Añade perbox, qty o ambos a la fila de marcadores.',
+  },
+  'Use {marker} only once in the marker row.': {
+    zh: '标记行只能出现一次 {marker}。',
+    es: 'Usa {marker} solo una vez en la fila de marcadores.',
+  },
+  'The value between total markers must be a valid monetary amount.': {
+    zh: '两个 total 标记之间必须是有效金额。',
+    es: 'El valor entre los marcadores total debe ser un importe válido.',
+  },
+  'Surround exactly one whole-order amount with two total markers: total | amount | total.':
+    {
+      zh: '请用两个 total 标记包围唯一的订单总金额：total | 金额 | total。',
+      es: 'Rodea un único total de pedido con dos marcadores total: total | importe | total.',
+    },
+  'Remove or pair the extra total markers.': {
+    zh: '请移除多余的 total 标记，或将其正确配对。',
+    es: 'Elimina o empareja los marcadores total sobrantes.',
+  },
+  'Correct this spreadsheet formula error before importing.': {
+    zh: '请先修正此表格公式错误再导入。',
+    es: 'Corrige este error de fórmula antes de importar.',
+  },
+  'Open and save this workbook in Excel so this formula has a calculated value.':
+    {
+      zh: '请在 Excel 中打开并保存工作簿，使此公式具有计算结果。',
+      es: 'Abre y guarda el libro en Excel para que la fórmula tenga un resultado calculado.',
+    },
+  'Enter {marker} for this included product row.': {
+    zh: '请为此待导入商品行填写 {marker}。',
+    es: 'Indica {marker} para esta fila incluida.',
+  },
+  '{marker}: {reason}': { zh: '{marker}：{reason}', es: '{marker}: {reason}' },
+  'Supply an exact positive qty or perbox value; qty must divide evenly across boxes.':
+    {
+      zh: '请填写准确的正整数 qty 或 perbox；qty 必须能被 boxes 整除。',
+      es: 'Indica un valor entero positivo exacto en qty o perbox; qty debe repartirse entre boxes sin sobrantes.',
+    },
+  '{boxes} boxes × {perbox} pcs/box = {expected} pieces, but qty is {quantity}. Correct the source values.':
+    {
+      zh: '{boxes} 箱 × 每箱 {perbox} 件 = {expected} 件，但 qty 为 {quantity}。请修改源数据。',
+      es: '{boxes} cajas × {perbox} pzas/caja = {expected} piezas, pero qty indica {quantity}. Corrige los valores originales.',
+    },
+  'The calculated quantity exceeds the supported whole-number range.': {
+    zh: '计算出的数量超出支持的整数范围。',
+    es: 'La cantidad calculada supera el rango de enteros admitido.',
+  },
+  'Price {price} × quantity {quantity} = ¥{expected}, but amount is ¥{amount}. Correct the source values.':
+    {
+      zh: '单价 {price} × 数量 {quantity} = ¥{expected}，但 amount 为 ¥{amount}。请修改源数据。',
+      es: 'Precio {price} × cantidad {quantity} = ¥{expected}, pero amount indica ¥{amount}. Corrige los valores originales.',
+    },
+  'Enter all three carton dimensions: cbmx, cbmy and cbmz.': {
+    zh: '请填写全部三项纸箱尺寸：cbmx、cbmy 和 cbmz。',
+    es: 'Introduce las tres medidas de la caja: cbmx, cbmy y cbmz.',
+  },
+  'This row combines variants. Allocate its existing quantity across the variants; do not duplicate the row totals or cartons.':
+    {
+      zh: '此行包含多种款式。请分配原有数量，不要重复计算该行的总金额或箱数。',
+      es: 'Esta fila combina variantes. Reparte su cantidad existente sin duplicar los importes ni las cajas.',
+    },
+  'No included product rows were found. Add group values to the product rows to import.':
+    {
+      zh: '未找到待导入商品行。请为需要导入的商品行填写 group 值。',
+      es: 'No hay filas incluidas. Añade valores group a los productos que quieras importar.',
+    },
+  'A group with multiple source rows cannot contain combined variants without distinct sizes. Give each variant its own row, or use distinct sized assortments such as abs, abm and abl.':
+    {
+      zh: '同组有多个源数据行时，合并款式必须有不同尺寸。请将每个款式分行，或使用 abs、abm、abl 等不同尺寸的组合。',
+      es: 'Un grupo con varias filas no puede combinar variantes sin tallas distintas. Usa una fila por variante o surtidos de tallas distintas como abs, abm y abl.',
+    },
+  'One picture overlaps different groups. Anchor separate pictures to the correct product rows in Excel before importing.':
+    {
+      zh: '一张照片跨越不同商品组。请先在 Excel 中为正确的商品行分别插入并定位图片。',
+      es: 'Una foto abarca grupos distintos. Ancla fotos separadas a las filas correctas en Excel antes de importar.',
+    },
+  'This picture is not embedded as a readable raster image. Paste the picture into its product row in Excel.':
+    {
+      zh: '此照片未以可读取的位图形式嵌入。请在 Excel 中将照片粘贴到对应的商品行。',
+      es: 'Esta foto no está incrustada como una imagen legible. Pégala en su fila de producto en Excel.',
+    },
+  'This picture spans several rows of one group. Confirm that the group shares this picture.':
+    {
+      zh: '此照片跨越同组的多行。请确认此组共用这张照片。',
+      es: 'Esta foto abarca varias filas de un grupo. Confirma que el grupo comparte la foto.',
+    },
+  'Every included product row needs an embedded picture anchored to its pic cell or a merged pic cell within its group.':
+    {
+      zh: '每个待导入商品行都需要嵌入照片，并定位在其 pic 单元格或同组的合并 pic 单元格内。',
+      es: 'Cada fila incluida necesita una foto incrustada anclada a su celda pic o a una celda pic combinada dentro de su grupo.',
+    },
+  'The product rows total ¥{computedTotal}, but the whole-order total control is ¥{total}. Correct the source values before importing.':
+    {
+      zh: '商品行合计为 ¥{computedTotal}，但订单总金额校验值为 ¥{total}。请先修改源数据再导入。',
+      es: 'Las filas suman ¥{computedTotal}, pero el control del pedido indica ¥{total}. Corrige los valores originales antes de importar.',
+    },
+  'The spreadsheet exceeds the 100 MB import limit.': {
+    zh: '表格文件超过 100 MB 导入限制。',
+    es: 'El archivo supera el límite de importación de 100 MB.',
+  },
+  'Choose an Excel .xlsx or .xls workbook.': {
+    zh: '请选择 .xlsx 或 .xls 格式的 Excel 工作簿。',
+    es: 'Elige un libro de Excel .xlsx o .xls.',
+  },
+  'Spreadsheet could not be read.': {
+    zh: '无法读取表格文件。',
+    es: 'No se pudo leer el archivo de Excel.',
+  },
+  'Photo dimensions are invalid': {
+    zh: '照片尺寸无效',
+    es: 'Las dimensiones de la foto no son válidas',
+  },
+  'Adjust photo': { zh: '调整照片', es: 'Ajustar foto' },
+  'Save photo': { zh: '保存照片', es: 'Guardar foto' },
+  'Reset photo': { zh: '重置照片', es: 'Restablecer foto' },
+  'Fit inside square': { zh: '完整放入方形', es: 'Encajar en el cuadrado' },
+  'Fill square (crop)': {
+    zh: '填满方形（裁剪）',
+    es: 'Llenar el cuadrado (recortar)',
+  },
+  'Canvas fit': { zh: '画布适配', es: 'Ajuste al lienzo' },
+  'Image size': { zh: '图片大小', es: 'Tamaño de imagen' },
+  'Horizontal position': { zh: '水平位置', es: 'Posición horizontal' },
+  'Vertical position': { zh: '垂直位置', es: 'Posición vertical' },
+  'Canvas background': { zh: '画布背景', es: 'Fondo del lienzo' },
+  'Adjust the square canvas. The original photo is kept.': {
+    zh: '调整方形画布，原始照片将保留。',
+    es: 'Ajusta el lienzo cuadrado. Se conserva la foto original.',
+  },
+  'Photo saved. Original preserved.': {
+    zh: '照片已保存，原图已保留。',
+    es: 'Foto guardada. Original conservado.',
+  },
+  'Carton details': { zh: '纸箱信息', es: 'Datos de la caja' },
+  'Save carton details': { zh: '保存纸箱信息', es: 'Guardar datos de la caja' },
+  'Measurements for one carton': {
+    zh: '单箱测量值',
+    es: 'Medidas de una caja',
+  },
+  'Weight (kg/box)': { zh: '重量（千克/箱）', es: 'Peso (kg/caja)' },
+  'Volume (m³/box)': { zh: '体积（立方米/箱）', es: 'Volumen (m³/caja)' },
+  'Length (cm)': { zh: '长度（厘米）', es: 'Largo (cm)' },
+  'Width (cm)': { zh: '宽度（厘米）', es: 'Ancho (cm)' },
+  'Height (cm)': { zh: '高度（厘米）', es: 'Alto (cm)' },
+  'Volume per carton: {0} m³': {
+    zh: '单箱体积：{0} 立方米',
+    es: 'Volumen por caja: {0} m³',
+  },
+  'Complete centimetre dimensions take priority over the supplied volume. Weight and volume always describe one carton.':
+    {
+      zh: '以厘米填写的三项尺寸齐全时，优先用于计算体积。重量和体积始终指单箱值。',
+      es: 'Las tres medidas en centímetros tienen prioridad sobre el volumen indicado. El peso y el volumen siempre corresponden a una caja.',
+    },
+  'Import store spreadsheet': {
+    zh: '导入门店表格',
+    es: 'Importar Excel de tienda',
+  },
+  'Review one sheet, then save it as a new order.': {
+    zh: '审核一个工作表后，将其保存为新订单。',
+    es: 'Revisa una hoja y guárdala como un pedido nuevo.',
+  },
+  'Import order': { zh: '导入订单', es: 'Importar pedido' },
+  'Close import': { zh: '关闭导入', es: 'Cerrar importación' },
+  Workbook: { zh: '工作簿', es: 'Libro de Excel' },
+  'Store or factory name': {
+    zh: '门店或工厂名称',
+    es: 'Nombre de tienda o fábrica',
+  },
+  'Choose the marked .xlsx or .xls file to begin.': {
+    zh: '请选择已添加标记的 .xlsx 或 .xls 文件。',
+    es: 'Elige el archivo .xlsx o .xls con los marcadores para empezar.',
+  },
+  'Confirm the date of this purchase; the filename only identifies the store.':
+    {
+      zh: '请确认本次购买日期；文件名仅用于识别门店。',
+      es: 'Confirma la fecha de esta compra; el nombre del archivo solo identifica la tienda.',
+    },
+  'I checked the product photos, quantities and order total.': {
+    zh: '我已核对商品照片、数量和订单总金额。',
+    es: 'He revisado las fotos, las cantidades y el total del pedido.',
+  },
+  'File naming, markers and review rules': {
+    zh: '文件命名、导入标记与审核规则',
+    es: 'Nombres de archivo, marcadores y reglas de revisión',
+  },
+  'Store number {0} · Each import creates a separate order.': {
+    zh: '门店号 {0} · 每次导入均创建独立订单。',
+    es: 'Tienda n.º {0} · Cada importación crea un pedido independiente.',
+  },
+  'Factory · No store number · Each import creates a separate order.': {
+    zh: '工厂 · 无门店号 · 每次导入均创建独立订单。',
+    es: 'Fábrica · Sin número de tienda · Cada importación crea un pedido independiente.',
+  },
+  'Included rows': { zh: '导入行数', es: 'Filas incluidas' },
+  'Product groups': { zh: '商品组数', es: 'Grupos de productos' },
+  'Calculated total · CNY': {
+    zh: '计算总金额 · 人民币',
+    es: 'Total calculado · CNY',
+  },
+  'Seller total · CNY': {
+    zh: '卖家总金额 · 人民币',
+    es: 'Total del vendedor · CNY',
+  },
+  'Row {0}': { zh: '第 {0} 行', es: 'Fila {0}' },
+  'Group {0}': { zh: '分组 {0}', es: 'Grupo {0}' },
+  'Row {0}, photo {1}': {
+    zh: '第 {0} 行，第 {1} 张照片',
+    es: 'Fila {0}, foto {1}',
+  },
+  'View or adjust row {0}, photo {1}': {
+    zh: '查看或调整第 {0} 行的第 {1} 张照片',
+    es: 'Ver o ajustar la foto {1} de la fila {0}',
+  },
+  'Photo missing': { zh: '缺少照片', es: 'Falta la foto' },
+  'kg/carton': { zh: '千克/箱', es: 'kg/caja' },
+  'm³/carton': { zh: '立方米/箱', es: 'm³/caja' },
+  'Carton · cm': { zh: '纸箱尺寸 · 厘米', es: 'Caja · cm' },
+  'Split the combined quantity': {
+    zh: '分配合计数量',
+    es: 'Reparte la cantidad combinada',
+  },
+  'These variants share the source row’s cartons. Their physical packing needs review; carton counts are never multiplied.':
+    {
+      zh: '这些款式共用源数据行的纸箱。实际装箱需要审核；箱数不会重复计算。',
+      es: 'Estas variantes comparten las cajas de la fila original. Revisa su empaque físico; el número de cajas nunca se multiplica.',
+    },
+  '{0} of {1} units allocated': {
+    zh: '已分配 {0} / {1} 件',
+    es: '{0} de {1} unidades asignadas',
+  },
+  'Row {0}, variant {1} quantity': {
+    zh: '第 {0} 行，款式 {1} 的数量',
+    es: 'Fila {0}, cantidad de la variante {1}',
+  },
+  '{0} workbook issues block import. Fix the marked cells and choose the corrected file.':
+    {
+      zh: '工作簿中有 {0} 个问题阻止导入。请修改标出的单元格后重新选择文件。',
+      es: '{0} problemas del libro impiden importar. Corrige las celdas indicadas y elige el archivo corregido.',
+    },
+  'Check the photos and totals, confirm the date, and complete the highlighted reviews.':
+    {
+      zh: '请核对照片和总金额、确认日期，并完成标出的审核项。',
+      es: 'Comprueba las fotos y los totales, confirma la fecha y completa las revisiones señaladas.',
+    },
+  'Reading workbook and product photos…': {
+    zh: '正在读取工作簿和商品照片…',
+    es: 'Leyendo el libro y las fotos de los productos…',
+  },
+  'Saving the reviewed order…': {
+    zh: '正在保存已审核的订单…',
+    es: 'Guardando el pedido revisado…',
+  },
+  'Preparing photo {0} of {1}…': {
+    zh: '正在处理第 {0} / {1} 张照片…',
+    es: 'Preparando foto {0} de {1}…',
+  },
+  Checked: { zh: '已核对', es: 'Comprobado' },
+  'Fix in workbook': { zh: '请修改工作簿', es: 'Corregir en el libro' },
+  'Choose a workbook with at least one included product row.': {
+    zh: '请选择至少包含一行待导入商品的工作簿。',
+    es: 'Elige un libro que incluya al menos una fila de producto.',
+  },
+  'Confirm the purchase date before importing.': {
+    zh: '请先确认购买日期再导入。',
+    es: 'Confirma la fecha de compra antes de importar.',
+  },
+  'Enter the store or factory name.': {
+    zh: '请填写门店或工厂名称。',
+    es: 'Introduce el nombre de la tienda o fábrica.',
+  },
+  'Review the product photos and source totals before importing.': {
+    zh: '请先核对商品照片和源数据总金额再导入。',
+    es: 'Revisa las fotos y los totales del archivo antes de importar.',
+  },
+  'Confirm each highlighted review item before importing.': {
+    zh: '请先确认每个标出的审核项再导入。',
+    es: 'Confirma cada revisión señalada antes de importar.',
+  },
+  'Row {0}: enter a positive quantity for every variant; the sum must be {1}.':
+    {
+      zh: '第 {0} 行：请为每种款式填写正整数数量；总和必须为 {1}。',
+      es: 'Fila {0}: indica una cantidad positiva para cada variante; la suma debe ser {1}.',
+    },
+  'Could not read this workbook. Check the file and try again.': {
+    zh: '无法读取工作簿，请检查文件后重试。',
+    es: 'No se pudo leer el libro. Revisa el archivo e inténtalo de nuevo.',
+  },
+  'Use the exact English markers': {
+    zh: '使用准确的英文标记',
+    es: 'Usa los marcadores exactos en inglés',
+  },
+  'Only the markers listed here are imported. Old pinyin names and alternate spellings must be replaced in your workbook. amount checks one product row; the two total markers check the complete order.':
+    {
+      zh: '仅导入本指南列出的标记。请替换工作簿中的旧拼音标记或其他拼写。amount 核对单行商品金额；两个 total 标记核对整张订单的总金额。',
+      es: 'Solo se importan los marcadores de esta guía. Sustituye los nombres antiguos en pinyin y las variantes de escritura. amount comprueba una fila; los dos marcadores total comprueban el pedido completo.',
+    },
   'Store spreadsheet guide': {
     zh: '门店表格格式指南',
     es: 'Guía de Excel de tiendas',
@@ -12,10 +373,10 @@ export const STORE_IMPORT_MESSAGES = {
       zh: '查看导入标记、文件命名和审核规则。本格式指南不会导入文件，也不会更改资料库。',
       es: 'Consulta los marcadores, los nombres de archivo y las reglas de revisión. Esta guía de formato no importa archivos ni cambia tu biblioteca.',
     },
-  'Format guide for the proposed Store spreadsheet import. Importing files and editing their photos are not available yet; this guide does not change your library.':
+  'Prepare a copy of the seller’s workbook, then review its rows, photos and totals before importing a new order.':
     {
-      zh: '本指南说明计划中的门店表格导入格式。文件导入与照片编辑尚未开放；本指南不会更改资料库。',
-      es: 'Guía del formato propuesto para importar Excel de tiendas. La importación de archivos y la edición de sus fotos aún no están disponibles; esta guía no cambia tu biblioteca.',
+      zh: '请先制作卖家工作簿的副本，导入新订单前审核行、照片和总金额。',
+      es: 'Prepara una copia del libro del vendedor y revisa sus filas, fotos y totales antes de importar un pedido nuevo.',
     },
   'Spreadsheet guide sections': {
     zh: '表格指南章节',
@@ -55,20 +416,20 @@ export const STORE_IMPORT_MESSAGES = {
       zh: '保留卖家的原文件，在卖家列标题上方添加一行导入标记。仅导入已标记的列；列的位置不限。',
       es: 'Conserva el archivo original del vendedor. Añade una fila de marcadores sobre sus encabezados. Solo se incluyen las columnas marcadas; su posición no importa.',
     },
-  'Copy markers from the next tab. Repeat ysms for every description column to combine.':
+  'Copy markers from the next tab. Repeat desc for every description column to combine.':
     {
-      zh: '从下一个标签页复制标记。在需要合并的每个描述列中重复填写 ysms。',
-      es: 'Copia los marcadores de la siguiente pestaña. Repite ysms en cada columna de descripción que quieras combinar.',
+      zh: '从下一个标签页复制标记。在需要合并的每个描述列中重复填写 desc。',
+      es: 'Copia los marcadores de la siguiente pestaña. Repite desc en cada columna de descripción que quieras combinar.',
     },
   'Give each imported row a group value. Matching group values can appear anywhere in the sheet.':
     {
       zh: '为每个需要导入的行填写 group 值。相同 group 值可以分散在工作表中的不同位置。',
       es: 'Asigna un valor group a cada fila que quieras importar. Los valores iguales pueden aparecer en cualquier parte de la hoja.',
     },
-  'Mark the order total with zje on both sides, then review photos, quantities and amounts before a future import.':
+  'Mark the order total with total on both sides, then review photos, quantities and amounts before importing.':
     {
-      zh: '在订单总金额两侧各填写 zje。未来导入时，还需要先审核照片、数量和金额。',
-      es: 'Pon zje a ambos lados del importe total del pedido. Antes de una futura importación, revisa las fotos, las cantidades y los importes.',
+      zh: '在订单总金额两侧各填写 total。导入时，还需要先审核照片、数量和金额。',
+      es: 'Pon total a ambos lados del importe total del pedido. Antes de importar, revisa las fotos, las cantidades y los importes.',
     },
   'Click a marker to copy its exact spelling. Markers stay the same in every language.':
     {
@@ -95,14 +456,14 @@ export const STORE_IMPORT_MESSAGES = {
     zh: '必填。该行商品的箱数。',
     es: 'Obligatorio. Número de cajas de esta fila.',
   },
-  'Provide zxs, zsl, or both. Units inside one carton.': {
-    zh: 'zxs 和 zsl 至少填写一项。一个箱内的商品件数。',
-    es: 'Indica zxs, zsl o ambos. Unidades dentro de una caja.',
+  'Provide perbox, qty, or both. Units inside one carton.': {
+    zh: 'perbox 和 qty 至少填写一项。一个箱内的商品件数。',
+    es: 'Indica perbox, qty o ambos. Unidades dentro de una caja.',
   },
   'Total quantity': { zh: '总数量', es: 'Cantidad total' },
-  'Provide zxs, zsl, or both. Units across all cartons.': {
-    zh: 'zxs 和 zsl 至少填写一项。全部箱子中的商品总件数。',
-    es: 'Indica zxs, zsl o ambos. Unidades de todas las cajas.',
+  'Provide perbox, qty, or both. Units across all cartons.': {
+    zh: 'perbox 和 qty 至少填写一项。全部箱子中的商品总件数。',
+    es: 'Indica perbox, qty o ambos. Unidades de todas las cajas.',
   },
   'Unit price': { zh: '单价', es: 'Precio unitario' },
   'Required. Price of one unit in yuan.': {
@@ -135,10 +496,10 @@ export const STORE_IMPORT_MESSAGES = {
     es: 'Opcional. Metros cúbicos por caja, nunca el total de la fila.',
   },
   'Carton dimensions': { zh: '纸箱尺寸', es: 'Medidas de la caja' },
-  'Optional. Length, width and height in centimetres; all three take priority over tiji.':
+  'Optional. Length, width and height in centimetres; all three take priority over cbm.':
     {
-      zh: '选填。以厘米填写长、宽、高；三项齐全时优先用于计算体积，保留 tiji 原值。',
-      es: 'Opcional. Largo, ancho y alto en centímetros; las tres medidas tienen prioridad sobre tiji.',
+      zh: '选填。以厘米填写长、宽、高；三项齐全时优先用于计算体积，保留 cbm 原值。',
+      es: 'Opcional. Largo, ancho y alto en centímetros; las tres medidas tienen prioridad sobre cbm.',
     },
   'Order total': { zh: '订单总金额', es: 'Total del pedido' },
   'Required twice, on either side of the seller’s whole-order total.': {
@@ -149,10 +510,10 @@ export const STORE_IMPORT_MESSAGES = {
     zh: '核对数量与价格',
     es: 'Comprueba cantidades y precios',
   },
-  'When both quantities are supplied, xs × zxs must equal zsl. Each product amount must equal unit price × total quantity, and the sum must match the total between the two zje markers. Mismatches must pause import and identify the affected cells; values are never silently corrected.':
+  'When both quantities are supplied, boxes × perbox must equal qty. Each product amount must equal unit price × total quantity, and the sum must match the total between the two total markers. Mismatches must pause import and identify the affected cells; values are never silently corrected.':
     {
-      zh: '两种数量都提供时，xs × zxs 必须等于 zsl。商品金额必须等于单价 × 总数量，各商品金额之和须与两个 zje 之间的总金额一致。不一致时必须暂停导入并指出具体单元格，不会自动更正数据。',
-      es: 'Si se indican ambas cantidades, xs × zxs debe ser igual a zsl. Cada importe debe ser precio unitario × cantidad total y la suma debe coincidir con el total entre los dos zje. Las diferencias deben detener la importación e identificar las celdas afectadas; nunca se corrigen valores en silencio.',
+      zh: '两种数量都提供时，boxes × perbox 必须等于 qty。商品金额必须等于单价 × 总数量，各商品金额之和须与两个 total 之间的总金额一致。不一致时必须暂停导入并指出具体单元格，不会自动更正数据。',
+      es: 'Si se indican ambas cantidades, boxes × perbox debe ser igual a qty. Cada importe debe ser precio unitario × cantidad total y la suma debe coincidir con el total entre los dos total. Las diferencias deben detener la importación e identificar las celdas afectadas; nunca se corrigen valores en silencio.',
     },
   'Read numbers without their units': {
     zh: '读取数字并识别单位',
@@ -194,10 +555,10 @@ export const STORE_IMPORT_MESSAGES = {
     zh: '分别填写纸箱尺寸与体积',
     es: 'Separa las medidas de la caja',
   },
-  'tiji is a decimal volume in cubic metres, not text such as 58*35*47. Put centimetre dimensions in tijix, tijiy and tijiz. Their volume is length × width × height ÷ 1,000,000 per carton; it takes priority over the supplied decimal volume.':
+  'cbm is a decimal volume in cubic metres, not text such as 58*35*47. Put centimetre dimensions in cbmx, cbmy and cbmz. Their volume is length × width × height ÷ 1,000,000 per carton; it takes priority over the supplied decimal volume.':
     {
-      zh: 'tiji 为以立方米表示的小数体积，不是 58*35*47 等尺寸文本。厘米尺寸请分别填入 tijix、tijiy、tijiz。每箱体积按长 × 宽 × 高 ÷ 1,000,000 计算，并优先于卖家填写的小数体积。',
-      es: 'tiji es un volumen decimal en metros cúbicos, no texto como 58*35*47. Pon las medidas en centímetros en tijix, tijiy y tijiz. El volumen por caja es largo × ancho × alto ÷ 1,000,000 y tiene prioridad sobre el volumen decimal indicado.',
+      zh: 'cbm 为以立方米表示的小数体积，不是 58*35*47 等尺寸文本。厘米尺寸请分别填入 cbmx、cbmy、cbmz。每箱体积按长 × 宽 × 高 ÷ 1,000,000 计算，并优先于卖家填写的小数体积。',
+      es: 'cbm es un volumen decimal en metros cúbicos, no texto como 58*35*47. Pon las medidas en centímetros en cbmx, cbmy y cbmz. El volumen por caja es largo × ancho × alto ÷ 1,000,000 y tiene prioridad sobre el volumen decimal indicado.',
     },
   'Confirm the purchase date': {
     zh: '确认购买日期',

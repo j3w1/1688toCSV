@@ -1544,6 +1544,87 @@ dialog a {
     height: auto;
   }
 }
+.product-photo-count {
+  position: absolute;
+  bottom: 3px;
+  right: 3px;
+  min-width: 16px;
+  padding: 1px 3px;
+  border-radius: 4px;
+  color: #fff;
+  background: #202020d9;
+  font: 600 10px/1.3 system-ui;
+  pointer-events: none;
+}
+.product-carton-details {
+  margin-top: 10px;
+  font-size: 12px;
+}
+.product-carton-details fieldset {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 8px;
+  margin: 8px 0;
+  padding: 8px;
+}
+.product-carton-details label {
+  display: grid;
+  gap: 3px;
+  min-width: 0;
+  font-size: 11px;
+}
+.product-carton-details input {
+  min-width: 0;
+  width: 100%;
+  height: 28px;
+  box-sizing: border-box;
+}
+.product-carton-details output {
+  display: block;
+  margin-bottom: 7px;
+  font-size: 11px;
+}
+.product-carton-details button {
+  min-height: 28px;
+  padding: 4px 7px;
+  font-size: 11px;
+}
+.product-carton-status {
+  margin: 5px 0;
+  font-size: 11px;
+}
+.store-source-file {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 7px;
+  color: var(--muted);
+  font-size: 11px;
+}
+.store-rename {
+  display: flex;
+  align-items: end;
+  gap: 8px;
+  margin: 8px 0;
+}
+.store-rename label {
+  display: grid;
+  flex: 1;
+  gap: 4px;
+  font-size: 12px;
+}
+.store-rename input {
+  min-width: 0;
+  width: 100%;
+}
+.store-number {
+  font-size: 10px;
+  font-variant-numeric: tabular-nums;
+}
+.carton-source-facts {
+  color: var(--muted);
+  font-size: 10px;
+}
 .dismissed-job {
   opacity: 0.75;
 }
@@ -2011,6 +2092,8 @@ button.icon-button {
 }
 .settings-data-actions {
   display: flex;
+  flex-wrap: wrap;
+  min-inline-size: 0;
   gap: 8px;
 }
 .sheet-pane .table-scroll {

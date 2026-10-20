@@ -1,6 +1,7 @@
 import { startLibrary } from '../src/library.js'
 import { createDemoRecords } from './library-fixture.js'
 import { openDatabase } from '../src/database.js'
+import { loadThumbnail } from '../src/images.js'
 
 const records = createDemoRecords(document)
 const repository = await openDatabase()
@@ -32,7 +33,8 @@ await startLibrary(async (message) => {
   if (message.type === 'LIBRARY_QUERY')
     data = { orders: await repository.listOrders(), jobs: [] }
   else if (message.type === 'JOBS_QUERY') data = { jobs: [] }
-  else if (message.type === 'IMAGE_GET') data = message.url
+  else if (message.type === 'IMAGE_GET')
+    data = await loadThumbnail(message.url, repository)
   else if (message.type === 'LIBRARY_HISTORY') data = []
   else if (message.type === 'LIBRARY_NOTES') {
     data = await repository.setNotes(message.orderId, {

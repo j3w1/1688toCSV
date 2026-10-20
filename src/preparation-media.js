@@ -49,6 +49,7 @@ export function createPreparationMedia({
   settings,
   logoUrl,
   getPhotoItems = () => [],
+  onPhotoEdit,
 }) {
   const renderer = createLabelRenderer({
     maxBytes: 16 * 1024 * 1024,
@@ -61,7 +62,7 @@ export function createPreparationMedia({
     activePhotos = 0,
     disposed = false,
     timer
-  const zoom = createPhotoViewer(loadImage)
+  const zoom = createPhotoViewer(loadImage, { onEdit: onPhotoEdit })
   const photoQueue = []
   async function thumbnail(url) {
     if (photos.has(url)) return photos.get(url)
@@ -258,10 +259,17 @@ export function createPreparationMedia({
       image.width = image.height = 96
       image.hidden = true
       root.append(image, status)
+      if (item.photos?.length > 1)
+        root.append(
+          el('small', String(item.photos.length), 'product-photo-count')
+        )
       if (item.thumbnail) {
         if (interactive) {
           root.onclick = () => void zoom.open(item, getPhotoItems())
-          observe(root, image, status, { photo: item.thumbnail })
+          observe(root, image, status, {
+            photo: item.thumbnail,
+            sourceItem: item,
+          })
         } else {
           const tile = {
             root,
@@ -366,6 +374,15 @@ export function createPreparationMedia({
           tiles.delete(element)
         }
       }
+    },
+    updatePhoto(item, thumbnail) {
+      for (const tile of tiles.values())
+        if (tile.sourceItem === item) {
+          release(tile)
+          tile.photo = thumbnail
+          if (tile.visible) photoQueue.push(tile)
+        }
+      drainPhotos()
     },
     reset() {
       clearTimeout(timer)

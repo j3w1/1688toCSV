@@ -7,6 +7,8 @@
     <meta name="viewport" content="width=device-width,initial-scale=1" />
     <title data-i18n="1688 Packing workspace">1688 Packing workspace</title>
     <link rel="stylesheet" href="library.css" />
+    <link rel="stylesheet" href="store-import.css" />
+    <link rel="stylesheet" href="order-charges.css" />
     <link rel="stylesheet" href="packing.css" />
     <link rel="stylesheet" href="label-editor.css" />
     <link rel="stylesheet" href="copy-actions.css" />
@@ -88,6 +90,13 @@
         <span id="workspace-status-text">Status: idle</span>
       </p>
       <div class="top-actions">
+        <button
+          id="import-store-sheet"
+          type="button"
+          data-i18n="Import spreadsheet"
+        >
+          Import spreadsheet
+        </button>
         <a
           data-i18n="Open 1688 orders"
           class="open-orders"
@@ -384,10 +393,10 @@
                   </th>
                   <th
                     scope="col"
-                    data-i18n="Pack size"
+                    data-i18n="Pcs/box"
                     class="numeric pack-size-heading"
                   >
-                    Pack size
+                    Pcs/box
                   </th>
                 </tr>
               </thead>

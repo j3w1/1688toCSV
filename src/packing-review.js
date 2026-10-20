@@ -105,7 +105,10 @@ export async function reviewPackingChanges({
       const content = el('div')
       content.append(el('strong', change.name || uiMessage('Product group')))
       if (change.order) content.append(el('small', change.order))
-      if (change.orderId) content.append(orderReference(change.orderId))
+      if (change.orderId)
+        content.append(
+          orderReference(change.orderId, { sourceType: change.sourceType })
+        )
       content.append(
         packingValueComparison(
           change.values || [

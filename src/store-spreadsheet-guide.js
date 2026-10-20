@@ -9,26 +9,30 @@ const markerRows = [
     'Product group',
     'Required. Repeated values join a group; a blank skips the row.',
   ],
-  [['xs'], 'Cartons', 'Required. Number of cartons for this row.'],
-  [['zxs'], 'Pack size', 'Provide zxs, zsl, or both. Units inside one carton.'],
+  [['boxes'], 'Cartons', 'Required. Number of cartons for this row.'],
   [
-    ['zsl'],
-    'Total quantity',
-    'Provide zxs, zsl, or both. Units across all cartons.',
+    ['perbox'],
+    'Pcs/box',
+    'Provide perbox, qty, or both. Units inside one carton.',
   ],
-  [['danjia'], 'Unit price', 'Required. Price of one unit in yuan.'],
   [
-    ['zongji'],
+    ['qty'],
+    'Total quantity',
+    'Provide perbox, qty, or both. Units across all cartons.',
+  ],
+  [['price'], 'Unit price', 'Required. Price of one unit in yuan.'],
+  [
+    ['amount'],
     'Product amount',
     'Optional. Must equal unit price × total quantity.',
   ],
   [
-    ['ysms'],
+    ['desc'],
     'Seller description',
     'Optional; repeat on each description column you want to include.',
   ],
   [
-    ['variant'],
+    ['var'],
     'Variant or size',
     'Optional. Combined variants require a reviewed quantity split.',
   ],
@@ -38,17 +42,17 @@ const markerRows = [
     'Optional. Kilograms per carton, never the row total.',
   ],
   [
-    ['tiji'],
+    ['cbm'],
     'Carton volume',
     'Optional. Cubic metres per carton, never the row total.',
   ],
   [
-    ['tijix', 'tijiy', 'tijiz'],
+    ['cbmx', 'cbmy', 'cbmz'],
     'Carton dimensions',
-    'Optional. Length, width and height in centimetres; all three take priority over tiji.',
+    'Optional. Length, width and height in centimetres; all three take priority over cbm.',
   ],
   [
-    ['zje'],
+    ['total'],
     'Order total',
     'Required twice, on either side of the seller’s whole-order total.',
   ],
@@ -67,13 +71,13 @@ function section(title, text) {
   return result
 }
 
-/** Pure format documentation, reusable by a future spreadsheet import review. */
+/** Canonical format documentation shared by Settings and the import review. */
 export function mountStoreSpreadsheetGuide(host) {
   const root = el('div', undefined, 'store-import-guide-content'),
     intro = el(
       'p',
       m(
-        'Format guide for the proposed Store spreadsheet import. Importing files and editing their photos are not available yet; this guide does not change your library.'
+        'Prepare a copy of the seller’s workbook, then review its rows, photos and totals before importing a new order.'
       ),
       'store-import-guide-intro'
     ),
@@ -158,13 +162,19 @@ export function mountStoreSpreadsheetGuide(host) {
   )
   const steps = el('ol')
   for (const text of [
-    'Copy markers from the next tab. Repeat ysms for every description column to combine.',
+    'Copy markers from the next tab. Repeat desc for every description column to combine.',
     'Give each imported row a group value. Matching group values can appear anywhere in the sheet.',
-    'Mark the order total with zje on both sides, then review photos, quantities and amounts before a future import.',
+    'Mark the order total with total on both sides, then review photos, quantities and amounts before importing.',
   ])
     steps.append(el('li', m(text)))
   workflow.append(steps)
   start.append(filenames, workflow)
+  start.append(
+    section(
+      'Use the exact English markers',
+      'Only the markers listed here are imported. Old pinyin names and alternate spellings must be replaced in your workbook. amount checks one product row; the two total markers check the complete order.'
+    )
+  )
 
   const markers = makePanel('Import markers'),
     table = el('table', undefined, 'store-import-marker-table'),
@@ -197,14 +207,14 @@ export function mountStoreSpreadsheetGuide(host) {
   table.append(thead, tbody)
   markers.append(table)
   const total = el('p', undefined, 'store-import-total-example')
-  total.append(copyToken('zje'), el('code', '500.00'), copyToken('zje'))
+  total.append(copyToken('total'), el('code', '500.00'), copyToken('total'))
   markers.append(total)
 
   const review = makePanel('Review rules')
   review.append(
     section(
       'Check quantities and prices',
-      'When both quantities are supplied, xs × zxs must equal zsl. Each product amount must equal unit price × total quantity, and the sum must match the total between the two zje markers. Mismatches must pause import and identify the affected cells; values are never silently corrected.'
+      'When both quantities are supplied, boxes × perbox must equal qty. Each product amount must equal unit price × total quantity, and the sum must match the total between the two total markers. Mismatches must pause import and identify the affected cells; values are never silently corrected.'
     ),
     section(
       'Read numbers without their units',
@@ -212,7 +222,7 @@ export function mountStoreSpreadsheetGuide(host) {
     ),
     section(
       'Keep carton measurements separate',
-      'tiji is a decimal volume in cubic metres, not text such as 58*35*47. Put centimetre dimensions in tijix, tijiy and tijiz. Their volume is length × width × height ÷ 1,000,000 per carton; it takes priority over the supplied decimal volume.'
+      'cbm is a decimal volume in cubic metres, not text such as 58*35*47. Put centimetre dimensions in cbmx, cbmy and cbmz. Their volume is length × width × height ÷ 1,000,000 per carton; it takes priority over the supplied decimal volume.'
     ),
     section(
       'Keep combined variants together until review',

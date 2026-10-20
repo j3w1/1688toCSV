@@ -28,6 +28,10 @@ import {
   progressPresentation,
 } from './import-progress.js'
 import { createPhotoViewer } from './photo-viewer.js'
+import { openStoreImportDialog } from './store-import-dialog.js'
+import { productCartonDetails } from './carton-details.js'
+import { mountOrderCharges } from './order-charges-ui.js'
+import { orderCostAdjustments } from './order-charges.js'
 import { presentOrderStatus } from './order-presentation.js'
 import { labelColorKey } from './appearance.js'
 import { applyCodeDesign } from './code-design.js'
@@ -58,6 +62,8 @@ applyCodeDesign(document.documentElement)
 
 const $ = (id) => document.getElementById(id)
 const keyFor = (row) => `${row.orderId}/${row.entryId}`
+const storeKeyFor = (order) =>
+  order.store?.key || order.sellerMemberLogin || order.sellerName
 const headerPreference = '1688-library-include-headers'
 const monthPreference = '1688-library-purchase-months'
 const purchaseDay = (order) => order.purchasedAt?.slice(0, 10) || ''
@@ -244,16 +250,24 @@ export async function startLibrary(
     showDismissed = false,
     orderPage = 0
   let packing
+  let storeFilter = null
   let orderTagDefinitions = [],
     productTagDefinitions = [],
     productDetailsEditor,
-    annotationEditor
+    annotationEditor,
+    chargeEditor
   const annotationDrafts = new Map()
   async function flushOrderDetails() {
     if (annotationEditor) await annotationEditor.flush()
+    if (chargeEditor) await chargeEditor.flush()
   }
   addEventListener('beforeunload', (event) => {
-    if (!annotationEditor?.dirty() && !productDetailsEditor?.dirty()) return
+    if (
+      !annotationEditor?.dirty() &&
+      !productDetailsEditor?.dirty() &&
+      !chargeEditor?.dirty()
+    )
+      return
     event.preventDefault()
     event.returnValue = ''
   })
@@ -268,6 +282,7 @@ export async function startLibrary(
       detailsDialog.close()
       annotationEditor?.destroy()
       annotationEditor = undefined
+      chargeEditor = undefined
     } catch {
       annotationEditor?.section
         .querySelector('.annotation-footer button')
@@ -292,10 +307,27 @@ export async function startLibrary(
   const selectedMonths = new Set(savedMonths)
   const expandedMonths = new Set([currentMonth, ...savedMonths])
   let monthAnchor = null
-  const photos = createPhotoViewer(async (url) => {
-    const data = await send('IMAGE_GET', { url })
-    return typeof data === 'string' ? data : data.dataUrl
-  })
+  const photos = createPhotoViewer(
+    async (url) => {
+      const data = await send('IMAGE_GET', { url })
+      return typeof data === 'string' ? data : data.dataUrl
+    },
+    {
+      onEdit: async (item, edit) => {
+        const store = repository || (await openDatabase())
+        const sourceItem = records
+          .find(({ snapshot }) => snapshot.orderId === item.orderId)
+          ?.snapshot.items.find((entry) => entry.entryId === item.entryId)
+        await packing?.flush()
+        await store.setProductPhoto(item.orderId, item.entryId, edit, {
+          accountId: item.record?.accountId || 'local',
+        })
+        if (edit.photoIndex === 0 && sourceItem)
+          packing?.refreshPhoto(sourceItem, edit.thumbnail)
+        await refresh()
+      },
+    }
+  )
   const selectedOrders = new Set(),
     selectedRows = new Set(),
     preparedImages = new Map(),
@@ -308,6 +340,19 @@ export async function startLibrary(
           (!row.record || accountId === row.record.accountId)
       ) || row.record
     const details = openProductDetails(row, {
+      carton: record
+        ? {
+            value: productCartonDetails(row, record),
+            onSave: async (value) => {
+              await packing?.flush()
+              const store = repository || (await openDatabase())
+              await store.setCartonDetails(row.orderId, row.entryId, value, {
+                accountId: record.accountId,
+              })
+              await refresh()
+            },
+          }
+        : undefined,
       tags:
         record && repository?.setProductTags
           ? {
@@ -712,9 +757,11 @@ export async function startLibrary(
       const order = record.snapshot
       const day = purchaseDay(order)
       return (
+        (!storeFilter || storeKeyFor(order) === storeFilter) &&
         matches([
           order.sellerName,
           order.sellerMemberLogin,
+          order.store?.number,
           order.orderId,
           ...record.tags,
         ]) &&
@@ -771,6 +818,8 @@ export async function startLibrary(
           orderId: order.orderId,
           sellerName: order.sellerName,
           sellerMemberLogin: order.sellerMemberLogin,
+          sourceType: order.sourceType,
+          store: order.store,
           record,
         }))
     })
@@ -1130,6 +1179,7 @@ export async function startLibrary(
       reference.append(
         orderReference(order.orderId, {
           className: 'order-reference',
+          sourceType: order.sourceType,
         }),
         node(
           'span',
@@ -1140,6 +1190,13 @@ export async function startLibrary(
         )
       )
       const meta = node('div', undefined, 'order-card-meta')
+      if (order.store?.number)
+        meta.append(
+          copyTextButton(order.store.number, {
+            label: 'Copy store number',
+            className: 'store-number',
+          })
+        )
       meta.append(
         statusBadge(order.status),
         dateBadge(order),
@@ -1161,7 +1218,9 @@ export async function startLibrary(
     updateOrderActions()
   }
   function updateOrderActions() {
-    const matching = scopedOrders()
+    const matching = scopedOrders().filter(
+      ({ snapshot }) => snapshot.sourceType !== 'spreadsheet'
+    )
     bindText(
       $('refresh-orders'),
       uiMessage('Refresh {0} order{1}', {
@@ -1180,7 +1239,9 @@ export async function startLibrary(
     )
     const running = jobs.some((job) => job.state === 'running')
     $('refresh-orders').disabled = !matching.length || running
-    $('refresh-all').disabled = !records.length || running
+    $('refresh-all').disabled =
+      !records.some(({ snapshot }) => snapshot.sourceType !== 'spreadsheet') ||
+      running
     $('remove-orders').disabled = !selectedOrders.size
   }
   function renderRows() {
@@ -1208,6 +1269,14 @@ export async function startLibrary(
           source: row.materialSource,
         },
       ])
+    )
+    const adjustedCosts = new Map(
+      records
+        .filter((record) => record.additionalCharges?.length)
+        .map((record) => [
+          record.snapshot.orderId,
+          orderCostAdjustments(record),
+        ])
     )
     for (const [index, row] of pageRows.entries()) {
       const changed = row.record.changedEntryIds.includes(row.entryId)
@@ -1239,6 +1308,7 @@ export async function startLibrary(
           shop,
           orderReference(row.orderId, {
             className: 'order-section-number',
+            sourceType: row.sourceType,
           }),
           dateBadge(row.record.snapshot),
           statusBadge(row.record.snapshot.status),
@@ -1296,6 +1366,10 @@ export async function startLibrary(
       )
       zoom.disabled = !row.thumbnail
       zoom.append(image)
+      if (row.photos?.length > 1)
+        zoom.append(
+          node('span', String(row.photos.length), 'product-photo-count')
+        )
       zoom.addEventListener(
         'click',
         () => void photos.open(row, filteredRows())
@@ -1370,11 +1444,28 @@ export async function startLibrary(
             uiMessage('incl. {0} allocated', { 0: row.allocatedDiscount })
           )
         )
+      const priceCell = node('td', amount(row.price), 'numeric price-cell')
+      const adjustment = adjustedCosts.get(row.orderId)?.get(row.entryId)
+      if (adjustment && adjustment.additionalCharge !== '0.00') {
+        const effective = node(
+          'strong',
+          `→ ${amount(adjustment.effectiveUnitPrice)}`,
+          'additional-cost-price'
+        )
+        preparationHelp(
+          effective,
+          uiMessage(
+            'Includes ¥{0} of additional order charges. The source unit price stays unchanged.',
+            { 0: adjustment.additionalCharge }
+          )
+        )
+        priceCell.append(effective)
+      }
       tr.append(
         selection,
         thumb,
         description,
-        node('td', amount(row.price), 'numeric price-cell'),
+        priceCell,
         discount,
         node(
           'td',
@@ -1984,6 +2075,7 @@ export async function startLibrary(
     await flushOrderDetails()
     annotationEditor?.destroy()
     annotationEditor = undefined
+    chargeEditor = undefined
     const order = record.snapshot,
       content = $('details-content')
     const metadata = node('div', undefined, 'row-meta')
@@ -2002,6 +2094,7 @@ export async function startLibrary(
     identity.append(
       orderReference(order.orderId, {
         className: 'order-reference',
+        sourceType: order.sourceType,
       })
     )
     const sellerHeading = node('h2')
@@ -2014,6 +2107,85 @@ export async function startLibrary(
       metadata
     )
     content.replaceChildren()
+    if (order.sourceType === 'spreadsheet') {
+      const source = node('p', undefined, 'store-source-file')
+      source.append(
+        node('span', uiMessage('Source spreadsheet')),
+        node(
+          'code',
+          `${order.spreadsheet.filename} · ${order.spreadsheet.sheetName}`
+        )
+      )
+      if (order.store.number)
+        source.append(
+          node('span', uiMessage('Store number')),
+          copyTextButton(order.store.number, { label: 'Copy store number' })
+        )
+      const rename = node('form', undefined, 'store-rename'),
+        label = node('label', uiMessage('Store name')),
+        input = node('input'),
+        save = node('button', uiMessage('Save store name'))
+      input.name = 'store-name'
+      input.value = order.sellerName
+      input.required = true
+      label.append(input)
+      save.type = 'submit'
+      rename.append(label, save)
+      rename.addEventListener('submit', async (event) => {
+        event.preventDefault()
+        save.disabled = true
+        try {
+          const store = repository || (await openDatabase())
+          await packing?.flush()
+          await store.renameStore(order.orderId, input.value, {
+            accountId: record.accountId,
+          })
+          await refresh()
+          await closeOrderDetails(new Event('submit', { cancelable: true }))
+        } catch (error) {
+          feedback(error.message, true)
+        } finally {
+          save.disabled = false
+        }
+      })
+      content.append(source, rename)
+    }
+    const storeOrders = records.filter(
+      ({ snapshot }) => storeKeyFor(snapshot) === storeKeyFor(order)
+    )
+    const allStoreOrders = node(
+      'button',
+      uiMessage('View all {0} orders from this store', {
+        0: storeOrders.length,
+      })
+    )
+    allStoreOrders.onclick = async () => {
+      await closeOrderDetails(new Event('click', { cancelable: true }))
+      storeFilter = storeKeyFor(order)
+      selectedOrders.clear()
+      selectedMonths.clear()
+      $('order-search').value = order.sellerName
+      $('date-from').value = ''
+      $('date-to').value = ''
+      orderPage = page = 0
+      renderMonthOptions()
+      render()
+    }
+    content.append(allStoreOrders)
+    chargeEditor = mountOrderCharges(content, {
+      record,
+      onSave: async (charges) => {
+        const store = repository || (await openDatabase())
+        await packing?.flush()
+        const result = await store.setAdditionalCharges(
+          order.orderId,
+          charges,
+          { accountId: record.accountId }
+        )
+        await refresh()
+        return result
+      },
+    })
     if (order.sellerUnavailable)
       content.append(
         node(
@@ -2304,6 +2476,7 @@ export async function startLibrary(
     })
   )
   action('all-orders', () => {
+    storeFilter = null
     clearTimeout(orderSearchTimer)
     orderSelection.reset()
     productSelection.reset()
@@ -2326,6 +2499,12 @@ export async function startLibrary(
     renderRows()
   })
   async function refreshOrders(orderIds) {
+    orderIds = orderIds.filter((id) =>
+      records.some(
+        ({ snapshot }) =>
+          snapshot.orderId === id && snapshot.sourceType !== 'spreadsheet'
+      )
+    )
     if (!orderIds.length) return
     const frozen = [...orderIds]
     if (
@@ -2407,6 +2586,32 @@ export async function startLibrary(
     feedback(uiMessage('Backup requested. Check your downloads.'))
   })
   action('restore', () => $('backup-file').click())
+  $('import-store-sheet').addEventListener('click', () => {
+    void (async () => {
+      await packing?.flush()
+      await openStoreImportDialog({
+        repository: repository || (await openDatabase()),
+        onImported: async () => {
+          await refresh()
+          globalThis.chrome?.runtime
+            ?.sendMessage?.({ type: 'LIBRARY_CHANGED' })
+            .catch(() => {})
+        },
+      })
+    })().catch((error) => feedback(error.message, true))
+  })
+  decorateIcon($('import-store-sheet'), 'upload')
+  bindAttribute(
+    $('import-store-sheet'),
+    'aria-label',
+    uiMessage('Import spreadsheet')
+  )
+  preparationHelp(
+    $('import-store-sheet'),
+    uiMessage(
+      'Import a marked store spreadsheet. Review pictures, quantities, prices and purchase date before saving a new order.'
+    )
+  )
   $('backup-file').addEventListener('change', async () => {
     try {
       const file = $('backup-file').files[0]
@@ -2472,6 +2677,7 @@ export async function startLibrary(
     }
   })
   $('order-search').addEventListener('input', () => {
+    storeFilter = null
     clearTimeout(orderSearchTimer)
     orderSelection.reset()
     productSelection.reset()

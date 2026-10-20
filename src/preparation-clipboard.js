@@ -1,6 +1,11 @@
 import { productAttributes } from './product-attributes.js'
 import { createSizeClassifier } from './size-vocabulary.js'
 import { centsToMoney, lineGrossCents, moneyToCents } from './money.js'
+import { productCartonDetails, cartonVolume } from './carton-details.js'
+import {
+  orderCostAdjustments,
+  additionalChargesTotal,
+} from './order-charges.js'
 
 const escape = (value) =>
   String(value ?? '').replace(
@@ -26,7 +31,14 @@ export const preparationColumns = [
   ['spanishName', 'Spanish description', 'Codes & packing'],
   ['chineseCategory', 'Chinese category', 'Codes & packing'],
   ['material', 'Material', 'Codes & packing'],
-  ['unitsPerCarton', 'Pack size', 'Codes & packing'],
+  ['unitsPerCarton', 'Pcs/box', 'Codes & packing'],
+  ['cartons', 'Cartons', 'Codes & packing'],
+  ['cartonWeight', 'Weight (kg/box)', 'Codes & packing'],
+  ['cartonVolume', 'Volume (m³/box)', 'Codes & packing'],
+  ['cartonLength', 'Length (cm)', 'Codes & packing'],
+  ['cartonWidth', 'Width (cm)', 'Codes & packing'],
+  ['cartonHeight', 'Height (cm)', 'Codes & packing'],
+  ['storeNumber', 'Store number', 'Order & supplier'],
   ['title', 'Product title', 'Product details'],
   ['description', 'Description', 'Product details'],
   ['productNumber', 'Seller product code', 'Product details'],
@@ -44,6 +56,11 @@ export const preparationColumns = [
   ['allocatedDiscount', 'Allocated price change', 'Amounts'],
   ['lineAmount', 'Item amount', 'Amounts'],
   ['lineNetAmount', 'Amount after discount', 'Amounts'],
+  ['effectiveUnitPrice', 'Unit price with charges', 'Amounts'],
+  ['effectiveAmount', 'Amount with charges', 'Amounts'],
+  ['additionalCharge', 'Added cost', 'Amounts'],
+  ['additionalChargeReasons', 'Additional charge reasons', 'Amounts'],
+  ['orderAdditionalCharges', 'Additional order costs', 'Order & supplier'],
   ['orderId', 'Order number', 'Order & supplier'],
   ['orderDate', 'Purchase date', 'Order & supplier'],
   ['orderStatus', 'Order status', 'Order & supplier'],
@@ -77,6 +94,16 @@ export const DEFAULT_PREPARATION_COLUMNS = [
 export const PREPARATION_COLUMN_PREFERENCE = '1688-packing-copy-columns'
 const columnKeys = preparationColumns.map(([key]) => key)
 const numericFields = new Set([
+  'effectiveUnitPrice',
+  'effectiveAmount',
+  'additionalCharge',
+  'orderAdditionalCharges',
+  'cartons',
+  'cartonWeight',
+  'cartonVolume',
+  'cartonLength',
+  'cartonWidth',
+  'cartonHeight',
   'unitsPerCarton',
   'price',
   'quantity',
@@ -124,7 +151,25 @@ export function preparationOrderFields(row, record = row.record) {
   const order = record?.snapshot
   if (!order) return {}
   const totals = order.totals || {}
+  const carton = productCartonDetails(row, record)
+  const costs = record.additionalCharges?.length
+    ? orderCostAdjustments(record).get(row.entryId)
+    : {}
   return {
+    ...costs,
+    additionalChargeReasons: (record.additionalCharges || [])
+      .map((charge) => `${charge.reason} (¥${charge.amount})`)
+      .join(' · '),
+    orderAdditionalCharges: record.additionalCharges?.length
+      ? additionalChargesTotal(record)
+      : '',
+    cartons: carton.boxes ?? '',
+    cartonWeight: carton.kg ?? '',
+    cartonVolume: cartonVolume(carton),
+    cartonLength: carton.len ?? '',
+    cartonWidth: carton.wid ?? '',
+    cartonHeight: carton.ht ?? '',
+    storeNumber: order.store?.number || '',
     unitsPerCarton: record.unitsPerCarton?.[row.entryId] ?? '',
     orderDate: order.purchasedAt || '',
     orderStatus: order.status || '',

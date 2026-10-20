@@ -15,12 +15,13 @@ import { preparationHelp } from './preparation-help.js'
 import { setCodeText, CODE_READING_HELP } from './code-display.js'
 
 /** Keep the full copyable order number and its source link together. */
-export function orderReference(orderId, { className = '' } = {}) {
+export function orderReference(orderId, { className = '', sourceType } = {}) {
   const pair = element('span', undefined, 'order-reference-pair')
   pair.append(
     copyTextButton(orderId, { label: 'Copy order number', className })
   )
-  if (!/^[1-9]\d*$/.test(String(orderId))) return pair
+  if (sourceType === 'spreadsheet' || !/^[1-9]\d*$/.test(String(orderId)))
+    return pair
   const link = element('a', undefined, 'order-source-link icon-button')
   link.href = `https://air.1688.com/app/ctf-page/trade-order-detail/index.html?orderId=${orderId}`
   link.target = '_blank'

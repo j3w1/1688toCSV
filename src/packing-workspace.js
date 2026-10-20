@@ -43,7 +43,6 @@ import {
 } from './material-vocabulary.js'
 import { mountMaterialVocabulary } from './material-vocabulary-settings.js'
 import { openStoreSpreadsheetGuide } from './store-spreadsheet-guide.js'
-import { cartonBreakdown } from './carton-packing.js'
 import {
   mountCartonCapacity,
   cartonCapacityReadout,
@@ -76,7 +75,7 @@ import {
   arrangeOrderPositions,
 } from './packing-arrangement.js'
 import {
-  reviewPackingChanges,
+  reviewPackingChanges as showPackingChanges,
   packingValueComparison,
 } from './packing-review.js'
 import {
@@ -143,6 +142,11 @@ import {
   summaryFileName,
 } from './export-summary.js'
 import { createPreparationColumnPicker } from './preparation-column-picker.js'
+import {
+  cartonPackingForItems,
+  productCartonDetails,
+  cartonVolume,
+} from './carton-details.js'
 import { presentOrderStatus } from './order-presentation.js'
 import { orderTagBadge } from './tag-picker.js'
 
@@ -832,12 +836,24 @@ export async function startPackingWorkspace({
       setTimeout(remove, 5000)
     }
   }
+  function reviewPackingChanges(options) {
+    return showPackingChanges({
+      ...options,
+      changes: options.changes.map((change) => ({
+        ...change,
+        sourceType: getRecords().find(
+          ({ snapshot }) => snapshot.orderId === change.orderId
+        )?.snapshot.sourceType,
+      })),
+    })
+  }
   function packingErrorOptions(error, modal) {
     if (!error.packingIssue && !error.conflict && !error.focusId) return {}
     const issue = issueLocation(error)
     const context = {
       seller: issue.source?.sellerName,
       orderId: issue.orderId,
+      sourceType: issue.source?.sourceType,
       code: issue.group?.baseCode || issue.row.baseCode,
       variant: issue.variant?.variant || issue.item?.title,
       thumbnail: issue.item?.thumbnail
@@ -851,7 +867,12 @@ export async function startPackingWorkspace({
       // The originating copy action releases its disabled fieldset after close.
       await preparationIdle
     }
-    if (issue.field === 'photo' && issue.orderId && onRefreshOrder)
+    if (
+      issue.field === 'photo' &&
+      issue.orderId &&
+      onRefreshOrder &&
+      issue.source?.sourceType !== 'spreadsheet'
+    )
       action = {
         label: 'Refresh this order',
         onClick: async () => {
@@ -1102,11 +1123,35 @@ export async function startPackingWorkspace({
       return rendered.blob
     }
   }
+  const photoOwners = new WeakMap()
   const media = createPreparationMedia({
     container: null,
     loadImage,
     settings,
     logoUrl,
+    onPhotoEdit: async (item, edit) => {
+      const owner = photoOwners.get(item)
+      const record = getRecords().find(({ snapshot }) =>
+        owner
+          ? snapshot.orderId === owner.orderId &&
+            snapshot.accountId === owner.accountId
+          : snapshot.items.some((sourceItem) => sourceItem === item)
+      )
+      if (!record) throw new Error('Product photo was not found')
+      photoOwners.set(item, {
+        orderId: record.snapshot.orderId,
+        accountId: record.snapshot.accountId,
+      })
+      await flushSaves()
+      await repository.setProductPhoto(
+        record.snapshot.orderId,
+        item.entryId,
+        edit,
+        { accountId: record.accountId }
+      )
+      if (edit.photoIndex === 0) media.updatePhoto(item, edit.thumbnail)
+      await changed({ reload: true })
+    },
     getPhotoItems: () =>
       visibleDrafts().flatMap((draft) => {
         const source = getRecords().find(
@@ -1120,7 +1165,15 @@ export async function startPackingWorkspace({
           scopedVariants(draft, group).flatMap((variant) =>
             variant.entryIds
               .filter((id) => scope.has(id))
-              .map((id) => items.get(id))
+              .map((id) => {
+                const item = items.get(id)
+                if (item)
+                  photoOwners.set(item, {
+                    orderId: source.orderId,
+                    accountId: source.accountId,
+                  })
+                return item
+              })
               .filter(Boolean)
           )
         )
@@ -2373,7 +2426,7 @@ export async function startPackingWorkspace({
     const source = getRecords().find(
       (record) => record.snapshot.orderId === orderId
     )?.snapshot
-    if (!source) return
+    if (!source || source.sourceType === 'spreadsheet') return
     selectedOrderOpening = true
     try {
       if (!globalThis.chrome?.tabs) {
@@ -3396,7 +3449,11 @@ export async function startPackingWorkspace({
           owner.spanishName || owner.groupTitle || uiMessage('Original product')
         ),
         el('small', owner.sellerName),
-        orderReference(owner.orderId),
+        orderReference(owner.orderId, {
+          sourceType: getRecords().find(
+            ({ snapshot }) => snapshot.orderId === owner.orderId
+          )?.snapshot.sourceType,
+        }),
         ...(owner.variant ? [el('p', owner.variant)] : []),
         el('code', code, 'ce-code conflict-occupied-code'),
         el('p', uiMessage('This code is currently assigned here.'))
@@ -3947,7 +4004,13 @@ export async function startPackingWorkspace({
       'open-selected-order'
     )
     decorateIcon(open, 'external')
-    open.disabled = packingOrders.size !== 1
+    open.disabled =
+      packingOrders.size !== 1 ||
+      getRecords().some(
+        ({ snapshot }) =>
+          packingOrders.has(snapshot.orderId) &&
+          snapshot.sourceType === 'spreadsheet'
+      )
     const selectAll = button(uiMessage('Select all'), () =>
         selectPackingRows(true)
       ),
@@ -4580,7 +4643,9 @@ export async function startPackingWorkspace({
     )
     identity.append(sellerHeading)
     const orderNumber = el('span', undefined, 'packing-order-number')
-    orderNumber.append(orderReference(draft.orderId))
+    orderNumber.append(
+      orderReference(draft.orderId, { sourceType: source?.sourceType })
+    )
     identity.append(orderNumber)
     const restoreActions = el('div', undefined, 'packing-restore-actions')
     const reset = orderButton('Reset order and codes', () =>
@@ -5048,6 +5113,8 @@ export async function startPackingWorkspace({
           ...item,
           orderId: draft.orderId,
           sellerName: source?.sellerName,
+          sourceType: source?.sourceType,
+          store: source?.store,
         }))
         const ownsDetailsEvent = (event) =>
           event.target.closest('[data-variant-id]') === row &&
@@ -5282,14 +5349,27 @@ export async function startPackingWorkspace({
                 )
           )
         )
-        const cartonUnits =
-          getRecords().find(
-            (record) => record.snapshot.orderId === draft.orderId
-          )?.unitsPerCarton || {}
-        for (const item of items)
+        const cartonRecord = getRecords().find(
+          (record) => record.snapshot.orderId === draft.orderId
+        )
+        const cartonUnits = cartonRecord?.unitsPerCarton || {}
+        for (const item of items) {
           factsLine.append(
             cartonCapacityReadout(item, cartonUnits[item.entryId])
           )
+          const carton = productCartonDetails(item, cartonRecord)
+          const facts = [
+            carton.boxes ? `${carton.boxes} ${t('Cartons')}` : '',
+            carton.kg ? `${carton.kg} kg/${t('box')}` : '',
+            cartonVolume(carton)
+              ? `${cartonVolume(carton)} m³/${t('box')}`
+              : '',
+          ].filter(Boolean)
+          if (facts.length)
+            factsLine.append(
+              el('small', facts.join(' · '), 'carton-source-facts')
+            )
+        }
         description.append(factsLine)
         const codeOptions = el('fieldset', undefined, 'variant-code-options')
         bindAttribute(codeOptions, 'aria-label', uiMessage('Code options'))
@@ -5615,26 +5695,7 @@ export async function startPackingWorkspace({
               (id) => !selectedIds || selectedIds.has(`${prep.orderId}/${id}`)
             )
         )
-        const rows = (record?.snapshot.items || [])
-          .filter((item) => ids.has(item.entryId))
-          .map((item) => ({
-            entryId: item.entryId,
-            ...cartonBreakdown(
-              item.quantity,
-              record.unitsPerCarton?.[item.entryId]
-            ),
-          }))
-        const hasCapacity = rows.some((row) => row.unitsPerCarton !== null)
-        const exact =
-          rows.length > 0 && rows.every((row) => row.status === 'exact')
-        const total = rows.reduce((sum, row) => sum + (row.fullCartons || 0), 0)
-        cartonPacking = {
-          rows,
-          exact: exact && Number.isSafeInteger(total),
-          total,
-          requiresReview:
-            hasCapacity && (!exact || !Number.isSafeInteger(total)),
-        }
+        cartonPacking = cartonPackingForItems(record, ids)
       }
       return {
         item: {
@@ -5914,6 +5975,8 @@ export async function startPackingWorkspace({
           orderId: draft.orderId,
           sellerName: record.snapshot.sellerName,
           sellerMemberLogin: record.snapshot.sellerMemberLogin,
+          sourceType: record.snapshot.sourceType,
+          store: record.snapshot.store,
         }))
     )
   }
@@ -5927,11 +5990,16 @@ export async function startPackingWorkspace({
         localStorage.getItem(PREPARATION_COLUMN_PREFERENCE)
       )
     } catch {}
-    const grid = preparationGrid(
-      fields,
-      selectedPreparationColumns(preference),
-      t
-    )
+    const columns = selectedPreparationColumns(preference)
+    if (fields.some((row) => Number(row.additionalCharge) > 0))
+      for (const key of [
+        'effectiveUnitPrice',
+        'additionalCharge',
+        'effectiveAmount',
+        'additionalChargeReasons',
+      ])
+        if (!columns.includes(key)) columns.push(key)
+    const grid = preparationGrid(fields, columns, t)
     const file = uniqueFileName(
       packingListFileName(fields.map((row) => row.sellerName))
     )
@@ -6794,6 +6862,7 @@ export async function startPackingWorkspace({
   }
   return {
     reload,
+    refreshPhoto: (item, thumbnail) => media.updatePhoto(item, thumbnail),
     flush: flushSaves,
     preparedRows,
     copyLabels: (kind, rows) =>

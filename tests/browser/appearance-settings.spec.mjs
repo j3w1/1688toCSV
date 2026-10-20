@@ -243,7 +243,10 @@ test('settings keeps tabs and save visible while reset-all previews recommended 
       expect(footer.y + footer.height).toBeLessThanOrEqual(800)
       expect(tabs.y).toBeGreaterThanOrEqual(box.y)
       expect(
-        await panel.evaluate((node) => node.scrollWidth <= node.clientWidth + 1)
+        await panel.evaluate(
+          (node) => node.scrollWidth <= node.clientWidth + 1
+        ),
+        `${tab} panel at ${width}px must contain its content`
       ).toBe(true)
     }
   }

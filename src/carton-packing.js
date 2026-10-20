@@ -3,11 +3,11 @@ export function normalizeUnitsPerCarton(value) {
   if (value == null || (typeof value === 'string' && !value.trim())) return null
   if (typeof value === 'string') {
     if (!/^\d+$/.test(value.trim()))
-      throw new Error('Pack size must be a positive whole number')
+      throw new Error('Pcs/box must be a positive whole number')
     value = Number(value.trim())
   }
   if (!Number.isSafeInteger(value) || value < 1)
-    throw new Error('Pack size must be a positive whole number')
+    throw new Error('Pcs/box must be a positive whole number')
   return value
 }
 

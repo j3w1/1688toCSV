@@ -25,6 +25,11 @@ async function startFixtureServer() {
     if (
       [
         '/src/database.js',
+        '/src/store-order.js',
+        '/src/order-charges.js',
+        '/src/images.js',
+        '/src/product-photo.js',
+        '/src/carton-details.js',
         '/src/carton-packing.js',
         '/src/packing-model.js',
         '/src/packing-grouping.js',

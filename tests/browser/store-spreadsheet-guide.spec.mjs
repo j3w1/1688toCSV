@@ -1,5 +1,6 @@
 import { test, expect } from './extension-fixture.mjs'
 import { createDemoRecords } from '../../preview/library-fixture.js'
+import { STORE_IMPORT_MARKERS } from '../../src/store-workbook-model.js'
 
 async function openGuide(extension) {
   const [record] = await extension.inspector.evaluate(
@@ -47,7 +48,7 @@ test('store spreadsheet format guide supports keyboard sections and exact marker
       return data
     })
   const before = await snapshot()
-  await expect(guide).toContainText('not available yet')
+  await expect(guide).toContainText('review its rows, photos and totals')
   await expect(guide.locator('input[type=file]')).toHaveCount(0)
   const start = guide.getByRole('tab', { name: 'Start here', exact: true })
   const markers = guide.getByRole('tab', {
@@ -58,6 +59,13 @@ test('store spreadsheet format guide supports keyboard sections and exact marker
   await start.press('ArrowRight')
   await expect(markers).toBeFocused()
   await expect(markers).toHaveAttribute('aria-selected', 'true')
+  expect(
+    (
+      await guide
+        .locator('.store-import-marker-table .store-import-token')
+        .allTextContents()
+    ).sort()
+  ).toEqual([...STORE_IMPORT_MARKERS].sort())
   await expect(
     guide.getByRole('tabpanel', { name: 'Start here', exact: true })
   ).toBeHidden()
@@ -132,7 +140,7 @@ test('store spreadsheet guide translates its interface while preserving copyable
       data: 'Datos',
       guide: 'Guía de Excel de tiendas',
       markers: 'Marcadores de importación',
-      copy: 'Copiar marcador de importación: zxs',
+      copy: 'Copiar marcador de importación: perbox',
     },
     {
       code: 'zh',
@@ -140,7 +148,7 @@ test('store spreadsheet guide translates its interface while preserving copyable
       data: '数据',
       guide: '门店表格格式指南',
       markers: '导入标记',
-      copy: '复制导入标记：zxs',
+      copy: '复制导入标记：perbox',
     },
   ]) {
     await page.locator(`[data-language="${language.code}"]`).click()
@@ -171,7 +179,7 @@ test('store spreadsheet guide translates its interface while preserving copyable
       .click()
     await expect(
       currentGuide.getByRole('button', { name: language.copy, exact: true })
-    ).toHaveText('zxs')
+    ).toHaveText('perbox')
     await expect(currentGuide).not.toContainText('Meaning and requirement')
     await page.keyboard.press('Escape')
     await expect(currentGuide).toHaveCount(0)
