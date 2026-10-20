@@ -433,6 +433,11 @@ async function dispatch(message, sender, repository, controller) {
     case 'LIBRARY_UPDATED':
       await changed()
       return true
+    case 'OTHER_ORDER_CREATE': {
+      const result = await repository.createOtherOrder(message.order)
+      await changed()
+      return result
+    }
     case 'LIBRARY_QUERY':
       return {
         orders: await repository.listOrders(),

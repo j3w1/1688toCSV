@@ -112,7 +112,10 @@ export function openProductDetails(
     identity.append(
       copyTextButton(item.sellerName, { label: 'Copy store name' })
     )
-  if (item.orderId) identity.append(orderReference(item.orderId))
+  if (item.orderId)
+    identity.append(
+      orderReference(item.orderId, { snapshot: item.record?.snapshot })
+    )
   const body = el('div', undefined, 'product-details-body')
   const data = el('div', undefined, 'product-details-data')
   const title = el('h3')

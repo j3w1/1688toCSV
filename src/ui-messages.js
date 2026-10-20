@@ -14,9 +14,11 @@ import { REVIEW_MESSAGES } from './ui-messages-review.js'
 import { EXCLUSION_MESSAGES } from './ui-messages-exclusions.js'
 import { SHELL_MESSAGES } from './ui-messages-shell.js'
 import { PRINT_MESSAGES } from './ui-messages-print.js'
+import { OTHER_ORDER_MESSAGES } from './ui-messages-other-orders.js'
 
 // Explicit interface messages only; original seller, product and label values are never translated.
 export const UI_MESSAGES = {
+  ...OTHER_ORDER_MESSAGES,
   'Shortcut outside text fields': {
     zh: '非文本输入时的快捷键',
     es: 'Atajo fuera de los campos de texto',

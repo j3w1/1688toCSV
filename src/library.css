@@ -2146,3 +2146,62 @@ button.copyable-text:hover {
     min-block-size: 36px;
   }
 }
+
+/* Other-source entry uses the same bounded dialog and shared action bar. */
+.other-order-dialog {
+  width: min(740px, 94vw);
+  max-height: 90dvh;
+}
+.other-order-dialog form {
+  display: grid;
+  gap: 1rem;
+}
+.other-order-metadata,
+.other-order-product {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 0.75rem;
+}
+.other-order-dialog label {
+  display: grid;
+  gap: 0.3rem;
+  min-width: 0;
+}
+.other-order-dialog input,
+.other-order-dialog textarea {
+  width: 100%;
+  min-width: 0;
+  box-sizing: border-box;
+}
+.other-order-dialog textarea {
+  min-height: 4rem;
+  resize: vertical;
+}
+.other-order-product {
+  margin: 0 0 1rem;
+  padding: 0.75rem;
+  border: 1px solid var(--border);
+  border-radius: 0.5rem;
+}
+.other-order-product label:has(textarea) {
+  grid-column: 1 / -1;
+}
+.other-order-product img {
+  width: 72px;
+  height: 72px;
+  object-fit: contain;
+}
+.other-order-error {
+  color: var(--danger, #b32424);
+  white-space: pre-wrap;
+}
+.order-source {
+  font-size: 0.7rem;
+  opacity: 0.8;
+}
+@media (max-width: 540px) {
+  .other-order-metadata,
+  .other-order-product {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
