@@ -132,6 +132,7 @@ export function openPrintDialog({
   store = createPrintStore(),
 }) {
   const marks = kind === 'marks'
+  const quantityStep = marks ? 1 : 5
   const normalize = marks ? normalizeMarkLayout : normalizeLabelLayout
   let layout = normalize(job?.layout ?? store.layout(kind))
   const quantities = new Map(items.map((item) => [item.key, item.quantity]))
@@ -614,7 +615,7 @@ export function openPrintDialog({
     const row = el('tr')
     const name = el('td')
     name.append(
-      el('code', item.code, 'ce-code'),
+      el('code', item.code, 'ce-code ce-code-plain'),
       el('span', item.name || '', 'print-name')
     )
     if (item.detail) name.append(el('small', item.detail))
@@ -646,28 +647,32 @@ export function openPrintDialog({
     )
     const requested = el('td')
     const quantityInput = el('div', undefined, 'print-quantity-input')
-    const addFive = el('button', '+5', 'print-quantity-add')
-    addFive.type = 'button'
-    addFive.dataset.action = 'add-five-print-quantity'
+    const increment = el('button', `+${quantityStep}`, 'print-quantity-add')
+    increment.type = 'button'
+    increment.dataset.action = 'increment-print-quantity'
     bindAttribute(
-      addFive,
+      increment,
       'aria-label',
-      uiMessage('Add 5 to requested quantity for {0}', { 0: item.code })
+      uiMessage('Add {0} to requested quantity for {1}', {
+        0: quantityStep,
+        1: item.code,
+      })
     )
     preparationHelp(
-      addFive,
+      increment,
       uiMessage(
-        'Add 5 to this product’s requested quantity. The preview updates immediately; the maximum is 9999.'
+        'Add {0} to this product’s requested quantity. The preview updates immediately; the maximum is 9999.',
+        { 0: quantityStep }
       )
     )
-    addFive.addEventListener('click', () => {
+    increment.addEventListener('click', () => {
       if (busy || closed) return
       const value = whole(quantities.get(item.key), 0)
-      if (!Number.isInteger(value) || value > 9994) return
-      input.value = String(value + 5)
+      if (!Number.isInteger(value) || value > 9999 - quantityStep) return
+      input.value = String(value + quantityStep)
       input.dispatchEvent(new Event('input', { bubbles: true }))
     })
-    quantityInput.append(input, addFive)
+    quantityInput.append(input, increment)
     requested.append(quantityInput)
     const extra = el('td', '', 'numeric')
     const total = el('td', '', 'numeric')
@@ -700,7 +705,7 @@ export function openPrintDialog({
     }
     row.append(name, requested, ...(marks ? [total] : [extra, capCell, total]))
     tbody.append(row)
-    cellsByKey.set(item.key, { extra, total, input, cap, addFive })
+    cellsByKey.set(item.key, { extra, total, input, cap, increment })
   }
   const footRow = el('tr')
   const footLabel = el('th', uiMessage('Total'))
@@ -890,7 +895,8 @@ export function openPrintDialog({
     for (const [key, cells] of cellsByKey) {
       const quantity = whole(quantities.get(key), 0)
       const badQuantity = Number.isNaN(quantity)
-      cells.addFive.disabled = busy || badQuantity || quantity > 9994
+      cells.increment.disabled =
+        busy || badQuantity || quantity > 9999 - quantityStep
       const badCap =
         !marks && layout.limitExtras && Number.isNaN(whole(caps.get(key), null))
       // Explicit "true": the app rejects values the native input accepts (1e2).
@@ -1073,16 +1079,15 @@ export function openPrintDialog({
       pages ? uiMessage('Page {0} of {1}', { 0: page + 1, 1: pages }) : ''
     )
     const runs = plan?.pageSummaries?.[page] || []
-    bindText(
-      pageContents,
-      runs.length
-        ? () =>
-            runs
-              .map(
-                (run) => `${run.key} × ${run.count.toLocaleString(getLocale())}`
-              )
-              .join(' · ')
-        : ''
+    pageContents.replaceChildren(
+      ...runs.map((run) => {
+        const part = el('span', undefined, 'print-page-run')
+        part.append(
+          el('code', run.key, 'ce-code ce-code-plain'),
+          el('span', `× ${run.count.toLocaleString(getLocale())}`)
+        )
+        return part
+      })
     )
     try {
       context.fillStyle = '#fff'

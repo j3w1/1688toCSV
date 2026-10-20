@@ -8,16 +8,18 @@ const values = (inputs) =>
   inputs.evaluateAll((nodes) => nodes.map((input) => input.value))
 
 for (const kind of ['labels', 'marks']) {
-  test(`${kind} +5 stays inside each quantity field and increments only its row safely`, async ({
+  const step = kind === 'marks' ? 1 : 5
+  test(`${kind} +${step} stays inside each quantity field and increments only its row safely`, async ({
     extension,
   }) => {
     const { page, dialog } = await openPrintDialogFixture(extension, { kind })
+    await expect(dialog.locator('.ce-code-part')).toHaveCount(0)
     const quantities = dialog.getByLabel(/^Quantity for /)
-    const buttons = dialog.locator('[data-action="add-five-print-quantity"]')
+    const buttons = dialog.locator('[data-action="increment-print-quantity"]')
     await expect(buttons).toHaveCount(3)
     const first = buttons.first()
     await expect(first).toHaveAccessibleName(
-      'Add 5 to requested quantity for CE26100101'
+      `Add ${step} to requested quantity for CE26100101`
     )
     await first.hover()
     await expect(dialog.getByRole('tooltip')).toContainText(
@@ -25,20 +27,24 @@ for (const kind of ['labels', 'marks']) {
     )
     await first.click()
     await first.click()
-    expect(await values(quantities)).toEqual(['11', '3', '0'])
+    expect(await values(quantities)).toEqual([String(1 + 2 * step), '3', '0'])
     await expect(dialog.locator('.print-quantity-preview')).toHaveText(
-      'Total requested: 14 → 28'
+      `Total requested: ${4 + 2 * step} → ${8 + 4 * step}`
     )
     await expect(first).toBeFocused()
     await page.keyboard.press('Enter')
-    expect(await values(quantities)).toEqual(['16', '3', '0'])
+    expect(await values(quantities)).toEqual([String(1 + 3 * step), '3', '0'])
     await quantities.first().fill('23')
     await quantities.first().press('ArrowUp')
     await first.click()
-    expect(await values(quantities)).toEqual(['29', '3', '0'])
+    expect(await values(quantities)).toEqual([String(24 + step), '3', '0'])
     await quantities.nth(2).fill('')
     await buttons.nth(2).click()
-    expect(await values(quantities)).toEqual(['29', '3', '5'])
+    expect(await values(quantities)).toEqual([
+      String(24 + step),
+      '3',
+      String(step),
+    ])
     for (const invalid of ['2.5', '1e2', '-1', '10000']) {
       await quantities.nth(1).fill(invalid)
       await expect(buttons.nth(1)).toBeDisabled()
@@ -47,14 +53,14 @@ for (const kind of ['labels', 'marks']) {
       expect(await values(quantities)).toEqual(before)
     }
     await quantities.nth(1).fill('3')
-    await quantities.first().fill('9994')
+    await quantities.first().fill(String(9999 - step))
     await expect(first).toBeEnabled()
     await first.click()
     await expect(quantities.first()).toHaveValue('9999')
     await expect(first).toBeDisabled()
     await first.dispatchEvent('click')
     await expect(quantities.first()).toHaveValue('9999')
-    await quantities.first().fill('9995')
+    await quantities.first().fill(String(10000 - step))
     await expect(first).toBeDisabled()
     await quantities.first().fill('9')
     const inputBox = await quantities.first().boundingBox()
@@ -71,13 +77,13 @@ for (const kind of ['labels', 'marks']) {
     )
     await page.evaluate(() => Print.setLanguage('es', { persist: false }))
     await expect(first).toHaveAccessibleName(
-      'Sumar 5 a la cantidad solicitada de CE26100101'
+      `Sumar ${step} a la cantidad solicitada de CE26100101`
     )
     await first.click()
     await expect(quantities.first()).toHaveCount(0) // the English accessible name has translated
     await expect(
       dialog.locator('.print-quantity-input input').first()
-    ).toHaveValue('14')
+    ).toHaveValue(String(9 + step))
     await dialog.locator('[data-action="close-print-dialog"]').click()
     await page.close()
   })

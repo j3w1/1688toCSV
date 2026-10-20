@@ -1537,10 +1537,21 @@ dialog.print-dialog.packing-review {
   font-size: var(--text-l);
 }
 .print-page-contents {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 8px;
   margin: 0 0 var(--space-2);
   color: var(--muted);
   font-size: var(--text-xs);
   overflow-wrap: anywhere;
+}
+.print-page-run {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+}
+.print-page-run .ce-code {
+  --ce-code-size: 11px;
 }
 .print-recent-dialog.packing-review {
   inline-size: min(640px, calc(100vw - 24px));

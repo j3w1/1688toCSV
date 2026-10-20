@@ -129,20 +129,6 @@ dialog.packing-review:is(.packing-change-dialog, .code-conflict-dialog) {
   :is(.packing-value-caption, .packing-value-text) {
   color: var(--success-text);
 }
-.packing-review
-  .packing-value-row[data-changed='true']
-  .packing-value-before
-  code.ce-code {
-  --ce-code-background: var(--warning-text);
-  --ce-code-foreground: var(--warning);
-}
-.packing-review
-  .packing-value-row[data-changed='true']
-  .packing-value-after
-  code.ce-code {
-  --ce-code-background: var(--success-text);
-  --ce-code-foreground: var(--success);
-}
 .packing-review .packing-value-cell code.ce-code {
   --ce-code-size: 13px;
   margin: 0;
@@ -185,8 +171,6 @@ dialog.packing-review:is(.packing-change-dialog, .code-conflict-dialog) {
   color: var(--danger-text);
 }
 .code-conflict-dialog .conflict-owner-card code.conflict-occupied-code {
-  --ce-code-background: var(--danger-text);
-  --ce-code-foreground: var(--danger);
   margin-inline-end: 8px;
 }
 .code-conflict-dialog .conflict-product-details > .order-reference-pair {

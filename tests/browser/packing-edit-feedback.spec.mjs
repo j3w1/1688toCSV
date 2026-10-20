@@ -98,7 +98,14 @@ for (const theme of ['dark', 'light']) {
         .first()
         .evaluate((node) => getComputedStyle(node).backgroundColor),
     ])
-    expect(beforeColor).not.toBe(afterColor)
+    expect(beforeColor).toBe('rgb(0, 0, 0)')
+    expect(afterColor).toBe(beforeColor)
+    const captions = await impact
+      .locator('.packing-value-row[data-changed="true"]')
+      .first()
+      .locator('.packing-value-caption')
+      .evaluateAll((nodes) => nodes.map((node) => getComputedStyle(node).color))
+    expect(captions[0]).not.toBe(captions[1])
     expect((await backup(extension)).preparations).toEqual(before.preparations)
     const contrasts = await impact
       .locator('.packing-value-row[data-changed="true"] code')

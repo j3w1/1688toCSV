@@ -65,6 +65,18 @@ input.ce-code,
 .label-composed-code.ce-code {
   --ce-code-size: 20px;
 }
+/* The workspace-only aid never changes spacing or the white code text. */
+.ce-code-part {
+  display: inline;
+  white-space: nowrap;
+}
+.ce-code-part[data-code-part='product'] {
+  text-decoration-line: underline;
+  text-decoration-color: var(--accent, #edaa70);
+  text-decoration-thickness: 1px;
+  text-underline-offset: 0.12em;
+  text-decoration-skip-ink: none;
+}
 .variant-code-design {
   --ce-code-size: 20px;
   display: flex;

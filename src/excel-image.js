@@ -12,6 +12,7 @@ import { t } from './i18n.js'
 import { labelColorKey } from './appearance.js'
 import { orderTagColors } from './order-tags.js'
 import { createExcelImageBadges } from './excel-image-badges.js'
+import { CE_CODE_DESIGN, codeDesignMetrics } from './code-design.js'
 
 const SCALE = 2
 const DPI = 192
@@ -30,15 +31,15 @@ const MATERIAL_FONT = `700 16px ${FONT_FAMILY}`
 const HEADER_FONT = `700 14px ${FONT_FAMILY}`
 const NUMBER_FONT = `18px ${FONT_FAMILY}`
 const QUANTITY_FONT = `700 19px ${FONT_FAMILY}`
-const CODE_FONT = `17px ${FONT_FAMILY}`
-const CODE_SUFFIX_FONT = `700 17px ${FONT_FAMILY}`
+const CODE_FONT_SIZE = 17
+const codeFont = (size) =>
+  `${CE_CODE_DESIGN.fontWeight} ${size}px ${CE_CODE_DESIGN.fontFamily}`
 const TITLE_FONT = `600 16px ${FONT_FAMILY}`
 const DETAIL_FONT = `14px ${FONT_FAMILY}`
 const ARTICLE_FONT = `600 14px ${FONT_FAMILY}`
 const DETAIL_LABEL_FONT = `600 13px ${FONT_FAMILY}`
 const TAG_FONT = `13px ${FONT_FAMILY}`
 const LABEL_FONT = `600 12px ${FONT_FAMILY}`
-const REORDERED_CODE_COLOR = '#1d4ed8'
 
 export const excelImageColumns = Object.freeze(
   [
@@ -577,23 +578,34 @@ function categoryCell(context, source, width, language) {
   })
 }
 
-/** Measure each style while wrapping, so bold code endings cannot overflow. */
-function codeCell(context, value, width, reordered) {
-  const boundary = /^CE\d{8}/.test(value) ? 10 : value.length
+/** Printed codes use one unsegmented black/white badge, including endings. */
+function codeCell(context, value, width) {
+  context.font = codeFont(CODE_FONT_SIZE)
+  const naturalWidth =
+    context.measureText(value).width +
+    2 * codeDesignMetrics(CODE_FONT_SIZE).paddingInline
+  // Fit ordinary payloads on one line; only long endings need wrapping.
+  const fontSize = Math.max(
+    12,
+    Math.min(
+      CODE_FONT_SIZE,
+      Math.floor((CODE_FONT_SIZE * width) / naturalWidth)
+    )
+  )
+  const font = codeFont(fontSize)
+  const design = codeDesignMetrics(fontSize)
+  const innerWidth = width - 2 * design.paddingInline
   const lines = []
   let runs = []
-  let offset = 0
   for (const { segment } of graphemes.segment(value)) {
-    const font = offset < boundary ? CODE_FONT : CODE_SUFFIX_FONT
-    const color =
-      reordered && offset < boundary ? REORDERED_CODE_COLOR : '#24211c'
+    const color = CE_CODE_DESIGN.foreground
     context.font = font
     const last = runs.at(-1)
     const sameStyle = last?.font === font && last.color === color
     const candidate = sameStyle ? last.text + segment : segment
     const measured = context.measureText(candidate).width
     const previousWidth = runs.reduce((sum, run) => sum + run.width, 0)
-    if (previousWidth - (sameStyle ? last.width : 0) + measured > width) {
+    if (previousWidth - (sameStyle ? last.width : 0) + measured > innerWidth) {
       if (!runs.length)
         throw new Error('A product character cannot fit in the Excel image.')
       lines.push(runs)
@@ -610,20 +622,21 @@ function codeCell(context, value, width, reordered) {
         color,
         width: context.measureText(segment).width,
       })
-    offset += segment.length
   }
   if (runs.length || !lines.length) lines.push(runs)
   return Object.freeze({
     text: value,
-    font: CODE_FONT,
+    font,
+    codeBadge: true,
+    codeFontSize: fontSize,
     richLines: Object.freeze(
       lines.map((line) => Object.freeze(line.map(Object.freeze)))
     ),
     lines: Object.freeze(
       lines.map((line) => line.map((run) => run.text).join(''))
     ),
-    lineHeight: 24,
-    height: lines.length * 24,
+    lineHeight: Math.ceil((32 * fontSize) / CODE_FONT_SIZE),
+    height: lines.length * Math.ceil((32 * fontSize) / CODE_FONT_SIZE),
   })
 }
 
@@ -821,12 +834,7 @@ export function planExcelImage(
             ? ''
             : source[column.key]
         if (column.key === 'baseCode' || column.key === 'barcode')
-          return codeCell(
-            context,
-            text,
-            column.width - PADDING * 2,
-            source.manualReordered
-          )
+          return codeCell(context, text, column.width - PADDING * 2)
         if (column.key === 'price' && text.trim()) text = `¥ ${text}`
         const font =
           column.key === 'quantity'
@@ -1066,6 +1074,34 @@ export async function renderExcelImage(
   }
   function text(cell, x, y, column, rowHeight) {
     const top = y + (rowHeight - cell.height) / 2
+    if (cell.codeBadge && cell.text) {
+      context.font = cell.font
+      const bounds = cell.lines.map((value) => context.measureText(value))
+      const design = codeDesignMetrics(cell.codeFontSize)
+      const inkHeight = Math.max(
+        ...bounds.map(
+          (metrics) =>
+            (metrics.actualBoundingBoxAscent ?? cell.codeFontSize * 0.8) +
+            (metrics.actualBoundingBoxDescent ?? cell.codeFontSize * 0.2)
+        )
+      )
+      const width =
+        Math.max(...bounds.map((metrics) => metrics.width)) +
+        2 * design.paddingInline
+      const lineHeight = inkHeight + 2 * design.paddingBlock
+      // A wrapped payload still belongs to one code, so keep one backing.
+      const height = lineHeight + (cell.lines.length - 1) * cell.lineHeight
+      context.fillStyle = CE_CODE_DESIGN.background
+      context.beginPath()
+      context.roundRect(
+        x + (column.width - width) / 2,
+        top + (cell.lineHeight - lineHeight) / 2,
+        width,
+        height,
+        design.radius
+      )
+      context.fill()
+    }
     for (const [index, value] of cell.lines.entries())
       line(
         cell.richLines?.[index] || [{ text: value, font: cell.font }],

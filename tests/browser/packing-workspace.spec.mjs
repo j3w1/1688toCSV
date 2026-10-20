@@ -2562,6 +2562,7 @@ test('label editor saves repeated text edits and copies barcode and carton image
     label.getByRole('heading', { name: 'Barcode label' })
   ).toBeVisible()
   await expect(code).toHaveText(`${baseCode}S`)
+  await expect(label.locator('.ce-code-part')).toHaveCount(0)
   await expect(variantCode).toHaveValue('')
   await expect(sizeCode).toHaveValue('S')
   await expect(spanish).toHaveValue('FRASCO')

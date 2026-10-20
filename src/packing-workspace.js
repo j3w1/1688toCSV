@@ -3240,6 +3240,7 @@ export async function startPackingWorkspace({
           packingValueComparison(values, {
             beforeLabel: 'Saved value',
             afterLabel: 'Proposed value',
+            plainCodes: true,
           })
         )
       }
@@ -3347,7 +3348,7 @@ export async function startPackingWorkspace({
         el('small', owner.sellerName),
         orderReference(owner.orderId),
         ...(owner.variant ? [el('p', owner.variant)] : []),
-        el('code', code, 'ce-code conflict-occupied-code'),
+        el('code', code, 'ce-code ce-code-plain conflict-occupied-code'),
         el('p', uiMessage('This code is currently assigned here.'))
       )
       const owningGroupId =

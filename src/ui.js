@@ -12,6 +12,7 @@ import {
 } from './i18n.js'
 import { decorateIcon, icon } from './icons.js'
 import { preparationHelp } from './preparation-help.js'
+import { setCodeText, CODE_READING_HELP } from './code-display.js'
 
 /** Keep the full copyable order number and its source link together. */
 export function orderReference(orderId, { className = '' } = {}) {
@@ -57,13 +58,15 @@ export function copyTextButton(
   )
   preparationHelp(
     button,
-    uiMessage(
-      sourceLabel === 'Copy order number'
-        ? 'Click to copy the order number.'
-        : sourceLabel === 'Copy store name'
-          ? 'Click to copy the store name.'
-          : 'Click to copy this value.'
-    )
+    className.split(/\s+/).includes('ce-code')
+      ? () => `${t('Click to copy this value.')} ${t(CODE_READING_HELP)}`
+      : uiMessage(
+          sourceLabel === 'Copy order number'
+            ? 'Click to copy the order number.'
+            : sourceLabel === 'Copy store name'
+              ? 'Click to copy the store name.'
+              : 'Click to copy this value.'
+        )
   )
   const status = element('span', undefined, 'copy-text-feedback')
   status.setAttribute('role', 'status')
@@ -151,6 +154,13 @@ export function element(tag, text, className) {
   if (isMessage(text)) bindText(node, text)
   else if (text !== undefined) node.textContent = text
   if (className) node.className = className
+  if (
+    node.classList.contains('ce-code') &&
+    !node.classList.contains('ce-code-plain') &&
+    typeof text === 'string' &&
+    setCodeText(node, text)
+  )
+    preparationHelp(node, uiMessage(CODE_READING_HELP))
   return node
 }
 

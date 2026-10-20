@@ -17,6 +17,11 @@ import { PRINT_MESSAGES } from './ui-messages-print.js'
 
 // Explicit interface messages only; original seller, product and label values are never translated.
 export const UI_MESSAGES = {
+  'The underline identifies the four-digit product number. CE and year/month stay together; code values are unchanged.':
+    {
+      zh: '下划线标出四位商品编号。CE 与年月保持相连；编码值不变。',
+      es: 'El subrayado identifica el número de producto de cuatro cifras. CE y el año/mes permanecen unidos; el valor del código no cambia.',
+    },
   'Shortcut outside text fields': {
     zh: '非文本输入时的快捷键',
     es: 'Atajo fuera de los campos de texto',

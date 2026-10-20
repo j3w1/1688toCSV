@@ -1065,7 +1065,7 @@ test('CJK descriptions and long barcode values wrap fully without exceeding thei
     )
   }))
 
-test('Code emphasis preserves complete values and marks every reordered row without repeating group codes', async () =>
+test('Code badges preserve complete values, white bold text and rounding without repeating group codes', async () =>
   withCanvas(async (state) => {
     const barcode = `${row.baseCode}ABCDEFGHIJKLMNOPQRSTUVWXYZAMBS`
     const [plan] = planExcelImage([
@@ -1076,36 +1076,16 @@ test('Code emphasis preserves complete values and marks every reordered row with
     const first = cell(plan.rows[0], 'barcode')
     assert.equal(first.lines.join(''), barcode)
     const firstRuns = first.richLines.flat()
-    assert.equal(
-      firstRuns
-        .filter((run) => !run.font.startsWith('700'))
-        .map((run) => run.text)
-        .join(''),
-      row.baseCode
-    )
-    assert.equal(
-      firstRuns
-        .filter((run) => run.font.startsWith('700'))
-        .map((run) => run.text)
-        .join(''),
-      barcode.slice(10)
-    )
+    assert.equal(firstRuns.map((run) => run.text).join(''), barcode)
     assert.ok(
-      firstRuns
-        .filter((run) => !run.font.startsWith('700'))
-        .every((run) => run.color === '#1d4ed8')
+      firstRuns.every(
+        (run) => run.font.startsWith('700') && run.color === '#fff'
+      )
     )
-    assert.ok(
-      firstRuns
-        .filter((run) => run.font.startsWith('700'))
-        .every((run) => run.color === '#24211c')
-    )
+    assert.equal(first.codeBadge, true)
     assert.equal(cell(plan.rows[1], 'baseCode').text, '')
-    assert.equal(cell(plan.rows[1], 'barcode').richLines[0][0].color, '#1d4ed8')
-    assert.equal(
-      cell(plan.rows[2], 'baseCode').richLines[0][0].color,
-      '#24211c'
-    )
+    assert.equal(cell(plan.rows[1], 'barcode').richLines[0][0].color, '#fff')
+    assert.equal(cell(plan.rows[2], 'baseCode').richLines[0][0].color, '#fff')
     assert.equal(Object.isFrozen(first.richLines[0][0]), true)
     for (const entry of plan.rows)
       for (const column of ['baseCode', 'barcode']) {
@@ -1120,15 +1100,18 @@ test('Code emphasis preserves complete values and marks every reordered row with
         )
       }
     await renderExcelImage(plan, { loadImage: async () => png })
-    assert.ok(
-      state.text.some(
-        (value) => value.text === row.baseCode && value.color === '#1d4ed8'
+    const printed = state.text
+      .filter(
+        (value) => value.font.startsWith('700 ') && value.color === '#fff'
       )
-    )
-    assert.ok(
-      state.text.some(
-        (value) => value.text === 'BS' && value.font.startsWith('700 17px')
-      )
+      .map((value) => value.text)
+      .join('')
+    assert.equal(printed, `${barcode}${row.baseCode}BS${row.baseCode}XL`)
+    assert.equal(
+      state.fills.filter((fill) => fill.color === '#000' && fill.radius > 0)
+        .length,
+      3,
+      'Each barcode has one rounded backing even when its text wraps'
     )
   }))
 
@@ -1597,7 +1580,7 @@ test('Cancellation interrupts a pending photo and stops subsequent row work', as
     )
   }))
 
-test('Real canvas output preserves centered rich text, blue reordered codes and contained photos', async (t) => {
+test('Real canvas output preserves centered rich text, black/white code badges and contained photos', async (t) => {
   const { build } = await import('esbuild')
   const { chromium } = await import('@playwright/test')
   const bundle = await build({
@@ -1710,15 +1693,32 @@ test('Real canvas output preserves centered rich text, blue reordered codes and 
     canvas.height = bitmap.height
     const context = canvas.getContext('2d')
     context.drawImage(bitmap, 0, 0)
-    const { data } = context.getImageData(0, 0, bitmap.width, bitmap.height)
+    const codeIndex = plan.columns.findIndex(
+      (column) => column.key === 'barcode'
+    )
+    const codeLeft =
+      1 +
+      plan.columns
+        .slice(0, codeIndex)
+        .reduce((sum, column) => sum + column.width, 0)
+    const { data } = context.getImageData(
+      Math.round(codeLeft * 2),
+      Math.round((plan.headerHeight + 1) * 2),
+      plan.columns[codeIndex].width * 2,
+      plan.rows[0].height * 2
+    )
     let bluePixels = 0
-    for (let index = 0; index < data.length; index += 4)
+    let blackPixels = 0
+    for (let index = 0; index < data.length; index += 4) {
       if (
         data[index] === 29 &&
         data[index + 1] === 78 &&
         data[index + 2] === 216
       )
         bluePixels++
+      if (data[index] === 0 && data[index + 1] === 0 && data[index + 2] === 0)
+        blackPixels++
+    }
     bitmap.close()
     canvas.width = canvas.height = 0
     photo.width = photo.height = 0
@@ -1727,13 +1727,15 @@ test('Real canvas output preserves centered rich text, blue reordered codes and 
       calls,
       photos,
       bluePixels,
+      blackPixels,
       plan,
       headerChecks,
       width: result.width,
       height: result.height,
     }
   }, row)
-  assert.ok(actual.bluePixels > 100)
+  assert.equal(actual.bluePixels, 0)
+  assert.ok(actual.blackPixels > 100)
   for (const check of actual.headerChecks) {
     for (const [index, column] of check.columns.entries())
       for (const word of column.label.split(/\s+/))
@@ -1775,9 +1777,6 @@ test('Real canvas output preserves centered rich text, blue reordered codes and 
     )
     x += column.width
   }
-  const prefix = actual.calls.find((call) => call.text === row.baseCode)
-  assert.equal(prefix.color, '#1d4ed8')
-  assert.ok(prefix.font.startsWith('17px'))
   const barcodeIndex = excelImageColumns.findIndex(
     (column) => column.key === 'barcode'
   )
@@ -1803,17 +1802,14 @@ test('Real canvas output preserves centered rich text, blue reordered codes and 
     // Font metrics differ by OS. Verify every drawn character and its style,
     // including suffixes that wrap into separate draw calls.
     assert.equal(calls.map((call) => call.text).join(''), expected)
-    let offset = 0
+    assert.equal(
+      calls.length === 1,
+      index === 0,
+      'Ordinary codes fit on one line; long endings remain complete by wrapping'
+    )
     for (const call of calls) {
-      if (offset < row.baseCode.length) {
-        assert.ok(offset + call.text.length <= row.baseCode.length)
-        assert.ok(call.font.startsWith('17px'))
-        assert.equal(call.color, '#1d4ed8')
-      } else {
-        assert.match(call.font, /^(?:700|bold) 17px/)
-        assert.equal(call.color, '#24211c')
-      }
-      offset += call.text.length
+      assert.match(call.font, /^(?:700|bold) (?:1[2-7])px/)
+      assert.match(call.color, /^#(?:fff|ffffff)$/i)
     }
     barcodeTop = barcodeBottom
   }
