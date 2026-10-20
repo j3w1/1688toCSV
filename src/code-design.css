@@ -4,6 +4,7 @@
 .packing-review-codes code.ce-code,
 .row-preparation .row-code-copy.ce-code,
 .preparation-workspace .preparation-group input.group-code-editor.ce-code {
+  --ce-code-reading-weight: 0.25;
   display: inline-block;
   box-sizing: border-box;
   inline-size: fit-content;
@@ -71,11 +72,18 @@ input.ce-code,
   white-space: nowrap;
 }
 .ce-code-part[data-code-part='product'] {
-  text-decoration-line: underline;
-  text-decoration-color: #fff;
-  text-decoration-thickness: 0.5px;
-  text-underline-offset: 0.12em;
-  text-decoration-skip-ink: none;
+  position: relative;
+}
+.ce-code-part[data-code-part='product']::after {
+  content: '';
+  position: absolute;
+  inset-inline: 0;
+  inset-block-end: 0.1em;
+  height: 1px;
+  background: #fff;
+  /* Scaling avoids text-decoration's whole-device-pixel minimum. */
+  transform: scaleY(var(--ce-code-reading-weight, 0.25));
+  pointer-events: none;
 }
 input.ce-code.ce-code-input-readable,
 .preparation-workspace
@@ -83,7 +91,8 @@ input.ce-code.ce-code-input-readable,
   input.group-code-editor.ce-code-input-readable {
   background-image: linear-gradient(#fff, #fff);
   background-repeat: no-repeat;
-  background-size: var(--ce-code-underline-width) 0.5px;
+  background-size: var(--ce-code-underline-width)
+    calc(1px * var(--ce-code-reading-weight, 0.25));
   background-position: calc(50% + var(--ce-code-underline-shift))
     calc(50% + 0.48em);
 }

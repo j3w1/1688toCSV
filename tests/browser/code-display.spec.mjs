@@ -90,18 +90,20 @@ test('workspace uses white hairlines on product digits across readouts and nativ
     })
   )
   expect(Math.abs(parts[1].x - parts[0].x - parts[0].width)).toBeLessThan(0.1)
-  await expect(badge.locator('[data-code-part="product"]')).toHaveCSS(
-    'text-decoration-line',
-    'underline'
-  )
-  await expect(badge.locator('[data-code-part="product"]')).toHaveCSS(
-    'text-decoration-color',
-    'rgb(255, 255, 255)'
-  )
-  await expect(badge.locator('[data-code-part="product"]')).toHaveCSS(
-    'text-decoration-thickness',
-    '0.5px'
-  )
+  expect(
+    await badge.locator('[data-code-part="product"]').evaluate((node) => {
+      const line = getComputedStyle(node, '::after')
+      return {
+        color: line.backgroundColor,
+        height: line.height,
+        transform: line.transform,
+      }
+    })
+  ).toEqual({
+    color: 'rgb(255, 255, 255)',
+    height: '1px',
+    transform: 'matrix(1, 0, 0, 0.25, 0, 0)',
+  })
   await expect(badge.locator('[data-code-part="prefix-period"]')).toHaveCSS(
     'text-decoration-line',
     'none'
@@ -130,7 +132,7 @@ test('workspace uses white hairlines on product digits across readouts and nativ
   )
   expect(
     await input.evaluate((node) => getComputedStyle(node).backgroundSize)
-  ).toMatch(/ 0\.5px$/)
+  ).toMatch(/ 0\.25px$/)
   await expect(input).toHaveAttribute('aria-label', 'Product code')
   await input.focus()
   await expect(input).toHaveCSS('color', 'rgb(255, 255, 255)')
