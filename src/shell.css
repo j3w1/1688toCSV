@@ -997,7 +997,7 @@ html:has(body.packing-active) {
   }
 }
 
-/* Settings: sections listed on the left; the panel scrolls and Save stays visible. */
+/* One viewport-bounded Settings frame: section content scrolls without resizing it. */
 #settings-dialog {
   inline-size: min(1040px, calc(100vw - 24px));
   max-inline-size: 1040px;
@@ -1011,7 +1011,8 @@ html:has(body.packing-active) {
   display: grid;
   grid-template-columns: 200px minmax(0, 1fr);
   grid-template-rows: auto minmax(0, 1fr) auto;
-  min-block-size: min(620px, calc(100dvh - 34px));
+  block-size: min(720px, calc(100dvh - 34px));
+  min-block-size: 0;
   max-block-size: calc(100dvh - 34px);
 }
 #settings-content > h2 {
@@ -1034,6 +1035,9 @@ html:has(body.packing-active) {
   border: 0;
   border-inline-end: 1px solid var(--divider);
   background: var(--field);
+  min-block-size: 0;
+  overflow: auto;
+  overscroll-behavior: contain;
 }
 #settings-content > h2 {
   border-inline-end: 1px solid var(--divider);
