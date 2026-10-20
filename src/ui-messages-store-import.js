@@ -1,4 +1,158 @@
 export const STORE_IMPORT_MESSAGES = {
+  'Workbook guide': { zh: '工作簿指南', es: 'Guía del libro' },
+  Setup: { zh: '准备', es: 'Preparar' },
+  Markers: { zh: '标记', es: 'Marcadores' },
+  Checks: { zh: '核对', es: 'Revisar' },
+  'Use the store number or factory name as the filename. Copy suffixes keep the same store; each import adds a new order.':
+    {
+      zh: '用门店号或工厂名命名文件。复制后缀不改变门店；每次导入都会新增一个订单。',
+      es: 'Usa el número de tienda o el nombre de fábrica como archivo. Los sufijos de copia conservan la tienda; cada importación añade un pedido.',
+    },
+  'Keep the original. Add one marker row above the seller’s headers in a copy. Only marked columns are read, in any order.':
+    {
+      zh: '保留原文件。在副本的卖家表头上方添加一行标记。只读取已标记的列，列顺序不限。',
+      es: 'Conserva el original. Añade una fila de marcadores sobre los encabezados en una copia. Solo se leen las columnas marcadas, en cualquier orden.',
+    },
+  'Copy markers from the Markers tab. Repeat desc to combine description columns.':
+    {
+      zh: '从“标记”页复制标记。重复使用 desc 可合并多个描述列。',
+      es: 'Copia los marcadores de la pestaña Marcadores. Repite desc para combinar columnas de descripción.',
+    },
+  'Check boxes × perbox = qty, price × qty = amount, and the row amounts against total. A mismatch blocks import and names the affected cells; values are never silently corrected.':
+    {
+      zh: '核对 boxes × perbox = qty、price × qty = amount，以及各行金额之和是否等于 total。不一致时会阻止导入并指出相关单元格，不会自动修改数值。',
+      es: 'Comprueba boxes × perbox = qty, price × qty = amount y la suma frente a total. Una diferencia bloquea la importación e identifica las celdas; nunca se corrigen valores sin avisar.',
+    },
+  'Numbers may include units, such as 6元, 20.5 KG or 0.14 CBM. Ambiguous values need review. kg and cbm always describe one carton.':
+    {
+      zh: '数字可带单位，如 6元、20.5 KG 或 0.14 CBM。含义不清的值需要审核。kg 和 cbm 始终表示每箱数值。',
+      es: 'Los números pueden incluir unidades, como 6元, 20.5 KG o 0.14 CBM. Revisa los valores ambiguos. kg y cbm siempre corresponden a una caja.',
+    },
+  'cbm is decimal m³. Put centimetre dimensions in cbmx, cbmy and cbmz. When all three exist, their calculated volume takes priority: x × y × z ÷ 1,000,000.':
+    {
+      zh: 'cbm 为十进制立方米。厘米尺寸分别填入 cbmx、cbmy、cbmz。三项齐全时，优先使用计算体积：x × y × z ÷ 1,000,000。',
+      es: 'cbm expresa m³ decimales. Pon las dimensiones en centímetros en cbmx, cbmy y cbmz. Si existen las tres, tiene prioridad su volumen calculado: x × y × z ÷ 1,000,000.',
+    },
+  'abcd shares one quantity and amount across A–D. Enter the actual split during review; never duplicate the totals or assume equal quantities. abs, abm and abl mean A/B in sizes S, M and L.':
+    {
+      zh: 'abcd 表示 A–D 共用一份数量和金额。审核时输入实际分配；不可复制总数或假定平均分配。abs、abm、abl 分别表示 S、M、L 尺码的 A/B 款。',
+      es: 'abcd comparte una cantidad e importe entre A–D. Introduce el reparto real al revisar; nunca dupliques los totales ni supongas cantidades iguales. abs, abm y abl indican A/B en tallas S, M y L.',
+    },
+  'Every product needs a photo. Missing or uncertain row links block import. Review shared or multiple photos. Thumbnails fit a square without stretching; photo edits keep the original.':
+    {
+      zh: '每件商品都需要照片。缺失照片或行关联不明确时会阻止导入。共用照片或多张照片需要审核。缩略图等比适配正方形；编辑会保留原图。',
+      es: 'Cada producto necesita foto. Las fotos ausentes o los vínculos dudosos bloquean la importación. Revisa las fotos compartidas o múltiples. Las miniaturas se ajustan sin deformarse y la edición conserva el original.',
+    },
+  'Review loose units and shared cartons separately from ordered quantities. Never infer fractional or mixed cartons. Add and explain extra order costs separately.':
+    {
+      zh: '零散件和共箱安排应与订购数量分开审核，不推断分数箱或混装箱。额外订单费用需单独添加并说明。',
+      es: 'Revisa las unidades sueltas y cajas compartidas aparte de lo pedido. No supongas cajas fraccionadas o mixtas. Añade y explica los costes extra por separado.',
+    },
+  'Confirm the purchase date in the form. The filename identifies the store, not the date.':
+    {
+      zh: '在表单中确认购买日期。文件名只标识门店，不表示购买日期。',
+      es: 'Confirma la fecha de compra en el formulario. El archivo identifica la tienda, no la fecha.',
+    },
+  'Download template': { zh: '下载模板', es: 'Descargar plantilla' },
+  'Download an editable workbook with ready import markers, formatted product rows and formulas.':
+    {
+      zh: '下载可编辑的工作簿，其中已设好导入标记、商品行格式和公式。',
+      es: 'Descarga un libro editable con marcadores, filas de productos y fórmulas ya preparados.',
+    },
+  'Save your completed copy as the store number or factory name, then choose it below.':
+    {
+      zh: '填写后以门店编号或工厂名称保存副本，再在下方选择文件。',
+      es: 'Guarda tu copia completada con el número de tienda o el nombre de la fábrica y selecciónala debajo.',
+    },
+  'Workbook checks': { zh: '表格核对', es: 'Revisión del Excel' },
+  'Check all reviews': {
+    zh: '勾选全部审核项',
+    es: 'Marcar todas las revisiones',
+  },
+  'Confirms review warnings only. Workbook errors, variant quantities and the final photo check still need attention.':
+    {
+      zh: '仅确认可审核的提醒。表格错误、款式数量分配及最终照片核对仍需单独处理。',
+      es: 'Solo confirma los avisos revisables. Los errores, las cantidades por variante y la comprobación final de fotos siguen requiriendo atención.',
+    },
+  '{checked}/{total} reviews checked · {blocking} blocking': {
+    zh: '已核对 {checked}/{total} 项 · {blocking} 项阻止导入',
+    es: '{checked}/{total} revisiones marcadas · {blocking} bloqueos',
+  },
+  'Confirm review {0}': {
+    zh: '确认第 {0} 项审核',
+    es: 'Confirmar revisión {0}',
+  },
+  'Shared group photo': { zh: '组内共用照片', es: 'Foto compartida del grupo' },
+  'Photo overlaps groups': {
+    zh: '照片跨越商品组',
+    es: 'Foto entre grupos distintos',
+  },
+  'Missing product photo': {
+    zh: '缺少商品照片',
+    es: 'Falta la foto del producto',
+  },
+  'Unreadable photo': { zh: '照片无法读取', es: 'Foto ilegible' },
+  'Split variant quantities': {
+    zh: '分配款式数量',
+    es: 'Repartir cantidades por variante',
+  },
+  'Quantity mismatch': { zh: '数量不符', es: 'Cantidad incorrecta' },
+  'Product amount mismatch': {
+    zh: '商品金额不符',
+    es: 'Importe del producto incorrecto',
+  },
+  'Order total mismatch': {
+    zh: '订单总金额不符',
+    es: 'Total del pedido incorrecto',
+  },
+  'Incomplete carton dimensions': {
+    zh: '纸箱尺寸不完整',
+    es: 'Medidas de caja incompletas',
+  },
+  'Confirm these rows share this photo.': {
+    zh: '请确认这些商品行共用此照片。',
+    es: 'Confirma que estas filas comparten la foto.',
+  },
+  'Anchor a separate photo inside each group in Excel.': {
+    zh: '请在 Excel 中为每个商品组分别定位照片。',
+    es: 'Ancla una foto separada dentro de cada grupo en Excel.',
+  },
+  'Paste a picture into this row’s pic cell in Excel.': {
+    zh: '请在 Excel 中将照片粘贴到此行的 pic 单元格。',
+    es: 'Pega una foto en la celda pic de esta fila en Excel.',
+  },
+  'Replace this picture with an embedded image in Excel.': {
+    zh: '请在 Excel 中将此照片替换为嵌入图片。',
+    es: 'Sustituye esta foto por una imagen incrustada en Excel.',
+  },
+  'Allocate the combined quantity in the product row below.': {
+    zh: '请在下方商品行分配合并款式的数量。',
+    es: 'Reparte la cantidad combinada en la fila del producto de abajo.',
+  },
+  'Correct qty, boxes or perbox in Excel.': {
+    zh: '请在 Excel 中修改 qty、boxes 或 perbox。',
+    es: 'Corrige qty, boxes o perbox en Excel.',
+  },
+  'Correct price, qty or amount in Excel.': {
+    zh: '请在 Excel 中修改 price、qty 或 amount。',
+    es: 'Corrige price, qty o amount en Excel.',
+  },
+  'Correct the product rows or the seller’s total in Excel.': {
+    zh: '请在 Excel 中修改商品行或卖家总金额。',
+    es: 'Corrige las filas de productos o el total del vendedor en Excel.',
+  },
+  'Review photo {0}': { zh: '核对照片 {0}', es: 'Foto de revisión {0}' },
+  'View review photo for row {0}, photo {1}': {
+    zh: '查看第 {0} 行的审核照片 {1}',
+    es: 'Ver foto {1} de la revisión de la fila {0}',
+  },
+  'Rows {0}': { zh: '第 {0} 行', es: 'Filas {0}' },
+  'Source qty': { zh: '表格数量', es: 'Cantidad original' },
+  'Source amount': { zh: '表格金额', es: 'Importe original' },
+  'Seller total': { zh: '卖家合计', es: 'Total del vendedor' },
+  Calculated: { zh: '计算结果', es: 'Calculado' },
+  Blocked: { zh: '需修正', es: 'Bloqueado' },
+  Manual: { zh: '需填写', es: 'Manual' },
   'The source photo changed. Reopen the photo before editing it.': {
     zh: '来源照片已更改。请重新打开照片后再编辑。',
     es: 'La foto original cambió. Vuelve a abrirla antes de editar.',
@@ -320,6 +474,7 @@ export const STORE_IMPORT_MESSAGES = {
     zh: '正在处理第 {0} / {1} 张照片…',
     es: 'Preparando foto {0} de {1}…',
   },
+  Review: { zh: '待核对', es: 'Revisar' },
   Checked: { zh: '已核对', es: 'Comprobado' },
   'Fix in workbook': { zh: '请修改工作簿', es: 'Corregir en el libro' },
   'Choose a workbook with at least one included product row.': {

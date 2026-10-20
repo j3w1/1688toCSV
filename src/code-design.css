@@ -4,7 +4,7 @@
 .packing-review-codes code.ce-code,
 .row-preparation .row-code-copy.ce-code,
 .preparation-workspace .preparation-group input.group-code-editor.ce-code {
-  --ce-code-reading-weight: 0.35;
+  --ce-code-reading-weight: 0.5;
   display: inline-block;
   box-sizing: border-box;
   inline-size: fit-content;
@@ -78,11 +78,11 @@ input.ce-code,
   content: '';
   position: absolute;
   inset-inline: 0;
-  inset-block-end: 0.1em;
+  inset-block-end: 0;
   height: 1px;
   background: #fff;
   /* Scaling avoids text-decoration's whole-device-pixel minimum. */
-  transform: scaleY(var(--ce-code-reading-weight, 0.35));
+  transform: scaleY(var(--ce-code-reading-weight, 0.5));
   pointer-events: none;
 }
 input.ce-code.ce-code-input-readable,
@@ -92,9 +92,9 @@ input.ce-code.ce-code-input-readable,
   background-image: linear-gradient(#fff, #fff);
   background-repeat: no-repeat;
   background-size: var(--ce-code-underline-width)
-    calc(1px * var(--ce-code-reading-weight, 0.35));
+    calc(1px * var(--ce-code-reading-weight, 0.5));
   background-position: calc(50% + var(--ce-code-underline-shift))
-    calc(50% + 0.48em);
+    calc(50% + 0.58em);
 }
 @supports (height: 1cap) {
   input.ce-code.ce-code-input-readable,
@@ -102,11 +102,11 @@ input.ce-code.ce-code-input-readable,
     .preparation-group
     input.group-code-editor.ce-code-input-readable {
     background-position: calc(50% + var(--ce-code-underline-shift))
-      calc(50% + 0.5cap + 0.12em);
+      calc(50% + 0.5cap + 0.22em);
   }
 }
 .variant-code-design {
-  --ce-code-size: 20px;
+  --ce-code-size: 16px;
   display: flex;
   flex-wrap: wrap;
   align-items: center;
@@ -118,10 +118,13 @@ input.ce-code.ce-code-input-readable,
 }
 .variant-code-band.ce-code {
   display: inline-flex;
-  align-items: center;
+  align-items: baseline;
   gap: 0;
   block-size: calc(0.72em + 2 * var(--ce-code-padding-block));
-  padding-block: 0;
+  /* Native suffix fields keep an untrimmed 1em line box. Align its actual
+     baseline with the trimmed readout, then center that line box inside the
+     same cap-height badge envelope instead of centering unlike boxes. */
+  padding-block: calc((0.72em + 2 * var(--ce-code-padding-block) - 1em) / 2);
 }
 .variant-code-design .variant-code-base,
 .preparation-workspace .variants .variant-code-design input {
@@ -152,6 +155,9 @@ input.ce-code.ce-code-input-readable,
   input.ce-code,
   .preparation-workspace .preparation-group input.group-code-editor.ce-code {
     block-size: calc(1cap + 2 * var(--ce-code-padding-block));
+  }
+  .variant-code-band.ce-code {
+    padding-block: calc((1cap + 2 * var(--ce-code-padding-block) - 1em) / 2);
   }
 }
 .preparation-workspace

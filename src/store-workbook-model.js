@@ -318,7 +318,7 @@ export function analyzeStoreSheet(workbook, sheetName) {
       'cbm',
     ].filter((marker) => {
       const value = clean(valueAt(cells, marker)?.value)
-      return /^(?:箱数|箱數|件数|装箱数|装箱量|数量|总数量|單價|单价|金额|总价|重量|体积|立方|ctns?|pcs(?:\/ctn)?|price|u\/p|amount|ttl\s*amt\.?|kg|g\.w\.?|cbm)$/i.test(
+      return /^(?:箱数|箱數|件数|装箱数|装箱量|数量|总数量|單價|单价|金额|总价|重量|体积|立方|ctns?|cartons?|boxes|pcs(?:\/(?:ctn|box))?|total units|qty|unit price(?:\s*\(CNY\))?|price|u\/p|(?:line )?amount(?:\s*\(CNY\))?|ttl\s*amt\.?|kg(?:\/box)?|g\.w\.?|cbm|m³\/box)$/i.test(
         value
       )
     }).length

@@ -8,6 +8,28 @@ import {
 
 const json = (name) => JSON.stringify({ groups: [{ spanishName: name }] })
 
+test('measurement-only history retains exact patches and expected values in both directions', () => {
+  const history = createPreparationHistory()
+  const before = JSON.stringify({ 1: { kg: '20.5' } }),
+    after = JSON.stringify({ 1: { kg: '25.125' } })
+  history.recordBatch([
+    {
+      orderId: 'one',
+      before: json('same'),
+      after: json('same'),
+      beforeCartons: before,
+      afterCartons: after,
+    },
+  ])
+  const undone = history.undo().changes[0]
+  assert.deepEqual(undone.cartons, { 1: { kg: '20.5' } })
+  assert.deepEqual(undone.expectedCartons, { 1: { kg: '25.125' } })
+  const redone = history.redo().changes[0]
+  assert.deepEqual(redone.cartons, { 1: { kg: '25.125' } })
+  assert.deepEqual(redone.expectedCartons, { 1: { kg: '20.5' } })
+  assert.ok(history.state().bytes >= 2 * (before.length + after.length))
+})
+
 test('removal scope remains undoable when saved preparation values do not change', () => {
   const history = createPreparationHistory()
   const before = json('same saved values')

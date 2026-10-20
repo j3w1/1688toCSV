@@ -11,7 +11,7 @@ import {
   setLanguage,
 } from './i18n.js'
 import { copyTable, copySingleImage, pngThumbnail } from './clipboard.js'
-import { openDatabase } from './database.js'
+import { openDatabase, storeIdentity } from './database.js'
 import {
   confirmScope,
   copied,
@@ -31,7 +31,10 @@ import { createPhotoViewer } from './photo-viewer.js'
 import { openStoreImportDialog } from './store-import-dialog.js'
 import { productCartonDetails } from './carton-details.js'
 import { mountOrderCharges } from './order-charges-ui.js'
-import { orderCostAdjustments } from './order-charges.js'
+import {
+  orderCostAdjustments,
+  additionalChargesTotal,
+} from './order-charges.js'
 import { presentOrderStatus } from './order-presentation.js'
 import { labelColorKey } from './appearance.js'
 import { applyCodeDesign } from './code-design.js'
@@ -62,8 +65,7 @@ applyCodeDesign(document.documentElement)
 
 const $ = (id) => document.getElementById(id)
 const keyFor = (row) => `${row.orderId}/${row.entryId}`
-const storeKeyFor = (order) =>
-  order.store?.key || order.sellerMemberLogin || order.sellerName
+const storeKeyFor = (order) => storeIdentity(order) || order.orderId
 const headerPreference = '1688-library-include-headers'
 const monthPreference = '1688-library-purchase-months'
 const purchaseDay = (order) => order.purchasedAt?.slice(0, 10) || ''
@@ -118,12 +120,29 @@ function node(tag, text, className) {
   }
   return element
 }
+function wechatCopyButton(value) {
+  if (!value) return null
+  const button = decorateIcon(node('button'), 'wechat', {
+    iconOnly: true,
+    label: uiMessage('Copy WeChat ID'),
+  })
+  button.type = 'button'
+  button.classList.add('store-wechat-copy')
+  preparationHelp(button, uiMessage('Copy WeChat ID: {0}', { 0: value }))
+  button.onclick = (event) => {
+    event.stopPropagation()
+    void copied(button, () => navigator.clipboard.writeText(value))
+  }
+  return button
+}
 function statusBadge(status) {
   const display = presentOrderStatus(status)
   const badge = node('span', uiMessage(display.label), 'order-status')
   badge.dataset.tone = display.tone
   badge.dataset.uiLabel = labelColorKey(display.label)
-  badge.title = status
+  if (status === 'Imported')
+    bindAttribute(badge, 'title', uiMessage('Imported'))
+  else badge.title = status
   return badge
 }
 function revisionBadge(updated) {
@@ -932,42 +951,88 @@ export async function startLibrary(
         .find((part) => part.type === 'decimal').value
       return `¥ ${BigInt(whole).toLocaleString(getLocale())}${decimal}${fraction}`
     }
+    const metric = (key, label, raw, formatted) => {
+      const pair = node('div')
+      pair.dataset.selectionTotal = key
+      const amount = node('dd')
+      if (raw === null) amount.textContent = formatted
+      else {
+        const copy = copyTextButton(String(raw), {
+          label: uiMessage('Copy {0}', { 0: uiMessage(label) }),
+          className: 'selection-total-value',
+        })
+        // Keep the copy closure exact while formatting only its visible number.
+        copy.firstChild.textContent = formatted
+        preparationHelp(
+          copy,
+          uiMessage(
+            'Copy this number without currency or thousands separators.'
+          )
+        )
+        amount.append(copy)
+      }
+      pair.append(node('dt', uiMessage(label)), amount)
+      return pair
+    }
     const amounts = node('dl', undefined, 'selection-totals-grid')
-    for (const [key, label, value] of [
-      ['rows', 'Selected rows', integer(selectedTotals.rowCount)],
-      ['quantity', 'Quantity', integer(selectedTotals.quantity)],
-      ['gross', 'Price × quantity', money(selectedTotals.gross)],
+    for (const [key, label, raw, formatted] of [
+      [
+        'rows',
+        'Selected rows',
+        selectedTotals.rowCount,
+        integer(selectedTotals.rowCount),
+      ],
+      [
+        'quantity',
+        'Quantity',
+        selectedTotals.quantity,
+        integer(selectedTotals.quantity),
+      ],
+      [
+        'gross',
+        'Price × quantity',
+        selectedTotals.gross,
+        money(selectedTotals.gross),
+      ],
       [
         'after-discounts',
         'After row discounts',
+        selectedTotals.afterDiscount,
         money(selectedTotals.afterDiscount),
       ],
-    ]) {
-      const pair = node('div')
-      pair.dataset.selectionTotal = key
-      pair.append(node('dt', uiMessage(label)), node('dd', value))
-      amounts.append(pair)
-    }
+    ])
+      amounts.append(metric(key, label, raw, formatted))
     preparationHelp(
       amounts,
       uiMessage(
         'Only selected product rows are summed, across all filtered pages. After row discounts uses the saved Discount column, including already allocated seller adjustments. Shipping and other order-wide charges are not added or divided. This is not the order payable total.'
       )
     )
-    const context = node('p', undefined, 'selection-totals-context')
+    const context = node('dl', undefined, 'selection-totals-context')
     context.append(
-      node(
-        'span',
-        uiMessage('Filtered products: {rows} rows · Quantity {quantity}', {
-          rows: integer(filteredTotals.rowCount),
-          quantity: integer(filteredTotals.quantity),
-        })
+      metric(
+        'filtered-rows',
+        'Filtered rows',
+        filteredTotals.rowCount,
+        integer(filteredTotals.rowCount)
       ),
-      node(
-        'span',
-        uiMessage('Complete matching orders: Quantity {quantity}', {
-          quantity: integer(matchingTotals.quantity),
-        })
+      metric(
+        'filtered-quantity',
+        'Filtered quantity',
+        filteredTotals.quantity,
+        integer(filteredTotals.quantity)
+      ),
+      metric(
+        'matching-quantity',
+        'Matching-order quantity',
+        matchingTotals.quantity,
+        integer(matchingTotals.quantity)
+      )
+    )
+    preparationHelp(
+      context.querySelector('[data-selection-total="matching-quantity"] dt'),
+      uiMessage(
+        'Quantity in the complete orders containing the filtered products.'
       )
     )
     host.replaceChildren(amounts, context)
@@ -1159,6 +1224,8 @@ export async function startLibrary(
         void openDetails(record).catch((error) => feedback(error.message, true))
       })
       identity.append(details)
+      const contact = wechatCopyButton(record.storeWechat)
+      if (contact) identity.append(contact)
       const productNames = packing?.orderNames(order.orderId) || []
       if (getLanguage() !== 'zh' && productNames.length) {
         const names = node('span', undefined, 'order-name-summary spanish-name')
@@ -1177,10 +1244,6 @@ export async function startLibrary(
       summary.append(identity)
       const reference = node('div', undefined, 'order-card-reference')
       reference.append(
-        orderReference(order.orderId, {
-          className: 'order-reference',
-          sourceType: order.sourceType,
-        }),
         node(
           'span',
           uiMessage(order.items.length === 1 ? '{0} product' : '{0} products', {
@@ -1189,8 +1252,40 @@ export async function startLibrary(
           'order-products'
         )
       )
+      const charges = additionalChargesTotal(record)
+      if (charges !== '0.00') {
+        const costs = node('button', `+¥${charges}`, 'order-card-charges')
+        costs.type = 'button'
+        bindAttribute(
+          costs,
+          'aria-label',
+          uiMessage('Additional charges: ¥{0}', { 0: charges })
+        )
+        preparationHelp(
+          costs,
+          uiMessage('Additional order charges: {0}. Click to edit.', {
+            0: record.additionalCharges
+              .map((charge) => `${charge.reason} (¥${charge.amount})`)
+              .join(' · '),
+          })
+        )
+        costs.onclick = (event) => {
+          event.stopPropagation()
+          void openDetails(record)
+            .then(() =>
+              $('details-content')
+                .querySelector('.order-charges')
+                ?.scrollIntoView({ block: 'nearest' })
+            )
+            .catch((error) => feedback(error.message, true))
+        }
+        reference.append(costs)
+      }
       const meta = node('div', undefined, 'order-card-meta')
-      if (order.store?.number)
+      if (
+        order.store?.number &&
+        !String(order.sellerName).split(/\D+/).includes(order.store.number)
+      )
         meta.append(
           copyTextButton(order.store.number, {
             label: 'Copy store number',
@@ -1289,7 +1384,7 @@ export async function startLibrary(
       if (previousOrder !== row.orderId) {
         const heading = node('tr', undefined, `order-section-heading ${tone}`)
         const cell = node('th')
-        cell.colSpan = 7
+        cell.colSpan = 9
         sectionId = `order-section-${row.orderId}`
         cell.id = sectionId
         const band = node('div', undefined, 'order-section-band')
@@ -1315,7 +1410,7 @@ export async function startLibrary(
           revisionBadge(row.record.revision > 1),
           node(
             'span',
-            uiMessage('{0} matching product{1}{2}', {
+            uiMessage('{0} product row{1}{2}', {
               0: () => count.toLocaleString(getLocale()),
               1: count === 1 ? '' : 's',
               2: continued ? uiMessage(' · continued') : '',
@@ -1420,7 +1515,12 @@ export async function startLibrary(
         attributes.append(pair)
       }
       const capacity = node('td', undefined, 'numeric pack-size-cell')
-      packing?.decorateRow(description, row, capacity)
+      const weight = node('td', undefined, 'numeric measurement-cell'),
+        volume = node('td', undefined, 'numeric measurement-cell')
+      packing?.decorateRow(description, row, capacity, {
+        kg: weight,
+        cbm: volume,
+      })
       const assignedTags = row.record.productTags?.[row.entryId] || []
       if (assignedTags.length) {
         const tags = node('div', undefined, 'product-row-tags')
@@ -1474,7 +1574,9 @@ export async function startLibrary(
           }),
           'numeric quantity-cell'
         ),
-        capacity
+        capacity,
+        weight,
+        volume
       )
       body.append(tr)
     }
@@ -2076,8 +2178,8 @@ export async function startLibrary(
     annotationEditor?.destroy()
     annotationEditor = undefined
     chargeEditor = undefined
-    const order = record.snapshot,
-      content = $('details-content')
+    let order = record.snapshot
+    const content = $('details-content')
     const metadata = node('div', undefined, 'row-meta')
     metadata.append(
       statusBadge(order.status),
@@ -2107,6 +2209,108 @@ export async function startLibrary(
       metadata
     )
     content.replaceChildren()
+    const profile = node('section', undefined, 'store-profile'),
+      profileFields = node('div', undefined, 'store-profile-fields'),
+      profileStatus = node('p', undefined, 'store-profile-status'),
+      wechatForm = node('form', undefined, 'store-wechat-form'),
+      wechatField = node('div', undefined, 'store-profile-field'),
+      wechatLabel = node('label', uiMessage('WeChat ID')),
+      wechatControls = node('span', undefined, 'store-contact-controls'),
+      wechatInput = node('input'),
+      wechatSave = node('button', uiMessage('Save'))
+    let savedWechat = record.storeWechat || '',
+      profileBusy = false,
+      nameInput,
+      nameSave
+    wechatInput.type = 'text'
+    wechatInput.name = 'store-wechat'
+    wechatInput.id = `store-wechat-${crypto.randomUUID()}`
+    wechatInput.value = savedWechat
+    wechatInput.maxLength = 128
+    wechatInput.autocomplete = 'off'
+    wechatInput.spellcheck = false
+    wechatLabel.htmlFor = wechatInput.id
+    wechatSave.type = 'submit'
+    bindAttribute(wechatSave, 'aria-label', uiMessage('Save WeChat ID'))
+    decorateIcon(wechatSave, 'check')
+    preparationHelp(
+      wechatSave,
+      uiMessage(
+        'Save this WeChat ID for every order from this store. Leave it blank to remove the saved contact.'
+      )
+    )
+    profileStatus.setAttribute('role', 'status')
+    const renderContact = () => {
+      wechatControls.querySelector('.store-wechat-copy')?.remove()
+      const copy = wechatCopyButton(savedWechat)
+      if (copy) wechatControls.append(copy)
+    }
+    const profileButtons = () => {
+      wechatInput.disabled = profileBusy
+      wechatSave.disabled =
+        profileBusy || wechatInput.value.trim() === savedWechat
+      if (nameInput) {
+        nameInput.disabled = profileBusy
+        nameSave.disabled =
+          profileBusy ||
+          !nameInput.value.trim() ||
+          nameInput.value.trim() === order.sellerName
+      }
+    }
+    const saveProfile = async (field) => {
+      if (profileBusy) return
+      const nameDirty =
+          nameInput && nameInput.value.trim() !== order.sellerName,
+        contactDirty = wechatInput.value.trim() !== savedWechat
+      profileBusy = true
+      profileButtons()
+      profileStatus.classList.remove('is-error')
+      bindText(profileStatus, uiMessage('Saving…'))
+      try {
+        const store = repository || (await openDatabase())
+        await packing?.flush()
+        const next =
+          field === 'name'
+            ? await store.renameStore(order.orderId, nameInput.value, {
+                accountId: record.accountId,
+              })
+            : await store.setStoreWechat(order.orderId, wechatInput.value, {
+                accountId: record.accountId,
+              })
+        record = next
+        order = next.snapshot
+        savedWechat = next.storeWechat || ''
+        if (field === 'wechat' || !contactDirty) wechatInput.value = savedWechat
+        if (nameInput && (field === 'name' || !nameDirty))
+          nameInput.value = order.sellerName
+        sellerHeading.replaceChildren(
+          copyTextButton(order.sellerName, { label: 'Copy store name' })
+        )
+        renderContact()
+        chargeEditor?.update(next)
+        await refresh()
+        bindText(profileStatus, uiMessage('Saved'))
+      } catch (error) {
+        profileStatus.classList.add('is-error')
+        bindText(profileStatus, uiMessage(error.message))
+      } finally {
+        profileBusy = false
+        profileButtons()
+      }
+    }
+    const profileInputChanged = () => {
+      bindText(profileStatus, '')
+      profileStatus.classList.remove('is-error')
+      profileButtons()
+    }
+    wechatInput.addEventListener('input', profileInputChanged)
+    wechatForm.addEventListener('submit', (event) => {
+      event.preventDefault()
+      void saveProfile('wechat')
+    })
+    wechatControls.append(wechatInput)
+    wechatField.append(wechatLabel, wechatControls)
+    wechatForm.append(wechatField, wechatSave)
     if (order.sourceType === 'spreadsheet') {
       const source = node('p', undefined, 'store-source-file')
       source.append(
@@ -2122,34 +2326,43 @@ export async function startLibrary(
           copyTextButton(order.store.number, { label: 'Copy store number' })
         )
       const rename = node('form', undefined, 'store-rename'),
+        field = node('div', undefined, 'store-profile-field'),
         label = node('label', uiMessage('Store name')),
         input = node('input'),
-        save = node('button', uiMessage('Save store name'))
+        save = node('button', uiMessage('Save'))
+      nameInput = input
+      nameSave = save
+      input.type = 'text'
+      input.id = `store-name-${crypto.randomUUID()}`
       input.name = 'store-name'
       input.value = order.sellerName
       input.required = true
-      label.append(input)
+      label.htmlFor = input.id
+      field.append(label, input)
       save.type = 'submit'
-      rename.append(label, save)
-      rename.addEventListener('submit', async (event) => {
+      bindAttribute(save, 'aria-label', uiMessage('Save store name'))
+      decorateIcon(save, 'check')
+      preparationHelp(
+        save,
+        uiMessage(
+          'Save the store name for every imported order from this store.'
+        )
+      )
+      rename.append(field, save)
+      input.addEventListener('input', profileInputChanged)
+      rename.addEventListener('submit', (event) => {
         event.preventDefault()
-        save.disabled = true
-        try {
-          const store = repository || (await openDatabase())
-          await packing?.flush()
-          await store.renameStore(order.orderId, input.value, {
-            accountId: record.accountId,
-          })
-          await refresh()
-          await closeOrderDetails(new Event('submit', { cancelable: true }))
-        } catch (error) {
-          feedback(error.message, true)
-        } finally {
-          save.disabled = false
-        }
+        void saveProfile('name')
       })
-      content.append(source, rename)
+      profileFields.append(rename)
+      profile.append(source)
     }
+    profileFields.append(wechatForm)
+    profile.prepend(profileFields)
+    profile.append(profileStatus)
+    content.append(profile)
+    renderContact()
+    profileButtons()
     const storeOrders = records.filter(
       ({ snapshot }) => storeKeyFor(snapshot) === storeKeyFor(order)
     )
@@ -2157,8 +2370,10 @@ export async function startLibrary(
       'button',
       uiMessage('View all {0} orders from this store', {
         0: storeOrders.length,
-      })
+      }),
+      'store-orders-link'
     )
+    decorateIcon(allStoreOrders, 'store')
     allStoreOrders.onclick = async () => {
       await closeOrderDetails(new Event('click', { cancelable: true }))
       storeFilter = storeKeyFor(order)
@@ -2171,7 +2386,9 @@ export async function startLibrary(
       renderMonthOptions()
       render()
     }
-    content.append(allStoreOrders)
+    const storeOrdersBar = node('div', undefined, 'store-orders-bar')
+    storeOrdersBar.append(allStoreOrders)
+    content.append(storeOrdersBar)
     chargeEditor = mountOrderCharges(content, {
       record,
       onSave: async (charges) => {
@@ -2196,7 +2413,7 @@ export async function startLibrary(
           'packing-help'
         )
       )
-    const totals = node('dl')
+    const totals = node('dl', undefined, 'order-details-totals')
     for (const [label, value] of [
       [
         Number(order.totals.grossIncludedCustomization) > 0
@@ -2239,12 +2456,18 @@ export async function startLibrary(
     ])
       totals.append(node('dt', uiMessage(label)), node('dd', `¥ ${value}`))
     content.append(
+      node(
+        'h3',
+        uiMessage('Source order totals'),
+        'order-source-totals-heading'
+      ),
       totals,
       node(
         'p',
         uiMessage(
           'Price changes not already included in product discounts are allocated in proportion to each product’s value after its own discounts. Wholesale reductions already in prices are counted once. Order-only shop and promotion discounts, shipping, customization services and red-packet payment reductions stay separate. Discounts are totals per row.'
-        )
+        ),
+        'order-details-explanation'
       )
     )
     if (order.foreignCurrencyFeeUnspecified)

@@ -3,7 +3,13 @@ import {
   bindText,
   bindAttribute,
   getLocale,
+  getLanguage,
+  onLanguageChange,
+  setLanguage,
 } from './i18n.js'
+import { popupLanguageToggle } from './popup-language-toggle.js'
+import { embedPdfCaptions } from './print-captions.js'
+import { printText } from './print-language.js'
 import { element as el, enableLightDismiss, pinDialogActions } from './ui.js'
 import { renderLabel } from './labels.js'
 import { preparationHelp } from './preparation-help.js'
@@ -132,6 +138,7 @@ export function openPrintDialog({
   job = null,
   store = createPrintStore(),
 }) {
+  if (job?.language) setLanguage(job.language)
   const marks = kind === 'marks'
   const quantityStep = marks ? 1 : 5
   const normalize = marks ? normalizeMarkLayout : normalizeLabelLayout
@@ -160,11 +167,21 @@ export function openPrintDialog({
     uiMessage('Close this dialog. Paper and sheet settings are remembered.')
   )
   const actions = el('div', undefined, 'dialog-actions')
-  actions.append(cancel, exportButton)
+  const languages = popupLanguageToggle(dialog)
+  actions.append(languages, cancel, exportButton)
   dialog.append(heading, actions)
   const body = pinDialogActions(dialog, actions)
 
   const left = el('div', undefined, 'print-left')
+  left.append(
+    el(
+      'p',
+      uiMessage(
+        'Language also applies to PDF captions and carton numbers. Codes and saved label text stay unchanged.'
+      ),
+      'print-hint'
+    )
+  )
   if (job) {
     const note = el('p', undefined, 'print-note')
     bindText(
@@ -778,6 +795,7 @@ export function openPrintDialog({
 
   const images = new Map()
   const pendingImages = new Map()
+  let desiredPreviewImages = new Set()
   let plan = null
   let grid = null
   let slots = null
@@ -916,12 +934,14 @@ export function openPrintDialog({
           slots: state.slots,
           layout: state.layout,
           page: index,
+          language: state.language ?? getLanguage(),
         })
       : labelPageOps({
           plan: state.plan,
           grid: state.grid,
           layout: state.layout,
           page: index,
+          language: state.language ?? getLanguage(),
         })
   const pageOps = (index) => opsFor({ plan, grid, slots, layout }, index)
 
@@ -1130,10 +1150,23 @@ export function openPrintDialog({
     void drawPreview()
   }
 
-  async function ensureImages(keys, dpi, signal = closing.signal) {
+  const artworkKey = (key, dpi, language) => `${key}@${dpi}@${language}`
+  function selectPreviewImages(keys, language) {
+    desiredPreviewImages = new Set(
+      keys.map((key) => artworkKey(key, PREVIEW_DPI, language))
+    )
+    for (const [key, image] of images) {
+      if (image.dpi !== PREVIEW_DPI || desiredPreviewImages.has(key)) continue
+      image.bitmap.close?.()
+      images.delete(key)
+    }
+  }
+  async function ensureImages(keys, dpi, language, signal = closing.signal) {
     for (const key of keys) {
       if (!key) continue
-      const cacheKey = `${key}@${dpi}`
+      const cacheKey = artworkKey(key, dpi, language)
+      if (dpi === PREVIEW_DPI && !desiredPreviewImages.has(cacheKey))
+        throw new DOMException('Preview superseded', 'AbortError')
       if (images.has(cacheKey)) continue
       let pending = pendingImages.get(cacheKey)
       if (!pending) {
@@ -1141,16 +1174,21 @@ export function openPrintDialog({
           const item = itemByKey.get(key)
           const result = await renderLabel({
             ...item.model,
+            language,
             settings: { ...settings, dpi },
             logoUrl,
             signal,
           })
           const full = await decode(result.blob)
-          if (closed || signal?.aborted) {
+          if (
+            closed ||
+            signal?.aborted ||
+            (dpi === PREVIEW_DPI && !desiredPreviewImages.has(cacheKey))
+          ) {
             full.bitmap.close?.()
-            throw new DOMException('Preview closed', 'AbortError')
+            throw new DOMException('Preview superseded or closed', 'AbortError')
           }
-          images.set(cacheKey, full)
+          images.set(cacheKey, { ...full, dpi })
         })()
         pendingImages.set(cacheKey, pending)
       }
@@ -1165,6 +1203,7 @@ export function openPrintDialog({
 
   async function drawPreview() {
     const token = ++renderToken
+    const language = getLanguage()
     const context = preview.getContext('2d')
     preview.dataset.previewState = 'loading'
     preview.setAttribute('aria-busy', 'true')
@@ -1195,6 +1234,7 @@ export function openPrintDialog({
     )
     try {
       if (!pages) {
+        selectPreviewImages([], language)
         context.fillStyle = '#fff'
         context.fillRect(0, 0, preview.width, preview.height)
         preview.dataset.previewState = 'empty'
@@ -1205,14 +1245,15 @@ export function openPrintDialog({
       const keys = [
         ...new Set(ops.filter((op) => op.type === 'image').map((op) => op.key)),
       ]
-      await ensureImages(keys, PREVIEW_DPI)
+      selectPreviewImages(keys, language)
+      await ensureImages(keys, PREVIEW_DPI, language)
       if (token !== renderToken) return
       context.fillStyle = '#fff'
       context.fillRect(0, 0, preview.width, preview.height)
       drawOps(
         canvasPage(context, PREVIEW_PX_PER_MM),
         ops,
-        (key) => images.get(`${key}@${PREVIEW_DPI}`)?.bitmap
+        (key) => images.get(artworkKey(key, PREVIEW_DPI, language))?.bitmap
       )
       preview.dataset.ops = String(ops.length)
       preview.dataset.previewState = 'ready'
@@ -1233,10 +1274,18 @@ export function openPrintDialog({
     if (!plan?.pages || busy || exportButton.disabled) return
     let saved = false
     busy = true
+    for (const button of languages.children) button.disabled = true
     exportButton.disabled = true
     // Freeze what is exported: edits wait until the PDF is saved or fails.
     left.inert = true
-    const state = { plan, grid, slots, layout, caps: new Map(caps) }
+    const state = {
+      plan,
+      grid,
+      slots,
+      layout,
+      caps: new Map(caps),
+      language: getLanguage(),
+    }
     try {
       const pages = Array.from({ length: state.plan.pages }, (_, index) =>
         opsFor(state, index)
@@ -1249,24 +1298,32 @@ export function openPrintDialog({
             .map((op) => op.key)
         ),
       ]
-      const pdf = createPdf({ title: marks ? 'CE carton marks' : 'CE labels' })
+      const pdf = createPdf({
+        title: printText(marks ? 'marks' : 'labels', state.language),
+      })
       const names = new Map()
       for (const [index, key] of keys.entries()) {
         bindText(
           status,
           uiMessage('Preparing {0} of {1}', { 0: index + 1, 1: keys.length })
         )
-        await ensureImages([key], PDF_DPI, closing.signal)
+        await ensureImages([key], PDF_DPI, state.language, closing.signal)
         if (closed) return
-        const full = images.get(`${key}@${PDF_DPI}`)
+        const full = images.get(artworkKey(key, PDF_DPI, state.language))
         names.set(key, pdf.addImage(await rgbImage(full.pixels)))
         // Full-resolution pixels are needed once; free them before the next label.
         full.bitmap.close?.()
-        images.delete(`${key}@${PDF_DPI}`)
+        images.delete(artworkKey(key, PDF_DPI, state.language))
         if (closed) return
       }
       bindText(status, uiMessage('Building PDF…'))
-      for (const ops of pages) drawOps(pdf.page(), ops, (key) => names.get(key))
+      const captions = await embedPdfCaptions(pdf, pages, {
+        dpi: PDF_DPI,
+        signal: closing.signal,
+      })
+      for (const [key, name] of captions.images) names.set(key, name)
+      for (const ops of captions.pages)
+        drawOps(pdf.page(), ops, (key) => names.get(key))
       const bytes = pdf.build()
       // Cancel or close while preparing means no download and no recent job.
       if (closed) return
@@ -1278,6 +1335,7 @@ export function openPrintDialog({
       // A small machine-readable summary sits next to every PDF.
       const summary = printSummary({
         kind,
+        language: state.language,
         file: filename,
         pages: state.plan.pages,
         perPage: marks ? 2 : state.grid.perPage,
@@ -1300,6 +1358,7 @@ export function openPrintDialog({
       const cap = (key) => whole(state.caps.get(key), null)
       const recorded = store.recordJob({
         kind,
+        language: state.language,
         products: state.plan.items.map((entry) => ({
           code: entry.key,
           name: itemByKey.get(entry.key)?.name || '',
@@ -1327,6 +1386,7 @@ export function openPrintDialog({
       if (!closed) bindText(status, uiMessage(error.message))
     } finally {
       busy = false
+      for (const button of languages.children) button.disabled = false
       left.inert = false
       exportButton.disabled = !plan?.pages
       // Observable end of every export attempt, saved or abandoned.
@@ -1338,14 +1398,18 @@ export function openPrintDialog({
     }
   }
 
-  function exportCalibration() {
-    const pdf = createPdf({ title: 'CE print calibration' })
+  async function exportCalibration() {
+    if (busy || closed) return
+    const language = getLanguage()
+    const pdf = createPdf({ title: printText('calibration', language) })
     const preset = store.presets().find((entry) => entry.id === layout.preset)
-    drawOps(
-      pdf.page(),
-      calibrationOps(layout, { presetName: preset?.name || '' }),
-      () => null
+    const captions = await embedPdfCaptions(
+      pdf,
+      [calibrationOps(layout, { presetName: preset?.name || '', language })],
+      { dpi: PDF_DPI, signal: closing.signal }
     )
+    if (closed) return
+    drawOps(pdf.page(), captions.pages[0], (key) => captions.images.get(key))
     const filename = uniqueFileName(printFileName('calibration', 0))
     savePdf(pdf.build(), filename)
     announceExport([filename])
@@ -1374,7 +1438,10 @@ export function openPrintDialog({
     page = Math.min((plan?.pages || 1) - 1, page + 1)
     void drawPreview()
   }
-  calibrate.onclick = () => exportCalibration()
+  calibrate.onclick = () =>
+    void exportCalibration().catch((error) => {
+      if (!closed) bindText(status, uiMessage(error.message))
+    })
   exportButton.onclick = () => void exportPdf()
   cancel.onclick = () => dialog.close()
   enableLightDismiss(dialog)
@@ -1383,10 +1450,15 @@ export function openPrintDialog({
     closing.abort()
     disposeNavigation?.()
     renderToken++
+    desiredPreviewImages.clear()
     for (const { bitmap } of images.values()) bitmap.close?.()
     images.clear()
     dialog.remove()
   })
+  const stopLanguage = onLanguageChange(() => {
+    if (!closed && !busy) update()
+  })
+  dialog.addEventListener('close', stopLanguage, { once: true })
   document.body.append(dialog)
   update()
   dialog.showModal()

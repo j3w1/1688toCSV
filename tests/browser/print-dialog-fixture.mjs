@@ -9,7 +9,8 @@ async function buildResources() {
       contents: `export { openPrintDialog } from './src/print-dialog.js';
         export { DEFAULT_LABEL_SETTINGS } from './src/labels.js';
         export { applyCodeDesign } from './src/code-design.js';
-        export { setLanguage } from './src/i18n.js';`,
+        export { setLanguage } from './src/i18n.js';
+        export { copyExcelImage } from './src/excel-image-copy.js';`,
       resolveDir: root,
     },
     bundle: true,

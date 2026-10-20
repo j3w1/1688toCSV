@@ -47,6 +47,8 @@ test('capacities autosave before assignment, copy in preparation and require rev
     'Discount',
     'Quantity',
     'Pcs/box',
+    'kg/box',
+    'm³/box',
   ])
   const capacity = (i) =>
     rows.nth(i).getByRole('spinbutton', { name: 'Pcs/box', exact: true })

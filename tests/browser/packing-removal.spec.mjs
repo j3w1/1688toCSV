@@ -95,7 +95,7 @@ test('packing keeps direct drag and trash controls at the far left for pointer, 
   const group = view.locator('.preparation-group').first()
   const row = group.locator('tr[data-variant-id]').first()
   await expect(group.locator('.variant-index')).toHaveCount(0)
-  await expect(row.locator(':scope > td')).toHaveCount(4)
+  await expect(row.locator(':scope > td')).toHaveCount(5)
   await expect(row.locator(':scope > td').first()).toHaveClass(
     'variant-actions'
   )
@@ -103,6 +103,7 @@ test('packing keeps direct drag and trash controls at the far left for pointer, 
     'Product actions',
     'Photo',
     'Product variant',
+    'Carton details',
     'Barcode',
   ])
   expect(

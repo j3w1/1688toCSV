@@ -47,6 +47,8 @@ import {
   mountCartonCapacity,
   cartonCapacityReadout,
 } from './carton-packing-ui.js'
+import { mountCartonMeasurement } from './carton-measurements-ui.js'
+import { popupLanguageToggle } from './popup-language-toggle.js'
 import { createProductDescription } from './product-details.js'
 import {
   setCodeText,
@@ -146,6 +148,7 @@ import {
   cartonPackingForItems,
   productCartonDetails,
   cartonVolume,
+  formatCartonMeasurement,
 } from './carton-details.js'
 import { presentOrderStatus } from './order-presentation.js'
 import { orderTagBadge } from './tag-picker.js'
@@ -287,6 +290,7 @@ export async function startPackingWorkspace({
   const materialFields = new Set()
   const sourceAttributeFields = new Set()
   const cartonFields = new Map()
+  const measurementFields = new Map()
   function renderSourceAttributes(host, items) {
     host.replaceChildren()
     for (const item of [
@@ -620,11 +624,145 @@ export async function startPackingWorkspace({
   const history = createPreparationHistory(),
     checkpoints = new Map(),
     sessionBaselines = new Map(),
+    sessionCartons = new Map(),
+    sessionCartonValues = new Map(),
     historySaved = new Map(),
     historyRestores = new Map()
   function rememberSessionBaseline(orderId) {
     if (!sessionBaselines.has(orderId))
       sessionBaselines.set(orderId, structuredClone(preparations.get(orderId)))
+    rememberCartonBaseline(orderId)
+  }
+  function rememberCartonBaseline(orderId) {
+    if (sessionCartons.has(orderId)) return
+    const record = getRecords().find(
+      ({ snapshot }) => snapshot.orderId === orderId
+    )
+    if (record)
+      sessionCartons.set(
+        orderId,
+        Object.fromEntries(
+          record.snapshot.items.map((item) => [
+            item.entryId,
+            structuredClone(productCartonDetails(item, record)),
+          ])
+        )
+      )
+  }
+  function measurementChanges(before, after) {
+    return Object.entries(after).map(([entryId, values]) => ({
+      entryId,
+      before: before[entryId],
+      after: values,
+    }))
+  }
+  function recordCartonHistory(draft, before, after) {
+    const snapshot = preparationHistorySnapshot(draft)
+    history.recordBatch([
+      {
+        orderId: draft.orderId,
+        before: snapshot,
+        after: snapshot,
+        beforeCartons: JSON.stringify(before),
+        afterCartons: JSON.stringify(after),
+      },
+    ])
+    updateHistoryButtons()
+  }
+  function mountMeasurements(hosts, item, record, draft) {
+    for (const field of ['kg', 'cbm']) {
+      const key = `${draft ? 'packing' : 'orders'}/${record.snapshot.accountId}/${record.snapshot.orderId}/${item.entryId}/${field}`
+      const currentValue = () => {
+        const details = productCartonDetails(
+          item,
+          packingRecord({ orderId: record.snapshot.orderId }) || record
+        )
+        return field === 'cbm' ? cartonVolume(details) : details.kg
+      }
+      let editor = measurementFields.get(key)
+      if (editor) {
+        if (editor.update({ value: currentValue() }))
+          editor.cartonBaseline = structuredClone(
+            productCartonDetails(
+              item,
+              packingRecord({ orderId: record.snapshot.orderId }) || record
+            )
+          )
+        hosts[field].append(editor.control)
+      } else {
+        editor = mountCartonMeasurement(hosts[field], {
+          field,
+          value: currentValue(),
+          onSave: async (value) => {
+            const live =
+              packingRecord({ orderId: record.snapshot.orderId }) || record
+            const carton = editor.cartonBaseline
+            const keys =
+              field === 'cbm' &&
+              ['len', 'wid', 'ht'].some((key) => carton[key] !== undefined)
+                ? ['cbm', 'len', 'wid', 'ht']
+                : [field]
+            const before = {
+              [item.entryId]: Object.fromEntries(
+                keys.map((key) => [key, carton[key] ?? ''])
+              ),
+            }
+            const after = {
+              [item.entryId]: Object.fromEntries(
+                keys.map((key) => [key, key === field ? value : ''])
+              ),
+            }
+            const result = await repository.setCartonMeasurements(
+              record.snapshot.orderId,
+              measurementChanges(before, after),
+              { accountId: record.snapshot.accountId }
+            )
+            Object.assign(live, mergeProductAnnotations(live, result))
+            editor.cartonBaseline = structuredClone(
+              productCartonDetails(item, result)
+            )
+            if (field === 'cbm') updateVolumeHelp(editor, editor.cartonBaseline)
+            if (draft) {
+              rememberSessionCartonValues(draft.orderId, after)
+              const currentDraft = drafts.find(
+                (entry) => entry.orderId === draft.orderId
+              )
+              if (currentDraft) recordCartonHistory(currentDraft, before, after)
+            }
+            channel?.postMessage('carton-capacity')
+          },
+        })
+        editor.cartonBaseline = structuredClone(
+          productCartonDetails(item, record)
+        )
+        measurementFields.set(key, editor)
+      }
+      if (field === 'cbm')
+        updateVolumeHelp(editor, productCartonDetails(item, record))
+    }
+  }
+  function updateVolumeHelp(editor, details) {
+    const derived = ['len', 'wid', 'ht'].every(
+      (key) => Number(details[key]) > 0
+    )
+    editor.control.classList.toggle('is-calculated', derived)
+    preparationHelp(
+      editor.input,
+      derived
+        ? uiMessage(
+            'Calculated from {0} × {1} × {2} cm. Editing CBM replaces these dimensions with the entered volume per carton.',
+            { 0: details.len, 1: details.wid, 2: details.ht }
+          )
+        : uiMessage(
+            'Volume of one carton in m³. Leave blank if unknown. Decimals may use a dot or comma. Saves automatically.'
+          )
+    )
+  }
+  function rememberSessionCartonValues(orderId, values) {
+    if (!sessionCartonValues.has(orderId)) sessionCartonValues.set(orderId, {})
+    const previous = sessionCartonValues.get(orderId)
+    for (const [id, fields] of Object.entries(values))
+      previous[id] = { ...previous[id], ...fields }
   }
   let undoButton,
     redoButton,
@@ -1012,6 +1150,7 @@ export async function startPackingWorkspace({
     updateSaveStatus()
   }
   async function flushSaves() {
+    await flushMeasurements()
     for (const [key, entry] of cartonFields) {
       await entry.flush()
       if (!entry.input.isConnected) cartonFields.delete(key)
@@ -1056,6 +1195,12 @@ export async function startPackingWorkspace({
     } finally {
       saveWork = null
       updateSaveStatus()
+    }
+  }
+  async function flushMeasurements() {
+    for (const [key, entry] of measurementFields) {
+      await entry.flush()
+      if (!entry.input.isConnected) measurementFields.delete(key)
     }
   }
   async function preparationAction(action) {
@@ -1219,6 +1364,7 @@ export async function startPackingWorkspace({
     updateHistoryButtons()
   }
   async function travel(direction) {
+    await flushMeasurements()
     const result = history.peek(direction)
     if (!result) return
     const previousSaving = arrangementSaving
@@ -1241,6 +1387,18 @@ export async function startPackingWorkspace({
         try {
           restored = await repository.savePreparations(candidates, {
             preserveNaming: true,
+            cartonMeasurements: changes
+              .filter((change) => change.cartons)
+              .map((change) => ({
+                orderId: change.orderId,
+                accountId: candidates.find(
+                  (draft) => draft.orderId === change.orderId
+                ).accountId,
+                edits: measurementChanges(
+                  change.expectedCartons,
+                  change.cartons
+                ),
+              })),
           })
         } catch (error) {
           error.arrangementRecovery = true
@@ -1254,6 +1412,9 @@ export async function startPackingWorkspace({
         }
       }
       history[direction]()
+      for (const change of changes)
+        if (change.cartons)
+          rememberSessionCartonValues(change.orderId, change.cartons)
       for (const draft of restored) {
         const index = drafts.findIndex(
           (entry) => entry.orderId === draft.orderId
@@ -1304,7 +1465,7 @@ export async function startPackingWorkspace({
       }
       if (result.changes) {
         await reload()
-        changed()
+        await changed({ reload: true })
         channel?.postMessage('changed')
       }
       groupPage = 0
@@ -1412,7 +1573,9 @@ export async function startPackingWorkspace({
     if (
       !pendingSaves.size &&
       !saveWork &&
-      ![...cartonFields.values()].some((field) => field.dirty())
+      ![...cartonFields.values(), ...measurementFields.values()].some((field) =>
+        field.dirty()
+      )
     )
       return
     event.preventDefault()
@@ -2321,8 +2484,12 @@ export async function startPackingWorkspace({
       historySaved.clear()
       historyRestores.clear()
       sessionBaselines.clear()
-      for (const [orderId, baseline] of openingBaselines)
+      sessionCartons.clear()
+      sessionCartonValues.clear()
+      for (const [orderId, baseline] of openingBaselines) {
         sessionBaselines.set(orderId, baseline)
+        rememberCartonBaseline(orderId)
+      }
       for (const draft of drafts) historySaved.set(draft.orderId, draft)
       initializePackingSelection()
       progress.update('Displaying packing', undefined, undefined, counts)
@@ -2800,11 +2967,39 @@ export async function startPackingWorkspace({
     })
   }
   async function removePackingProducts(draft, entryIds) {
+    await flushSaves()
     const ids = [...new Set(entryIds)]
     if (!ids.length) return
-    const source = getRecords().find(
+    const record = getRecords().find(
       (record) => record.snapshot.orderId === draft.orderId
-    )?.snapshot
+    )
+    const source = record?.snapshot
+    const beforeCartons = {},
+      afterCartons = {}
+    for (const id of ids) {
+      const expected = sessionCartonValues.get(draft.orderId)?.[id] || {}
+      const keys = Object.keys(expected)
+      const item = source?.items.find((item) => item.entryId === id)
+      if (!keys.length || !item) continue
+      const current = productCartonDetails(item, record),
+        baseline = sessionCartons.get(draft.orderId)?.[id] || {}
+      if (
+        [...keys].some((key) => (current[key] ?? '') !== (expected[key] ?? ''))
+      )
+        throw new Error(
+          'Carton measurements changed in another tab. Reload before saving your edits.'
+        )
+      if (
+        [...keys].every((key) => (current[key] ?? '') === (baseline[key] ?? ''))
+      )
+        continue
+      beforeCartons[id] = Object.fromEntries(
+        [...keys].map((key) => [key, current[key] ?? ''])
+      )
+      afterCartons[id] = Object.fromEntries(
+        [...keys].map((key) => [key, baseline[key] ?? ''])
+      )
+    }
     const candidate = discardPreparationProducts(
       draft,
       sessionBaselines.get(draft.orderId),
@@ -2884,6 +3079,25 @@ export async function startPackingWorkspace({
         ['Variant', before.variant.variant, after?.variant.variant || ''],
         ['Size', before.variant.size, after?.variant.size || ''],
         ['Grouping', grouping(before), grouping(after)],
+        ...['kg', 'cbm'].flatMap((field) => {
+          if (!beforeCartons[id] || !Object.hasOwn(beforeCartons[id], field))
+            return []
+          const current = productCartonDetails(item, record),
+            baseline = { ...current, ...afterCartons[id] }
+          return [
+            [
+              field === 'kg' ? 'Weight (kg/box)' : 'Volume (m³/box)',
+              formatCartonMeasurement(
+                field === 'kg' ? current.kg : cartonVolume(current),
+                field
+              ),
+              formatCartonMeasurement(
+                field === 'kg' ? baseline.kg : cartonVolume(baseline),
+                field
+              ),
+            ],
+          ]
+        }),
         [
           'Product rows',
           before.variant.entryIds.length,
@@ -2957,7 +3171,19 @@ export async function startPackingWorkspace({
     const afterScope = JSON.stringify(
       JSON.parse(beforeScope).filter((id) => !removed.has(id))
     )
-    const saveOptions = { recordHistory: false, preserveNaming: true }
+    const saveOptions = {
+      recordHistory: false,
+      preserveNaming: true,
+      cartonMeasurements: Object.keys(beforeCartons).length
+        ? [
+            {
+              orderId: draft.orderId,
+              accountId: draft.accountId,
+              edits: measurementChanges(beforeCartons, afterCartons),
+            },
+          ]
+        : [],
+    }
     let result
     try {
       result = await saved(candidate, saveOptions)
@@ -2978,9 +3204,17 @@ export async function startPackingWorkspace({
         after: preparationHistorySnapshot(result),
         beforeScope,
         afterScope,
+        ...(Object.keys(beforeCartons).length
+          ? {
+              beforeCartons: JSON.stringify(beforeCartons),
+              afterCartons: JSON.stringify(afterCartons),
+            }
+          : {}),
       },
     ])
     acceptDraft(result)
+    rememberSessionCartonValues(draft.orderId, afterCartons)
+    if (Object.keys(beforeCartons).length) await changed({ reload: true })
     const scope = scopeEntries.get(draft.orderId)
     for (const id of ids) scope?.delete(id)
     selectionStates.delete(draft.orderId)
@@ -4467,11 +4701,15 @@ export async function startPackingWorkspace({
     historySaved.clear()
     historyRestores.clear()
     sessionBaselines.clear()
-    for (const draft of drafts)
+    sessionCartons.clear()
+    sessionCartonValues.clear()
+    for (const draft of drafts) {
       sessionBaselines.set(
         draft.orderId,
         structuredClone(before.get(draft.orderId))
       )
+      rememberCartonBaseline(draft.orderId)
+    }
     rememberSavedPreparations(
       drafts.map(
         (draft) => before.get(draft.orderId) || { ...draft, groups: [] }
@@ -5015,12 +5253,13 @@ export async function startPackingWorkspace({
       )
       table.setAttribute('aria-multiselectable', 'true')
       const columns = el('colgroup')
-      for (let column = 0; column < 4; column++) columns.append(el('col'))
+      for (let column = 0; column < 5; column++) columns.append(el('col'))
       table.append(columns)
       for (const label of [
         'Product actions',
         'Photo',
         'Product variant',
+        'Carton details',
         'Barcode',
       ]) {
         const column = el('th', uiMessage(label))
@@ -5307,11 +5546,15 @@ export async function startPackingWorkspace({
             prices.map((price) => `¥ ${price}`).join(' / ') || '—',
             'variant-price',
           ],
-          [
-            'Quantity',
-            items.length ? () => quantity.toLocaleString(getLocale()) : '—',
-            'variant-quantity',
-          ],
+          ...(items.length > 1
+            ? [
+                [
+                  'Quantity',
+                  () => quantity.toLocaleString(getLocale()),
+                  'variant-quantity',
+                ],
+              ]
+            : []),
         ]) {
           const fact = el('div', undefined, className)
           const amount = el('dd')
@@ -5353,21 +5596,48 @@ export async function startPackingWorkspace({
           (record) => record.snapshot.orderId === draft.orderId
         )
         const cartonUnits = cartonRecord?.unitsPerCarton || {}
+        const measurementCell = el('td', undefined, 'variant-carton-columns')
+        const numericHeader = el('div', undefined, 'variant-numeric-header')
+        for (const label of ['Quantity', 'Pcs/box', 'kg/box', 'm³/box'])
+          numericHeader.append(el('span', uiMessage(label)))
+        measurementCell.append(numericHeader)
         for (const item of items) {
-          factsLine.append(
-            cartonCapacityReadout(item, cartonUnits[item.entryId])
+          const measurements = el('div', undefined, 'variant-numeric-row')
+          measurements.dataset.entryId = item.entryId
+          const quantityValue = copyTextButton(item.quantity, {
+            label: uiMessage('Copy quantity'),
+            className: 'variant-quantity',
+          })
+          const quantityDisplay = el('span')
+          bindText(quantityDisplay, () =>
+            BigInt(item.quantity).toLocaleString(getLocale())
           )
+          quantityValue.firstChild.replaceWith(quantityDisplay)
+          const capacity = cartonCapacityReadout(
+            item,
+            cartonUnits[item.entryId]
+          )
+          capacity.firstChild.classList.add('sr-only')
+          capacity.querySelector('small')?.classList.add('sr-only')
+          preparationHelp(
+            capacity,
+            uiMessage(
+              'Units packed inside one full carton. Leave blank if unknown. Saves automatically; leftovers need packing review. This does not change the ordered quantity.'
+            )
+          )
+          const kg = el('div', undefined, 'variant-measurement-cell'),
+            cbm = el('div', undefined, 'variant-measurement-cell')
+          mountMeasurements({ kg, cbm }, item, cartonRecord, draft)
+          measurements.append(quantityValue, capacity, kg, cbm)
+          measurementCell.append(measurements)
           const carton = productCartonDetails(item, cartonRecord)
-          const facts = [
-            carton.boxes ? `${carton.boxes} ${t('Cartons')}` : '',
-            carton.kg ? `${carton.kg} kg/${t('box')}` : '',
-            cartonVolume(carton)
-              ? `${cartonVolume(carton)} m³/${t('box')}`
-              : '',
-          ].filter(Boolean)
-          if (facts.length)
-            factsLine.append(
-              el('small', facts.join(' · '), 'carton-source-facts')
+          if (carton.boxes !== undefined)
+            capacity.append(
+              el(
+                'small',
+                uiMessage('{0} full cartons', { 0: carton.boxes }),
+                'sr-only'
+              )
             )
         }
         description.append(factsLine)
@@ -5502,7 +5772,7 @@ export async function startPackingWorkspace({
         heading.append(codeOptions, noteRow)
         details.append(heading, description)
         option.append(details)
-        row.append(photoCell, option)
+        row.append(photoCell, option, measurementCell)
         const output = el('td')
         if (!variant.entryIds.some((id) => live.has(id)))
           output.append(
@@ -6077,6 +6347,7 @@ export async function startPackingWorkspace({
     copy.disabled = !fields.selected().length
     const actions = el('div', undefined, 'dialog-actions')
     actions.append(headerChoice, close, copy)
+    actions.prepend(popupLanguageToggle(modal))
     modal.append(
       el(
         'p',
@@ -6911,7 +7182,7 @@ export async function startPackingWorkspace({
         ),
       ]
     },
-    decorateRow(host, row, capacityHost = host) {
+    decorateRow(host, row, capacityHost = host, measurementHosts) {
       for (const [key, entry] of cartonFields)
         if (!entry.input.isConnected && !entry.dirty()) cartonFields.delete(key)
       const matched = membership.get(`${row.orderId}/${row.entryId}`),
@@ -6972,6 +7243,10 @@ export async function startPackingWorkspace({
         control.disabled = opening || packingExclusionSaving
       host.append(bar)
       const record = packingRecord(row)
+      for (const [key, entry] of measurementFields)
+        if (!entry.input.isConnected && !entry.dirty())
+          measurementFields.delete(key)
+      if (measurementHosts) mountMeasurements(measurementHosts, row, record)
       const cartonKey = `${record?.snapshot.accountId || 'local'}/${row.orderId}/${row.entryId}`
       const existing = cartonFields.get(cartonKey)
       if (existing) {

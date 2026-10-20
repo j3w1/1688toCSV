@@ -2603,6 +2603,63 @@ html:has(body.packing-active) {
 .variant-facts .carton-capacity-readout small {
   color: var(--muted);
 }
+.variants col:nth-child(4),
+.variants .variant-carton-columns {
+  width: 238px;
+}
+.variant-numeric-header,
+.variant-numeric-row {
+  display: grid;
+  grid-template-columns: 44px 46px 56px 66px;
+  gap: 4px;
+  align-items: center;
+  text-align: end;
+}
+.variant-numeric-header {
+  margin-block-end: 3px;
+  color: var(--attribute-label);
+  font-size: 10px;
+  font-weight: 400;
+}
+.variant-numeric-row + .variant-numeric-row {
+  margin-block-start: 3px;
+  padding-block-start: 3px;
+  border-block-start: 1px solid var(--border);
+}
+.variant-numeric-row .variant-quantity {
+  justify-self: end;
+  color: var(--quantity-text);
+  font-weight: 600;
+  font-size: 12px;
+}
+.variant-numeric-row .carton-capacity-readout {
+  justify-self: end;
+  display: inline-flex;
+  margin: 0;
+  font-size: 12px;
+}
+.variant-measurement-cell {
+  justify-self: end;
+  min-inline-size: 0;
+}
+.variant-carton-columns .carton-measurement {
+  font-size: 12px;
+  box-sizing: border-box;
+}
+@media (max-width: 600px) {
+  .variants .variant-carton-columns {
+    grid-column: 2 / -1;
+    grid-row: 3;
+    width: auto;
+    max-inline-size: 100%;
+    padding-block: 3px 6px;
+  }
+  .variant-numeric-header,
+  .variant-numeric-row {
+    grid-template-columns: 40px 42px minmax(48px, 56px) minmax(56px, 66px);
+    justify-content: start;
+  }
+}
 .variants .product-attributes {
   margin: 0;
   font-size: 11px;

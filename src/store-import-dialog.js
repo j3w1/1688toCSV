@@ -6,6 +6,7 @@ import { readStoreWorkbookAsync } from './store-workbook-client.js'
 import { analyzeStoreSheet } from './store-workbook-model.js'
 import { createPhotoViewer } from './photo-viewer.js'
 import { squareProductPhoto } from './product-photo.js'
+import { popupLanguageToggle } from './popup-language-toggle.js'
 
 const positiveInteger = (value) =>
   /^\d+$/.test(String(value ?? '')) &&
@@ -103,32 +104,237 @@ const issueMessage = (issue) =>
     ...(issue.params?.reason ? { reason: m(issue.params.reason) } : {}),
   })
 
-function appendIssue(host, issue, { check, index } = {}) {
+const issueTitles = {
+  'photo-shared': 'Shared group photo',
+  'photo-cross-group': 'Photo overlaps groups',
+  'photo-missing': 'Missing product photo',
+  'photo-unresolved': 'Unreadable photo',
+  'variant-allocation': 'Split variant quantities',
+  'quantity-mismatch': 'Quantity mismatch',
+  'amount-mismatch': 'Product amount mismatch',
+  'total-mismatch': 'Order total mismatch',
+  'incomplete-dimensions': 'Incomplete carton dimensions',
+}
+const issueInstructions = {
+  'photo-shared': 'Confirm these rows share this photo.',
+  'photo-cross-group': 'Anchor a separate photo inside each group in Excel.',
+  'photo-missing': 'Paste a picture into this row’s pic cell in Excel.',
+  'photo-unresolved': 'Replace this picture with an embedded image in Excel.',
+  'variant-allocation':
+    'Allocate the combined quantity in the product row below.',
+  'quantity-mismatch': 'Correct qty, boxes or perbox in Excel.',
+  'amount-mismatch': 'Correct price, qty or amount in Excel.',
+  'total-mismatch': 'Correct the product rows or the seller’s total in Excel.',
+}
+
+function issueContext(issue, analysis, sheet) {
+  const addresses = new Set(issue.cells ?? [])
+  const rows = (analysis?.rows ?? []).filter(
+    (row) =>
+      row.row === issue.row ||
+      Object.values(row.cells)
+        .flat()
+        .some((cell) => addresses.has(cell))
+  )
+  const photos = [...new Set(rows.flatMap((row) => row.photos))]
+  // An invalid cross-group anchor is still useful visual evidence, even though
+  // validation correctly refuses to attach that picture to imported products.
+  const assigned = photos.length > 0
+  for (const image of sheet?.images ?? []) {
+    if (assigned || !image.dataUrl || !image.from) continue
+    const to = image.to || image.from,
+      last = to.row - (to.row > image.from.row && to.rowOffset === 0 ? 1 : 0),
+      lastColumn =
+        to.col - (to.col > image.from.col && to.colOffset === 0 ? 1 : 0)
+    if (
+      rows.some((row) => {
+        const column = [...(row.cells.pic?.match(/^[A-Z]+/)?.[0] || '')].reduce(
+          (value, letter) => value * 26 + letter.charCodeAt(0) - 64,
+          0
+        )
+        return (
+          row.row >= image.from.row &&
+          row.row <= last &&
+          column >= image.from.col &&
+          column <= lastColumn
+        )
+      }) &&
+      !photos.includes(image.dataUrl)
+    )
+      photos.push(image.dataUrl)
+  }
+  const values = new Map(
+    (sheet?.rows ?? []).flatMap((row) =>
+      row.cells.map((cell) => [cell.address, cell.error || cell.value])
+    )
+  )
+  return { rows, photos, values }
+}
+
+function appendIssue(host, issue, { check, index, context, openPhoto } = {}) {
   const item = el(
       'li',
       undefined,
       `store-import-issue is-${issue.severity ?? 'error'}`
     ),
-    detail = el('div'),
+    detail = el('div', undefined, 'store-import-issue-detail'),
+    heading = el('div', undefined, 'store-import-issue-heading'),
     title = el(
       'strong',
-      m(issue.severity === 'review' ? 'Review' : 'Fix in workbook')
+      m(
+        issueTitles[issue.code] ||
+          (issue.severity === 'review' ? 'Review' : 'Fix in workbook')
+      )
     )
-  detail.append(title, el('p', issueMessage(issue)))
-  if (issue.cells?.length) {
-    const cells = el('div', undefined, 'store-import-cells')
-    for (const cell of issue.cells) cells.append(el('code', String(cell)))
-    detail.append(cells)
-  }
+  item.dataset.issueCode = issue.code
+  heading.append(title)
+  let input, checkCaption
   if (check) {
     const label = el('label', undefined, 'store-import-review-check'),
-      input = textInput(`review-${index}`, 'checkbox')
-    input.addEventListener('change', () => check(input.checked))
-    label.append(input, el('span', m('Checked')))
-    item.append(label)
+      control = textInput(`review-${index}`, 'checkbox')
+    input = control
+    bindAttribute(
+      control,
+      'aria-label',
+      m('Confirm review {0}', { 0: index + 1 })
+    )
+    control.addEventListener('change', () => check(control.checked))
+    checkCaption = el('span', m('Review'))
+    label.append(control, checkCaption)
+    heading.append(label)
+  } else {
+    heading.append(
+      el(
+        'span',
+        m(issue.severity === 'error' ? 'Blocked' : 'Manual'),
+        'store-import-issue-state'
+      )
+    )
+  }
+  detail.append(heading)
+  if (context?.rows.length) {
+    const identity = el('div', undefined, 'store-import-issue-identity')
+    for (const group of new Set(context.rows.map((row) => row.group)))
+      identity.append(el('code', m('Group {0}', { 0: group })))
+    identity.append(
+      el(
+        'span',
+        m('Rows {0}', { 0: context.rows.map((row) => row.row).join(', ') })
+      )
+    )
+    detail.append(identity)
+  }
+  const visual = el('div', undefined, 'store-import-issue-visual')
+  if (context?.photos.length) {
+    const photos = el('div', undefined, 'store-import-issue-photos')
+    for (const [photoIndex, source] of context.photos.slice(0, 3).entries()) {
+      const row = context.rows.find((row) => row.photos.includes(source)),
+        tile = el(row ? 'button' : 'span'),
+        image = el('img')
+      image.src = source
+      image.loading = 'lazy'
+      bindAttribute(image, 'alt', m('Review photo {0}', { 0: photoIndex + 1 }))
+      if (row) {
+        tile.type = 'button'
+        const index = row.photos.indexOf(source)
+        bindAttribute(
+          tile,
+          'aria-label',
+          m('View review photo for row {0}, photo {1}', {
+            0: row.row,
+            1: index + 1,
+          })
+        )
+        tile.onclick = () => openPhoto?.(row, index)
+      }
+      tile.append(image)
+      photos.append(tile)
+    }
+    visual.append(photos)
+  }
+  const explanation = el('div', undefined, 'store-import-issue-explanation')
+  explanation.append(
+    el(
+      'p',
+      issueInstructions[issue.code]
+        ? m(issueInstructions[issue.code])
+        : issueMessage(issue)
+    )
+  )
+  if (context?.rows.length) {
+    const description = [
+      ...new Set(context.rows.map((row) => row.description).filter(Boolean)),
+    ].join(' · ')
+    if (description)
+      explanation.append(
+        el('span', description, 'store-import-issue-description')
+      )
+    const facts = el('div', undefined, 'store-import-issue-facts'),
+      sum = (key) =>
+        context.rows.every((row) => Number.isSafeInteger(row[key]))
+          ? context.rows
+              .reduce((total, row) => total + BigInt(row[key]), 0n)
+              .toString()
+          : '—'
+    facts.append(
+      fact('Quantity', sum('quantity')),
+      fact('Cartons', sum('boxes'))
+    )
+    explanation.append(facts)
+  }
+  visual.append(explanation)
+  detail.append(visual)
+  const mismatch = {
+    'quantity-mismatch': [
+      'Source qty',
+      issue.params?.quantity,
+      issue.params?.expected,
+    ],
+    'amount-mismatch': [
+      'Source amount',
+      issue.params?.amount,
+      issue.params?.expected,
+    ],
+    'total-mismatch': [
+      'Seller total',
+      issue.params?.total,
+      issue.params?.computedTotal,
+    ],
+  }[issue.code]
+  if (mismatch) {
+    const comparison = el('div', undefined, 'store-import-issue-comparison'),
+      currency = issue.code !== 'quantity-mismatch',
+      value = (source) => `${currency ? '¥' : ''}${source ?? '—'}`
+    comparison.append(
+      fact(mismatch[0], value(mismatch[1])),
+      el('span', '→'),
+      fact('Calculated', value(mismatch[2]))
+    )
+    detail.append(comparison)
+    const formula =
+      issue.code === 'quantity-mismatch'
+        ? `${issue.params.boxes} × ${issue.params.perbox} = ${issue.params.expected}`
+        : issue.code === 'amount-mismatch'
+          ? `¥${issue.params.price} × ${issue.params.quantity} = ¥${issue.params.expected}`
+          : null
+    if (formula)
+      detail.append(el('code', formula, 'store-import-issue-formula'))
+  }
+  if (issue.cells?.length) {
+    const cells = el('div', undefined, 'store-import-cells')
+    for (const address of issue.cells) {
+      const cell = el('span'),
+        value = context?.values.get(address)
+      cell.append(el('code', String(address)))
+      if (value !== null && value !== undefined && String(value).trim())
+        cell.append(el('span', String(value)))
+      cells.append(cell)
+    }
+    detail.append(cells)
   }
   item.append(detail)
   host.append(item)
+  return { input, item, checkCaption }
 }
 
 function fact(label, value) {
@@ -150,7 +356,10 @@ export function openStoreImportDialog({ repository, onImported = () => {} }) {
     close = decorateIcon(el('button', m('Close import')), 'close', {
       iconOnly: true,
     }),
+    layout = el('div', undefined, 'store-import-layout'),
     body = el('div', undefined, 'store-import-body'),
+    guide = el('aside', undefined, 'store-import-sidebar'),
+    guideTitle = el('h3', m('Workbook guide')),
     setup = el('section', undefined, 'store-import-setup'),
     file = textInput('workbook', 'file'),
     sheet = el('select'),
@@ -163,12 +372,15 @@ export function openStoreImportDialog({ repository, onImported = () => {} }) {
       'store-import-status'
     ),
     issues = el('ul', undefined, 'store-import-issues'),
+    checksHeader = el('div', undefined, 'store-import-checks-header'),
+    checksTitle = el('h3', m('Workbook checks')),
+    checksStatus = el('span', undefined, 'store-import-checks-status'),
+    allReviews = textInput('allReviews', 'checkbox'),
+    allReviewsLabel = el('label', undefined, 'store-import-check-all'),
     summary = el('div', undefined, 'store-import-summary'),
     products = el('div', undefined, 'store-import-products'),
     reviewLabel = el('label', undefined, 'store-import-final-review'),
-    photosReviewed = textInput('photosReviewed', 'checkbox'),
-    guide = el('details', undefined, 'store-import-embedded-guide'),
-    guideHost = el('div', undefined, 'store-import-guide-frame')
+    photosReviewed = textInput('photosReviewed', 'checkbox')
   let workbook,
     analysis,
     generation = 0,
@@ -177,7 +389,39 @@ export function openStoreImportDialog({ repository, onImported = () => {} }) {
     readingController,
     submitted = false
   const allocations = new Map(),
-    reviewedIssues = new Set()
+    reviewedIssues = new Set(),
+    reviewChecks = new Map()
+  const updateReviews = () => {
+    const checked = reviewedIssues.size,
+      total = reviewChecks.size
+    allReviews.checked = Boolean(total && checked === total)
+    allReviews.indeterminate = checked > 0 && checked < total
+    allReviews.disabled = busy || !total
+    allReviewsLabel.hidden = !total
+    for (const [index, { input, item, checkCaption }] of reviewChecks) {
+      input.checked = reviewedIssues.has(index)
+      input.disabled = busy
+      item.classList.toggle('is-checked', input.checked)
+      bindText(checkCaption, m(input.checked ? 'Checked' : 'Review'))
+    }
+    const blocking =
+      analysis?.issues.filter((issue) => issue.severity === 'error').length ?? 0
+    bindText(
+      checksStatus,
+      m('{checked}/{total} reviews checked · {blocking} blocking', {
+        checked,
+        total,
+        blocking,
+      })
+    )
+    checksStatus.classList.toggle('has-blockers', blocking > 0)
+  }
+  allReviews.addEventListener('change', () => {
+    for (const index of reviewChecks.keys())
+      if (allReviews.checked) reviewedIssues.add(index)
+      else reviewedIssues.delete(index)
+    updateReviews()
+  })
   const photoViewer = createPhotoViewer(async (source) => source, {
     onEdit: async (row, { photoIndex, thumbnail, edit }) => {
       row.photoEdits = { ...row.photoEdits, [photoIndex]: edit }
@@ -218,38 +462,70 @@ export function openStoreImportDialog({ repository, onImported = () => {} }) {
     })
   }
   heading.append(title, subtitle)
-  actions.append(submit, close)
+  decorateIcon(submit, 'upload')
+  actions.append(popupLanguageToggle(dialog), submit, close)
   header.append(heading, actions)
   setup.append(
     field('Workbook', file),
     field('Sheet', sheet),
     field('Store or factory name', storeName),
-    field(
-      'Purchase date',
-      purchaseDate,
-      'Confirm the date of this purchase; the filename only identifies the store.'
+    field('Purchase date', purchaseDate)
+  )
+  const templateTools = el('div', undefined, 'store-import-file-tools'),
+    template = decorateIcon(
+      el('a', m('Download template'), 'button store-import-template'),
+      'download'
+    )
+  template.href = 'assets/store-order-template.xlsx'
+  template.download = 'store-order-template.xlsx'
+  bindAttribute(
+    template,
+    'title',
+    m(
+      'Download an editable workbook with ready import markers, formatted product rows and formulas.'
     )
   )
+  templateTools.append(template)
+  setup.firstElementChild.append(templateTools)
   reviewLabel.append(
     photosReviewed,
     el('span', m('I checked the product photos, quantities and order total.'))
   )
   reviewLabel.hidden = true
-  const guideSummary = el('summary', m('File naming, markers and review rules'))
-  guide.append(guideSummary, guideHost)
-  guide.open = true
-  mountStoreSpreadsheetGuide(guideHost)
+  guideTitle.id = `store-import-guide-heading-${crypto.randomUUID()}`
+  guide.setAttribute('aria-labelledby', guideTitle.id)
+  guide.append(guideTitle)
+  mountStoreSpreadsheetGuide(guide, { initialSection: 'markers' })
+  allReviewsLabel.append(allReviews, el('span', m('Check all reviews')))
+  bindAttribute(
+    allReviews,
+    'aria-description',
+    m(
+      'Confirms review warnings only. Workbook errors, variant quantities and the final photo check still need attention.'
+    )
+  )
+  bindAttribute(
+    allReviewsLabel,
+    'title',
+    m(
+      'Confirms review warnings only. Workbook errors, variant quantities and the final photo check still need attention.'
+    )
+  )
+  checksStatus.setAttribute('role', 'status')
+  checksHeader.append(checksTitle, checksStatus, allReviewsLabel)
+  checksHeader.hidden = true
   body.append(
     setup,
     identity,
     status,
+    checksHeader,
     issues,
     summary,
     products,
-    reviewLabel,
-    guide
+    reviewLabel
   )
-  form.append(header, body)
+  layout.append(body, guide)
+  form.append(header, layout)
   dialog.append(form)
 
   const setBusy = (value, { saving = false } = {}) => {
@@ -260,6 +536,7 @@ export function openStoreImportDialog({ repository, onImported = () => {} }) {
     file.disabled = value
     sheet.disabled = value || !workbook
     form.setAttribute('aria-busy', String(value))
+    updateReviews()
   }
   const fail = (error) => {
     bindText(
@@ -278,6 +555,9 @@ export function openStoreImportDialog({ repository, onImported = () => {} }) {
     products.replaceChildren()
     allocations.clear()
     reviewedIssues.clear()
+    reviewChecks.clear()
+    checksHeader.hidden = !analysis?.issues.length
+    updateReviews()
     photosReviewed.checked = false
     reviewLabel.hidden = !analysis?.rows?.length
     if (!analysis) {
@@ -295,17 +575,29 @@ export function openStoreImportDialog({ repository, onImported = () => {} }) {
         : m('Factory · No store number · Each import creates a separate order.')
     )
     for (const [index, issue] of analysis.issues.entries()) {
-      appendIssue(issues, issue, {
+      const controls = appendIssue(issues, issue, {
         index,
+        context: issueContext(
+          issue,
+          analysis,
+          workbook?.sheets.find((sheet) => sheet.name === analysis.sheetName)
+        ),
+        openPhoto: (row, index) => {
+          void photoViewer.open(row, analysis.rows, index)
+        },
         check:
           issue.severity === 'review' && issue.code !== 'variant-allocation'
-            ? (checked) =>
+            ? (checked) => {
                 checked
                   ? reviewedIssues.add(String(index))
                   : reviewedIssues.delete(String(index))
+                updateReviews()
+              }
             : null,
       })
+      if (controls.input) reviewChecks.set(String(index), controls)
     }
+    updateReviews()
     const groupCount = new Set(analysis.rows.map((row) => row.group)).size
     summary.append(
       fact('Included rows', analysis.rows.length),
@@ -445,7 +737,6 @@ export function openStoreImportDialog({ repository, onImported = () => {} }) {
           )
     )
     status.classList.toggle('is-error', errors > 0)
-    guide.open = false
   }
   const analyze = async () => {
     analysis = await analyzeStoreSheet(workbook, sheet.value)

@@ -72,7 +72,10 @@ function section(title, text) {
 }
 
 /** Canonical format documentation shared by Settings and the import review. */
-export function mountStoreSpreadsheetGuide(host) {
+export function mountStoreSpreadsheetGuide(
+  host,
+  { initialSection = 'setup' } = {}
+) {
   const root = el('div', undefined, 'store-import-guide-content'),
     intro = el(
       'p',
@@ -86,7 +89,7 @@ export function mountStoreSpreadsheetGuide(host) {
     controls = []
   tabs.setAttribute('role', 'tablist')
   bindAttribute(tabs, 'aria-label', m('Spreadsheet guide sections'))
-  const makePanel = (title) => {
+  const makePanel = (title, key) => {
     const id = `store-import-guide-${crypto.randomUUID()}`,
       tab = el('button', m(title)),
       panel = el('section', undefined, 'store-import-guide-panel')
@@ -98,7 +101,7 @@ export function mountStoreSpreadsheetGuide(host) {
     panel.tabIndex = 0
     panel.setAttribute('role', 'tabpanel')
     panel.setAttribute('aria-labelledby', tab.id)
-    controls.push({ tab, panel })
+    controls.push({ tab, panel, key })
     tab.addEventListener('click', () => select(tab))
     tabs.append(tab)
     panels.append(panel)
@@ -131,10 +134,10 @@ export function mountStoreSpreadsheetGuide(host) {
     controls[next].tab.focus()
   })
 
-  const start = makePanel('Start here')
+  const start = makePanel('Setup', 'setup')
   const filenames = section(
     'Name the file',
-    'A numeric filename identifies a store number. A company-name filename identifies a factory without a store number. Windows copy suffixes do not change the store identity. Each import creates a new order.'
+    'Use the store number or factory name as the filename. Copy suffixes keep the same store; each import adds a new order.'
   )
   const examples = el('dl', undefined, 'store-import-filenames')
   for (const [title, files] of [
@@ -158,11 +161,11 @@ export function mountStoreSpreadsheetGuide(host) {
   filenames.append(examples)
   const workflow = section(
     'Mark a copy of the workbook',
-    'Keep the seller’s original file. Add a row of import markers above the seller’s column headers. Only marked columns are included; their position does not matter.'
+    'Keep the original. Add one marker row above the seller’s headers in a copy. Only marked columns are read, in any order.'
   )
   const steps = el('ol')
   for (const text of [
-    'Copy markers from the next tab. Repeat desc for every description column to combine.',
+    'Copy markers from the Markers tab. Repeat desc to combine description columns.',
     'Give each imported row a group value. Matching group values can appear anywhere in the sheet.',
     'Mark the order total with total on both sides, then review photos, quantities and amounts before importing.',
   ])
@@ -176,11 +179,8 @@ export function mountStoreSpreadsheetGuide(host) {
     )
   )
 
-  const markers = makePanel('Import markers'),
-    table = el('table', undefined, 'store-import-marker-table'),
-    heading = el('tr'),
-    thead = el('thead'),
-    tbody = el('tbody')
+  const markers = makePanel('Markers', 'markers'),
+    list = el('ul', undefined, 'store-import-marker-list')
   markers.append(
     el(
       'p',
@@ -189,62 +189,57 @@ export function mountStoreSpreadsheetGuide(host) {
       )
     )
   )
-  for (const title of ['Marker', 'Meaning and requirement']) {
-    const cell = el('th', m(title))
-    cell.scope = 'col'
-    heading.append(cell)
-  }
-  thead.append(heading)
   for (const [values, title, description] of markerRows) {
-    const row = el('tr'),
-      tokens = el('td', undefined, 'store-import-marker-values'),
-      detail = el('td')
+    const row = el('li', undefined, 'store-import-marker-card'),
+      heading = el('div', undefined, 'store-import-marker-heading'),
+      tokens = el('span', undefined, 'store-import-marker-values')
     tokens.append(...values.map((value) => copyToken(value)))
-    detail.append(el('strong', m(title)), el('span', m(description)))
-    row.append(tokens, detail)
-    tbody.append(row)
+    heading.append(tokens, el('strong', m(title)))
+    row.append(heading, el('p', m(description)))
+    list.append(row)
   }
-  table.append(thead, tbody)
-  markers.append(table)
+  markers.append(list)
   const total = el('p', undefined, 'store-import-total-example')
   total.append(copyToken('total'), el('code', '500.00'), copyToken('total'))
   markers.append(total)
 
-  const review = makePanel('Review rules')
+  const review = makePanel('Checks', 'checks')
   review.append(
     section(
       'Check quantities and prices',
-      'When both quantities are supplied, boxes × perbox must equal qty. Each product amount must equal unit price × total quantity, and the sum must match the total between the two total markers. Mismatches must pause import and identify the affected cells; values are never silently corrected.'
+      'Check boxes × perbox = qty, price × qty = amount, and the row amounts against total. A mismatch blocks import and names the affected cells; values are never silently corrected.'
     ),
     section(
       'Read numbers without their units',
-      'Values such as 6元, 8RMB, 20.5 K.G. and 0.14 CBM describe numbers with units. Ambiguous values must be reviewed instead of guessed. Weight and volume always describe one carton.'
+      'Numbers may include units, such as 6元, 20.5 KG or 0.14 CBM. Ambiguous values need review. kg and cbm always describe one carton.'
     ),
     section(
       'Keep carton measurements separate',
-      'cbm is a decimal volume in cubic metres, not text such as 58*35*47. Put centimetre dimensions in cbmx, cbmy and cbmz. Their volume is length × width × height ÷ 1,000,000 per carton; it takes priority over the supplied decimal volume.'
+      'cbm is decimal m³. Put centimetre dimensions in cbmx, cbmy and cbmz. When all three exist, their calculated volume takes priority: x × y × z ÷ 1,000,000.'
     ),
     section(
       'Keep combined variants together until review',
-      'A row marked abcd contains one combined quantity and amount for A, B, C and D. Review must ask for the actual split; it must never duplicate the totals or assume equal quantities. abs, abm and abl mean variants A and B together in sizes S, M and L respectively.'
+      'abcd shares one quantity and amount across A–D. Enter the actual split during review; never duplicate the totals or assume equal quantities. abs, abm and abl mean A/B in sizes S, M and L.'
     ),
     section(
       'Review photos before importing',
-      'Every imported product needs a photo. Missing or uncertain row links must pause import. Shared group photos and multiple photos require review. Square thumbnails must fit without stretching, and any later photo adjustment must retain the original.'
+      'Every product needs a photo. Missing or uncertain row links block import. Review shared or multiple photos. Thumbnails fit a square without stretching; photo edits keep the original.'
     ),
     section(
       'Keep packing exceptions explicit',
-      'Keep the ordered quantity separate from the actual carton allocation. Do not turn loose units into fractional cartons or silently combine them with another group. Mixed cartons and unequal carton contents need a reviewed physical packing record. Additional order charges must be entered separately and explained.'
+      'Review loose units and shared cartons separately from ordered quantities. Never infer fractional or mixed cartons. Add and explain extra order costs separately.'
     ),
     section(
       'Confirm the purchase date',
-      'Review must require a confirmed purchase date when the workbook has no reliable date. The filename identifies the store, not the purchase date.'
+      'Confirm the purchase date in the form. The filename identifies the store, not the date.'
     )
   )
-  select(controls[0].tab)
+  const initial =
+    controls.find(({ key }) => key === initialSection) || controls[0]
+  select(initial.tab)
   root.append(intro, tabs, panels)
   host.append(root)
-  return { root, focus: () => controls[0].tab.focus() }
+  return { root, focus: () => initial.tab.focus() }
 }
 
 export function openStoreSpreadsheetGuide() {

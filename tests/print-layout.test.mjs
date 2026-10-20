@@ -31,6 +31,63 @@ const grid = (perPage, columns = 10) => ({
   rows: perPage / columns,
 })
 
+test('generated sheet captions and carton numbering support English, Spanish and Chinese without changing codes', () => {
+  const items = [{ key: 'CE26103102A', quantity: 3 }]
+  for (const [language, numbering, heading, pageWord, actual] of [
+    ['en', 'Carton 1 of 3', 'CE labels', 'page 1 of', 'Actual size'],
+    ['es', 'Caja 1 de 3', 'Etiquetas CE', 'página 1 de', 'Tamaño real'],
+    ['zh', '第 1/3 箱', 'CE 标签', '第 1/', '实际大小'],
+  ]) {
+    const labelGridValue = labelGrid({}, label)
+    const labelPlan = planLabels(items, labelGridValue, {})
+    const labelOps = labelPageOps({
+      plan: labelPlan,
+      grid: labelGridValue,
+      page: 0,
+      language,
+    })
+    const caption = labelOps.find((op) => op.type === 'text').value
+    assert.ok(caption.includes(heading), caption)
+    assert.ok(caption.includes(pageWord), caption)
+    assert.ok(caption.includes(actual), caption)
+    assert.ok(caption.includes('CE26103102A'), caption)
+    const markPlan = planCartonMarks(items)
+    const markOps = markPageOps({
+      plan: markPlan,
+      slots: cartonSlots(mark),
+      page: 0,
+      language,
+    })
+    assert.equal(markOps.find((op) => op.type === 'text').value, numbering)
+    assert.deepEqual(
+      markOps.filter((op) => op.type === 'image').map((op) => op.key),
+      ['CE26103102A', 'CE26103102A']
+    )
+    const calibration = calibrationOps(
+      {},
+      { language, presetName: '自定义 preset' }
+    )
+    assert.ok(
+      calibration.some(
+        (op) => op.type === 'text' && op.value.includes('自定义 preset')
+      )
+    )
+    assert.ok(
+      calibration.some(
+        (op) =>
+          op.type === 'text' &&
+          op.value.includes(
+            language === 'zh'
+              ? '打印校准'
+              : language === 'es'
+                ? 'Calibración'
+                : 'calibration'
+          )
+      )
+    )
+  }
+})
+
 test('40 × 20 mm labels fit 70 per A4 as 5 × 14, centred in 5 mm margins', () => {
   const result = labelGrid({}, label)
   assert.deepEqual(

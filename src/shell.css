@@ -210,16 +210,38 @@ body > .topbar {
   background: var(--field);
 }
 .top-actions .language-toggle button {
-  inline-size: 28px;
-  min-inline-size: 28px;
+  inline-size: 32px;
+  min-inline-size: 32px;
   block-size: 26px;
   min-block-size: 26px;
   border-radius: var(--radius-s);
   font-size: var(--text-m);
 }
+.language-toggle button:focus-visible {
+  outline: 1px solid var(--focus);
+  outline-offset: 1px;
+}
 .top-actions .language-toggle button[aria-pressed='true'] {
   background: var(--surface);
   box-shadow: 0 0 0 1px var(--border);
+}
+
+dialog .popup-language-toggle {
+  gap: 0;
+  padding: 2px;
+  border: 1px solid var(--divider);
+  border-radius: var(--radius-m);
+  background: var(--field);
+}
+dialog .language-toggle.popup-language-toggle button {
+  inline-size: 32px;
+  min-inline-size: 32px;
+  flex: 0 0 32px;
+  block-size: 26px;
+  min-block-size: 26px;
+  padding: 0;
+  font-size: 11px;
+  white-space: nowrap;
 }
 
 body > main {
@@ -545,9 +567,9 @@ body > main {
   margin-inline-start: auto;
 }
 .action-bar .product-selection-totals {
-  flex: 0 1 auto;
+  flex: 1 1 440px;
   min-inline-size: 0;
-  max-inline-size: 460px;
+  max-inline-size: 560px;
   padding: 0;
   background: transparent;
 }
@@ -571,35 +593,42 @@ body > main {
   border-inline-start: 1px solid var(--divider);
 }
 .action-bar .selection-totals-grid {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 2px var(--space-4);
+  display: grid;
+  grid-template-columns:
+    minmax(0, 0.75fr) minmax(0, 0.65fr) minmax(0, 1.15fr)
+    minmax(0, 1.25fr);
+  align-items: stretch;
+  gap: 2px 12px;
 }
 .action-bar .selection-totals-grid > div {
-  display: grid;
-  gap: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
   min-inline-size: 0;
 }
+.action-bar .selection-totals-grid > [data-selection-total='gross'] {
+  padding-inline-start: 12px;
+  border-inline-start: 1px solid var(--divider);
+}
 .action-bar .selection-totals-grid dt {
-  overflow: hidden;
-  font-size: var(--text-xs);
-  text-overflow: ellipsis;
-  white-space: nowrap;
+  font-size: 10px;
+  line-height: 1.3;
+  white-space: normal;
 }
 .action-bar .selection-totals-grid dd {
-  font-size: var(--text-m);
-  white-space: nowrap;
+  font-size: 14px;
+  line-height: 1.35;
+  font-weight: 700;
+  white-space: normal;
 }
 .action-bar .selection-totals-context {
-  display: block;
-  margin: 2px 0 0;
-  overflow: hidden;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 2px 14px;
+  margin: 5px 0 0;
   font-size: 10px;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-.action-bar .selection-totals-context > span + span::before {
-  content: ' · ';
+  line-height: 1.3;
+  white-space: normal;
 }
 .action-bar .row-selection-actions button {
   border-color: transparent;

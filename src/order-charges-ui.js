@@ -11,9 +11,8 @@ import {
 
 /** Authored order costs stay separate from the seller's original prices/totals. */
 export function mountOrderCharges(host, { record, onSave }) {
-  const details = el('details', undefined, 'order-charges')
-  details.open = Boolean(record.additionalCharges?.length)
-  const summary = el('summary')
+  const details = el('section', undefined, 'order-charges')
+  const summary = el('header', undefined, 'order-charges-heading')
   summary.append(el('strong', message('Additional charges')))
   const summaryTotal = el('span', undefined, 'order-charges-summary-total')
   summary.append(summaryTotal)
@@ -45,6 +44,7 @@ export function mountOrderCharges(host, { record, onSave }) {
     )
   )
   toolbar.append(add, save)
+  summary.append(toolbar)
   const status = el('span', undefined, 'order-charges-status')
   status.setAttribute('role', 'status')
   const error = el('p', undefined, 'order-charges-error')
@@ -69,9 +69,9 @@ export function mountOrderCharges(host, { record, onSave }) {
   )
   const preview = el('div', undefined, 'order-charges-preview')
   preview.setAttribute('aria-live', 'polite')
-  fields.append(toolbar, table, empty, status, error, preview)
+  fields.append(summary, help, table, empty, status, error, preview)
   form.append(fields)
-  details.append(help, form)
+  details.append(form)
   host.append(details)
   const rows = []
   let saved = structuredClone(record.additionalCharges || []),

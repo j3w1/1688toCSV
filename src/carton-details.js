@@ -1,5 +1,38 @@
 /** Local measurements override source measurements without rewriting evidence. */
 import { cartonBreakdown } from './carton-packing.js'
+import { validateCartonDetails } from './store-order.js'
+
+/** Decimal editing never rounds source measurements or interprets thousands. */
+export function normalizeCartonMeasurement(value, field) {
+  if (!['kg', 'cbm'].includes(field))
+    throw new TypeError('Unknown carton measurement field')
+  if (value === undefined || value === null || value === '') return ''
+  const invalid = () => {
+    throw new Error(
+      field === 'kg'
+        ? 'Weight must be a nonnegative decimal in kg'
+        : 'Volume must be a nonnegative decimal in m³'
+    )
+  }
+  if (!['string', 'number'].includes(typeof value)) return invalid()
+  const text = String(value).trim()
+  if (!text) return ''
+  // A single comma means a decimal separator. Grouped numbers, unit suffixes,
+  // exponents and incomplete drafts are intentionally never guessed.
+  if (!/^(?:\d+(?:[.,]\d+)?|[.,]\d+)$/.test(text)) return invalid()
+  const [integer, fraction = ''] = text.replace(',', '.').split('.')
+  const whole = (integer || '0').replace(/^0+(?=\d)/, '')
+  const decimals = fraction.replace(/0+$/, '')
+  const normalized = decimals ? `${whole}.${decimals}` : whole
+  return validateCartonDetails({ [field]: normalized })[field]
+}
+
+export function formatCartonMeasurement(value, field) {
+  const normalized = normalizeCartonMeasurement(value, field)
+  return normalized === ''
+    ? '—'
+    : `${normalized} ${field === 'kg' ? 'kg' : 'm³'}`
+}
 
 export function productCartonDetails(item, record) {
   return record?.cartonDetails?.[item.entryId] ?? item.carton ?? {}

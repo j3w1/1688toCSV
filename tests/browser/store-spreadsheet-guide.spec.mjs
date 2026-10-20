@@ -50,9 +50,9 @@ test('store spreadsheet format guide supports keyboard sections and exact marker
   const before = await snapshot()
   await expect(guide).toContainText('review its rows, photos and totals')
   await expect(guide.locator('input[type=file]')).toHaveCount(0)
-  const start = guide.getByRole('tab', { name: 'Start here', exact: true })
+  const start = guide.getByRole('tab', { name: 'Setup', exact: true })
   const markers = guide.getByRole('tab', {
-    name: 'Import markers',
+    name: 'Markers',
     exact: true,
   })
   await expect(start).toBeFocused()
@@ -62,12 +62,12 @@ test('store spreadsheet format guide supports keyboard sections and exact marker
   expect(
     (
       await guide
-        .locator('.store-import-marker-table .store-import-token')
+        .locator('.store-import-marker-list .store-import-token')
         .allTextContents()
     ).sort()
   ).toEqual([...STORE_IMPORT_MARKERS].sort())
   await expect(
-    guide.getByRole('tabpanel', { name: 'Start here', exact: true })
+    guide.getByRole('tabpanel', { name: 'Setup', exact: true })
   ).toBeHidden()
   const marker = guide.getByRole('button', {
     name: 'Copy import marker: pic',
@@ -86,11 +86,11 @@ test('store spreadsheet format guide supports keyboard sections and exact marker
   ).toContain('monospace')
   await markers.focus()
   await markers.press('End')
-  const review = guide.getByRole('tab', { name: 'Review rules', exact: true })
+  const review = guide.getByRole('tab', { name: 'Checks', exact: true })
   await expect(review).toBeFocused()
-  await expect(
-    guide.getByRole('tabpanel', { name: 'Review rules' })
-  ).toContainText('never duplicate the totals or assume equal quantities')
+  await expect(guide.getByRole('tabpanel', { name: 'Checks' })).toContainText(
+    'never duplicate the totals or assume equal quantities'
+  )
   for (const viewport of [
     { width: 1440, height: 1000 },
     { width: 390, height: 568 },
@@ -139,7 +139,7 @@ test('store spreadsheet guide translates its interface while preserving copyable
       settings: 'Ajustes',
       data: 'Datos',
       guide: 'Guía de Excel de tiendas',
-      markers: 'Marcadores de importación',
+      markers: 'Marcadores',
       copy: 'Copiar marcador de importación: perbox',
     },
     {
@@ -147,7 +147,7 @@ test('store spreadsheet guide translates its interface while preserving copyable
       settings: '设置',
       data: '数据',
       guide: '门店表格格式指南',
-      markers: '导入标记',
+      markers: '标记',
       copy: '复制导入标记：perbox',
     },
   ]) {

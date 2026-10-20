@@ -56,7 +56,9 @@ test('order-charge editor previews every affected product and exact order total 
     record,
     onSave: async () => assert.fail('initial render must not save'),
   })
-  assert.equal(host.querySelector('details').open, true)
+  assert.equal(host.querySelector('section.order-charges')?.tagName, 'SECTION')
+  assert.equal(host.querySelector('details, summary'), null)
+  assert.equal(host.querySelector('.order-charges-inputs').hidden, false)
   assert.equal(host.querySelectorAll('.order-charge-product').length, 2)
   assert.match(
     host.querySelector('.order-charges-total').textContent,

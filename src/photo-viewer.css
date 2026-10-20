@@ -27,7 +27,8 @@
 .product-photo-editor[hidden] {
   display: none;
 }
-.product-photo-editor > div:not(.product-photo-editor-actions) {
+.product-photo-editor
+  > div:not(.product-photo-editor-actions, .photo-variant-tag-controls) {
   display: grid;
   gap: 4px;
   flex: 1 1 110px;
@@ -37,6 +38,9 @@
   width: 100%;
   min-width: 70px;
 }
+.product-photo-editor label {
+  margin: 0;
+}
 .product-photo-editor input[type='color'] {
   width: 40px;
   height: 26px;
@@ -44,12 +48,173 @@
 }
 .product-photo-editor-actions {
   display: flex;
+  flex: 0 0 auto;
+  align-items: center;
+  margin-inline-start: auto;
   gap: 5px;
 }
 .product-photo-editor button {
   padding: 4px 7px;
   min-height: 28px;
   font-size: 11px;
+}
+.product-photo-editor .photo-variant-tag-controls {
+  display: flex;
+  flex: 1 0 100%;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+  padding-top: 7px;
+  border-top: 1px solid var(--border);
+}
+.photo-variant-tag-controls > label {
+  flex: 0 0 auto;
+  font-size: 10px;
+}
+.product-photo-editor .photo-variant-tag-controls input[type='text'] {
+  width: 58px;
+  margin: 0;
+  min-height: 26px;
+  height: 26px;
+  padding: 4px 6px;
+  font:
+    700 12px/1.2 Arial,
+    sans-serif;
+  text-transform: uppercase;
+  color: #fff;
+  background: #000;
+  border: 0;
+  border-radius: 4px 0 0 4px;
+}
+.photo-tag-entry,
+.photo-tag-tools {
+  display: inline-flex;
+  align-items: center;
+  flex: 0 0 auto;
+}
+.photo-tag-entry {
+  border: 1px solid var(--border);
+  border-radius: 5px;
+  overflow: hidden;
+}
+.product-photo-editor .photo-tag-entry button,
+.product-photo-editor .photo-tag-tools button,
+.product-photo-editor-actions > .icon-button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 26px;
+  height: 26px;
+  min-height: 26px;
+  padding: 4px;
+  border: 0;
+  background: transparent;
+  border-radius: 4px;
+}
+.photo-tag-entry .ui-icon,
+.photo-tag-tools .ui-icon,
+.product-photo-editor-actions .ui-icon {
+  width: 14px;
+  height: 14px;
+  margin: 0;
+}
+.photo-tag-size {
+  display: flex;
+  align-items: center;
+  flex: 0 1 175px;
+  gap: 5px;
+  margin-inline-start: auto;
+}
+.photo-tag-size label {
+  flex: none;
+  font-size: 10px;
+  white-space: nowrap;
+}
+.product-photo-editor .photo-tag-size input[type='range'] {
+  min-width: 45px;
+  width: 65px;
+}
+.photo-tag-size span {
+  font-size: 10px;
+  min-width: 30px;
+  font-variant-numeric: tabular-nums;
+}
+.photo-variant-tag-list {
+  display: flex;
+  flex: 1;
+  flex-wrap: wrap;
+  gap: 4px;
+  align-self: center;
+  min-width: 0;
+  max-height: 64px;
+  overflow: auto;
+}
+.photo-variant-tag-controls .photo-variant-tag-chip {
+  min-width: 28px;
+  min-height: 24px;
+  padding: 3px 6px;
+  color: #fff;
+  background: #000;
+  border: 1px solid #000;
+  border-radius: 5px;
+  font:
+    700 12px/1 Arial,
+    sans-serif;
+}
+.photo-variant-tag-chip[aria-pressed='true'] {
+  outline: 2px solid var(--text);
+  outline-offset: 1px;
+}
+.photo-variant-tag-overlay {
+  position: absolute;
+  z-index: 1;
+  inset: 0 auto auto 0;
+  transform-origin: 0 0;
+  pointer-events: none;
+}
+.photo-variant-tag-overlay[hidden] {
+  display: none;
+}
+.photo-variant-tag-overlay canvas {
+  display: block;
+}
+.photo-variant-tag-overlay .photo-tag-handle {
+  position: absolute;
+  min-width: 0;
+  min-height: 0;
+  margin: 0;
+  padding: 0;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  box-shadow: none;
+  pointer-events: auto;
+  cursor: move;
+  touch-action: none;
+}
+.photo-variant-tag-overlay .photo-tag-point {
+  border-radius: 50%;
+}
+.photo-variant-tag-overlay .photo-tag-handle:is(:hover, :focus-visible) {
+  background: transparent;
+  border: 0;
+}
+.photo-tag-handle:is(:hover, :focus-visible),
+.photo-tag-handle.is-selected {
+  outline: 1px dashed #fff;
+  outline-offset: 3px;
+  box-shadow: 0 0 0 4px #0008;
+}
+.photo-viewport.is-placing-tag {
+  cursor: crosshair;
+}
+@media (max-width: 600px) {
+  .product-photo-editor .photo-variant-tag-controls {
+    flex-wrap: wrap;
+  }
+  .photo-variant-tag-list {
+    flex-basis: 100%;
+  }
 }
 .photo-viewer-frame > .dialog-close {
   position: absolute;

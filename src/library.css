@@ -148,6 +148,14 @@
   box-shadow: 0 0 0 1px var(--border);
 }
 .language-toggle button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex: 0 0 auto;
+  white-space: nowrap;
+  word-break: keep-all;
+  overflow-wrap: normal;
+  line-height: 1;
   inline-size: 28px;
   min-inline-size: 28px;
   block-size: 30px;
@@ -533,6 +541,37 @@ h2 {
   color: var(--muted);
   font-size: 11px;
 }
+.order-card .order-card-charges {
+  inline-size: auto;
+  min-block-size: 24px;
+  padding: 2px 5px;
+  border: 0;
+  border-radius: 4px;
+  color: var(--danger-text);
+  background: var(--danger);
+  font-size: 10px;
+  font-variant-numeric: tabular-nums;
+}
+.order-card .store-wechat-copy,
+.store-contact-controls .store-wechat-copy {
+  display: inline-grid;
+  place-items: center;
+  flex: 0 0 24px;
+  inline-size: 24px;
+  min-inline-size: 24px;
+  block-size: 24px;
+  min-block-size: 24px;
+  padding: 2px;
+  border: 0;
+  border-radius: 4px;
+  background: transparent;
+  color: var(--success-text);
+  vertical-align: middle;
+}
+.store-wechat-copy .ui-icon {
+  inline-size: 18px;
+  block-size: 18px;
+}
 .order-card-meta .purchase-date,
 .order-card-meta .order-status {
   margin: 0;
@@ -861,6 +900,108 @@ tbody tr:hover {
   box-shadow: 0 2px 8px #0002;
   white-space: normal;
   text-align: start;
+}
+.measurement-heading,
+#sheet-body .measurement-cell {
+  inline-size: 72px;
+  padding-inline: 4px;
+}
+.measurement-heading:last-child,
+#sheet-body .measurement-cell:last-child {
+  padding-inline-end: 12px;
+}
+.carton-measurement {
+  --carton-measurement-width: 7ch;
+  display: inline-flex;
+  align-items: center;
+  position: relative;
+  min-inline-size: 0;
+  max-inline-size: 100%;
+  block-size: 23px;
+  vertical-align: middle;
+  color: var(--text);
+  font-size: inherit;
+  font-weight: inherit;
+  font-variant-numeric: tabular-nums;
+}
+.carton-measurement[data-field='cbm'] {
+  --carton-measurement-width: 9ch;
+}
+/* These small table fields must win over the generic text-input/dialog rules. */
+.carton-measurement[data-field] > input[type='text'] {
+  display: block;
+  box-sizing: border-box;
+  inline-size: var(--carton-measurement-width);
+  min-inline-size: 0;
+  max-inline-size: 100%;
+  block-size: 23px;
+  min-block-size: 23px;
+  max-block-size: 23px;
+  margin: 0;
+  padding: 1px 3px;
+  border: 1px solid transparent;
+  border-radius: 3px;
+  background: transparent;
+  box-shadow: none;
+  color: inherit;
+  font: inherit;
+  font-size: inherit;
+  text-align: end;
+  text-box: normal;
+  line-height: 18px;
+}
+.carton-measurement-unit {
+  flex: 0 0 auto;
+  margin-inline-start: 2px;
+  color: var(--muted);
+  font-size: 9px;
+  line-height: 1;
+  font-weight: 400;
+  pointer-events: none;
+}
+.carton-measurement-unit[hidden] {
+  display: none;
+}
+.carton-measurement:has(.carton-measurement-unit:not([hidden]))
+  > input[type='text'] {
+  inline-size: calc(var(--carton-measurement-width) - 15px);
+}
+.carton-measurement[data-field]
+  > input[type='text']:is(:hover, :focus-visible) {
+  border-block-end-color: var(--border);
+  background: var(--field);
+}
+.carton-measurement[data-field] > input[type='text']:focus-visible {
+  outline: 2px solid var(--focus);
+  outline-offset: 1px;
+}
+.carton-measurement[data-state='saved']:not(:focus-within)
+  > input[type='text'] {
+  border-block-end-color: var(--success-text);
+}
+.carton-measurement[data-state='error'][data-field] > input[type='text'] {
+  border-block-end-color: var(--danger-text);
+  color: var(--danger-text);
+}
+.carton-measurement[data-state='error'] .carton-measurement-status {
+  position: absolute;
+  z-index: 2;
+  inset-block-start: calc(100% + 3px);
+  inset-inline-end: 0;
+  clip: auto;
+  clip-path: none;
+  inline-size: max-content;
+  max-inline-size: 200px;
+  block-size: auto;
+  margin: 0;
+  padding: 4px 6px;
+  border-radius: 4px;
+  background: var(--danger);
+  color: var(--danger-text);
+  box-shadow: 0 2px 8px #0002;
+  white-space: normal;
+  text-align: start;
+  font-size: 10px;
 }
 .thumb-cell {
   width: 90px;
@@ -1336,6 +1477,117 @@ dialog::backdrop {
 }
 #order-details-heading > h2 {
   margin-block: 6px;
+}
+#order-details {
+  inline-size: min(740px, calc(100% - 24px));
+  max-inline-size: 740px;
+}
+#order-details-heading .row-meta {
+  margin-block-start: 6px;
+  font-size: 10px;
+}
+#order-details .store-profile {
+  padding: 12px;
+  border: 1px solid var(--border);
+  border-radius: 7px;
+  background: var(--field);
+}
+.store-profile-fields {
+  display: grid;
+  gap: 10px;
+}
+#order-details .store-profile :is(.store-rename, .store-wechat-form) {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: end;
+  gap: 8px;
+  margin: 0;
+}
+.store-profile-field {
+  min-inline-size: 0;
+}
+#order-details .store-profile-field > label {
+  display: block;
+  margin: 0 0 4px;
+  font-size: 11px;
+  line-height: 1.3;
+  color: var(--muted);
+}
+#order-details .store-profile input[type='text'] {
+  box-sizing: border-box;
+  inline-size: 100%;
+  min-inline-size: 0;
+  min-block-size: 30px;
+  block-size: 30px;
+  margin: 0;
+  padding: 4px 7px;
+  border-radius: 5px;
+  background: var(--surface);
+  font-size: 12px;
+}
+.store-contact-controls {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+}
+#order-details .store-profile form > button {
+  min-block-size: 30px;
+  block-size: 30px;
+  margin: 0;
+  padding: 3px 8px;
+  border-radius: 5px;
+  font-size: 11px;
+}
+#order-details .store-profile-status {
+  min-block-size: 14px;
+  margin: 5px 0 0;
+  font-size: 10px;
+  line-height: 1.4;
+  color: var(--muted);
+}
+#order-details .store-profile-status.is-error {
+  color: var(--danger-text);
+}
+#order-details .store-source-file {
+  margin: 8px 0 0;
+  gap: 4px 7px;
+  font-size: 10px;
+}
+.store-orders-bar {
+  display: flex;
+  align-items: center;
+  margin-block: 10px 12px;
+}
+.store-orders-link {
+  min-block-size: 28px;
+  padding: 4px 8px;
+  border-radius: 5px;
+  font-size: 11px;
+}
+.order-source-totals-heading {
+  margin: 10px 0 7px;
+  font-size: 12px;
+}
+#order-details .order-details-totals {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto minmax(0, 1fr) auto;
+  gap: 7px 12px;
+  margin: 0;
+  font-size: 11px;
+}
+#order-details .order-details-totals dt {
+  color: var(--muted);
+}
+#order-details .order-details-explanation {
+  margin-block: 9px 12px;
+  font-size: 10px;
+  line-height: 1.5;
+  color: var(--muted);
+}
+@media (max-width: 620px) {
+  #order-details .order-details-totals {
+    grid-template-columns: minmax(0, 1fr) auto;
+  }
 }
 .detail-dialog-scroll {
   min-block-size: 0;
@@ -2013,7 +2265,8 @@ button.icon-button {
   margin: 0;
 }
 .selection-totals-grid > div {
-  display: grid;
+  display: flex;
+  flex-direction: column;
   gap: 2px;
   min-inline-size: 0;
 }
@@ -2022,7 +2275,7 @@ button.icon-button {
   font-size: 11px;
 }
 .selection-totals-grid dd {
-  margin: 0;
+  margin: auto 0 0;
   font-size: 13px;
   font-weight: 650;
   font-variant-numeric: tabular-nums;
@@ -2036,6 +2289,33 @@ button.icon-button {
   color: var(--muted);
   font-size: 10px;
   overflow-wrap: anywhere;
+}
+.selection-totals-context > div {
+  display: inline-flex;
+  align-items: baseline;
+  gap: 4px;
+  min-inline-size: 0;
+}
+.selection-totals-context dt,
+.selection-totals-context dd {
+  margin: 0;
+}
+.selection-totals-context dd {
+  color: var(--text);
+  font-weight: 650;
+  font-variant-numeric: tabular-nums;
+}
+.product-selection-totals button.selection-total-value {
+  min-block-size: 0;
+  padding: 0;
+  border-radius: 2px;
+  font: inherit;
+  line-height: inherit;
+  vertical-align: baseline;
+}
+.product-selection-totals button.selection-total-value:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
 }
 .order-totals {
   border-top: 1px solid var(--divider);

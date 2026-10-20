@@ -1,5 +1,5 @@
-// Workspace-only reading aids. Renderers/exporters always use the raw code
-// and the shared black/white artwork in code-design.js.
+// Readable UI codes preserve their raw text. Excel table images explicitly
+// reuse the product split; barcode-label/carton/PDF artwork stays unmarked.
 export const CODE_READING_HELP =
   'The underline identifies the four-digit product number. CE and year/month stay together; code values are unchanged.'
 

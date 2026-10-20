@@ -31,7 +31,7 @@ try {
     exact: true,
   })
   await spreadsheetImport
-    .getByRole('tab', { name: 'Import markers', exact: true })
+    .getByRole('tab', { name: 'Markers', exact: true })
     .click()
   await spreadsheetImport.screenshot({
     path: 'screenshots/store-spreadsheet-import.png',

@@ -17,6 +17,35 @@ function memoryStorage() {
   }
 }
 
+test('recent jobs retain the output language independently of later workspace changes', () => {
+  const storage = memoryStorage()
+  const store = createPrintStore(storage)
+  for (const language of ['en', 'es', 'zh']) {
+    store.recordJob({
+      id: language,
+      kind: 'marks',
+      language,
+      products: [{ code: 'CE26103102', quantity: 1 }],
+    })
+  }
+  assert.deepEqual(
+    new Set(
+      createPrintStore(storage)
+        .recentJobs()
+        .map((job) => job.language)
+    ),
+    new Set(['en', 'es', 'zh'])
+  )
+  assert.equal(
+    store.recordJob({
+      id: 'old',
+      kind: 'labels',
+      products: [{ code: 'CE26103102', quantity: 1 }],
+    }).language,
+    'en'
+  )
+})
+
 test('labels and carton marks keep separate settings', () => {
   const storage = memoryStorage()
   const store = createPrintStore(storage)

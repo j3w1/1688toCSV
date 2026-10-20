@@ -169,3 +169,223 @@ test('adjusting an additional gallery photo preserves the product primary thumbn
   expect(result.item.photos).toHaveLength(2)
   expect(result.staleRejected).toBe(true)
 })
+
+test('photo variant callouts render and survive gallery edits, backup and restore without changing originals', async ({
+  extension,
+}) => {
+  const page = await openRepository(extension)
+  const result = await page.evaluate(async (input) => {
+    const { photoVariantTagLayout, squareProductPhoto } =
+      await import('/src/product-photo.js')
+    const canvas = document.createElement('canvas')
+    canvas.width = canvas.height = 2
+    const context = canvas.getContext('2d')
+    context.fillStyle = '#d0453a'
+    context.fillRect(0, 0, 2, 2)
+    const secondaryPhoto = canvas.toDataURL('image/png')
+    const data = structuredClone(input)
+    data.rows[0].photos.push(secondaryPhoto)
+    const imported = await repository.importStoreOrder(data)
+    const orderId = imported.snapshot.orderId
+    const originals = imported.snapshot.items[0].photos
+    const tags = [
+      { id: 'a', code: 'AS', x: 0.2, y: 0.7, labelX: 0.8, labelY: 0.2 },
+    ]
+    const annotated = await squareProductPhoto(input.rows[0].photos[0], {
+      tags,
+      tagScale: 1.8,
+    })
+    const first = await repository.setProductPhoto(orderId, '1', {
+      originalPhoto: originals[0],
+      thumbnail: annotated,
+      edit: { fit: 'contain', tags, tagScale: 1.8 },
+    })
+    const second = await repository.setProductPhoto(orderId, '1', {
+      photoIndex: 1,
+      originalPhoto: originals[1],
+      edit: {
+        fit: 'cover',
+        tags: [{ ...tags[0], id: 'b', code: 'B' }],
+        tagScale: 2.5,
+      },
+    })
+    const beforeInvalid = await repository.getOrder(orderId)
+    let rejected = false
+    try {
+      await repository.setProductPhoto(orderId, '1', {
+        edit: { tags: [{ ...tags[0], labelX: 2 }] },
+      })
+    } catch (error) {
+      rejected = error.message.includes('coordinates')
+    }
+    const afterInvalid = await repository.getOrder(orderId)
+    let scaleRejected = false
+    try {
+      await repository.setProductPhoto(orderId, '1', {
+        edit: { tags, tagScale: 2.6 },
+      })
+    } catch (error) {
+      scaleRejected = error.message.includes('Photo tag size')
+    }
+    const afterInvalidScale = await repository.getOrder(orderId)
+    const exported = await repository.exportBackup()
+    const restored = await openOrderDatabase({
+      name: `${databaseName}-tags-restored`,
+    })
+    await restored.restoreBackup(exported)
+    const restoredOrder = await restored.getOrder(orderId)
+    const restoredOriginals = await Promise.all(
+      originals.map((photo) => restored.getImage(photo))
+    )
+    await repository.setProductPhoto(orderId, '1', {
+      thumbnail: input.rows[0].photos[0],
+      edit: { fit: 'contain', tags: [] },
+    })
+    const cleared = await repository.getOrder(orderId)
+    // Inspect the actual generated PNG at the callout anchor and leader.
+    const image = new Image()
+    image.src = annotated
+    await image.decode()
+    canvas.width = canvas.height = 640
+    context.drawImage(image, 0, 0)
+    const layout = photoVariantTagLayout(tags[0], 640, context, 1.8)
+    const core = [...context.getImageData(128, 448, 1, 1).data]
+    const rimX = Math.round(
+      layout.anchor.x + (layout.dot.radius + layout.dot.innerRadius) / 2
+    )
+    const rim = [...context.getImageData(rimX, 448, 1, 1).data]
+    const midX = Math.round((layout.leader.x1 + layout.leader.x2) / 2)
+    const midY = Math.round((layout.leader.y1 + layout.leader.y2) / 2)
+    const leader = [...context.getImageData(midX - 1, midY - 1, 3, 3).data]
+    restored.close()
+    return {
+      originals,
+      first,
+      second,
+      restoredOrder,
+      restoredOriginals,
+      sourcePhotos: data.rows[0].photos,
+      rejected,
+      beforeInvalid,
+      afterInvalid,
+      scaleRejected,
+      afterInvalidScale,
+      cleared,
+      core,
+      rim,
+      leader,
+    }
+  }, input)
+  const expectedTag = {
+    id: 'a',
+    code: 'AS',
+    x: 0.2,
+    y: 0.7,
+    labelX: 0.8,
+    labelY: 0.2,
+  }
+  expect(result.first.snapshot.items[0].photoEdits['0'].tags).toEqual([
+    expectedTag,
+  ])
+  expect(result.first.snapshot.items[0].photoEdits['0'].tagScale).toBe(1.8)
+  expect(result.second.snapshot.items[0].photoEdits['1'].tagScale).toBe(2.5)
+  expect(result.second.snapshot.items[0].thumbnail).toBe(
+    result.first.snapshot.items[0].thumbnail
+  )
+  expect(result.restoredOrder.snapshot.items[0].photoEdits).toEqual(
+    result.second.snapshot.items[0].photoEdits
+  )
+  expect(result.restoredOrder.snapshot.items[0].photos).toEqual(
+    result.originals
+  )
+  expect(result.restoredOriginals.map((asset) => asset.dataUrl)).toEqual(
+    result.sourcePhotos
+  )
+  expect(result.rejected).toBe(true)
+  expect(result.afterInvalid).toEqual(result.beforeInvalid)
+  expect(result.scaleRejected).toBe(true)
+  expect(result.afterInvalidScale).toEqual(result.beforeInvalid)
+  expect(result.cleared.snapshot.items[0].photoEdits['0'].tags).toEqual([])
+  expect(result.cleared.snapshot.items[0].photoEdits['0']).not.toHaveProperty(
+    'tagScale'
+  )
+  expect(result.cleared.snapshot.items[0].photoEdits['1'].tags[0].code).toBe(
+    'B'
+  )
+  expect(result.core).toEqual([255, 255, 255, 255])
+  expect(result.rim).toEqual([0, 0, 0, 255])
+  expect(
+    Array.from({ length: 9 }, (_, index) =>
+      result.leader.slice(index * 4, index * 4 + 3)
+    ).some((pixel) => pixel.every((channel) => channel === 0))
+  ).toBe(true)
+})
+
+test('deleting orders removes unshared local originals while keeping shared and historical assets', async ({
+  extension,
+}) => {
+  const page = await openRepository(extension)
+  const result = await page.evaluate(async (input) => {
+    const { localImageAsset } = await import('/src/images.js')
+    const canvas = document.createElement('canvas')
+    canvas.width = canvas.height = 2
+    const context = canvas.getContext('2d')
+    function image(color) {
+      context.fillStyle = color
+      context.fillRect(0, 0, 2, 2)
+      return canvas.toDataURL('image/png')
+    }
+    const firstInput = structuredClone(input)
+    firstInput.rows[0].photos.push(image('#c93535'))
+    const first = await repository.importStoreOrder(firstInput)
+    const second = await repository.importStoreOrder(input)
+    const [sharedPhoto, uniquePhoto] = first.snapshot.items[0].photos
+    const replacement = await localImageAsset(image('#3355c9'))
+    await repository.putImage(replacement)
+    const unrelated = await localImageAsset(image('#35c955'))
+    await repository.putImage(unrelated)
+    const newer = structuredClone(second.snapshot)
+    newer.observedAt = new Date(
+      Date.parse(newer.observedAt) + 1000
+    ).toISOString()
+    newer.items[0].photos = [replacement.url]
+    newer.items[0].thumbnail = replacement.dataUrl
+    await repository.saveSnapshot(newer)
+    const history = await repository.getHistory(second.snapshot.orderId)
+    await repository.setProductPhoto(first.snapshot.orderId, '1', {
+      edit: {
+        tags: [
+          { id: 'a', code: 'A', x: 0.1, y: 0.2, labelX: 0.7, labelY: 0.8 },
+        ],
+      },
+    })
+    await repository.removeOrders([first.snapshot.orderId])
+    const afterFirst = await repository.exportBackup()
+    await repository.removeOrders([second.snapshot.orderId])
+    const afterSecond = await repository.exportBackup()
+    return {
+      history,
+      sharedPhoto,
+      uniquePhoto,
+      replacement: replacement.url,
+      unrelated: unrelated.url,
+      afterFirst,
+      afterSecond,
+    }
+  }, input)
+  expect(result.history).toHaveLength(1)
+  expect(result.history[0].snapshot.items[0].photos).toContain(
+    result.sharedPhoto
+  )
+  expect(result.afterFirst.orders).toHaveLength(1)
+  const afterFirst = result.afterFirst.images.map((asset) => asset.url)
+  expect(afterFirst).not.toContain(result.uniquePhoto)
+  expect(afterFirst).toContain(result.sharedPhoto)
+  expect(afterFirst).toContain(result.replacement)
+  expect(afterFirst).toContain(result.unrelated)
+  expect(result.afterSecond.orders).toHaveLength(0)
+  expect(result.afterSecond.history).toHaveLength(0)
+  expect(result.afterSecond.images.map((asset) => asset.url)).toEqual([
+    result.unrelated,
+  ])
+})

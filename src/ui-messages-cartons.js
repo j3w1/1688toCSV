@@ -6,6 +6,36 @@ export const CARTON_MESSAGES = {
   },
   Unknown: { zh: '未知', es: 'Desconocido' },
   'Pcs/box': { zh: '每箱件数', es: 'Pzas/caja' },
+  'kg/box': { zh: '千克/箱', es: 'kg/caja' },
+  'm³/box': { zh: '立方米/箱', es: 'm³/caja' },
+  'Carton measurements changed in another tab. Reload before saving your edits.':
+    {
+      zh: '纸箱测量数据已在另一个标签页中更改。请重新加载后再保存编辑。',
+      es: 'Las medidas de la caja cambiaron en otra pestaña. Recarga antes de guardar tus cambios.',
+    },
+  'Calculated from {0} × {1} × {2} cm. Editing CBM replaces these dimensions with the entered volume per carton.':
+    {
+      zh: '根据 {0} × {1} × {2} 厘米计算。编辑体积将以输入的每箱体积替换这些尺寸。',
+      es: 'Calculado a partir de {0} × {1} × {2} cm. Editar el volumen sustituye estas dimensiones por el volumen indicado por caja.',
+    },
+  'Weight must be a nonnegative decimal in kg': {
+    zh: '重量必须是大于或等于零的千克数值',
+    es: 'El peso debe ser un decimal no negativo en kg',
+  },
+  'Volume must be a nonnegative decimal in m³': {
+    zh: '体积必须是大于或等于零的立方米数值',
+    es: 'El volumen debe ser un decimal no negativo en m³',
+  },
+  'Weight of one carton in kg. Leave blank if unknown. Decimals may use a dot or comma. Saves automatically.':
+    {
+      zh: '每箱重量，单位为千克。不确定时留空。小数可以使用点或逗号。自动保存。',
+      es: 'Peso de una caja en kg. Déjalo vacío si no lo sabes. Los decimales admiten punto o coma. Se guarda automáticamente.',
+    },
+  'Volume of one carton in m³. Leave blank if unknown. Decimals may use a dot or comma. Saves automatically.':
+    {
+      zh: '每箱体积，单位为立方米。不确定时留空。小数可以使用点或逗号。自动保存。',
+      es: 'Volumen de una caja en m³. Déjalo vacío si no lo sabes. Los decimales admiten punto o coma. Se guarda automáticamente.',
+    },
   'Copy Pcs/box': {
     zh: '复制每箱件数',
     es: 'Copiar unidades por caja',

@@ -2,8 +2,8 @@
 // names, grouping, or codes. Swatches are illustrative, not seller color samples.
 export const COLOR_VOCABULARY_VERSION = 1
 
-// Longer aliases take precedence. Bare single characters and ambiguous nouns
-// (for example 咖啡) are accepted only as complete color-field values.
+// Longer aliases take precedence. Bare characters need an explicit color-field
+// segment or a named shade ending; ambiguous nouns (for example 咖啡) stay exact.
 const definitions = [
   [
     'black',
@@ -771,7 +771,12 @@ function indexVocabulary() {
     )
   )
   tokens = activeVocabulary
-    .flatMap((entry) => entry.aliases.map((alias) => ({ alias, entry })))
+    .flatMap((entry) => [
+      ...entry.aliases.map((alias) => ({ alias, entry })),
+      // Display names are useful seller spellings too, but only an explicit
+      // color field gives English words enough context to be a color hint.
+      { alias: entry.labels.en, entry, english: true },
+    ])
     .sort((a, b) => b.alias.length - a.alias.length)
 }
 /** Change display helpers only. Imported seller text and issued codes stay intact. */
@@ -829,7 +834,9 @@ function hintsForField(field, language) {
     if (!entry) return
     if (occupied.slice(start, end).some(Boolean)) return
     if (
-      /(?:不是|并非|非|不要|不含)[^,，;；。()【】]*$/.test(text.slice(0, start))
+      /(?:不是|并非|非|不要|不含)[^,，;；。()（）【】]*$/.test(
+        text.slice(0, start)
+      )
     )
       return
     occupied.fill(1, start, end)
@@ -876,20 +883,34 @@ function hintsForField(field, language) {
       null
     )
   }
-  for (const { alias, entry } of tokens) {
+  for (const { alias, entry, english } of tokens) {
+    if (english && !field.color) continue
+    const haystack = english ? text.toLocaleLowerCase('en') : text
+    const needle = english ? alias.toLocaleLowerCase('en') : alias
     let offset = 0
-    while ((offset = text.indexOf(alias, offset)) !== -1) {
+    while ((offset = haystack.indexOf(needle, offset)) !== -1) {
       const start = offset
       offset += alias.length
+      const before = text.slice(0, start)
+      const after = text.slice(offset)
+      if (
+        english &&
+        (/[\p{L}\p{N}_]$/u.test(before) || /^[\p{L}\p{N}_]/u.test(after))
+      )
+        continue
       if (alias.length === 1 || ambiguous.has(alias)) {
-        // Exact field/segment values allow 红 or 咖啡 without interpreting
-        // 红包, 咖啡杯, 丁香, 黑板, or model names as colors.
-        const before = text.slice(0, start)
-        const after = text.slice(offset)
+        // A named shade such as 安可拉红 may end in a bare color character.
+        // Require the color to end its segment so 红酒杯 and 黑板 still do not
+        // qualify; descriptions and arbitrary SKU fields remain conservative.
+        const namedShadeEnding =
+          alias.length === 1 &&
+          /\p{Script=Han}/u.test(alias) &&
+          /[\p{L}\p{N}]$/u.test(before)
         if (
           !field.color ||
-          !/^(?:|.*[\s,，;；/+:：()【】\[\]\-])$/.test(before) ||
-          !/^(?:|[\s,，;；/+:：()【】\[\]\-].*)$/.test(after)
+          (!/^(?:|.*[\s,，;；/+:：()（）【】\[\]\-])$/.test(before) &&
+            !namedShadeEnding) ||
+          !/^(?:|[\s,，;；/+:：()（）【】\[\]\-].*)$/.test(after)
         )
           continue
       }

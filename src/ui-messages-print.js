@@ -1,5 +1,11 @@
 // A4 print sheets for labels and carton marks.
 export const PRINT_MESSAGES = {
+  Language: { zh: '语言', es: 'Idioma' },
+  'Language also applies to PDF captions and carton numbers. Codes and saved label text stay unchanged.':
+    {
+      zh: '语言也适用于 PDF 页脚和箱号。编码及已保存的标签文字保持不变。',
+      es: 'El idioma también se aplica a los textos del PDF y números de caja. Los códigos y textos guardados de las etiquetas se conservan.',
+    },
   'Updating preview…': {
     zh: '正在更新预览…',
     es: 'Actualizando vista previa…',
@@ -88,8 +94,8 @@ export const PRINT_MESSAGES = {
       es: 'Imprime la hoja de calibración una vez por impresora, mídela e introduce los desplazamientos.',
     },
   'Number cartons (Carton 1 of 3)': {
-    zh: '为箱子编号（Carton 1 of 3）',
-    es: 'Numerar cajas (Carton 1 of 3)',
+    zh: '为箱子编号（第 1/3 箱）',
+    es: 'Numerar cajas (Caja 1 de 3)',
   },
   'Fill an odd last half with an extra copy': {
     zh: '奇数时用额外一份填满最后半页',
@@ -261,8 +267,8 @@ export const PRINT_MESSAGES = {
       es: 'Mueve todo el contenido impreso en milímetros: hacia arriba con valores negativos o hacia abajo con positivos.',
     },
   'Print each carton’s sequence below its mark, such as Carton 1 of 3.': {
-    zh: '在每个箱唛下方打印箱号顺序，例如 Carton 1 of 3。',
-    es: 'Imprime el número de cada caja debajo de su marca, por ejemplo Carton 1 of 3.',
+    zh: '在每个箱唛下方打印箱号顺序，例如第 1/3 箱。',
+    es: 'Imprime el número de cada caja debajo de su marca, por ejemplo Caja 1 de 3.',
   },
   'Repeat the last carton mark once to fill an empty final half page.': {
     zh: '将最后一个箱唛再打印一份，以填满最后空白的半页。',

@@ -5,6 +5,7 @@ import {
   normalizeLabelLayout,
   normalizeMarkLayout,
 } from './print-layout.js'
+import { printLanguage } from './print-language.js'
 
 export const PRINT_KEYS = Object.freeze({
   labels: '1688-print-labels',
@@ -89,6 +90,7 @@ function cleanJob(input) {
   return {
     id: String(input.id || `${input.kind}-${date.getTime()}`).slice(0, 80),
     kind: input.kind,
+    language: printLanguage(input.language),
     date: Number.isNaN(date.getTime())
       ? new Date(0).toISOString()
       : date.toISOString(),

@@ -155,8 +155,11 @@ test('packing rows show exact source unit prices and quantities as read-only fac
     ['¥ 8.20', '80'],
   ].entries()) {
     const facts = rows.nth(index).locator('.variant-order-facts')
-    await expect(facts.locator('dt')).toHaveText(['Unit price', 'Quantity'])
-    await expect(facts.locator('dd')).toHaveText([price, quantity])
+    await expect(facts.locator('dt')).toHaveText(['Unit price'])
+    await expect(facts.locator('dd')).toHaveText([price])
+    await expect(
+      rows.nth(index).locator('.variant-numeric-row .variant-quantity')
+    ).toHaveText(quantity)
     await expect(
       facts.locator('input, textarea, [contenteditable=true]')
     ).toHaveCount(0)
@@ -190,7 +193,7 @@ test('preparation keeps facts compact and read-only beside a visible label edito
 }) => {
   const { page, view } = await openPacking(extension, undefined, [10, 8, 10])
   const row = view.locator('tr[data-variant-id]').first()
-  const facts = row.locator('.variant-facts')
+  const facts = row.locator('.variant-numeric-row')
   const capacity = facts.locator('.carton-capacity-readout')
   await expect(capacity).toContainText('10')
   await expect(capacity).toContainText('4 full cartons')
@@ -222,8 +225,9 @@ test('preparation keeps facts compact and read-only beside a visible label edito
     )
   expect(widths[0]).toBeLessThanOrEqual(58)
   expect(widths[1]).toBeLessThanOrEqual(96)
-  expect(widths[2]).toBeGreaterThan(rowBounds.width * 0.55)
-  expect(widths[3]).toBeLessThanOrEqual(176)
+  expect(widths[2]).toBeGreaterThan(rowBounds.width * 0.35)
+  expect(widths[3]).toBeLessThanOrEqual(286)
+  expect(widths[4]).toBeLessThanOrEqual(176)
 
   for (const width of [1440, 768, 390]) {
     await page.setViewportSize({ width, height: 1000 })
@@ -327,12 +331,11 @@ test('reopening one selected source row of a shared barcode shows only that row 
   const row = view.locator('tr[data-variant-id]')
   await expect(row.locator('.variant-order-facts dt')).toHaveText([
     'Unit price',
-    'Quantity',
   ])
-  await expect(row.locator('.variant-order-facts dd')).toHaveText([
-    '¥ 18.90',
-    '24',
-  ])
+  await expect(row.locator('.variant-order-facts dd')).toHaveText(['¥ 18.90'])
+  await expect(
+    row.locator('.variant-numeric-row .variant-quantity')
+  ).toHaveText('24')
   await expect(row.locator('.variant-price')).not.toContainText('12.345')
   await expect(row.locator('.variant-source-count')).toHaveCount(0)
   await expect(view.locator('.preparation-copy-scope')).toHaveText(

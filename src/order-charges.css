@@ -1,15 +1,21 @@
 .order-charges {
   border-block-start: 1px solid var(--border);
-  padding-block: 10px;
+  padding-block: 14px;
   min-inline-size: 0;
 }
-.order-charges > summary {
-  cursor: pointer;
+.order-charges-heading {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 5px 10px;
   font-size: 12px;
 }
+.order-charges-heading > strong {
+  margin-inline-end: auto;
+}
 .order-charges-summary-total {
-  margin-inline-start: 10px;
-  color: var(--muted);
+  margin-inline-start: 0;
+  color: var(--danger-text, #bd2727);
   font-variant-numeric: tabular-nums;
 }
 .order-charges-help,
@@ -30,11 +36,8 @@
   display: flex;
   justify-content: flex-end;
   gap: 6px;
-  position: sticky;
-  inset-block-start: 0;
-  z-index: 1;
-  background: var(--panel, var(--field));
-  padding-block: 6px;
+  background: transparent;
+  padding: 0;
 }
 .order-charges-toolbar button {
   min-block-size: 28px;
@@ -94,7 +97,7 @@
 .order-charges-products {
   display: grid;
   gap: 4px;
-  max-block-size: 290px;
+  max-block-size: 190px;
   overflow: auto;
   overscroll-behavior: contain;
 }

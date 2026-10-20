@@ -1,5 +1,9 @@
 import { centsToMoney, lineGrossCents, moneyToCents } from './money.js'
 import { localImageAsset } from './images.js'
+import {
+  validatePhotoVariantTags,
+  validatePhotoTagScale,
+} from './product-photo.js'
 
 const positiveDecimal = /^(?:0|[1-9]\d*)(?:\.\d+)?$/
 const whole = /^[1-9]\d*$/
@@ -188,6 +192,10 @@ export function validatePhotoEdits(edits, count) {
           throw new Error('Photo background is invalid')
         result.background = edit.background
       }
+      if (edit.tags !== undefined)
+        result.tags = validatePhotoVariantTags(edit.tags)
+      if (edit.tagScale !== undefined)
+        result.tagScale = validatePhotoTagScale(edit.tagScale)
       return [index, result]
     })
   )

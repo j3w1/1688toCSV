@@ -2,7 +2,8 @@
 // and the PDF. Everything here is pure: quantities in, page drawings out. All
 // lengths are millimetres from the top-left corner of the page.
 
-import { captionText } from './pdf-writer.js'
+import { captionUnits } from './print-captions.js'
+import { printText } from './print-language.js'
 
 export const A4 = Object.freeze({ widthMm: 210, heightMm: 297 })
 /** Content closer than this to a paper edge may not print. */
@@ -427,7 +428,7 @@ const MM_PER_CAPTION_CHAR = CAPTION_PT * 0.5 * MM_PER_PT
 // Helvetica proportions: about half an em per character, cap height 0.72 em
 // and descenders 0.22 em. Used to keep text inside the printable area.
 const textBox = (op) => {
-  const width = captionText(op.value).length * op.size * 0.5 * MM_PER_PT
+  const width = captionUnits(op.value) * op.size * 0.5 * MM_PER_PT
   const above = op.size * 0.72 * MM_PER_PT
   const below = op.size * 0.22 * MM_PER_PT
   const left =
@@ -554,18 +555,24 @@ export function pageCaption(
   prefix,
   runs,
   suffix,
-  { widthMm = A4.widthMm - 16 } = {}
+  { widthMm = A4.widthMm - 16, language = 'en' } = {}
 ) {
   const limit = Math.floor(widthMm / MM_PER_CAPTION_CHAR)
   const parts = runs.map((run) => `${run.key} x${run.count}`)
   const join = (shown) => {
     const more = parts.length - shown.length
-    return [prefix, ...shown, ...(more ? [`+${more} more`] : []), suffix]
+    return [
+      prefix,
+      ...shown,
+      ...(more ? [printText('more', language, { n: more })] : []),
+      suffix,
+    ]
       .filter(Boolean)
       .join(' - ')
   }
   let shown = parts
-  while (shown.length && join(shown).length > limit) shown = shown.slice(0, -1)
+  while (shown.length && captionUnits(join(shown)) > limit)
+    shown = shown.slice(0, -1)
   return join(shown)
 }
 
@@ -643,7 +650,13 @@ function productBoundaries(grid, keys) {
 }
 
 /** Every operation for label page `page` (0-based), offsets applied. */
-export function labelPageOps({ plan, grid, layout: layoutInput, page }) {
+export function labelPageOps({
+  plan,
+  grid,
+  layout: layoutInput,
+  page,
+  language = 'en',
+}) {
   const layout = normalizeLabelLayout(layoutInput)
   const keys = plan.sequence.slice(
     page * grid.perPage,
@@ -666,9 +679,10 @@ export function labelPageOps({ plan, grid, layout: layoutInput, page }) {
     ops.push(
       text(
         pageCaption(
-          `CE labels - page ${page + 1} of ${plan.pages}`,
+          `${printText('labels', language)} - ${printText('page', language, { n: page + 1, total: plan.pages })}`,
           plan.pageSummaries[page] || [],
-          'print at 100% (Actual size)'
+          printText('actual', language),
+          { language }
         ),
         A4.widthMm / 2,
         baseline,
@@ -697,7 +711,13 @@ export const numberingFits = (slots) =>
   numberingBaseline(slots, 0) !== null && numberingBaseline(slots, 1) !== null
 
 /** Every operation for carton-mark page `page` (0-based), offsets applied. */
-export function markPageOps({ plan, slots, layout: layoutInput, page }) {
+export function markPageOps({
+  plan,
+  slots,
+  layout: layoutInput,
+  page,
+  language = 'en',
+}) {
   const layout = normalizeMarkLayout(layoutInput)
   const ops = []
   const entries = plan.sequence.slice(page * 2, page * 2 + 2)
@@ -714,7 +734,7 @@ export function markPageOps({ plan, slots, layout: layoutInput, page }) {
     if (layout.numbering && entry.number && baseline !== null)
       ops.push(
         text(
-          `Carton ${entry.number} of ${entry.of}`,
+          printText('carton', language, { n: entry.number, total: entry.of }),
           A4.widthMm / 2,
           baseline,
           {
@@ -756,9 +776,10 @@ export function markPageOps({ plan, slots, layout: layoutInput, page }) {
     ops.push(
       text(
         pageCaption(
-          `CE carton marks - page ${page + 1} of ${plan.pages}`,
+          `${printText('marks', language)} - ${printText('page', language, { n: page + 1, total: plan.pages })}`,
           plan.pageSummaries[page] || [],
-          'print at 100% (Actual size)'
+          printText('actual', language),
+          { language }
         ),
         A4.widthMm / 2,
         baseline,
@@ -802,54 +823,43 @@ const signed = (value) =>
   `${value >= 0 ? '+' : '-'}${Math.abs(value).toFixed(1)}`
 
 /** A one-page calibration sheet: 10 mm and 100 mm rulers on both axes and two reference crosses. */
-export function calibrationOps(layoutInput = {}, { presetName = '' } = {}) {
+export function calibrationOps(
+  layoutInput = {},
+  { presetName = '', language = 'en' } = {}
+) {
   const layout = normalizeLabelLayout(layoutInput)
   const ops = []
   const say = (value, y, style = {}) =>
     ops.push(text(value, 30, y, { size: 8, gray: 0.15, ...style }))
-  say('CE print calibration', 34, { size: 12, gray: 0 })
+  say(printText('calibration', language), 34, { size: 12, gray: 0 })
+  say(printText('calibrationScale', language), 41)
+  say(printText('calibrationRulers', language), 47)
+  say(printText('calibrationRulersFix', language), 52)
+  say(printText('calibrationLeft', language), 58)
+  say(printText('calibrationFormula', language), 63)
+  say(printText('calibrationTop', language), 69)
+  say(printText('calibrationExample', language), 74)
   say(
-    'Print this page at 100% (Actual size), with no "fit to page" scaling.',
-    41
-  )
-  say(
-    '1. Each long ruler must measure exactly 100 mm and each short ruler 10 mm.',
-    47
-  )
-  say(
-    '   If not, the printer is scaling: choose Actual size or 100% and print again.',
-    52
-  )
-  say(
-    '2. Measure from the left paper edge to the vertical line of the top-left cross',
-    58
-  )
-  say(
-    '   (target 20 mm). New offset X = current X + 20 - measured; X is printed below.',
-    63
-  )
-  say(
-    '3. Do the same from the top paper edge to its horizontal line for offset Y.',
-    69
-  )
-  say(
-    '   Example: current X +2.0, measured 22 mm -> new X +0.0. Save them as a preset.',
-    74
-  )
-  say(
-    `Offsets on this sheet: X ${signed(layout.offsetXMm)} mm, Y ${signed(layout.offsetYMm)} mm${presetName ? ` - preset ${presetName}` : ''}`,
+    `${printText('offsets', language, { x: signed(layout.offsetXMm), y: signed(layout.offsetYMm) })}${presetName ? ` - ${printText('preset', language, { name: presetName })}` : ''}`,
     82,
     { gray: 0.3 }
   )
   cross(ops, 20, 20)
-  ops.push(text('20 mm from left and top', 25, 18, { size: 6, gray: 0.3 }))
+  ops.push(
+    text(printText('crossTop', language), 25, 18, { size: 6, gray: 0.3 })
+  )
   cross(ops, A4.widthMm - 20, A4.heightMm - 20)
   ops.push(
-    text('20 mm from right and bottom', A4.widthMm - 25, A4.heightMm - 22, {
-      size: 6,
-      gray: 0.3,
-      align: 'right',
-    })
+    text(
+      printText('crossBottom', language),
+      A4.widthMm - 25,
+      A4.heightMm - 22,
+      {
+        size: 6,
+        gray: 0.3,
+        align: 'right',
+      }
+    )
   )
   ops.push(text('100 mm', 105, 112, { size: 7, gray: 0.3, align: 'center' }))
   ruler(ops, { x: 55, y: 125, lengthMm: 100, vertical: false })

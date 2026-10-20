@@ -3,6 +3,7 @@ import { bindText, bindAttribute, message } from './i18n.js'
 import { decorateIcon } from './icons.js'
 import { showErrorNotice, clearErrorNotice } from './error-notice.js'
 import { photoCopyTile } from './photo-copy.js'
+import { popupLanguageToggle } from './popup-language-toggle.js'
 
 export class ImageBatchTooLarge extends Error {}
 
@@ -211,6 +212,8 @@ export function openImageCopyDialog({
   writeImage = writePreparedImage,
   createOptions,
   interactivePreview = false,
+  languageToggle = false,
+  onLanguageChange,
   errorOptions,
   signal,
 }) {
@@ -224,7 +227,19 @@ export function openImageCopyDialog({
     label: 'Close',
   })
   close.onclick = () => dialog.close()
-  heading.append(element('h2', message(title)), close)
+  heading.append(element('h2', message(title)))
+  const headingActions = element('div', undefined, 'image-copy-heading-actions')
+  const languages = languageToggle
+    ? popupLanguageToggle(dialog, {
+        onChange(language) {
+          onLanguageChange?.(language)
+          refresh(true)
+        },
+      })
+    : null
+  if (languages) headingActions.append(languages)
+  headingActions.append(close)
+  heading.append(headingActions)
   const hint = element(
     'p',
     message(
@@ -305,6 +320,8 @@ export function openImageCopyDialog({
     previous.disabled = copying || current === 0 || !plans.length
     next.disabled = copying || current >= plans.length - 1
     if (options) options.disabled = copying
+    if (languages)
+      for (const button of languages.children) button.disabled = copying
     for (const button of preview.querySelectorAll('.photo-copy-button'))
       button.disabled = copying || !ready
     for (const button of batches.children) {

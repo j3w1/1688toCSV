@@ -16,7 +16,10 @@ import { SHELL_MESSAGES } from './ui-messages-shell.js'
 import { PRINT_MESSAGES } from './ui-messages-print.js'
 import { CARTON_MESSAGES } from './ui-messages-cartons.js'
 import { STORE_IMPORT_MESSAGES } from './ui-messages-store-import.js'
+import { STORE_DETAILS_MESSAGES } from './ui-messages-store-details.js'
+import { PHOTO_TAG_MESSAGES } from './ui-messages-photo-tags.js'
 import { ORDER_CHARGE_MESSAGES } from './ui-messages-order-charges.js'
+import { SUMMARY_MESSAGES } from './ui-messages-summary.js'
 
 // Explicit interface messages only; original seller, product and label values are never translated.
 export const UI_MESSAGES = {
@@ -34,6 +37,9 @@ export const UI_MESSAGES = {
   ...PRINT_MESSAGES,
   ...CARTON_MESSAGES,
   ...STORE_IMPORT_MESSAGES,
+  ...STORE_DETAILS_MESSAGES,
+  ...PHOTO_TAG_MESSAGES,
+  ...SUMMARY_MESSAGES,
   ...ORDER_CHARGE_MESSAGES,
   ...REVIEW_MESSAGES,
   Sizes: { zh: '尺寸', es: 'Tallas' },
@@ -1058,10 +1064,6 @@ export const UI_MESSAGES = {
   'Whole-order totals · {0} matching order{1}': {
     zh: '完整订单合计 · {0} 个匹配订单',
     es: 'Totales completos · {0} pedido{1} coincidente{1}',
-  },
-  '{0} matching product{1}{2}': {
-    zh: '{0} 件匹配商品{2}',
-    es: '{0} producto{1} coincidente{1}{2}',
   },
   ' · continued': {
     zh: ' · 续页',

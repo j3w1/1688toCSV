@@ -233,6 +233,20 @@ test('packing copy formats remain selection-only and Escape dismisses them befor
   await page.screenshot({
     path: test.info().outputPath('copy-menu-preparation-wide.png'),
   })
+  const exportPacking = panel.locator('[data-action="export-packing-list"]')
+  const exportBounds = await exportPacking.boundingBox()
+  const panelBounds = await panel.boundingBox()
+  expect(exportBounds.width).toBeGreaterThan(panelBounds.width * 0.8)
+  expect(
+    await exportPacking.evaluate((button) => {
+      const text = [...button.childNodes].find(
+        (node) => node.nodeType === Node.TEXT_NODE && node.textContent.trim()
+      )
+      const range = document.createRange()
+      range.selectNode(text)
+      return range.getClientRects().length
+    })
+  ).toBe(1)
   await extension.context.grantPermissions([
     'clipboard-read',
     'clipboard-write',

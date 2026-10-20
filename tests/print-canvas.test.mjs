@@ -20,6 +20,19 @@ function recordingContext() {
   return context
 }
 
+test('the preview preserves Chinese glyphs and Spanish accents in generated captions', () => {
+  const context = recordingContext()
+  const target = canvasPage(context, 3)
+  target.text('第 1/3 箱', 105, 30, { align: 'center' })
+  target.text('página 1 de 3 · Tamaño real', 105, 40, { align: 'center' })
+  assert.deepEqual(
+    context.calls
+      .filter(([name]) => name === 'fillText')
+      .map(([, value]) => value),
+    ['第 1/3 箱', 'página 1 de 3 · Tamaño real']
+  )
+})
+
 test('the preview and the PDF place captions and dashes with the same millimetre geometry', () => {
   const k = 3
   const ops = [

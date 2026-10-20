@@ -1,5 +1,5 @@
-// Session history contains preparation snapshots only, never database state or
-// reservations. Saving acknowledges a revision without discarding user edits.
+// Session history contains preparation snapshots and explicit measurement patches,
+// never database snapshots or reservations. Saving retains the session history.
 export function preparationHistorySnapshot(preparation) {
   return JSON.stringify({ ...preparation, revision: 0, updatedAt: '' })
 }
@@ -43,6 +43,8 @@ export function createPreparationHistory({
         entry.after.length +
         (entry.beforeScope?.length || 0) +
         (entry.afterScope?.length || 0) +
+        (entry.beforeCartons?.length || 0) +
+        (entry.afterCartons?.length || 0) +
         (entry.mergeKey?.length || 0))
     )
   }
@@ -72,6 +74,16 @@ export function createPreparationHistory({
         ? {
             scope: JSON.parse(
               direction === 'undo' ? change.beforeScope : change.afterScope
+            ),
+          }
+        : {}),
+      ...(change.beforeCartons !== undefined
+        ? {
+            cartons: JSON.parse(
+              direction === 'undo' ? change.beforeCartons : change.afterCartons
+            ),
+            expectedCartons: JSON.parse(
+              direction === 'undo' ? change.afterCartons : change.beforeCartons
             ),
           }
         : {}),
@@ -122,18 +134,31 @@ export function createPreparationHistory({
     recordBatch(values) {
       const changed = values.filter(
         (entry) =>
-          entry.before !== entry.after || entry.beforeScope !== entry.afterScope
+          entry.before !== entry.after ||
+          entry.beforeScope !== entry.afterScope ||
+          entry.beforeCartons !== entry.afterCartons
       )
       if (!changed.length) return false
       if (
         changed.some(
-          ({ orderId, before, after, beforeScope, afterScope }) =>
+          ({
+            orderId,
+            before,
+            after,
+            beforeScope,
+            afterScope,
+            beforeCartons,
+            afterCartons,
+          }) =>
             typeof orderId !== 'string' ||
             typeof before !== 'string' ||
             typeof after !== 'string' ||
             (beforeScope !== undefined &&
               (typeof beforeScope !== 'string' ||
-                typeof afterScope !== 'string'))
+                typeof afterScope !== 'string')) ||
+            (beforeCartons !== undefined &&
+              (typeof beforeCartons !== 'string' ||
+                typeof afterCartons !== 'string'))
         ) ||
         new Set(changed.map((entry) => entry.orderId)).size !== changed.length
       )
@@ -144,11 +169,22 @@ export function createPreparationHistory({
       for (const removed of entries.splice(position)) bytes -= size(removed)
       const entry = {
         changes: changed.map(
-          ({ orderId, before, after, beforeScope, afterScope }) => ({
+          ({
+            orderId,
+            before,
+            after,
+            beforeScope,
+            afterScope,
+            beforeCartons,
+            afterCartons,
+          }) => ({
             orderId,
             before,
             after,
             ...(beforeScope !== undefined ? { beforeScope, afterScope } : {}),
+            ...(beforeCartons !== undefined
+              ? { beforeCartons, afterCartons }
+              : {}),
           })
         ),
       }

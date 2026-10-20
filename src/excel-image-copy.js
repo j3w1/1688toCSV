@@ -64,11 +64,16 @@ export async function copyExcelImage(
     }))
   })
   if (!frozen.length) return false
+  let outputLanguage = language
   return openImageCopyDialog({
     title: 'Copy Excel image',
     count: frozen.length,
     signal,
     interactivePreview: true,
+    languageToggle: true,
+    onLanguageChange: (value) => {
+      outputLanguage = value
+    },
     errorOptions,
     createOptions: columns
       ? undefined
@@ -83,7 +88,7 @@ export async function copyExcelImage(
         style: preference.style,
         details: preference.details,
         badges,
-        language,
+        language: outputLanguage,
       })
     },
     prepare: async (plan, { signal, onProgress }) => {

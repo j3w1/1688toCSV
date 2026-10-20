@@ -1,6 +1,8 @@
 import { CFB, utils, write } from 'xlsx'
 import { crc32, deflateSync } from 'node:zlib'
+import { mkdir } from 'node:fs/promises'
 import { test, expect } from './extension-fixture.mjs'
+import { STORE_IMPORT_MARKERS } from '../../src/store-workbook-model.js'
 
 const png = (() => {
   const chunk = (name, content) => {
@@ -37,16 +39,20 @@ function workbookFile({
   amount = 60,
   total = 60,
   name = '4321.xlsx',
+  rows,
+  photoSpans = [{ from: 1, to: 2 }],
 } = {}) {
   const workbook = utils.book_new()
   utils.book_append_sheet(
     workbook,
-    utils.aoa_to_sheet([
-      ['pic', 'desc', 'boxes', 'perbox', 'price', 'amount', 'group', 'var'],
-      ['', 'Synthetic import cup', 2, 10, 3, amount, 1, variants],
-      [],
-      ['total', total, 'total'],
-    ]),
+    utils.aoa_to_sheet(
+      rows ?? [
+        ['pic', 'desc', 'boxes', 'perbox', 'price', 'amount', 'group', 'var'],
+        ['', 'Synthetic import cup', 2, 10, 3, amount, 1, variants],
+        [],
+        ['total', total, 'total'],
+      ]
+    ),
     'Products'
   )
   const archive = CFB.read(
@@ -75,7 +81,7 @@ function workbookFile({
   )
   add(
     'xl/drawings/drawing1.xml',
-    '<xdr:wsDr><xdr:twoCellAnchor><xdr:from><xdr:col>0</xdr:col><xdr:row>1</xdr:row></xdr:from><xdr:to><xdr:col>1</xdr:col><xdr:colOff>0</xdr:colOff><xdr:row>2</xdr:row><xdr:rowOff>0</xdr:rowOff></xdr:to><xdr:pic><a:blip r:embed="photo1"/></xdr:pic></xdr:twoCellAnchor></xdr:wsDr>'
+    `<xdr:wsDr>${photoSpans.map(({ from, to }) => `<xdr:twoCellAnchor><xdr:from><xdr:col>0</xdr:col><xdr:row>${from}</xdr:row></xdr:from><xdr:to><xdr:col>1</xdr:col><xdr:colOff>0</xdr:colOff><xdr:row>${to}</xdr:row><xdr:rowOff>0</xdr:rowOff></xdr:to><xdr:pic><a:blip r:embed="photo1"/></xdr:pic></xdr:twoCellAnchor>`).join('')}</xdr:wsDr>`
   )
   add(
     'xl/drawings/_rels/drawing1.xml.rels',
@@ -88,6 +94,66 @@ function workbookFile({
       'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
     buffer: Buffer.from(CFB.write(archive, { type: 'array', fileType: 'zip' })),
   }
+}
+
+function reviewWorkbook({
+  groups = 8,
+  badAmount = false,
+  combined = false,
+} = {}) {
+  const rows = [
+      ['pic', 'desc', 'boxes', 'perbox', 'price', 'amount', 'group', 'var'],
+    ],
+    photoSpans = []
+  const names = [
+    'Ceramic mugs · ivory',
+    'Woven baskets · natural',
+    'Glass vases · blue',
+    'Cotton towels · white',
+    'Bamboo trays · honey',
+    'Desk lamps · brass',
+    'Storage jars · clear',
+    'Linen cushions · sage',
+  ]
+  let total = 0
+  for (let group = 0; group < groups; group++) {
+    const from = rows.length
+    for (let variant = 0; variant < 2; variant++) {
+      const boxes = variant + 1,
+        perbox = 10 + group,
+        price = 3 + group * 0.5,
+        amount = boxes * perbox * price
+      total += amount
+      rows.push([
+        '',
+        names[group % names.length],
+        boxes,
+        perbox,
+        price,
+        amount + (badAmount && group === 0 && variant === 0 ? 1 : 0),
+        group + 1,
+        '',
+      ])
+    }
+    photoSpans.push({ from, to: rows.length })
+  }
+  if (combined) {
+    const from = rows.length
+    rows.push([
+      '',
+      'Assorted ceramic dishes · A / B',
+      1,
+      20,
+      4,
+      80,
+      'assorted',
+      'ab',
+    ])
+    photoSpans.push({ from, to: rows.length })
+    total += 80
+  }
+  rows.push([], ['total', total, 'total'])
+  return workbookFile({ rows, photoSpans })
 }
 
 async function openImport(extension) {
@@ -112,6 +178,215 @@ async function backup(extension) {
   expect(response.ok, response.error).toBe(true)
   return response.data
 }
+
+test('import sidebar keeps compact marker cards and setup guidance beside an independently scrolling review', async ({
+  extension,
+}) => {
+  const { page, file } = await openImport(extension)
+  const dialog = page.locator('.store-import-dialog')
+  await page.setViewportSize({ width: 1280, height: 960 })
+  const sidebar = dialog.locator('.store-import-sidebar'),
+    body = dialog.locator('.store-import-body')
+  await expect(sidebar).toBeVisible()
+  await expect(sidebar).toHaveAccessibleName('Workbook guide')
+  await expect(dialog.locator('details, summary, table')).toHaveCount(0)
+  await expect(sidebar.getByRole('tab')).toHaveCount(3)
+  await expect(
+    sidebar.getByRole('tab', { name: 'Markers', exact: true })
+  ).toHaveAttribute('aria-selected', 'true')
+  expect(
+    (
+      await sidebar
+        .locator('.store-import-marker-list .store-import-token')
+        .allTextContents()
+    ).sort()
+  ).toEqual([...STORE_IMPORT_MARKERS].sort())
+  const frame = await sidebar.boundingBox(),
+    main = await body.boundingBox()
+  expect(frame.x).toBeGreaterThanOrEqual(main.x + main.width - 1)
+  expect(frame.width).toBe(282)
+  await expect(
+    dialog.locator('.store-import-field .store-import-template')
+  ).toHaveAttribute('download', 'store-order-template.xlsx')
+  await sidebar.getByRole('tab', { name: 'Setup', exact: true }).click()
+  for (const row of await sidebar
+    .locator('.store-import-filenames > div')
+    .all()) {
+    const title = await row.locator('dt').boundingBox(),
+      examples = await row.locator('dd').boundingBox()
+    expect(examples.y).toBeGreaterThanOrEqual(title.y + title.height)
+    expect(examples.x).toBeCloseTo(title.x, 1)
+  }
+  await file.setInputFiles(reviewWorkbook())
+  await expect(dialog.locator('.store-import-product')).toHaveCount(16)
+  await dialog
+    .getByLabel('Store or factory name', { exact: true })
+    .fill('Draft store')
+  await dialog.getByLabel('Purchase date', { exact: true }).fill('2026-10-20')
+  await dialog.locator('input[name="allReviews"]').check()
+  await body.evaluate((node) => {
+    node.scrollTop = node.scrollHeight
+  })
+  expect((await sidebar.boundingBox()).y).toBe(frame.y)
+  await sidebar.getByRole('tab', { name: 'Markers', exact: true }).click()
+  await dialog.locator('.popup-language-toggle [data-language="es"]').click()
+  await expect(
+    sidebar.getByRole('tab', { name: 'Marcadores', exact: true })
+  ).toHaveAttribute('aria-selected', 'true')
+  await expect(dialog.locator('input[name="storeName"]')).toHaveValue(
+    'Draft store'
+  )
+  await expect(dialog.locator('input[name="purchaseDate"]')).toHaveValue(
+    '2026-10-20'
+  )
+  await expect(
+    dialog.locator('.store-import-review-check input:checked')
+  ).toHaveCount(8)
+  await dialog.locator('.popup-language-toggle [data-language="en"]').click()
+  await body.evaluate((node) => {
+    node.scrollTop = 0
+  })
+  await mkdir(new URL('../../work/', import.meta.url), { recursive: true })
+  await dialog.screenshot({ path: 'work/store-import-sidebar-wide.png' })
+  await page.setViewportSize({ width: 390, height: 700 })
+  const narrow = await sidebar.boundingBox(),
+    content = await body.boundingBox()
+  expect(narrow.y).toBeGreaterThanOrEqual(content.y + content.height - 1)
+  for (const tab of await sidebar.getByRole('tab').all()) {
+    await tab.click()
+    expect(
+      await dialog.evaluate((node) => node.scrollWidth <= node.clientWidth + 1)
+    ).toBe(true)
+    expect(
+      await sidebar
+        .locator('.store-import-guide-panel:not([hidden])')
+        .evaluate((node) => node.scrollWidth <= node.clientWidth + 1)
+    ).toBe(true)
+  }
+  await sidebar.getByRole('tab', { name: 'Setup', exact: true }).click()
+  await sidebar.scrollIntoViewIfNeeded()
+  await dialog.screenshot({ path: 'work/store-import-sidebar-narrow.png' })
+  await expect(dialog.locator('input[name="photosReviewed"]')).not.toBeChecked()
+  await page.close()
+})
+
+test('import review cards show photos, source values and arithmetic comparisons in a compact grid; Check all preserves real validation', async ({
+  extension,
+}) => {
+  const { page, file } = await openImport(extension)
+  const dialog = page.locator('.store-import-dialog')
+  await page.setViewportSize({ width: 1280, height: 960 })
+  await file.setInputFiles(reviewWorkbook({ badAmount: true, combined: true }))
+  const reviews = dialog.locator('[data-issue-code="photo-shared"]'),
+    all = dialog.locator('input[name="allReviews"]'),
+    checks = dialog.locator('.store-import-review-check input')
+  await expect(reviews).toHaveCount(8)
+  await expect(
+    reviews.first().locator('.store-import-review-check')
+  ).toHaveText('Review')
+  await expect(reviews.locator('.store-import-issue-photos img')).toHaveCount(8)
+  await expect(reviews.first()).toContainText('Group 1')
+  await expect(reviews.first()).toContainText('Rows 2, 3')
+  await expect(reviews.first()).toContainText('Ceramic mugs')
+  const arithmetic = dialog.locator('[data-issue-code="amount-mismatch"]')
+  await expect(
+    arithmetic.locator('.store-import-issue-comparison')
+  ).toContainText('¥31')
+  await expect(
+    arithmetic.locator('.store-import-issue-comparison')
+  ).toContainText('¥30')
+  await expect(arithmetic.locator('.store-import-cells')).toContainText('F2')
+  await expect(arithmetic.locator('.store-import-cells')).toContainText('31')
+  await expect(
+    dialog.locator('.store-import-issue.is-error input')
+  ).toHaveCount(0)
+  await expect(
+    dialog.locator('[data-issue-code="variant-allocation"] input')
+  ).toHaveCount(0)
+  await expect(dialog.locator('.store-import-checks-status')).toHaveText(
+    '0/8 reviews checked · 1 blocking'
+  )
+  const columns = await dialog
+    .locator('.store-import-issues')
+    .evaluate(
+      (list) => getComputedStyle(list).gridTemplateColumns.split(' ').length
+    )
+  expect(columns).toBe(3)
+  const before = await reviews.first().boundingBox()
+  expect(before.height).toBeLessThan(160)
+  await checks.nth(0).check()
+  await expect(
+    reviews.first().locator('.store-import-review-check')
+  ).toHaveText('Checked')
+  await checks.nth(1).check()
+  expect(await all.evaluate((input) => input.indeterminate)).toBe(true)
+  await mkdir(new URL('../../work/', import.meta.url), { recursive: true })
+  await page.screenshot({ path: 'work/store-import-review-grid.png' })
+  await all.check()
+  await expect(
+    dialog.locator('.store-import-review-check input:checked')
+  ).toHaveCount(8)
+  await expect(dialog.locator('.store-import-checks-status')).toHaveText(
+    '8/8 reviews checked · 1 blocking'
+  )
+  const after = await reviews.first().boundingBox()
+  expect(after.height).toBe(before.height)
+  expect(after.width).toBe(before.width)
+  await dialog.locator('.popup-language-toggle [data-language="es"]').click()
+  await expect(checks).toHaveCount(8)
+  await expect(
+    dialog.locator('.store-import-review-check input:checked')
+  ).toHaveCount(8)
+  await expect(dialog.locator('.store-import-checks-status')).toHaveText(
+    '8/8 revisiones marcadas · 1 bloqueos'
+  )
+  await all.uncheck()
+  await expect(
+    dialog.locator('.store-import-review-check input:checked')
+  ).toHaveCount(0)
+  await dialog.locator('.popup-language-toggle [data-language="en"]').click()
+  await all.check()
+  await expect(dialog.locator('input[name="photosReviewed"]')).not.toBeChecked()
+  expect(
+    await dialog
+      .locator('.store-import-allocation input')
+      .evaluateAll((inputs) => inputs.map((input) => input.value))
+  ).toEqual(['', ''])
+  await dialog.locator('input[name="purchaseDate"]').fill('2026-10-20')
+  await dialog.locator('input[name="photosReviewed"]').check()
+  await dialog
+    .getByRole('button', { name: 'Import order', exact: true })
+    .click()
+  expect((await backup(extension)).orders).toHaveLength(0)
+  await expect(dialog).toBeVisible()
+  await file.setInputFiles(reviewWorkbook({ combined: true }))
+  await expect(dialog.locator('.store-import-issue.is-error')).toHaveCount(0)
+  await expect(
+    dialog.locator('.store-import-review-check input:checked')
+  ).toHaveCount(0)
+  await all.check()
+  await dialog.locator('input[name="purchaseDate"]').fill('2026-10-20')
+  await dialog.locator('input[name="photosReviewed"]').check()
+  await dialog
+    .getByRole('button', { name: 'Import order', exact: true })
+    .click()
+  expect((await backup(extension)).orders).toHaveLength(0)
+  await expect(dialog.locator('.store-import-status')).toContainText(
+    'enter a positive quantity for every variant'
+  )
+  await page.setViewportSize({ width: 560, height: 820 })
+  expect(
+    await dialog
+      .locator('.store-import-issues')
+      .evaluate(
+        (list) => getComputedStyle(list).gridTemplateColumns.split(' ').length
+      )
+  ).toBe(1)
+  await dialog
+    .getByRole('button', { name: 'Close import', exact: true })
+    .click()
+  await page.close()
+})
 
 test('store import reads a real marked workbook in its worker, blocks bad totals/date, and refreshes Products immediately', async ({
   extension,
@@ -204,9 +479,7 @@ test('combined variants require actual quantities and photo adjustments keep ori
     exact: true,
   })
   await expect(viewer.locator('.photo-viewport img')).toBeVisible()
-  await viewer
-    .getByRole('button', { name: 'Adjust photo', exact: true })
-    .click()
+  await viewer.getByRole('button', { name: 'Edit photo', exact: true }).click()
   await viewer.getByLabel('Canvas fit', { exact: true }).selectOption('cover')
   await viewer.getByRole('button', { name: 'Save photo', exact: true }).click()
   await viewer
@@ -249,7 +522,8 @@ test('additional order charges preview increased prices and preserve source amou
   await expect(dialog).toHaveCount(0)
   await page.locator('.order-details-trigger').click()
   const details = page.locator('#order-details')
-  await details.locator('.order-charges summary').click()
+  await expect(details.locator('section.order-charges')).toBeVisible()
+  await expect(details.locator('.order-charges summary')).toHaveCount(0)
   await details.getByRole('button', { name: 'Add charge', exact: true }).click()
   await details.getByLabel('Reason', { exact: true }).fill('Unloading')
   await details.getByLabel('Amount · CNY', { exact: true }).fill('20.00')
@@ -338,17 +612,13 @@ test('editing a repeated import photo in preparation updates its exact order and
     exact: true,
   })
   await expect(viewer.locator('.photo-viewport img')).toBeVisible()
-  await viewer
-    .getByRole('button', { name: 'Adjust photo', exact: true })
-    .click()
+  await viewer.getByRole('button', { name: 'Edit photo', exact: true }).click()
   await viewer.getByLabel('Canvas fit', { exact: true }).selectOption('cover')
   await viewer.getByRole('button', { name: 'Save photo', exact: true }).click()
   await expect(viewer.locator('.photo-viewer-status')).toHaveText(
     'Photo saved. Original preserved.'
   )
-  await viewer
-    .getByRole('button', { name: 'Adjust photo', exact: true })
-    .click()
+  await viewer.getByRole('button', { name: 'Edit photo', exact: true }).click()
   await viewer.getByLabel('Image size', { exact: true }).press('ArrowRight')
   await viewer.getByRole('button', { name: 'Save photo', exact: true }).click()
   await expect(viewer.locator('.photo-viewer-status')).toHaveText(

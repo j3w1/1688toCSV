@@ -13,6 +13,7 @@ import { labelColorKey } from './appearance.js'
 import { orderTagColors } from './order-tags.js'
 import { createExcelImageBadges } from './excel-image-badges.js'
 import { CE_CODE_DESIGN, codeDesignMetrics } from './code-design.js'
+import { codeParts } from './code-display.js'
 
 const SCALE = 2
 const DPI = 192
@@ -578,8 +579,8 @@ function categoryCell(context, source, width, language) {
   })
 }
 
-/** Printed codes use one unsegmented black/white badge, including endings. */
-function codeCell(context, value, width) {
+/** Codes stay contiguous; only the barcode column adds the product reading aid. */
+function codeCell(context, value, width, readingAid = false) {
   context.font = codeFont(CODE_FONT_SIZE)
   const naturalWidth =
     context.measureText(value).width +
@@ -594,6 +595,7 @@ function codeCell(context, value, width) {
   )
   const font = codeFont(fontSize)
   const design = codeDesignMetrics(fontSize)
+  const parts = readingAid ? codeParts(value) : null
   const innerWidth = width - 2 * design.paddingInline
   const lines = []
   let runs = []
@@ -629,6 +631,14 @@ function codeCell(context, value, width) {
     font,
     codeBadge: true,
     codeFontSize: fontSize,
+    ...(parts
+      ? {
+          codeProductRange: Object.freeze([
+            parts[0].length,
+            parts[0].length + parts[1].length,
+          ]),
+        }
+      : {}),
     richLines: Object.freeze(
       lines.map((line) => Object.freeze(line.map(Object.freeze)))
     ),
@@ -834,7 +844,12 @@ export function planExcelImage(
             ? ''
             : source[column.key]
         if (column.key === 'baseCode' || column.key === 'barcode')
-          return codeCell(context, text, column.width - PADDING * 2)
+          return codeCell(
+            context,
+            text,
+            column.width - PADDING * 2,
+            column.key === 'barcode'
+          )
         if (column.key === 'price' && text.trim()) text = `¥ ${text}`
         const font =
           column.key === 'quantity'
@@ -1065,12 +1080,14 @@ export async function renderExcelImage(
     })
     const baseline = top + (lineHeight - ascent - descent) / 2 + ascent
     let left = center - width / 2
+    const start = left
     for (const run of measured) {
       context.font = run.font
       context.fillStyle = run.color || '#24211c'
       context.fillText(run.text, left, baseline)
       left += run.width
     }
+    return { left: start, baseline }
   }
   function text(cell, x, y, column, rowHeight) {
     const top = y + (rowHeight - cell.height) / 2
@@ -1102,13 +1119,30 @@ export async function renderExcelImage(
       )
       context.fill()
     }
-    for (const [index, value] of cell.lines.entries())
-      line(
+    let offset = 0
+    for (const [index, value] of cell.lines.entries()) {
+      const placement = line(
         cell.richLines?.[index] || [{ text: value, font: cell.font }],
         x + column.width / 2,
         top + index * cell.lineHeight,
         cell.lineHeight
       )
+      if (cell.codeProductRange) {
+        const start = Math.max(0, cell.codeProductRange[0] - offset)
+        const end = Math.min(value.length, cell.codeProductRange[1] - offset)
+        if (end > start) {
+          context.font = cell.font
+          context.fillStyle = CE_CODE_DESIGN.foreground
+          context.fillRect(
+            placement.left + context.measureText(value.slice(0, start)).width,
+            placement.baseline + cell.codeFontSize * 0.18,
+            context.measureText(value.slice(start, end)).width,
+            0.5
+          )
+        }
+      }
+      offset += value.length
+    }
   }
   function tags(layout, center, top) {
     if (!layout?.height) return

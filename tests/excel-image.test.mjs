@@ -1115,6 +1115,52 @@ test('Code badges preserve complete values, white bold text and rounding without
     )
   }))
 
+test('barcode image cells underline only product digits across schemes, languages, variants and wrapped endings', async () => {
+  for (const language of ['en', 'es', 'zh'])
+    for (const scheme of ['neutral', 'warm', 'sage', 'ink', 'custom'])
+      await withCanvas(async (state) => {
+        const sources = ['A', 'BL', 'XYZ'.repeat(15)].map((ending) => ({
+          ...row,
+          barcode: `${row.baseCode}${ending}`,
+        }))
+        const [plan] = planExcelImage(sources, {
+          columns: ['baseCode', 'barcode', 'quantity'],
+          language,
+          style: { scheme },
+          showOrderDetails: false,
+        })
+        assert.equal(plan.markSpans.length, 1)
+        for (const entry of plan.rows) {
+          assert.equal(entry.cells[0].codeProductRange, undefined)
+          assert.deepEqual(entry.cells[1].codeProductRange, [6, 10])
+          assert.equal(Object.isFrozen(entry.cells[1].codeProductRange), true)
+        }
+        assert.ok(plan.rows[2].cells[1].lines.length > 1)
+        await renderExcelImage(plan, { loadImage: async () => png })
+        const underlines = state.fills.filter(
+          (fill) => fill.color === '#fff' && fill.height === 0.5
+        )
+        assert.equal(underlines.length, 3, `${language}/${scheme}`)
+        const printed = state.text.filter((draw) =>
+          draw.text.startsWith(row.baseCode)
+        )
+        assert.equal(printed.length, 3)
+        for (const [index, underline] of underlines.entries()) {
+          const draw = printed[index]
+          const fontSize = plan.rows[index].cells[1].codeFontSize
+          assert.equal(underline.x, draw.x + measure('CE2610'))
+          assert.equal(underline.width, measure('0101'))
+          assert.equal(underline.y, draw.y + fontSize * 0.18)
+        }
+      })
+  await withCanvas(() => {
+    const [plan] = planExcelImage([{ ...row, barcode: 'unfinished' }], {
+      columns: ['barcode'],
+    })
+    assert.equal(plan.rows[0].cells[0].codeProductRange, undefined)
+  })
+})
+
 test('Headers, numeric cells and mixed-style descriptions center horizontally and vertically', async () =>
   withCanvas(async (state) => {
     const [plan] = planExcelImage([

@@ -921,7 +921,7 @@ test('purchase dates group orders by month while separators stay out of copied v
   const orderBands = page.locator('.order-section-heading')
   await expect(orderBands).toHaveCount(3)
   await expect(orderBands.first()).toContainText('Habitat Studio')
-  await expect(orderBands.first()).toContainText('3 matching products')
+  await expect(orderBands.first()).toContainText('3 product rows')
   await expect(orderBands.first().locator('.order-section-number')).toHaveText(
     /^\d+$/
   )
@@ -942,7 +942,7 @@ test('purchase dates group orders by month while separators stay out of copied v
     2
   )
   await expect(orderBands).toHaveCount(1)
-  await expect(orderBands.first()).toContainText('2 matching products')
+  await expect(orderBands.first()).toContainText('2 product rows')
   await page.getByRole('button', { name: 'Show all', exact: true }).click()
   await expect(page.locator('#sheet-body tr[data-selection-key]')).toHaveCount(
     8

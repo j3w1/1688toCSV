@@ -16,6 +16,7 @@ import {
   barcodeGeometry,
   createLabelRenderer,
   normalizeLabelSettings,
+  normalizeLabelLanguage,
 } from '../src/labels.js'
 import { pngWithDpi } from '../src/png-resolution.js'
 
@@ -58,6 +59,81 @@ before(async () => {
     channel: process.env.EXTENSION_TEST_CHANNEL || 'chromium',
     headless: true,
   })
+})
+
+test('label language choices are normalized and cached independently without changing product models', async () => {
+  const rendered = []
+  const renderer = createLabelRenderer({
+    render: async (request) => {
+      rendered.push({ language: request.language, model: request.model })
+      return { blob: new Blob([request.language]), width: 10, height: 10 }
+    },
+  })
+  const request = { kind: 'mark', code: 'CE26103102', category: '保存类别' }
+  const original = structuredClone(request)
+  const legacy = await renderer.render(request)
+  assert.equal(await renderer.render({ ...request, language: 'zh' }), legacy)
+  assert.equal(
+    await renderer.render({ ...request, language: 'invalid' }),
+    legacy
+  )
+  await renderer.render({ ...request, language: 'es' })
+  await renderer.render({ ...request, language: 'en' })
+  assert.deepEqual(
+    rendered.map((result) => result.language),
+    ['zh', 'es', 'en']
+  )
+  assert.ok(
+    rendered.every(
+      ({ model }) =>
+        model.category === '保存类别' && model.language === undefined
+    )
+  )
+  assert.deepEqual(request, original)
+  assert.equal(normalizeLabelLanguage(), 'zh')
+  renderer.dispose()
+})
+
+test('carton marks localize generated field labels while retaining authored categories and legacy default geometry', async (t) => {
+  const page = await pageFor(t)
+  const rows = await page.evaluate(async () => {
+    const renderer = Labels.createLabelRenderer({ maxBytes: 0 })
+    const calls = []
+    const fill = CanvasRenderingContext2D.prototype.fillText
+    CanvasRenderingContext2D.prototype.fillText = function (value, ...args) {
+      calls.push(String(value))
+      return fill.call(this, value, ...args)
+    }
+    const rows = []
+    try {
+      for (const language of ['en', 'es', 'zh', undefined]) {
+        calls.length = 0
+        await renderer.render({
+          kind: 'mark',
+          code: 'CE26103102',
+          category: '保存类别',
+          language,
+        })
+        rows.push({ language, calls: [...calls] })
+      }
+      return rows
+    } finally {
+      CanvasRenderingContext2D.prototype.fillText = fill
+      renderer.dispose()
+    }
+  })
+  for (const [index, expected] of [
+    ['Quantity:', 'Weight:', 'Volume:'],
+    ['Cantidad:', 'Peso:', 'Volumen:'],
+    ['数量：', '重量：', '体积：'],
+    ['数量：', '重量：', '体积：'],
+  ].entries()) {
+    for (const value of [...expected, 'CE26103102', '保存类别'])
+      assert.ok(
+        rows[index].calls.includes(value),
+        `${rows[index].language}: ${value}`
+      )
+  }
 })
 after(async () => {
   await browser?.close()

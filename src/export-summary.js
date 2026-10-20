@@ -178,6 +178,7 @@ export function packingSummary({
 /** Which labels or carton marks a PDF export holds, page count included. */
 export function printSummary({
   kind,
+  language = 'en',
   file,
   items,
   pages,
@@ -204,6 +205,7 @@ export function printSummary({
     format: SUMMARY_FORMAT,
     version: 1,
     kind: kind === 'marks' ? 'carton-marks' : 'labels',
+    language,
     exportedAt,
     files: [file, summaryFileName(file)],
     pages,

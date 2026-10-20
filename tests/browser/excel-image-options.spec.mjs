@@ -363,7 +363,7 @@ test('image style and detail controls persist, update the same preview, and keep
   expect(await page.evaluate(() => window.imageDetailColors)).toContain(
     '#ffff00'
   )
-  await dialog.locator('.image-copy-heading > button').click()
+  await dialog.locator('.image-copy-heading [data-icon="close"]').click()
   await page.reload()
   await page.locator('#copy-excel-image').click()
   await ready()
@@ -742,7 +742,7 @@ test('image columns reorder, persist across copying and reload, and use the sele
     )
   ).toEqual(preference)
   await page.setViewportSize({ width: 1280, height: 800 })
-  await dialog.locator('.image-copy-heading > button').click()
+  await dialog.locator('.image-copy-heading [data-icon="close"]').click()
   await extension.context.grantPermissions([
     'clipboard-read',
     'clipboard-write',

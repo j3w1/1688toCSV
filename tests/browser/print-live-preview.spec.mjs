@@ -1,5 +1,8 @@
 import { test, expect } from './extension-fixture.mjs'
-import { openPrintDialogFixture } from './print-dialog-fixture.mjs'
+import {
+  openPrintDialogFixture,
+  showPrintDialog,
+} from './print-dialog-fixture.mjs'
 
 const pixels = (canvas) => canvas.evaluate((node) => node.toDataURL())
 
@@ -164,5 +167,122 @@ test('rapid print edits share pending artwork and display only the latest layout
     '20'
   )
   await expect(canvas).not.toHaveAttribute('aria-busy')
+  await page.close()
+})
+
+test('print previews release inactive page and language bitmaps, including obsolete pending decodes', async ({
+  extension,
+}) => {
+  const initial = await openPrintDialogFixture(extension, { kind: 'marks' })
+  const { page } = initial
+  await expect(initial.dialog.locator('.print-preview')).toHaveAttribute(
+    'data-preview-state',
+    'ready'
+  )
+  await initial.dialog.locator('[data-action="close-print-dialog"]').click()
+  await expect(initial.dialog).toHaveCount(0)
+  await page.evaluate(() => {
+    const decode = window.createImageBitmap.bind(window)
+    const close = ImageBitmap.prototype.close
+    const live = new Set()
+    let created = 0,
+      closed = 0,
+      requested = 0,
+      gate = null,
+      release
+    window.printBitmapStats = () => ({
+      created,
+      closed,
+      requested,
+      live: live.size,
+    })
+    window.holdPrintBitmaps = () => {
+      gate = new Promise((resolve) => (release = resolve))
+    }
+    window.releasePrintBitmaps = () => {
+      gate = null
+      release()
+    }
+    window.createImageBitmap = async (...args) => {
+      requested++
+      if (gate) await gate
+      const bitmap = await decode(...args)
+      created++
+      live.add(bitmap)
+      return bitmap
+    }
+    ImageBitmap.prototype.close = function (...args) {
+      if (live.delete(this)) closed++
+      return close.apply(this, args)
+    }
+  })
+  const items = Array.from({ length: 6 }, (_, index) => {
+    const code = `CE2610200${index + 1}`
+    return {
+      key: code,
+      code,
+      name: 'PRODUCTO SINTÉTICO',
+      quantity: 1,
+      model: { kind: 'mark', code, category: '测试' },
+    }
+  })
+  const dialog = await showPrintDialog(page, { kind: 'marks', items })
+  const canvas = dialog.locator('.print-preview')
+  const stats = () => page.evaluate(() => window.printBitmapStats())
+  const readyWithTwo = async () => {
+    await expect(canvas).toHaveAttribute('data-preview-state', 'ready')
+    await expect.poll(async () => (await stats()).live).toBe(2)
+  }
+  await readyWithTwo()
+  for (const language of ['es', 'zh', 'en']) {
+    await dialog.locator(`[data-language="${language}"]`).click()
+    await readyWithTwo()
+  }
+  const quantities = dialog.locator('.print-quantity-input input')
+  for (let index = 0; index < items.length; index++)
+    await quantities.nth(index).fill('0')
+  await expect(canvas).toHaveAttribute('data-preview-state', 'empty')
+  await expect.poll(async () => (await stats()).live).toBe(0)
+  for (let index = 0; index < items.length; index++)
+    await quantities.nth(index).fill('1')
+  await readyWithTwo()
+  for (let next = 0; next < 2; next++) {
+    await dialog.locator('.print-page-next').click()
+    await readyWithTwo()
+  }
+  const beforePending = await stats()
+  await page.evaluate(() => window.holdPrintBitmaps())
+  await dialog.locator('[data-language="es"]').click()
+  await expect
+    .poll(async () => (await stats()).requested)
+    .toBe(beforePending.requested + 1)
+  await dialog.locator('[data-language="zh"]').click()
+  await expect
+    .poll(async () => (await stats()).requested)
+    .toBe(beforePending.requested + 2)
+  await page.evaluate(() => window.releasePrintBitmaps())
+  await readyWithTwo()
+  await expect
+    .poll(async () => (await stats()).closed)
+    .toBe(beforePending.closed + 3)
+
+  const beforeClose = await stats()
+  await page.evaluate(() => window.holdPrintBitmaps())
+  await dialog.locator('.print-page-previous').click()
+  await expect
+    .poll(async () => (await stats()).requested)
+    .toBe(beforeClose.requested + 1)
+  await dialog.locator('[data-action="close-print-dialog"]').click()
+  await expect(dialog).toHaveCount(0)
+  await page.evaluate(() => window.releasePrintBitmaps())
+  await expect
+    .poll(async () => (await stats()).created)
+    .toBeGreaterThan(beforeClose.created)
+  await expect
+    .poll(async () => {
+      const result = await stats()
+      return result.closed === result.created && result.live === 0
+    })
+    .toBe(true)
   await page.close()
 })
