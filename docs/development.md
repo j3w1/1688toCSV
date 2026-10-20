@@ -66,6 +66,8 @@ Use one narrow status strip beside existing identity/code text. Show a progress 
 
 Financial linkage must distinguish actual payments from cost attribution. An existing payment-only order is already included in source payables; linking it to another purchase must not add the payment again. A fee row inside an order is already included too. Allocate its existing cost to the intended goods for packing/unit costs while retaining the source totals. Require review of whether source shipping represents freight or an extra service before classification; notes alone do not prove it. Distinguish manually entered external charges from links to already recorded payments.
 
+After owner confirmation, a linked allocation may include the supplemental order's entire payable, including an amount recorded as shipping. Preserve that order's original goods/shipping breakdown as evidence; the cost attribution to the original purchase is separate. Do not add another payable or a duplicate manual charge. A confirmed order-wide allocation does not by itself establish a per-feature or per-variant split.
+
 Repeat purchases need a shared product identity before sharing a code across orders. Validate matching variants, sizes and features and review both source quantities and barcodes. Do not disable the current uniqueness index or allow two unrelated code owners to make a repeat purchase appear linked. Initial support can stay within one packing month; reuse across different packing months requires an explicit numbering decision. Migration should preview recognized tags and affected orders/products, preserve unresolved tags and notes, and apply only reviewed changes.
 
 ## China-store spreadsheets
