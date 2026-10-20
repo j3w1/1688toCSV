@@ -200,6 +200,11 @@ for (const kind of ['labels', 'marks']) {
         .check()
     }
     const quantity = dialog.locator('.print-counts tbody input').first()
+    const compactApply = await dialog
+      .getByRole('button', { name: 'Apply to all', exact: true })
+      .boundingBox()
+    expect(compactApply.width).toBe(26)
+    expect(compactApply.height).toBe(26)
     const preset = dialog.getByLabel('A4 preset', { exact: true })
     const name = dialog.getByLabel('Preset name', { exact: true })
     await expect(name.locator('..').locator('span')).toHaveText('Preset name')

@@ -1150,16 +1150,15 @@ dialog.print-dialog.packing-review {
   flex-wrap: wrap;
   align-items: center;
   gap: var(--space-2);
-  justify-content: space-between;
-  padding: var(--space-2);
-  border: 1px solid var(--divider);
-  border-radius: var(--radius-m);
-  background: var(--field);
+  justify-content: flex-start;
+  padding-block: 2px;
 }
 .print-quantity-heading {
-  display: grid;
-  flex: 1 1 140px;
-  gap: 4px;
+  display: flex;
+  flex: 0 1 auto;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 4px 8px;
   font-size: var(--text-s);
 }
 .print-quantity-preview {
@@ -1169,21 +1168,45 @@ dialog.print-dialog.packing-review {
 }
 .print-quantity-actions {
   display: grid;
-  flex: 1 1 300px;
-  grid-template-columns: minmax(0, 1fr) 64px auto;
-  align-items: end;
-  gap: 6px;
+  flex: 0 1 196px;
+  grid-template-columns: minmax(0, 1fr) 48px 26px;
+  align-items: center;
+  gap: 0;
   min-inline-size: 0;
+  padding: 2px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-s);
+  background: var(--field);
+}
+.print-quantity-actions .print-field > span {
+  position: absolute;
+  inline-size: 1px;
+  block-size: 1px;
+  overflow: hidden;
+  clip-path: inset(50%);
+}
+.print-dialog .print-quantity-actions .print-field :is(input, select) {
+  min-block-size: 26px;
+  block-size: 26px;
+  padding: 2px 6px;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  font-size: var(--text-s);
+}
+.print-quantity-actions .print-field + .print-field {
+  border-inline-start: 1px solid var(--divider);
 }
 .print-dialog .print-quantity-apply {
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  gap: 6px;
-  min-block-size: 32px;
-  padding: 4px 10px;
-  font-size: var(--text-s);
-  white-space: normal;
+  inline-size: 26px;
+  block-size: 26px;
+  min-inline-size: 0;
+  min-block-size: 0;
+  padding: 0;
+  border-radius: 4px;
 }
 .print-quantity-apply-icon {
   font-size: 17px;
@@ -1429,6 +1452,9 @@ dialog.print-dialog.packing-review {
   border-radius: var(--radius-s);
   background: var(--field);
 }
+.print-preview-viewport:not(.is-zoomed) {
+  overflow-x: hidden;
+}
 .print-preview-figure {
   display: grid;
   place-items: center;
@@ -1440,6 +1466,7 @@ dialog.print-dialog.packing-review {
   padding: 4px;
 }
 .print-preview-pane .print-preview-pan {
+  position: relative;
   display: block;
   inline-size: max-content;
   block-size: max-content;
@@ -1459,6 +1486,18 @@ dialog.print-dialog.packing-review {
   max-block-size: none;
   -webkit-user-select: none;
   user-select: none;
+}
+.print-safe-area {
+  position: absolute;
+  inset: 0;
+  inline-size: 100%;
+  block-size: 100%;
+  overflow: hidden;
+  pointer-events: none;
+  fill: none;
+  stroke: var(--control-accent);
+  stroke-width: 0.3;
+  stroke-dasharray: 2 1.5;
 }
 .print-preview-viewport.is-zoomed .print-preview-pan {
   cursor: grab;

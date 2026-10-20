@@ -1,5 +1,14 @@
 // A4 print sheets for labels and carton marks.
 export const PRINT_MESSAGES = {
+  'Updating preview…': {
+    zh: '正在更新预览…',
+    es: 'Actualizando vista previa…',
+  },
+  'Scroll to zoom · drag to pan. Dashed outlines show safe margins; they are not printed.':
+    {
+      zh: '滚动缩放，拖动平移。虚线显示安全边距，不会打印。',
+      es: 'Desplázate para ampliar y arrastra para mover. Los contornos discontinuos muestran los márgenes de seguridad; no se imprimen.',
+    },
   'Print labels': { zh: '打印标签', es: 'Imprimir etiquetas' },
   'Print carton marks': { zh: '打印箱唛', es: 'Imprimir marcas de caja' },
   'Print labels…': { zh: '打印标签…', es: 'Imprimir etiquetas…' },

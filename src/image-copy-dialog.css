@@ -101,6 +101,9 @@
   display: block;
   block-size: min(58dvh, 580px);
 }
+.copy-preview-interactive:not(.is-zoomed) {
+  overflow-x: hidden;
+}
 .copy-preview-interactive figure,
 .copy-preview-interactive figure.is-enlarged {
   inline-size: max-content;

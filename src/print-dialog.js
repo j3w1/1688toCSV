@@ -226,9 +226,10 @@ export function openPrintDialog({
   )
   applyQuantities.type = 'button'
   applyQuantities.dataset.action = 'apply-print-quantities'
-  const arrow = el('span', '→', 'print-quantity-apply-icon')
+  bindAttribute(applyQuantities, 'aria-label', uiMessage('Apply to all'))
+  const arrow = el('span', '✓', 'print-quantity-apply-icon')
   arrow.setAttribute('aria-hidden', 'true')
-  applyQuantities.append(arrow, el('span', uiMessage('Apply to all')))
+  applyQuantities.append(arrow)
   preparationHelp(
     applyQuantities,
     uiMessage(
@@ -299,6 +300,18 @@ export function openPrintDialog({
     uiMessage('Page {0} preview', { 0: () => page + 1 })
   )
   previewPan.append(preview)
+  // Preview-only guides make even small changes to the minimum margin visible.
+  // They are DOM overlays, so neither canvas artwork nor the PDF includes them.
+  const safeArea = document.createElementNS('http://www.w3.org/2000/svg', 'svg')
+  safeArea.classList.add('print-safe-area')
+  safeArea.setAttribute('viewBox', `0 0 ${A4.widthMm} ${A4.heightMm}`)
+  safeArea.setAttribute('aria-hidden', 'true')
+  const safeRects = Array.from({ length: marks ? 2 : 1 }, () => {
+    const rect = document.createElementNS('http://www.w3.org/2000/svg', 'rect')
+    safeArea.append(rect)
+    return rect
+  })
+  previewPan.append(safeArea)
   previewFigure.append(previewPan)
   previewViewport.append(previewFigure)
   previewPane.append(
@@ -722,6 +735,7 @@ export function openPrintDialog({
   tfoot.append(footRow)
 
   const images = new Map()
+  const pendingImages = new Map()
   let plan = null
   let grid = null
   let slots = null
@@ -886,6 +900,13 @@ export function openPrintDialog({
       offsetXMm: offsetX.value,
       offsetYMm: offsetY.value,
     })
+    for (const [index, rect] of safeRects.entries()) {
+      const half = marks ? A4.heightMm / 2 : A4.heightMm
+      rect.setAttribute('x', String(layout.marginMm))
+      rect.setAttribute('y', String(index * half + layout.marginMm))
+      rect.setAttribute('width', String(A4.widthMm - 2 * layout.marginMm))
+      rect.setAttribute('height', String(half - 2 * layout.marginMm))
+    }
     store.saveLayout(kind, layout)
     renderPresets()
     table.classList.toggle('print-caps', !marks && layout.limitExtras === true)
@@ -1047,24 +1068,45 @@ export function openPrintDialog({
     void drawPreview()
   }
 
-  async function ensureImages(keys, dpi, signal) {
-    for (const key of keys.filter(
-      (key) => key && !images.has(`${key}@${dpi}`)
-    )) {
-      const item = itemByKey.get(key)
-      const result = await renderLabel({
-        ...item.model,
-        settings: { ...settings, dpi },
-        logoUrl,
-        signal,
-      })
-      images.set(`${key}@${dpi}`, await decode(result.blob))
+  async function ensureImages(keys, dpi, signal = closing.signal) {
+    for (const key of keys) {
+      if (!key) continue
+      const cacheKey = `${key}@${dpi}`
+      if (images.has(cacheKey)) continue
+      let pending = pendingImages.get(cacheKey)
+      if (!pending) {
+        pending = (async () => {
+          const item = itemByKey.get(key)
+          const result = await renderLabel({
+            ...item.model,
+            settings: { ...settings, dpi },
+            logoUrl,
+            signal,
+          })
+          const full = await decode(result.blob)
+          if (closed || signal?.aborted) {
+            full.bitmap.close?.()
+            throw new DOMException('Preview closed', 'AbortError')
+          }
+          images.set(cacheKey, full)
+        })()
+        pendingImages.set(cacheKey, pending)
+      }
+      try {
+        await pending
+      } finally {
+        if (pendingImages.get(cacheKey) === pending)
+          pendingImages.delete(cacheKey)
+      }
     }
   }
 
   async function drawPreview() {
     const token = ++renderToken
     const context = preview.getContext('2d')
+    preview.dataset.previewState = 'loading'
+    preview.setAttribute('aria-busy', 'true')
+    bindText(previewStatus, uiMessage('Updating preview…'))
     for (const target of [preview, previewPan])
       bindAttribute(
         target,
@@ -1090,9 +1132,13 @@ export function openPrintDialog({
       })
     )
     try {
-      context.fillStyle = '#fff'
-      context.fillRect(0, 0, preview.width, preview.height)
-      if (!pages) return
+      if (!pages) {
+        context.fillStyle = '#fff'
+        context.fillRect(0, 0, preview.width, preview.height)
+        preview.dataset.previewState = 'empty'
+        bindText(previewStatus, '')
+        return
+      }
       const ops = pageOps(page)
       const keys = [
         ...new Set(ops.filter((op) => op.type === 'image').map((op) => op.key)),
@@ -1107,10 +1153,17 @@ export function openPrintDialog({
         (key) => images.get(`${key}@${PREVIEW_DPI}`)?.bitmap
       )
       preview.dataset.ops = String(ops.length)
+      preview.dataset.previewState = 'ready'
       bindText(previewStatus, '')
     } catch (error) {
-      if (token === renderToken)
+      if (token === renderToken && !closed) {
+        context.fillStyle = '#fff'
+        context.fillRect(0, 0, preview.width, preview.height)
+        preview.dataset.previewState = 'error'
         bindText(previewStatus, uiMessage(error.message))
+      }
+    } finally {
+      if (token === renderToken) preview.removeAttribute('aria-busy')
     }
   }
 
@@ -1282,6 +1335,12 @@ export function openPrintDialog({
     preview,
     previewTools,
     { fitHeight: true, fitLabel: 'Fit page' }
+  )
+  bindText(
+    previewTools.querySelector(':scope > span'),
+    uiMessage(
+      'Scroll to zoom · drag to pan. Dashed outlines show safe margins; they are not printed.'
+    )
   )
   for (const button of previewTools.querySelectorAll('button'))
     preparationHelp(
