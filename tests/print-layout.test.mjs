@@ -284,19 +284,44 @@ test('carton quantities that differ from a known count are reported', () => {
   assert.deepEqual(plan.mismatches, [{ key: 'B', requested: 2, known: 4 }])
 })
 
-test('carton halves are 210 × 148.5 mm with the mark centred inside the safe margin', () => {
+test('carton artwork fills both A4 halves at the same scale without distorting its design', () => {
   const slots = cartonSlots(mark)
   assert.equal(slots.rotated, false)
   assert.equal(slots.cutYMm, 148.5)
-  assert.deepEqual(slots.slots, [
-    { xMm: 30.75, yMm: 21.75, widthMm: 148.5, heightMm: 105 },
-    { xMm: 30.75, yMm: 170.25, widthMm: 148.5, heightMm: 105 },
-  ])
+  for (const [index, slot] of slots.slots.entries()) {
+    assert.ok(
+      slot.widthMm > 180 && slot.heightMm > 130,
+      'enlarge the old 148.5 × 105 mm artwork'
+    )
+    assert.ok(
+      Math.abs(slot.widthMm / slot.heightMm - mark.widthMm / mark.heightMm) <
+        1e-9
+    )
+    assert.ok(Math.abs(slot.xMm + slot.widthMm / 2 - 105) < 1e-9)
+    assert.ok(slot.yMm >= index * 148.5 + 5)
+    assert.ok(slot.yMm + slot.heightMm <= (index + 1) * 148.5 - 5)
+  }
+  assert.equal(slots.slots[1].widthMm, slots.slots[0].widthMm)
+  assert.equal(slots.slots[1].yMm - slots.slots[0].yMm, 148.5)
   assert.equal(cartonSlots({ widthMm: 100, heightMm: 190 }).rotated, true)
+  const large = cartonSlots({ widthMm: 300, heightMm: 300 })
+  assert.equal(large.slots[0].widthMm, large.slots[0].heightMm)
+  assert.ok(large.slots[0].heightMm < 148.5)
   assert.throws(
-    () => cartonSlots({ widthMm: 300, heightMm: 300 }),
-    /larger than half/
+    () => cartonSlots({ widthMm: 0, heightMm: 105 }),
+    /greater than zero/
   )
+})
+
+test('turning off carton footer text gives its space back to the artwork', () => {
+  const layout = { marginMm: 0.5, numbering: false, pageSummary: false }
+  const full = cartonSlots(mark, layout).slots[0]
+  const numbered = cartonSlots(mark, { marginMm: 0.5 }).slots[0]
+  assert.ok(full.widthMm > 208 && full.heightMm === 147.5)
+  assert.ok(
+    full.widthMm > numbered.widthMm && full.heightMm > numbered.heightMm
+  )
+  assert.ok(full.xMm >= 0.5 && full.xMm + full.widthMm <= 209.5)
 })
 
 test('settings are bounded: offsets from -5 to +5 mm in 0.1 mm steps', () => {
@@ -455,7 +480,7 @@ test('carton pages draw two marks, numbering, a midpoint cut guide and offsets',
   const ops = markPageOps({ plan, slots, layout: { offsetYMm: 0.5 }, page: 1 })
   const images = ops.filter((op) => op.type === 'image')
   assert.equal(images.length, 1)
-  assert.equal(images[0].box.yMm, 22.25)
+  assert.equal(images[0].box.yMm, slots.slots[0].yMm + 0.5)
   const texts = ops.filter((op) => op.type === 'text').map((op) => op.value)
   assert.deepEqual(texts, [
     'Carton 3 of 3',
@@ -613,16 +638,23 @@ test('recalibration adjusts the current offset instead of replacing it', () => {
   assert.equal(nextOffset(2, vertical.x1), 0)
 })
 
-test('carton numbering is left out when it cannot fit below the mark', () => {
+test('large carton artwork keeps numbering and the summary outside the design', () => {
   const plan = planCartonMarks([{ key: 'M1', quantity: 2 }])
   const big = cartonSlots({ widthMm: 200, heightMm: 138.5 })
-  assert.equal(numberingFits(big), false)
+  assert.equal(numberingFits(big), true)
   const ops = markPageOps({ plan, slots: big, layout: {}, page: 0 })
   assert.equal(
     ops.filter((op) => op.type === 'text' && op.value.startsWith('Carton'))
       .length,
-    0
+    2
   )
+  assert.ok(
+    ops.some(
+      (op) => op.type === 'text' && op.value.startsWith('CE carton marks')
+    )
+  )
+  const boxes = contentBoxes(ops)
+  for (const box of boxes) assert.ok(box.yMm + box.heightMm <= 293 + 1e-9)
   const normal = cartonSlots(mark)
   assert.equal(numberingFits(normal), true)
   const placed = markPageOps({

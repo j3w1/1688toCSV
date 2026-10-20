@@ -1133,7 +1133,34 @@ dialog.print-dialog.packing-review {
 }
 .print-table-scroll {
   min-inline-size: 0;
-  overflow-x: auto;
+  max-block-size: min(36vh, 260px);
+  overflow: auto;
+}
+.print-quantity-section {
+  display: grid;
+  min-inline-size: 0;
+  gap: var(--space-1);
+}
+.print-quantity-toolbar,
+.print-quantity-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-2);
+}
+.print-quantity-toolbar {
+  justify-content: space-between;
+  font-size: var(--text-s);
+  font-weight: 600;
+}
+.print-quantity-actions > button {
+  min-inline-size: 38px;
+  min-block-size: 28px;
+  padding: 2px 8px;
+  font-size: var(--text-m);
+}
+.print-quantity-reason:empty {
+  display: none;
 }
 .print-dialog .print-options {
   display: flex;
@@ -1157,6 +1184,7 @@ dialog.print-dialog.packing-review {
   padding: var(--space-2) var(--space-3) var(--space-3);
   border: 1px solid var(--divider);
   border-radius: var(--radius-m);
+  min-inline-size: 0;
 }
 .print-fieldset legend {
   padding-inline: 4px;
@@ -1183,7 +1211,7 @@ dialog.print-dialog.packing-review {
 }
 .print-grid-fields {
   display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(150px, 1fr));
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 130px), 1fr));
   gap: var(--space-2) var(--space-3);
   align-items: end;
 }
@@ -1192,9 +1220,13 @@ dialog.print-dialog.packing-review {
   gap: 2px;
   color: var(--muted);
   font-size: var(--text-s);
+  min-inline-size: 0;
 }
-.print-field :is(input, select) {
+.print-dialog .print-field :is(input, select) {
+  inline-size: 100%;
+  min-inline-size: 0;
   min-block-size: 32px;
+  margin: 0;
   padding: 4px var(--space-2);
   border: 1px solid var(--border);
   border-radius: var(--radius-s);
@@ -1214,14 +1246,34 @@ dialog.print-dialog.packing-review {
 }
 .print-counts {
   inline-size: 100%;
+  /* The source order table's global minimum and column widths do not apply
+     to this compact dialog table. Keep any necessary narrow-screen scroll local. */
+  min-width: 0;
+  min-inline-size: 300px;
+  table-layout: fixed;
   border-collapse: collapse;
-  font-size: var(--text-m);
+  font-size: var(--text-s);
+}
+.print-counts.print-caps {
+  min-inline-size: 384px;
+}
+.print-counts.print-counts-marks {
+  min-inline-size: 260px;
 }
 .print-counts :is(th, td) {
-  padding: 6px var(--space-2);
+  inline-size: auto;
+  padding: 4px 6px;
   border-block-end: 1px solid var(--divider);
   text-align: start;
   vertical-align: middle;
+  overflow-wrap: anywhere;
+}
+.print-counts :is(th, td):not(:first-child) {
+  inline-size: 56px;
+}
+.print-counts :is(th, td):nth-child(2),
+.print-counts :is(th, td).print-cap-column {
+  inline-size: 84px;
 }
 .print-counts th {
   color: var(--muted);
@@ -1231,24 +1283,28 @@ dialog.print-dialog.packing-review {
   letter-spacing: 0.04em;
 }
 .print-counts td:first-child {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: baseline;
-  gap: 2px var(--space-2);
+  overflow-wrap: anywhere;
+}
+.print-counts .ce-code {
+  --ce-code-size: 12px;
+}
+.print-counts .print-name {
+  margin-inline-start: 6px;
 }
 .print-counts td:first-child small {
-  flex-basis: 100%;
+  display: block;
   color: var(--muted);
 }
-.print-counts input {
-  inline-size: 96px;
-  min-block-size: 30px;
+.print-dialog .print-counts input {
+  inline-size: 72px;
+  min-block-size: 28px;
   padding: 2px 6px;
   border: 1px solid var(--border);
   border-radius: var(--radius-s);
   background: var(--field);
   color: var(--text);
   font-variant-numeric: tabular-nums;
+  font-size: var(--text-s);
 }
 .print-counts .print-cap-column input::placeholder {
   font-size: var(--text-xs);
@@ -1265,6 +1321,7 @@ dialog.print-dialog.packing-review {
 .print-preview-pane {
   position: sticky;
   top: 0;
+  min-inline-size: 0;
 }
 .print-preview {
   display: block;
@@ -1275,6 +1332,71 @@ dialog.print-dialog.packing-review {
   border-radius: 2px;
   background: #fff;
   box-shadow: var(--shadow-1);
+}
+.print-preview-tools {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 4px;
+  margin-block-end: var(--space-2);
+}
+.print-preview-tools > button {
+  min-inline-size: 28px;
+  min-block-size: 28px;
+  padding: 3px 8px;
+  font-size: var(--text-s);
+}
+.print-preview-tools > span {
+  flex-basis: 100%;
+  color: var(--muted);
+  font-size: var(--text-xs);
+}
+.print-preview-viewport {
+  block-size: min(64dvh, 650px);
+  min-block-size: 240px;
+  min-inline-size: 0;
+  overflow: auto;
+  overscroll-behavior: contain;
+  border: 1px solid var(--divider);
+  border-radius: var(--radius-s);
+  background: var(--field);
+}
+.print-preview-figure {
+  display: grid;
+  place-items: center;
+  inline-size: max-content;
+  block-size: max-content;
+  min-inline-size: 100%;
+  min-block-size: 100%;
+  margin: 0;
+  padding: 4px;
+}
+.print-preview-pane .print-preview-pan {
+  display: block;
+  inline-size: max-content;
+  block-size: max-content;
+  min-inline-size: 0;
+  min-block-size: 0;
+  max-inline-size: none;
+  margin: 0;
+  padding: 0;
+  border: 0;
+  border-radius: 2px;
+  background: transparent;
+  line-height: 0;
+  cursor: zoom-in;
+}
+.print-preview-pan .print-preview {
+  max-inline-size: none;
+  max-block-size: none;
+  -webkit-user-select: none;
+  user-select: none;
+}
+.print-preview-viewport.is-zoomed .print-preview-pan {
+  cursor: grab;
+}
+.print-preview-viewport.is-panning .print-preview-pan {
+  cursor: grabbing;
 }
 .print-note {
   margin: 0;
@@ -1305,25 +1427,18 @@ dialog.print-dialog.packing-review {
   color: var(--muted);
 }
 .print-preset-row {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  align-items: end;
+  gap: var(--space-2) var(--space-3);
+}
+.print-preset-actions {
+  grid-column: 1 / -1;
   display: flex;
   flex-wrap: wrap;
-  align-items: end;
   gap: var(--space-2);
 }
-.print-preset-row > .print-field {
-  flex: none;
-}
-.print-preset-row > input {
-  flex: 1 1 140px;
-  min-inline-size: 0;
-  min-block-size: 32px;
-  padding: 4px var(--space-2);
-  border: 1px solid var(--border);
-  border-radius: var(--radius-s);
-  background: var(--field);
-  color: var(--text);
-}
-.print-preset-row > button,
+.print-preset-actions > button,
 .print-fieldset > button {
   min-block-size: 32px;
   justify-self: start;
@@ -1396,6 +1511,11 @@ dialog.print-dialog.packing-review {
   .print-preview-pane {
     position: static;
     max-inline-size: 360px;
+  }
+}
+@media (max-width: 500px) {
+  .print-preset-row {
+    grid-template-columns: minmax(0, 1fr);
   }
 }
 

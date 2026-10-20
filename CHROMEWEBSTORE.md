@@ -1,6 +1,6 @@
 # Chrome Web Store Listing — 1688toCSV
 
-> Last Updated: 2026-10-17
+> Last Updated: 2026-10-20
 >
 > Version 2.9.0 changes code ownership to current assignments only, discards session edits on packing removal, adds labeled before/after conflict reviews, fixes tooltip movement and code-input clipping, keeps Orders and Products in newest-purchase-first order as imports arrive, adds individual hover-copy controls to every image-copy popup, adds persistent Skip packing choices for fee and other excluded product rows, offers Assign only without leaving Orders, keeps long-popup actions at the top, converges copy formats and compact packing backup, and adds contextual keyboard shortcuts led by Ctrl+Enter for Prepare. Local verification passed across the full and focused runs documented below. Version 2.8.0 added consistent code-band proportions, a flatter packing form, a richer order selector, 45 searchable copy fields, Excel-image appearance/details customization, session Undo/Redo after autosave, editable conflict recovery and clearer historical ownership evidence. New assignments always require review; size-recognition preferences save without a warning when codes stay unchanged. Local source, documentation, unit and browser checks passed across the runs described below. Live order collection, installed embedded-browser acceptance and physical printing remain unverified. No store submission or publication.
 
@@ -191,6 +191,8 @@ Draft substance: records, history, notes/tags, product packing exclusions, pictu
 ## Review Notes
 
 ### Development verification
+
+- Local print-layout candidate (2026-10-20): carton artwork fills each A4 half proportionally; print dialogs use compact quantity tables and aligned preset fields, carton-wide ×2/÷2 actions, translated control explanations and zoomable page previews. Local verification passed: 609 unit tests, 10 focused Chromium cases across targeted runs, source and documentation checks, and the development build. Checks cover both print dialogs, responsive tables, translated helpers, bulk quantity validation, pointer and keyboard navigation, unchanged PDF bytes after zoom, and the existing Excel-image viewer. Desktop/narrow dialogs and rendered synthetic PDFs were visually inspected. The installed-extension reload is blocked by browser policy, and physical printing was not run. This candidate is not deployed; README print-dialog screenshots require refresh before deployment. Permissions and privacy disclosures are unchanged.
 
 - Final 2.9.0 verification passed the complete command: source/docs checks, 544 unit tests, the production rebuild and all 350 packaged Chromium cases. Earlier fixture corrections retained the original layout limits, selection behavior and exact help text while accounting for asynchronous preview layout, the copy-menu Headers checkbox and shortcut text. The helper regression also checks occluded controls and clicks beneath overlapping hints. Scoped independent review of compact backup restoration has no outstanding findings. Twelve focused Edge cases and all five native Windows Excel cases passed earlier in this update; their extraction/clipboard paths are unchanged. Live 1688 and installed-extension acceptance, physical printing and hardware scanners remain unverified.
 

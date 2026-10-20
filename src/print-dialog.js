@@ -6,6 +6,8 @@ import {
 } from './i18n.js'
 import { element as el, enableLightDismiss, pinDialogActions } from './ui.js'
 import { renderLabel } from './labels.js'
+import { preparationHelp } from './preparation-help.js'
+import { enableImageNavigation } from './image-copy-dialog.js'
 import {
   A4,
   SAFE_EDGE_MM,
@@ -38,7 +40,7 @@ import {
 /** Labels are rendered at 600 dpi inside the PDF; the preview uses 150 dpi. */
 const PDF_DPI = 600
 const PREVIEW_DPI = 150
-const PREVIEW_PX_PER_MM = 3
+const PREVIEW_PX_PER_MM = PREVIEW_DPI / 25.4
 
 /** File names such as CE-labels-2026-10-19-153012-3-products.pdf. */
 export { printFileName }
@@ -64,9 +66,10 @@ async function decode(blob) {
   }
 }
 
-function field(label, input, className = '') {
-  const wrapper = el('label', undefined, `print-field ${className}`.trim())
+function field(label, input, help) {
+  const wrapper = el('label', undefined, 'print-field')
   wrapper.append(el('span', uiMessage(label)), input)
+  if (help) preparationHelp(wrapper, uiMessage(help))
   return wrapper
 }
 function numberInput(value, { min, max, step = 0.5 }) {
@@ -78,18 +81,19 @@ function numberInput(value, { min, max, step = 0.5 }) {
   input.value = String(value)
   return input
 }
-function check(label, checked) {
+function check(label, checked, help) {
   const input = el('input')
   input.type = 'checkbox'
   input.checked = checked
   const wrapper = el('label', undefined, 'print-check')
   wrapper.append(input, el('span', uiMessage(label)))
+  if (help) preparationHelp(wrapper, uiMessage(help))
   return { wrapper, input }
 }
 function choice(name, options, current) {
   const group = el('div', undefined, 'print-choice')
   group.setAttribute('role', 'radiogroup')
-  const inputs = options.map(([value, label]) => {
+  const inputs = options.map(([value, label, help]) => {
     const input = el('input')
     input.type = 'radio'
     input.name = name
@@ -97,6 +101,7 @@ function choice(name, options, current) {
     input.checked = value === current
     const wrapper = el('label', undefined, 'print-check')
     wrapper.append(input, el('span', uiMessage(label)))
+    if (help) preparationHelp(wrapper, uiMessage(help))
     group.append(wrapper)
     return input
   })
@@ -142,6 +147,16 @@ export function openPrintDialog({
   cancel.dataset.action = 'close-print-dialog'
   const exportButton = el('button', uiMessage('Export PDF'), 'primary')
   exportButton.dataset.action = 'export-pdf'
+  preparationHelp(
+    exportButton,
+    uiMessage(
+      'Save every preview page as an A4 PDF, plus a JSON summary. Print the PDF at 100% (Actual size).'
+    )
+  )
+  preparationHelp(
+    cancel,
+    uiMessage('Close this dialog. Paper and sheet settings are remembered.')
+  )
   const actions = el('div', undefined, 'dialog-actions')
   actions.append(cancel, exportButton)
   dialog.append(heading, actions)
@@ -164,6 +179,7 @@ export function openPrintDialog({
   const warnings = el('ul', undefined, 'print-warnings')
   warnings.setAttribute('aria-live', 'polite')
   const table = el('table', undefined, 'print-counts')
+  table.classList.toggle('print-counts-marks', marks)
   const settingsPane = el('div', undefined, 'print-settings')
   const advice = el(
     'p',
@@ -174,23 +190,73 @@ export function openPrintDialog({
   status.setAttribute('role', 'status')
   const tableScroll = el('div', undefined, 'print-table-scroll')
   tableScroll.append(table)
-  left.append(summary, warnings, tableScroll, settingsPane, advice, status)
+  const quantitySection = el('div', undefined, 'print-quantity-section')
+  let doubleQuantities, halveQuantities, quantityReason
+  if (marks) {
+    const toolbar = el('div', undefined, 'print-quantity-toolbar')
+    const scope = el('span', uiMessage('All carton quantities'))
+    const actions = el('div', undefined, 'print-quantity-actions')
+    actions.setAttribute('role', 'group')
+    bindAttribute(actions, 'aria-label', uiMessage('All carton quantities'))
+    doubleQuantities = el('button', '×2')
+    halveQuantities = el('button', '÷2')
+    doubleQuantities.dataset.action = 'double-carton-quantities'
+    halveQuantities.dataset.action = 'halve-carton-quantities'
+    for (const [target, label, help] of [
+      [
+        doubleQuantities,
+        'Double all carton quantities',
+        'Multiply every carton quantity in this dialog by two. All counts must stay at or below 9999.',
+      ],
+      [
+        halveQuantities,
+        'Halve all carton quantities',
+        'Divide every carton quantity in this dialog by two, rounding odd counts up. Zero stays zero.',
+      ],
+    ]) {
+      target.type = 'button'
+      bindAttribute(target, 'aria-label', uiMessage(label))
+      preparationHelp(target, uiMessage(help))
+    }
+    actions.append(doubleQuantities, halveQuantities)
+    toolbar.append(scope, actions)
+    const hint = el(
+      'p',
+      uiMessage(
+        'Applies to every product below. Halving rounds odd counts up; zero stays zero.'
+      ),
+      'print-hint'
+    )
+    quantityReason = el('p', undefined, 'print-hint print-quantity-reason')
+    quantityReason.setAttribute('role', 'status')
+    quantitySection.append(toolbar, hint, quantityReason)
+  }
+  quantitySection.append(tableScroll)
+  left.append(summary, warnings, quantitySection, settingsPane, advice, status)
 
   const pageLabel = el('span', undefined, 'print-page-label')
   const previous = el('button', undefined, 'icon-button print-page-previous')
   previous.textContent = '‹'
   bindAttribute(previous, 'aria-label', uiMessage('Previous page'))
   bindAttribute(previous, 'title', uiMessage('Previous page'))
+  preparationHelp(
+    previous,
+    uiMessage('View the previous A4 page. All pages are included in the PDF.')
+  )
   const next = el('button', undefined, 'icon-button print-page-next')
   next.textContent = '›'
   bindAttribute(next, 'aria-label', uiMessage('Next page'))
   bindAttribute(next, 'title', uiMessage('Next page'))
+  preparationHelp(
+    next,
+    uiMessage('View the next A4 page. All pages are included in the PDF.')
+  )
   const pager = el('div', undefined, 'print-pager')
   pager.append(previous, pageLabel, next)
   const pageContents = el('p', undefined, 'print-page-contents')
   const preview = el('canvas', undefined, 'print-preview')
-  preview.width = A4.widthMm * PREVIEW_PX_PER_MM
-  preview.height = A4.heightMm * PREVIEW_PX_PER_MM
+  preview.width = Math.round(A4.widthMm * PREVIEW_PX_PER_MM)
+  preview.height = Math.round(A4.heightMm * PREVIEW_PX_PER_MM)
   preview.setAttribute('role', 'img')
   bindAttribute(
     preview,
@@ -200,7 +266,27 @@ export function openPrintDialog({
   const previewStatus = el('p', undefined, 'print-status')
   previewStatus.setAttribute('role', 'status')
   const previewPane = el('div', undefined, 'print-preview-pane')
-  previewPane.append(pager, pageContents, preview, previewStatus)
+  const previewTools = el('div', undefined, 'print-preview-tools')
+  const previewViewport = el('div', undefined, 'print-preview-viewport')
+  const previewFigure = el('figure', undefined, 'print-preview-figure')
+  const previewPan = el('button', undefined, 'print-preview-pan')
+  previewPan.type = 'button'
+  previewPan.dataset.action = 'print-preview'
+  bindAttribute(
+    previewPan,
+    'aria-label',
+    uiMessage('Page {0} preview', { 0: () => page + 1 })
+  )
+  previewPan.append(preview)
+  previewFigure.append(previewPan)
+  previewViewport.append(previewFigure)
+  previewPane.append(
+    pager,
+    pageContents,
+    previewTools,
+    previewViewport,
+    previewStatus
+  )
   const columns = el('div', undefined, 'print-columns')
   columns.append(left, previewPane)
   body.append(columns)
@@ -232,17 +318,58 @@ export function openPrintDialog({
   calibrate.dataset.action = 'print-calibration'
   calibrate.type = 'button'
   const presetRow = el('div', undefined, 'print-preset-row')
+  const presetActions = el('div', undefined, 'print-preset-actions')
+  presetActions.append(savePreset, deletePreset)
   presetRow.append(
-    field('A4 preset', presetSelect),
-    presetName,
+    field(
+      'A4 preset',
+      presetSelect,
+      'Apply this preset’s margin and X/Y printer offsets to the preview and PDF.'
+    ),
+    field(
+      'Preset name',
+      presetName,
+      'Name these margin and printer-offset settings, then choose Save preset to reuse them.'
+    ),
+    presetActions
+  )
+  preparationHelp(
     savePreset,
-    deletePreset
+    uiMessage(
+      'Save the current margin and printer offsets under this name. Reusing a name replaces that preset.'
+    )
+  )
+  preparationHelp(
+    deletePreset,
+    uiMessage(
+      'Remove this saved preset. The preview keeps its current margin and offsets.'
+    )
+  )
+  preparationHelp(
+    calibrate,
+    uiMessage(
+      'Export an A4 test page with rulers and reference crosses to check printer scale and alignment.'
+    )
   )
   const paperFields = el('div', undefined, 'print-grid-fields')
   paperFields.append(
-    field(marks ? 'Safe margin (mm)' : 'Margin (mm)', margin),
-    field('Offset X (mm)', offsetX),
-    field('Offset Y (mm)', offsetY)
+    field(
+      marks ? 'Safe margin (mm)' : 'Margin (mm)',
+      margin,
+      marks
+        ? 'Reserve this much space inside each A4 half. The carton mark scales to fit the remaining area.'
+        : 'Reserve empty space around the label grid. Larger margins can fit fewer labels per page.'
+    ),
+    field(
+      'Offset X (mm)',
+      offsetX,
+      'Move all printed content left with negative values or right with positive values, in millimetres.'
+    ),
+    field(
+      'Offset Y (mm)',
+      offsetY,
+      'Move all printed content up with negative values or down with positive values, in millimetres.'
+    )
   )
   const paper = el('fieldset', undefined, 'print-fieldset')
   const calibrateHint = el(
@@ -323,13 +450,26 @@ export function openPrintDialog({
   const kindFields = el('fieldset', undefined, 'print-fieldset print-options')
   let capsBox = null
   if (marks) {
-    const numbering = check('Number cartons (Carton 1 of 3)', layout.numbering)
+    const numbering = check(
+      'Number cartons (Carton 1 of 3)',
+      layout.numbering,
+      'Print each carton’s sequence below its mark, such as Carton 1 of 3.'
+    )
     const extra = check(
       'Fill an odd last half with an extra copy',
-      layout.fillExtra
+      layout.fillExtra,
+      'Repeat the last carton mark once to fill an empty final half page.'
     )
-    const guides = check('Cut guide', layout.guides)
-    const pageSummary = check('Page summary line', layout.pageSummary)
+    const guides = check(
+      'Cut guide',
+      layout.guides,
+      'Show the cut line between the two A4 halves.'
+    )
+    const pageSummary = check(
+      'Page summary line',
+      layout.pageSummary,
+      'Print a small line with the page number, product codes and quantities below the artwork when space allows.'
+    )
     kindFields.append(
       el('legend', uiMessage('Two carton marks per A4, cut in half.')),
       numbering.wrapper,
@@ -345,9 +485,21 @@ export function openPrintDialog({
     }))
     settingsPane.append(kindFields, paper)
   } else {
-    const guides = check('Cut guides', layout.guides)
-    const pageSummary = check('Page summary line', layout.pageSummary)
-    const boundaries = check('Mark where products change', layout.boundaries)
+    const guides = check(
+      'Cut guides',
+      layout.guides,
+      'Show dotted label edges and crop marks to guide cutting.'
+    )
+    const pageSummary = check(
+      'Page summary line',
+      layout.pageSummary,
+      'Print a small line with the page number, product codes and quantities below the artwork when space allows.'
+    )
+    const boundaries = check(
+      'Mark where products change',
+      layout.boundaries,
+      'Draw solid separators where neighbouring labels belong to different products.'
+    )
     kindFields.append(
       el('legend', uiMessage('Sheet')),
       guides.wrapper,
@@ -357,26 +509,53 @@ export function openPrintDialog({
     const spares = choice(
       'print-spares',
       [
-        ['proportional', 'Share by quantity (recommended)'],
-        ['equal', 'Share equally'],
-        ['blank', 'Leave blank'],
+        [
+          'proportional',
+          'Share by quantity (recommended)',
+          'Fill spare places on the last page in proportion to each product’s requested quantity.',
+        ],
+        [
+          'equal',
+          'Share equally',
+          'Share spare places on the last page equally between products.',
+        ],
+        [
+          'blank',
+          'Leave blank',
+          'Leave unused label places empty on the last page.',
+        ],
       ],
       layout.spares
     )
     capsBox = check(
       'Limit extra copies per product',
       layout.limitExtras ||
-        items.some((item) => item.cap !== undefined && item.cap !== '')
+        items.some((item) => item.cap !== undefined && item.cap !== ''),
+      'Set a maximum number of extra labels for each product. Places that no product can use stay blank.'
     )
     const gapX = numberInput(layout.gapXMm, { min: 0, max: 20 })
     const gapY = numberInput(layout.gapYMm, { min: 0, max: 20 })
     const gaps = el('div', undefined, 'print-grid-fields')
     gaps.append(
-      field('Horizontal gap (mm)', gapX),
-      field('Vertical gap (mm)', gapY)
+      field(
+        'Horizontal gap (mm)',
+        gapX,
+        'Add horizontal space between labels. Larger gaps can fit fewer labels per page.'
+      ),
+      field(
+        'Vertical gap (mm)',
+        gapY,
+        'Add vertical space between labels. Larger gaps can fit fewer labels per page.'
+      )
     )
     const advanced = el('details', undefined, 'print-advanced')
     const advancedSummary = el('summary', uiMessage('Advanced'))
+    preparationHelp(
+      advancedSummary,
+      uiMessage(
+        'Set how spare label places are filled, limit extra copies and adjust gaps. The preview updates as you change them.'
+      )
+    )
     const spareSet = el('fieldset', undefined, 'print-fieldset')
     spareSet.append(
       el('legend', uiMessage('Spare places on the last page')),
@@ -437,6 +616,14 @@ export function openPrintDialog({
       quantities.set(item.key, input.value)
       update()
     })
+    preparationHelp(
+      input,
+      uiMessage(
+        marks
+          ? 'Set how many copies of this carton mark to print. The page count and carton numbering update immediately.'
+          : 'Set required copies of this barcode label. Extra copies are calculated separately to fill the last page.'
+      )
+    )
     const requested = el('td')
     requested.append(input)
     const extra = el('td', '', 'numeric')
@@ -456,6 +643,12 @@ export function openPrintDialog({
         uiMessage('Max extra for {0}', { 0: item.code })
       )
       bindAttribute(cap, 'placeholder', uiMessage('No limit'))
+      preparationHelp(
+        cap,
+        uiMessage(
+          'Limit extra copies of this barcode label. Leave empty for no limit or enter 0 for none.'
+        )
+      )
       cap.addEventListener('input', () => {
         caps.set(item.key, cap.value)
         update()
@@ -487,6 +680,7 @@ export function openPrintDialog({
   let renderToken = 0
   let busy = false
   let closed = false
+  let disposeNavigation
   const closing = new AbortController()
   // Quantities and caps are whole numbers; an empty quantity means none and an empty cap no limit.
   const whole = (value, empty) => {
@@ -494,6 +688,33 @@ export function openPrintDialog({
     if (!text) return empty
     return /^\d{1,4}$/.test(text) ? Number(text) : NaN
   }
+  function adjustCartons(operation) {
+    if (!marks || busy || closed) return
+    const values = [...quantities].map(([key, value]) => [key, whole(value, 0)])
+    // Validate every result before changing any input, so a blocked bulk action
+    // cannot leave a partially changed table or silently clamp a count.
+    const changed = values.map(([key, value]) => [
+      key,
+      operation === 'double' ? value * 2 : Math.ceil(value / 2),
+    ])
+    if (changed.some(([, value]) => !Number.isInteger(value) || value > 9999))
+      return
+    for (const [key, value] of changed) {
+      quantities.set(key, value)
+      cellsByKey.get(key).input.value = String(value)
+    }
+    update()
+    bindText(
+      status,
+      uiMessage(
+        operation === 'double'
+          ? 'All carton quantities doubled.'
+          : 'All carton quantities halved.'
+      )
+    )
+  }
+  doubleQuantities?.addEventListener('click', () => adjustCartons('double'))
+  halveQuantities?.addEventListener('click', () => adjustCartons('halve'))
 
   const itemByKey = new Map(items.map((item) => [item.key, item]))
   const currentItems = () =>
@@ -557,6 +778,23 @@ export function openPrintDialog({
         if (bad) field?.setAttribute('aria-invalid', 'true')
         else field?.removeAttribute('aria-invalid')
       invalid ||= badQuantity || badCap
+    }
+    if (marks) {
+      const overflow = [...quantities.values()].some(
+        (value) => whole(value, 0) > 4999
+      )
+      doubleQuantities.disabled = busy || invalid || overflow
+      halveQuantities.disabled = busy || invalid
+      bindText(
+        quantityReason,
+        invalid
+          ? uiMessage('Enter whole numbers from 0 to 9999.')
+          : overflow
+            ? uiMessage(
+                'Doubling would exceed 9999. Lower the carton quantities first.'
+              )
+            : ''
+      )
     }
     try {
       if (invalid) throw new Error('Enter whole numbers from 0 to 9999.')
@@ -714,6 +952,12 @@ export function openPrintDialog({
   async function drawPreview() {
     const token = ++renderToken
     const context = preview.getContext('2d')
+    for (const target of [preview, previewPan])
+      bindAttribute(
+        target,
+        'aria-label',
+        uiMessage('Page {0} preview', { 0: page + 1 })
+      )
     const pages = plan?.pages || 0
     previous.disabled = page <= 0
     next.disabled = page >= pages - 1
@@ -910,6 +1154,7 @@ export function openPrintDialog({
   dialog.addEventListener('close', () => {
     closed = true
     closing.abort()
+    disposeNavigation?.()
     renderToken++
     for (const { bitmap } of images.values()) bitmap.close?.()
     images.clear()
@@ -918,6 +1163,29 @@ export function openPrintDialog({
   document.body.append(dialog)
   update()
   dialog.showModal()
+  disposeNavigation = enableImageNavigation(
+    previewViewport,
+    previewFigure,
+    previewPan,
+    preview,
+    previewTools,
+    { fitHeight: true, fitLabel: 'Fit page' }
+  )
+  for (const button of previewTools.querySelectorAll('button'))
+    preparationHelp(
+      button,
+      uiMessage(
+        button.textContent === String(uiMessage('Fit page'))
+          ? 'Fit the whole A4 page in the preview without changing the PDF.'
+          : 'Zoom the preview without changing the PDF or printed size.'
+      )
+    )
+  preparationHelp(
+    previewPan,
+    uiMessage(
+      'Scroll to zoom around the pointer; drag to pan. Use +/− to zoom, arrow keys to pan, and 0 to fit the page.'
+    )
+  )
   return dialog
 }
 
@@ -972,6 +1240,12 @@ export function openRecentPrintJobs({
     )
     what.append(kindLabel, when, detail)
     const regenerate = el('button', uiMessage('Regenerate'))
+    preparationHelp(
+      regenerate,
+      uiMessage(
+        'Build a new PDF using current product data and this job’s requested quantities and layout.'
+      )
+    )
     bindAttribute(
       regenerate,
       'aria-label',

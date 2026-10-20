@@ -52,14 +52,17 @@ Imports read each order in a background tab (or, if the browser refuses that, a 
 
 ### Print menu and dialog (both views)
 
-| `data-action`        | Accessible name     | Does                                                    |
-| -------------------- | ------------------- | ------------------------------------------------------- |
-| `print-labels`       | Print labels…       | Opens the label dialog for the selected products.       |
-| `print-carton-marks` | Print carton marks… | Opens the carton-mark dialog for the selected products. |
-| `print-recent`       | Recent print jobs…  | Lists the five most recent exports to regenerate.       |
-| `export-pdf`         | Export PDF          | Saves the PDF and its summary.                          |
-| `print-calibration`  | Calibration sheet   | Saves a one-page calibration PDF (no summary).          |
-| `close-print-dialog` | Cancel              | Closes the dialog; an export in progress is abandoned.  |
+| `data-action`              | Accessible name              | Does                                                                                                     |
+| -------------------------- | ---------------------------- | -------------------------------------------------------------------------------------------------------- |
+| `print-labels`             | Print labels…                | Opens the label dialog for the selected products.                                                        |
+| `print-carton-marks`       | Print carton marks…          | Opens the carton-mark dialog for the selected products.                                                  |
+| `print-recent`             | Recent print jobs…           | Lists the five most recent exports to regenerate.                                                        |
+| `export-pdf`               | Export PDF                   | Saves the PDF and its summary.                                                                           |
+| `print-calibration`        | Calibration sheet            | Saves a one-page calibration PDF (no summary).                                                           |
+| `close-print-dialog`       | Cancel                       | Closes the dialog; an export in progress is abandoned.                                                   |
+| `print-preview`            | Page N preview               | Preview only: scroll or +/− to zoom, drag or arrows to pan, 0 to fit. Exported dimensions do not change. |
+| `double-carton-quantities` | Double all carton quantities | Carton dialog only: doubles every count if all results stay at or below 9999.                            |
+| `halve-carton-quantities`  | Halve all carton quantities  | Carton dialog only: halves every count, rounding odd counts up; zero stays zero.                         |
 
 ### Import notices
 

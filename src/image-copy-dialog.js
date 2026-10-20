@@ -24,45 +24,72 @@ export function imageBatchPlans(count, size) {
 }
 
 // Preview-only sizing: copied blobs and label dimensions never change.
-function enableImageNavigation(viewport, figure, button, image, tools) {
+export function enableImageNavigation(
+  viewport,
+  figure,
+  button,
+  image,
+  tools,
+  { fitHeight = false, fitLabel = 'Fit image' } = {}
+) {
   const abort = new AbortController()
   const listen = (node, name, handler, options = {}) =>
     node.addEventListener(name, handler, { ...options, signal: abort.signal })
   const zoomOut = element('button', '−')
   const zoomIn = element('button', '+')
-  const fit = element('button', message('Fit image'))
+  const fit = element('button', message(fitLabel))
   const amount = element('output', undefined, 'copy-preview-scale')
   const help = element('span', message('Scroll to zoom · drag to pan'))
   for (const [control, label] of [
     [zoomOut, 'Zoom out'],
     [zoomIn, 'Zoom in'],
   ]) {
+    control.type = 'button'
     bindAttribute(control, 'aria-label', message(label))
     bindAttribute(control, 'title', message(label))
   }
+  fit.type = 'button'
   tools.replaceChildren(zoomOut, amount, zoomIn, fit, help)
   let scale = 1,
     fitted = 1,
     drag,
     suppressClick = false
-  const ready = () => image.naturalWidth > 0
+  // Canvas previews retain their backing pixels; only their display size changes.
+  const dimensions = () => ({
+    width: image.localName === 'canvas' ? image.width : image.naturalWidth,
+    height: image.localName === 'canvas' ? image.height : image.naturalHeight,
+  })
+  const ready = () => dimensions().width > 0 && dimensions().height > 0
   const fitScale = () =>
-    Math.min(1, (viewport.clientWidth - 8) / image.naturalWidth)
+    Math.max(
+      0.001,
+      Math.min(
+        1,
+        (viewport.clientWidth - 8) / dimensions().width,
+        fitHeight ? (viewport.clientHeight - 8) / dimensions().height : 1
+      )
+    )
   const apply = (next, point) => {
     if (!ready()) return
     const rect = viewport.getBoundingClientRect()
-    const x = point ? point.x - rect.left : viewport.clientWidth / 2
-    const y = point ? point.y - rect.top : viewport.clientHeight / 2
+    const x = point?.x ?? rect.left + viewport.clientWidth / 2
+    const y = point?.y ?? rect.top + viewport.clientHeight / 2
     const old = scale
+    const before = image.getBoundingClientRect()
+    const sourceX = (x - before.left) / old
+    const sourceY = (y - before.top) / old
     scale = Math.max(fitted, Math.min(4, next))
-    image.style.inlineSize = `${image.naturalWidth * scale}px`
-    image.style.blockSize = `${image.naturalHeight * scale}px`
+    image.style.inlineSize = `${dimensions().width * scale}px`
+    image.style.blockSize = `${dimensions().height * scale}px`
     const enlarged = scale > fitted + 0.001
     figure.classList.toggle('is-enlarged', enlarged)
     button.setAttribute('aria-pressed', String(enlarged))
     viewport.classList.toggle('is-zoomed', enlarged)
-    viewport.scrollLeft = ((viewport.scrollLeft + x) * scale) / old - x
-    viewport.scrollTop = ((viewport.scrollTop + y) * scale) / old - y
+    // Keep the same image point under the pointer, including when a fitted
+    // preview is centered in a larger viewport rather than at its origin.
+    const after = image.getBoundingClientRect()
+    viewport.scrollLeft += after.left + sourceX * scale - x
+    viewport.scrollTop += after.top + sourceY * scale - y
     amount.value = `${Math.round(scale * 100)}%`
     zoomOut.disabled = !enlarged
     zoomIn.disabled = scale >= 4

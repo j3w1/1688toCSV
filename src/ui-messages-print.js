@@ -27,6 +27,20 @@ export const PRINT_MESSAGES = {
   'Page {0} of {1}': { zh: '第 {0} 页，共 {1} 页', es: 'Página {0} de {1}' },
   'Previous page': { zh: '上一页', es: 'Página anterior' },
   'Next page': { zh: '下一页', es: 'Página siguiente' },
+  'Fit page': { zh: '适合整页', es: 'Ajustar página' },
+  'Zoom the preview without changing the PDF or printed size.': {
+    zh: '缩放预览，不改变 PDF 或实际打印尺寸。',
+    es: 'Amplía o reduce la vista previa sin cambiar el PDF ni el tamaño impreso.',
+  },
+  'Fit the whole A4 page in the preview without changing the PDF.': {
+    zh: '在预览中显示完整 A4 页面，不改变 PDF。',
+    es: 'Muestra toda la página A4 en la vista previa sin cambiar el PDF.',
+  },
+  'Scroll to zoom around the pointer; drag to pan. Use +/− to zoom, arrow keys to pan, and 0 to fit the page.':
+    {
+      zh: '滚动鼠标可围绕指针缩放，拖动可平移。用 +/− 缩放、方向键平移、0 显示整页。',
+      es: 'Desplázate para ampliar alrededor del puntero y arrastra para mover. Usa +/− para ampliar, las flechas para mover y 0 para ajustar la página.',
+    },
   'Regenerated from the print job of {0}. Product data may have changed since; check the preview before printing.':
     {
       zh: '根据 {0} 的打印任务重新生成。商品数据可能已经变化，打印前请检查预览。',
@@ -112,6 +126,186 @@ export const PRINT_MESSAGES = {
   Extra: { zh: '额外', es: 'Extra' },
   'Max extra': { zh: '最多额外', es: 'Extra máx.' },
   Cartons: { zh: '箱数', es: 'Cajas' },
+  'All carton quantities': {
+    zh: '所有箱唛数量',
+    es: 'Todas las cantidades de cajas',
+  },
+  'Double all carton quantities': {
+    zh: '所有箱唛数量乘以二',
+    es: 'Duplicar todas las cantidades de cajas',
+  },
+  'Halve all carton quantities': {
+    zh: '所有箱唛数量减半',
+    es: 'Reducir a la mitad todas las cantidades de cajas',
+  },
+  'Applies to every product below. Halving rounds odd counts up; zero stays zero.':
+    {
+      zh: '应用于下方所有商品。减半时奇数向上取整，零保持为零。',
+      es: 'Se aplica a todos los productos de abajo. Al dividir, las cantidades impares se redondean hacia arriba; el cero sigue siendo cero.',
+    },
+  'Doubling would exceed 9999. Lower the carton quantities first.': {
+    zh: '乘以二后会超过 9999。请先减少箱唛数量。',
+    es: 'Al duplicar se superaría 9999. Reduce primero las cantidades de cajas.',
+  },
+  'All carton quantities doubled.': {
+    zh: '所有箱唛数量已乘以二。',
+    es: 'Se han duplicado todas las cantidades de cajas.',
+  },
+  'All carton quantities halved.': {
+    zh: '所有箱唛数量已减半。',
+    es: 'Se han reducido a la mitad todas las cantidades de cajas.',
+  },
+  'Multiply every carton quantity in this dialog by two. All counts must stay at or below 9999.':
+    {
+      zh: '将此对话框中的所有箱唛数量乘以二。每个数量都必须不超过 9999。',
+      es: 'Multiplica por dos todas las cantidades de cajas de este diálogo. Ninguna puede superar 9999.',
+    },
+  'Divide every carton quantity in this dialog by two, rounding odd counts up. Zero stays zero.':
+    {
+      zh: '将此对话框中的所有箱唛数量除以二，奇数向上取整。零保持为零。',
+      es: 'Divide por dos todas las cantidades de cajas de este diálogo, redondeando las impares hacia arriba. El cero sigue siendo cero.',
+    },
+  'Save every preview page as an A4 PDF, plus a JSON summary. Print the PDF at 100% (Actual size).':
+    {
+      zh: '将全部预览页面保存为 A4 PDF，并附带 JSON 摘要。请按 100%（实际大小）打印 PDF。',
+      es: 'Guarda todas las páginas de la vista previa en un PDF A4, junto con un resumen JSON. Imprime el PDF al 100 % (tamaño real).',
+    },
+  'Close this dialog. Paper and sheet settings are remembered.': {
+    zh: '关闭此对话框。纸张和版式设置会保留。',
+    es: 'Cierra este diálogo. Se conservan los ajustes del papel y la hoja.',
+  },
+  'View the previous A4 page. All pages are included in the PDF.': {
+    zh: '查看上一张 A4 页面。PDF 包含全部页面。',
+    es: 'Muestra la página A4 anterior. El PDF incluye todas las páginas.',
+  },
+  'View the next A4 page. All pages are included in the PDF.': {
+    zh: '查看下一张 A4 页面。PDF 包含全部页面。',
+    es: 'Muestra la siguiente página A4. El PDF incluye todas las páginas.',
+  },
+  'Apply this preset’s margin and X/Y printer offsets to the preview and PDF.':
+    {
+      zh: '将此预设的页边距和打印机 X/Y 偏移应用到预览和 PDF。',
+      es: 'Aplica el margen y los desplazamientos X/Y de este ajuste a la vista previa y al PDF.',
+    },
+  'Name these margin and printer-offset settings, then choose Save preset to reuse them.':
+    {
+      zh: '为这组页边距和打印机偏移设置命名，然后点击“保存预设”以便再次使用。',
+      es: 'Pon nombre a estos ajustes de margen y desplazamiento y pulsa Guardar ajuste para volver a utilizarlos.',
+    },
+  'Save the current margin and printer offsets under this name. Reusing a name replaces that preset.':
+    {
+      zh: '使用此名称保存当前页边距和打印机偏移。同名预设会被替换。',
+      es: 'Guarda el margen y los desplazamientos actuales con este nombre. Si ya existe, se reemplaza ese ajuste.',
+    },
+  'Remove this saved preset. The preview keeps its current margin and offsets.':
+    {
+      zh: '删除此已保存的预设。预览保留当前页边距和偏移。',
+      es: 'Elimina este ajuste guardado. La vista previa conserva el margen y los desplazamientos actuales.',
+    },
+  'Export an A4 test page with rulers and reference crosses to check printer scale and alignment.':
+    {
+      zh: '导出带标尺和参考十字线的 A4 测试页，用来检查打印缩放和对齐。',
+      es: 'Exporta una página A4 de prueba con reglas y cruces de referencia para comprobar la escala y la alineación de la impresora.',
+    },
+  'Reserve this much space inside each A4 half. The carton mark scales to fit the remaining area.':
+    {
+      zh: '在每半张 A4 内预留此宽度的边距。箱唛按比例缩放以适应剩余区域。',
+      es: 'Reserva este margen dentro de cada mitad A4. La marca de caja se escala para ocupar el espacio restante.',
+    },
+  'Reserve empty space around the label grid. Larger margins can fit fewer labels per page.':
+    {
+      zh: '在标签网格四周预留空白。页边距越大，每页可能容纳的标签越少。',
+      es: 'Reserva espacio vacío alrededor de la cuadrícula. Con márgenes mayores pueden caber menos etiquetas por página.',
+    },
+  'Move all printed content left with negative values or right with positive values, in millimetres.':
+    {
+      zh: '以毫米为单位移动全部打印内容：负值向左，正值向右。',
+      es: 'Mueve todo el contenido impreso en milímetros: a la izquierda con valores negativos o a la derecha con positivos.',
+    },
+  'Move all printed content up with negative values or down with positive values, in millimetres.':
+    {
+      zh: '以毫米为单位移动全部打印内容：负值向上，正值向下。',
+      es: 'Mueve todo el contenido impreso en milímetros: hacia arriba con valores negativos o hacia abajo con positivos.',
+    },
+  'Print each carton’s sequence below its mark, such as Carton 1 of 3.': {
+    zh: '在每个箱唛下方打印箱号顺序，例如 Carton 1 of 3。',
+    es: 'Imprime el número de cada caja debajo de su marca, por ejemplo Carton 1 of 3.',
+  },
+  'Repeat the last carton mark once to fill an empty final half page.': {
+    zh: '将最后一个箱唛再打印一份，以填满最后空白的半页。',
+    es: 'Repite una vez la última marca de caja para completar la media página final vacía.',
+  },
+  'Show the cut line between the two A4 halves.': {
+    zh: '显示两半张 A4 之间的裁切线。',
+    es: 'Muestra la línea de corte entre las dos mitades A4.',
+  },
+  'Print a small line with the page number, product codes and quantities below the artwork when space allows.':
+    {
+      zh: '空间足够时，在图案下方用小字打印页码、商品编码和数量。',
+      es: 'Si hay espacio, imprime debajo del diseño una línea pequeña con la página, los códigos de producto y las cantidades.',
+    },
+  'Show dotted label edges and crop marks to guide cutting.': {
+    zh: '显示标签边缘虚线和裁切标记，方便裁剪。',
+    es: 'Muestra los bordes punteados de las etiquetas y marcas para guiar el corte.',
+  },
+  'Draw solid separators where neighbouring labels belong to different products.':
+    {
+      zh: '相邻标签属于不同商品时，在它们之间绘制实线分隔。',
+      es: 'Dibuja separadores continuos donde las etiquetas contiguas pertenecen a productos distintos.',
+    },
+  'Fill spare places on the last page in proportion to each product’s requested quantity.':
+    {
+      zh: '按每个商品所需数量的比例，用额外标签填满最后一页的空位。',
+      es: 'Rellena los espacios libres de la última página en proporción a la cantidad solicitada de cada producto.',
+    },
+  'Share spare places on the last page equally between products.': {
+    zh: '将最后一页的空位平均分配给各商品。',
+    es: 'Reparte por igual entre los productos los espacios libres de la última página.',
+  },
+  'Leave unused label places empty on the last page.': {
+    zh: '最后一页未使用的标签位置保持空白。',
+    es: 'Deja vacíos los espacios sin usar de la última página.',
+  },
+  'Set a maximum number of extra labels for each product. Places that no product can use stay blank.':
+    {
+      zh: '设置每个商品最多额外打印的标签数。无法分配给任何商品的空位保持空白。',
+      es: 'Fija un máximo de etiquetas extra por producto. Los espacios que ningún producto puede utilizar quedan vacíos.',
+    },
+  'Add horizontal space between labels. Larger gaps can fit fewer labels per page.':
+    {
+      zh: '增加标签之间的水平间距。间距越大，每页可能容纳的标签越少。',
+      es: 'Añade separación horizontal entre etiquetas. Con separaciones mayores pueden caber menos por página.',
+    },
+  'Add vertical space between labels. Larger gaps can fit fewer labels per page.':
+    {
+      zh: '增加标签之间的垂直间距。间距越大，每页可能容纳的标签越少。',
+      es: 'Añade separación vertical entre etiquetas. Con separaciones mayores pueden caber menos por página.',
+    },
+  'Set how spare label places are filled, limit extra copies and adjust gaps. The preview updates as you change them.':
+    {
+      zh: '设置标签空位的填充方式、限制额外份数并调整间距。修改时预览会立即更新。',
+      es: 'Elige cómo rellenar los espacios libres, limita las copias extra y ajusta las separaciones. La vista previa se actualiza al cambiarlos.',
+    },
+  'Set how many copies of this carton mark to print. The page count and carton numbering update immediately.':
+    {
+      zh: '设置此箱唛要打印的份数。页数和箱号会立即更新。',
+      es: 'Indica cuántas copias de esta marca de caja imprimir. Las páginas y la numeración se actualizan de inmediato.',
+    },
+  'Set required copies of this barcode label. Extra copies are calculated separately to fill the last page.':
+    {
+      zh: '设置此条码标签的所需份数。用于填满最后一页的额外份数会单独计算。',
+      es: 'Indica las copias necesarias de esta etiqueta de código de barras. Las extras se calculan por separado para completar la última página.',
+    },
+  'Limit extra copies of this barcode label. Leave empty for no limit or enter 0 for none.':
+    {
+      zh: '限制此条码标签的额外份数。留空表示不限，输入 0 表示不额外打印。',
+      es: 'Limita las copias extra de esta etiqueta. Déjalo vacío para no limitar o escribe 0 para ninguna.',
+    },
+  'Build a new PDF using current product data and this job’s requested quantities and layout.':
+    {
+      zh: '使用当前商品数据以及此任务所需数量和版式，重新生成 PDF。',
+      es: 'Crea un PDF nuevo con los datos actuales y las cantidades solicitadas y el diseño de esta impresión.',
+    },
   'No limit': { zh: '不限', es: 'Sin límite' },
   'Quantity for {0}': { zh: '{0} 的数量', es: 'Cantidad de {0}' },
   'Max extra for {0}': { zh: '{0} 最多额外份数', es: 'Extra máx. de {0}' },

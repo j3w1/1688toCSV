@@ -357,30 +357,44 @@ export function planCartonMarks(itemsInput, layoutInput = {}) {
   }
 }
 
-/** Two A4 halves, each holding one mark centred inside the safe margin. */
+/** Maximise the same artwork in each A4 half, keeping its aspect ratio. */
 export function cartonSlots(mark, layoutInput = {}) {
-  const { marginMm } = normalizeMarkLayout(layoutInput)
+  const layout = normalizeMarkLayout(layoutInput)
+  const { marginMm } = layout
   const half = A4.heightMm / 2
   const widthMm = Number(mark?.widthMm)
   const heightMm = Number(mark?.heightMm)
-  const fits = (w, h) =>
-    w <= A4.widthMm - 2 * marginMm + 1e-9 && h <= half - 2 * marginMm + 1e-9
-  let rotated = false
-  if (!fits(widthMm, heightMm)) {
-    if (fits(heightMm, widthMm)) rotated = true
-    else
-      throw new Error(
-        'The carton mark is larger than half an A4 page. Reduce its size in Settings → Labels.'
-      )
-  }
-  const w = rotated ? heightMm : widthMm
-  const h = rotated ? widthMm : heightMm
+  if (
+    !Number.isFinite(widthMm) ||
+    !Number.isFinite(heightMm) ||
+    widthMm <= 0 ||
+    heightMm <= 0
+  )
+    throw new Error('Label size must be greater than zero')
+  // Reserve only the small band that the enabled numbering/summary needs.
+  // Both halves use the same image size, including on an odd final page.
+  const numberBand = layout.numbering ? 1.5 + NUMBER_PT * 0.94 * MM_PER_PT : 0
+  const footer =
+    layout.numbering || layout.pageSummary
+      ? SAFE_EDGE_MM +
+        numberBand +
+        (layout.pageSummary ? CAPTION_PT * 0.94 * MM_PER_PT + 1 : 0)
+      : 0
+  const bottom = Math.max(marginMm, Math.ceil(footer * 10) / 10)
+  const availableWidth = A4.widthMm - 2 * marginMm
+  const availableHeight = half - marginMm - bottom
+  const upright = Math.min(availableWidth / widthMm, availableHeight / heightMm)
+  const turned = Math.min(availableWidth / heightMm, availableHeight / widthMm)
+  const rotated = turned > upright + 1e-9
+  const scale = rotated ? turned : upright
+  const w = (rotated ? heightMm : widthMm) * scale
+  const h = (rotated ? widthMm : heightMm) * scale
   return {
     rotated,
     cutYMm: half,
     slots: [0, half].map((top) => ({
       xMm: (A4.widthMm - w) / 2,
-      yMm: top + (half - h) / 2,
+      yMm: top + marginMm + (availableHeight - h) / 2,
       widthMm: w,
       heightMm: h,
     })),
@@ -727,16 +741,18 @@ export function markPageOps({ plan, slots, layout: layoutInput, page }) {
     )
   }
   const lowest = slots.slots[1]
-  const baseline = captionBaseline(
-    Math.max(
-      lowest.yMm +
-        lowest.heightMm +
-        (layout.numbering && numberingBaseline(slots, 1) !== null ? 6 : 0),
-      A4.heightMm - 12
-    ),
-    layout.offsetYMm
-  )
-  if (layout.pageSummary && baseline !== null)
+  const numberBaseline = layout.numbering ? numberingBaseline(slots, 1) : null
+  const contentBottom =
+    numberBaseline === null
+      ? lowest.yMm + lowest.heightMm
+      : numberBaseline + NUMBER_PT * 0.22 * MM_PER_PT
+  // Anchor the small page caption in the printable footer, rather than
+  // centring it in a large empty band beneath the carton artwork.
+  const baseline =
+    SAFE.bottom - CAPTION_PT * 0.22 * MM_PER_PT - layout.offsetYMm
+  const captionFits =
+    baseline - CAPTION_PT * 0.72 * MM_PER_PT >= contentBottom + 0.5
+  if (layout.pageSummary && captionFits)
     ops.push(
       text(
         pageCaption(
