@@ -82,12 +82,24 @@ export function createImportController({
     await browser.closeDetailTab(tabId, job.id)
   }
 
-  async function pause(jobId, reason = 'Paused by you.') {
+  async function pause(jobId, reason = 'Paused by you.', { attention } = {}) {
     const job = await repository.getJob(jobId)
     if (!job) throw new Error('That import no longer exists.')
     if (!active(job)) return job
     job.state = 'paused'
     job.error = reason
+    // A sign-in or verification step is shown once in the workspace with a
+    // button to open the tab; the importer never switches tabs by itself.
+    job.attention =
+      attention &&
+      (Number.isInteger(job.workerTabId) || attention === 'visible-reader')
+        ? {
+            kind: attention,
+            tabId: Number.isInteger(job.workerTabId) ? job.workerTabId : null,
+            orderId: job.currentOrderId ?? null,
+            at: new Date(now()).toISOString(),
+          }
+        : null
     await releaseWorker(job)
     return job
   }
@@ -211,6 +223,7 @@ export function createImportController({
     job.state = 'running'
     delete job.dismissedAt
     job.error = ''
+    job.attention = null
     await write(job)
     await browser.schedule()
     return job
@@ -276,6 +289,28 @@ export function createImportController({
     return 'continue'
   }
 
+  /** The sign-in error when the reader tab has left this order's page, else null. */
+  async function leftOrderPage(job, order) {
+    let tab
+    try {
+      tab = await browser.getDetailTab(job.workerTabId, job.id)
+    } catch (error) {
+      return error?.attention ? error : null
+    }
+    if (
+      tab?.url &&
+      tab.status === 'complete' &&
+      !detailUrl(tab.url, order.orderId)
+    )
+      return Object.assign(
+        new Error(
+          'The import tab left the order page. Complete sign-in or verification, then resume.'
+        ),
+        { attention: 'sign-in' }
+      )
+    return null
+  }
+
   async function details(job) {
     const order = job.orders.find((item) => item.state === 'pending')
     if (!order) {
@@ -293,7 +328,11 @@ export function createImportController({
       job.currentRows = null
       job.detailError = ''
       await write(job)
-      job.workerTabId = await browser.openDetailTab(order.sourceUrl, job.id)
+      const reader = await browser.openDetailTab(order.sourceUrl, job.id, {
+        allowVisible: job.allowVisibleReader === true,
+      })
+      job.workerTabId = typeof reader === 'object' ? reader.id : reader
+      job.visibleReader = typeof reader === 'object' && reader.visible === true
       await write(job)
       return 'wait'
     }
@@ -305,8 +344,11 @@ export function createImportController({
       tab.status === 'complete' &&
       !detailUrl(tab.pendingUrl || tab.url, job.currentOrderId)
     )
-      throw new Error(
-        'The import tab left the order page. Complete sign-in or verification, then resume.'
+      throw Object.assign(
+        new Error(
+          'The import tab left the order page. Complete sign-in or verification, then resume.'
+        ),
+        { attention: 'sign-in' }
       )
     if (job.currentOrderId !== order.orderId) {
       job.currentOrderId = order.orderId
@@ -338,8 +380,11 @@ export function createImportController({
       return 'wait'
     }
     if (tab.url && !detailUrl(tab.url, order.orderId))
-      throw new Error(
-        'The import tab left the order page. Complete sign-in or verification, then resume.'
+      throw Object.assign(
+        new Error(
+          'The import tab left the order page. Complete sign-in or verification, then resume.'
+        ),
+        { attention: 'sign-in' }
       )
     job.detailAttempts += 1
     job.detailStage = 'reading'
@@ -378,6 +423,12 @@ export function createImportController({
         at: new Date(now()).toISOString(),
       }
     } catch (error) {
+      // A sign-in or verification redirect during the read is not an order
+      // failure: pause with the notice instead (issue 10 R7).
+      if (!saved) {
+        const left = await leftOrderPage(job, order)
+        if (left) throw left
+      }
       if (
         error?.retryable &&
         job.detailAttempts < 3 &&
@@ -417,7 +468,7 @@ export function createImportController({
     try {
       return job.phase === 'scan' ? await scan(job) : await details(job)
     } catch (error) {
-      await pause(job.id, errorText(error))
+      await pause(job.id, errorText(error), { attention: error?.attention })
       return 'finished'
     }
   }
@@ -446,5 +497,24 @@ export function createImportController({
     }
   }
 
-  return { start, refresh, pause, resume, dismiss, tick, startup, removedTab }
+  /** The owner allowed a visible reader for this import; continue it. */
+  async function allowVisibleReader(jobId) {
+    const job = await repository.getJob(jobId)
+    if (!job) throw new Error('That import no longer exists.')
+    job.allowVisibleReader = true
+    await write(job)
+    return resume(jobId)
+  }
+
+  return {
+    start,
+    refresh,
+    pause,
+    resume,
+    dismiss,
+    tick,
+    startup,
+    removedTab,
+    allowVisibleReader,
+  }
 }

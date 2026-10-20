@@ -209,7 +209,7 @@ test('reopening one selected source row of a shared barcode shows only that row 
   const { page, view, record } = await openPacking(extension)
   await mergeFirstGroup(page, view)
   const before = await backup(extension)
-  await view.getByRole('button', { name: 'Orders', exact: true }).click()
+  await view.page().locator('#view-orders').click()
   await expect(productRows(page)).toHaveCount(3)
   await page.locator('#clear-rows').click()
   await productRows(page).nth(1).focus()

@@ -81,7 +81,7 @@ const browser = {
   async changePage(source, page) {
     return content(source.tabId, { type: 'LIST_PAGE', page }, source.frameId)
   },
-  async openDetailTab(url, id) {
+  async openDetailTab(url, id, options = {}) {
     // The marker is written atomically with tab creation. Reuse it if the
     // worker stopped between creating the tab and saving its numeric ID.
     const existing = (await chrome.tabs.query({})).find((tab) => owns(tab, id))
@@ -90,11 +90,7 @@ const browser = {
         await chrome.tabs.update(existing.id, { url: `${url}${marker(id)}` })
       return existing.id
     }
-    const tab = await chrome.tabs.create({
-      url: `${url}${marker(id)}`,
-      active: true,
-    })
-    return tab.id
+    return createReaderTab(`${url}${marker(id)}`, options)
   },
   async navigateDetailTab(tabId, url, id) {
     const tab = await this.getDetailTab(tabId, id)
@@ -132,8 +128,11 @@ const browser = {
         'The browser did not provide the import tab URL. Refresh the order page, then resume.'
       )
     }
-    throw new Error(
-      'The import tab left its marked order page. Complete sign-in or verification, then resume.'
+    throw Object.assign(
+      new Error(
+        'The import tab left its marked order page. Complete sign-in or verification, then resume.'
+      ),
+      { attention: 'sign-in' }
     )
   },
   async closeDetailTab(tabId, id) {
@@ -190,6 +189,64 @@ async function pump() {
   } finally {
     pumping = false
   }
+}
+
+/**
+ * The import reader opens in the background so imports never take over the
+ * visible tab: a background tab, else a separate unfocused window. Browsers
+ * that allow neither (an earlier embedded browser rejected inactive tabs)
+ * pause the import; a visible reader is used only after the owner allows it.
+ */
+async function createReaderTab(url, { allowVisible = false } = {}) {
+  let tab
+  let visible = false
+  try {
+    // Open blank, then navigate: background tabs then load like any other
+    // navigation (and test harnesses attach before the order page loads).
+    tab = await chrome.tabs.create({ url: 'about:blank', active: false })
+    tab = await chrome.tabs.update(tab.id, { url })
+  } catch (error) {
+    if (!/active/i.test(error?.message || '')) throw error
+    try {
+      const window = await chrome.windows.create({ url, focused: false })
+      tab = window?.tabs?.[0]
+    } catch {}
+    if (!tab) {
+      if (!allowVisible)
+        throw Object.assign(
+          new Error(
+            'This browser does not allow background import tabs. Allow a visible import tab to continue.'
+          ),
+          { attention: 'visible-reader' }
+        )
+      tab = await chrome.tabs.create({ url, active: true })
+      visible = true
+    }
+  }
+  // A background reader must not be discarded to save memory mid-import.
+  try {
+    await chrome.tabs.update(tab.id, { autoDiscardable: false })
+  } catch {}
+  return { id: tab.id, visible }
+}
+
+/** Bring the tab that needs a sign-in or verification forward, on request only. */
+async function openAttentionTab(job) {
+  const tabId = job?.attention?.tabId
+  if (!Number.isInteger(tabId))
+    throw new Error('This import does not need a sign-in or verification.')
+  let tab
+  try {
+    tab = await chrome.tabs.get(tabId)
+  } catch {
+    throw new Error(
+      'The 1688 tab was closed. Resume the import to open the order again.'
+    )
+  }
+  await chrome.tabs.update(tabId, { active: true })
+  if (Number.isInteger(tab.windowId))
+    await chrome.windows?.update?.(tab.windowId, { focused: true })
+  return { tabId }
 }
 
 async function openLibrary() {
@@ -381,6 +438,10 @@ async function dispatch(message, sender, repository, controller) {
         orders: await repository.listOrders(),
         jobs: (await repository.listJobs()).map(importJobView),
       }
+    case 'IMPORT_ATTENTION_OPEN':
+      return openAttentionTab(await repository.getJob(message.jobId))
+    case 'IMPORT_ALLOW_VISIBLE':
+      return controller.allowVisibleReader(message.jobId)
     case 'JOBS_QUERY':
       return { jobs: (await repository.listJobs()).map(importJobView) }
     case 'LIBRARY_HISTORY':
@@ -460,6 +521,7 @@ chrome.runtime.onMessage.addListener((message, sender, respond) => {
           'REFRESH_ORDERS',
           'CONTENT_READY',
           'IMPORT_PAUSE',
+          'IMPORT_ALLOW_VISIBLE',
         ].includes(message.type)
       )
         void pump()

@@ -130,7 +130,7 @@ test('label backdrop saves a valid blurred edit, preserves Escape restore, and k
   await expect(
     preparation.getByLabel('Product code', { exact: true }).first()
   ).toHaveValue(/^CE2610\d{4}$/)
-  await preparation.getByRole('button', { name: 'Orders', exact: true }).click()
+  await preparation.page().locator('#view-orders').click()
   await expect(preparation).not.toBeVisible()
   const open = page
     .locator('#sheet-body tr[data-selection-key]')

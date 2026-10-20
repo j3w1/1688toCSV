@@ -369,60 +369,6 @@ button:disabled {
   outline: 3px solid var(--focus);
   outline-offset: 3px;
 }
-.topbar {
-  height: 86px;
-  display: flex;
-  align-items: center;
-  gap: 24px;
-  padding: 0 36px;
-  background: var(--surface);
-  border-bottom: 1px solid var(--border);
-}
-.brand {
-  display: flex;
-  align-items: center;
-  gap: 12px;
-  font-size: 17px;
-  line-height: 1.45;
-  font-weight: 680;
-  color: inherit;
-  text-decoration: none;
-}
-.brand-mark {
-  display: grid;
-  place-items: center;
-  width: 45px;
-  height: 45px;
-  background: var(--selected);
-  color: var(--accent-text);
-  border-radius: 12px;
-  font-size: 15px;
-  letter-spacing: -1px;
-}
-.brand small {
-  display: block;
-  font-size: 11px;
-  font-weight: 450;
-  color: var(--muted);
-}
-.local-label {
-  display: flex;
-  align-items: center;
-  gap: 7px;
-  color: var(--muted);
-  font-size: 12px;
-  margin-left: auto;
-}
-.local-label i {
-  height: 6px;
-  width: 6px;
-  border-radius: 100%;
-  background: var(--success-text);
-}
-.top-actions {
-  display: flex;
-  gap: 8px;
-}
 #activity-open {
   display: inline-flex;
   align-items: center;
@@ -453,11 +399,6 @@ button:disabled {
   font-variant-numeric: tabular-nums;
   white-space: nowrap;
 }
-main {
-  max-width: 1640px;
-  margin: auto;
-  padding: 36px;
-}
 .intro {
   display: flex;
   gap: 24px;
@@ -486,38 +427,6 @@ h1 {
 }
 .intro .button {
   padding: 12px 17px;
-}
-.stats {
-  display: grid;
-  grid-template-columns: repeat(4, 1fr);
-  border: 1px solid var(--border);
-  border-radius: 10px;
-  background: var(--surface);
-  margin-bottom: 24px;
-  padding: 20px 0;
-}
-.stats div {
-  display: flex;
-  flex-direction: column;
-  gap: 4px;
-  padding: 0 25px;
-}
-.stats div + div {
-  border-left: 1px solid var(--divider);
-}
-.stats span {
-  font-size: 25px;
-  letter-spacing: -0.5px;
-  font-weight: 600;
-  font-variant-numeric: tabular-nums;
-}
-.stats small {
-  font-size: 11px;
-  color: var(--muted);
-}
-.stats div:last-child span {
-  font-size: 18px;
-  line-height: 30px;
 }
 .workspace {
   display: grid;
@@ -1438,67 +1347,18 @@ dialog summary {
     grid-template-columns: 225px minmax(0, 1fr);
     gap: 12px;
   }
-  main {
-    padding: 24px;
-  }
-  .topbar {
-    padding-inline: 24px;
-  }
   .sheet-toolbar {
     flex-wrap: wrap;
   }
   .copy-actions {
     margin-top: 3px;
   }
-  .stats div {
-    padding-inline: 20px;
-  }
 }
 @media (max-width: 760px) {
-  main {
-    padding: 18px 12px;
-  }
-  .topbar {
-    padding: 12px;
-    height: auto;
-    gap: 10px;
-    flex-wrap: wrap;
-  }
-  .local-label {
-    display: none;
-  }
-  .top-actions {
-    margin-left: auto;
-  }
-  .top-actions button {
-    font-size: 11px;
-    padding: 7px;
-  }
-  .brand {
-    font-size: 14px;
-  }
-  .brand small {
-    display: none;
-  }
-  .brand-mark {
-    height: 34px;
-    width: 34px;
-  }
   .intro {
     align-items: start;
     flex-direction: column;
     gap: 15px;
-  }
-  .stats {
-    grid-template-columns: repeat(2, 1fr);
-    gap: 18px;
-    padding: 17px 0;
-  }
-  .stats div:nth-child(3) {
-    border-left: 0;
-  }
-  .stats span {
-    font-size: 21px;
   }
   .workspace {
     grid-template-columns: 1fr;
@@ -1819,8 +1679,7 @@ button.copy-active {
   margin-inline-end: 6px;
   pointer-events: none;
 }
-button.icon-button,
-.top-actions .theme-toggle {
+button.icon-button {
   inline-size: 32px;
   min-inline-size: 32px;
   block-size: 32px;
@@ -1835,33 +1694,6 @@ button.icon-button,
   margin: 0;
   inline-size: 19px;
   block-size: 19px;
-}
-body > .topbar {
-  min-height: 60px;
-  height: auto;
-  padding-block: 10px;
-}
-.topbar .brand-mark {
-  background: transparent;
-  padding: 0;
-  border-radius: 9px;
-  width: 36px;
-  height: 36px;
-  object-fit: contain;
-}
-body > main {
-  padding-block: 14px;
-}
-main > .stats {
-  gap: 12px 22px;
-  padding-bottom: 13px;
-  align-items: baseline;
-}
-.stats .open-orders {
-  margin-inline-start: auto;
-  font-size: 12px;
-  color: var(--accent-text);
-  text-decoration: none;
 }
 .month-filter {
   position: relative;
@@ -2127,9 +1959,6 @@ main > .stats {
   max-height: max(270px, calc(100dvh - 340px));
   scrollbar-width: thin;
 }
-.topbar .theme-toggle {
-  font-size: 20px;
-}
 @media (max-width: 760px) {
   .packing-launch {
     width: 100%;
@@ -2139,12 +1968,6 @@ main > .stats {
   }
   .orders-pane #order-list {
     max-height: 260px;
-  }
-  .topbar .brand {
-    font-size: 13px;
-  }
-  .stats .open-orders {
-    margin-inline-start: 0;
   }
 }
 @media (max-width: 760px) {

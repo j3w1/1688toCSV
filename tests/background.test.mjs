@@ -29,7 +29,7 @@ function event() {
     },
   }
 }
-function setup({ orderIds = ['10001'] } = {}) {
+function setup({ orderIds = ['10001'], rejectInactive = false } = {}) {
   const jobs = new Map(),
     tabs = new Map([[7, { id: 7, url: listUrl, status: 'complete' }]]),
     saved = new Map(),
@@ -112,7 +112,8 @@ function setup({ orderIds = ['10001'] } = {}) {
         return { ...tabs.get(id) }
       },
       async create(options) {
-        if (options.active !== true)
+        // The embedded browser that 2.0.1 supported rejected background tabs.
+        if (rejectInactive && options.active !== true)
           throw new Error('Owl extension-created tabs must be active.')
         const tab = { id: ++tabSequence, ...options, status: 'loading' }
         tabs.set(tab.id, tab)
@@ -727,23 +728,18 @@ test('startup leaves interrupted import paused and library updates broadcast', a
   )
 })
 
-test('embedded browser creates explicit active tabs and reuses one detail tab across orders', async () => {
-  const s = setup({ orderIds: ['10001', '10002', '10003'] })
+test('a browser that rejects background tabs pauses until the owner allows a visible reader', async () => {
+  const s = setup({
+    orderIds: ['10001', '10002', '10003'],
+    rejectInactive: true,
+  })
   await assert.rejects(
     s.chrome.tabs.create({ url: url('10001'), active: false }),
-    /must be active/
-  )
-  await assert.rejects(
-    s.chrome.tabs.create({ url: url('10001') }),
     /must be active/
   )
   const library = await s.send({ type: 'OPEN_LIBRARY' })
   assert.equal(library.ok, true)
   assert.equal(library.data.active, true)
-  assert.equal(
-    (await s.send({ type: 'OPEN_LIBRARY' })).data.id,
-    library.data.id
-  )
   const result = await s.send(
     {
       type: 'IMPORT_START',
@@ -753,29 +749,120 @@ test('embedded browser creates explicit active tabs and reuses one detail tab ac
     sender
   )
   await settle()
-  const workerTabId = s.jobs.get(result.data.id).workerTabId
+  // No background tab and no window API: the import waits for the owner.
+  const job = () => s.jobs.get(result.data.id)
+  assert.equal(job().state, 'paused')
+  assert.equal(job().attention.kind, 'visible-reader')
+  assert.equal(job().attention.tabId, null)
+  assert.equal(s.calls.filter(([type]) => type === 'create').length, 1)
+  // Content pages cannot grant it; the workspace can.
+  const refused = await s.send(
+    { type: 'IMPORT_ALLOW_VISIBLE', jobId: result.data.id },
+    sender
+  )
+  assert.equal(refused.ok, false)
+  const allowed = await s.send(
+    { type: 'IMPORT_ALLOW_VISIBLE', jobId: result.data.id },
+    own
+  )
+  assert.equal(allowed.ok, true, allowed.error)
+  await settle()
+  const workerTabId = job().workerTabId
   assert.equal(s.tabs.get(workerTabId).active, true)
+  assert.equal(job().visibleReader, true)
+  assert.equal(job().attention, null)
   for (const orderId of ['10001', '10002', '10003']) {
-    assert.equal(s.jobs.get(result.data.id).workerTabId, workerTabId)
+    assert.equal(job().workerTabId, workerTabId)
     assert.equal(detailUrl(s.tabs.get(workerTabId).url), url(orderId))
     s.tabs.get(workerTabId).status = 'complete'
     s.chrome.tabs.onUpdated.emit(workerTabId, { status: 'complete' })
     await settle()
   }
   assert.equal(s.saved.size, 3)
-  assert.equal(s.jobs.get(result.data.id).state, 'completed')
-  assert.equal(s.calls.filter(([type]) => type === 'create').length, 2)
-  assert.equal(
-    s.calls.filter(([type, id]) => type === 'remove' && id === workerTabId)
-      .length,
-    1
-  )
+  assert.equal(job().state, 'completed')
   const navigations = s.calls.filter(
-    ([type, id]) => type === 'update' && id === workerTabId
+    ([type, id, options]) =>
+      type === 'update' && id === workerTabId && options.url
   )
   assert.equal(navigations.length, 2)
   assert.ok(navigations.every(([, , options]) => !('active' in options)))
-  assert.ok(s.tabs.has(library.data.id))
+})
+
+test('a browser that rejects background tabs can still read in an unfocused window', async () => {
+  const s = setup({ orderIds: ['10001'], rejectInactive: true })
+  const windows = []
+  s.chrome.windows = {
+    async create(options) {
+      windows.push({ ...options })
+      const tab = {
+        id: 80,
+        url: options.url,
+        status: 'loading',
+        active: true,
+        windowId: 9,
+      }
+      s.tabs.set(tab.id, tab)
+      return { id: 9, focused: false, tabs: [{ ...tab }] }
+    },
+  }
+  const result = await s.send(
+    { type: 'IMPORT_START', scope: 'selected', orderIds: ['10001'] },
+    sender
+  )
+  await settle()
+  assert.equal(JSON.stringify(windows.map((entry) => entry.focused)), '[false]')
+  assert.equal(s.jobs.get(result.data.id).workerTabId, 80)
+  assert.equal(s.jobs.get(result.data.id).visibleReader, false)
+  s.tabs.get(80).status = 'complete'
+  s.chrome.tabs.onUpdated.emit(80, { status: 'complete' })
+  await settle()
+  assert.equal(s.saved.size, 1)
+})
+
+test('imports read orders in a background tab and never switch the visible tab', async () => {
+  const s = setup({ orderIds: ['10001', '10002'] })
+  const created = []
+  s.chrome.tabs.create = async (options) => {
+    created.push({ ...options })
+    const tab = { id: 50 + created.length, ...options, status: 'loading' }
+    s.tabs.set(tab.id, tab)
+    s.calls.push(['create', tab.id])
+    return { ...tab }
+  }
+  const result = await s.send(
+    { type: 'IMPORT_START', scope: 'selected', orderIds: ['10001', '10002'] },
+    sender
+  )
+  await settle()
+  const job = () => s.jobs.get(result.data.id)
+  const workerTabId = job().workerTabId
+  assert.deepEqual(
+    created.map((options) => options.active),
+    [false]
+  )
+  assert.equal(job().visibleReader, false)
+  assert.ok(
+    s.calls.some(
+      ([type, id, options]) =>
+        type === 'update' &&
+        id === workerTabId &&
+        options.autoDiscardable === false
+    )
+  )
+  for (const orderId of ['10001', '10002']) {
+    assert.equal(detailUrl(s.tabs.get(workerTabId).url), url(orderId))
+    s.tabs.get(workerTabId).status = 'complete'
+    s.chrome.tabs.onUpdated.emit(workerTabId, { status: 'complete' })
+    await settle()
+  }
+  assert.equal(s.saved.size, 2)
+  assert.equal(job().state, 'completed')
+  // No update ever activated a tab during the import.
+  assert.ok(
+    !s.calls.some(
+      ([type, , options]) => type === 'update' && options?.active === true
+    )
+  )
 })
 
 test('spreadsheet fallback navigates only the requesting idle order tab without creating a tab', async () => {
@@ -888,4 +975,52 @@ test('list progress and pause/resume are limited to the original source tab and 
     (await s.send({ type: 'IMPORT_STATUS' }, sender)).data.jobs[0].error,
     'A job-level problem'
   )
+})
+
+test('the workspace opens the tab that needs a sign-in only when asked', async () => {
+  const s = setup()
+  const focused = []
+  s.chrome.windows = {
+    update: async (id, options) => focused.push([id, options]),
+  }
+  s.tabs.set(60, {
+    id: 60,
+    url: 'https://login.1688.com/',
+    status: 'complete',
+    windowId: 3,
+  })
+  s.jobs.set('job-attention', {
+    id: 'job-attention',
+    state: 'paused',
+    orders: [],
+    attention: {
+      kind: 'sign-in',
+      tabId: 60,
+      orderId: '10001',
+      at: '2026-10-19T10:00:00.000Z',
+    },
+  })
+  const opened = await s.send(
+    { type: 'IMPORT_ATTENTION_OPEN', jobId: 'job-attention' },
+    own
+  )
+  assert.equal(opened.ok, true, opened.error)
+  assert.equal(s.tabs.get(60).active, true)
+  assert.equal(
+    JSON.stringify(focused),
+    JSON.stringify([[3, { focused: true }]])
+  )
+  // Content pages cannot trigger it, and a closed tab explains itself.
+  const refused = await s.send(
+    { type: 'IMPORT_ATTENTION_OPEN', jobId: 'job-attention' },
+    sender
+  )
+  assert.equal(refused.ok, false)
+  s.tabs.delete(60)
+  const closed = await s.send(
+    { type: 'IMPORT_ATTENTION_OPEN', jobId: 'job-attention' },
+    own
+  )
+  assert.equal(closed.ok, false)
+  assert.match(closed.error, /tab was closed/)
 })

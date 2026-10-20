@@ -575,22 +575,22 @@ test('mixed selection skips a fee without generating codes and including it agai
     )
       await page.locator('#theme-toggle').click()
     await rows.first().locator('.row-preparation').hover()
-    await page
-      .locator('.table-scroll')
-      .screenshot({ path: `work/packing-exclusion-${theme}.png` })
+    await page.locator('.table-scroll').screenshot({
+      path: test.info().outputPath(`packing-exclusion-${theme}.png`),
+    })
     await rows
       .first()
       .getByRole('button', { name: 'Skip packing', exact: true })
       .hover()
-    await page
-      .locator('.table-scroll')
-      .screenshot({ path: `work/packing-exclusion-skip-hover-${theme}.png` })
+    await page.locator('.table-scroll').screenshot({
+      path: test.info().outputPath(`packing-exclusion-skip-hover-${theme}.png`),
+    })
   }
   await page.setViewportSize({ width: 520, height: 900 })
   await rows.first().hover()
-  await page
-    .locator('.table-scroll')
-    .screenshot({ path: 'work/packing-exclusion-narrow.png' })
+  await page.locator('.table-scroll').screenshot({
+    path: test.info().outputPath('packing-exclusion-narrow.png'),
+  })
   const controlSizes = () =>
     page.evaluate(() =>
       Object.fromEntries(
@@ -621,9 +621,9 @@ test('mixed selection skips a fee without generating codes and including it agai
         exact: true,
       })
     ).toBeVisible()
-    await page
-      .locator('.table-scroll')
-      .screenshot({ path: 'work/packing-exclusion-coarse.png' })
+    await page.locator('.table-scroll').screenshot({
+      path: test.info().outputPath('packing-exclusion-coarse.png'),
+    })
     const measurements = JSON.stringify({
       mouse: mouseSizes,
       coarse: await controlSizes(),
@@ -633,7 +633,7 @@ test('mixed selection skips a fee without generating codes and including it agai
       contentType: 'application/json',
     })
     await writeFile(
-      new URL('../../work/packing-control-sizes.json', import.meta.url),
+      test.info().outputPath('packing-control-sizes.json'),
       measurements
     )
   } finally {
@@ -659,7 +659,7 @@ test('mixed selection skips a fee without generating codes and including it agai
   )
   expect(entryIds(assigned)).not.toContain(feeId)
   expect(assigned.orders[0].snapshot).toEqual(record.snapshot)
-  await view.getByRole('button', { name: 'Orders', exact: true }).click()
+  await view.page().locator('#view-orders').click()
   await page.reload()
   await expect(
     fee.getByRole('button', {
@@ -739,7 +739,7 @@ test('skipped-only selection never falls back to saved packing and unselected re
   expect(entryIds(reopened)).toEqual(entryIds(before))
   expect(assignedCodes(reopened)).toEqual(assignedCodes(before))
   expect(reopened.orders[0].snapshot).toEqual(record.snapshot)
-  await view.getByRole('button', { name: 'Orders', exact: true }).click()
+  await view.page().locator('#view-orders').click()
   await skip(rows.nth(0))
   await skip(rows.nth(1))
   expectAssignmentsUnchanged(await backup(extension), reopened)

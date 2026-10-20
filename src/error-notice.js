@@ -57,6 +57,13 @@ export function showErrorNotice(
   )
     return
   previous?.dismiss()
+  // A page-level notice must not appear underneath an open copy menu.
+  if (!scope.matches('dialog'))
+    for (const menu of document.querySelectorAll('.copy-actions-panel')) {
+      try {
+        if (menu.matches(':popover-open')) menu.hidePopover()
+      } catch {}
+    }
   const panel = element('aside', undefined, 'error-notice')
   const heading = element('strong', translated(title), 'error-notice-title')
   const body = element('p', translated(text), 'error-notice-message')

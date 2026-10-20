@@ -70,6 +70,8 @@ import {
 import { mountSizeVocabulary } from './size-vocabulary-settings.js'
 import { attachSearchSuggestions, searchMatcher } from './search-assistance.js'
 import { DEFAULT_LABEL_SETTINGS, renderLabel } from './labels.js'
+import { openPrintDialog, openRecentPrintJobs } from './print-dialog.js'
+import { restoreJob } from './print-store.js'
 import { mountLabelEditor } from './label-editor.js'
 import {
   createPreparationHistory,
@@ -113,7 +115,17 @@ import {
   preparationOrderFields,
   writeTable,
   labelClipboard,
+  preparationGrid,
+  selectedPreparationColumns,
+  PREPARATION_COLUMN_PREFERENCE,
 } from './preparation-clipboard.js'
+import { createXlsx } from './xlsx-writer.js'
+import { saveFile, announceExport, uniqueFileName } from './save-file.js'
+import {
+  packingListFileName,
+  packingSummary,
+  summaryFileName,
+} from './export-summary.js'
 import { createPreparationColumnPicker } from './preparation-column-picker.js'
 import { presentOrderStatus } from './order-presentation.js'
 import { orderTagBadge } from './tag-picker.js'
@@ -244,6 +256,7 @@ export async function startPackingWorkspace({
     copyActionPanel,
     arrangementPanel,
     groupingPanel,
+    printPanel,
     selectionToolbar,
     toolbarResize,
     backupButton,
@@ -1243,6 +1256,8 @@ export async function startPackingWorkspace({
     copyActionPanel = null
     arrangementPanel?.destroy()
     arrangementPanel = null
+    printPanel?.destroy()
+    printPanel = null
     $('packing-view').hidden = true
     $('orders-view').hidden = false
     document.body.classList.remove('packing-active')
@@ -1583,7 +1598,9 @@ export async function startPackingWorkspace({
       packingRecord(row)?.packingExcludedEntryIds?.includes(row.entryId)
     )
   }
-  function launchCandidates(orderId, entryId) {
+  // `monthOnly` (the Packing list tab) reopens the packing month without
+  // using the Orders selection; every other caller keeps the selection.
+  function launchCandidates(orderId, entryId, { monthOnly = false } = {}) {
     if (orderId) {
       const source = getRecords().find(
         (record) => record.snapshot.orderId === orderId
@@ -1592,7 +1609,7 @@ export async function startPackingWorkspace({
         .filter((item) => !entryId || item.entryId === entryId)
         .map((item) => ({ ...item, orderId }))
     }
-    const selected = getSelectedRows()
+    const selected = monthOnly ? [] : getSelectedRows()
     if (selected.length) return selected
     const result = []
     for (const record of getRecords()) {
@@ -1613,8 +1630,8 @@ export async function startPackingWorkspace({
     }
     return result
   }
-  function launchRows(orderId, entryId) {
-    return launchCandidates(orderId, entryId).filter(
+  function launchRows(orderId, entryId, options) {
+    return launchCandidates(orderId, entryId, options).filter(
       (row) => !isPackingExcluded(row)
     )
   }
@@ -1820,7 +1837,7 @@ export async function startPackingWorkspace({
       remove: () => host.remove(),
     }
   }
-  async function openPreparation(orderId, entryId) {
+  async function openPreparation(orderId, entryId, launch = {}) {
     if (opening || packingExclusionSaving) return
     if (preparationBusy)
       throw new Error(
@@ -1833,8 +1850,8 @@ export async function startPackingWorkspace({
     try {
       await yieldUI()
       await flushSaves()
-      const rows = launchRows(orderId, entryId)
-      if (!rows.length && launchCandidates(orderId, entryId).length)
+      const rows = launchRows(orderId, entryId, launch)
+      if (!rows.length && launchCandidates(orderId, entryId, launch).length)
         throw new Error(
           'All these products are skipped for packing. Choose Skipped on a product to include it.'
         )
@@ -3635,8 +3652,6 @@ export async function startPackingWorkspace({
   }
   function renderPackingHeader(host) {
     const header = el('header', undefined, 'packing-view-header')
-    const back = button(uiMessage('Orders'), showOrders, 'text-button')
-    decorateIcon(back, 'previous')
     const heading = el('div', undefined, 'packing-title')
     const months = currentPackingMonths()
     heading.append(
@@ -3668,7 +3683,7 @@ export async function startPackingWorkspace({
       resolveButton,
       reloadPreparationButton
     )
-    header.append(back, heading, actions)
+    header.append(heading, actions)
     const commandBar = el('div', undefined, 'packing-command-bar')
     commandBar.append(header)
     const toolbar = el('div', undefined, 'packing-top-tools')
@@ -3956,6 +3971,8 @@ export async function startPackingWorkspace({
       )
     )
     const selectionActions = el('div', undefined, 'packing-selection-actions')
+    selectAll.dataset.action = 'select-all-rows'
+    clear.dataset.action = 'clear-selection'
     selectionActions.append(selectAll, clear)
     copyScope = el('span', '', 'packing-help preparation-copy-scope')
     const imageCopy = button(uiMessage('Copy Excel image'), async (target) => {
@@ -4121,8 +4138,28 @@ export async function startPackingWorkspace({
         'Back up every group and product in this preparation, including other pages and orders. Selection does not limit the backup; removed products and unrelated library data are excluded.'
       )
     )
+    const exportList = button(
+      uiMessage('Export packing list'),
+      async (target) => {
+        const rows = scopedDrafts().flatMap((draft) =>
+          preparationCopyRows(draft, { selectedOnly: false })
+        )
+        if (!rows.length) return
+        await flushSaves()
+        exportPackingList(rows)
+      }
+    )
+    exportList.dataset.action = 'export-packing-list'
+    decorateIcon(exportList, 'download')
+    preparationHelp(
+      exportList,
+      uiMessage(
+        'Save the whole open packing list as an Excel file with your chosen columns, plus a small JSON summary of its orders, products and quantities.'
+      )
+    )
     const copyActions = el('div', undefined, 'packing-copy-actions')
     copyActionPanel = mountProductCopyActions(copyActions, {
+      exportList,
       image: imageCopy,
       values: sourceCopies[0],
       photos: sourceCopies[1],
@@ -4134,6 +4171,7 @@ export async function startPackingWorkspace({
       headers: headerChoice,
       backup,
     })
+    copyActionPanel.trigger.dataset.action = 'open-copy-menu'
     const grouping = el('div', undefined, 'packing-grouping-actions')
     const groupingDefinitions = [
       [
@@ -4185,6 +4223,7 @@ export async function startPackingWorkspace({
       symbol: 'packing',
       groups: [{ label: 'Selected products', actions: groupingActions }],
     })
+    groupingPanel.trigger.dataset.action = 'open-grouping-menu'
     groupingPanel.panel.classList.add('packing-grouping-panel')
     preparationHelp(
       groupingPanel.trigger,
@@ -4192,7 +4231,41 @@ export async function startPackingWorkspace({
         'Change grouping for selected products. Review affected photos and codes before applying. Orders are never merged together.'
       )
     )
-    output.append(copyScope, selectionActions, copyActions, grouping)
+    const printing = el('div', undefined, 'packing-print-actions')
+    const printButtons = [
+      ['Print labels…', 'barcode', 'barcode'],
+      ['Print carton marks…', 'carton', 'mark'],
+    ].map(([label, symbol, kind]) => {
+      const target = button(uiMessage(label), () =>
+        preparationAction(() => openPrint(kind, packingCopyRows()))
+      )
+      target.dataset.action =
+        kind === 'mark' ? 'print-carton-marks' : 'print-labels'
+      decorateIcon(target, symbol)
+      return target
+    })
+    const recentPrints = button(uiMessage('Recent print jobs…'), () =>
+      openRecentPrints()
+    )
+    recentPrints.classList.add('packing-recent-prints')
+    recentPrints.dataset.action = 'print-recent'
+    decorateIcon(recentPrints, 'undo')
+    printButtons.push(recentPrints)
+    printPanel = mountCopyActions(printing, {
+      label: 'Print…',
+      ariaLabel: 'More print formats',
+      panelLabel: 'Print formats',
+      symbol: 'barcode',
+      groups: [{ label: 'Print', actions: printButtons }],
+    })
+    printPanel.trigger.dataset.action = 'open-print-menu'
+    preparationHelp(
+      printPanel.trigger,
+      uiMessage(
+        'Export print-ready A4 PDFs of labels or carton marks for the selected products.'
+      )
+    )
+    output.append(copyScope, selectionActions, copyActions, printing, grouping)
     host.append(commandBar, output)
     toolbarResize = new ResizeObserver(() => {
       document.documentElement.style.setProperty(
@@ -4315,6 +4388,8 @@ export async function startPackingWorkspace({
     arrangementPanel = null
     groupingPanel?.destroy()
     groupingPanel = null
+    printPanel?.destroy()
+    printPanel = null
     groupingButtons.clear()
     toolbarResize?.disconnect()
     for (const draft of drafts) checkpoint(null, draft)
@@ -5421,6 +5496,178 @@ export async function startPackingWorkspace({
       errorOptions: packingErrorOptions,
     })
   }
+  /** A print entry for one label, or the label validation's refusal. */
+  function printEntry(prep, group, variant, kind) {
+    const code =
+      kind === 'mark'
+        ? group.baseCode
+        : barcodeValue(group, { ...variant, needsSizeMapping: false })
+    try {
+      const model = outputModel(prep, group, variant, kind, false, true)
+      return {
+        item: {
+          key: model.code,
+          code: model.code,
+          name: model.spanishName,
+          detail: model.category,
+          // Packing data records no carton count yet; marks default to one.
+          known: null,
+          // Recent jobs find the product again by where it lives, not by code.
+          ref: {
+            orderId: prep.orderId,
+            groupId: group.id,
+            variantId: variant?.id ?? null,
+          },
+          model,
+        },
+      }
+    } catch (error) {
+      return {
+        problem: {
+          code,
+          name: variant?.spanishName || group.spanishName || '',
+          message: error.message,
+          error,
+        },
+      }
+    }
+  }
+  /** One entry per distinct label for the selected source rows. */
+  function printItems(kind, selectedRows) {
+    const selected = new Set(
+      selectedRows.map((row) => `${row.orderId}/${row.entryId}`)
+    )
+    const items = new Map()
+    const problems = new Map()
+    for (const orderId of new Set(selectedRows.map((row) => row.orderId))) {
+      const record = getRecords().find(
+        (record) => record.snapshot.orderId === orderId
+      )
+      const prep = preparations.get(orderId)
+      if (!prep || !record) continue
+      const quantityOf = new Map(
+        record.snapshot.items.map((item) => [
+          item.entryId,
+          Math.max(0, Math.floor(Number(item.quantity)) || 0),
+        ])
+      )
+      for (const group of activeGroups(prep, record.snapshot)) {
+        const variants = group.variants.filter((variant) =>
+          variant.entryIds.some((id) => selected.has(`${orderId}/${id}`))
+        )
+        if (!variants.length) continue
+        for (const variant of kind === 'mark' ? [null] : variants) {
+          const { item, problem } = printEntry(prep, group, variant, kind)
+          if (problem) {
+            problems.set(problem.code, problem)
+            continue
+          }
+          const units = (variant ? [variant] : [])
+            .flatMap((entry) => entry.entryIds)
+            .filter((id) => selected.has(`${orderId}/${id}`))
+            .reduce((sum, id) => sum + (quantityOf.get(id) || 0), 0)
+          const existing = items.get(item.code)
+          const source = { orderId, seller: record.snapshot.sellerName || '' }
+          if (existing) {
+            existing.quantity += kind === 'mark' ? 0 : units
+            if (!existing.orders.some((entry) => entry.orderId === orderId))
+              existing.orders.push(source)
+          } else
+            items.set(item.code, {
+              ...item,
+              // Every source order of this label, for the export summary.
+              orders: [source],
+              quantity:
+                kind === 'mark' ? (item.known ?? 1) : Math.max(1, units),
+            })
+        }
+      }
+    }
+    return { items: [...items.values()], problems: [...problems.values()] }
+  }
+  /** Current print entries at the job's product references (order, group, variant). */
+  function printItemsForRefs(kind, products) {
+    const items = []
+    const problems = []
+    for (const { ref } of products) {
+      if (!ref) continue
+      const prep = preparations.get(ref.orderId)
+      const record = getRecords().find(
+        (record) => record.snapshot.orderId === ref.orderId
+      )
+      if (!prep || !record) continue
+      const group = activeGroups(prep, record.snapshot).find(
+        (entry) => entry.id === ref.groupId
+      )
+      const variant =
+        kind === 'mark'
+          ? null
+          : group?.variants.find((entry) => entry.id === ref.variantId)
+      if (!group || (kind !== 'mark' && !variant)) continue
+      const { item, problem } = printEntry(prep, group, variant, kind)
+      if (item)
+        items.push({
+          ...item,
+          orders: [
+            { orderId: ref.orderId, seller: record.snapshot.sellerName || '' },
+          ],
+        })
+      else problems.push(problem)
+    }
+    return { items, problems }
+  }
+  const publicProblems = (problems) =>
+    problems.map(({ code, name, message }) => ({ code, name, message }))
+  async function openPrint(kind, selectedRows) {
+    if (!selectedRows.length) throw new Error('Select prepared products first.')
+    await flushSaves()
+    const { items, problems } = printItems(kind, selectedRows)
+    if (!items.length) {
+      // The validation error carries its own way to fix the product.
+      if (problems.length) throw problems[0].error
+      throw new Error('Select prepared products first.')
+    }
+    openPrintDialog({
+      kind: kind === 'mark' ? 'marks' : 'labels',
+      items,
+      problems: publicProblems(problems),
+      settings: structuredClone(settings()),
+      logoUrl: logoUrl(),
+    })
+  }
+  /** Rebuild a recent export from current product data. */
+  async function regeneratePrint(job) {
+    await flushSaves()
+    const kind = job.kind === 'marks' ? 'mark' : 'barcode'
+    const { items, problems } = printItemsForRefs(kind, job.products)
+    const restored = restoreJob(job, items)
+    if (!restored.items.length) {
+      if (problems.length) throw problems[0].error
+      throw new Error(
+        'None of the products in this print job can be found any more.'
+      )
+    }
+    const refused = new Set(problems.map((problem) => problem.code))
+    openPrintDialog({
+      kind: job.kind,
+      items: restored.items,
+      problems: publicProblems(problems),
+      settings: structuredClone(settings()),
+      logoUrl: logoUrl(),
+      job: {
+        ...job,
+        missing: restored.missing.filter(
+          (product) => !refused.has(product.code)
+        ),
+        changed: restored.changed,
+      },
+    })
+  }
+  function openRecentPrints() {
+    openRecentPrintJobs({
+      onRegenerate: (job) => preparationAction(() => regeneratePrint(job)),
+    })
+  }
   function orderRows(rows) {
     const ranks = new Map()
     for (const [orderId, prep] of preparations) {
@@ -5528,6 +5775,53 @@ export async function startPackingWorkspace({
         }))
     )
   }
+  /** Packing list as .xlsx (chosen columns) plus its JSON summary. */
+  function exportPackingList(rows) {
+    const sizeClassifier = createSizeClassifier(preferences.sizeVocabulary)
+    const fields = rows.map((row) => preparationCopyFields(row, sizeClassifier))
+    let preference
+    try {
+      preference = JSON.parse(
+        localStorage.getItem(PREPARATION_COLUMN_PREFERENCE)
+      )
+    } catch {}
+    const grid = preparationGrid(
+      fields,
+      selectedPreparationColumns(preference),
+      t
+    )
+    const file = uniqueFileName(
+      packingListFileName(fields.map((row) => row.sellerName))
+    )
+    saveFile(
+      new Blob(
+        [
+          createXlsx({
+            sheetName: t('Packing list'),
+            header: grid.titles,
+            rows: grid.values,
+            numeric: grid.numeric,
+          }),
+        ],
+        {
+          type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+        }
+      ),
+      file
+    )
+    const summary = packingSummary({ rows: fields, file })
+    saveFile(
+      new Blob([JSON.stringify(summary, null, 2)], {
+        type: 'application/json',
+      }),
+      summaryFileName(file)
+    )
+    announceExport(summary.files)
+    feedback(
+      uiMessage('Packing list saved to your downloads: {0}', { 0: file })
+    )
+    return summary
+  }
   async function copyPreparation(rows = preparedRows()) {
     if (!rows.length) throw new Error('Select product rows to copy.')
     const sizeClassifier = createSizeClassifier(preferences.sizeVocabulary)
@@ -5609,6 +5903,20 @@ export async function startPackingWorkspace({
     edits.append(tabs)
     host.replaceChildren(el('h2', uiMessage('Settings')), edits)
     tabs.setAttribute('role', 'tablist')
+    // The tab list is a column on wide screens and a wrapping row on narrow ones.
+    const narrowSettings = matchMedia('(max-width: 760px)')
+    const orientTabs = () =>
+      tabs.setAttribute(
+        'aria-orientation',
+        narrowSettings.matches ? 'horizontal' : 'vertical'
+      )
+    orientTabs()
+    narrowSettings.addEventListener('change', orientTabs)
+    settingsDialog.addEventListener(
+      'close',
+      () => narrowSettings.removeEventListener('change', orientTabs),
+      { once: true }
+    )
     bindAttribute(tabs, 'aria-label', uiMessage('Settings sections'))
     function selectTab(id) {
       for (const tab of tabButtons) {
@@ -5652,9 +5960,9 @@ export async function startPackingWorkspace({
           ? 0
           : event.key === 'End'
             ? tabButtons.length - 1
-            : event.key === 'ArrowRight'
+            : event.key === 'ArrowRight' || event.key === 'ArrowDown'
               ? (current + 1) % tabButtons.length
-              : event.key === 'ArrowLeft'
+              : event.key === 'ArrowLeft' || event.key === 'ArrowUp'
                 ? (current + tabButtons.length - 1) % tabButtons.length
                 : -1
       if (index < 0) return
@@ -6237,6 +6545,44 @@ export async function startPackingWorkspace({
   monthInput.addEventListener('change', updateLaunchActions)
   $('prepare-orders').onclick = () =>
     openPreparation().catch((e) => feedback(e.message, true))
+  const ordersTab = $('view-orders')
+  const packingTab = $('view-packing')
+  if (ordersTab && packingTab) {
+    const syncTabs = () => {
+      const packing = !$('packing-view').hidden
+      if (packing) {
+        ordersTab.removeAttribute('aria-current')
+        packingTab.setAttribute('aria-current', 'page')
+      } else {
+        packingTab.removeAttribute('aria-current')
+        ordersTab.setAttribute('aria-current', 'page')
+      }
+    }
+    new MutationObserver(syncTabs).observe($('packing-view'), {
+      attributes: true,
+      attributeFilter: ['hidden'],
+    })
+    syncTabs()
+    preparationHelp(
+      ordersTab,
+      uiMessage('Return to Orders. Packing edits are saved first.')
+    )
+    preparationHelp(
+      packingTab,
+      uiMessage(
+        'Open the packing list for the packing month. Products already assigned to that month reopen; your product selection stays in Orders.'
+      )
+    )
+    ordersTab.onclick = () => {
+      if (!$('packing-view').hidden) showOrders()
+    }
+    packingTab.onclick = () => {
+      if (!$('packing-view').hidden || opening) return
+      openPreparation(undefined, undefined, { monthOnly: true }).catch((e) =>
+        feedback(e.message, true)
+      )
+    }
+  }
   const restoreFile = $('restore-packing-file')
   const restore = $('restore-packing')
   decorateIcon(restore, 'upload')
@@ -6283,6 +6629,9 @@ export async function startPackingWorkspace({
     preparedRows,
     copyLabels: (kind, rows) =>
       preparationAction(() => bulkLabels(kind, orderRows(rows))),
+    printLabels: (kind, rows) =>
+      preparationAction(() => openPrint(kind, orderRows(rows))),
+    openRecentPrints,
     canCopyLabels: (rows) =>
       rows.length > 0 &&
       rows.every((row) => membership.has(`${row.orderId}/${row.entryId}`)),

@@ -619,6 +619,38 @@ test('closing source during scan and moving a detail tab to login pause safely',
   await s.controller.tick()
   assert.equal(s.jobs.get(job.id).state, 'paused')
   assert.match(s.jobs.get(job.id).error, /sign-in/)
+  // The workspace gets one notice pointing at the tab that needs the owner.
+  assert.deepEqual(
+    { ...s.jobs.get(job.id).attention, at: undefined },
+    { kind: 'sign-in', tabId: 42, orderId: '10001', at: undefined }
+  )
+  // Resuming clears the notice and keeps the existing resume behaviour.
+  s.setTab({ id: 42, url: url('10001'), status: 'complete' })
+  await s.controller.resume(job.id)
+  assert.equal(s.jobs.get(job.id).attention, null)
+  assert.equal(s.jobs.get(job.id).state, 'running')
+})
+
+test('an ordinary pause or failure sets no sign-in notice', async () => {
+  const s = setup()
+  const job = await s.controller.start({ scope: 'all', source })
+  await s.controller.tick()
+  await s.controller.pause(job.id)
+  assert.equal(s.jobs.get(job.id).attention, null)
+})
+
+test('a reader that the browser only allows visible is recorded for the workspace', async () => {
+  const s = setup([[row('10001')]], 1)
+  s.browser.openDetailTab = async (sourceUrl, jobId) => {
+    s.calls.push(['open', sourceUrl, jobId])
+    s.setTab({ id: 42, url: sourceUrl, status: 'complete' })
+    return { id: 42, visible: true }
+  }
+  const job = await s.controller.start({ scope: 'all', source })
+  await s.controller.tick()
+  await s.controller.tick()
+  assert.equal(s.jobs.get(job.id).workerTabId ?? 42, 42)
+  assert.equal(s.jobs.get(job.id).visibleReader, true)
 })
 test('refresh does not use old row counts as proof of current completeness', async () => {
   const s = setup()
@@ -739,4 +771,47 @@ test('job progress does not report library changes before a successful save', as
   await s.controller.tick()
   await s.controller.tick()
   assert.equal(s.calls.filter(([type]) => type === 'changed').length, 1)
+})
+
+test('a sign-in redirect during the final read attempt pauses with the notice, not a failure', async () => {
+  const s = setup([[row('10001')]], 1)
+  const job = await s.controller.start({ scope: 'all', source })
+  await s.controller.tick()
+  await s.controller.tick()
+  // The read fails because 1688 sent the reader to its sign-in page.
+  s.browser.readDetail = async () => {
+    s.setTab({ id: 42, url: 'https://login.1688.com/', status: 'complete' })
+    throw Object.assign(new Error('The order page is not ready.'), {
+      retryable: true,
+    })
+  }
+  s.advance(100000)
+  await s.controller.tick()
+  const paused = s.jobs.get(job.id)
+  assert.equal(paused.state, 'paused')
+  assert.equal(paused.attention?.kind, 'sign-in')
+  assert.equal(paused.orders[0].state, 'pending')
+})
+
+test('a sign-in redirect on the last allowed read attempt also pauses with the notice', async () => {
+  const s = setup([[row('10001')]], 1)
+  const job = await s.controller.start({ scope: 'all', source })
+  await s.controller.tick()
+  await s.controller.tick()
+  let reads = 0
+  s.browser.readDetail = async () => {
+    reads++
+    // The first two reads fail while the page hydrates; the third finds sign-in.
+    if (reads === 3)
+      s.setTab({ id: 42, url: 'https://login.1688.com/', status: 'complete' })
+    throw Object.assign(new Error('The order page is not ready.'), {
+      retryable: true,
+    })
+  }
+  for (let attempt = 0; attempt < 3; attempt++) await s.controller.tick()
+  const paused = s.jobs.get(job.id)
+  assert.equal(reads, 3)
+  assert.equal(paused.state, 'paused')
+  assert.equal(paused.attention?.kind, 'sign-in')
+  assert.equal(paused.orders[0].state, 'pending')
 })

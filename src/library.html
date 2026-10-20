@@ -11,6 +11,7 @@
     <link rel="stylesheet" href="label-editor.css" />
     <link rel="stylesheet" href="copy-actions.css" />
     <link rel="stylesheet" href="code-design.css" />
+    <link rel="stylesheet" href="shell.css" />
     <script type="module" src="library.js"></script>
   </head>
   <body>
@@ -19,25 +20,83 @@
         ><img
           class="brand-mark"
           src="icons/icon48.png"
-          width="36"
-          height="36"
+          width="28"
+          height="28"
           alt=""
-        />
-        <span
-          ><span data-i18n="1688 Packing workspace">1688 Packing workspace</span
-          ><small data-i18n="Orders · packing · Excel"
-            >Orders · packing · Excel</small
-          ></span
+        /><span data-i18n="1688 Packing workspace"
+          >1688 Packing workspace</span
         ></a
       >
-      <span class="local-label"
-        ><i></i
-        ><span data-i18n="Stored in this browser"
-          >Stored in this browser</span
-        ></span
+      <nav
+        data-i18n-aria-label="Workspace views"
+        class="view-tabs"
+        aria-label="Workspace views"
       >
+        <button
+          id="view-orders"
+          data-action="view-orders"
+          type="button"
+          data-i18n="Orders"
+          aria-current="page"
+        >
+          Orders
+        </button>
+        <button
+          id="view-packing"
+          data-action="view-packing"
+          type="button"
+          data-i18n="Packing list"
+        >
+          Packing list
+        </button>
+      </nav>
+      <section
+        data-i18n-aria-label="Library overview"
+        class="library-line"
+        aria-label="Library overview"
+      >
+        <span
+          ><b id="order-count">0</b>
+          <small data-i18n="Orders">Orders</small></span
+        >
+        <span
+          ><b id="product-count">0</b>
+          <small data-i18n="Product rows">Product rows</small></span
+        >
+        <span
+          ><b id="changed-count">0</b>
+          <small data-i18n="Updated orders">Updated orders</small></span
+        >
+        <span
+          ><small data-i18n="Last checked">Last checked</small>
+          <b id="checked-at">—</b></span
+        >
+        <span class="local-label"
+          ><i></i
+          ><span data-i18n="Stored in this browser"
+            >Stored in this browser</span
+          ></span
+        >
+      </section>
+      <p
+        id="workspace-status"
+        class="workspace-status"
+        role="status"
+        data-status="idle"
+        data-files="[]"
+      >
+        <span id="workspace-status-text">Status: idle</span>
+      </p>
       <div class="top-actions">
-        <button id="activity-open">
+        <a
+          data-i18n="Open 1688 orders"
+          class="open-orders"
+          href="https://air.1688.com/app/ctf-page/trade-order-list/buyer-order-list.html?page=1&pageSize=10"
+          target="_blank"
+          rel="noreferrer"
+          >Open 1688 orders</a
+        >
+        <button id="activity-open" data-action="open-activity">
           <span data-i18n="Activity">Activity</span
           ><span id="activity-count"></span>
         </button>
@@ -103,36 +162,6 @@
       </div>
     </header>
     <main>
-      <section
-        data-i18n-aria-label="Library overview"
-        class="stats"
-        aria-label="Library overview"
-      >
-        <div>
-          <span id="order-count">0</span
-          ><small data-i18n="Orders">Orders</small>
-        </div>
-        <div>
-          <span id="product-count">0</span
-          ><small data-i18n="Product rows">Product rows</small>
-        </div>
-        <div>
-          <span id="changed-count">0</span
-          ><small data-i18n="Updated orders">Updated orders</small>
-        </div>
-        <div>
-          <span id="checked-at">—</span
-          ><small data-i18n="Last checked">Last checked</small>
-        </div>
-        <a
-          data-i18n="Open 1688 orders"
-          class="open-orders"
-          href="https://air.1688.com/app/ctf-page/trade-order-list/buyer-order-list.html?page=1&pageSize=10"
-          target="_blank"
-          rel="noreferrer"
-          >Open 1688 orders</a
-        >
-      </section>
       <div id="active-job" class="active-job" hidden>
         <progress
           data-i18n-aria-label="Orders processed"
@@ -141,6 +170,36 @@
         ></progress>
         <span id="active-job-text"></span
         ><button data-i18n="Pause" id="pause-active">Pause</button>
+      </div>
+      <div id="import-attention" class="import-attention" role="alert" hidden>
+        <span
+          id="import-attention-text"
+          data-i18n="1688 needs a sign-in or verification in the import tab. Open that tab, finish the step, then resume."
+          >1688 needs a sign-in or verification in the import tab. Open that
+          tab, finish the step, then resume.</span
+        ><button
+          id="import-attention-open"
+          type="button"
+          data-action="open-attention-tab"
+          data-i18n="Open the 1688 tab"
+        >
+          Open the 1688 tab</button
+        ><button
+          id="import-attention-allow"
+          type="button"
+          data-action="allow-visible-reader"
+          data-i18n="Use a visible tab"
+          hidden
+        >
+          Use a visible tab</button
+        ><button
+          id="import-attention-resume"
+          type="button"
+          data-action="resume-import"
+          data-i18n="Resume import"
+        >
+          Resume import
+        </button>
       </div>
       <div id="orders-view" class="workspace">
         <aside
@@ -170,28 +229,33 @@
               aria-controls="order-list"
             />
           </div>
-          <details id="month-filter" class="month-filter">
-            <summary data-i18n="All purchase months" id="month-filter-label">
-              All purchase months
-            </summary>
-            <div class="month-picker">
+          <div
+            id="month-filter"
+            class="month-filter"
+            role="group"
+            aria-labelledby="month-filter-label"
+          >
+            <span
+              data-i18n="All purchase months"
+              id="month-filter-label"
+              class="month-filter-label"
+              >All purchase months</span
+            >
+            <div class="month-chips">
               <button
                 data-i18n="All months"
                 id="clear-months"
-                class="text-button"
+                class="month-choice month-all"
               >
                 All months
               </button>
-              <p data-i18n="Filter months. Shift-click for a range.">
-                Filter months. Shift-click for a range.
-              </p>
               <div
                 data-i18n-aria-label="Purchase months"
                 id="month-options"
                 aria-label="Purchase months"
               ></div>
             </div>
-          </details>
+          </div>
           <details class="date-range">
             <summary data-i18n="Purchase date range">
               Purchase date range
@@ -204,11 +268,6 @@
               ><input type="date" id="date-to"
             /></label>
           </details>
-          <div class="order-refresh">
-            <button data-i18n="Refresh orders" id="refresh-orders">
-              Refresh orders</button
-            ><span id="refresh-scope"></span>
-          </div>
           <div
             data-i18n-aria-label="Saved orders"
             id="order-list"
@@ -233,6 +292,11 @@
             </button>
           </div>
           <div class="pane-footer">
+            <div class="order-refresh">
+              <button data-i18n="Refresh orders" id="refresh-orders">
+                Refresh orders</button
+              ><span id="refresh-scope"></span>
+            </div>
             <button data-i18n="Remove selected" id="remove-orders">
               Remove selected
             </button>
@@ -247,6 +311,131 @@
             <div class="sheet-title-actions">
               <h2 data-i18n="All products" id="sheet-title">All products</h2>
               <p data-i18n="0 rows" id="selection-summary">0 rows</p>
+            </div>
+            <div class="filterbar">
+              <label class="search"
+                ><span data-i18n="Search products and orders" class="sr-only"
+                  >Search products and orders</span
+                ><input
+                  data-i18n-placeholder="Search products, sellers or codes…"
+                  id="search"
+                  type="search"
+                  placeholder="Search products, sellers or codes…" /></label
+              ><label
+                ><span data-i18n="Order status" class="sr-only"
+                  >Order status</span
+                ><select id="status-filter">
+                  <option data-i18n="All statuses" value="">
+                    All statuses
+                  </option>
+                </select></label
+              ><label class="check"
+                ><input id="changes-only" type="checkbox" /><span
+                  data-i18n="Changed only"
+                  >Changed only</span
+                ></label
+              >
+            </div>
+          </div>
+          <section
+            data-i18n-aria-label="Matching order totals"
+            id="order-totals"
+            class="order-totals"
+            aria-label="Matching order totals"
+            aria-live="polite"
+          ></section>
+          <div id="empty-state" class="empty-state">
+            <span aria-hidden="true">▦</span>
+            <h2 data-i18n="Your orders belong here.">
+              Your orders belong here.
+            </h2>
+            <p>
+              <span
+                data-i18n="Open your 1688 order list, select a few orders and choose"
+                >Open your 1688 order list, select a few orders and choose</span
+              ><strong data-i18n="Import selected">Import selected</strong>.
+            </p>
+          </div>
+          <div
+            data-i18n-aria-label="Scrollable product rows"
+            class="table-scroll"
+            tabindex="0"
+            aria-label="Scrollable product rows"
+          >
+            <table
+              data-i18n-aria-label="Products"
+              role="grid"
+              aria-label="Products"
+              aria-multiselectable="true"
+            >
+              <thead>
+                <tr>
+                  <th class="row-number" scope="col">#</th>
+                  <th data-i18n="Photo">Photo</th>
+                  <th data-i18n="Description & labels">
+                    Description &amp; labels
+                  </th>
+                  <th data-i18n="Price" class="numeric">Price</th>
+                  <th data-i18n="Quantity" class="numeric">Quantity</th>
+                  <th data-i18n="Discount" class="numeric">Discount</th>
+                </tr>
+              </thead>
+              <tbody id="sheet-body"></tbody>
+            </table>
+          </div>
+          <div class="sheet-footer">
+            <div>
+              <button
+                data-i18n-aria-label="Previous product page"
+                id="previous-page"
+                aria-label="Previous product page"
+              >
+                ←</button
+              ><span data-i18n="Page 1" id="page-label">Page 1</span
+              ><button
+                data-i18n-aria-label="Next product page"
+                id="next-page"
+                aria-label="Next product page"
+              >
+                →
+              </button>
+            </div>
+          </div>
+        </section>
+        <div
+          data-i18n-aria-label="Selection and next step"
+          class="action-bar"
+          role="region"
+          aria-label="Selection and next step"
+        >
+          <div class="action-bar-selection">
+            <section
+              data-i18n-aria-label="Selected product totals"
+              id="product-selection-totals"
+              class="product-selection-totals"
+              aria-label="Selected product totals"
+              aria-live="polite"
+              aria-atomic="true"
+            ></section>
+            <div class="row-selection-actions">
+              <button
+                data-i18n="Select all rows"
+                id="select-rows"
+                data-action="select-all-rows"
+              >
+                Select all rows
+              </button>
+              <button
+                data-i18n="Clear selection"
+                id="clear-rows"
+                data-action="clear-selection"
+              >
+                Clear selection
+              </button>
+            </div>
+          </div>
+          <div class="action-bar-actions">
+            <div class="action-bar-export">
               <div class="export-toolbar copy-actions" id="orders-copy-actions">
                 <div
                   data-i18n-aria-label="Copy selected product rows"
@@ -292,20 +481,33 @@
                   >
                 </div>
               </div>
+              <div
+                class="export-toolbar copy-actions"
+                id="orders-print-actions"
+              ></div>
             </div>
             <div class="packing-launch">
               <label
                 ><span data-i18n="Packing month">Packing month</span
-                ><input type="month" id="packing-month" required /></label
+                ><input
+                  type="month"
+                  id="packing-month"
+                  data-action="packing-month"
+                  required /></label
               ><button
                 data-i18n="Prepare packing list"
                 id="prepare-orders"
+                data-action="prepare-packing-list"
                 class="primary"
                 disabled
               >
                 Prepare packing list
               </button>
-              <button id="restore-packing" data-i18n="Restore packing">
+              <button
+                id="restore-packing"
+                data-action="restore-packing"
+                data-i18n="Restore packing"
+              >
                 Restore packing
               </button>
               <input
@@ -319,108 +521,7 @@
               <p id="packing-scope" role="status"></p>
             </div>
           </div>
-          <div class="filterbar">
-            <label class="search"
-              ><span data-i18n="Search products and orders" class="sr-only"
-                >Search products and orders</span
-              ><input
-                data-i18n-placeholder="Search products, sellers or codes…"
-                id="search"
-                type="search"
-                placeholder="Search products, sellers or codes…" /></label
-            ><label
-              ><span data-i18n="Order status" class="sr-only">Order status</span
-              ><select id="status-filter">
-                <option data-i18n="All statuses" value="">All statuses</option>
-              </select></label
-            ><label class="check"
-              ><input id="changes-only" type="checkbox" /><span
-                data-i18n="Changed only"
-                >Changed only</span
-              ></label
-            >
-          </div>
-          <section
-            data-i18n-aria-label="Matching order totals"
-            id="order-totals"
-            class="order-totals"
-            aria-label="Matching order totals"
-            aria-live="polite"
-          ></section>
-          <section
-            data-i18n-aria-label="Selected product totals"
-            id="product-selection-totals"
-            class="product-selection-totals"
-            aria-label="Selected product totals"
-            aria-live="polite"
-            aria-atomic="true"
-          ></section>
-          <div id="empty-state" class="empty-state">
-            <span aria-hidden="true">▦</span>
-            <h2 data-i18n="Your orders belong here.">
-              Your orders belong here.
-            </h2>
-            <p>
-              <span
-                data-i18n="Open your 1688 order list, select a few orders and choose"
-                >Open your 1688 order list, select a few orders and choose</span
-              ><strong data-i18n="Import selected">Import selected</strong>.
-            </p>
-          </div>
-          <div
-            data-i18n-aria-label="Scrollable product rows"
-            class="table-scroll"
-            tabindex="0"
-            aria-label="Scrollable product rows"
-          >
-            <table
-              data-i18n-aria-label="Products"
-              role="grid"
-              aria-label="Products"
-              aria-multiselectable="true"
-            >
-              <thead>
-                <tr>
-                  <th class="row-number" scope="col">#</th>
-                  <th data-i18n="Photo">Photo</th>
-                  <th data-i18n="Description & labels">
-                    Description &amp; labels
-                  </th>
-                  <th data-i18n="Price" class="numeric">Price</th>
-                  <th data-i18n="Quantity" class="numeric">Quantity</th>
-                  <th data-i18n="Discount" class="numeric">Discount</th>
-                </tr>
-              </thead>
-              <tbody id="sheet-body"></tbody>
-            </table>
-          </div>
-          <div class="sheet-footer">
-            <div class="row-selection-actions">
-              <button data-i18n="Select all rows" id="select-rows">
-                Select all rows
-              </button>
-              <button data-i18n="Clear selection" id="clear-rows">
-                Clear selection
-              </button>
-            </div>
-            <div>
-              <button
-                data-i18n-aria-label="Previous product page"
-                id="previous-page"
-                aria-label="Previous product page"
-              >
-                ←</button
-              ><span data-i18n="Page 1" id="page-label">Page 1</span
-              ><button
-                data-i18n-aria-label="Next product page"
-                id="next-page"
-                aria-label="Next product page"
-              >
-                →
-              </button>
-            </div>
-          </div>
-        </section>
+        </div>
       </div>
       <section
         data-i18n-aria-label="Prepare packing list"

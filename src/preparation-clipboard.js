@@ -189,12 +189,11 @@ export function preparationCopyFields(
   }
 }
 
-export function preparationTable(
-  rows,
-  fields,
-  headers = false,
-  translate = (value) => value
-) {
+/**
+ * The packing rows as a grid: translated titles, raw cell values and which
+ * columns are numeric. Copying and the file export share this one model.
+ */
+export function preparationGrid(rows, fields, translate = (value) => value) {
   const chosen = [...new Set(fields)]
     .map((key) => preparationColumns.find(([field]) => key === field))
     .filter(Boolean)
@@ -210,10 +209,24 @@ export function preparationTable(
       return Array.isArray(value) ? value.join(' · ') : value
     })
   })
-  const plain = [
-    ...(headers ? [chosen.map(([, title]) => translate(title))] : []),
-    ...values,
-  ]
+  return {
+    fields: chosen.map(([field]) => field),
+    titles: chosen.map(([, title]) => translate(title)),
+    values,
+    numeric: chosen.map(([field]) => numericFields.has(field)),
+  }
+}
+
+export function preparationTable(
+  rows,
+  fields,
+  headers = false,
+  translate = (value) => value
+) {
+  const grid = preparationGrid(rows, fields, translate)
+  const chosen = grid.fields.map((field, index) => [field, grid.titles[index]])
+  const values = grid.values
+  const plain = [...(headers ? [grid.titles] : []), ...values]
     .map((row) =>
       row
         .map((value, index) => line(value, numeric(chosen[index][0], value)))
@@ -221,7 +234,7 @@ export function preparationTable(
     )
     .join('\r\n')
   const head = headers
-    ? `<tr>${chosen.map(([, title]) => `<th>${escape(translate(title))}</th>`).join('')}</tr>`
+    ? `<tr>${chosen.map(([, title]) => `<th>${escape(title)}</th>`).join('')}</tr>`
     : ''
   const html = `<table>${head}${values.map((row) => `<tr>${row.map((value, i) => `<td${numeric(chosen[i][0], value) ? '' : ' style="mso-number-format:\'\\@\'"'}>${escape(numeric(chosen[i][0], value) ? normalized(value) : safe(normalized(value)))}</td>`).join('')}</tr>`).join('')}</table>`
   return { plain, html }

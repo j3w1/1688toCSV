@@ -118,9 +118,43 @@ export const HELP_MESSAGES = {
     zh: '已开始刷新，可在“活动”或进度条处暂停。',
     es: 'Actualización iniciada. Puedes pausarla desde Actividad o la barra de progreso.',
   },
-  'Resuming import. One visible detail tab will read the remaining orders.': {
-    zh: '正在继续导入。系统将使用一个可见的详情标签页读取剩余订单。',
-    es: 'Reanudando la importación. Una pestaña visible de detalles leerá los pedidos restantes.',
+  'Resuming import. A background tab reads the remaining orders.': {
+    zh: '正在继续导入。后台标签页会读取剩余订单。',
+    es: 'Reanudando la importación. Una pestaña en segundo plano lee los pedidos restantes.',
+  },
+  '1688 needs a sign-in or verification in the import tab. Open that tab, finish the step, then resume.':
+    {
+      zh: '1688 需要在导入标签页中登录或验证。打开该标签页完成后再继续。',
+      es: '1688 necesita un inicio de sesión o una verificación en la pestaña de importación. Ábrela, completa el paso y luego reanuda.',
+    },
+  'This browser does not allow background import tabs. Use a visible import tab for this import? It will switch to that tab while it reads.':
+    {
+      zh: '这个浏览器不允许后台导入标签页。这次导入要使用可见的导入标签页吗？读取时会切换到该标签页。',
+      es: 'Este navegador no permite pestañas de importación en segundo plano. ¿Usar una pestaña visible para esta importación? Cambiará a esa pestaña mientras lee.',
+    },
+  'This browser does not allow background import tabs. Allow a visible import tab to continue.':
+    {
+      zh: '这个浏览器不允许后台导入标签页。允许使用可见的导入标签页才能继续。',
+      es: 'Este navegador no permite pestañas de importación en segundo plano. Permite una pestaña visible para continuar.',
+    },
+  'Use a visible tab': { zh: '使用可见标签页', es: 'Usar una pestaña visible' },
+  'Open the 1688 tab': {
+    zh: '打开 1688 标签页',
+    es: 'Abrir la pestaña de 1688',
+  },
+  'Resume import': { zh: '继续导入', es: 'Reanudar importación' },
+  'This browser does not allow background import tabs, so the import tab is visible.':
+    {
+      zh: '这个浏览器不允许后台导入标签页，所以导入标签页是可见的。',
+      es: 'Este navegador no permite pestañas de importación en segundo plano, así que la pestaña es visible.',
+    },
+  'The 1688 tab was closed. Resume the import to open the order again.': {
+    zh: '1688 标签页已关闭。继续导入即可重新打开订单。',
+    es: 'Se cerró la pestaña de 1688. Reanuda la importación para abrir el pedido de nuevo.',
+  },
+  'This import does not need a sign-in or verification.': {
+    zh: '这个导入不需要登录或验证。',
+    es: 'Esta importación no necesita iniciar sesión ni verificación.',
   },
   'Save every order status and error for this import. This does not start or retry any orders.':
     {

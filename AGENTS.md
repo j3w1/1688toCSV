@@ -6,34 +6,72 @@ release decisions inside an explicitly authorized change. Never commit credentia
 data, downloaded exports, or personal/provider configuration. Metadata work does not authorize an
 extension build, package update, publication, store release, or production mutation.
 
+## Delivery: local first
+
+Standing owner rule (2026-10-19, issue #10). It overrides older wording that asked for full
+verification after every edit.
+
+- **"Implement X"** means: build it on a local integration branch, run the fast loop below, and load
+  it into the owner's installed extension in CE Dev Browser for the owner to try. No push, pull
+  request, hosted CI, remote merge, store publication or deploy. Accepted changes accumulate as
+  local commits.
+- **"Deploy it"** (or the owner's equivalent words) means: publish exactly the owner-accepted local
+  changes as one pull request, run `npm run verify`, get hosted CI green, merge to main, then
+  refresh the installed extension from main and confirm the library counts.
+- Yolo or any standing authorization covers delegable decisions only. It never replaces the owner's
+  deploy word, and the owner's local acceptance happens in the coordinator's own tab.
+
 ## Development workflow
 
-After requested code changes, run `npm run verify` against the final candidate. This explicitly
-checks source and documentation, runs regression tests, rebuilds the complete extension in `dist`,
-and tests that build in Chromium. Do not add watch mode or leave rebuilding to the user. Load the
+**Fast local loop.** `npm run try` runs the unit tests, makes a development build, stages the
+complete `dist` into the installed extension, reloads it through the CE Dev Browser MCP server, and
+then checks read-only that every library store count is unchanged. It reopens the workspace tab
+that the reload closed. `--quick` skips the unit tests (a few seconds), `--smoke` adds the browser
+smoke subset, `--dry-run` only builds, and `--rollback` restores the previously staged build. It
+refuses when the extension is not registered from the configured folder, an import is running,
+the manifest name or key would change the extension id, or the counts change. Machine settings
+live outside the repository in `~/.config/1688tocsv/try.json`: `installDir` (the registered `dist`
+folder), `extensionId`, `browserMcp` (the CE Dev Browser MCP server command) and `stagingDir` (same
+filesystem as `installDir`). Never commit them. Do not add watch mode or leave rebuilding to the user.
+
+**Visual checks.** Owner rule (2026-10-19): "let the implementation agents or coordinator visually
+test using ce browser only if needed". Check changes with the fast tests and the automated Chromium
+tests first. Open the shared CE Dev Browser for a visual check only when nothing else can judge it,
+and keep it brief. Loading a ready build with `npm run try` for the owner to try stays part of the
+loop: load once per ready batch, not after every edit.
+
+**The owner's library.** The installed extension holds the owner's real orders. Always reload that
+same install so its id and storage stay. Never reset, re-import or restore it for testing. If the id
+ever has to change, first take a backup with the extension's own Backup, restore it into the new
+install and verify the counts before abandoning the old one. Automated tests use synthetic
+fixtures and temporary profiles only.
+
+**Full verification** (`npm run verify`) runs once on the final candidate at deploy, and locally when
+a change touches the build, test or CI setup. It checks source and documentation, runs regression
+tests, rebuilds the complete extension in `dist`, and tests that build in Chromium. Load the
 generated `dist` folder as the unpacked extension; the root manifest remains source.
 
 For UI changes, run `npm run screenshots` to regenerate the README screenshots from synthetic data,
-then run `npm run check:docs`. Use `npm run preview` when inspecting the page download control locally. Keep
-fixtures and screenshots synthetic; never commit real orders, downloaded exports, credentials,
-or unsanitized page captures. Preserve documented calculation limitations unless their correction
-is explicitly within scope.
+then run `npm run check:docs`, before deploy. Use `npm run preview` when inspecting the page download
+control locally. Keep fixtures and screenshots synthetic; never commit real orders, downloaded
+exports, credentials, or unsanitized page captures. Preserve documented calculation limitations
+unless their correction is explicitly within scope.
 
-After every rebuild, reload the installed extension and refresh its order page before browser
-acceptance. Automated Chromium tests use a temporary profile, a test copy of the manifest with
-localhost access and test-only permissions for download inspection and script reinjection.
-They exercise actual extraction and one-click page downloads against synthetic content.
-Do not claim this proves live 1688 compatibility.
+Automated Chromium tests use a temporary profile, a test copy of the manifest with localhost access
+and test-only permissions for download inspection and script reinjection. They exercise actual
+extraction and one-click page downloads against synthetic content. Do not claim this proves live
+1688 compatibility.
 
 When browser policy prevents live-site access, have the user perform the reload, refresh, and
 download step and inspect the supplied CSV or error. Report builds, regression tests, automated
 browser tests, and live-site acceptance separately, identifying passed, failed, blocked, and
 not-run checks. A preview or ready state alone does not verify a completed download.
 
-Documentation-only changes use `npm run check:docs`; code and mixed changes use full verification.
-Keep GitHub CI routing and its stable `required` check aligned with this process. CI routing is
-independent of the CE Meta label and Project authority described below. Commit, push, and
-release only when the user has authorized those delivery actions.
+Documentation-only changes use `npm run check:docs`; code and mixed changes use the fast loop while
+iterating and full verification at deploy. Keep GitHub CI routing and its stable `required` check
+aligned with this process. CI routing is independent of the CE Meta label and Project authority
+described below. Local commits are fine; push, pull requests, merge and release follow the
+local-first rule above.
 
 ## CE Meta integration
 

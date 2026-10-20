@@ -206,7 +206,7 @@ test('main order and product views retain purchase chronology and source rows af
     ...originalGroups.slice(2),
   ]
   await expect.poll(groupIds).toEqual(arranged)
-  await view.getByRole('button', { name: 'Orders', exact: true }).click()
+  await view.page().locator('#view-orders').click()
   await page.getByRole('button', { name: 'Show all', exact: true }).click()
   expect(await keys(page.locator('.order-card'))).toEqual(orderIds)
   expect(await keys(rows)).toEqual(expectedRows)

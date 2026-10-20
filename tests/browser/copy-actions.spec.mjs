@@ -92,14 +92,14 @@ for (const fallback of [false, true])
           )
           .map((node) => node.id || node.className)
       )
-    expect(order).toEqual([
-      'order-totals',
-      'product-selection-totals',
-      'table-scroll',
-    ])
+    expect(order).toEqual(['order-totals', 'table-scroll'])
+    // Selection totals and copy actions live in the bottom action bar.
     await expect(
-      page.locator('.sheet-toolbar .sheet-title-actions > #orders-copy-actions')
+      page.locator('.action-bar #product-selection-totals')
     ).toHaveCount(1)
+    await expect(page.locator('.action-bar #orders-copy-actions')).toHaveCount(
+      1
+    )
     const trigger = page.locator('#orders-copy-actions .copy-actions-trigger')
     const panel = page.locator('#orders-copy-actions .copy-actions-panel')
     await expect(page.locator('#copy-excel-image')).toBeVisible()
@@ -121,7 +121,9 @@ for (const fallback of [false, true])
     await trigger.click()
     await expect(panel).toBeVisible()
     if (!fallback)
-      await page.screenshot({ path: 'work/copy-menu-orders-narrow.png' })
+      await page.screenshot({
+        path: test.info().outputPath('copy-menu-orders-narrow.png'),
+      })
     // Anchored placement can cover the search field. Use the page margin,
     // waiting for the queued fallback positioning before clicking outside.
     await expect
@@ -195,6 +197,7 @@ test('packing copy formats remain selection-only and Escape dismisses them befor
     'Packing',
     'Labels & codes',
     'Options',
+    'Export',
     'Backup',
   ])
   await expect(trigger).toBeEnabled()
@@ -227,7 +230,9 @@ test('packing copy formats remain selection-only and Escape dismisses them befor
   await expect(trigger).toBeEnabled()
   await revealCopyActions(page)
   await expect(panel).toBeVisible()
-  await page.screenshot({ path: 'work/copy-menu-preparation-wide.png' })
+  await page.screenshot({
+    path: test.info().outputPath('copy-menu-preparation-wide.png'),
+  })
   await extension.context.grantPermissions([
     'clipboard-read',
     'clipboard-write',

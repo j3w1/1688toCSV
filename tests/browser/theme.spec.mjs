@@ -62,6 +62,11 @@ test('workspace text and validation colors stay readable on every interactive su
           background,
           ratio: ratio(`${background}-text`, background),
         })
+      pairs.push({
+        foreground: 'on-accent',
+        background: 'accent',
+        ratio: ratio('on-accent', 'accent'),
+      })
       return pairs
     })
     for (const pair of contrast)
@@ -223,65 +228,6 @@ test('theme controls fit a narrow viewport and remain usable when preference sto
     )
   ).toBe(true)
   expect(errors).toEqual([])
-})
-
-test('both palettes keep readable text, semantic badges and primary controls', async ({
-  extension,
-}) => {
-  const page = await openLibrary(extension)
-  for (const scheme of ['dark', 'light']) {
-    if (scheme === 'light')
-      await page.getByRole('button', { name: 'Switch to light theme' }).click()
-    const ratios = await page.evaluate(() => {
-      const style = getComputedStyle(document.documentElement)
-      const luminance = (token) => {
-        const hex = style.getPropertyValue(token).trim().slice(1)
-        const channels = [0, 2, 4].map((offset) => {
-          const channel =
-            Number.parseInt(hex.slice(offset, offset + 2), 16) / 255
-          return channel <= 0.04045
-            ? channel / 12.92
-            : ((channel + 0.055) / 1.055) ** 2.4
-        })
-        return (
-          channels[0] * 0.2126 + channels[1] * 0.7152 + channels[2] * 0.0722
-        )
-      }
-      const pairs = [
-        ['--text', '--surface'],
-        ['--muted', '--surface'],
-        ['--accent-text', '--surface'],
-        ['--on-accent', '--accent'],
-        ['--success-text', '--success'],
-        ['--warning-text', '--warning'],
-        ['--info-text', '--info'],
-        ['--danger-text', '--danger'],
-      ]
-      return pairs.map(([foreground, background]) => {
-        const values = [luminance(foreground), luminance(background)].sort(
-          (a, b) => a - b
-        )
-        return {
-          foreground,
-          background,
-          ratio: (values[1] + 0.05) / (values[0] + 0.05),
-        }
-      })
-    })
-    for (const { foreground, background, ratio } of ratios)
-      expect(
-        ratio,
-        `${scheme}: ${foreground} on ${background}`
-      ).toBeGreaterThanOrEqual(4.5)
-    await expect(page.locator('#prepare-orders')).toHaveCSS(
-      'background-color',
-      scheme === 'dark' ? 'rgb(251, 139, 121)' : 'rgb(199, 67, 53)'
-    )
-    await expect(page.getByLabel('Headers', { exact: true })).toHaveCSS(
-      'accent-color',
-      scheme === 'dark' ? 'rgb(232, 173, 99)' : 'rgb(155, 91, 37)'
-    )
-  }
 })
 
 test('preference checkboxes keep generous labels and native keyboard focus without row checkboxes', async ({

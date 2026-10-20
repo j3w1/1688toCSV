@@ -1,20 +1,4 @@
 /* Compact preparation workspace; the source table remains accessible and bounded. */
-.topbar {
-  height: 72px;
-  padding-inline: 24px;
-  gap: 16px;
-}
-.top-actions {
-  align-items: center;
-  flex-wrap: wrap;
-}
-.brand small {
-  letter-spacing: 0.02em;
-}
-main {
-  max-width: 1800px;
-  padding: 24px;
-}
 .intro {
   margin-bottom: 18px;
   gap: 14px;
@@ -24,30 +8,6 @@ main {
 }
 .eyebrow {
   margin-bottom: 6px;
-}
-.stats {
-  display: flex;
-  gap: 24px;
-  padding: 0 0 16px;
-  margin: 0;
-  background: none;
-  border: 0;
-  flex-wrap: wrap;
-}
-.stats div {
-  flex-direction: row;
-  align-items: baseline;
-  gap: 7px;
-  padding: 0;
-  border: 0 !important;
-}
-.stats span,
-.stats div:last-child span {
-  font-size: 15px;
-  line-height: 1.5;
-}
-.stats small {
-  font-size: 11px;
 }
 .workspace {
   grid-template-columns: 260px minmax(0, 1fr);
@@ -2355,16 +2315,6 @@ html:has(body.packing-active) {
   .workspace {
     grid-template-columns: 210px minmax(0, 1fr);
   }
-  .topbar {
-    height: auto;
-    padding: 12px;
-  }
-  .brand {
-    font-size: 14px;
-  }
-  .local-label {
-    display: none;
-  }
   .intro {
     align-items: start;
     flex-direction: column;
@@ -2386,21 +2336,12 @@ html:has(body.packing-active) {
   .table-scroll {
     max-height: 600px;
   }
-  .stats {
-    gap: 12px;
-  }
   .group-fields,
   .settings-grid {
     grid-template-columns: 1fr;
   }
   .preparation-toolbar {
     padding: 10px;
-  }
-  .top-actions {
-    margin-left: 0;
-  }
-  .brand small {
-    display: none;
   }
   .preparation-workspace {
     padding: 0;

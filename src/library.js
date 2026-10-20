@@ -36,8 +36,9 @@ import { mergeOrderTags } from './order-tags.js'
 import { createRowSelection } from './row-selection.js'
 import { copyExcelImage } from './excel-image-copy.js'
 import { copySourceImages } from './source-image-copy.js'
-import { mountProductCopyActions } from './copy-actions.js'
+import { mountProductCopyActions, mountCopyActions } from './copy-actions.js'
 import { showErrorNotice, clearErrorNotice } from './error-notice.js'
+import { workspaceStatus } from './workspace-status.js'
 import { photoCopyTile } from './photo-copy.js'
 import { summarizeOrders, summarizeProductRows } from './order-summary.js'
 import { decorateIcon, icon } from './icons.js'
@@ -476,6 +477,8 @@ export async function startLibrary(
     ['refresh-all', 'refresh'],
     ['refresh-orders', 'refresh'],
     ['remove-orders', 'trash', true],
+    ['select-rows', 'check', true],
+    ['clear-rows', 'close', true],
     ['backup', 'download'],
     ['restore', 'upload'],
   ])
@@ -499,7 +502,7 @@ export async function startLibrary(
     ['theme-toggle', 'Switch between dark and light appearance.'],
     ['order-search', 'Find a seller, member login or full order number.'],
     [
-      'month-filter-label',
+      'month-filter',
       'Filter by purchase month. Shift-click filters a range. Starts with the current month, then remembers your filter.',
     ],
     ['date-from', 'Include orders purchased on or after this date.'],
@@ -947,7 +950,12 @@ export async function startLibrary(
     ])
       $(id).disabled =
         !rows.length || copyBusy || $(id).getAttribute('aria-busy') === 'true'
-    for (const id of ['copy-barcodes', 'copy-carton-marks']) {
+    for (const id of [
+      'copy-barcodes',
+      'copy-carton-marks',
+      'print-labels',
+      'print-carton-marks',
+    ]) {
       const target = $(id)
       if (target)
         target.disabled = copyBusy || !packing?.canCopyLabels(copyRows())
@@ -1058,6 +1066,8 @@ export async function startLibrary(
       if (!visible.has(order.orderId)) continue
       const card = node('div', undefined, 'order-card')
       card.setAttribute('role', 'option')
+      card.dataset.action = 'choose-order'
+      card.dataset.orderId = order.orderId
       bindAttribute(
         card,
         'aria-label',
@@ -1380,6 +1390,79 @@ export async function startLibrary(
       renderJobs()
     }
   })
+  // A readable status line for people and automation agents (docs/automation.md).
+  let lastExport = null
+  let lastStatusJob = null
+  document.addEventListener('workspace-export', (event) => {
+    lastExport = event.detail
+    renderStatus()
+  })
+  function renderStatus() {
+    const state = workspaceStatus({ jobs, lastExport })
+    // A newer import replaces an earlier export as the latest news.
+    if (state.status === 'importing' && state.job.id !== lastStatusJob) {
+      lastStatusJob = state.job.id
+      lastExport = null
+    }
+    const line = $('workspace-status')
+    line.dataset.status = state.status
+    line.dataset.files = JSON.stringify(state.files || [])
+    const text =
+      state.status === 'importing'
+        ? uiMessage('Status: importing · {0}', {
+            0: progressPresentation(state.job).counts,
+          })
+        : state.status === 'needs-sign-in'
+          ? uiMessage('Status: needs sign-in or verification')
+          : state.status === 'needs-visible-tab'
+            ? uiMessage('Status: needs permission for a visible import tab')
+            : state.status === 'export-finished'
+              ? uiMessage('Status: export finished · {0}', {
+                  0: state.files.join(', '),
+                })
+              : uiMessage('Status: idle')
+    bindText($('workspace-status-text'), text)
+    line.title = String(text)
+  }
+  $('import-attention-open').addEventListener('click', async () => {
+    try {
+      await send('IMPORT_ATTENTION_OPEN', {
+        jobId: $('import-attention').dataset.jobId,
+      })
+    } catch (error) {
+      showErrorNotice(error)
+    }
+  })
+  $('import-attention-allow').addEventListener('click', async (event) => {
+    const button = event.currentTarget
+    button.disabled = true
+    try {
+      await send('IMPORT_ALLOW_VISIBLE', {
+        jobId: $('import-attention').dataset.jobId,
+      })
+      ;({ jobs } = await send('JOBS_QUERY'))
+      renderJobs()
+    } catch (error) {
+      showErrorNotice(error)
+    } finally {
+      button.disabled = false
+    }
+  })
+  $('import-attention-resume').addEventListener('click', async (event) => {
+    const button = event.currentTarget
+    button.disabled = true
+    try {
+      await send('IMPORT_RESUME', {
+        jobId: $('import-attention').dataset.jobId,
+      })
+      ;({ jobs } = await send('JOBS_QUERY'))
+      renderJobs()
+    } catch (error) {
+      showErrorNotice(error)
+    } finally {
+      button.disabled = false
+    }
+  })
   function renderJobs() {
     const running = jobs.some((job) => job.state === 'running')
     updateOrderActions()
@@ -1425,10 +1508,36 @@ export async function startLibrary(
     bindAttribute(activityButton, 'aria-description', activityHelp)
     preparationHelp(activityButton, activityHelp)
     $('active-job').hidden = !active
+    // One notice for a sign-in or verification step; the importer never
+    // switches tabs by itself, so this button is the only way forward.
+    const attention = sorted.find(
+      (job) => job.state === 'paused' && job.attention && !job.dismissedAt
+    )
+    $('import-attention').hidden = !attention
+    $('import-attention').dataset.jobId = attention?.id || ''
+    // A browser without background tabs asks for a visible reader instead.
+    const visibleRequest = attention?.attention?.kind === 'visible-reader'
+    bindText(
+      $('import-attention-text'),
+      visibleRequest
+        ? uiMessage(
+            'This browser does not allow background import tabs. Use a visible import tab for this import? It will switch to that tab while it reads.'
+          )
+        : uiMessage(
+            '1688 needs a sign-in or verification in the import tab. Open that tab, finish the step, then resume.'
+          )
+    )
+    $('import-attention-allow').hidden = !visibleRequest
+    $('import-attention-open').hidden = visibleRequest
+    $('import-attention-resume').hidden = visibleRequest
+    renderStatus()
     if (active) {
       const display = progressPresentation(active)
       $('active-job-text').textContent =
-        `${display.title} · ${display.meter} · ${display.counts}`
+        `${display.title} · ${display.meter} · ${display.counts}` +
+        (active.visibleReader
+          ? ` · ${t('This browser does not allow background import tabs, so the import tab is visible.')}`
+          : '')
       const bar = $('active-job-progress')
       bar.max = display.max || 1
       if (display.max) bar.value = display.value
@@ -1583,7 +1692,7 @@ export async function startLibrary(
               job.state === 'running'
                 ? uiMessage('Pausing import…')
                 : uiMessage(
-                    'Resuming import. One visible detail tab will read the remaining orders.'
+                    'Resuming import. A background tab reads the remaining orders.'
                   )
             )
             await send(
@@ -1689,7 +1798,19 @@ export async function startLibrary(
         'aria-pressed',
         String(selectedMonths.has(button.dataset.month))
       )
+    $('clear-months').setAttribute('aria-pressed', String(!selectedMonths.size))
   }
+  // Recent months stay visible as chips; older ones open on demand.
+  const visibleMonths = 7
+  let monthsExpanded = false
+  const shortMonth = (month) =>
+    month === 'unknown'
+      ? t('Date unavailable')
+      : new Intl.DateTimeFormat(getLocale(), {
+          month: 'short',
+          year: 'numeric',
+          timeZone: 'UTC',
+        }).format(new Date(`${month}-01T00:00:00Z`))
   function renderMonthOptions() {
     const months = [
       ...new Set([
@@ -1700,9 +1821,36 @@ export async function startLibrary(
     ]
       .sort()
       .reverse()
+    const shown = monthsExpanded
+      ? months
+      : months.filter(
+          (month, index) => index < visibleMonths || selectedMonths.has(month)
+        )
+    const hidden = months.length - shown.length
+    const more = node('button', undefined, 'month-choice month-more')
+    bindText(
+      more,
+      monthsExpanded
+        ? uiMessage('Fewer months')
+        : uiMessage('+{0} months', { 0: hidden })
+    )
+    more.setAttribute('aria-expanded', String(monthsExpanded))
+    more.addEventListener('click', () => {
+      const focused = document.activeElement === more
+      monthsExpanded = !monthsExpanded
+      renderMonthOptions()
+      // The toggle is re-created; keep keyboard focus on its replacement.
+      if (focused)
+        $('month-options')
+          .querySelector('.month-more')
+          ?.focus({ preventScroll: true })
+    })
     $('month-options').replaceChildren(
-      ...months.map((month) => {
-        const button = node('button', monthLabel(month), 'month-choice')
+      ...shown.map((month) => {
+        const button = node('button', undefined, 'month-choice')
+        bindText(button, () => shortMonth(month))
+        bindAttribute(button, 'aria-label', () => monthLabel(month))
+        bindAttribute(button, 'title', () => monthLabel(month))
         button.dataset.month = month
         button.addEventListener('click', (event) => {
           if (event.shiftKey && monthAnchor && months.includes(monthAnchor)) {
@@ -1726,7 +1874,8 @@ export async function startLibrary(
           render()
         })
         return button
-      })
+      }),
+      ...(hidden || monthsExpanded ? [more] : [])
     )
     updateMonthFilter()
   }
@@ -2056,7 +2205,7 @@ export async function startLibrary(
       })
     return target
   })
-  mountProductCopyActions($('orders-copy-actions'), {
+  const ordersCopyMenu = mountProductCopyActions($('orders-copy-actions'), {
     image: $('copy-excel-image'),
     values: $('copy-values'),
     photos: $('copy-images'),
@@ -2067,6 +2216,44 @@ export async function startLibrary(
     marks: labelCopies[1],
     headers: $('include-headers').closest('label'),
   })
+  ordersCopyMenu.trigger.dataset.action = 'open-copy-menu'
+  const printButtons = [
+    ['print-labels', 'Print labels…', 'barcode', 'barcode'],
+    ['print-carton-marks', 'Print carton marks…', 'carton', 'mark'],
+  ].map(([id, label, symbol, kind]) => {
+    const target = node('button', uiMessage(label))
+    target.id = id
+    target.dataset.action = id
+    decorateIcon(target, symbol)
+    target.disabled = true
+    target.onclick = () => {
+      const rows = copyRows()
+      if (copyBusy || !packing?.canCopyLabels(rows)) return
+      // Label validation errors carry their own resolve action.
+      packing.printLabels(kind, rows).catch((error) => showErrorNotice(error))
+    }
+    return target
+  })
+  const recentPrints = node('button', uiMessage('Recent print jobs…'))
+  recentPrints.id = 'print-recent'
+  recentPrints.dataset.action = 'print-recent'
+  decorateIcon(recentPrints, 'undo')
+  recentPrints.onclick = () => packing?.openRecentPrints()
+  printButtons.push(recentPrints)
+  const printMenu = mountCopyActions($('orders-print-actions'), {
+    label: 'Print…',
+    ariaLabel: 'More print formats',
+    panelLabel: 'Print formats',
+    symbol: 'barcode',
+    groups: [{ label: 'Print', actions: printButtons }],
+  })
+  printMenu.trigger.dataset.action = 'open-print-menu'
+  preparationHelp(
+    printMenu.trigger,
+    uiMessage(
+      'Export print-ready A4 PDFs of labels or carton marks for the selected products.'
+    )
+  )
   $('copy-excel-image').addEventListener('click', () =>
     copyAction($('copy-excel-image'), async () => {
       if (copyBusy) return false

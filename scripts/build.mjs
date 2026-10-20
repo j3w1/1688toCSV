@@ -53,6 +53,7 @@ for (const resource of [
   'packing.css',
   'packing-review.css',
   'label-editor.css',
+  'shell.css',
   'theme.js',
 ])
   await cp(path.join(root, 'src', resource), path.join(output, resource))
@@ -77,6 +78,7 @@ const resources = [
   'packing.css',
   'packing-review.css',
   'label-editor.css',
+  'shell.css',
   'assets/casa-elida.png',
 ]
 for (const resource of resources) await readFile(path.join(output, resource))

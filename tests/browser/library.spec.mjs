@@ -3,10 +3,11 @@ import { createDemoRecords } from '../../preview/library-fixture.js'
 import { readFile, stat, writeFile } from 'node:fs/promises'
 import { copyCurrentImageBatch } from './copy-actions-helpers.mjs'
 
-async function seed(extension) {
+async function seed(extension, configure) {
   const records = await extension.inspector.evaluate(
     `(${createDemoRecords.toString()})(document)`
   )
+  configure?.(records)
   const result = await extension.inspector.evaluate(
     async (orders) =>
       chrome.runtime.sendMessage({
@@ -50,7 +51,7 @@ async function confirmOperation(page, name) {
 }
 
 async function openCopyFormats(page) {
-  const panel = page.locator('#orders-view .copy-actions-panel')
+  const panel = page.locator('#orders-copy-actions .copy-actions-panel')
   if (!(await panel.isVisible()))
     await page
       .getByRole('button', { name: 'More copy formats', exact: true })
@@ -483,7 +484,9 @@ test('filters and explicit product selections determine copy scope', async ({
 test('order cards select across their full surface, range-select and open details only on double-click or Enter', async ({
   extension,
 }) => {
-  await seed(extension)
+  await seed(extension, (records) => {
+    records[0].tags = ['Synthetic selection tag']
+  })
   const page = await openLibrary(extension)
   await page.setViewportSize({ width: 1280, height: 1200 })
   const cards = page.locator('.order-card')
@@ -505,6 +508,8 @@ test('order cards select across their full surface, range-select and open detail
   await expect(cards.locator('input[type=checkbox]')).toHaveCount(0)
   await expect(card).toHaveAttribute('aria-selected', 'false')
   for (const target of [
+    card.locator('.order-products'),
+    card.locator('.order-tag-badge').first(),
     card.locator('.badge'),
     card.locator('.order-status'),
     card.locator('.purchase-date'),
@@ -901,7 +906,6 @@ test('purchase dates group orders by month while separators stay out of copied v
   await expect(page.locator('#sheet-body tr.is-selected')).toHaveCount(5)
   await expect(orderBands.locator('[aria-selected]')).toHaveCount(0)
   await page.locator('#clear-rows').click()
-  await page.locator('#month-filter > summary').click()
   await page.locator('[data-month="2026-09"]').click()
   await expect(page.locator('.order-card')).toHaveCount(1)
   await expect(page.locator('#sheet-body tr[data-selection-key]')).toHaveCount(

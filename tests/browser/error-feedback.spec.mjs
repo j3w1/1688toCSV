@@ -139,7 +139,7 @@ for (const theme of ['light', 'dark']) {
       'Saved automatically'
     )
     await expect(notice).toHaveCount(0)
-    await view.getByRole('button', { name: 'Orders', exact: true }).click()
+    await view.page().locator('#view-orders').click()
     await expect(view).toBeHidden()
     await expect(page.locator('.error-notice')).toHaveCount(0)
   })
@@ -185,7 +185,7 @@ test('operation errors are nonmodal and dismiss before leaving the current view'
   extension,
 }) => {
   const { page, view } = await openPacking(extension)
-  await view.getByRole('button', { name: 'Orders', exact: true }).click()
+  await view.page().locator('#view-orders').click()
   await page.getByLabel('Packing month', { exact: true }).fill('')
   await page
     .getByRole('button', { name: 'Prepare packing list', exact: true })

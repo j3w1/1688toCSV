@@ -1,16 +1,17 @@
 # Development
 
-Use Windows-native Node.js 24 and the workflow in [AGENTS.md](../AGENTS.md). Edit sources, rebuild explicitly, then test the generated **dist** extension. There is no watch mode.
+Use Node.js 24 and the workflow in [AGENTS.md](../AGENTS.md): iterate locally with `npm run try`, and run full verification once at deploy. Edit sources, rebuild explicitly, then test the generated **dist** extension. There is no watch mode.
 
-| Command                               | Purpose                                                                        |
-| ------------------------------------- | ------------------------------------------------------------------------------ |
-| `npm run verify`                      | Source/docs checks, unit tests, production rebuild and isolated Chromium tests |
-| `npm run build` / `npm run build:dev` | Build the complete extension once into dist                                    |
-| `npm run test:browser`                | Test the current build with synthetic pages in a temporary profile             |
-| `npm run test:excel`                  | Windows Excel integration check in an unsaved workbook; restores the clipboard |
-| `npm run preview`                     | Synthetic preview; `/library.html` opens the workspace                         |
-| `npm run screenshots`                 | Regenerate workspace and label-editor images using synthetic data              |
-| `npm run check:docs`                  | Validate local links, screenshots and documented commands                      |
+| Command                               | Purpose                                                                                                                        |
+| ------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------ |
+| `npm run try`                         | Unit tests, development build, stage into the installed extension, reload it through CE Dev Browser and confirm library counts |
+| `npm run verify`                      | Source/docs checks, unit tests, production rebuild and isolated Chromium tests                                                 |
+| `npm run build` / `npm run build:dev` | Build the complete extension once into dist                                                                                    |
+| `npm run test:browser`                | Test the current build with synthetic pages in a temporary profile                                                             |
+| `npm run test:excel`                  | Windows Excel integration check in an unsaved workbook; restores the clipboard                                                 |
+| `npm run preview`                     | Synthetic preview; `/library.html` opens the workspace                                                                         |
+| `npm run screenshots`                 | Regenerate workspace and label-editor images using synthetic data                                                              |
+| `npm run check:docs`                  | Validate local links, screenshots and documented commands                                                                      |
 
 For UI changes, regenerate screenshots and check documentation after final verification. Keep the main README practical; record only necessary developer constraints here. Do not commit private orders, exports, captures, profiles or credentials.
 
@@ -24,7 +25,7 @@ Page adapters extract and validate source data. Monetary calculations use exact 
 
 Full order and product-entry IDs remain strings. Only complete snapshots that reconcile with displayed totals replace saved data. Changed data creates a retained version; notes and tags remain separate. Failed reads preserve the last good snapshot. Purchase dates describe the source order, not the time it was imported; unknown dates remain unknown until a successful refresh supplies them. Once established, purchase time stays fixed across list and detail reads.
 
-Imports use one visible, marked reader tab. Preserve tabs navigated away from the importer and never resume saved bulk queues automatically. **Open Workspace** opens the library; **Open Workspace here** refuses to replace a tab used by a running import. The embedded browser can reject new tabs. Dismissing an import notice hides it without deleting its job or order records.
+Imports use one marked reader tab created blank in the background (`active: false`, not auto-discardable) and then navigated, so the visible tab never changes; browsers that reject background extension tabs use an unfocused window; when that is refused too the job pauses with `attention.kind` `visible-reader`, and only the owner's **Use a visible tab** (`IMPORT_ALLOW_VISIBLE`) sets `allowVisibleReader` and records `visibleReader`. When the reader leaves its order page (sign-in or verification), the job pauses with `attention` naming that tab; the workspace shows one notice whose button is the only path that activates it, and Resume clears it. Preserve tabs navigated away from the importer and never resume saved bulk queues automatically. **Open Workspace** opens the library; **Open Workspace here** refuses to replace a tab used by a running import. The embedded browser can reject new tabs. Dismissing an import notice hides it without deleting its job or order records.
 
 Render at most 50 expanded order cards and 100 product rows per page. Month headings stay available independently of card pagination. Filtering and selection still include all matching records. Purchase-date ranges are inclusive; an empty matching scope must never fall back to all saved orders. Confirm multi-order import/refresh before starting; copy actions have no confirmation warning. Column controls and the persistent image preview select output; only an explicit copy action writes the clipboard. `IMPORT_PROGRESS` updates jobs only; `LIBRARY_CHANGED` reloads saved records. Progress alone must not rescan or rebuild the product library.
 

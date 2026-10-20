@@ -1,0 +1,262 @@
+import test from 'node:test'
+import assert from 'node:assert/strict'
+import {
+  createPrintStore,
+  restoreJob,
+  PRINT_KEYS,
+  RECENT_LIMIT,
+  RECENT_PRODUCT_LIMIT,
+} from '../src/print-store.js'
+
+function memoryStorage() {
+  const values = new Map()
+  return {
+    getItem: (key) => (values.has(key) ? values.get(key) : null),
+    setItem: (key, value) => values.set(key, String(value)),
+    values,
+  }
+}
+
+test('labels and carton marks keep separate settings', () => {
+  const storage = memoryStorage()
+  const store = createPrintStore(storage)
+  store.saveLayout('labels', { spares: 'equal', offsetXMm: 1.2 })
+  store.saveLayout('marks', { numbering: false, offsetXMm: -0.4 })
+  const again = createPrintStore(storage)
+  assert.equal(again.layout('labels').spares, 'equal')
+  assert.equal(again.layout('labels').offsetXMm, 1.2)
+  assert.equal(again.layout('marks').numbering, false)
+  assert.equal(again.layout('marks').offsetXMm, -0.4)
+  assert.notEqual(PRINT_KEYS.labels, PRINT_KEYS.marks)
+})
+
+test('unreadable or missing storage falls back to defaults', () => {
+  const storage = memoryStorage()
+  storage.setItem(PRINT_KEYS.labels, '{not json')
+  assert.equal(
+    createPrintStore(storage).layout('labels').spares,
+    'proportional'
+  )
+  const broken = {
+    getItem() {
+      throw new Error('blocked')
+    },
+    setItem() {
+      throw new Error('blocked')
+    },
+  }
+  const store = createPrintStore(broken)
+  assert.equal(store.layout('marks').numbering, true)
+  assert.doesNotThrow(() => store.saveLayout('labels', {}))
+  assert.equal(createPrintStore(null).recentJobs().length, 0)
+})
+
+test('named A4 presets start with the fixed default and replace by name', () => {
+  const store = createPrintStore(memoryStorage())
+  assert.deepEqual(store.presets(), [
+    { id: 'a4-5', name: 'A4 · 5 mm', marginMm: 5, offsetXMm: 0, offsetYMm: 0 },
+  ])
+  const office = store.savePreset({
+    name: 'Office HP',
+    marginMm: 6,
+    offsetXMm: 0.8,
+    offsetYMm: -9,
+  })
+  assert.match(office.id, /^preset-/)
+  assert.deepEqual(
+    { ...office, id: undefined },
+    {
+      id: undefined,
+      name: 'Office HP',
+      marginMm: 6,
+      offsetXMm: 0.8,
+      offsetYMm: -5,
+    }
+  )
+  store.savePreset({
+    name: 'Office HP',
+    marginMm: 5,
+    offsetXMm: 0.5,
+    offsetYMm: 0,
+  })
+  assert.equal(store.presets().length, 2)
+  assert.equal(store.presets()[1].offsetXMm, 0.5)
+  assert.throws(() => store.savePreset({ name: '  ' }), /Name the preset/)
+  assert.throws(() => store.savePreset({ name: 'A4 · 5 mm' }), /default preset/)
+  store.deletePreset('a4-5')
+  store.deletePreset(office.id)
+  assert.equal(store.presets().length, 1)
+})
+
+test('recent jobs keep the five most recent exports across both types, newest first', () => {
+  const store = createPrintStore(memoryStorage())
+  for (let index = 0; index < 7; index++)
+    store.recordJob({
+      kind: index % 2 ? 'marks' : 'labels',
+      date: new Date(Date.UTC(2026, 9, 19, 10, index)).toISOString(),
+      products: [
+        { code: `CE2610010${index}`, name: 'VELA', quantity: index + 1 },
+      ],
+      layout: { spares: 'equal' },
+      pages: 1,
+      total: 70,
+    })
+  const jobs = store.recentJobs()
+  assert.equal(jobs.length, RECENT_LIMIT)
+  assert.deepEqual(
+    jobs.map((job) => job.products[0].code),
+    ['CE26100106', 'CE26100105', 'CE26100104', 'CE26100103', 'CE26100102']
+  )
+  assert.equal(jobs[0].kind, 'labels')
+  assert.equal(jobs[1].kind, 'marks')
+  assert.equal(jobs[0].layout.spares, 'equal')
+  assert.equal(jobs[1].layout.numbering, true)
+  // A job without products is not recorded.
+  assert.equal(store.recordJob({ kind: 'labels', products: [] }), null)
+})
+
+test('regenerating a job revalidates products against current data and keeps quantities and caps', () => {
+  const ref = (variantId) => ({ orderId: 'O1', groupId: 'G1', variantId })
+  const job = {
+    kind: 'labels',
+    date: '2026-10-19T10:00:00.000Z',
+    products: [
+      {
+        code: 'CE26100101',
+        name: 'VELA',
+        quantity: 40,
+        cap: 2,
+        ref: ref('V1'),
+      },
+      { code: 'CE26100102', name: 'DIFUSOR', quantity: 50, ref: ref('V2') },
+      { code: 'CE26100199', name: 'GONE', quantity: 5, ref: ref('V9') },
+    ],
+    layout: { spares: 'proportional', limitExtras: true },
+  }
+  const current = [
+    {
+      key: 'CE26100102',
+      code: 'CE26100102',
+      name: 'DIFUSOR AROMA',
+      quantity: 24,
+      ref: ref('V2'),
+    },
+    {
+      key: 'CE26100101',
+      code: 'CE26100101',
+      name: 'VELA',
+      quantity: 1,
+      ref: ref('V1'),
+    },
+  ]
+  const restored = restoreJob(job, current)
+  assert.deepEqual(
+    restored.items.map((item) => [
+      item.code,
+      item.quantity,
+      item.cap,
+      item.name,
+    ]),
+    [
+      ['CE26100101', 40, 2, 'VELA'],
+      ['CE26100102', 50, undefined, 'DIFUSOR AROMA'],
+    ]
+  )
+  assert.deepEqual(
+    restored.missing.map((product) => product.code),
+    ['CE26100199']
+  )
+  assert.deepEqual(restored.changed, [])
+  assert.equal(restored.layout.limitExtras, true)
+})
+
+test('regeneration finds products by order, group and variant, never by a reused code', () => {
+  const ref = (variantId) => ({ orderId: 'O1', groupId: 'G1', variantId })
+  const store = createPrintStore(memoryStorage())
+  const job = store.recordJob({
+    kind: 'labels',
+    date: '2026-10-19T10:00:00.000Z',
+    products: [
+      { code: 'CE26100101', name: 'VELA', quantity: 40, ref: ref('V1') },
+      { code: 'CE26100102', name: 'DIFUSOR', quantity: 10, ref: ref('V2') },
+      { code: 'CE26100103', name: 'OLD', quantity: 5 },
+    ],
+    layout: {},
+  })
+  assert.deepEqual(job.products[0].ref, ref('V1'))
+  assert.equal(job.products[2].ref, undefined)
+  const current = [
+    // CE26100101 was released and reused by another product elsewhere.
+    {
+      key: 'CE26100101',
+      code: 'CE26100101',
+      name: 'OTRO',
+      ref: { orderId: 'O9', groupId: 'G9', variantId: 'V9' },
+    },
+    // The original product now carries a new code.
+    { key: 'CE26100111', code: 'CE26100111', name: 'VELA', ref: ref('V1') },
+    { key: 'CE26100102', code: 'CE26100102', name: 'DIFUSOR', ref: ref('V2') },
+  ]
+  const restored = restoreJob(job, current)
+  assert.deepEqual(
+    restored.items.map((item) => [item.code, item.name, item.quantity]),
+    [
+      ['CE26100111', 'VELA', 40],
+      ['CE26100102', 'DIFUSOR', 10],
+    ]
+  )
+  assert.deepEqual(restored.changed, [{ from: 'CE26100101', to: 'CE26100111' }])
+  assert.deepEqual(
+    restored.missing.map((product) => product.code),
+    ['CE26100103']
+  )
+})
+
+test('distinct non-Latin preset names stay distinct; the same name replaces in place', () => {
+  const store = createPrintStore(memoryStorage())
+  const office = store.savePreset({
+    name: '办公室',
+    marginMm: 5,
+    offsetXMm: 0.5,
+  })
+  const storeroom = store.savePreset({ name: '仓库', marginMm: 6 })
+  assert.notEqual(office.id, storeroom.id)
+  assert.deepEqual(
+    store.presets().map((preset) => preset.name),
+    ['A4 · 5 mm', '办公室', '仓库']
+  )
+  const again = store.savePreset({ name: '办公室', marginMm: 7 })
+  assert.equal(again.id, office.id)
+  assert.deepEqual(
+    store.presets().map((preset) => [preset.name, preset.marginMm]),
+    [
+      ['A4 · 5 mm', 5],
+      ['仓库', 6],
+      ['办公室', 7],
+    ]
+  )
+})
+
+test('an export with more products than history can hold is not kept rather than kept incomplete', () => {
+  const store = createPrintStore(memoryStorage())
+  const products = (count) =>
+    Array.from({ length: count }, (_, index) => ({
+      code: `CE${String(index).padStart(8, '0')}`,
+      quantity: 1,
+    }))
+  assert.equal(
+    store.recordJob({
+      kind: 'labels',
+      products: products(RECENT_PRODUCT_LIMIT + 1),
+      layout: {},
+    }),
+    null
+  )
+  assert.equal(store.recentJobs().length, 0)
+  const kept = store.recordJob({
+    kind: 'labels',
+    products: products(RECENT_PRODUCT_LIMIT),
+    layout: {},
+  })
+  assert.equal(kept.products.length, RECENT_PRODUCT_LIMIT)
+})
