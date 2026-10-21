@@ -300,8 +300,96 @@ test('missing photos block import; multiple photos are retained; shared merges n
     analyze(shared).issues.some((issue) => issue.code === 'photo-shared')
   )
   shared.sheets[0].rows[2].cells[7].value = 2
-  assert.ok(
-    errors(analyze(shared)).some((issue) => issue.code === 'photo-cross-group')
+  shared.sheets[0].images[0].to = { row: 2, col: 1 }
+  const separateGroups = analyze(shared)
+  assert.deepEqual(errors(separateGroups), [])
+  assert.deepEqual(
+    separateGroups.rows.map((row) => row.photos),
+    [[photo], [photo]]
+  )
+  assert.equal(separateGroups.groupCount, 2)
+  assert.deepEqual(
+    separateGroups.issues
+      .filter((issue) => issue.code === 'photo-shared')
+      .map((issue) => issue.cells),
+    [['A2', 'A3']]
+  )
+})
+
+test('one anchored photo serves different groups only within covered pic rows, skipping blank groups and preserving galleries', () => {
+  const source = fixture([
+    { group: 1, boxes: 1, perbox: 10, price: 3 },
+    { group: null, boxes: 1, perbox: 10, price: 3 },
+    { group: 2, boxes: 1, perbox: 10, price: 3 },
+    { group: 1, boxes: 1, perbox: 10, price: 3 },
+  ])
+  source.sheets[0].rows.at(-1).cells[1].value = 90
+  source.sheets[0].images = [
+    {
+      id: 'shared',
+      dataUrl: photo,
+      from: { row: 2, col: 1 },
+      to: { row: 5, col: 2, rowOffset: 0, colOffset: 0 },
+    },
+    {
+      id: 'second',
+      dataUrl: 'data:image/png;base64,Yg==',
+      from: { row: 4, col: 1 },
+      to: { row: 4, col: 1 },
+    },
+  ]
+  const result = analyze(source)
+  assert.deepEqual(
+    result.rows.map((row) => row.row),
+    [2, 4, 5]
+  )
+  assert.deepEqual(
+    result.rows.map((row) => row.photos),
+    [[photo], [photo, 'data:image/png;base64,Yg=='], []]
+  )
+  assert.deepEqual(
+    errors(result).map((issue) => [issue.code, issue.cells]),
+    [['photo-missing', ['A5']]]
+  )
+  assert.deepEqual(
+    result.issues.find((issue) => issue.code === 'photo-shared').cells,
+    ['A2', 'A4']
+  )
+})
+
+test('unreadable shared photos still block every covered group and unrelated-column pictures never fill pic rows', () => {
+  const source = fixture([
+    { group: 1, boxes: 1, perbox: 10, price: 3 },
+    { group: 2, boxes: 1, perbox: 10, price: 3 },
+  ])
+  source.sheets[0].images = [
+    {
+      id: 'unreadable',
+      unresolved: true,
+      dataUrl: photo,
+      from: { row: 2, col: 1 },
+      to: { row: 3, col: 1 },
+    },
+    {
+      id: 'outside-pic',
+      dataUrl: photo,
+      from: { row: 2, col: 2 },
+      to: { row: 3, col: 2 },
+    },
+  ]
+  const result = analyze(source)
+  assert.deepEqual(
+    result.rows.map((row) => row.photos),
+    [[], []]
+  )
+  assert.deepEqual(
+    errors(result).map((issue) => issue.code),
+    ['photo-unresolved', 'photo-missing', 'photo-missing']
+  )
+  assert.deepEqual(result.issues[0].cells, ['A2', 'A3'])
+  assert.equal(
+    result.issues.some((issue) => issue.code === 'photo-shared'),
+    false
   )
 })
 

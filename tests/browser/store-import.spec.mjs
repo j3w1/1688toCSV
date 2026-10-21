@@ -301,8 +301,30 @@ test('import sidebar keeps compact marker cards and setup guidance beside an ind
   expect(frame.x).toBeGreaterThanOrEqual(main.x + main.width - 1)
   expect(frame.width).toBe(282)
   await expect(
-    dialog.locator('.store-import-field .store-import-template')
+    dialog.locator('.store-import-date-field .store-import-template')
   ).toHaveAttribute('download', 'store-order-template.xlsx')
+  const checkTemplatePosition = async () => {
+    const date = await dialog
+        .getByLabel('Purchase date', { exact: true })
+        .boundingBox(),
+      download = await dialog
+        .getByRole('link', { name: 'Download template', exact: true })
+        .boundingBox()
+    expect(download.x).toBeGreaterThan(date.x + date.width)
+    expect(download.y + download.height / 2).toBeCloseTo(
+      date.y + date.height / 2,
+      0
+    )
+    expect(download.width).toBe(32)
+    expect(download.height).toBe(32)
+    const name = await dialog
+      .getByLabel('Store or factory name', { exact: true })
+      .boundingBox()
+    expect(date.y).toBeCloseTo(name.y, 0)
+    expect(date.height).toBe(32)
+    expect(name.height).toBe(32)
+  }
+  await checkTemplatePosition()
   await sidebar.getByRole('tab', { name: 'Setup', exact: true }).click()
   for (const row of await sidebar
     .locator('.store-import-filenames > div')
@@ -344,6 +366,7 @@ test('import sidebar keeps compact marker cards and setup guidance beside an ind
   await mkdir(new URL('../../work/', import.meta.url), { recursive: true })
   await dialog.screenshot({ path: 'work/store-import-sidebar-wide.png' })
   await page.setViewportSize({ width: 390, height: 700 })
+  await checkTemplatePosition()
   const narrow = await sidebar.boundingBox(),
     content = await body.boundingBox()
   expect(narrow.y).toBeGreaterThanOrEqual(content.y + content.height - 1)
@@ -362,6 +385,67 @@ test('import sidebar keeps compact marker cards and setup guidance beside an ind
   await sidebar.scrollIntoViewIfNeeded()
   await dialog.screenshot({ path: 'work/store-import-sidebar-narrow.png' })
   await expect(dialog.locator('input[name="photosReviewed"]')).not.toBeChecked()
+  await page.close()
+})
+
+test('one embedded photo imports into every covered product group with one original asset and a shared-photo review', async ({
+  extension,
+}) => {
+  const { page, file } = await openImport(extension)
+  const dialog = page.locator('.store-import-dialog')
+  await file.setInputFiles(
+    workbookFile({
+      rows: [
+        ['pic', 'desc', 'boxes', 'perbox', 'price', 'amount', 'group', 'var'],
+        ['', 'Shared photo plate', 1, 10, 3, 30, 1, ''],
+        ['', 'Skipped source row', 1, 10, 3, 30, '', ''],
+        ['', 'Shared photo bowl', 2, 10, 4, 80, 2, ''],
+        ['', 'Shared photo cup', 1, 10, 2, 20, 3, ''],
+        ['total', 130, 'total'],
+      ],
+      photoSpans: [{ from: 1, to: 5 }],
+    })
+  )
+  await expect(dialog.locator('.store-import-product')).toHaveCount(3)
+  await expect(dialog.locator('.store-import-product img')).toHaveCount(3)
+  await expect(dialog.locator('.store-import-issue.is-error')).toHaveCount(0)
+  const shared = dialog.locator('[data-issue-code="photo-shared"]')
+  await expect(shared).toHaveCount(1)
+  await expect(shared).toContainText('Shared product photo')
+  await expect(shared).toContainText('Group 1')
+  await expect(shared).toContainText('Group 2')
+  await expect(shared).toContainText('Group 3')
+  await expect(shared).toContainText('Rows 2, 4, 5')
+  for (const [language, title] of [
+    ['es', 'Foto compartida de productos'],
+    ['zh', '商品共用照片'],
+    ['en', 'Shared product photo'],
+  ]) {
+    await dialog
+      .locator(`.popup-language-toggle [data-language="${language}"]`)
+      .click()
+    await expect(shared).toContainText(title)
+  }
+  await dialog.getByLabel('Purchase date', { exact: true }).fill('2026-10-20')
+  await dialog.locator('input[name="photosReviewed"]').check()
+  await dialog
+    .getByRole('button', { name: 'Import order', exact: true })
+    .click()
+  await expect(dialog).toBeVisible()
+  expect((await backup(extension)).orders).toHaveLength(0)
+  await dialog.locator('input[name="allReviews"]').check()
+  await dialog
+    .getByRole('button', { name: 'Import order', exact: true })
+    .click()
+  await expect(dialog).toHaveCount(0)
+  const saved = await backup(extension)
+  expect(saved.orders).toHaveLength(1)
+  const items = saved.orders[0].snapshot.items
+  expect(items.map((item) => item.sourceGroup)).toEqual(['1', '2', '3'])
+  expect(items.map((item) => item.sourceRow)).toEqual([2, 4, 5])
+  expect(new Set(items.flatMap((item) => item.photos)).size).toBe(1)
+  expect(saved.images).toHaveLength(1)
+  expect(saved.orders[0].snapshot.totals.payable).toBe('130.00')
   await page.close()
 })
 

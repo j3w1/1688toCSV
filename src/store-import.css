@@ -71,46 +71,51 @@
     minmax(180px, 1.2fr) minmax(110px, 0.7fr) minmax(160px, 1fr)
     minmax(155px, 1fr);
   gap: 10px;
+  align-items: start;
 }
-.store-import-file-tools {
-  display: flex;
-  flex-wrap: wrap;
+.store-import-date-field {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
   align-items: center;
-  gap: 5px;
-  margin-block-start: 6px;
-  color: var(--muted);
-  font-size: 10px;
+  column-gap: 6px;
 }
-.store-import-file-tools .store-import-template {
+.store-import-date-field > label {
+  grid-column: 1 / -1;
+}
+.store-import-date-field .store-import-template {
+  box-sizing: border-box;
   display: inline-flex;
-  flex: 0 0 auto;
   align-items: center;
-  gap: 5px;
-  min-block-size: 24px;
-  padding: 3px 6px;
+  justify-content: center;
+  inline-size: 32px;
+  min-inline-size: 32px;
+  block-size: 32px;
+  min-block-size: 32px;
+  padding: 6px;
   border-radius: 5px;
-  font-size: 11px;
-  line-height: 1.3;
 }
 .store-import-template .ui-icon {
-  inline-size: 13px;
-  block-size: 13px;
+  inline-size: 16px;
+  block-size: 16px;
 }
 .store-import-field {
   min-inline-size: 0;
 }
 .store-import-field > label {
   display: block;
-  margin-block-end: 4px;
+  margin: 0 0 4px;
   font-size: 11px;
   font-weight: 600;
 }
-.store-import-field > input,
-.store-import-field > select {
+.store-import-dialog .store-import-field > input,
+.store-import-dialog .store-import-field > select {
   box-sizing: border-box;
   inline-size: 100%;
   min-inline-size: 0;
   min-block-size: 32px;
+  block-size: 32px;
+  margin: 0;
+  padding: 5px 8px;
   font-size: 12px;
 }
 .store-import-field > small {

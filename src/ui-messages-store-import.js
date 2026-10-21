@@ -38,10 +38,10 @@ export const STORE_IMPORT_MESSAGES = {
       zh: 'abcd 表示 A–D 共用一份数量和金额。审核时输入实际分配；不可复制总数或假定平均分配。abs、abm、abl 分别表示 S、M、L 尺码的 A/B 款。',
       es: 'abcd comparte una cantidad e importe entre A–D. Introduce el reparto real al revisar; nunca dupliques los totales ni supongas cantidades iguales. abs, abm y abl indican A/B en tallas S, M y L.',
     },
-  'Every product needs a photo. Missing or uncertain row links block import. Review shared or multiple photos. Thumbnails fit a square without stretching; photo edits keep the original.':
+  'Every product needs a photo. One photo can serve different groups when its anchor or merged pic cell covers their rows. Confirm shared photos during review. Missing or unreadable photos block import. Square thumbnails keep proportions and originals.':
     {
-      zh: '每件商品都需要照片。缺失照片或行关联不明确时会阻止导入。共用照片或多张照片需要审核。缩略图等比适配正方形；编辑会保留原图。',
-      es: 'Cada producto necesita foto. Las fotos ausentes o los vínculos dudosos bloquean la importación. Revisa las fotos compartidas o múltiples. Las miniaturas se ajustan sin deformarse y la edición conserva el original.',
+      zh: '每件商品都需要照片。图片锚定范围或合并的 pic 单元格覆盖对应行时，不同商品组可以共用照片。审核时请确认共用照片。缺失或无法读取的照片会阻止导入。正方形缩略图保持比例，并保留原图。',
+      es: 'Cada producto necesita foto. Una foto puede servir a distintos grupos si su anclaje o celda pic combinada cubre sus filas. Confirma las fotos compartidas al revisar. Las fotos ausentes o ilegibles bloquean la importación. Las miniaturas cuadradas conservan las proporciones y los originales.',
     },
   'Review loose units and shared cartons separately from ordered quantities. Never infer fractional or mixed cartons. Add and explain extra order costs separately.':
     {
@@ -82,10 +82,9 @@ export const STORE_IMPORT_MESSAGES = {
     zh: '确认第 {0} 项审核',
     es: 'Confirmar revisión {0}',
   },
-  'Shared group photo': { zh: '组内共用照片', es: 'Foto compartida del grupo' },
-  'Photo overlaps groups': {
-    zh: '照片跨越商品组',
-    es: 'Foto entre grupos distintos',
+  'Shared product photo': {
+    zh: '商品共用照片',
+    es: 'Foto compartida de productos',
   },
   'Missing product photo': {
     zh: '缺少商品照片',
@@ -112,10 +111,6 @@ export const STORE_IMPORT_MESSAGES = {
   'Confirm these rows share this photo.': {
     zh: '请确认这些商品行共用此照片。',
     es: 'Confirma que estas filas comparten la foto.',
-  },
-  'Anchor a separate photo inside each group in Excel.': {
-    zh: '请在 Excel 中为每个商品组分别定位照片。',
-    es: 'Ancla una foto separada dentro de cada grupo en Excel.',
   },
   'Paste a picture into this row’s pic cell in Excel.': {
     zh: '请在 Excel 中将照片粘贴到此行的 pic 单元格。',
@@ -289,25 +284,20 @@ export const STORE_IMPORT_MESSAGES = {
       zh: '同组有多个源数据行时，合并款式必须有不同尺寸。请将每个款式分行，或使用 abs、abm、abl 等不同尺寸的组合。',
       es: 'Un grupo con varias filas no puede combinar variantes sin tallas distintas. Usa una fila por variante o surtidos de tallas distintas como abs, abm y abl.',
     },
-  'One picture overlaps different groups. Anchor separate pictures to the correct product rows in Excel before importing.':
-    {
-      zh: '一张照片跨越不同商品组。请先在 Excel 中为正确的商品行分别插入并定位图片。',
-      es: 'Una foto abarca grupos distintos. Ancla fotos separadas a las filas correctas en Excel antes de importar.',
-    },
   'This picture is not embedded as a readable raster image. Paste the picture into its product row in Excel.':
     {
       zh: '此照片未以可读取的位图形式嵌入。请在 Excel 中将照片粘贴到对应的商品行。',
       es: 'Esta foto no está incrustada como una imagen legible. Pégala en su fila de producto en Excel.',
     },
-  'This picture spans several rows of one group. Confirm that the group shares this picture.':
+  'This picture covers multiple product rows, which may belong to different groups. Confirm these rows share this photo.':
     {
-      zh: '此照片跨越同组的多行。请确认此组共用这张照片。',
-      es: 'Esta foto abarca varias filas de un grupo. Confirma que el grupo comparte la foto.',
+      zh: '此照片覆盖多个商品行，这些行可以属于不同商品组。请确认这些商品行共用此照片。',
+      es: 'Esta foto cubre varias filas de productos, que pueden pertenecer a distintos grupos. Confirma que estas filas comparten la foto.',
     },
-  'Every included product row needs an embedded picture anchored to its pic cell or a merged pic cell within its group.':
+  'Every included product row needs an embedded picture anchored to its pic cell or a merged pic cell covering that row.':
     {
-      zh: '每个待导入商品行都需要嵌入照片，并定位在其 pic 单元格或同组的合并 pic 单元格内。',
-      es: 'Cada fila incluida necesita una foto incrustada anclada a su celda pic o a una celda pic combinada dentro de su grupo.',
+      zh: '每个待导入商品行都需要嵌入照片，并定位在其 pic 单元格或覆盖该行的合并 pic 单元格内。',
+      es: 'Cada fila incluida necesita una foto incrustada anclada a su celda pic o a una celda pic combinada que cubra esa fila.',
     },
   'The product rows total ¥{computedTotal}, but the whole-order total control is ¥{total}. Correct the source values before importing.':
     {

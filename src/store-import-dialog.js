@@ -105,8 +105,7 @@ const issueMessage = (issue) =>
   })
 
 const issueTitles = {
-  'photo-shared': 'Shared group photo',
-  'photo-cross-group': 'Photo overlaps groups',
+  'photo-shared': 'Shared product photo',
   'photo-missing': 'Missing product photo',
   'photo-unresolved': 'Unreadable photo',
   'variant-allocation': 'Split variant quantities',
@@ -117,7 +116,6 @@ const issueTitles = {
 }
 const issueInstructions = {
   'photo-shared': 'Confirm these rows share this photo.',
-  'photo-cross-group': 'Anchor a separate photo inside each group in Excel.',
   'photo-missing': 'Paste a picture into this row’s pic cell in Excel.',
   'photo-unresolved': 'Replace this picture with an embedded image in Excel.',
   'variant-allocation':
@@ -137,8 +135,7 @@ function issueContext(issue, analysis, sheet) {
         .some((cell) => addresses.has(cell))
   )
   const photos = [...new Set(rows.flatMap((row) => row.photos))]
-  // An invalid cross-group anchor is still useful visual evidence, even though
-  // validation correctly refuses to attach that picture to imported products.
+  // Keep anchored visual evidence available for issues without an assigned photo.
   const assigned = photos.length > 0
   for (const image of sheet?.images ?? []) {
     if (assigned || !image.dataUrl || !image.from) continue
@@ -465,17 +462,19 @@ export function openStoreImportDialog({ repository, onImported = () => {} }) {
   decorateIcon(submit, 'upload')
   actions.append(popupLanguageToggle(dialog), submit, close)
   header.append(heading, actions)
+  const dateField = field('Purchase date', purchaseDate)
+  dateField.classList.add('store-import-date-field')
   setup.append(
     field('Workbook', file),
     field('Sheet', sheet),
     field('Store or factory name', storeName),
-    field('Purchase date', purchaseDate)
+    dateField
   )
-  const templateTools = el('div', undefined, 'store-import-file-tools'),
-    template = decorateIcon(
-      el('a', m('Download template'), 'button store-import-template'),
-      'download'
-    )
+  const template = decorateIcon(
+    el('a', m('Download template'), 'button store-import-template'),
+    'download',
+    { iconOnly: true }
+  )
   template.href = 'assets/store-order-template.xlsx'
   template.download = 'store-order-template.xlsx'
   bindAttribute(
@@ -485,8 +484,7 @@ export function openStoreImportDialog({ repository, onImported = () => {} }) {
       'Download an editable workbook with ready import markers, formatted product rows and formulas.'
     )
   )
-  templateTools.append(template)
-  setup.firstElementChild.append(templateTools)
+  dateField.append(template)
   reviewLabel.append(
     photosReviewed,
     el('span', m('I checked the product photos, quantities and order total.'))

@@ -223,7 +223,7 @@ export function mountStoreSpreadsheetGuide(
     ),
     section(
       'Review photos before importing',
-      'Every product needs a photo. Missing or uncertain row links block import. Review shared or multiple photos. Thumbnails fit a square without stretching; photo edits keep the original.'
+      'Every product needs a photo. One photo can serve different groups when its anchor or merged pic cell covers their rows. Confirm shared photos during review. Missing or unreadable photos block import. Square thumbnails keep proportions and originals.'
     ),
     section(
       'Keep packing exceptions explicit',

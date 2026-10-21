@@ -20,7 +20,7 @@ test('import popup downloads the real editable template and accepts it for revie
     await dialog
       .locator(`.popup-language-toggle [data-language="${language}"]`)
       .click()
-    await expect(link).toHaveText(label)
+    await expect(link).toHaveAccessibleName(label)
   }
   const pending = page.waitForEvent('download')
   await link.click()

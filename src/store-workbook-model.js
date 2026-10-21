@@ -611,15 +611,6 @@ export function analyzeStoreSheet(workbook, sheetName) {
         )
     affected = [...new Set(affected)]
     if (!affected.length) continue
-    if (new Set(affected.map((row) => row.group)).size > 1) {
-      issue(
-        'error',
-        'photo-cross-group',
-        'One picture overlaps different groups. Anchor separate pictures to the correct product rows in Excel before importing.',
-        affected.map((row) => row.cells.pic)
-      )
-      continue
-    }
     if (!image.dataUrl || image.unresolved) {
       issue(
         'error',
@@ -629,12 +620,12 @@ export function analyzeStoreSheet(workbook, sheetName) {
       )
       continue
     }
-    const shared = groups.get(affected[0].group) || affected
-    if (shared.length > 1 && affected.length > 1)
+    // Photo ownership follows its explicit pic-cell coverage, independently of groups.
+    if (affected.length > 1)
       issue(
         'review',
         'photo-shared',
-        'This picture spans several rows of one group. Confirm that the group shares this picture.',
+        'This picture covers multiple product rows, which may belong to different groups. Confirm these rows share this photo.',
         affected.map((row) => row.cells.pic)
       )
     for (const row of affected)
@@ -645,7 +636,7 @@ export function analyzeStoreSheet(workbook, sheetName) {
       issue(
         'error',
         'photo-missing',
-        'Every included product row needs an embedded picture anchored to its pic cell or a merged pic cell within its group.',
+        'Every included product row needs an embedded picture anchored to its pic cell or a merged pic cell covering that row.',
         [row.cells.pic].filter(Boolean),
         row.row
       )
