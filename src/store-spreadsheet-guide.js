@@ -29,7 +29,7 @@ const markerRows = [
   [
     ['desc'],
     'Seller description',
-    'Optional; repeat on each description column you want to include.',
+    'Optional. Repeat for all descriptions; colors, sizes and materials are recognized even without seller headers.',
   ],
   [
     ['var'],

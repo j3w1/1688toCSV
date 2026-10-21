@@ -1,7 +1,9 @@
 import { normalizePrice } from './money.js'
+import { recognitionProperties } from './spreadsheet-properties.js'
 
-// Literal local aliases only. Product titles and article numbers are not size
-// evidence; measured sizes are compared in compatible units, without area guesses.
+// Literal local aliases only. 1688 marketing titles and article numbers are not
+// size evidence; marked spreadsheet descriptions are. Compare compatible units
+// without area guesses.
 export const SIZE_VOCABULARY_VERSION = 1
 
 export const DEFAULT_SIZE_VOCABULARY = Object.freeze(
@@ -332,8 +334,9 @@ function descriptionProperties(item) {
 }
 
 function extract(item, aliases) {
-  const properties = item.skuProperties?.length
-    ? item.skuProperties
+  const sourceProperties = recognitionProperties(item)
+  const properties = sourceProperties.length
+    ? sourceProperties
     : descriptionProperties(item)
   const variantProperties = []
   const sizeSources = []
@@ -534,8 +537,13 @@ export function resolvePendingSizeMappings(
     if (
       sources &&
       (sources.some((item) => !item) ||
-        new Set(sources.map((item) => (item.title || item.description).trim()))
-          .size !== 1)
+        new Set(
+          sources.map((item) =>
+            snapshot.sourceType === 'spreadsheet'
+              ? item.sourceGroup
+              : (item.title || item.description).trim()
+          )
+        ).size !== 1)
     )
       continue
     const sourceSizes =

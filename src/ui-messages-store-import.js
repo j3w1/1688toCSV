@@ -631,10 +631,11 @@ export const STORE_IMPORT_MESSAGES = {
     es: 'Opcional. Debe ser igual al precio unitario × cantidad total.',
   },
   'Seller description': { zh: '卖家描述', es: 'Descripción del vendedor' },
-  'Optional; repeat on each description column you want to include.': {
-    zh: '选填；在每个需要导入的描述列重复填写。',
-    es: 'Opcional; repítelo en cada columna de descripción que quieras incluir.',
-  },
+  'Optional. Repeat for all descriptions; colors, sizes and materials are recognized even without seller headers.':
+    {
+      zh: '选填。在所有描述列重复填写；即使没有卖家表头，也可识别颜色、尺寸和材质。',
+      es: 'Opcional. Repítelo en todas las descripciones; se reconocen colores, medidas y materiales incluso sin encabezados del vendedor.',
+    },
   'Variant or size': { zh: '款式或尺寸', es: 'Variante o talla' },
   'Optional. Combined variants require a reviewed quantity split.': {
     zh: '选填。合并款式的数量必须经审核后拆分。',

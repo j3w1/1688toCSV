@@ -1,3 +1,5 @@
+import { recognitionProperties } from './spreadsheet-properties.js'
+
 // Local translation helpers only. A hint never changes imported text, label
 // names, grouping, or codes. Swatches are illustrative, not seller color samples.
 export const COLOR_VOCABULARY_VERSION = 1
@@ -799,7 +801,7 @@ function fieldsForItem(item) {
     fields.push({ label, value, color: colorField.test(label) })
     seen.add(key)
   }
-  for (const property of item?.skuProperties ?? [])
+  for (const property of recognitionProperties(item))
     add(property?.label, property?.value, true)
   // Older imports can have only a description. Read labeled variant lines,
   // never the title, product number, or unlabelled marketing description.

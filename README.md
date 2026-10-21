@@ -113,23 +113,25 @@ The template has **Orders** and **Guide** sheets, with all English markers in pl
 
 <a href="screenshots/store-spreadsheet-import.png"><img src="screenshots/store-spreadsheet-import.png" alt="Store spreadsheet import with compact review controls and copyable English import markers" width="640" /></a>
 
-| Marker                 | Meaning                                                                                               |
-| ---------------------- | ----------------------------------------------------------------------------------------------------- |
-| `pic`                  | Required embedded product pictures; multiple pictures are retained.                                   |
-| `desc`                 | Optional description; repeat across columns to combine their text and recognized attributes.          |
-| `boxes`                | Required number of cartons.                                                                           |
-| `perbox`               | Pieces inside one carton; provide this or `qty`.                                                      |
-| `qty`                  | Total pieces for this source row; provide this or `perbox`.                                           |
-| `price`                | Required unit price in yuan.                                                                          |
-| `amount`               | Optional row amount, checked against price × quantity.                                                |
-| `group`                | Required product group identity; blank skips the row.                                                 |
-| `var`                  | Optional variant/size declaration. Combined letters need actual per-variant quantities during review. |
-| `kg`                   | Optional kilograms per carton.                                                                        |
-| `cbm`                  | Optional cubic metres per carton.                                                                     |
-| `cbmx`, `cbmy`, `cbmz` | Optional complete length, width and height in centimetres; their calculated volume takes priority.    |
-| `total`                | Required twice, surrounding the whole-order amount: `total` · value · `total`.                        |
+| Marker                 | Meaning                                                                                                      |
+| ---------------------- | ------------------------------------------------------------------------------------------------------------ |
+| `pic`                  | Required embedded product pictures; multiple pictures are retained.                                          |
+| `desc`                 | Optional description; repeat across columns. All marked text feeds recognition, even without seller headers. |
+| `boxes`                | Required number of cartons.                                                                                  |
+| `perbox`               | Pieces inside one carton; provide this or `qty`.                                                             |
+| `qty`                  | Total pieces for this source row; provide this or `perbox`.                                                  |
+| `price`                | Required unit price in yuan.                                                                                 |
+| `amount`               | Optional row amount, checked against price × quantity.                                                       |
+| `group`                | Required product group identity; blank skips the row.                                                        |
+| `var`                  | Optional variant/size declaration. Combined letters need actual per-variant quantities during review.        |
+| `kg`                   | Optional kilograms per carton.                                                                               |
+| `cbm`                  | Optional cubic metres per carton.                                                                            |
+| `cbmx`, `cbmy`, `cbmz` | Optional complete length, width and height in centimetres; their calculated volume takes priority.           |
+| `total`                | Required twice, surrounding the whole-order amount: `total` · value · `total`.                               |
 
 Quantity and financial mismatches block import and identify their cells. Missing or ambiguous picture links also block import; pictures spanning several rows of one group require confirmation. Combined variants retain one source quantity, amount and carton record. Their reviewed split never duplicates cartons; selecting only part of a shared carton record requires carton-print review. Ordinary unit suffixes such as `6元` or `20.5 K.G.` are accepted, while ambiguous calculations are rejected. Workbook formulas are read from saved results; macros and formulas are never executed.
+
+Marked `desc` text uses the shared color, size and material recognition rules. Seller headers help identify article codes and explicit attributes, but a measurement such as `25cm` or `8.5"` does not need a seller header. Comparable measurements receive size endings during preparation; incompatible units or dimensions remain for size review. Unitless values stay unitless. Existing imported descriptions are also recognized without reimporting. Saved codes stay unchanged until you review a reset or a pending size correction.
 
 Original photos stay in the local library. Square thumbnails preserve their proportions. **Edit photo** lets you fit or crop to a square, resize, reposition, choose the canvas background and reset the composition. Use the visual **A–E** and size buttons to compose a code such as **AS** or **BL**, or enter a custom code such as **AX**, then click its product in the photo. New labels start in the nearest corner with the full badge kept inside the canvas; drag them to refine their positions. A larger black dot with a strong white center points to a rounded black label with bold white text. **Invert pointer** switches the lines and outer circles to white with black centers for dark products; code badges keep their standard colors. Single-letter badges are square with balanced padding and centered text; longer codes retain enough width to stay readable. Drag the dot and label separately; arrow keys make small adjustments, and Shift moves farther. Select a tag to rename or remove it with the compact edit/trash controls. **Tag size** scales all labels, dots and connecting lines in that photo together, from 60% to 600%. **Pointer size** independently scales all pointing circles in the photo, from 50% to 400%, leaving label sizes, leaders and positions intact. The longer sliders snap to fixed standard percentages, including every 25-point stop from 75% to 600% for Tag size; then choose **Save photo**. Tags stay with that product's photo, appear in its composed thumbnail and photo copies, and survive backups. Cancel preserves the saved version. Resizing or repositioning keeps tag points attached to the product; a crop that hides a point must be adjusted first. Every Product photo popup keeps the full assigned product code and compact product context visible while viewing, editing or moving through a gallery. A small photo count identifies galleries. Deleting an order also removes its unused local originals; images still referenced by another order or its history remain.
 

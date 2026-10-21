@@ -179,6 +179,101 @@ async function backup(extension) {
   return response.data
 }
 
+test('marked description cells without measurement headers reach automatic size recognition after a real workbook import', async ({
+  extension,
+}) => {
+  const { page, dialog, file } = await openImport(extension)
+  const groups = [
+    ['25cm', '20.5cm', '18cm'],
+    ['10.5"', '8"', '7.5"', '6"'],
+    ['25cm', '14*6'],
+  ]
+  const products = groups.flatMap((sizes, group) =>
+    sizes.map((size, index) => [
+      '',
+      `SYN-${group + 1}-${index + 1}`,
+      '黑色陶瓷盘',
+      size,
+      1,
+      10,
+      1,
+      10,
+      group + 1,
+    ])
+  )
+  await file.setInputFiles(
+    workbookFile({
+      rows: [
+        [
+          'pic',
+          'desc',
+          'desc',
+          'desc',
+          'boxes',
+          'perbox',
+          'price',
+          'amount',
+          'group',
+        ],
+        ['图片', '货号', '品名', '', '箱数', '装箱量', '单价', '金额', '组'],
+        ...products,
+        ['total', products.length * 10, 'total'],
+      ],
+      photoSpans: products.map((_, index) => ({
+        from: index + 2,
+        to: index + 3,
+      })),
+    })
+  )
+  await expect(dialog.locator('.store-import-product')).toHaveCount(
+    products.length
+  )
+  await expect(dialog.locator('.store-import-issue.is-error')).toHaveCount(0)
+  await dialog.getByLabel('Purchase date', { exact: true }).fill('2026-10-20')
+  await dialog
+    .getByRole('checkbox', {
+      name: 'I checked the product photos, quantities and order total.',
+    })
+    .check()
+  await dialog
+    .getByRole('button', { name: 'Import order', exact: true })
+    .click()
+  await expect(dialog).toHaveCount(0)
+  const imported = (await backup(extension)).orders[0].snapshot
+  expect(imported.items[0].productNumber).toBe('SYN-1-1')
+  expect(imported.items[0].description).toBe('SYN-1-1 · 黑色陶瓷盘 · 25cm')
+  await page.locator('#select-rows').click()
+  await page.locator('#prepare-orders').click()
+  await page
+    .getByRole('dialog', { name: 'Assign product codes?', exact: true })
+    .getByRole('button', { name: 'Assign codes and prepare', exact: true })
+    .click()
+  const packing = page.locator('#packing-view')
+  await expect(packing.locator('.preparation-group')).toHaveCount(3)
+  await expect(packing.locator('.preparation-save-status')).toHaveText(
+    'Saved automatically'
+  )
+  const saved = await backup(extension)
+  const prepared = saved.preparations[0].groups
+  expect(prepared[0].variants.map((variant) => variant.size)).toEqual(groups[0])
+  expect(prepared[0].variants.map((variant) => variant.sizeSuffix)).toEqual([
+    'L',
+    'M',
+    'S',
+  ])
+  expect(prepared[1].variants.map((variant) => variant.sizeSuffix)).toEqual([
+    'XL',
+    'L',
+    'M',
+    'S',
+  ])
+  expect(prepared[2].variants.map((variant) => variant.size)).toEqual(groups[2])
+  expect(
+    prepared[2].variants.every((variant) => variant.needsSizeMapping)
+  ).toBe(true)
+  expect(saved.orders[0].snapshot).toEqual(imported)
+})
+
 test('import sidebar keeps compact marker cards and setup guidance beside an independently scrolling review', async ({
   extension,
 }) => {
