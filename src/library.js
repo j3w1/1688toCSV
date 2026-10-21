@@ -35,6 +35,7 @@ import { mountOrderCharges } from './order-charges-ui.js'
 import { mountOperationsStrip, openOperationsDialog } from './operations-ui.js'
 import { mountPaymentLinks } from './payment-links-ui.js'
 import { paymentCostAdjustments, paymentLinksTotal } from './payment-links.js'
+import { hasProductFeatureCosts } from './product-features.js'
 import { centsToMoney, moneyToCents } from './money.js'
 import {
   orderCostAdjustments,
@@ -1268,9 +1269,10 @@ export async function startLibrary(
         void openDetails(record).catch((error) => feedback(error.message, true))
       })
       identity.append(details)
+      const actions = node('span', undefined, 'order-card-actions')
       const contact = wechatCopyButton(record.storeWechat)
-      if (contact) identity.append(contact)
-      operationsStrip(identity, record)
+      if (contact) actions.append(contact)
+      operationsStrip(actions, record)
       const receiving = records.filter((target) =>
         target.paymentLinks?.some(
           (link) => link.sourceOrderId === order.orderId
@@ -1297,8 +1299,12 @@ export async function startLibrary(
         }
         const paymentStrip = node('span', undefined, 'operations-strip')
         paymentStrip.append(linked)
-        identity.append(paymentStrip)
+        actions.append(paymentStrip)
       }
+      identity.append(actions)
+      summary.append(identity)
+      const reference = node('div', undefined, 'order-card-reference')
+      const products = node('span', undefined, 'order-card-products')
       const productNames = packing?.orderNames(order.orderId) || []
       if (getLanguage() !== 'zh' && productNames.length) {
         const names = node('span', undefined, 'order-name-summary spanish-name')
@@ -1312,11 +1318,9 @@ export async function startLibrary(
           names,
           uiMessage('Product names: {0}', { 0: productNames.join(' · ') })
         )
-        identity.append(names)
+        products.append(names)
       }
-      summary.append(identity)
-      const reference = node('div', undefined, 'order-card-reference')
-      reference.append(
+      products.append(
         node(
           'span',
           uiMessage(order.items.length === 1 ? '{0} product' : '{0} products', {
@@ -1325,6 +1329,7 @@ export async function startLibrary(
           'order-products'
         )
       )
+      reference.append(products)
       const charges = centsToMoney(
         moneyToCents(additionalChargesTotal(record)) +
           moneyToCents(paymentLinksTotal(record))
@@ -1459,6 +1464,7 @@ export async function startLibrary(
         .filter(
           (record) =>
             record.additionalCharges?.length ||
+            hasProductFeatureCosts(record) ||
             linkedOrders.has(record.snapshot.orderId)
         )
         .map((record) => [
@@ -1648,6 +1654,7 @@ export async function startLibrary(
       if (
         adjustment &&
         (Number(adjustment.additionalCharge) ||
+          Number(adjustment.featureCharge) ||
           Number(adjustment.linkedPaymentNet))
       ) {
         const effective = node(
@@ -1658,10 +1665,11 @@ export async function startLibrary(
         preparationHelp(
           effective,
           uiMessage(
-            'Includes ¥{0} of additional order charges. The source unit price stays unchanged.',
+            'Includes ¥{0} of added costs. The source unit price stays unchanged.',
             {
               0: centsToMoney(
                 moneyToCents(adjustment.additionalCharge || '0.00') +
+                  moneyToCents(adjustment.featureCharge || '0.00') +
                   moneyToCents(adjustment.linkedPaymentNet || '0.00')
               ),
             }

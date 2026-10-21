@@ -42,7 +42,7 @@ const paths = {
   warning: 'M12 3 23 21H1zM12 9v5M12 17h.01',
   lightbulb: 'M8 16a7 7 0 1 1 8 0l-1 2H9zM9 21h6M12 3V1',
   rotation: 'M20 8a9 9 0 1 0 1 8M20 3v5h-5M8 12h8',
-  more: 'M4 12h.01M12 12h.01M20 12h.01',
+  more: 'M6.2 12a1.7 1.7 0 1 0-3.4 0 1.7 1.7 0 1 0 3.4 0M13.7 12a1.7 1.7 0 1 0-3.4 0 1.7 1.7 0 1 0 3.4 0M21.2 12a1.7 1.7 0 1 0-3.4 0 1.7 1.7 0 1 0 3.4 0',
   refund:
     'M4 8a9 9 0 1 1-1 8M4 3v5h5M15 9h-4a2 2 0 0 0 0 4h2a2 2 0 0 1 0 4H9M12 7v12',
   plus: 'M12 5v14M5 12h14',
@@ -67,6 +67,10 @@ export function icon(name) {
   svg.classList.add('ui-icon')
   const path = document.createElementNS(svg.namespaceURI, 'path')
   path.setAttribute('d', paths[name] || paths.copy)
+  if (name === 'more') {
+    path.setAttribute('fill', 'currentColor')
+    path.setAttribute('stroke', 'none')
+  }
   svg.append(path)
   return svg
 }

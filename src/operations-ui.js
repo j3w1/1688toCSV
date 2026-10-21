@@ -3,6 +3,8 @@ import { bindAttribute, bindText, message, t } from './i18n.js'
 import { preparationHelp } from './preparation-help.js'
 import { icon } from './icons.js'
 import { storeIdentity } from './database.js'
+import { centsToMoney } from './money.js'
+import { productFeatures, featureUnitCost } from './product-features.js'
 import {
   operationsIndicators,
   productWorkflowClock,
@@ -53,7 +55,7 @@ export function mountOperationsStrip(
                   detail: () =>
                     indicators
                       .slice(4)
-                      .map((item) => t(item.label, item.params))
+                      .map((item) => t(item.label, indicatorParams(item)))
                       .join(' · '),
                 },
               },
@@ -70,9 +72,12 @@ export function mountOperationsStrip(
       bindAttribute(
         button,
         'aria-label',
-        message(indicator.label, indicator.params)
+        message(indicator.label, indicatorParams(indicator))
       )
-      preparationHelp(button, message(indicator.label, indicator.params))
+      preparationHelp(
+        button,
+        message(indicator.label, indicatorParams(indicator))
+      )
       button.append(operationIcon(indicator.icon))
       button.addEventListener('click', (event) => {
         event.preventDefault()
@@ -88,6 +93,19 @@ export function mountOperationsStrip(
   }
   render(record)
   return { update: render, destroy: () => strip.remove() }
+}
+
+function indicatorParams(indicator) {
+  const params = { ...indicator.params }
+  if (indicator.label.startsWith('Product feature:')) {
+    if (indicator.translateFeatureName) {
+      const name = params.name
+      params.name = () => t(name)
+    }
+    const treatment = params.treatment
+    params.treatment = () => t(treatment)
+  }
+  return params
 }
 
 function field(
@@ -452,6 +470,111 @@ function renderOrder(host, draft) {
   renderOriginalTags(host, draft)
 }
 
+function renderFeatures(host, draft) {
+  const section = group(host, 'Product features'),
+    list = el('div', undefined, 'operations-features'),
+    header = el('div', undefined, 'operations-feature-head'),
+    add = el('button', undefined, 'operations-feature-add'),
+    total = el('p', undefined, 'operations-feature-total')
+  for (const label of ['Feature name', 'Cost / piece (¥)', 'Cost treatment'])
+    header.append(el('span', message(label)))
+  add.type = 'button'
+  add.append(icon('plus'), el('span', message('Add feature')))
+  section.append(
+    header,
+    list,
+    add,
+    total,
+    el(
+      'p',
+      message(
+        'Enter a cost per piece. Choose Already recorded when the source price, linked payment or order charges already cover it; otherwise it increases this product’s cost.'
+      ),
+      'operations-help'
+    )
+  )
+  function updateTotal() {
+    try {
+      bindText(
+        total,
+        message('Additional feature cost: ¥{cost} per piece', {
+          cost: centsToMoney(featureUnitCost(draft.features)),
+        })
+      )
+    } catch {
+      bindText(
+        total,
+        message('Enter a valid feature cost to calculate the total.')
+      )
+    }
+  }
+  function appendFeature(feature, focus = false) {
+    const row = el('div', undefined, 'operations-feature-row'),
+      { key } = feature,
+      write = (field, value) => {
+        draft.features = {
+          ...draft.features,
+          [key]: { ...feature, ...draft.features?.[key], [field]: value },
+        }
+        delete draft.features[key].key
+        updateTotal()
+      }
+    const name = field(row, 'Feature name', `feature-name-${key}`, {
+      value: feature.name,
+      maxLength: 120,
+      onChange: (value) => write('name', value),
+    })
+    name.required = true
+    name.dataset.featureField = 'name'
+    const cost = field(row, 'Cost / piece (¥)', `feature-cost-${key}`, {
+      value: feature.unitCost,
+      onChange: (value) => write('unitCost', value.trim().replace(',', '.')),
+    })
+    cost.inputMode = 'decimal'
+    cost.required = true
+    cost.dataset.featureField = 'cost'
+    const treatment = field(row, 'Cost treatment', `feature-treatment-${key}`, {
+      value: feature.included ? 'included' : 'extra',
+      options: [
+        ['extra', 'Additional cost'],
+        ['included', 'Already recorded'],
+      ],
+      onChange: (value) => write('included', value === 'included'),
+    })
+    treatment.dataset.featureField = 'treatment'
+    const remove = el('button', undefined, 'operations-feature-remove')
+    remove.type = 'button'
+    bindAttribute(remove, 'aria-label', message('Remove feature'))
+    preparationHelp(remove, message('Remove feature'))
+    remove.append(icon('close'))
+    remove.addEventListener('click', () => {
+      draft.features = { ...draft.features }
+      delete draft.features[key]
+      if (!Object.keys(draft.features).length) delete draft.features
+      row.remove()
+      updateTotal()
+      add.focus()
+    })
+    row.append(remove)
+    list.append(row)
+    if (focus) name.focus()
+  }
+  for (const feature of productFeatures(draft.features)) appendFeature(feature)
+  add.addEventListener('click', () => {
+    const feature = {
+      key: crypto.randomUUID(),
+      name: '',
+      unitCost: '0.00',
+      included: false,
+    }
+    const { key, ...value } = feature
+    draft.features = { ...draft.features, [key]: value }
+    appendFeature(feature, true)
+    updateTotal()
+  })
+  updateTotal()
+}
+
 function renderProduct(host, draft, record) {
   host.append(
     el(
@@ -462,14 +585,7 @@ function renderProduct(host, draft, record) {
       'operations-help'
     )
   )
-  const features = group(host, 'Product features')
-  for (const [key, label] of [
-    ['lighting', 'Lighting'],
-    ['rotation', 'Rotation'],
-  ])
-    check(features, label, key, draft.features?.[key], (value) => {
-      draft.features = { ...draft.features, [key]: value }
-    })
+  renderFeatures(host, draft)
   renderDelay(host, draft, {
     product: true,
     fallback: record.orderWorkflow?.delay,

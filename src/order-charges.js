@@ -1,4 +1,5 @@
 import { centsToMoney, moneyToCents } from './money.js'
+import { featureUnitCost } from './product-features.js'
 
 function decimalParts(value) {
   if (typeof value !== 'string' || !/^\d+(?:\.\d+)?$/.test(value))
@@ -134,17 +135,34 @@ export function orderCostAdjustments(record) {
   return new Map(
     items.map((item) => {
       const amount = productNetCents(item),
-        additionalCharge = shares.get(item.entryId)
+        additionalCharge = shares.get(item.entryId),
+        unitFeatureCost = featureUnitCost(
+          record.productWorkflow?.[item.entryId]?.features
+        ),
+        featureCharge = grossCents(
+          centsToMoney(unitFeatureCost),
+          item.quantity
+        ),
+        featurePrice = unitFeatureCost
+          ? costAdjustedUnitPrice(item.price, unitFeatureCost, '1')
+          : item.price
       return [
         item.entryId,
         {
           sourceUnitPrice: item.price,
           effectiveUnitPrice: additionalCharge
-            ? costAdjustedUnitPrice(item.price, additionalCharge, item.quantity)
-            : item.price,
+            ? costAdjustedUnitPrice(
+                featurePrice,
+                additionalCharge,
+                item.quantity
+              )
+            : featurePrice,
           sourceAmount: centsToMoney(amount),
-          effectiveAmount: centsToMoney(amount + additionalCharge),
+          effectiveAmount: centsToMoney(
+            amount + additionalCharge + featureCharge
+          ),
           additionalCharge: centsToMoney(additionalCharge),
+          featureCharge: centsToMoney(featureCharge),
         },
       ]
     })

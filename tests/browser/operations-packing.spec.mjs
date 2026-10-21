@@ -231,7 +231,12 @@ test('reviewed payment links preserve source totals, skip payment rows and expor
     name: 'Operations workflow',
     exact: true,
   })
-  await expect(workflow.getByLabel('Lighting', { exact: true })).toBeChecked()
+  await expect(
+    workflow.getByLabel('Feature name', { exact: true }).first()
+  ).toHaveValue('Lighting')
+  await expect(
+    workflow.getByLabel('Cost treatment', { exact: true }).first()
+  ).toHaveValue('included')
   await workflow.getByRole('button', { name: 'Cancel', exact: true }).click()
   const downloads = []
   page.on('download', (download) => downloads.push(download))

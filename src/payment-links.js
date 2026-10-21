@@ -1,4 +1,5 @@
 import { centsToMoney, moneyToCents } from './money.js'
+import { featureUnitCost } from './product-features.js'
 import {
   allocateCostCents,
   costAdjustedUnitPrice,
@@ -394,13 +395,19 @@ export function paymentCostAdjustments(record, records = [record]) {
         incoming = added.get(item.entryId) || 0n,
         outgoing = removed.get(item.entryId) || 0n
       const delta = incoming - outgoing,
-        manual = moneyToCents(cost.additionalCharge)
+        manual = moneyToCents(cost.additionalCharge),
+        unitFeatureCost = featureUnitCost(
+          record.productWorkflow?.[item.entryId]?.features
+        ),
+        featurePrice = unitFeatureCost
+          ? costAdjustedUnitPrice(item.price, unitFeatureCost, '1')
+          : item.price
       return [
         item.entryId,
         {
           ...cost,
           effectiveUnitPrice: delta
-            ? costAdjustedUnitPrice(item.price, manual + delta, item.quantity)
+            ? costAdjustedUnitPrice(featurePrice, manual + delta, item.quantity)
             : cost.effectiveUnitPrice,
           effectiveAmount: centsToMoney(
             moneyToCents(cost.effectiveAmount) + delta

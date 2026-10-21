@@ -1,13 +1,15 @@
 import { productAttributes } from './product-attributes.js'
 import { createSizeClassifier } from './size-vocabulary.js'
-import { centsToMoney, lineGrossCents, moneyToCents } from './money.js'
+import { centsToMoney, moneyToCents } from './money.js'
 import { productCartonDetails, cartonVolume } from './carton-details.js'
 import {
   orderCostAdjustments,
   additionalChargesTotal,
+  productNetCents,
 } from './order-charges.js'
 import { paymentCostAdjustments } from './payment-links.js'
 import { resolveOperations } from './operations-workflow.js'
+import { hasProductFeatureCosts, productFeatures } from './product-features.js'
 import { t } from './i18n.js'
 
 const escape = (value) =>
@@ -63,6 +65,8 @@ export const preparationColumns = [
   ['effectiveAmount', 'Amount with charges', 'Amounts'],
   ['additionalCharge', 'Added cost', 'Amounts'],
   ['additionalChargeReasons', 'Additional charge reasons', 'Amounts'],
+  ['featureCharge', 'Feature added cost', 'Amounts'],
+  ['productFeatureCosts', 'Feature cost details', 'Amounts'],
   ['linkedPaymentCharge', 'Linked cost', 'Amounts'],
   ['linkedPaymentReasons', 'Linked cost reasons', 'Amounts'],
   ['orderAdditionalCharges', 'Additional order costs', 'Order & supplier'],
@@ -103,6 +107,7 @@ const numericFields = new Set([
   'effectiveUnitPrice',
   'effectiveAmount',
   'additionalCharge',
+  'featureCharge',
   'linkedPaymentCharge',
   'orderAdditionalCharges',
   'cartons',
@@ -167,18 +172,23 @@ export function preparationOrderFields(
     costs?.get(row.entryId) ||
     (records
       ? paymentCostAdjustments(record, records).get(row.entryId)
-      : record.additionalCharges?.length
+      : record.additionalCharges?.length || hasProductFeatureCosts(record)
         ? orderCostAdjustments(record).get(row.entryId)
         : {})
-  const features = resolveOperations(record, row.entryId).effective.features
+  const rawFeatures = resolveOperations(record, row.entryId).effective.features
+  const features = productFeatures(rawFeatures)
+  const featureName = (feature) =>
+    rawFeatures[feature.key] === true ? t(feature.name) : feature.name
   return {
     ...cost,
     linkedPaymentReasons: cost?.linkedPaymentReasons?.join(' · ') || '',
-    productFeatures: [
-      features.lighting && t('Lighting'),
-      features.rotation && t('Rotation'),
-    ]
-      .filter(Boolean)
+    productFeatures: features.map(featureName).join(' · '),
+    productFeatureCosts: features
+      .filter((feature) => moneyToCents(feature.unitCost) > 0n)
+      .map(
+        (feature) =>
+          `${featureName(feature)} (¥${feature.unitCost} ${t('per piece')}; ${t(feature.included ? 'Already recorded' : 'Added cost')})`
+      )
       .join(' · '),
     additionalChargeReasons: (record.additionalCharges || [])
       .map((charge) => `${charge.reason} (¥${charge.amount})`)
@@ -239,7 +249,7 @@ export function preparationCopyFields(
   let lineAmount = '',
     lineNetAmount = ''
   if (row.price !== undefined && row.quantity !== undefined) {
-    const gross = lineGrossCents(row.price, row.quantity)
+    const gross = productNetCents({ ...row, discount: '0.00' })
     lineAmount = centsToMoney(gross)
     if (row.discount !== undefined)
       lineNetAmount = centsToMoney(gross - moneyToCents(row.discount))

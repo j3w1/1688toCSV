@@ -1,4 +1,60 @@
 export const OPERATIONS_MESSAGES = {
+  'Feature name': { es: 'Característica', zh: '功能名称' },
+  'Cost / piece (¥)': { es: 'Costo / pieza (¥)', zh: '费用 / 件 (¥)' },
+  'Cost treatment': { es: 'Contabilización', zh: '费用处理' },
+  'Includes ¥{0} of added costs. The source unit price stays unchanged.': {
+    es: 'Incluye ¥{0} de costos añadidos. El precio unitario original se conserva.',
+    zh: '包含 ¥{0} 的新增成本，原始单价保持不变。',
+  },
+  'Already recorded': { es: 'Ya registrado', zh: '已计入付款' },
+  'Additional cost': { es: 'Costo adicional', zh: '另加费用' },
+  'Add feature': { es: 'Añadir característica', zh: '添加功能' },
+  'Remove feature': { es: 'Quitar característica', zh: '移除功能' },
+  'Product feature: {name} · ¥{cost}/piece · {treatment}': {
+    es: 'Característica: {name} · ¥{cost}/pieza · {treatment}',
+    zh: '商品功能：{name} · ¥{cost}/件 · {treatment}',
+  },
+  'Enter a cost per piece. Choose Already recorded when the source price, linked payment or order charges already cover it; otherwise it increases this product’s cost.':
+    {
+      es: 'Ingresa el costo por pieza. Elige Ya registrado si ya está incluido en el precio, un pago vinculado o los cargos del pedido; de lo contrario, se suma al costo del producto.',
+      zh: '填写每件费用。如果原价、关联付款或订单附加费用已包含此项，请选择“已计入付款”；否则将增加该商品的成本。',
+    },
+  'Additional feature cost: ¥{cost} per piece': {
+    es: 'Costo adicional de características: ¥{cost} por pieza',
+    zh: '功能另加费用：每件 ¥{cost}',
+  },
+  'Enter a valid feature cost to calculate the total.': {
+    es: 'Ingresa un costo válido para calcular el total.',
+    zh: '请输入有效功能费用以计算总额。',
+  },
+  'Product features must be an object': {
+    es: 'Las características deben ser un objeto',
+    zh: '商品功能必须为对象',
+  },
+  'Product feature ID is invalid': {
+    es: 'El ID de la característica no es válido',
+    zh: '商品功能标识无效',
+  },
+  'Product feature names must be unique': {
+    es: 'Los nombres de las características deben ser únicos',
+    zh: '商品功能名称不能重复',
+  },
+  'Product feature is invalid': {
+    es: 'La característica no es válida',
+    zh: '商品功能无效',
+  },
+  'Enter a product feature name': {
+    es: 'Ingresa un nombre para la característica',
+    zh: '请输入商品功能名称',
+  },
+  'Feature cost must be a non-negative amount': {
+    es: 'El costo de la característica no puede ser negativo',
+    zh: '功能费用不得为负数',
+  },
+  'Choose whether the feature cost is already recorded': {
+    es: 'Indica si el costo ya está registrado',
+    zh: '请选择功能费用是否已计入付款',
+  },
   Operations: { es: 'Seguimiento', zh: '业务跟进' },
   'Operations workflow': { es: 'Seguimiento operativo', zh: '业务跟进' },
   'Edit operations workflow': {

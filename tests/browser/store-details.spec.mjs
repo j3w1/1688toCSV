@@ -187,6 +187,62 @@ test('store cards keep IDs in details, show minimal charges and copy WeChat with
   await page.close()
 })
 
+test('order-card headings keep compact centered status controls beside the store name', async ({
+  extension,
+}) => {
+  const { page, native } = await seedStores(extension)
+  const card = page.locator(
+    `.order-card[data-order-id="${native[0].snapshot.orderId}"]`
+  )
+  for (const width of [1280, 375]) {
+    await page.setViewportSize({ width, height: 960 })
+    const layout = await card.evaluate((card) => {
+      const box = (selector) =>
+        card.querySelector(selector).getBoundingClientRect()
+      const frame = card.getBoundingClientRect()
+      const title = box('.order-card-identity')
+      const seller = box('.order-seller')
+      const actions = box('.order-card-actions')
+      return {
+        topGap: title.top - frame.top,
+        iconGap: actions.left - seller.right,
+        controls: [...card.querySelectorAll('.order-card-actions button')].map(
+          (button) => {
+            const bounds = button.getBoundingClientRect()
+            const glyph = button.querySelector('svg').getBoundingClientRect()
+            return {
+              height: bounds.height,
+              centerOffset:
+                bounds.top + bounds.height / 2 - (title.top + title.height / 2),
+              glyphOffset:
+                glyph.top + glyph.height / 2 - (bounds.top + bounds.height / 2),
+            }
+          }
+        ),
+        overflows: card.scrollWidth > card.clientWidth,
+      }
+    })
+    expect(layout.topGap).toBeLessThanOrEqual(8)
+    expect(layout.iconGap).toBeGreaterThanOrEqual(0)
+    expect(layout.iconGap).toBeLessThanOrEqual(7)
+    expect(layout.overflows).toBe(false)
+    for (const control of layout.controls) {
+      expect(control.height).toBeLessThanOrEqual(18)
+      expect(Math.abs(control.centerOffset)).toBeLessThanOrEqual(1)
+      expect(Math.abs(control.glyphOffset)).toBeLessThanOrEqual(1)
+    }
+    await expect(card.locator('.operations-state svg path')).toHaveAttribute(
+      'fill',
+      'currentColor'
+    )
+    await expect(card.locator('.operations-state svg path')).toHaveAttribute(
+      'stroke',
+      'none'
+    )
+  }
+  await page.close()
+})
+
 test('store profile aligns compact saves, shares WeChat, preserves other drafts and translates new controls live', async ({
   extension,
 }) => {

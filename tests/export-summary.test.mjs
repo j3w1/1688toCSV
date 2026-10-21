@@ -85,7 +85,7 @@ test('a packing-list summary lists its orders, products, quantities and files', 
   assert.deepEqual(summary.totals, { orders: 2, products: 3, quantity: 64 })
 })
 
-test('packing summaries keep linked costs separate from manual costs and include product features', () => {
+test('packing summaries keep feature, linked and manual costs separate and include custom product details', () => {
   const summary = packingSummary({
     file: 'packing-list-synthetic.xlsx',
     rows: [
@@ -97,6 +97,8 @@ test('packing summaries keep linked costs separate from manual costs and include
         effectiveAmount: '486.00',
         additionalCharge: '0.00',
         linkedPaymentCharge: '456.00',
+        featureCharge: '1.25',
+        productFeatureCosts: 'Engraving (¥1.25 per piece; Added cost)',
         linkedPaymentReasons: 'Recorded lighting and rotation service',
         productFeatures: 'Lighting · Rotation',
       },
@@ -106,6 +108,11 @@ test('packing summaries keep linked costs separate from manual costs and include
   assert.equal(summary.products[0].effectiveAmount, '486.00')
   assert.equal(summary.products[0].additionalCharge, '0.00')
   assert.equal(summary.products[0].linkedPaymentCharge, '456.00')
+  assert.equal(summary.products[0].featureCharge, '1.25')
+  assert.equal(
+    summary.products[0].productFeatureCosts,
+    'Engraving (¥1.25 per piece; Added cost)'
+  )
   assert.equal(
     summary.products[0].linkedPaymentReasons,
     'Recorded lighting and rotation service'

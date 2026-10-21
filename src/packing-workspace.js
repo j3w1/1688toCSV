@@ -94,6 +94,7 @@ import {
   openOperationsMigrationDialog,
 } from './operations-ui.js'
 import { paymentCostAdjustments } from './payment-links.js'
+import { hasProductFeatureCosts } from './product-features.js'
 import {
   combineRepeatCartonPacking,
   sharedVariantSources,
@@ -4932,6 +4933,19 @@ export async function startPackingWorkspace({
   function renderPackingOrder(host, draft, pageGroups) {
     const index = drafts.indexOf(draft)
     const selection = preparationSelection(draft)
+    const costRecords = getRecords(),
+      affectedCostOrders = costAffectedOrderIds(costRecords),
+      costByOrder = new Map()
+    function itemCost(item, orderId) {
+      if (!affectedCostOrders.has(orderId)) return undefined
+      if (!costByOrder.has(orderId)) {
+        const record = costRecords.find(
+          ({ snapshot }) => snapshot.orderId === orderId
+        )
+        costByOrder.set(orderId, paymentCostAdjustments(record, costRecords))
+      }
+      return costByOrder.get(orderId).get(item.entryId)
+    }
     function orderButton(text, action, className) {
       return prepButton(
         text,
@@ -5648,19 +5662,18 @@ export async function startPackingWorkspace({
         }
         description.append(attributes)
         const facts = el('dl', undefined, 'variant-order-facts')
-        const sharedItems = group.sharedProductId
+        const sharedSources = group.sharedProductId
           ? sharedVariantSources(
               [...preparations.values()],
               getRecords(),
               group.sharedProductId,
               variant.sharedVariantId,
               { accountId: draft.accountId }
+            ).filter((entry) =>
+              scopeEntries.get(entry.orderId)?.has(entry.item.entryId)
             )
-              .filter((entry) =>
-                scopeEntries.get(entry.orderId)?.has(entry.item.entryId)
-              )
-              .map((entry) => entry.item)
-          : items
+          : items.map((item) => ({ item, orderId: draft.orderId }))
+        const sharedItems = sharedSources.map((entry) => entry.item)
         const prices = [
           ...new Set(sharedItems.map((item) => normalizePrice(item.price))),
         ]
@@ -5720,6 +5733,37 @@ export async function startPackingWorkspace({
                 )
           )
         )
+        const adjustedPrices = [
+          ...new Set(
+            sharedSources
+              .map(({ item, orderId }) => itemCost(item, orderId))
+              .filter(
+                (cost) =>
+                  cost && cost.effectiveUnitPrice !== cost.sourceUnitPrice
+              )
+              .map((cost) => cost.effectiveUnitPrice)
+          ),
+        ]
+        if (adjustedPrices.length) {
+          const adjusted = el(
+              'div',
+              undefined,
+              'variant-price additional-cost-price'
+            ),
+            amounts = el('dd')
+          for (const [index, price] of adjustedPrices.entries()) {
+            if (index) amounts.append(' / ')
+            amounts.append(
+              '¥ ',
+              copyTextButton(price, { label: uiMessage('Copy price') })
+            )
+          }
+          adjusted.append(
+            el('dt', uiMessage('Unit price with charges')),
+            amounts
+          )
+          facts.append(adjusted)
+        }
         const cartonRecord = getRecords().find(
           (record) => record.snapshot.orderId === draft.orderId
         )
@@ -6340,19 +6384,24 @@ export async function startPackingWorkspace({
           (ranks.get(`${b.orderId}/${b.entryId}`) ?? Number.MAX_SAFE_INTEGER)
     )
   }
-  function preparedRows(rows = getRows()) {
-    const allRecords = getRecords()
-    const records = new Map(
-      allRecords.map((record) => [record.snapshot.orderId, record])
-    )
-    const costOrders = new Set(
-      allRecords.flatMap((record) => [
-        ...(record.additionalCharges?.length || record.paymentLinks?.length
+  function costAffectedOrderIds(records) {
+    return new Set(
+      records.flatMap((record) => [
+        ...(record.additionalCharges?.length ||
+        record.paymentLinks?.length ||
+        hasProductFeatureCosts(record)
           ? [record.snapshot.orderId]
           : []),
         ...(record.paymentLinks || []).map((link) => link.sourceOrderId),
       ])
     )
+  }
+  function preparedRows(rows = getRows()) {
+    const allRecords = getRecords()
+    const records = new Map(
+      allRecords.map((record) => [record.snapshot.orderId, record])
+    )
+    const costOrders = costAffectedOrderIds(allRecords)
     const costs = new Map()
     return orderRows(rows).map((row) => {
       const record = records.get(row.orderId) || row.record
@@ -6471,6 +6520,16 @@ export async function startPackingWorkspace({
         'linkedPaymentReasons',
       ])
         if (!columns.includes(key)) columns.push(key)
+    if (fields.some((row) => Number(row.featureCharge) > 0))
+      for (const key of [
+        'effectiveUnitPrice',
+        'featureCharge',
+        'effectiveAmount',
+      ])
+        if (!columns.includes(key)) columns.push(key)
+    if (fields.some((row) => row.productFeatureCosts))
+      if (!columns.includes('productFeatureCosts'))
+        columns.push('productFeatureCosts')
     if (fields.some((row) => row.productFeatures))
       if (!columns.includes('productFeatures')) columns.push('productFeatures')
     const grid = preparationGrid(fields, columns, t)

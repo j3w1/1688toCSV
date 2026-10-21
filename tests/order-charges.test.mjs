@@ -29,6 +29,7 @@ test('additional charges preserve original row values and allocate every cent by
     sourceAmount: '20.00',
     effectiveAmount: '20.67',
     additionalCharge: '0.67',
+    featureCharge: '0.00',
   })
   assert.equal(costs.get('2').additionalCharge, '0.33')
   assert.equal(additionalChargesTotal(input), '1.00')
@@ -40,6 +41,55 @@ test('equal fractional remainders are assigned deterministically in source row o
   assert.equal(costs.get('3').additionalCharge, '0.01')
   assert.equal(costs.get('2').additionalCharge, '0.00')
   assert.equal(costs.get('1').additionalCharge, '0.00')
+})
+
+test('custom per-piece feature costs add only to their source product and keep already recorded costs informational', () => {
+  const input = record(
+    [row('1', '10.125', '3', '1.00'), row('2', '2.00', '2')],
+    '0.00'
+  )
+  input.productWorkflow = {
+    1: {
+      features: {
+        engraving: { name: 'Engraving', unitCost: '0.25', included: false },
+        lining: { name: 'Lining', unitCost: '1.20', included: false },
+        lighting: { name: 'Lighting', unitCost: '2.00', included: true },
+      },
+    },
+    2: { features: { rotation: true } },
+  }
+  const before = structuredClone(input)
+  const costs = orderCostAdjustments(input)
+  assert.equal(costs.get('1').sourceUnitPrice, '10.125')
+  assert.equal(costs.get('1').effectiveUnitPrice, '11.575')
+  assert.equal(costs.get('1').sourceAmount, '29.38')
+  assert.equal(costs.get('1').featureCharge, '4.35')
+  assert.equal(costs.get('1').effectiveAmount, '33.73')
+  assert.equal(costs.get('2').effectiveAmount, '4.00')
+  assert.equal(costs.get('2').featureCharge, '0.00')
+  assert.deepEqual(input, before)
+})
+
+test('feature costs round each decimal-quantity row once and zero quantity adds no row charge', () => {
+  const input = record([row('1', '0.00', '1.5'), row('2', '7.00', '0')], '0.00')
+  input.productWorkflow = Object.fromEntries(
+    ['1', '2'].map((id) => [
+      id,
+      {
+        features: {
+          paint: { name: 'Paint', unitCost: '0.01', included: false },
+          trim: { name: 'Trim', unitCost: '0.02', included: false },
+        },
+      },
+    ])
+  )
+  const costs = orderCostAdjustments(input)
+  assert.equal(costs.get('1').featureCharge, '0.05')
+  assert.equal(costs.get('1').effectiveUnitPrice, '0.03')
+  assert.equal(costs.get('1').effectiveAmount, '0.05')
+  assert.equal(costs.get('2').featureCharge, '0.00')
+  assert.equal(costs.get('2').effectiveAmount, '0.00')
+  assert.equal(costs.get('2').effectiveUnitPrice, '7.03')
 })
 
 test('discounted source rows weight costs by net values without reducing their effective unit price', () => {

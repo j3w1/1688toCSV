@@ -2,6 +2,7 @@ import { bindAttribute, bindText, message } from './i18n.js'
 import { element as el, orderReference, pinDialogActions } from './ui.js'
 import { packingValueComparison } from './packing-review.js'
 import { preparationHelp } from './preparation-help.js'
+import { productFeatures } from './product-features.js'
 
 /** One native modal reviews all source rows; no code changes happen on selection. */
 export async function openRepeatProductDialog({
@@ -80,15 +81,31 @@ export async function openRepeatProductDialog({
         details.append(
           el('small', [change.variant, change.size].filter(Boolean).join(' · '))
         )
-      const features = [
-        ['lighting', 'Lighting'],
-        ['rotation', 'Rotation'],
-      ].filter(([field]) => change.features?.[field] === true)
+      const features = productFeatures(change.features)
       if (features.length) {
         const readout = el('small', undefined, 'repeat-product-features')
-        features.forEach(([, label], index) => {
+        features.forEach((feature, index) => {
           if (index) readout.append(' · ')
-          readout.append(el('span', message(label)))
+          readout.append(
+            el(
+              'span',
+              change.features[feature.key] === true
+                ? message(feature.name)
+                : feature.name
+            )
+          )
+          if (/[1-9]/.test(feature.unitCost)) {
+            readout.append(
+              ` (¥${feature.unitCost} `,
+              el('span', message('per piece')),
+              '; ',
+              el(
+                'span',
+                message(feature.included ? 'Already recorded' : 'Added cost')
+              ),
+              ')'
+            )
+          }
         })
         details.append(readout)
       }

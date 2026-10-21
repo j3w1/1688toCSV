@@ -43,16 +43,23 @@ export const REPEAT_PRODUCT_MESSAGES = {
     zh: '装箱备份缺少财务来源依赖记录',
     es: 'Falta una dependencia financiera original en la copia de empaque',
   },
-  'Shared repeat purchases must have matching lighting and rotation features.':
-    {
-      zh: '共用编码的复购商品必须具有相同的照明和旋转特征。',
-      es: 'Las compras repetidas compartidas deben coincidir en sus características de iluminación y rotación.',
-    },
-  'Unlink this repeat purchase before changing its lighting or rotation features.':
-    {
-      zh: '请先解除复购关联，再更改照明或旋转特征。',
-      es: 'Desvincule esta compra repetida antes de cambiar sus características de iluminación o rotación.',
-    },
+  'Shared repeat purchases must have matching product features.': {
+    zh: '共用编码的复购商品必须具有相同的商品特征。',
+    es: 'Las compras repetidas compartidas deben coincidir en sus características de producto.',
+  },
+  'Unlink this repeat purchase before changing its product features.': {
+    zh: '请先解除复购关联，再更改商品特征。',
+    es: 'Desvincule esta compra repetida antes de cambiar sus características de producto.',
+  },
+  'Feature added cost': {
+    zh: '特征附加费用',
+    es: 'Coste añadido por características',
+  },
+  'Feature cost details': {
+    zh: '特征费用明细',
+    es: 'Detalle de costes por características',
+  },
+  'per piece': { zh: '每件', es: 'por pieza' },
   'Loading…': { zh: '正在加载…', es: 'Cargando…' },
   'Combined quantity': { zh: '合计数量', es: 'Cantidad combinada' },
   'Link repeat purchase': {

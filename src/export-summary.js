@@ -98,6 +98,7 @@ const packingDetailFields = [
   'sourceAmount',
   'effectiveAmount',
   'additionalCharge',
+  'featureCharge',
   'linkedPaymentCharge',
 ]
 
@@ -163,6 +164,9 @@ export function packingSummary({
         : {}),
       ...(row.productFeatures
         ? { productFeatures: String(row.productFeatures) }
+        : {}),
+      ...(row.productFeatureCosts
+        ? { productFeatureCosts: String(row.productFeatureCosts) }
         : {}),
     })
   }

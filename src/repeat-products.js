@@ -7,11 +7,12 @@ import {
   sameCodeOwner,
   validatePreparation,
 } from './packing-model.js'
+import { featureSignature } from './product-features.js'
 
 export const SHARED_PRODUCT_EDIT_ERROR =
   'Unlink this repeat purchase before changing its shared codes, variants, size handling or label names.'
 export const SHARED_PRODUCT_FEATURE_EDIT_ERROR =
-  'Unlink this repeat purchase before changing its lighting or rotation features.'
+  'Unlink this repeat purchase before changing its product features.'
 
 const key = (value) =>
   JSON.stringify([value.accountId || 'local', value.orderId])
@@ -21,10 +22,8 @@ const normalize = (value) =>
     .trim()
     .toLocaleLowerCase('en')
 
-const featuresOf = (record, entryId) => [
-  record?.productWorkflow?.[entryId]?.features?.lighting === true,
-  record?.productWorkflow?.[entryId]?.features?.rotation === true,
-]
+const featuresOf = (record, entryId) =>
+  featureSignature(record?.productWorkflow?.[entryId]?.features)
 const variantFeatures = (variant, record) =>
   [
     ...new Set(
@@ -587,7 +586,7 @@ export function validateSharedProducts(
             (previousFeatures && previousFeatures !== signature)
           )
             throw new Error(
-              'Shared repeat purchases must have matching lighting and rotation features.'
+              'Shared repeat purchases must have matching product features.'
             )
           state.featureVariants.set(variant.sharedVariantId, signature)
         }

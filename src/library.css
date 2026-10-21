@@ -469,7 +469,7 @@ h2 {
 }
 .order-card {
   position: relative;
-  padding: 8px 10px;
+  padding: 7px 10px;
   border-top: 1px solid var(--divider);
   cursor: pointer;
 }
@@ -486,7 +486,7 @@ h2 {
 .order-card::after {
   content: '\2713';
   position: absolute;
-  inset-block-start: 8px;
+  inset-block-start: 7px;
   inset-inline-end: 10px;
   color: var(--text);
   visibility: hidden;
@@ -540,6 +540,19 @@ h2 {
   min-inline-size: 0;
   color: var(--muted);
   font-size: 11px;
+}
+.order-card-products {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  min-inline-size: 0;
+}
+.order-card-products > .order-products {
+  flex: none;
+}
+.order-card-products > .order-name-summary {
+  flex: 0 1 auto;
+  max-inline-size: none;
 }
 .order-card .order-card-charges {
   inline-size: auto;
@@ -2081,6 +2094,7 @@ button.copy-active {
   min-width: 64px;
 }
 .ui-icon {
+  display: inline-block;
   inline-size: 16px;
   block-size: 16px;
   flex: none;
@@ -2098,8 +2112,11 @@ button.icon-button {
   background: transparent;
   display: inline-grid;
   place-items: center;
+  vertical-align: middle;
+  line-height: 1;
 }
 .icon-button .ui-icon {
+  display: block;
   margin: 0;
   inline-size: 19px;
   block-size: 19px;
@@ -2478,15 +2495,25 @@ button.copyable-text:hover {
 }
 .order-card-identity {
   display: flex;
-  flex-wrap: wrap;
-  align-items: baseline;
-  gap: 2px 8px;
+  align-items: center;
+  gap: 6px;
   padding-inline-end: 15px;
+  min-inline-size: 0;
 }
 .order-card-identity > .order-seller {
+  flex: 0 1 auto;
   min-inline-size: 0;
+  min-block-size: 18px;
   max-inline-size: 100%;
   font-weight: 600;
+  text-box: trim-both cap alphabetic;
+}
+.order-card-actions {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  flex: none;
+  line-height: 1;
 }
 .order-details-trigger {
   min-block-size: 0;

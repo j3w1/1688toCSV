@@ -65,6 +65,22 @@ test('individual columns respect optional headers and text formula safety', () =
   assert.throws(() => preparationTable([row], []), /Choose columns/)
 })
 
+test('copy calculations preserve decimal and zero quantities for feature cost exports', () => {
+  const decimal = preparationCopyFields({
+    ...row,
+    price: '1.005',
+    quantity: '1.5',
+    discount: '0.00',
+    featureCharge: '0.02',
+  })
+  assert.equal(decimal.lineAmount, '1.51')
+  assert.equal(decimal.featureCharge, '0.02')
+  assert.equal(
+    preparationCopyFields({ ...row, quantity: '0' }).lineAmount,
+    '0.00'
+  )
+})
+
 test('size wording and the assigned size code copy independently as exact text', () => {
   const rows = [
     { ...row, sourceSize: '001.50 × 020CM', sizeSuffix: '00300' },

@@ -1,4 +1,5 @@
 import { centsToMoney, moneyToCents } from './money.js'
+import { productFeatures, validateProductFeatures } from './product-features.js'
 
 export const OPERATIONS_METADATA_FIELDS = [
   'storeWorkflow',
@@ -173,8 +174,7 @@ export const validateProductWorkflow = (value = {}) =>
     delay,
     warehouse: (value) => warehouse(value, true),
     missingLabels,
-    features: (value) =>
-      fields(value, { lighting: boolean, rotation: boolean }),
+    features: validateProductFeatures,
     legacyTags,
   })
 
@@ -430,10 +430,31 @@ export function operationsIndicators(
       )
     if (!entryId && workflowRefundPending(record))
       add('refund', 'refund', 'warning', 'Shipping refund needs follow-up')
-    if (entryId && effective.features.lighting)
-      add('lighting', 'bulb', 'neutral', 'Lighting')
-    if (entryId && effective.features.rotation)
-      add('rotation', 'rotation', 'neutral', 'Rotation')
+    if (entryId)
+      for (const feature of productFeatures(effective.features)) {
+        const preset = ['Lighting', 'Rotation'].includes(feature.name)
+          ? feature.name
+          : ''
+        add(
+          feature.key,
+          preset === 'Lighting'
+            ? 'bulb'
+            : preset === 'Rotation'
+              ? 'rotation'
+              : 'tag',
+          'neutral',
+          'Product feature: {name} · ¥{cost}/piece · {treatment}',
+          {
+            name: feature.name,
+            cost: feature.unitCost,
+            treatment: feature.included
+              ? 'Already recorded'
+              : 'Additional cost',
+          }
+        )
+        result.at(-1).translateFeatureName =
+          effective.features[feature.key] === true
+      }
   }
   if (!result.length)
     add('workflow', 'workflow', 'neutral', 'Edit operations workflow')

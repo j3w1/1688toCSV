@@ -39,9 +39,6 @@
   max-height: calc(100vh - 420px);
   min-height: 180px;
 }
-.order-card {
-  padding: 10px;
-}
 .order-card small {
   font-size: 11px;
 }

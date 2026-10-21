@@ -427,12 +427,19 @@ test('order and product status controls stay compact, save exceptions and preser
     .getByLabel('Delay state', { exact: true })
     .filter({ visible: true })
     .selectOption('none')
-  await dialog.getByLabel('Lighting', { exact: true }).check()
+  await dialog.getByRole('button', { name: 'Add feature', exact: true }).click()
+  await dialog.getByLabel('Feature name', { exact: true }).fill('Sound sensor')
+  await dialog.getByLabel('Cost / piece (¥)', { exact: true }).fill('1.25')
+  await expect(dialog.locator('.operations-feature-total')).toContainText(
+    '1.25'
+  )
   await dialog
     .getByRole('button', { name: 'Save workflow', exact: true })
     .click()
   await expect(dialog).toHaveCount(0)
-  await expect(row.locator('[data-operation="lighting"]')).toHaveCount(1)
+  await expect(
+    row.getByRole('button', { name: /Product feature: Sound sensor/ })
+  ).toHaveCount(1)
   await expect(row.locator('[data-operation="delay"]')).toHaveCount(0)
   const dimensions = await row.locator('.operations-icon').first().boundingBox()
   expect(dimensions.width).toBe(14)
@@ -445,10 +452,100 @@ test('order and product status controls stay compact, save exceptions and preser
     (entry) => entry.snapshot.orderId === record.snapshot.orderId
   )
   expect(saved.snapshot).toEqual(record.snapshot)
+  expect(
+    Object.values(
+      saved.productWorkflow[record.snapshot.items[0].entryId].features
+    )
+  ).toEqual([{ name: 'Sound sensor', unitCost: '1.25', included: false }])
+  await expect(row.locator('.additional-cost-price')).toBeVisible()
   expect(saved.orderWorkflow.delay.confirmedStart).toBeUndefined()
   expect(
     saved.productWorkflow[record.snapshot.items[0].entryId].delay.status
   ).toBe('none')
+})
+
+test('three custom feature costs persist without changing source evidence and fit narrow dialogs', async ({
+  extension,
+}, testInfo) => {
+  const { page, record } = await openWorkspace(extension)
+  await page.setViewportSize({ width: 1280, height: 900 })
+  const row = page.locator('#sheet-body tr[data-selection-key]').first()
+  await row.locator('.operations-strip button').first().click()
+  const dialog = page.getByRole('dialog', {
+    name: 'Operations workflow',
+    exact: true,
+  })
+  for (const [name, cost, treatment] of [
+    ['Lighting', '1.20', 'extra'],
+    ['Rotation', '0.80', 'included'],
+    ['Sound sensor', '0.50', 'extra'],
+  ]) {
+    await dialog
+      .getByRole('button', { name: 'Add feature', exact: true })
+      .click()
+    const feature = dialog.locator('.operations-feature-row').last()
+    await feature.getByLabel('Feature name', { exact: true }).fill(name)
+    await feature.getByLabel('Cost / piece (¥)', { exact: true }).fill(cost)
+    await feature
+      .getByLabel('Cost treatment', { exact: true })
+      .selectOption(treatment)
+  }
+  await expect(dialog.locator('.operations-feature-row')).toHaveCount(3)
+  await expect(dialog.locator('.operations-feature-total')).toContainText(
+    '1.70'
+  )
+  const controls = await dialog
+    .locator('.operations-feature-row')
+    .first()
+    .evaluate((row) =>
+      [...row.querySelectorAll('input, select, button')].map((node) => {
+        const bounds = node.getBoundingClientRect()
+        return { height: bounds.height, center: bounds.y + bounds.height / 2 }
+      })
+    )
+  for (const control of controls) {
+    expect(control.height).toBeLessThanOrEqual(28)
+    expect(Math.abs(control.center - controls[0].center)).toBeLessThanOrEqual(1)
+  }
+  await page.screenshot({ path: testInfo.outputPath('features-desktop.png') })
+  await page.setViewportSize({ width: 390, height: 844 })
+  await expect
+    .poll(() => dialog.evaluate((node) => node.scrollWidth <= node.clientWidth))
+    .toBe(true)
+  await expect(
+    dialog.getByRole('button', { name: 'Save workflow', exact: true })
+  ).toBeInViewport()
+  await page.screenshot({ path: testInfo.outputPath('features-narrow.png') })
+  await dialog
+    .getByRole('button', { name: 'Save workflow', exact: true })
+    .click()
+  await expect(dialog).toHaveCount(0)
+  await page.reload()
+  const updatedRow = page.locator('#sheet-body tr[data-selection-key]').first()
+  await expect(updatedRow.locator('.additional-cost-price')).toBeVisible()
+  await updatedRow.locator('.operations-strip button').first().click()
+  await expect(dialog.locator('.operations-feature-row')).toHaveCount(3)
+  await expect(dialog.locator('.operations-feature-total')).toContainText(
+    '1.70'
+  )
+  const backup = await extension.inspector.evaluate(() =>
+    chrome.runtime.sendMessage({ type: 'BACKUP_EXPORT' })
+  )
+  expect(backup.ok, backup.error).toBe(true)
+  const saved = backup.data.orders.find(
+    (item) => item.snapshot.orderId === record.snapshot.orderId
+  )
+  expect(saved.snapshot).toEqual(record.snapshot)
+  expect(
+    Object.values(
+      saved.productWorkflow[record.snapshot.items[0].entryId].features
+    )
+  ).toEqual([
+    { name: 'Lighting', unitCost: '1.20', included: false },
+    { name: 'Rotation', unitCost: '0.80', included: true },
+    { name: 'Sound sensor', unitCost: '0.50', included: false },
+  ])
+  await dialog.getByRole('button', { name: 'Cancel', exact: true }).click()
 })
 
 test('Settings migration shows reviewed conversions and keeps unresolved tags', async ({

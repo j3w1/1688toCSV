@@ -120,6 +120,93 @@ test('empty workflow has one compact accessible affordance and stops row-selecti
   assert.equal(host.querySelector('table, details'), null)
 })
 
+test('feature editor supports custom per-piece costs, payment treatment, removal and translations', async (t) => {
+  const { document, record, change, submit } = fixture(t),
+    calls = []
+  record.productWorkflow = {
+    1: { features: { lighting: true, rotation: true } },
+  }
+  const done = openOperationsDialog({
+    record,
+    entryId: '1',
+    repository: {
+      setOperationsWorkflow: async (...args) => {
+        calls.push(args)
+        return record
+      },
+    },
+  })
+  await tick()
+  const dialog = document.querySelector('dialog')
+  assert.equal(dialog.querySelectorAll('.operations-feature-row').length, 2)
+  dialog.querySelector('.operations-feature-add').click()
+  const custom = [...dialog.querySelectorAll('.operations-feature-row')].at(-1)
+  change(custom.querySelector('[data-feature-field="name"]'), 'Sound sensor')
+  change(custom.querySelector('[data-feature-field="cost"]'), '1,25')
+  assert.match(
+    dialog.querySelector('.operations-feature-total').textContent,
+    /1.25/
+  )
+  change(custom.querySelector('select'), 'included', 'change')
+  assert.match(
+    dialog.querySelector('.operations-feature-total').textContent,
+    /0.00/
+  )
+  change(custom.querySelector('select'), 'extra', 'change')
+  dialog.querySelector('.operations-feature-remove').click()
+  setLanguage('es', { persist: false })
+  assert.match(
+    dialog.querySelector('.operations-feature-add').textContent,
+    /Añadir característica/
+  )
+  assert.match(
+    dialog.querySelector('.operations-feature-total').textContent,
+    /1.25 por pieza/
+  )
+  submit(dialog)
+  assert.equal(await done, record)
+  const features = calls[0][1].product.value.features
+  assert.equal(features.lighting, undefined)
+  assert.equal(features.rotation, true)
+  assert.deepEqual(
+    Object.values(features).find((item) => item.name === 'Sound sensor'),
+    {
+      name: 'Sound sensor',
+      unitCost: '1.25',
+      included: false,
+    }
+  )
+})
+
+test('duplicate feature names keep the draft open without writing money or workflow data', async (t) => {
+  const { document, record, change, submit } = fixture(t),
+    calls = []
+  record.productWorkflow = { 1: { features: { lighting: true } } }
+  const done = openOperationsDialog({
+    record,
+    entryId: '1',
+    repository: {
+      setOperationsWorkflow: async (...args) => {
+        calls.push(args)
+        return record
+      },
+    },
+  })
+  await tick()
+  const dialog = document.querySelector('dialog')
+  dialog.querySelector('.operations-feature-add').click()
+  const custom = [...dialog.querySelectorAll('.operations-feature-row')].at(-1)
+  change(custom.querySelector('[data-feature-field="name"]'), 'LIGHTING')
+  change(custom.querySelector('[data-feature-field="cost"]'), '2')
+  submit(dialog)
+  await tick()
+  assert.equal(calls.length, 0)
+  assert.match(dialog.querySelector('[role="alert"]').textContent, /unique/)
+  assert.equal(custom.querySelector('[data-feature-field="cost"]').value, '2')
+  dialog.close()
+  assert.equal(await done, null)
+})
+
 test('workflow dialog edits structured fields, keeps a failed draft and retries atomically', async (t) => {
   const { document, record, change, submit } = fixture(t),
     calls = []

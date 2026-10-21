@@ -27,6 +27,7 @@ async function startFixtureServer() {
         '/src/database.js',
         '/src/store-order.js',
         '/src/order-charges.js',
+        '/src/product-features.js',
         '/src/operations-workflow.js',
         '/src/operations-repository.js',
         '/src/payment-links.js',

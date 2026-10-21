@@ -435,7 +435,7 @@ test('linked physical features cannot diverge through product editing or restore
   assert.throws(
     () =>
       validateSharedProducts(linked, { orders: [data.records[0], changed] }),
-    /matching lighting and rotation features/
+    /matching product features/
   )
   const statusOnly = structuredClone(data.records[1])
   statusOnly.productWorkflow = {
@@ -469,4 +469,77 @@ test('linked physical features cannot diverge through product editing or restore
   )
   preview.changes[0].features.lighting = false
   assert.equal(both[1].productWorkflow['1'].features.lighting, true)
+})
+
+test('repeat identity matches custom feature names independently from local IDs and source-specific prices', () => {
+  const data = fixture()
+  const originalFeature = {
+    name: 'Engraving',
+    unitCost: '1.00',
+    included: false,
+  }
+  data.records[0].productWorkflow = {
+    1: { features: { sourceFeature: originalFeature } },
+  }
+  data.records[1].productWorkflow = {
+    1: {
+      features: {
+        repeatFeature: { name: 'engraving', unitCost: '2.50', included: true },
+      },
+    },
+  }
+  const plan = data.plan()
+  assert.equal(plan.changes.length, 2)
+  assert.equal(plan.changes[0].features.repeatFeature.unitCost, '2.50')
+  assert.equal(
+    plan.expectedSnapshots[0].productFeatures['1'].repeatFeature.unitCost,
+    '2.50'
+  )
+  const priceEdit = structuredClone(data.records[1])
+  priceEdit.productWorkflow['1'].features.repeatFeature.unitCost = '3.00'
+  priceEdit.productWorkflow['1'].features.repeatFeature.included = false
+  assert.doesNotThrow(() =>
+    assertSharedProductFeatureEdit(
+      data.records[1],
+      priceEdit,
+      plan.preparations
+    )
+  )
+  assert.doesNotThrow(() =>
+    validateSharedProducts(plan.preparations, {
+      orders: [data.records[0], priceEdit],
+    })
+  )
+  for (const changed of [
+    { features: {} },
+    {
+      features: {
+        repeatFeature: { ...originalFeature, name: 'Different feature' },
+      },
+    },
+    {
+      features: {
+        ...priceEdit.productWorkflow['1'].features,
+        lining: { name: 'Lining', unitCost: '0.00', included: true },
+      },
+    },
+  ]) {
+    const next = { ...priceEdit, productWorkflow: { 1: changed } }
+    assert.throws(
+      () =>
+        assertSharedProductFeatureEdit(
+          data.records[1],
+          next,
+          plan.preparations
+        ),
+      /changing its product features/
+    )
+    assert.throws(
+      () =>
+        validateSharedProducts(plan.preparations, {
+          orders: [data.records[0], next],
+        }),
+      /matching product features/
+    )
+  }
 })

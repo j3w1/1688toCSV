@@ -138,6 +138,52 @@ test('manual external charges remain distinct from recorded-payment attribution'
   assert.equal(costs.get('1').effectiveUnitPrice, '22.00')
 })
 
+test('recorded feature costs do not double-count manual or linked payments while external features add per piece', () => {
+  const source = order('pay')
+  const goods = order('goods', [row('1', '10.00', '2')], '20.00', {
+    additionalCharges: [{ id: 'unload', reason: 'Unloading', amount: '2.00' }],
+    productWorkflow: {
+      1: {
+        features: {
+          engraving: { name: 'Engraving', unitCost: '1.25', included: false },
+          lighting: { name: 'Lighting', unitCost: '5.00', included: true },
+        },
+      },
+    },
+  })
+  goods.paymentLinks = [link(source, { targetEntryIds: ['1'] })]
+  const before = structuredClone([goods, source])
+  const cost = paymentCostAdjustments(goods, [goods, source]).get('1')
+  assert.equal(cost.featureCharge, '2.50')
+  assert.equal(cost.linkedPaymentCharge, '10.00')
+  assert.equal(cost.additionalCharge, '2.00')
+  assert.equal(cost.effectiveAmount, '34.50')
+  assert.equal(cost.effectiveUnitPrice, '17.25')
+  assert.deepEqual([goods, source], before)
+  const copied = preparationOrderFields({ entryId: '1' }, goods, {
+    records: [goods, source],
+  })
+  assert.equal(copied.productFeatures, 'Engraving · Lighting')
+  assert.match(
+    copied.productFeatureCosts,
+    /Engraving \(¥1.25 per piece; Added cost\)/
+  )
+  assert.match(
+    copied.productFeatureCosts,
+    /Lighting \(¥5.00 per piece; Already recorded\)/
+  )
+  assert.equal(copied.featureCharge, '2.50')
+  const table = preparationTable(
+    [copied],
+    ['featureCharge', 'productFeatureCosts'],
+    true
+  )
+  assert.match(
+    table.plain,
+    /^Feature added cost\tFeature cost details\r\n2.50\t/
+  )
+})
+
 test('split whole payments remove the aggregate source share once before cent rounding', () => {
   const source = order('pay', [row('1', '0.01')], '0.02')
   source.snapshot.totals.shipping = '0.01'
