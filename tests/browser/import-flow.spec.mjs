@@ -239,6 +239,10 @@ test('1688 list and detail controls follow saved workspace palettes and mode wit
   })
   for (const panel of [listPanel, detailPanel])
     await expect(panel).toHaveCSS('background-color', 'rgb(36, 33, 29)')
+  // Packing status renders after storage startup has attached Settings actions.
+  await expect(library.locator('#packing-scope')).toHaveText(
+    'Select products first. Ctrl+A selects all filtered products.'
+  )
   await library.getByRole('button', { name: 'Settings', exact: true }).click()
   const settings = library.getByRole('dialog', {
     name: 'Settings',
