@@ -803,6 +803,20 @@ select {
   min-inline-size: 0;
   max-inline-size: 100%;
 }
+.variant-source-attributes.has-product-descriptions {
+  display: grid;
+  gap: 4px;
+  flex: 1 1 220px;
+}
+.variant-source-description {
+  min-inline-size: 0;
+}
+.variant-source-description .product-title {
+  color: var(--description-text);
+  font-weight: 560;
+  line-height: 1.45;
+  white-space: pre-line;
+}
 .variant-facts {
   display: flex;
   flex-wrap: wrap;

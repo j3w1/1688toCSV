@@ -308,16 +308,27 @@ export async function startPackingWorkspace({
   const measurementFields = new Map()
   function renderSourceAttributes(host, items) {
     host.replaceChildren()
+    host.classList.toggle(
+      'has-product-descriptions',
+      items.some((item) => item.sourceType === 'spreadsheet')
+    )
     for (const item of [
       ...new Map(items.map((item) => [item.description, item])).values(),
     ]) {
       const source = createProductDescription(item)
-      source.querySelector('.product-title')?.remove()
+      // Spreadsheet groups can contain different descriptions on every row.
+      // Their group heading only contains the first source product's title.
+      if (item.sourceType !== 'spreadsheet')
+        source.querySelector('.product-title')?.remove()
       for (const field of source.querySelectorAll(
         '[data-attribute="material"], [data-attribute="size"]'
       ))
         field.remove()
-      host.append(source)
+      if (item.sourceType === 'spreadsheet') {
+        const description = el('div', undefined, 'variant-source-description')
+        description.append(source)
+        host.append(description)
+      } else host.append(source)
     }
   }
   function packingItemActions(label, grip, remove) {
@@ -5676,8 +5687,11 @@ export async function startPackingWorkspace({
           undefined,
           'variant-source-attributes'
         )
-        renderSourceAttributes(sourceAttributes, items)
-        sourceAttributeFields.add({ host: sourceAttributes, items })
+        renderSourceAttributes(sourceAttributes, sourceDetailItems)
+        sourceAttributeFields.add({
+          host: sourceAttributes,
+          items: sourceDetailItems,
+        })
         const attributes = el('div', undefined, 'variant-product-attributes')
         attributes.append(
           sourceAttributes,
