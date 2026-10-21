@@ -3,7 +3,7 @@ import { test, expect } from './extension-fixture.mjs'
 import { createDemoRecords } from '../../preview/library-fixture.js'
 import { createStoreOrder } from '../../src/store-order.js'
 
-async function seedStores(extension) {
+async function seedStores(extension, { tags = [] } = {}) {
   const native = await extension.inspector.evaluate(
     `(${createDemoRecords.toString()})(document)`
   )
@@ -19,6 +19,7 @@ async function seedStores(extension) {
   native[0].additionalCharges = [
     { id: 'native-unload', reason: 'Unloading', amount: '20.00' },
   ]
+  native[0].tags.push(...tags)
   native[0].additionalChargesUpdatedAt = '2026-10-21T00:00:00.000Z'
   const sheets = []
   const assets = new Map()
@@ -190,7 +191,9 @@ test('store cards keep IDs in details, show minimal charges and copy WeChat with
 test('order cards keep compact rows and centered controls in both themes', async ({
   extension,
 }) => {
-  const { page, native } = await seedStores(extension)
+  const { page, native } = await seedStores(extension, {
+    tags: ['Labels sent', 'Shipping refund', 'Fragile delivery'],
+  })
   const card = page.locator(
     `.order-card[data-order-id="${native[0].snapshot.orderId}"]`
   )
@@ -239,8 +242,10 @@ test('order cards keep compact rows and centered controls in both themes', async
       })
       expect(layout.topGap).toBeLessThanOrEqual(5)
       expect(layout.bottomGap).toBeLessThanOrEqual(6)
-      expect(layout.productsGap).toBe(2)
-      expect(layout.metadataGap).toBe(2)
+      expect(layout.productsGap).toBeGreaterThanOrEqual(0)
+      expect(layout.productsGap).toBeLessThanOrEqual(1)
+      expect(layout.metadataGap).toBeGreaterThanOrEqual(7)
+      expect(layout.metadataGap).toBeLessThanOrEqual(9)
       expect(layout.productRowHeight).toBeLessThanOrEqual(18)
       expect(layout.sellerFont).toBeGreaterThanOrEqual(12.5)
       expect(layout.iconGap).toBeGreaterThanOrEqual(0)
@@ -259,8 +264,15 @@ test('order cards keep compact rows and centered controls in both themes', async
         'stroke',
         'none'
       )
+      await expect(
+        card.locator('.order-card-tags .order-tag-badge')
+      ).toHaveCount(3)
     }
   }
+  await page.setViewportSize({ width: 1280, height: 960 })
+  await card.screenshot({
+    path: test.info().outputPath('order-card-spacing.png'),
+  })
   await page.close()
 })
 

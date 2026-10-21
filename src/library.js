@@ -1254,6 +1254,7 @@ export async function startLibrary(
       )
       const summary = node('div', undefined, 'order-summary')
       summary.id = `order-summary-${order.orderId}`
+      const main = node('div', undefined, 'order-card-main')
       const identity = node('div', undefined, 'order-card-identity')
       const details = node(
         'button',
@@ -1315,7 +1316,7 @@ export async function startLibrary(
         actions.append(paymentStrip)
       }
       identity.append(actions)
-      summary.append(identity)
+      main.append(identity)
       const reference = node('div', undefined, 'order-card-reference')
       const products = node('span', undefined, 'order-card-products')
       const productNames = packing?.orderNames(order.orderId) || []
@@ -1401,7 +1402,8 @@ export async function startLibrary(
         )
         meta.append(tags)
       }
-      summary.append(reference, meta)
+      main.append(reference)
+      summary.append(main, meta)
       card.append(summary)
       orderSelection.bind(card, order.orderId)
       list.append(card)

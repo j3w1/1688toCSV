@@ -496,11 +496,16 @@ h2 {
 }
 .order-summary {
   display: grid;
-  gap: 2px;
+  gap: 8px;
   font-size: 12.5px;
   line-height: 1.35;
   min-width: 0;
   overflow-wrap: anywhere;
+}
+.order-card-main {
+  display: grid;
+  gap: 0;
+  min-inline-size: 0;
 }
 .order-summary > strong {
   display: block;

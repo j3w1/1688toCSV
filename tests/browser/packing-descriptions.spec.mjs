@@ -82,6 +82,17 @@ async function spreadsheetPacking(extension, kind) {
       .getByRole('button', { name: 'Assign codes and prepare' })
       .click()
   await expect(packing).toBeVisible()
+  await packing.getByLabel('Spanish short name', { exact: true }).fill('PLATES')
+  await packing.getByLabel('Chinese category', { exact: true }).fill('陶瓷')
+  await packing.getByLabel('Chinese category', { exact: true }).blur()
+  await expect(packing.getByAltText('Carton mark preview')).toBeVisible({
+    timeout: 20_000,
+  })
+  await expect(packing.getByAltText('Barcode preview')).toHaveCount(3, {
+    timeout: 20_000,
+  })
+  for (const preview of await packing.getByAltText('Barcode preview').all())
+    await expect(preview).toBeVisible()
   return { page, packing, descriptions, snapshot: built.snapshot }
 }
 
@@ -94,6 +105,7 @@ for (const kind of ['market', 'factory']) {
       kind
     )
     await expect(packing.locator('.preparation-group')).toHaveCount(1)
+    await expect(packing.locator('.original-product-name')).toHaveCount(0)
     const rows = packing.locator('tr[data-variant-id]')
     await expect(rows).toHaveCount(3)
     for (const [index, description] of descriptions.entries()) {
@@ -104,11 +116,34 @@ for (const kind of ['market', 'factory']) {
         descriptions[(index + 1) % descriptions.length]
       )
     }
+    const layout = await rows.first().evaluate((row) => {
+      const code = row
+        .querySelector('.variant-code-band')
+        .getBoundingClientRect()
+      const title = row.querySelector('.product-title').getBoundingClientRect()
+      const attributes = row
+        .querySelector('.product-attributes')
+        .getBoundingClientRect()
+      const price = row.querySelector('.variant-price').getBoundingClientRect()
+      return {
+        descriptionGap: title.top - code.bottom,
+        metadataAlignment: Math.abs(attributes.top - price.top),
+        height: row.getBoundingClientRect().height,
+      }
+    })
+    expect(layout.descriptionGap).toBeGreaterThanOrEqual(0)
+    expect(layout.descriptionGap).toBeLessThanOrEqual(6)
+    expect(layout.metadataAlignment).toBeLessThanOrEqual(6)
+    expect(layout.height).toBeLessThanOrEqual(100)
+    const note = rows.first().locator('.variant-note textarea')
+    await note.fill('Ivory finish\nHandle on left')
+    await note.blur()
     for (const language of ['es', 'zh', 'en']) {
       await page.locator(`#language-toggle [data-language=${language}]`).click()
       await expect(packing.locator('.product-title')).toHaveText(descriptions)
+      await expect(note).toHaveValue('Ivory finish\nHandle on left')
     }
-    for (const width of [1280, 760]) {
+    for (const width of [1280, 760, 390]) {
       await page.setViewportSize({ width, height: 900 })
       for (const title of await packing.locator('.product-title').all()) {
         const geometry = await title.evaluate((node) => ({

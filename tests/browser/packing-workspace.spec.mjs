@@ -333,6 +333,10 @@ test('variant endings stay editable and order names summarize distinct saved pro
     const heading = card
       .querySelector('.order-card-identity')
       .getBoundingClientRect()
+    const reference = card
+      .querySelector('.order-card-reference')
+      .getBoundingClientRect()
+    const meta = card.querySelector('.order-card-meta').getBoundingClientRect()
     return {
       rowParent: summary.parentElement.className,
       countOnRight: count.left >= name.right,
@@ -340,12 +344,16 @@ test('variant endings stay editable and order names summarize distinct saved pro
         count.top + count.height / 2 - name.top - name.height / 2
       ),
       belowHeading: name.top >= heading.bottom,
+      nameGap: reference.top - heading.bottom,
+      badgeGap: meta.top - reference.bottom,
     }
   })
   expect(cardLayout.rowParent).toBe('order-card-products')
   expect(cardLayout.countOnRight).toBe(true)
   expect(cardLayout.sameRow).toBeLessThanOrEqual(1)
   expect(cardLayout.belowHeading).toBe(true)
+  expect(cardLayout.nameGap).toBeLessThanOrEqual(1)
+  expect(cardLayout.badgeGap).toBeGreaterThanOrEqual(7)
   await summary.hover()
   await expect(page.getByRole('tooltip')).toContainText(`${firstName} · CAJAS`)
   await page.mouse.move(0, 0)

@@ -306,30 +306,27 @@ export async function startPackingWorkspace({
   const sourceAttributeFields = new Set()
   const cartonFields = new Map()
   const measurementFields = new Map()
-  function renderSourceAttributes(host, items) {
+  function renderSourceAttributes(host, items, titles) {
     host.replaceChildren()
-    host.classList.toggle(
-      'has-product-descriptions',
-      items.some((item) => item.sourceType === 'spreadsheet')
-    )
+    titles.replaceChildren()
     for (const item of [
       ...new Map(items.map((item) => [item.description, item])).values(),
     ]) {
       const source = createProductDescription(item)
-      // Spreadsheet groups can contain different descriptions on every row.
-      // Their group heading only contains the first source product's title.
-      if (item.sourceType !== 'spreadsheet')
-        source.querySelector('.product-title')?.remove()
+      const title = source.querySelector('.product-title')
+      // Spreadsheet descriptions belong to their own products, above the
+      // compact attributes/cost row rather than repeated in the group heading.
+      if (item.sourceType === 'spreadsheet') titles.append(title)
+      else title.remove()
       for (const field of source.querySelectorAll(
         '[data-attribute="material"], [data-attribute="size"]'
       ))
         field.remove()
-      if (item.sourceType === 'spreadsheet') {
-        const description = el('div', undefined, 'variant-source-description')
-        description.append(source)
-        host.append(description)
-      } else host.append(source)
+      source.querySelector('.product-attributes:empty')?.remove()
+      host.append(source)
     }
+    host.hidden = !host.hasChildNodes()
+    titles.hidden = !titles.hasChildNodes()
   }
   function packingItemActions(label, grip, remove) {
     const host = el('div', undefined, 'packing-item-actions')
@@ -343,7 +340,7 @@ export async function startPackingWorkspace({
   onLanguageChange(() => {
     for (const entry of sourceAttributeFields) {
       if (!entry.host.isConnected) sourceAttributeFields.delete(entry)
-      else renderSourceAttributes(entry.host, entry.items)
+      else renderSourceAttributes(entry.host, entry.items, entry.titles)
     }
     for (const entry of materialFields) {
       if (!entry.input.isConnected) materialFields.delete(entry)
@@ -5217,6 +5214,8 @@ export async function startPackingWorkspace({
         title = el('h3'),
         selectGroup = el('span', undefined, 'group-select')
       card.dataset.groupId = group.id
+      if (source?.sourceType === 'spreadsheet')
+        card.classList.add('spreadsheet-group')
       selectGroup.setAttribute('role', 'button')
       bindAttribute(
         selectGroup,
@@ -5339,8 +5338,6 @@ export async function startPackingWorkspace({
           'Click this header to select the group. Click again to deselect; Shift-click selects a range.'
         )
       )
-      const originalTitle = el('div', undefined, 'original-product-name')
-      originalTitle.append(el('p', group.title))
       const summary = el('div', undefined, 'product-summary')
       summary.append(title)
       watchCodeFields([productInput], draft, summary, { groupId: group.id })
@@ -5420,7 +5417,12 @@ export async function startPackingWorkspace({
           'mark'
         )
       )
-      summary.append(fields, originalTitle)
+      summary.append(fields)
+      if (source?.sourceType !== 'spreadsheet') {
+        const originalTitle = el('div', undefined, 'original-product-name')
+        originalTitle.append(el('p', group.title))
+        summary.append(originalTitle)
+      }
       overview.append(groupActions, summary, carton)
       card.append(overview)
       const scroll = el('div', undefined, 'variant-scroll'),
@@ -5687,10 +5689,20 @@ export async function startPackingWorkspace({
           undefined,
           'variant-source-attributes'
         )
-        renderSourceAttributes(sourceAttributes, sourceDetailItems)
+        const sourceDescriptions = el(
+          'div',
+          undefined,
+          'variant-source-descriptions'
+        )
+        renderSourceAttributes(
+          sourceAttributes,
+          sourceDetailItems,
+          sourceDescriptions
+        )
         sourceAttributeFields.add({
           host: sourceAttributes,
           items: sourceDetailItems,
+          titles: sourceDescriptions,
         })
         const attributes = el('div', undefined, 'variant-product-attributes')
         attributes.append(
@@ -5715,7 +5727,7 @@ export async function startPackingWorkspace({
             )
           )
         }
-        description.append(attributes)
+        description.append(sourceDescriptions, attributes)
         const facts = el('dl', undefined, 'variant-order-facts')
         const sharedSources = group.sharedProductId
           ? sharedVariantSources(
@@ -5867,7 +5879,8 @@ export async function startPackingWorkspace({
               )
             )
         }
-        description.append(factsLine)
+        if (source?.sourceType === 'spreadsheet') attributes.append(factsLine)
+        else description.append(factsLine)
         const codeOptions = el('fieldset', undefined, 'variant-code-options')
         bindAttribute(codeOptions, 'aria-label', uiMessage('Code options'))
         const codeReadout = el(

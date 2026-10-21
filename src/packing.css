@@ -803,19 +803,35 @@ select {
   min-inline-size: 0;
   max-inline-size: 100%;
 }
-.variant-source-attributes.has-product-descriptions {
+.variant-source-descriptions {
   display: grid;
-  gap: 4px;
-  flex: 1 1 220px;
-}
-.variant-source-description {
+  gap: 2px;
   min-inline-size: 0;
 }
-.variant-source-description .product-title {
+.variant-source-descriptions .product-title {
   color: var(--description-text);
   font-weight: 560;
   line-height: 1.45;
   white-space: pre-line;
+}
+.spreadsheet-group .product-overview {
+  align-items: center;
+}
+.spreadsheet-group .variant-details,
+.spreadsheet-group .variant-description {
+  gap: 2px;
+}
+.spreadsheet-group .variant-source-attributes .product-attributes {
+  margin: 0;
+}
+.preparation-workspace .spreadsheet-group .variants .variant-note textarea {
+  display: block;
+  margin: 0;
+  min-block-size: 24px;
+  min-height: 24px;
+  padding: 2px 3px;
+  font-size: 12px;
+  line-height: 1.35;
 }
 .variant-facts {
   display: flex;
