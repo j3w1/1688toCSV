@@ -48,8 +48,33 @@ test('packing comparisons identify changed codes and empty restored fields witho
       '蜡烛'
     )
     assert.equal(
-      rows[0].querySelector('.packing-value-caption').textContent,
+      comparison.querySelector('.packing-value-before-heading').textContent,
       'Antes'
+    )
+    assert.equal(comparison.querySelectorAll('thead').length, 1)
+    assert.equal(comparison.querySelectorAll('th[scope="row"]').length, 3)
+    assert.equal(rows[0].querySelector('.packing-value-arrow').textContent, '→')
+    assert.equal(rows[2].querySelector('.packing-value-arrow').textContent, '=')
+    assert.equal(
+      rows[0].querySelectorAll('[data-code-part="product"]').length,
+      2
+    )
+    const changesOnly = packingValueComparison(
+      [
+        {
+          label: 'Product code',
+          before: 'CE26103101',
+          after: 'CE26103102',
+          kind: 'code',
+        },
+        { label: 'Material', before: '玻璃', after: '玻璃' },
+      ],
+      { hideUnchanged: true }
+    )
+    assert.equal(changesOnly.querySelectorAll('.packing-value-row').length, 1)
+    assert.equal(
+      changesOnly.querySelector('.packing-value-unchanged').textContent,
+      '1 sin cambios'
     )
   } finally {
     setLanguage('en', { persist: false })

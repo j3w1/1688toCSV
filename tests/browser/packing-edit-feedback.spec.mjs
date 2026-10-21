@@ -32,7 +32,7 @@ for (const theme of ['dark', 'light']) {
       name: 'Resolve code conflict',
       exact: true,
     })
-    const impact = dialog.locator('.conflict-code-impact')
+    const impact = dialog.locator('.conflict-edit-card .conflict-code-impact')
     await expect(impact).toHaveCSS('grid-column', '1 / -1')
     await expect(impact.locator('.packing-value-row').first()).toHaveCSS(
       'display',
@@ -47,8 +47,14 @@ for (const theme of ['dark', 'light']) {
       ),
     ])
     await expect(
-      dialog.locator('.conflict-owner-card .conflict-occupied-code')
-    ).toHaveText(occupied)
+      dialog
+        .locator('.conflict-owner-card')
+        .getByLabel('Product code', { exact: true })
+    ).toHaveValue(occupied)
+    for (const table of await dialog.locator('.packing-value-table').all())
+      expect(
+        await table.evaluate((node) => node.scrollWidth - node.clientWidth)
+      ).toBeLessThanOrEqual(1)
     const ownerPhoto = await dialog
       .locator('.conflict-owner-card .preparation-photo')
       .boundingBox()
@@ -82,7 +88,10 @@ for (const theme of ['dark', 'light']) {
     expect(await boxes()).toEqual(positions)
     await page.mouse.move(4, 4)
     await expect(dialog.getByRole('tooltip')).toHaveCount(0)
-    await dialog.getByLabel('Product code', { exact: true }).fill('CE26100199')
+    await dialog
+      .locator('.conflict-edit-card')
+      .getByLabel('Product code', { exact: true })
+      .fill('CE26100199')
     await expect(impact.locator('.packing-value-after code')).toHaveText([
       'CE26100199',
       ...savedGroup.variants.map(
@@ -102,9 +111,7 @@ for (const theme of ['dark', 'light']) {
     expect(beforeColor).toBe('rgb(0, 0, 0)')
     expect(afterColor).toBe(beforeColor)
     const captions = await impact
-      .locator('.packing-value-row[data-changed="true"]')
-      .first()
-      .locator('.packing-value-caption')
+      .locator('thead th.packing-value-caption:not([aria-hidden])')
       .evaluateAll((nodes) => nodes.map((node) => getComputedStyle(node).color))
     expect(captions[0]).not.toBe(captions[1])
     expect((await backup(extension)).preparations).toEqual(before.preparations)
@@ -229,6 +236,276 @@ async function backup(extension) {
   expect(response.ok, response.error).toBe(true)
   return response.data
 }
+
+async function openCodeConflict(page, target, value) {
+  const code = target.getByLabel('Product code', { exact: true })
+  await code.fill(value)
+  await expect(code).toHaveAttribute('aria-invalid', 'true')
+  await target
+    .locator('.product-summary')
+    .getByRole('button', { name: 'Resolve code', exact: true })
+    .click()
+  return page.getByRole('dialog', {
+    name: 'Resolve code conflict',
+    exact: true,
+  })
+}
+
+test('either product in the same order can release its code inside the conflict popup', async ({
+  extension,
+}) => {
+  const { page, view } = await openPacking(extension)
+  const before = await backup(extension)
+  const [target, owner] = before.preparations[0].groups
+  const resolver = await openCodeConflict(
+    page,
+    view.locator('.preparation-group').first(),
+    owner.baseCode
+  )
+  const ownerCode = resolver
+    .locator('.conflict-owner-card')
+    .getByLabel('Product code', { exact: true })
+  await ownerCode.fill('CE26100199')
+  expect((await backup(extension)).preparations).toEqual(before.preparations)
+  await resolver
+    .getByRole('button', { name: 'Apply corrections', exact: true })
+    .click()
+  await expect(resolver).toBeHidden()
+  const after = await backup(extension)
+  expect(
+    after.preparations[0].groups.find((group) => group.id === target.id)
+      .baseCode
+  ).toBe(owner.baseCode)
+  expect(
+    after.preparations[0].groups.find((group) => group.id === owner.id).baseCode
+  ).toBe('CE26100199')
+  expect(after.orders).toEqual(before.orders)
+})
+
+test('both same-group barcode endings are editable and their shared base stays synchronized', async ({
+  extension,
+}) => {
+  const { page, view } = await openPacking(extension)
+  const before = await backup(extension)
+  const group = before.preparations[0].groups[0]
+  const [target, owner] = group.variants
+  const row = view
+    .locator('.preparation-group')
+    .first()
+    .locator('.variants tbody tr')
+    .first()
+  await row
+    .getByLabel(`Variant code ${target.id}`, { exact: true })
+    .fill(owner.variantSuffix)
+  await expect(
+    row.getByLabel(`Variant code ${target.id}`, { exact: true })
+  ).toHaveAttribute('aria-invalid', 'true')
+  await row.getByRole('button', { name: 'Resolve code', exact: true }).click()
+  const resolver = page.getByRole('dialog', {
+    name: 'Resolve code conflict',
+    exact: true,
+  })
+  const ownerCard = resolver.locator('.conflict-owner-card')
+  const targetCard = resolver.locator('.conflict-edit-card')
+  await ownerCard
+    .getByLabel('Variant code', { exact: true })
+    .fill(target.variantSuffix)
+  await targetCard
+    .getByLabel('Product code', { exact: true })
+    .fill('CE26100199')
+  await expect(
+    ownerCard.getByLabel('Product code', { exact: true })
+  ).toHaveValue('CE26100199')
+  await targetCard
+    .getByLabel('Product code', { exact: true })
+    .fill(group.baseCode)
+  await resolver
+    .getByRole('button', { name: 'Apply corrections', exact: true })
+    .click()
+  await expect(resolver).toBeHidden()
+  const after = (await backup(extension)).preparations[0].groups[0]
+  expect(after.baseCode).toBe(group.baseCode)
+  expect(after.variants[0].variantSuffix).toBe(owner.variantSuffix)
+  expect(after.variants[1].variantSuffix).toBe(target.variantSuffix)
+})
+
+test('cross-order code swaps apply and undo atomically while cancel and invalid corrections write neither order', async ({
+  extension,
+}) => {
+  const { page, view } = await openPacking(extension, { orderCount: 2 })
+  const before = await backup(extension)
+  const [targetOrder, ownerOrder] = before.preparations
+  const target = targetOrder.groups[0],
+    owner = ownerOrder.groups[0]
+  const targetGroup = view.locator(
+    `[data-packing-order="${targetOrder.orderId}"] [data-group-id="${target.id}"]`
+  )
+  let resolver = await openCodeConflict(page, targetGroup, owner.baseCode)
+  await resolver
+    .locator('.conflict-owner-card')
+    .getByLabel('Product code', { exact: true })
+    .fill(target.baseCode)
+  await resolver
+    .getByRole('button', { name: 'Continue editing', exact: true })
+    .click()
+  expect((await backup(extension)).preparations).toEqual(before.preparations)
+  resolver = await openCodeConflict(page, targetGroup, owner.baseCode)
+  const ownerCode = resolver
+    .locator('.conflict-owner-card')
+    .getByLabel('Product code', { exact: true })
+  await ownerCode.fill('BROKEN')
+  await resolver
+    .getByRole('button', { name: 'Apply corrections', exact: true })
+    .click()
+  await expect(resolver).toBeVisible()
+  await expect(resolver.locator('.conflict-editor-status')).toContainText(
+    /code|CE/
+  )
+  expect((await backup(extension)).preparations).toEqual(before.preparations)
+  await ownerCode.fill(target.baseCode)
+  await resolver
+    .getByRole('button', { name: 'Apply corrections', exact: true })
+    .click()
+  await expect(resolver).toBeHidden()
+  const codes = async () =>
+    (await backup(extension)).preparations.map((prep) => [
+      prep.orderId,
+      prep.groups.map((group) => group.baseCode),
+    ])
+  const swapped = await codes()
+  expect(swapped.find(([id]) => id === targetOrder.orderId)[1][0]).toBe(
+    owner.baseCode
+  )
+  expect(swapped.find(([id]) => id === ownerOrder.orderId)[1][0]).toBe(
+    target.baseCode
+  )
+  await view.getByRole('button', { name: 'Undo', exact: true }).click()
+  expect(await codes()).toEqual(
+    before.preparations.map((prep) => [
+      prep.orderId,
+      prep.groups.map((group) => group.baseCode),
+    ])
+  )
+  await view.getByRole('button', { name: 'Redo', exact: true }).click()
+  expect(await codes()).toEqual(swapped)
+  expect((await backup(extension)).orders).toEqual(before.orders)
+})
+
+test('a stale owning order blocks both corrections without overwriting another tab', async ({
+  extension,
+}) => {
+  const { page, view } = await openPacking(extension, { orderCount: 2 })
+  const before = await backup(extension)
+  const [targetOrder, ownerOrder] = before.preparations
+  const target = targetOrder.groups[0],
+    owner = ownerOrder.groups[0]
+  const resolver = await openCodeConflict(
+    page,
+    view.locator(
+      `[data-packing-order="${targetOrder.orderId}"] [data-group-id="${target.id}"]`
+    ),
+    owner.baseCode
+  )
+  await resolver
+    .locator('.conflict-owner-card')
+    .getByLabel('Product code', { exact: true })
+    .fill(target.baseCode)
+  const other = await extension.context.newPage()
+  await other.clock.setFixedTime(new Date('2026-10-15T04:00:00Z'))
+  await other.goto(`${extension.extensionBaseUrl}/library.html`)
+  await other
+    .getByRole('button', { name: 'Prepare packing list', exact: true })
+    .click()
+  await other
+    .locator(
+      `[data-packing-order="${ownerOrder.orderId}"] [data-group-id="${owner.id}"]`
+    )
+    .getByLabel('Spanish short name', { exact: true })
+    .fill('NEWER NAME')
+  await expect
+    .poll(
+      async () =>
+        (await backup(extension)).preparations.find(
+          (prep) => prep.orderId === ownerOrder.orderId
+        ).groups[0].spanishName
+    )
+    .toBe('NEWER NAME')
+  const newer = await backup(extension)
+  await resolver
+    .getByRole('button', { name: 'Apply corrections', exact: true })
+    .click()
+  await expect(resolver.locator('.conflict-editor-status')).toContainText(
+    'changed in another tab'
+  )
+  expect((await backup(extension)).preparations).toEqual(newer.preparations)
+})
+
+test('swapped variant and size fields show specific feedback and preserve saved codes', async ({
+  extension,
+}) => {
+  const { page, view } = await openPacking(extension)
+  const before = await backup(extension)
+  const variant = before.preparations[0].groups[0].variants[0]
+  const row = view
+    .locator('.preparation-group')
+    .first()
+    .locator('.variants tbody tr')
+    .first()
+  const modelCode = row.getByLabel(`Variant code ${variant.id}`, {
+    exact: true,
+  })
+  const sizeCode = row.getByLabel(`Size code ${variant.id}`, { exact: true })
+  await sizeCode.fill('A')
+  await expect(sizeCode).toHaveAttribute('aria-invalid', 'true')
+  await expect(modelCode).not.toHaveAttribute('aria-invalid', 'true')
+  await expect(row.locator('.code-field-error')).toContainText(
+    'Enter model/color letters in Variant code'
+  )
+  await sizeCode.press('Tab')
+  expect((await backup(extension)).preparations).toEqual(before.preparations)
+  await sizeCode.fill(variant.sizeSuffix)
+  await modelCode.fill('XL')
+  await expect(modelCode).toHaveAttribute('aria-invalid', 'true')
+  await expect(sizeCode).not.toHaveAttribute('aria-invalid', 'true')
+  await expect(row.locator('.code-field-error')).toContainText(
+    'Enter size endings in Size code'
+  )
+  await modelCode.fill(variant.variantSuffix)
+  await expect(modelCode).not.toHaveAttribute('aria-invalid', 'true')
+  await expect(sizeCode).not.toHaveAttribute('aria-invalid', 'true')
+  await sizeCode.fill('L')
+  await expect
+    .poll(
+      async () =>
+        (await backup(extension)).preparations[0].groups[0].variants[0]
+          .sizeSuffix
+    )
+    .toBe('L')
+  await view
+    .locator('.preparation-group')
+    .first()
+    .getByLabel('Spanish short name', { exact: true })
+    .fill('TARRO')
+  await expect(view.locator('.preparation-save-status')).toHaveText(
+    'Saved automatically'
+  )
+  await row.getByRole('button', { name: 'Edit barcode', exact: true }).click()
+  const editor = page.locator('#label-dialog')
+  await editor.getByLabel('Size code', { exact: true }).fill('B')
+  await expect(editor.getByLabel('Size code', { exact: true })).toHaveAttribute(
+    'aria-invalid',
+    'true'
+  )
+  await expect(
+    editor.getByLabel('Variant code', { exact: true })
+  ).not.toHaveAttribute('aria-invalid', 'true')
+  await expect(
+    editor.getByRole('button', { name: 'Copy label', exact: true })
+  ).toBeDisabled()
+  expect(
+    (await backup(extension)).preparations[0].groups[0].variants[0].sizeSuffix
+  ).toBe('L')
+})
 
 test(
   'a product can reuse its first code after a saved code change and a workspace reload',
@@ -683,9 +960,9 @@ test('conflicting barcode previews disappear immediately and a delayed render ca
     exact: true,
   })
   await firstVariant.fill('A')
-  await firstSize.fill('A')
+  await firstSize.fill('S')
   await secondVariant.fill('B')
-  await secondSize.fill('B')
+  await secondSize.fill('M')
   // Settle the serialized initial renders before testing immediate invalidation.
   // Native PNG encoding can take several seconds in the background browser.
   for (const preview of [firstPreview, secondPreview])
@@ -728,7 +1005,7 @@ test('conflicting barcode previews disappear immediately and a delayed render ca
       return encode.call(this, callback, ...args)
     }
   })
-  await secondSize.fill('C')
+  await secondSize.fill('L')
   await expect
     .poll(() => page.evaluate(() => Boolean(window.finishBarcodePreview)))
     .toBe(true)
@@ -850,7 +1127,9 @@ test('conflict popup restores only code edits and preserves other pending fields
     exact: true,
   })
   await expect(
-    resolver.getByLabel('Product code', { exact: true })
+    resolver
+      .locator('.conflict-edit-card')
+      .getByLabel('Product code', { exact: true })
   ).toBeVisible()
   await resolver
     .getByRole('button', { name: 'Undo code edits', exact: true })
@@ -901,9 +1180,15 @@ test('conflict popup edits remain local until applied and can return to a free p
     name: 'Resolve code conflict',
     exact: true,
   })
-  await resolver.getByLabel('Product code', { exact: true }).fill('CE26100108')
+  await resolver
+    .locator('.conflict-edit-card')
+    .getByLabel('Product code', { exact: true })
+    .fill('CE26100108')
   expect((await backup(extension)).preparations).toEqual(saved.preparations)
-  await resolver.getByLabel('Product code', { exact: true }).fill(other)
+  await resolver
+    .locator('.conflict-edit-card')
+    .getByLabel('Product code', { exact: true })
+    .fill(other)
   await resolver
     .getByRole('button', { name: 'Apply corrections', exact: true })
     .click()
@@ -912,15 +1197,22 @@ test('conflict popup edits remain local until applied and can return to a free p
     /already reserved|another product/
   )
   await expect(
-    resolver.getByLabel('Product code', { exact: true })
+    resolver
+      .locator('.conflict-edit-card')
+      .getByLabel('Product code', { exact: true })
   ).toBeFocused()
   expect((await backup(extension)).preparations).toEqual(saved.preparations)
   await expect(
     resolver.getByLabel('Previously used by this product', { exact: true })
   ).toHaveCount(0)
-  await resolver.getByLabel('Product code', { exact: true }).fill(base)
+  await resolver
+    .locator('.conflict-edit-card')
+    .getByLabel('Product code', { exact: true })
+    .fill(base)
   await expect(
-    resolver.getByLabel('Product code', { exact: true })
+    resolver
+      .locator('.conflict-edit-card')
+      .getByLabel('Product code', { exact: true })
   ).toHaveValue(base)
   await resolver
     .getByRole('button', { name: 'Apply corrections', exact: true })
@@ -953,12 +1245,18 @@ test('variant conflicts can be corrected inside the resolver without changing th
   await expect(
     row.getByLabel(`Variant code ${variant.id}`, { exact: true })
   ).toHaveAttribute('aria-invalid', 'true')
-  await row.getByRole('button', { name: 'Resolve code', exact: true }).click()
+  const resolve = row.getByRole('button', { name: 'Resolve code', exact: true })
+  await expect(resolve).toBeVisible()
+  await expect(resolve).toHaveCSS('font-size', '11px')
+  await expect(resolve).toHaveCSS('padding', '2px 6px')
+  expect((await resolve.boundingBox()).height).toBe(24)
+  await resolve.click()
   const resolver = page.getByRole('dialog', {
     name: 'Resolve code conflict',
     exact: true,
   })
   await resolver
+    .locator('.conflict-edit-card')
     .getByLabel('Variant code', { exact: true })
     .fill(variant.variantSuffix)
   await resolver
@@ -968,4 +1266,56 @@ test('variant conflicts can be corrected inside the resolver without changing th
   const after = await backup(extension)
   expect(after.preparations[0].groups[0]).toEqual(group)
   expect(after.issuedCodes).toEqual(original.issuedCodes)
+})
+
+test('legacy suffixes survive a valid edit followed by Undo, Redo and session removal', async ({
+  extension,
+}) => {
+  const { page, view } = await openPacking(extension)
+  const legacy = await backup(extension)
+  const preparation = legacy.preparations[0]
+  const group = preparation.groups[0],
+    variant = group.variants[0]
+  variant.sizeSuffix = 'A'
+  preparation.updatedAt = '2090-10-15T04:00:00.000Z'
+  for (const issued of legacy.issuedCodes)
+    if (issued.kind === 'barcode' && issued.variantId === variant.id)
+      issued.code = group.baseCode + variant.variantSuffix + variant.sizeSuffix
+  const restored = await extension.inspector.evaluate(
+    (data) =>
+      chrome.runtime.sendMessage({ type: 'BACKUP_RESTORE', backup: data }),
+    legacy
+  )
+  expect(restored.ok, restored.error).toBe(true)
+  await page.reload()
+  await page
+    .getByRole('button', { name: 'Prepare packing list', exact: true })
+    .click()
+  const row = view.locator(
+    `[data-group-id="${group.id}"] tr[data-variant-id="${variant.id}"]`
+  )
+  const sizeCode = row.getByLabel(`Size code ${variant.id}`, { exact: true })
+  const storedSize = async () =>
+    (await backup(extension)).preparations[0].groups
+      .find((entry) => entry.id === group.id)
+      .variants.find((entry) => entry.id === variant.id).sizeSuffix
+  await expect(sizeCode).toHaveValue('A')
+  await sizeCode.fill('L')
+  await expect.poll(storedSize).toBe('L')
+  await view.getByRole('button', { name: 'Undo', exact: true }).click()
+  await expect.poll(storedSize).toBe('A')
+  await expect(sizeCode).not.toHaveAttribute('aria-invalid', 'true')
+  await view.getByRole('button', { name: 'Redo', exact: true }).click()
+  await expect.poll(storedSize).toBe('L')
+  await row.getByRole('button', { name: 'Remove product', exact: true }).focus()
+  await row.getByRole('button', { name: 'Remove product', exact: true }).click()
+  const review = page.getByRole('dialog', {
+    name: 'Remove from packing?',
+    exact: true,
+  })
+  await review
+    .getByRole('button', { name: 'Remove from packing', exact: true })
+    .click()
+  await expect(review).toBeHidden()
+  await expect.poll(storedSize).toBe('A')
 })

@@ -263,6 +263,44 @@ test('packing measurements undo, redo and roll back on removal while preserving 
   await page.screenshot({ path: 'work/packing-carton-measurements.png' })
 })
 
+test('blank and populated preparation measurements keep a quiet compact field on hover and focus', async ({
+  extension,
+}) => {
+  const { page } = await seed(extension)
+  const packing = await prepare(page)
+  const rows = packing.locator('tr[data-variant-id]')
+  for (const row of [rows.first(), rows.nth(1)]) {
+    for (const input of [kg(row), cbm(row)]) {
+      await page.mouse.move(1, 1)
+      await expectMinimalMeasurement(input)
+      const bounds = await input.boundingBox()
+      const quantity = await row.locator('.variant-quantity').boundingBox()
+      expect(
+        Math.abs(
+          bounds.y + bounds.height / 2 - (quantity.y + quantity.height / 2)
+        )
+      ).toBeLessThanOrEqual(2)
+      const unit = input.locator('..').locator('.carton-measurement-unit')
+      if ((await input.inputValue()) === '') {
+        await expect(input).toHaveAttribute('placeholder', '—')
+        await expect(unit).toBeHidden()
+      } else await expect(unit).toBeVisible()
+      await input.hover()
+      await expectMinimalMeasurement(input)
+      for (const side of ['top', 'right', 'left'])
+        await expect(input).toHaveCSS(
+          `border-${side}-color`,
+          'rgba(0, 0, 0, 0)'
+        )
+      await input.focus()
+      await expectMinimalMeasurement(input)
+      await expect(input).toHaveCSS('outline-style', 'solid')
+      await expect(input).toHaveCSS('outline-width', '2px')
+      await input.blur()
+    }
+  }
+})
+
 test('a preserved dirty measurement cannot overwrite a same-field edit broadcast from another tab', async ({
   extension,
 }) => {

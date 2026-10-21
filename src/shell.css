@@ -809,74 +809,7 @@ dialog.packing-review.packing-change-dialog {
   .packing-value-comparison {
   grid-column: 2;
   grid-row: 1 / span 3;
-  display: flex;
-  flex-wrap: wrap;
-  align-items: baseline;
-  gap: var(--space-1) var(--space-4);
   margin: 0;
-}
-.packing-review.packing-change-dialog .packing-value-row {
-  display: inline-flex;
-  align-items: baseline;
-  gap: 6px;
-}
-.packing-review.packing-change-dialog
-  .packing-value-row
-  > .packing-value-label {
-  font-size: var(--text-xs);
-}
-.packing-review.packing-change-dialog .packing-value-cell {
-  display: inline-flex;
-  align-items: baseline;
-  padding: 0;
-  background: transparent;
-}
-.packing-review.packing-change-dialog
-  .packing-value-row[data-changed]
-  .packing-value-cell {
-  background: transparent;
-}
-.packing-review.packing-change-dialog .packing-value-caption {
-  position: absolute;
-  inline-size: 1px;
-  block-size: 1px;
-  overflow: hidden;
-  clip-path: inset(50%);
-  white-space: nowrap;
-}
-.packing-review.packing-change-dialog .packing-value-content {
-  font-size: var(--text-m);
-}
-.packing-review.packing-change-dialog .packing-value-after::before {
-  content: '→';
-  margin-inline-end: 6px;
-  color: var(--muted);
-}
-.packing-review.packing-change-dialog
-  .packing-value-row[data-changed='true']
-  .packing-value-before
-  .packing-value-text {
-  color: var(--muted);
-  text-decoration: line-through;
-}
-.packing-review.packing-change-dialog
-  .packing-value-row[data-changed='true']
-  .packing-value-after
-  .packing-value-text {
-  font-weight: 650;
-}
-.packing-review.packing-change-dialog .packing-value-row[data-changed='false'] {
-  opacity: 0.75;
-}
-.packing-review.packing-change-dialog
-  .packing-value-row[data-changed='false']
-  .packing-value-before {
-  display: none;
-}
-.packing-review.packing-change-dialog
-  .packing-value-row[data-changed='false']
-  .packing-value-after::before {
-  content: none;
 }
 .packing-change-dialog .packing-review-item p {
   grid-column: 1 / -1;

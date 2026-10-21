@@ -44,6 +44,7 @@ async function startFixtureServer() {
         '/src/product-vocabulary.js',
         '/src/material-vocabulary.js',
         '/src/size-vocabulary.js',
+        '/src/spreadsheet-properties.js',
         '/src/color-vocabulary.js',
         '/src/appearance.js',
         '/src/order-tags.js',

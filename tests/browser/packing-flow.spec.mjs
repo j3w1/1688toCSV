@@ -732,8 +732,10 @@ test('a released code is reusable and an active conflict identifies its owner be
     exact: true,
   })
   await expect(conflict).toContainText('CE26109998')
-  await expect(conflict).toContainText(
-    'is currently assigned to another product'
+  const owner = conflict.locator('.conflict-owner-card')
+  await expect(owner).toContainText('Current assignment')
+  await expect(owner.getByLabel('Product code', { exact: true })).toHaveValue(
+    'CE26109998'
   )
   await expect(conflict.getByAltText('Product photo')).toHaveCount(2)
   await expect(

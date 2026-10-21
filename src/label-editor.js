@@ -138,8 +138,14 @@ export function mountLabelEditor(container, options) {
     validationError = error
     resolve.hidden = !error?.conflict || !options.onResolve
     for (const [key, input] of inputs) {
+      const field = error?.packingIssue?.field
       const invalid = Boolean(
-        error && ['code', 'variantSuffix', 'sizeSuffix'].includes(key)
+        error &&
+        (field === 'size'
+          ? key === 'sizeSuffix'
+          : field === 'variant'
+            ? key === 'variantSuffix'
+            : ['code', 'variantSuffix', 'sizeSuffix'].includes(key))
       )
       if (invalid) {
         input.setAttribute('aria-invalid', 'true')

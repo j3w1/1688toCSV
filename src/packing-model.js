@@ -1184,6 +1184,119 @@ export function validatePreparation(input) {
   return result
 }
 
+/** New model/color endings must not borrow standard or configured size codes. */
+export function createVariantSuffixValidator(
+  sizeVocabulary = DEFAULT_SIZE_VOCABULARY
+) {
+  const sizes = new Set(
+    [...DEFAULT_SIZE_VOCABULARY, ...validateSizeVocabulary(sizeVocabulary)].map(
+      ({ suffix }) => suffix
+    )
+  )
+  return (value) =>
+    typeof value === 'string' &&
+    /^[A-Z]*$/.test(value) &&
+    !sizes.has(value) &&
+    !/^(?:X*[SL]|M)$/.test(value)
+}
+
+/** Check authored suffix changes without reinterpreting saved or source codes. */
+export function validatePreparationSuffixEdits(
+  preparation,
+  previous,
+  { snapshot, restored, sizeVocabulary = DEFAULT_SIZE_VOCABULARY } = {}
+) {
+  const validVariantSuffix = createVariantSuffixValidator(sizeVocabulary)
+  const previousVariants = new Map(),
+    previousEntries = new Map(),
+    restoredEntries = new Map()
+  if (
+    previous?.accountId === preparation.accountId &&
+    previous?.orderId === preparation.orderId
+  )
+    for (const group of previous.groups)
+      for (const variant of group.variants) {
+        previousVariants.set(variant.id, variant)
+        for (const entryId of variant.entryIds)
+          previousEntries.set(entryId, variant)
+      }
+  if (
+    restored?.accountId === preparation.accountId &&
+    restored?.orderId === preparation.orderId
+  )
+    for (const group of restored.groups)
+      for (const variant of group.variants)
+        for (const entryId of variant.entryIds)
+          restoredEntries.set(entryId, variant)
+  let sourceVariants
+  const sourceVariant = (variant) => {
+    if (!snapshot) return false
+    if (!sourceVariants)
+      sourceVariants = new Map(
+        createPreparation(snapshot, preparation.month, [], sizeVocabulary)
+          .groups.flatMap((group) => group.variants)
+          .flatMap((variant) =>
+            variant.entryIds.map((entryId) => [entryId, variant.variantSuffix])
+          )
+      )
+    return (
+      variant.entryIds.length > 0 &&
+      variant.entryIds.every(
+        (entryId) => sourceVariants.get(entryId) === variant.variantSuffix
+      )
+    )
+  }
+  for (const group of preparation.groups)
+    for (const variant of group.variants)
+      for (const [field, key] of [
+        ['variant', 'variantSuffix'],
+        ['size', 'sizeSuffix'],
+      ]) {
+        const value = variant[key]
+        if (
+          !value ||
+          (variant.entryIds.length === 0 &&
+            previousVariants.get(variant.id)?.entryIds.length === 0 &&
+            previousVariants.get(variant.id)[key] === value) ||
+          (variant.entryIds.length > 0 &&
+            variant.entryIds.every(
+              (entryId) => previousEntries.get(entryId)?.[key] === value
+            )) ||
+          (variant.entryIds.length > 0 &&
+            variant.entryIds.every(
+              (entryId) => restoredEntries.get(entryId)?.[key] === value
+            ))
+        )
+          continue
+        if (
+          field === 'variant'
+            ? validVariantSuffix(value) || sourceVariant(variant)
+            : !validVariantSuffix(value) ||
+              value === 'X' ||
+              !/^[A-Z]$/.test(value)
+        )
+          continue
+        throw Object.assign(
+          new Error(
+            field === 'variant'
+              ? 'Enter size endings in Size code; use model/color letters here.'
+              : 'Enter model/color letters in Variant code; use a size code here.'
+          ),
+          {
+            code: 'PACKING_SUFFIX_FIELD_MISMATCH',
+            packingIssue: {
+              orderId: preparation.orderId,
+              groupId: group.id,
+              variantId: variant.id,
+              field,
+              value,
+            },
+          }
+        )
+      }
+  return preparation
+}
+
 function validateNaming(input) {
   record(input, 'Name provenance')
   const result = {}

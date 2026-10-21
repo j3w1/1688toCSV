@@ -12,6 +12,7 @@ import {
   activeGroups,
   barcodeValue,
   validatePreparation,
+  validatePreparationSuffixEdits,
   groupPackingMonth,
   planSelectedPreparations,
   reorderPreparationGroups,
@@ -306,6 +307,19 @@ export async function startPackingWorkspace({
   const sourceAttributeFields = new Set()
   const cartonFields = new Map()
   const measurementFields = new Map()
+  let rowFieldCleanupPending = false
+  function scheduleRowFieldCleanup() {
+    if (rowFieldCleanupPending) return
+    rowFieldCleanupPending = true
+    queueMicrotask(() => {
+      rowFieldCleanupPending = false
+      // Virtual rows are built as one detached batch, then mounted together.
+      // Only prune after mounting so later rows cannot evict earlier editors.
+      for (const fields of [cartonFields, measurementFields])
+        for (const [key, entry] of fields)
+          if (!entry.input.isConnected && !entry.dirty()) fields.delete(key)
+    })
+  }
   function renderSourceAttributes(host, items, titles) {
     host.replaceChildren()
     titles.replaceChildren()
@@ -1399,7 +1413,6 @@ export async function startPackingWorkspace({
       before = checkpoints.get(draft.orderId)
     if (before !== undefined)
       if (history.record(draft.orderId, before, next, mergeKey)) {
-        historyRestores.delete(draft.orderId)
         scheduleSave(draft)
       }
     checkpoints.set(draft.orderId, next)
@@ -1451,6 +1464,7 @@ export async function startPackingWorkspace({
         try {
           restored = await repository.savePreparations(candidates, {
             preserveNaming: true,
+            suffixBaselines: candidates,
             cartonMeasurements: changes
               .filter((change) => change.cartons)
               .map((change) => ({
@@ -1704,6 +1718,12 @@ export async function startPackingWorkspace({
     })
     if (recordHistory && before) rememberSavedPreparations([before], [result])
     else historySaved.set(result.orderId, result)
+    rememberPreparation(result)
+    changed()
+    channel?.postMessage('changed')
+    return result
+  }
+  function rememberPreparation(result) {
     const previous = preparations.get(result.orderId)
     for (const group of previous?.groups || [])
       for (const variant of group.variants)
@@ -1718,9 +1738,6 @@ export async function startPackingWorkspace({
             group,
             variant,
           })
-    changed()
-    channel?.postMessage('changed')
-    return result
   }
   function outputModel(
     prep,
@@ -2645,6 +2662,7 @@ export async function startPackingWorkspace({
       // A reverted edit already matches saved ownership, even if a rerender
       // disconnected its field before the deferred validator could run.
       approveCodePreviews()
+      historyRestores.delete(draft.orderId)
       updateHistoryButtons()
       return draft
     }
@@ -2670,6 +2688,7 @@ export async function startPackingWorkspace({
     const submitted = structuredClone(draft)
     const result = await saved(submitted, {
       recordHistory: false,
+      suffixBaselines: [restoredSuffixBaseline(submitted)].filter(Boolean),
       preserveNaming:
         historyRestores.get(draft.orderId) ===
         preparationHistorySnapshot(submitted),
@@ -2693,6 +2712,10 @@ export async function startPackingWorkspace({
       media.refresh()
     }
     return draft
+  }
+  function restoredSuffixBaseline(draft) {
+    const value = historyRestores.get(draft.orderId)
+    return value ? restorePreparationHistory(JSON.parse(value), draft) : null
   }
   function selectPackingRows(select) {
     for (const draft of visibleDrafts()) {
@@ -2990,8 +3013,10 @@ export async function startPackingWorkspace({
   async function restorePacking(draft, previous) {
     if (!previous && !hasDefaultPackingChanges(draft)) return
     const restore = previous ? restorePreviousPacking : restoreDefaultPacking
-    const [candidate] = await repository.previewPreparations([restore(draft)], {
+    const restoring = restore(draft)
+    const [candidate] = await repository.previewPreparations([restoring], {
       preserveNaming: true,
+      suffixBaselines: [restoring],
     })
     if (
       !(await reviewPackingChanges({
@@ -3022,6 +3047,7 @@ export async function startPackingWorkspace({
       expectedRevision: draft.revision,
       preserveNaming: true,
       recordHistory: false,
+      suffixBaselines: [restoring],
     })
     acceptDraft(result)
     const source = getRecords().find(
@@ -3340,6 +3366,7 @@ export async function startPackingWorkspace({
     const saveOptions = {
       recordHistory: false,
       preserveNaming: true,
+      suffixBaselines: [sessionBaselines.get(draft.orderId)].filter(Boolean),
       cartonMeasurements: Object.keys(beforeCartons).length
         ? [
             {
@@ -3351,6 +3378,7 @@ export async function startPackingWorkspace({
         : [],
     }
     let result
+    const relatedCorrections = []
     try {
       result = await saved(candidate, saveOptions)
     } catch (error) {
@@ -3360,10 +3388,22 @@ export async function startPackingWorkspace({
         error,
         saveOptions,
         discard: true,
+        onRelatedSaved(before, results) {
+          for (const result of results) {
+            const old = before.find((entry) => entry.orderId === result.orderId)
+            if (old)
+              relatedCorrections.push({
+                orderId: result.orderId,
+                before: preparationHistorySnapshot(old),
+                after: preparationHistorySnapshot(result),
+              })
+          }
+        },
       })
     }
     if (!result) return
     history.recordBatch([
+      ...relatedCorrections,
       {
         orderId: draft.orderId,
         before: preparationHistorySnapshot(draft),
@@ -3395,6 +3435,7 @@ export async function startPackingWorkspace({
     groupingPanel?.panel.hidePopover()
     const candidates = await regroupSelection(entries, operation, {
       getReservedBarcodes: (...args) => repository.getReservedBarcodes(...args),
+      sizeVocabulary: preferences.sizeVocabulary,
     })
     const before = candidates.map((candidate) =>
       drafts.find((draft) => draft.orderId === candidate.orderId)
@@ -3474,6 +3515,12 @@ export async function startPackingWorkspace({
     const code =
       error?.conflict?.code || error?.message?.match(/CE\d{8}[A-Z0-9]*/)?.[0]
     const previous = preparations.get(orderId)
+    // Keep corrections isolated until the complete final ownership set can be
+    // checked and committed together. The same order shares one proposal.
+    const proposals = new Map([[orderId, draft]])
+    const baselines = new Map([[orderId, previous]])
+    const initialProposals = new Map([[orderId, structuredClone(draft)]])
+    const editorKey = (id, groupId) => JSON.stringify([id, groupId])
     const requestedGroupId = error?.conflict?.requestedOwner?.groupId
     let group =
       draft.groups.find(
@@ -3490,15 +3537,23 @@ export async function startPackingWorkspace({
       el(
         'p',
         code
-          ? uiMessage(
-              '{0} is currently assigned to another product. Choose a free code or restore the saved codes.',
-              { 0: code }
-            )
+          ? undefined
           : uiMessage(
               error?.message || 'Review the product codes in this order.'
-            )
+            ),
+        'conflict-explanation'
       )
     )
+    if (code)
+      modal.lastChild.append(
+        el('code', code, 'ce-code'),
+        el(
+          'span',
+          uiMessage(
+            "Edit either product's codes. Apply saves both corrections together."
+          )
+        )
+      )
     if (options.discard)
       modal.append(
         el(
@@ -3569,7 +3624,8 @@ export async function startPackingWorkspace({
     editorStatus.id = `conflict-feedback-${crypto.randomUUID()}`
     editorStatus.setAttribute('role', 'status')
     editorStatus.hidden = true
-    let saving = false
+    let saving = false,
+      lastCodeInput
     function showProposal(message) {
       for (const [input, read] of editorReads) {
         input.value = read()
@@ -3582,7 +3638,7 @@ export async function startPackingWorkspace({
       editorStatus.dataset.state = 'proposal'
       editorStatus.hidden = false
     }
-    const complete = async (candidate) => {
+    const complete = async () => {
       if (saving) return
       saving = true
       const controls = [...modal.querySelectorAll('button,input,select')]
@@ -3593,11 +3649,51 @@ export async function startPackingWorkspace({
       try {
         if (saveWork) await saveWork.catch(() => {})
         clearTimeout(saveTimer)
-        // The repository checks the complete order and its current revision;
-        // editing in this popup never reserves a code before Apply succeeds.
-        const result = await saved(candidate, options.saveOptions)
+        const candidates = [...proposals.values()].filter(
+          (proposal) =>
+            proposal.orderId === orderId ||
+            !samePreparation(proposal, initialProposals.get(proposal.orderId))
+        )
+        const { recordHistory = true, ...saveOptions } =
+          options.saveOptions || {}
+        // Check every revision and reserve the final code set in one existing
+        // repository transaction, allowing corrections and swaps on both sides.
+        const results = await repository.savePreparations(candidates, {
+          ...saveOptions,
+          suffixBaselines: candidates
+            .map(
+              (proposal) =>
+                saveOptions.suffixBaselines?.find(
+                  (baseline) =>
+                    baseline.orderId === proposal.orderId &&
+                    baseline.accountId === proposal.accountId
+                ) || restoredSuffixBaseline(proposal)
+            )
+            .filter(Boolean),
+          ...Object.fromEntries(
+            ['capturePrevious', 'resetDefaults'].flatMap((key) =>
+              saveOptions[key] === true ? [[key, [orderId]]] : []
+            )
+          ),
+        })
+        const before = candidates
+          .map((proposal) => baselines.get(proposal.orderId))
+          .filter(Boolean)
+        if (recordHistory) rememberSavedPreparations(before, results)
+        else
+          options.onRelatedSaved?.(
+            before,
+            results.filter((result) => result.orderId !== orderId)
+          )
+        const result = results.find((result) => result.orderId === orderId)
+        for (const saved of results) {
+          rememberPreparation(saved)
+          if (saved.orderId !== orderId || !options.candidate)
+            acceptDraft(saved)
+        }
+        changed()
+        channel?.postMessage('changed')
         resolved = result
-        if (!options.candidate) acceptDraft(result)
         modal.close()
         if (!options.candidate) renderPreparation()
       } catch (failure) {
@@ -3607,7 +3703,9 @@ export async function startPackingWorkspace({
         const issue =
           failure.packingIssue || failure.conflict?.requestedOwner || {}
         const targetId = issue.groupId || group?.id
-        const fields = editFields.get(targetId) || editFields.get(group?.id)
+        const fields =
+          editFields.get(editorKey(issue.orderId || orderId, targetId)) ||
+          editFields.get(editorKey(orderId, group?.id))
         const part =
           issue.field === 'size'
             ? 'sizeSuffix'
@@ -3615,11 +3713,14 @@ export async function startPackingWorkspace({
               ? 'variantSuffix'
               : 'baseCode'
         const input =
+          ((failure.conflict || (!issue.orderId && !issue.groupId)) &&
+            lastCodeInput) ||
           fields?.find(
             (field) =>
               field.dataset.codePart === part &&
               (!issue.variantId || field.dataset.variantId === issue.variantId)
-          ) || fields?.[0]
+          ) ||
+          fields?.[0]
         if (input) {
           input.setAttribute('aria-invalid', 'true')
           input.setAttribute('aria-errormessage', editorStatus.id)
@@ -3676,8 +3777,8 @@ export async function startPackingWorkspace({
             })))
       )
     })
-    const restoreCode = (entry) => {
-      const old = previous?.groups.find((saved) => saved.id === entry.id)
+    const restoreCode = (entry, baseline = previous) => {
+      const old = baseline?.groups.find((saved) => saved.id === entry.id)
       if (!old) return
       entry.baseCode = old.baseCode
       for (const variant of entry.variants) {
@@ -3689,11 +3790,21 @@ export async function startPackingWorkspace({
       if (old.sizeMode === undefined) delete entry.sizeMode
       else entry.sizeMode = old.sizeMode
     }
-    async function appendCodeEditor(description, entry) {
+    async function appendCodeEditor(
+      description,
+      entry,
+      proposal = draft,
+      editedVariant = conflictingVariant,
+      ownerEditor = false
+    ) {
       const fields = []
-      editFields.set(entry.id, fields)
+      const key = editorKey(proposal.orderId, entry.id)
+      const existingFields = editFields.get(key) || []
+      editFields.set(key, [...existingFields, ...fields])
       const editor = el('div', undefined, 'conflict-code-editor')
-      const old = previous?.groups.find((saved) => saved.id === entry.id)
+      const old = baselines
+        .get(proposal.orderId)
+        ?.groups.find((saved) => saved.id === entry.id)
       const comparison = el('div', undefined, 'conflict-code-impact')
       const updatePreview = () => {
         const values = [
@@ -3739,21 +3850,57 @@ export async function startPackingWorkspace({
               after: entry[key],
             })
         comparison.replaceChildren(
-          el('h3', uiMessage('Changes to labels')),
-          packingValueComparison(values, {
-            beforeLabel: 'Saved value',
-            afterLabel: 'Proposed value',
-          })
+          packingValueComparison(values, { hideUnchanged: true })
         )
       }
-      previewUpdates.set(entry.id, updatePreview)
-      function addField(label, value, key, change, read) {
+      previewUpdates.set(editor, updatePreview)
+      function addField(label, value, key, change, read, host = editor) {
         const wrapper = field(uiMessage(label), value, (value) => {
+          lastCodeInput = input
           change(value.trim().toUpperCase())
           input.removeAttribute('aria-invalid')
           input.removeAttribute('aria-errormessage')
           editorStatus.hidden = true
-          updatePreview()
+          for (const [other, read] of editorReads) {
+            if (other === input) continue
+            other.value = read()
+            refreshCodeInput(other)
+          }
+          for (const update of previewUpdates.values()) update()
+          try {
+            validatePreparationSuffixEdits(
+              proposal,
+              baselines.get(proposal.orderId),
+              {
+                snapshot: getRecords().find(
+                  (record) => record.snapshot.orderId === proposal.orderId
+                )?.snapshot,
+                sizeVocabulary: preferences.sizeVocabulary,
+                restored:
+                  options.saveOptions?.suffixBaselines?.find(
+                    (baseline) =>
+                      baseline.orderId === proposal.orderId &&
+                      baseline.accountId === proposal.accountId
+                  ) || restoredSuffixBaseline(proposal),
+              }
+            )
+          } catch (error) {
+            bindText(editorStatus, uiMessage(error.message))
+            editorStatus.dataset.state = 'error'
+            editorStatus.hidden = false
+            const issue = error.packingIssue
+            const part = issue.field === 'size' ? 'sizeSuffix' : 'variantSuffix'
+            for (const field of editFields.get(
+              editorKey(proposal.orderId, issue.groupId)
+            ) || [])
+              if (
+                field.dataset.codePart === part &&
+                field.dataset.variantId === issue.variantId
+              ) {
+                field.setAttribute('aria-invalid', 'true')
+                field.setAttribute('aria-errormessage', editorStatus.id)
+              }
+          }
         })
         const input = wrapper.querySelector('input')
         input.dataset.codePart = key
@@ -3762,7 +3909,11 @@ export async function startPackingWorkspace({
         input.maxLength = key === 'baseCode' ? 10 : 30
         editorReads.set(input, read)
         fields.push(input)
-        editor.append(wrapper)
+        editFields.set(editorKey(proposal.orderId, entry.id), [
+          ...existingFields,
+          ...fields,
+        ])
+        host.append(wrapper)
         return input
       }
       const baseInput = addField(
@@ -3777,21 +3928,24 @@ export async function startPackingWorkspace({
       baseInput.classList.add('ce-code')
       decorateCodeInput(baseInput)
       for (const variant of entry.variants) {
+        if (ownerEditor && variant !== editedVariant) continue
         const before = old?.variants.find((item) => item.id === variant.id)
         if (
-          variant !== conflictingVariant &&
+          variant !== editedVariant &&
           (!before ||
             ['variantSuffix', 'sizeSuffix', 'needsSizeMapping'].every(
               (key) => before[key] === variant[key]
             ))
         )
           continue
+        const variantFields = el('div', undefined, 'conflict-variant-fields')
         const identity = el(
           'p',
           [variant.variant, variant.size].filter(Boolean).join(' · '),
           'conflict-variant-name'
         )
-        editor.append(identity)
+        variantFields.append(identity)
+        editor.append(variantFields)
         for (const [key, label] of [
           ['variantSuffix', 'Variant code'],
           ['sizeSuffix', 'Size code'],
@@ -3807,7 +3961,8 @@ export async function startPackingWorkspace({
                 if (value) delete entry.sizeMode
               }
             },
-            () => variant[key]
+            () => variant[key],
+            variantFields
           )
           input.dataset.variantId = variant.id
         }
@@ -3823,8 +3978,23 @@ export async function startPackingWorkspace({
         )
           return
         event.preventDefault()
-        void complete(draft)
+        void complete()
       })
+    }
+    function appendIdentity(host, id, sellerName) {
+      const snapshot = getRecords().find(
+        (record) => record.snapshot.orderId === id
+      )?.snapshot
+      const identity = el('div', undefined, 'conflict-product-identity')
+      identity.append(el('span', sellerName || snapshot?.sellerName || ''))
+      if (snapshot?.purchasedAt)
+        identity.append(
+          el(
+            'span',
+            new Date(snapshot.purchasedAt).toLocaleDateString(getLocale())
+          )
+        )
+      host.append(identity)
     }
     for (const owner of ownership.owners.filter(
       (entry) => entry.kind === (error?.conflict?.kind || 'base')
@@ -3847,19 +4017,47 @@ export async function startPackingWorkspace({
         el(
           'strong',
           owner.spanishName || owner.groupTitle || uiMessage('Original product')
-        ),
-        el('small', owner.sellerName),
-        orderReference(owner.orderId, {
-          sourceType: getRecords().find(
-            ({ snapshot }) => snapshot.orderId === owner.orderId
-          )?.snapshot.sourceType,
-        }),
-        ...(owner.variant ? [el('p', owner.variant)] : []),
-        el('code', code, 'ce-code conflict-occupied-code'),
-        el('p', uiMessage('This code is currently assigned here.'))
+        )
       )
+      appendIdentity(details, owner.orderId, owner.sellerName)
+      if (owner.variant) details.append(el('p', owner.variant))
+      details.append(el('code', code, 'ce-code conflict-occupied-code'))
       const owningGroupId =
         owner.currentGroupId || (owner.groupExists ? owner.groupId : null)
+      card.append(details)
+      if (owner.orderExists && owningGroupId) {
+        let proposal = proposals.get(owner.orderId)
+        if (!proposal) {
+          const source =
+            drafts.find((entry) => entry.orderId === owner.orderId) ||
+            preparations.get(owner.orderId)
+          if (source) {
+            proposal = structuredClone(source)
+            proposals.set(owner.orderId, proposal)
+            baselines.set(owner.orderId, preparations.get(owner.orderId))
+            initialProposals.set(owner.orderId, structuredClone(proposal))
+          }
+        }
+        const owningGroup = proposal?.groups.find(
+          (entry) => entry.id === owningGroupId
+        )
+        const owningVariant =
+          owningGroup?.variants.find((entry) => entry.id === owner.variantId) ||
+          owningGroup?.variants.find((entry) =>
+            entry.entryIds.some((id) => owner.entryIds.includes(id))
+          )
+        if (owningGroup) {
+          if (owner.kind === 'base')
+            details.querySelector('.conflict-occupied-code')?.remove()
+          await appendCodeEditor(
+            details,
+            owningGroup,
+            proposal,
+            owner.kind === 'barcode' ? owningVariant : undefined,
+            true
+          )
+        }
+      }
       if (owner.orderExists && owningGroupId && !options.candidate)
         details.append(
           button(uiMessage('Show owning product'), async () => {
@@ -3901,7 +4099,6 @@ export async function startPackingWorkspace({
               ?.scrollIntoView({ block: 'center' })
           })
         )
-      card.append(details)
       evidence.append(card)
     }
     for (const entry of editableGroups) {
@@ -3925,6 +4122,7 @@ export async function startPackingWorkspace({
         el('span', uiMessage('Product you are editing'), 'conflict-role-label'),
         el('strong', entry.spanishName || entry.title)
       )
+      appendIdentity(description, orderId)
       if (entry === group && conflictingVariant)
         description.append(
           el(
@@ -3946,19 +4144,21 @@ export async function startPackingWorkspace({
     )
     if (group) {
       actions.append(
-        button(uiMessage('Apply corrections'), () => complete(draft), 'primary')
+        button(uiMessage('Apply corrections'), () => complete(), 'primary')
       )
       if (previous?.groups.some((entry) => entry.id === group.id))
         recovery.append(
           preparationHelp(
             button(uiMessage('Undo code edits'), () => {
-              for (const entry of editableGroups) restoreCode(entry)
+              for (const proposal of proposals.values())
+                for (const entry of proposal.groups)
+                  restoreCode(entry, baselines.get(proposal.orderId))
               showProposal(
                 'Saved codes restored in the proposal. Review the changes and choose Apply corrections.'
               )
             }),
             uiMessage(
-              'Restore saved product and variant codes in this order. Keep names, materials and other edits.'
+              'Restore saved codes on both sides. Keep names, materials and other edits.'
             )
           )
         )
@@ -3991,12 +4191,16 @@ export async function startPackingWorkspace({
                 used.add(code.slice(editedGroup.baseCode.length))
               editedVariant.variantSuffix = unusedSuffix(
                 used,
-                editedVariant.sizeSuffix
+                editedVariant.sizeSuffix,
+                preferences.sizeVocabulary
               )
             } else {
               candidate = regeneratePreparationCode(draft, group.id)
               ;[candidate] = await repository.previewPreparations([candidate], {
                 preserveNaming: true,
+                suffixBaselines:
+                  options.saveOptions?.suffixBaselines ||
+                  [restoredSuffixBaseline(candidate)].filter(Boolean),
               })
             }
             for (const entry of editableGroups) {
@@ -4038,16 +4242,7 @@ export async function startPackingWorkspace({
       )
     )
     const recoveryPanel = el('section', undefined, 'conflict-recovery-panel')
-    recoveryPanel.append(
-      el('h3', uiMessage('Review the correction')),
-      el(
-        'p',
-        uiMessage(
-          'Review the proposed codes below, then apply the correction. Nothing is saved until you apply.'
-        )
-      ),
-      recovery
-    )
+    recoveryPanel.append(recovery)
     modal.append(recoveryPanel, evidence, editorStatus, actions)
     pinDialogActions(modal, actions)
     modal.addEventListener('cancel', (event) => {
@@ -4097,7 +4292,12 @@ export async function startPackingWorkspace({
         showSaveError(draft.orderId, error)
       }
       for (const input of inputs)
-        if (error) {
+        if (
+          error &&
+          (!error.packingIssue?.field ||
+            !['variant', 'size'].includes(error.packingIssue.field) ||
+            input.dataset.packingField === error.packingIssue.field)
+        ) {
           input.setAttribute('aria-invalid', 'true')
           input.setAttribute('aria-errormessage', text.id)
         } else {
@@ -4141,7 +4341,9 @@ export async function startPackingWorkspace({
         const signature = state.signature
         let failure = null
         try {
-          await repository.previewPreparations([JSON.parse(snapshot)])
+          await repository.previewPreparations([JSON.parse(snapshot)], {
+            suffixBaselines: [restoredSuffixBaseline(draft)].filter(Boolean),
+          })
         } catch (error) {
           failure = error
         }
@@ -7579,8 +7781,7 @@ export async function startPackingWorkspace({
       ]
     },
     decorateRow(host, row, capacityHost = host, measurementHosts) {
-      for (const [key, entry] of cartonFields)
-        if (!entry.input.isConnected && !entry.dirty()) cartonFields.delete(key)
+      scheduleRowFieldCleanup()
       const matched = membership.get(`${row.orderId}/${row.entryId}`),
         bar = el('div', undefined, 'row-preparation')
       const excluded = isPackingExcluded(row)
@@ -7648,9 +7849,6 @@ export async function startPackingWorkspace({
         control.disabled = opening || packingExclusionSaving
       host.append(bar)
       const record = packingRecord(row)
-      for (const [key, entry] of measurementFields)
-        if (!entry.input.isConnected && !entry.dirty())
-          measurementFields.delete(key)
       if (measurementHosts) mountMeasurements(measurementHosts, row, record)
       const cartonKey = `${record?.snapshot.accountId || 'local'}/${row.orderId}/${row.entryId}`
       const existing = cartonFields.get(cartonKey)

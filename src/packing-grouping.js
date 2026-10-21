@@ -1,5 +1,6 @@
 import {
   barcodeValue,
+  createVariantSuffixValidator,
   groupPackingMonth,
   mergeVariantMaterials,
 } from './packing-model.js'
@@ -56,7 +57,8 @@ export function groupingReviewChanges(entries, previews, records) {
   })
 }
 
-export function unusedSuffix(used, sizeSuffix = '') {
+export function unusedSuffix(used, sizeSuffix = '', sizeVocabulary) {
+  const validSuffix = createVariantSuffixValidator(sizeVocabulary)
   for (let number = 1; ; number++) {
     let n = number,
       value = ''
@@ -65,7 +67,7 @@ export function unusedSuffix(used, sizeSuffix = '') {
       value = String.fromCharCode(65 + (n % 26)) + value
       n = Math.floor(n / 26)
     }
-    if (!used.has(value + sizeSuffix)) return value
+    if (validSuffix(value) && !used.has(value + sizeSuffix)) return value
   }
 }
 
@@ -132,11 +134,12 @@ export function groupingAvailability(entries) {
 export async function regroupSelection(
   entries,
   operation,
-  { getReservedBarcodes, newId = () => crypto.randomUUID() }
+  { getReservedBarcodes, newId = () => crypto.randomUUID(), sizeVocabulary }
 ) {
   const availability = groupingAvailability(entries)[operation]
   if (!availability) throw new Error('Unknown grouping operation')
   if (availability.reason) throw new Error(availability.reason)
+  const validVariantSuffix = createVariantSuffixValidator(sizeVocabulary)
   const candidates = new Map()
   for (const { draft } of availability.entries)
     if (!candidates.has(draft.orderId))
@@ -170,7 +173,11 @@ export async function regroupSelection(
     for (const group of selectedGroups.slice(1))
       for (const variant of group.variants) {
         if (used.has(variant.variantSuffix + variant.sizeSuffix))
-          variant.variantSuffix = unusedSuffix(used, variant.sizeSuffix)
+          variant.variantSuffix = unusedSuffix(
+            used,
+            variant.sizeSuffix,
+            sizeVocabulary
+          )
         used.add(variant.variantSuffix + variant.sizeSuffix)
         target.variants.push(variant)
       }
@@ -186,6 +193,17 @@ export async function regroupSelection(
       if (operation === 'share') {
         const target = selected[0]
         const materials = structuredClone(selected)
+        if (
+          !validVariantSuffix(target.variantSuffix) &&
+          selected.some(
+            (variant) => variant.variantSuffix !== target.variantSuffix
+          )
+        )
+          target.variantSuffix = unusedSuffix(
+            await usedEndings(draft, group),
+            target.sizeSuffix,
+            sizeVocabulary
+          )
         for (const variant of selected.slice(1))
           target.entryIds.push(...variant.entryIds)
         mergeVariantMaterials(target, materials)
@@ -196,7 +214,11 @@ export async function regroupSelection(
         const used = await usedEndings(draft, group)
         for (const variant of selected) {
           for (const entryId of variant.entryIds.slice(1)) {
-            const suffix = unusedSuffix(used, variant.sizeSuffix)
+            const suffix = unusedSuffix(
+              used,
+              variant.sizeSuffix,
+              sizeVocabulary
+            )
             used.add(suffix + variant.sizeSuffix)
             edited.variants.push({
               ...structuredClone(variant),

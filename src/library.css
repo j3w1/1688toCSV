@@ -1016,6 +1016,7 @@ tbody tr:hover {
 }
 .carton-measurement[data-field]
   > input[type='text']:is(:hover, :focus-visible) {
+  border-color: transparent;
   border-block-end-color: var(--border);
   background: var(--field);
 }

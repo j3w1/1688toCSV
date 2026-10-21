@@ -2391,9 +2391,14 @@ html:has(body.packing-active) {
 .code-field-error[hidden] {
   display: none;
 }
-.code-field-error button {
-  padding: 3px 6px;
-  min-height: 26px;
+.preparation-workspace .code-field-error > button {
+  box-sizing: border-box;
+  min-block-size: 24px;
+  block-size: 24px;
+  padding: 2px 6px;
+  border-radius: 4px;
+  font-size: 11px;
+  line-height: 16px;
 }
 .group-code-editor[aria-invalid='true'],
 .variant-code-part[aria-invalid='true'] {

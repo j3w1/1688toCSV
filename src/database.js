@@ -1305,6 +1305,7 @@ export async function openDatabase({ name = '1688-order-library' } = {}) {
       preview = false,
       preserveNaming = false,
       cartonMeasurements = [],
+      suffixBaselines = [],
       expectedSnapshots = [],
       allowSharedProductEdits = false,
     } = {}
@@ -1339,6 +1340,22 @@ export async function openDatabase({ name = '1688-order-library' } = {}) {
       throw new Error('Save each order preparation only once in a batch')
     const selectedKeys = new Set(keys)
     const selectedOrderIds = new Set(drafts.map((draft) => draft.orderId))
+    if (!Array.isArray(suffixBaselines))
+      throw new Error('Suffix restoration baselines must be an array')
+    const restoredByKey = new Map()
+    for (const input of suffixBaselines) {
+      const baseline = validatePreparation(input)
+      const key = JSON.stringify([baseline.accountId, baseline.orderId])
+      if (!selectedKeys.has(key))
+        throw new Error(
+          'Suffix restoration baseline contains an order outside this preparation batch'
+        )
+      if (restoredByKey.has(key))
+        throw new Error(
+          'Provide only one suffix restoration baseline per order'
+        )
+      restoredByKey.set(key, baseline)
+    }
     if (!Array.isArray(cartonMeasurements))
       throw new Error('Carton measurement batches must be an array')
     const measurementKeys = new Set()
@@ -1377,9 +1394,18 @@ export async function openDatabase({ name = '1688-order-library' } = {}) {
     const previousOrderIds = checkpointScope(capturePrevious, 'capturePrevious')
     const defaultOrderIds = checkpointScope(resetDefaults, 'resetDefaults')
     return (preview ? read : write)(
-      ['orders', 'preparations', 'packingAllocations', 'issuedCodes'],
+      [
+        'orders',
+        'preparations',
+        'packingAllocations',
+        'issuedCodes',
+        'packingPreferences',
+      ],
       async (tx) => {
         const store = tx.objectStore('preparations')
+        const preferences = await requested(
+          tx.objectStore('packingPreferences').get('packing')
+        )
         let allocations = await requested(
           tx.objectStore('packingAllocations').getAll()
         )
@@ -1419,6 +1445,13 @@ export async function openDatabase({ name = '1688-order-library' } = {}) {
             entry,
           ])
         )
+        const orders = await requested(tx.objectStore('orders').getAll())
+        const ordersByKey = new Map(
+          orders.map((order) => [
+            JSON.stringify([order.snapshot.accountId, order.snapshot.orderId]),
+            order,
+          ])
+        )
         for (const [index, draft] of drafts.entries()) {
           const previous = previousByKey.get(keys[index])
           if (!allowSharedProductEdits)
@@ -1431,6 +1464,14 @@ export async function openDatabase({ name = '1688-order-library' } = {}) {
             error.packingIssue = { orderId: draft.orderId }
             throw error
           }
+          const order = ordersByKey.get(keys[index])
+          if (!order)
+            throw new Error('Save the source order before preparing labels')
+          validatePreparationSuffixEdits(draft, previous, {
+            snapshot: order.snapshot,
+            restored: restoredByKey.get(keys[index]),
+            sizeVocabulary: preferences?.value.sizeVocabulary,
+          })
         }
         const measurementResults = []
         for (const { orderId, accountId, edits } of measurementBatches)
@@ -1447,7 +1488,7 @@ export async function openDatabase({ name = '1688-order-library' } = {}) {
             ),
             ...drafts,
           ],
-          { orders: await requested(tx.objectStore('orders').getAll()) }
+          { orders }
         )
         // Reserve the complete final set of explicit codes before allocating blanks.
         // This makes swaps and bulk edits atomic and ignores retired assignments.
@@ -1474,11 +1515,8 @@ export async function openDatabase({ name = '1688-order-library' } = {}) {
           const draft = drafts[index]
           const resetOrderDefaults = defaultOrderIds.has(draft.orderId)
           const expectedRevision = expectedRevisions[index]
-          const key = [draft.accountId, draft.orderId]
           const previous = previousByKey.get(keys[index])
-          const order = await requested(tx.objectStore('orders').get(key))
-          if (!order)
-            throw new Error('Save the source order before preparing labels')
+          const order = ordersByKey.get(keys[index])
           const knownIds = new Set([
             ...order.snapshot.items.map((item) => item.entryId),
             ...(previous?.groups.flatMap((group) =>
@@ -2878,5 +2916,6 @@ import {
   validateIssuedCode,
   validatePackingPreferences,
   validatePreparation,
+  validatePreparationSuffixEdits,
   validatePreparationReservations,
 } from './packing-model.js'

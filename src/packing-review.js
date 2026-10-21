@@ -19,36 +19,75 @@ import { preparationHelp } from './preparation-help.js'
 /** A shared, explicitly labelled comparison; colour reinforces the words. */
 export function packingValueComparison(
   values,
-  { beforeLabel = 'Before', afterLabel = 'After applying' } = {}
+  {
+    beforeLabel = 'Before',
+    afterLabel = 'After applying',
+    hideUnchanged = false,
+  } = {}
 ) {
-  const table = el('div', undefined, 'packing-value-comparison')
+  const wrapper = el('div', undefined, 'packing-value-comparison')
+  const table = el('table', undefined, 'packing-value-table')
+  const head = el('thead'),
+    heading = el('tr')
+  const labelled = values.some((value) => value.label)
+  table.classList.toggle('has-row-labels', labelled)
+  if (labelled) {
+    const field = el(
+      'th',
+      uiMessage('Changes to labels'),
+      'packing-value-field-heading'
+    )
+    field.setAttribute('scope', 'col')
+    heading.append(field)
+  }
+  for (const [side, label] of [
+    ['before', beforeLabel],
+    ['arrow', ''],
+    ['after', afterLabel],
+  ]) {
+    const cell = el(
+      'th',
+      label ? (isMessage(label) ? label : uiMessage(label)) : '',
+      `packing-value-caption packing-value-${side}-heading`
+    )
+    cell.setAttribute('scope', 'col')
+    if (side === 'arrow') cell.setAttribute('aria-hidden', 'true')
+    heading.append(cell)
+  }
+  head.append(heading)
+  const body = el('tbody')
+  let unchanged = 0
   for (const value of values) {
-    const row = el('div', undefined, 'packing-value-row')
-    if (value.label)
-      row.append(
-        el(
-          'strong',
-          isMessage(value.label) ? value.label : uiMessage(value.label),
-          'packing-value-label'
-        )
-      )
     const same = String(value.before ?? '') === String(value.after ?? '')
+    if (same && hideUnchanged) {
+      unchanged++
+      continue
+    }
+    const row = el('tr', undefined, 'packing-value-row')
+    if (labelled) {
+      const label = el(
+        'th',
+        value.label
+          ? isMessage(value.label)
+            ? value.label
+            : uiMessage(value.label)
+          : '',
+        'packing-value-label'
+      )
+      label.setAttribute('scope', 'row')
+      row.append(label)
+    }
     row.dataset.changed = String(!same)
-    for (const [side, label] of [
-      ['before', beforeLabel],
-      ['after', afterLabel],
-    ]) {
+    for (const side of ['before', 'after']) {
+      if (side === 'after') {
+        const arrow = el('td', same ? '=' : '→', 'packing-value-arrow')
+        arrow.setAttribute('aria-hidden', 'true')
+        row.append(arrow)
+      }
       const cell = el(
-        'div',
+        'td',
         undefined,
         `packing-value-cell packing-value-${side}`
-      )
-      cell.append(
-        el(
-          'span',
-          isMessage(label) ? label : uiMessage(label),
-          'packing-value-caption'
-        )
       )
       const content = el('div', undefined, 'packing-value-content')
       const entries = Array.isArray(value[side]) ? value[side] : [value[side]]
@@ -69,9 +108,21 @@ export function packingValueComparison(
       cell.append(content)
       row.append(cell)
     }
-    table.append(row)
+    body.append(row)
   }
-  return table
+  if (body.hasChildNodes()) {
+    table.append(head, body)
+    wrapper.append(table)
+  }
+  if (unchanged)
+    wrapper.append(
+      el(
+        'small',
+        uiMessage('{0} unchanged', { 0: unchanged }),
+        'packing-value-unchanged'
+      )
+    )
+  return wrapper
 }
 
 /** Review exact frozen changes before any allocation, restore or recoding write. */

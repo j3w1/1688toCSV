@@ -420,9 +420,13 @@ test('removal resolves a restored-code collision against its candidate and recor
     conflict.getByRole('button', { name: 'Keep saved version', exact: true })
   ).toHaveCount(0)
   await expect(
-    conflict.locator('.conflict-owner-card .conflict-occupied-code')
-  ).toHaveText(originalA.baseCode)
-  const correction = conflict.getByLabel('Product code', { exact: true })
+    conflict
+      .locator('.conflict-owner-card')
+      .getByLabel('Product code', { exact: true })
+  ).toHaveValue(originalA.baseCode)
+  const correction = conflict
+    .locator('.conflict-edit-card')
+    .getByLabel('Product code', { exact: true })
   await expect(correction).toHaveValue(originalA.baseCode)
   await expect(conflict).toContainText(
     'Removing these products would restore a code now assigned elsewhere'
@@ -788,4 +792,73 @@ test('undo after an external edit is rejected without overwriting the other tab'
     view.getByRole('button', { name: 'Undo', exact: true })
   ).toBeDisabled()
   await expect(page.locator('#packing-view')).toBeVisible()
+})
+
+test('removal can correct a different owning order and undo both the correction and scope together', async ({
+  extension,
+}) => {
+  const { page, view, original } = await setup(extension, 2, {
+    sameSeller: true,
+  })
+  const [targetOrder, ownerOrder] = original.preparations
+  const target = targetOrder.groups[0],
+    owner = ownerOrder.groups[0]
+  const targetGroup = view.locator(
+    `[data-packing-order="${targetOrder.orderId}"] [data-group-id="${target.id}"]`
+  )
+  const ownerGroup = view.locator(
+    `[data-packing-order="${ownerOrder.orderId}"] [data-group-id="${owner.id}"]`
+  )
+  await targetGroup
+    .getByLabel('Product code', { exact: true })
+    .fill('CE26109999')
+  await saved(view)
+  await ownerGroup
+    .getByLabel('Product code', { exact: true })
+    .fill(target.baseCode)
+  await saved(view)
+  const beforeRemoval = await backup(extension)
+  await targetGroup
+    .getByRole('button', { name: 'Remove group', exact: true })
+    .focus()
+  await targetGroup
+    .getByRole('button', { name: 'Remove group', exact: true })
+    .click()
+  await page
+    .getByRole('dialog', { name: 'Remove from packing?', exact: true })
+    .getByRole('button', { name: 'Remove from packing', exact: true })
+    .click()
+  const conflict = page.getByRole('dialog', {
+    name: 'Resolve code conflict',
+    exact: true,
+  })
+  await conflict
+    .locator('.conflict-owner-card')
+    .getByLabel('Product code', { exact: true })
+    .fill(owner.baseCode)
+  expect((await backup(extension)).preparations).toEqual(
+    beforeRemoval.preparations
+  )
+  await conflict
+    .getByRole('button', { name: 'Apply corrections', exact: true })
+    .click()
+  await expect(conflict).toBeHidden()
+  await expect(targetGroup).toHaveCount(0)
+  const removed = await backup(extension)
+  expect(
+    removed.preparations
+      .find((prep) => prep.orderId === targetOrder.orderId)
+      .groups.find((group) => group.id === target.id).baseCode
+  ).toBe(target.baseCode)
+  expect(
+    removed.preparations
+      .find((prep) => prep.orderId === ownerOrder.orderId)
+      .groups.find((group) => group.id === owner.id).baseCode
+  ).toBe(owner.baseCode)
+  await travel(view, 'Undo')
+  await expect(targetGroup).toHaveCount(1)
+  expect(groups(await backup(extension))).toEqual(groups(beforeRemoval))
+  await travel(view, 'Redo')
+  await expect(targetGroup).toHaveCount(0)
+  expect(groups(await backup(extension))).toEqual(groups(removed))
 })
