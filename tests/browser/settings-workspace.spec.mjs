@@ -139,7 +139,7 @@ test('Settings keeps the same frame, navigation and save position across every s
   }
 })
 
-test('Settings sections support the keyboard, preserve edits across searches and pages, and persist naming rules', async ({
+test('Settings sections support the keyboard, preserve edits across searches, and persist naming rules without pagers', async ({
   extension,
 }) => {
   const { page, dialog } = await openSettings(extension)
@@ -158,8 +158,11 @@ test('Settings sections support the keyboard, preserve edits across searches and
     name: 'Product names',
     exact: true,
   })
-  const rows = names.locator('.vocabulary-table tbody tr')
-  await expect(rows).toHaveCount(12)
+  const rows = names.locator(
+    '.vocabulary-table tbody tr:not(.virtual-table-spacer)'
+  )
+  expect(await rows.count()).toBeGreaterThan(12)
+  expect(await rows.count()).toBeLessThanOrEqual(100)
   const firstMatch = await rows
     .first()
     .getByLabel('Title includes', { exact: true })
@@ -168,13 +171,9 @@ test('Settings sections support the keyboard, preserve edits across searches and
     .first()
     .getByLabel('Spanish name', { exact: true })
     .fill('NOMBRE DE PRUEBA')
-  await names.getByRole('button', { name: 'Next rules', exact: true }).click()
   await expect(
-    names.locator('.vocabulary-navigation [role=status]')
-  ).toContainText('13–24 of')
-  await names
-    .getByRole('button', { name: 'Previous rules', exact: true })
-    .click()
+    names.getByRole('button', { name: 'Next rules', exact: true })
+  ).toHaveCount(0)
   await expect(
     rows.first().getByLabel('Spanish name', { exact: true })
   ).toHaveValue('NOMBRE DE PRUEBA')

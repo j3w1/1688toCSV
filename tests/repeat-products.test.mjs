@@ -23,6 +23,7 @@ import {
 } from '../src/repeat-products.js'
 import { createPackingBackup } from '../src/packing-backup.js'
 import { validateBackup } from '../src/database.js'
+import { repeatSubsetFixture } from './fixtures/repeat-subset-fixture.mjs'
 
 function fixture(quantities = ['3', '27']) {
   const records = quantities.map((quantity, index) => {
@@ -540,6 +541,159 @@ test('repeat identity matches custom feature names independently from local IDs 
           orders: [data.records[0], next],
         }),
       /matching product features/
+    )
+  }
+})
+
+test('a single 55cm reorder shares the original S barcode while M/L retain their codes, quantities and reservations', () => {
+  const data = repeatSubsetFixture()
+  const before = structuredClone({
+    records: data.records,
+    preparations: data.preparations,
+  })
+  const candidates = repeatProductCandidates({ source: data.ref(1), ...data })
+  assert.equal(candidates.length, 1)
+  assert.deepEqual(
+    candidates[0].variants.map((variant) => [
+      variant.barcode,
+      variant.size,
+      variant.quantity,
+    ]),
+    [['CE26101001S', '55cm', '3']]
+  )
+  const plan = planSharedProductLink({
+    source: data.ref(1),
+    target: data.ref(0),
+    ...data,
+  })
+  const original = plan.preparations.find((draft) => draft.orderId === '8801')
+  const repeated = plan.preparations.find((draft) => draft.orderId === '8805')
+  const group = original.groups[0]
+  assert.deepEqual(
+    group.variants.map((variant) => barcodeValue(group, variant)),
+    ['CE26101001S', 'CE26101001M', 'CE26101001L']
+  )
+  assert.equal(
+    barcodeValue(repeated.groups[0], repeated.groups[0].variants[0]),
+    'CE26101001S'
+  )
+  assert.equal(
+    new Set(group.variants.map((variant) => variant.sharedVariantId)).size,
+    3
+  )
+  assert.ok(group.variants.every((variant) => variant.sharedVariantId))
+  assert.equal(
+    repeated.groups[0].variants[0].sharedVariantId,
+    group.variants[0].sharedVariantId
+  )
+  for (const [index, variant] of group.variants.entries()) {
+    const { sharedVariantId, ...unchanged } = variant
+    assert.deepEqual(
+      unchanged,
+      before.preparations[0].groups[0].variants[index]
+    )
+  }
+  const state = activePackingState(
+    plan.preparations,
+    data.allocations,
+    data.issuedCodes
+  )
+  const members = Object.fromEntries(
+    state.issuedCodes
+      .filter((entry) => entry.kind === 'barcode')
+      .map((entry) => [entry.code, codeReservationMembers(entry).length])
+  )
+  assert.deepEqual(members, { CE26101001S: 2, CE26101001M: 1, CE26101001L: 1 })
+  for (const draft of plan.preparations)
+    validatePreparationReservations(draft, state)
+  validateSharedProducts(plan.preparations, {
+    orders: data.records,
+    issuedCodes: state.issuedCodes,
+  })
+  const backup = {
+    format: '1688-order-library',
+    version: 3,
+    exportedAt: '2026-10-21T00:00:00.000Z',
+    orders: data.records,
+    preparations: plan.preparations,
+    history: [],
+    images: [],
+    ...state,
+  }
+  assert.doesNotThrow(() => validateBackup(backup))
+  const clipped = createPackingBackup(backup, {
+    months: ['2026-10'],
+    orders: [{ accountId: 'local', orderId: '8805', entryIds: ['1'] }],
+  })
+  assert.doesNotThrow(() => validateBackup(clipped))
+  assert.deepEqual(
+    { records: data.records, preparations: data.preparations },
+    before
+  )
+  const unlink = planSharedProductUnlink({
+    source: data.ref(1),
+    preparations: plan.preparations,
+    records: data.records,
+  })
+  const surviving = activePackingState(
+    [original],
+    state.allocations,
+    state.issuedCodes
+  )
+  const detached = allocatePreparation(
+    unlink.preparations[0],
+    surviving.allocations,
+    surviving.issuedCodes
+  )
+  assert.notEqual(detached.preparation.groups[0].baseCode, group.baseCode)
+  assert.ok(
+    detached.issuedCodes
+      .filter((entry) => entry.sharedProductId)
+      .every((entry) => codeReservationMembers(entry).length === 1)
+  )
+  assert.equal(
+    sharedVariantSources(
+      plan.preparations,
+      data.records,
+      group.sharedProductId,
+      group.variants[0].sharedVariantId
+    ).length,
+    2
+  )
+})
+
+test('subset repeat matching stays injective and rejects changed sizes, features and materials', () => {
+  for (const mutate of [
+    (data) => {
+      data.preparations[1].groups[0].variants[0].size = '60cm'
+    },
+    (data) => {
+      data.records[1].productWorkflow = { 1: { features: { lighting: true } } }
+    },
+    (data) => {
+      data.preparations[0].groups[0].variants[0].material = '玻璃'
+      data.preparations[1].groups[0].variants[0].material = '塑料'
+    },
+    (data) => {
+      const copy = structuredClone(data.preparations[1].groups[0].variants[0])
+      copy.id += '-duplicate'
+      data.preparations[1].groups[0].variants.push(copy)
+    },
+  ]) {
+    const data = repeatSubsetFixture()
+    mutate(data)
+    assert.equal(
+      repeatProductCandidates({ source: data.ref(1), ...data }).length,
+      0
+    )
+    assert.throws(
+      () =>
+        planSharedProductLink({
+          source: data.ref(1),
+          target: data.ref(0),
+          ...data,
+        }),
+      /matching variants, sizes and features/
     )
   }
 })

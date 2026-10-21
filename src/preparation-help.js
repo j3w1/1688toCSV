@@ -61,6 +61,7 @@ export function preparationHelp(
   target.classList.add('preparation-hint')
   let hovered = false,
     pointerPosition,
+    pointerDriven = false,
     focused = false,
     keyboardFocused = false,
     focusPointerVersion = mode.pointerVersion,
@@ -68,6 +69,7 @@ export function preparationHelp(
     timer,
     listeners,
     observer,
+    positionFrame,
     controls = []
   if (hint.renderContent) content.replaceChildren()
 
@@ -98,15 +100,40 @@ export function preparationHelp(
       size = panel.getBoundingClientRect(),
       width = doc.documentElement.clientWidth,
       height = doc.documentElement.clientHeight
-    panel.style.left = `${Math.max(8, Math.min(bounds.left, width - size.width - 8))}px`
-    const top =
-      bounds.bottom + size.height + 16 <= height
+    const pointer = hovered && pointerDriven ? pointerPosition : undefined
+    const left = pointer
+      ? pointer.x + size.width + 20 <= width
+        ? pointer.x + 12
+        : pointer.x - size.width - 12
+      : bounds.left
+    const top = pointer
+      ? pointer.y + size.height + 20 <= height
+        ? pointer.y + 12
+        : pointer.y - size.height - 12
+      : bounds.bottom + size.height + 16 <= height
         ? bounds.bottom + 8
         : bounds.top - size.height - 8
+    panel.style.left = `${Math.max(8, Math.min(left, width - size.width - 8))}px`
     panel.style.top = `${Math.max(8, Math.min(top, height - size.height - 8))}px`
+  }
+  function requestPosition() {
+    if (
+      activeHint !== close ||
+      listeners?.signal.aborted ||
+      positionFrame !== undefined
+    )
+      return
+    positionFrame = doc.defaultView.requestAnimationFrame(() => {
+      positionFrame = undefined
+      if (activeHint === close && !listeners.signal.aborted) position()
+    })
   }
   function close() {
     clearTimeout(timer)
+    if (positionFrame !== undefined) {
+      doc.defaultView.cancelAnimationFrame(positionFrame)
+      positionFrame = undefined
+    }
     listeners?.abort()
     observer?.disconnect()
     if (nativePopover && panel.matches(':popover-open')) panel.hidePopover()
@@ -134,17 +161,18 @@ export function preparationHelp(
       target.querySelector('.preparation-hint:hover')
     )
       return
-    if (activeHint === close) return
+    if (activeHint === close) return requestPosition()
     activeHint?.()
     activeHint = close
     listeners = new AbortController()
+    const { signal } = listeners
     if (hint.renderContent) {
       content.replaceChildren()
       try {
         hint.renderContent(content, {
-          signal: listeners.signal,
+          signal,
           requestPosition: () => {
-            if (activeHint === close && !listeners.signal.aborted) position()
+            if (!signal.aborted) requestPosition()
           },
         })
       } catch {
@@ -211,8 +239,8 @@ export function preparationHelp(
       },
       options
     )
-    doc.addEventListener('scroll', position, options)
-    doc.defaultView.addEventListener('resize', position, options)
+    doc.addEventListener('scroll', requestPosition, options)
+    doc.defaultView.addEventListener('resize', requestPosition, options)
     host.addEventListener('close', close, { signal: listeners.signal })
     observer = new MutationObserver(() => {
       if (!target.isConnected) close()
@@ -224,15 +252,24 @@ export function preparationHelp(
     if (!hovered && !keyboardFocus()) {
       dismissed = false
       close()
-    }
+    } else requestPosition()
   }
   target.addEventListener('pointerover', (event) => {
     if (event.pointerType === 'touch') return
     if (!ownsHint(event.target) || ownsHint(event.relatedTarget)) return
     hovered = true
+    pointerDriven = true
     pointerPosition = { x: event.clientX, y: event.clientY }
+    requestPosition()
     clearTimeout(timer)
     if (!dismissed) timer = setTimeout(show, 500)
+  })
+  target.addEventListener('pointermove', (event) => {
+    if (event.pointerType === 'touch' || !hovered || !ownsHint(event.target))
+      return
+    pointerPosition = { x: event.clientX, y: event.clientY }
+    pointerDriven = true
+    requestPosition()
   })
   target.addEventListener('pointerout', (event) => {
     if (ownsHint(event.relatedTarget)) return
@@ -251,7 +288,10 @@ export function preparationHelp(
     // input mode so that newly mounted helper cannot turn the click into a pin.
     keyboardFocused = mode.keyboard
     focusPointerVersion = mode.pointerVersion
-    if (keyboardFocus()) show()
+    if (keyboardFocus()) {
+      pointerDriven = false
+      show()
+    }
   })
   target.addEventListener('focusout', (event) => {
     focused = ownsHint(event.relatedTarget)

@@ -1,7 +1,6 @@
 // Readable UI codes preserve their raw text. Excel table images explicitly
 // reuse the product split; barcode-label/carton/PDF artwork stays unmarked.
-export const CODE_READING_HELP =
-  'The underline identifies the four-digit product number. CE and year/month stay together; code values are unchanged.'
+export const CODE_READING_HELP = 'Underline: four-digit product number.'
 
 export function codeParts(value) {
   const match = /^(CE\d{4})(\d{4})([A-Z0-9]*)$/.exec(String(value ?? ''))

@@ -8,7 +8,10 @@ import {
 } from '../src/excel-image.js'
 import { createExcelImageBadges } from '../src/excel-image-badges.js'
 import { orderTagColors } from '../src/order-tags.js'
-import { workspaceExportStyle } from '../src/excel-image-style.js'
+import {
+  workspaceExportStyle,
+  excelImagePalette,
+} from '../src/excel-image-style.js'
 import { appearanceTokens } from '../src/appearance.js'
 
 const excelImageColumns = allExcelImageColumns
@@ -168,8 +171,34 @@ async function withCanvas(
 const cell = (entry, key) =>
   entry.cells[excelImageColumns.findIndex((column) => column.key === key)]
 
+test('Excel images left-align long 1688 descriptions and center China-store descriptions', async () => {
+  for (const sourceType of ['', 'spreadsheet']) {
+    await withCanvas(async (state) => {
+      const plan = planExcelImage(
+        [{ ...row, sourceType, description: 'Alignment sample' }],
+        {
+          columns: ['description'],
+          showOrderDetails: false,
+          details: { title: true, specifications: false, spanishName: false },
+        }
+      )[0]
+      await renderExcelImage(plan)
+      const drawn = state.text.find(
+        (entry) => entry.text === 'Alignment sample'
+      )
+      assert.ok(drawn)
+      assert.equal(
+        drawn.x,
+        sourceType === 'spreadsheet'
+          ? 1 + (plan.columns[0].width - measure(drawn.text)) / 2
+          : 11
+      )
+    })
+  }
+})
+
 for (const mode of ['light', 'dark'])
-  test(`Excel image tables use the captured workspace body and text colors in ${mode} mode`, async () =>
+  test(`Excel image tables keep light surfaces and the workspace accent in ${mode} mode`, async () =>
     withCanvas(async (state) => {
       const tokens = appearanceTokens({ [`${mode}Theme`]: 'terracotta' }, mode)
       const style = workspaceExportStyle({
@@ -192,17 +221,18 @@ for (const mode of ['light', 'dark'])
         style,
       })
       await renderExcelImage(plan)
-      assert.ok(state.fills.some(({ color }) => color === tokens.surface))
-      assert.ok(state.fills.some(({ color }) => color === tokens.page))
-      assert.ok(state.fills.some(({ color }) => color === tokens.selected))
-      assert.ok(state.fills.some(({ color }) => color === tokens.field))
-      assert.ok(state.fills.some(({ color }) => color === tokens.accent))
-      assert.ok(state.text.some(({ color }) => color === tokens.text))
-      assert.ok(state.text.some(({ color }) => color === tokens.muted))
+      const palette = excelImagePalette(style)
+      assert.ok(state.fills.some(({ color }) => color === '#ffffff'))
+      assert.ok(state.fills.some(({ color }) => color === palette.order))
+      assert.ok(
+        state.fills.some(({ color }) => color === tokens['excel-accent'])
+      )
+      assert.ok(state.text.some(({ color }) => color === palette.text))
+      assert.ok(state.text.some(({ color }) => color === palette.muted))
       for (const draw of state.text.filter(
         ({ text }) => text === 'Workspace theme product'
       ))
-        assert.equal(draw.color, tokens.text)
+        assert.equal(draw.color, palette.text)
       const codes = state.text.filter(({ text }) => text === row.barcode)
       assert.ok(codes.length)
       assert.ok(codes.every(({ color }) => color === '#fff'))
@@ -780,17 +810,11 @@ test('Custom image columns preserve the chosen order and leave supplier fields b
     )
     assert.deepEqual(
       plan.columns.map((column) => column.label),
-      [
-        'N.º de caja',
-        'Cantidad',
-        'Medidas de caja',
-        'Precio unitario (CNY)',
-        'Peso (kg)',
-      ]
+      ['N.º de caja', 'Cantidad', 'Medidas de caja', 'Precio (元)', 'Peso (kg)']
     )
     assert.deepEqual(
       plan.rows[0].cells.map((cell) => cell.text),
-      ['', '20', '', '¥ 3.00', '']
+      ['', '20', '', '3.00 元', '']
     )
     assert.equal(
       plan.cssWidth,
@@ -1003,7 +1027,7 @@ test('Chinese Excel image keeps saved values and one carton mark per group', asy
         '图片',
         '产品描述',
         '唛头货号',
-        '条码货号',
+        '标签货号',
         '品类与材质',
         '单价（元）',
         '数量',
@@ -1028,7 +1052,7 @@ test('Chinese Excel image keeps saved values and one carton mark per group', asy
       plan.rows.map((entry) => entry.separator),
       ['none', 'row', 'order']
     )
-    assert.equal(cell(plan.rows[0], 'price').text, '¥ 3.00')
+    assert.equal(cell(plan.rows[0], 'price').text, '3.00 元')
     assert.equal(plan.rows[0].source.price, '3.00')
     assert.equal(cell(plan.rows[0], 'description').text, row.description)
     assert.equal(cell(plan.rows[1], 'barcode').text, 'CE26100101AL')
@@ -1210,7 +1234,7 @@ test('barcode image cells underline only product digits across schemes, language
   })
 })
 
-test('Headers, numeric cells and mixed-style descriptions center horizontally and vertically', async () =>
+test('Headers and numeric cells center while 1688 descriptions retain a readable left edge', async () =>
   withCanvas(async (state) => {
     const [plan] = planExcelImage([
       {
@@ -1243,7 +1267,7 @@ test('Headers, numeric cells and mixed-style descriptions center horizontally an
     const rowCenter = plan.headerHeight + 1 + plan.rows[0].height / 2
     for (const [key, text] of [
       ['number', '1'],
-      ['price', '¥ 3.00'],
+      ['price', '3.00 元'],
       ['quantity', '20'],
       ['chineseCategory', '玻璃'],
     ]) {
@@ -1255,8 +1279,11 @@ test('Headers, numeric cells and mixed-style descriptions center horizontally an
     const value = state.text.find((entry) => entry.text === '透明')
     assert.equal(label.y, value.y)
     assert.equal(
-      (label.x + value.x + measure(value.text)) / 2,
-      centers.description
+      label.x,
+      centers.description -
+        excelImageColumns.find((column) => column.key === 'description').width /
+          2 +
+        10
     )
     const [, photoX, photoY, photoWidth, photoHeight] = state.draws[0]
     assert.equal(photoWidth, 126)
@@ -1278,7 +1305,7 @@ test('Large financial values remain complete and portrait photos fit the availab
         const value = cell(plan.rows[0], key)
         assert.equal(
           value.lines.join('').replaceAll(' ', ''),
-          `${key === 'price' ? '¥' : ''}${input[key]}`
+          `${input[key]}${key === 'price' ? '元' : ''}`
         )
         assert.ok(value.height + 20 <= plan.rows[0].height)
       }
@@ -1730,7 +1757,7 @@ test('Excel image reuses photos, reports real row completion and releases resour
       [0, 1, 2, 3]
     )
     assert.ok(progress.every((value) => value.total === 3))
-    assert.ok(state.text.some((value) => value.text === '¥ 3.00'))
+    assert.ok(state.text.some((value) => value.text === '3.00 元'))
     assert.ok(!state.text.some((value) => value.text === '0.20'))
     assert.ok(!state.text.some((value) => value.text === 'FRASCO DE VIDRIO'))
     assert.ok(
@@ -2065,7 +2092,7 @@ test('Real canvas output preserves centered rich text, black/white code badges a
     }
     barcodeTop = barcodeBottom
   }
-  assert.ok(actual.calls.some((call) => call.text.startsWith('¥ ')))
+  assert.ok(actual.calls.some((call) => call.text.endsWith(' 元')))
   const photos = actual.photos.filter((photo) => photo.bitmapWidth === 252)
   const marks = actual.photos.filter((photo) => photo.bitmapWidth === 312)
   assert.equal(photos.length, 2)

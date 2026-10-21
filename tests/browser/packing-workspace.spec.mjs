@@ -1323,7 +1323,7 @@ test('Copy Excel image freezes selected rows with current-language headings, sup
   const drawing = await page.evaluate(() => tableImageDrawing)
   const headings = drawing.text.slice(0, drawing.text.indexOf('1')).join(' ')
   expect(headings).toBe(
-    'No. Photo Product description Carton mark Barcode code Category & material Unit price (CNY) Quantity Carton dimensions Weight (kg) Carton no.'
+    'No. Photo Product description Carton mark Barcode code Category & material Price (元) Quantity Carton dimensions Weight (kg) Carton no.'
   )
   // Codes, including their endings, draw as one centered badge per variant.
   // The merged carton artwork has no redundant text caption beneath it.

@@ -14,6 +14,7 @@ import {
   normalizePrice,
 } from '../src/money.js'
 import { buildOrderFixture } from './fixtures/order-fixture.mjs'
+import { validateBackup } from '../src/database.js'
 
 const orderId = '9990000000000000001'
 const orderUrl = `https://air.1688.com/app/ctf-page/trade-order-detail/index.html?orderId=${orderId}`
@@ -423,6 +424,121 @@ test('promotion discounts retain the exact row values and only separate the evid
     assert.equal(result.totals.orderDiscount, orderOnly)
     assert.equal(result.totals.goodsNet, '46.00')
   }
+})
+
+function crossStorePromotion(rowDiscounts = ['1.60', '2.40']) {
+  const source = fixture({
+    rows: [
+      { price: '12.50', quantity: '4', sourceDiscount: rowDiscounts[0] },
+      { price: '8.00', quantity: '2', sourceDiscount: rowDiscounts[1] },
+    ],
+    totals: {
+      goodsGross: '66.00',
+      shipping: '0.00',
+      sourceDiscount: '0.00',
+      payable: '62.00',
+    },
+  })
+  source.fields['商品优惠'].parentElement.remove()
+  source.field('店铺优惠', '减 ¥1.00')
+  source.field('跨店满减', '减 ¥3.00')
+  source.totalDiscount.textContent = '4.00'
+  return source
+}
+
+test('cross-store and shop reductions already in row summaries are never subtracted twice and survive backup validation', () => {
+  for (const [rowDiscounts, orderDiscount] of [
+    [['1.60', '2.40'], undefined],
+    [['1.00', '1.50'], '1.50'],
+    [['0.00', '0.00'], '4.00'],
+  ]) {
+    const result = snapshot(crossStorePromotion(rowDiscounts))
+    assert.deepEqual(
+      result.items.map((item) => item.sourceDiscount),
+      rowDiscounts
+    )
+    assert.deepEqual(
+      result.items.map((item) => item.discount),
+      rowDiscounts
+    )
+    assert.deepEqual(
+      result.items.map((item) => item.allocatedDiscount),
+      ['0.00', '0.00']
+    )
+    assert.equal(result.orderId, orderId)
+    assert.equal(result.items[0].entryId, '9991000000000000001')
+    assert.equal(result.items[1].entryId, '9991000000000000002')
+    assert.equal(result.totals.orderAdjustment, '0.00')
+    assert.equal(result.totals.orderDiscount, orderDiscount)
+    assert.equal(
+      result.totals.sourceDiscount,
+      centsToMoney(
+        rowDiscounts.reduce((sum, amount) => sum + moneyToCents(amount), 0n)
+      )
+    )
+    assert.equal(result.totals.goodsNet, '62.00')
+    assert.equal(result.totals.payable, '62.00')
+    const restored = validateBackup(
+      JSON.parse(
+        JSON.stringify({
+          format: '1688-order-library',
+          version: 1,
+          exportedAt: observedAt,
+          orders: [
+            {
+              snapshot: result,
+              revision: 1,
+              changedAt: observedAt,
+              lastCheckedAt: observedAt,
+              notes: '',
+              tags: [],
+              changedEntryIds: [],
+              removedEntryIds: [],
+            },
+          ],
+          history: [],
+          images: [],
+        })
+      )
+    )
+    assert.deepEqual(restored.orders[0].snapshot, result)
+  }
+})
+
+test('cross-store reductions require explicit signs, exact breakdowns and a unique row/adjustment/payable reconciliation', () => {
+  for (const value of ['¥3.00', '增 ¥3.00', '减 ¥3.001', '减 ¥3.00 ¥1.00']) {
+    const source = crossStorePromotion()
+    source.fields['跨店满减'].textContent = value
+    assert.throws(
+      () => snapshot(source),
+      /explicit|reduction|invalid|two decimal places/
+    )
+  }
+  const summary = crossStorePromotion()
+  summary.totalDiscount.textContent = '4.01'
+  assert.throws(() => snapshot(summary), /discount total does not match/)
+  const payable = crossStorePromotion()
+  payable.payable.querySelector('.sub-ammount').textContent = '01'
+  assert.throws(() => snapshot(payable), /payable amount does not reconcile/)
+  const gross = crossStorePromotion()
+  gross.fields['原价总计'].textContent = '¥66.01'
+  assert.throws(() => snapshot(gross), /Product rows do not reconcile/)
+  assert.throws(
+    () => snapshot(crossStorePromotion(['1.61', '2.40'])),
+    /Product rows do not reconcile/
+  )
+  const duplicate = crossStorePromotion()
+  duplicate.field('跨店满减', '减 ¥3.00')
+  assert.throws(() => snapshot(duplicate), /labels are missing or ambiguous/)
+  const unknown = crossStorePromotion()
+  unknown.fields['跨店满减'].parentElement.querySelector('dt').textContent =
+    '跨店补贴'
+  assert.throws(() => snapshot(unknown), /Unsupported order total/)
+  const ambiguous = crossStorePromotion(['1.00', '1.50'])
+  ambiguous.field('商品改价', '减 ¥1.00')
+  ambiguous.payable.querySelector('.sub-ammount').textContent = '00'
+  ambiguous.payable.childNodes[1].textContent = ' ¥61.'
+  assert.throws(() => snapshot(ambiguous), /unambiguously/)
 })
 
 test('promotion adjustments require one interpretation and exact cent reconciliation', () => {

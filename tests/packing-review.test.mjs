@@ -203,7 +203,16 @@ test('preparation overview includes all 52 cards and opens every complete change
       52
     )
     assert.equal(dialog.querySelectorAll('.packing-review-detail').length, 52)
-    assert.equal(dialog.querySelectorAll('.packing-value-row').length, 104)
+    assert.equal(
+      dialog.querySelectorAll('.packing-review-inline .packing-value-row')
+        .length,
+      104
+    )
+    assert.equal(
+      dialog.querySelectorAll('.packing-review-detail .packing-value-row')
+        .length,
+      0
+    )
     assert.equal(
       dialog.querySelectorAll('.packing-review-overview-summary').length,
       52
@@ -219,7 +228,9 @@ test('preparation overview includes all 52 cards and opens every complete change
       0
     )
     assert.equal(
-      dialog.querySelectorAll('[data-code-part="product"]').length,
+      dialog.querySelectorAll(
+        '.packing-review-inline [data-code-part="product"], .packing-review-overview-select [data-code-part="product"]'
+      ).length,
       104
     )
 
@@ -259,5 +270,155 @@ test('preparation overview includes all 52 cards and opens every complete change
     else globalThis.document = originalDocument
     if (originalDialog === undefined) delete globalThis.HTMLDialogElement
     else globalThis.HTMLDialogElement = originalDialog
+  }
+})
+
+function reviewDocument() {
+  const originalDocument = globalThis.document,
+    originalDialog = globalThis.HTMLDialogElement
+  const { document, HTMLElement } = parseHTML('<html><body></body></html>')
+  globalThis.document = document
+  globalThis.HTMLDialogElement = { prototype: { closedBy: 'any' } }
+  const originalShowModal = HTMLElement.prototype.showModal,
+    originalClose = HTMLElement.prototype.close
+  HTMLElement.prototype.showModal = function () {
+    this.setAttribute('open', '')
+  }
+  HTMLElement.prototype.close = function () {
+    this.removeAttribute('open')
+    this.onclose?.()
+  }
+  return {
+    document,
+    restore() {
+      if (originalShowModal === undefined)
+        delete HTMLElement.prototype.showModal
+      else HTMLElement.prototype.showModal = originalShowModal
+      if (originalClose === undefined) delete HTMLElement.prototype.close
+      else HTMLElement.prototype.close = originalClose
+      if (originalDocument === undefined) delete globalThis.document
+      else globalThis.document = originalDocument
+      if (originalDialog === undefined) delete globalThis.HTMLDialogElement
+      else globalThis.HTMLDialogElement = originalDialog
+    },
+  }
+}
+
+test('one group exposes every proposed full variant code and helper inline in all three languages without changing its source', async () => {
+  const fixture = reviewDocument()
+  const source = '合成玻璃杯 · 原始供应商描述'
+  const change = {
+    name: 'Vaso',
+    sourceDescription: source,
+    order: 'Synthetic review store',
+    after: 'CE26101301',
+    values: [
+      {
+        label: message('Product code'),
+        before: message('Not prepared'),
+        after: 'CE26101301',
+        kind: 'code',
+      },
+      ...['AS', 'BM', 'CL'].map((suffix, index) => ({
+        label: message('Barcode'),
+        context: `原始款式 ${index + 1}`,
+        before: message('Not prepared'),
+        after: `CE26101301${suffix}`,
+        kind: 'code',
+      })),
+      { label: message('Material'), before: '', after: '玻璃' },
+      { label: message('Spanish short name'), before: '', after: 'Vaso' },
+      { label: message('Chinese category'), before: '', after: '玻璃杯' },
+    ],
+  }
+  const before = JSON.stringify(change)
+  try {
+    for (const language of ['en', 'es', 'zh']) {
+      setLanguage(language, { persist: false })
+      const result = reviewPackingChanges({
+        title: message('Assign product codes?'),
+        explanation: message('Review the product codes in this order.'),
+        changes: [change],
+        overview: true,
+        alternate: { label: message('Assign only'), value: 'assign-only' },
+      })
+      const dialog = fixture.document.querySelector('.packing-review-overview'),
+        inline = dialog.querySelector('.packing-review-inline')
+      assert.equal(dialog.dataset.reviewLayout, 'expanded')
+      assert.equal(
+        dialog.querySelector('.packing-review-overview-name').textContent,
+        'Vaso'
+      )
+      assert.equal(inline.querySelectorAll('.packing-value-row').length, 7)
+      assert.equal(
+        inline.querySelector('.packing-review-source').textContent,
+        source
+      )
+      assert.deepEqual(
+        [...inline.querySelectorAll('.packing-value-after code')].map(
+          (code) => code.textContent
+        ),
+        ['CE26101301', 'CE26101301AS', 'CE26101301BM', 'CE26101301CL']
+      )
+      assert.equal(
+        inline.querySelectorAll(
+          '.packing-value-after [data-code-part="product"]'
+        ).length,
+        4
+      )
+      assert.deepEqual(
+        [...inline.querySelectorAll('.packing-value-context')].map(
+          (node) => node.textContent
+        ),
+        ['原始款式 1', '原始款式 2', '原始款式 3']
+      )
+      assert.ok(
+        [...inline.querySelectorAll('.packing-value-before')].every(
+          (node) => !node.textContent.includes(source)
+        )
+      )
+      const action = language === 'es' ? 'assign-only' : 'cancel'
+      dialog.querySelector(`[data-action="review-${action}"]`).click()
+      assert.equal(
+        await result,
+        action === 'assign-only' ? 'assign-only' : false
+      )
+      assert.equal(JSON.stringify(change), before)
+    }
+  } finally {
+    setLanguage('en', { persist: false })
+    fixture.restore()
+  }
+})
+
+test('a shared change review renders its complete scope continuously without page controls', async () => {
+  const fixture = reviewDocument()
+  try {
+    const changes = Array.from({ length: 27 }, (_, index) => ({
+      name: `Synthetic product ${index + 1}`,
+      before: `CE261013${String(index + 1).padStart(2, '0')}`,
+      after: `CE261014${String(index + 1).padStart(2, '0')}`,
+    }))
+    const result = reviewPackingChanges({
+      title: message('Restore previous packing?'),
+      explanation: message('Review the product codes in this order.'),
+      changes,
+    })
+    const dialog = fixture.document.querySelector('.packing-change-dialog')
+    assert.equal(dialog.querySelectorAll('.packing-review-item').length, 27)
+    assert.equal(dialog.querySelectorAll('.packing-value-row').length, 27)
+    assert.equal(
+      dialog.querySelector('.packing-review-item:last-child strong')
+        .textContent,
+      'Synthetic product 27'
+    )
+    assert.equal(
+      dialog.querySelectorAll('.scroll-dialog-content button').length,
+      0
+    )
+    dialog.querySelector('[data-action="review-proceed"]').click()
+    assert.equal(await result, true)
+  } finally {
+    fixture.restore()
   }
 })

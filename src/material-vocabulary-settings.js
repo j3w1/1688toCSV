@@ -3,6 +3,7 @@ import { message as m, bindText, bindAttribute, getLanguage } from './i18n.js'
 import { attachSearchSuggestions, searchMatcher } from './search-assistance.js'
 import { decorateIcon } from './icons.js'
 import { preparationHelp } from './preparation-help.js'
+import { createVocabularyTable } from './vocabulary-table.js'
 import {
   MATERIAL_VOCABULARY,
   validateMaterialVocabulary,
@@ -13,8 +14,8 @@ export function mountMaterialVocabulary(host, value) {
   value.materialVocabulary = structuredClone(
     value.materialVocabulary ?? MATERIAL_VOCABULARY
   )
-  const pageSize = 8,
-    controls = new Map(),
+  let invalid
+  const controls = new Map(),
     toolbar = el('div', undefined, 'vocabulary-toolbar'),
     searchLabel = el('label', m('Search material rules'), 'vocabulary-search'),
     search = el('input'),
@@ -25,10 +26,9 @@ export function mountMaterialVocabulary(host, value) {
       'vocabulary-table material-vocabulary-table'
     ),
     body = el('tbody'),
-    navigation = el('div', undefined, 'vocabulary-navigation'),
+    navigation = el('div', undefined, 'vocabulary-status'),
     count = el('span', undefined, 'packing-help'),
     errors = el('p', undefined, 'appearance-validation')
-  let page = 0
   search.type = 'search'
   search.name = 'material-rule-search'
   search.id = `material-rule-search-${crypto.randomUUID()}`
@@ -40,8 +40,7 @@ export function mountMaterialVocabulary(host, value) {
   searchLabel.append(search)
   preparationHelp(search, m('Filter by a seller material name or translation.'))
   search.addEventListener('input', () => {
-    page = 0
-    render()
+    render(true)
   })
 
   function action(title, icon, help, handler, iconOnly = false) {
@@ -51,51 +50,33 @@ export function mountMaterialVocabulary(host, value) {
     preparationHelp(button, m(help))
     return button
   }
-  const previous = action(
-      'Previous material rules',
-      'previous',
-      'Previous page of material rules.',
-      () => {
-        page--
-        render()
-      },
-      true
-    ),
-    next = action(
-      'Next material rules',
-      'next',
-      'Next page of material rules.',
-      () => {
-        page++
-        render()
-      },
-      true
-    ),
-    add = action(
-      'Add material rule',
-      'plus',
-      'Add seller material names and their translations.',
-      () => {
-        if (value.materialVocabulary.length >= 500) return
-        value.materialVocabulary.unshift({
-          id: `custom-${crypto.randomUUID()}`,
-          aliases: [],
-          en: '',
-          zh: '',
-          es: '',
-          parent: '',
-        })
-        search.value = ''
-        page = 0
-        render()
-        body.querySelector('input')?.focus()
-      }
-    )
+  const add = action(
+    'Add material rule',
+    'plus',
+    'Add seller material names and their translations.',
+    () => {
+      if (value.materialVocabulary.length >= 500) return
+      value.materialVocabulary.unshift({
+        id: `custom-${crypto.randomUUID()}`,
+        aliases: [],
+        en: '',
+        zh: '',
+        es: '',
+        parent: '',
+      })
+      search.value = ''
+      render(true)
+      virtual
+        .reveal(value.materialVocabulary[0])
+        ?.querySelector('input')
+        ?.focus()
+    }
+  )
   count.setAttribute('role', 'status')
   errors.setAttribute('role', 'status')
   errors.id = `material-rule-errors-${crypto.randomUUID()}`
   errors.hidden = true
-  navigation.append(previous, count, next)
+  navigation.append(count)
   toolbar.append(searchLabel, add)
   scroll.tabIndex = 0
   scroll.setAttribute('role', 'region')
@@ -140,12 +121,17 @@ export function mountMaterialVocabulary(host, value) {
   )
 
   function clearError() {
+    invalid = undefined
     errors.hidden = true
     for (const input of body.querySelectorAll('[aria-invalid]'))
       input.removeAttribute('aria-invalid')
   }
   function showError(error, index) {
     clearError()
+    invalid = {
+      entry: value.materialVocabulary[index],
+      field: error.ruleField || 'aliases',
+    }
     errors.hidden = false
     bindText(
       errors,
@@ -159,117 +145,106 @@ export function mountMaterialVocabulary(host, value) {
     input?.setAttribute('aria-invalid', 'true')
     return input
   }
-  function render() {
-    const matches = searchMatcher(search.value),
-      matching = value.materialVocabulary.filter((entry) =>
-        matches([...entry.aliases, entry.en, entry.zh, entry.es])
-      )
-    page = Math.max(
-      0,
-      Math.min(page, Math.ceil(matching.length / pageSize) - 1)
-    )
-    controls.clear()
-    body.replaceChildren()
-    for (const entry of matching.slice(
-      page * pageSize,
-      (page + 1) * pageSize
-    )) {
-      const row = el('tr'),
-        fields = new Map()
-      row.dataset.materialRule = entry.id
-      for (const field of ['aliases', 'en', 'zh', 'es']) {
-        const cell = el('td'),
-          input = el('input')
-        input.name = field
-        input.dataset.ruleField = field
-        input.value =
-          field === 'aliases' ? entry.aliases.join('|') : entry[field]
-        input.required = true
-        input.maxLength = field === 'aliases' ? 4000 : 80
-        input.autocomplete = 'off'
-        input.setAttribute('aria-labelledby', headers.get(field))
-        input.setAttribute('aria-describedby', errors.id)
-        if (field === 'aliases') {
-          input.autocapitalize = 'off'
-          input.setAttribute('autocorrect', 'off')
-          input.spellcheck = false
-        }
-        input.addEventListener('input', () => {
-          if (field === 'aliases')
-            entry.aliases = input.value
-              .split('|')
-              .map((part) => part.trim())
-              .filter(Boolean)
-          else entry[field] = input.value
-          clearError()
-        })
-        preparationHelp(
-          input,
-          m(
-            field === 'aliases'
-              ? 'Match these seller material names. Separate alternatives with |.'
-              : 'Display name for this material in the chosen language.'
-          )
-        )
-        fields.set(field, input)
-        cell.append(input)
-        row.append(cell)
+  function renderRow(entry) {
+    const row = el('tr'),
+      fields = new Map()
+    row.dataset.materialRule = entry.id
+    for (const field of ['aliases', 'en', 'zh', 'es']) {
+      const cell = el('td'),
+        input = el('input')
+      input.name = field
+      input.dataset.ruleField = field
+      input.value = field === 'aliases' ? entry.aliases.join('|') : entry[field]
+      input.required = true
+      input.maxLength = field === 'aliases' ? 4000 : 80
+      input.autocomplete = 'off'
+      input.setAttribute('aria-labelledby', headers.get(field))
+      input.setAttribute('aria-describedby', errors.id)
+      if (invalid?.entry === entry && invalid.field === field)
+        input.setAttribute('aria-invalid', 'true')
+      if (field === 'aliases') {
+        input.autocapitalize = 'off'
+        input.setAttribute('autocorrect', 'off')
+        input.spellcheck = false
       }
-      const actions = el('td')
-      actions.append(
-        action(
-          'Remove material rule',
-          'trash',
-          'Remove this material rule when you save Settings.',
-          () => {
-            const index = value.materialVocabulary.indexOf(entry)
-            value.materialVocabulary.splice(index, 1)
-            clearError()
-            render()
-            const remaining = [...body.querySelectorAll('button')]
-            remaining[Math.min(remaining.length - 1, index % pageSize)]?.focus()
-            if (!remaining.length) add.focus()
-          },
-          true
+      input.addEventListener('input', () => {
+        if (field === 'aliases')
+          entry.aliases = input.value
+            .split('|')
+            .map((part) => part.trim())
+            .filter(Boolean)
+        else entry[field] = input.value
+        clearError()
+      })
+      preparationHelp(
+        input,
+        m(
+          field === 'aliases'
+            ? 'Match these seller material names. Separate alternatives with |.'
+            : 'Display name for this material in the chosen language.'
         )
       )
-      row.append(actions)
-      row.addEventListener('focusout', (event) => {
-        if (row.contains(event.relatedTarget)) return
-        const index = value.materialVocabulary.indexOf(entry)
-        try {
-          validateMaterialVocabulary([entry])
-        } catch (error) {
-          showError(error, index)
-          return
-        }
-        try {
-          validateMaterialVocabulary(value.materialVocabulary)
-        } catch (error) {
-          // Other unfinished draft rows must not interrupt this row's editing.
-          if (error.ruleIndex === index) showError(error, index)
-        }
-      })
-      body.append(row)
-      controls.set(entry, fields)
-    }
-    if (!matching.length) {
-      const row = el('tr'),
-        cell = el('td', m('No matching material rules.'), 'vocabulary-empty')
-      cell.colSpan = 5
+      fields.set(field, input)
+      cell.append(input)
       row.append(cell)
-      body.append(row)
     }
-    bindText(
-      count,
-      m('{0}–{1} of {2} rules', {
-        0: matching.length ? page * pageSize + 1 : 0,
-        1: Math.min((page + 1) * pageSize, matching.length),
-        2: matching.length,
-      })
+    const actions = el('td')
+    actions.append(
+      action(
+        'Remove material rule',
+        'trash',
+        'Remove this material rule when you save Settings.',
+        () => {
+          const matching = matchingRules(),
+            position = matching.indexOf(entry),
+            index = value.materialVocabulary.indexOf(entry)
+          value.materialVocabulary.splice(index, 1)
+          clearError()
+          render()
+          const next = matching[position + 1] || matching[position - 1]
+          if (next) virtual.reveal(next)?.querySelector('button')?.focus()
+          else add.focus()
+        },
+        true
+      )
     )
-    previous.disabled = page === 0
-    next.disabled = (page + 1) * pageSize >= matching.length
+    row.append(actions)
+    row.addEventListener('focusout', (event) => {
+      if (row.contains(event.relatedTarget)) return
+      const index = value.materialVocabulary.indexOf(entry)
+      try {
+        validateMaterialVocabulary([entry])
+      } catch (error) {
+        showError(error, index)
+        return
+      }
+      try {
+        validateMaterialVocabulary(value.materialVocabulary)
+      } catch (error) {
+        // Other unfinished draft rows must not interrupt this row's editing.
+        if (error.ruleIndex === index) showError(error, index)
+      }
+    })
+    controls.set(entry, fields)
+    return row
+  }
+  const virtual = createVocabularyTable({
+    scroller: scroll,
+    body,
+    render: renderRow,
+    remove: (entry) => controls.delete(entry),
+    emptyMessage: m('No matching material rules.'),
+  })
+  function matchingRules() {
+    const matches = searchMatcher(search.value)
+    return value.materialVocabulary.filter((entry) =>
+      matches([...entry.aliases, entry.en, entry.zh, entry.es])
+    )
+  }
+  function render(reset = false) {
+    const matching = matchingRules()
+    virtual.setItems(matching, { reset })
+    bindText(count, m('{0} rules', { 0: matching.length }))
     add.disabled = value.materialVocabulary.length >= 500
   }
   render()
@@ -280,14 +255,20 @@ export function mountMaterialVocabulary(host, value) {
     }))
   )
   return {
+    destroy: () => virtual.destroy(),
+    revealError() {
+      return invalid
+        ? virtual.reveal(invalid.entry)?.querySelector('[aria-invalid="true"]')
+        : undefined
+    },
     validate() {
       try {
         return validateMaterialVocabulary(value.materialVocabulary)
       } catch (error) {
         const index = error.ruleIndex || 0
         search.value = ''
-        page = Math.floor(index / pageSize)
-        render()
+        render(true)
+        virtual.reveal(value.materialVocabulary[index])
         showError(error, index)?.focus()
         throw error
       }

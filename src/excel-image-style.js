@@ -48,7 +48,7 @@ function workspacePalette(value) {
   )
 }
 
-/** Capture the rendered workspace, including an explicit light/dark override. */
+/** Use the selected theme's light palette, independent of the workspace mode. */
 export function workspaceExportStyle(
   root = globalThis.document?.documentElement
 ) {
@@ -56,28 +56,16 @@ export function workspaceExportStyle(
   const computed = root
     ? (root.ownerDocument?.defaultView || globalThis).getComputedStyle?.(root)
     : null
-  const color = (name) => {
-    const value = computed?.getPropertyValue(`--${name}`).trim()
-    return /^#[0-9a-f]{6}$/i.test(value || '')
-      ? value.toLowerCase()
-      : defaults[name]
-  }
-  const accent = color('accent')
+  const value =
+    computed?.getPropertyValue('--excel-accent').trim() ||
+    computed?.getPropertyValue('--accent').trim()
+  const accent = /^#[0-9a-f]{6}$/i.test(value || '')
+    ? value.toLowerCase()
+    : defaults.accent
   return Object.freeze({
     scheme: 'custom',
     accent,
-    workspace: Object.freeze({
-      header: accent,
-      headerText: color('on-accent'),
-      store: color('selected'),
-      order: color('field'),
-      stripe: color('page'),
-      separator: color('border'),
-      grid: color('divider'),
-      body: color('surface'),
-      text: color('text'),
-      muted: color('muted'),
-    }),
+    workspace: excelImagePalette({ scheme: 'custom', accent }),
   })
 }
 

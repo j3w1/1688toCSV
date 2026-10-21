@@ -365,16 +365,27 @@ dialog.packing-review:is(.packing-change-dialog, .code-conflict-dialog) {
   gap: 5px 8px;
 }
 
-/* Assignment review keeps every group in one fitted overview. Full, unabridged
-   changes open from its card rather than consuming a row for every field. */
+/* Assignment reviews first fit their complete, readable changes. Only batches
+   that cannot fit a detail grid use the dense overview and card details. */
 dialog.packing-review.packing-change-dialog.packing-review-overview {
-  inline-size: min(1800px, calc(100dvw - 24px));
+  --packing-review-photo-size: 96px;
+  inline-size: min(900px, calc(100dvw - 24px));
   max-inline-size: none;
+  block-size: fit-content;
+  max-block-size: min(920px, calc(100dvh - 24px));
+}
+dialog.packing-review.packing-review-overview[data-review-layout='detailed-grid'] {
+  --packing-review-photo-size: 72px;
+  inline-size: min(1800px, calc(100dvw - 24px));
+}
+dialog.packing-review.packing-review-overview[data-review-layout='compact'] {
+  --packing-review-photo-size: 34px;
+  inline-size: min(1800px, calc(100dvw - 24px));
   block-size: min(920px, calc(100dvh - 24px));
 }
 .packing-review-overview > .scroll-dialog-content {
   display: flex;
-  flex: 1;
+  flex: 0 1 auto;
   flex-direction: column;
   min-block-size: 0;
   overflow: hidden;
@@ -389,31 +400,51 @@ dialog.packing-review.packing-change-dialog.packing-review-overview {
 }
 .packing-review-overview-fit {
   position: relative;
-  flex: 1;
+  flex: none;
   min-inline-size: 0;
   min-block-size: 0;
+  overflow: visible;
+}
+.packing-review-overview[data-review-layout='compact'] > .scroll-dialog-content,
+.packing-review-overview[data-review-layout='compact']
+  .packing-review-overview-fit {
+  flex: 1;
+}
+.packing-review-overview[data-review-layout='compact']
+  .packing-review-overview-fit {
   overflow: hidden;
 }
 .packing-change-dialog.packing-review-overview .packing-review-list {
-  position: absolute;
-  inset-block-start: 0;
+  position: static;
   inline-size: 100%;
-  gap: 5px;
+  gap: 10px;
   border: 0;
   border-radius: 0;
   overflow: visible;
-  transform: scale(var(--packing-review-scale, 1));
+  transform: none;
   transform-origin: top center;
 }
-.packing-change-dialog.packing-review-overview .packing-review-overview-item {
-  grid-template-columns: 34px minmax(0, 1fr);
-  align-items: center;
+.packing-change-dialog.packing-review-overview[data-review-layout='compact']
+  .packing-review-list {
+  position: absolute;
+  inset-block-start: 0;
   gap: 5px;
+  transform: scale(var(--packing-review-scale, 1));
+}
+.packing-change-dialog.packing-review-overview .packing-review-overview-item {
+  grid-template-columns: var(--packing-review-photo-size) minmax(0, 1fr);
+  align-items: center;
+  gap: 8px 12px;
   min-block-size: 56px;
-  padding: 5px;
+  padding: 12px;
   border: 1px solid var(--border);
   border-radius: 6px;
   background: var(--field);
+}
+.packing-change-dialog.packing-review-overview[data-review-layout='compact']
+  .packing-review-overview-item {
+  gap: 5px;
+  padding: 5px;
 }
 .packing-change-dialog.packing-review-overview
   .packing-review-overview-item:not(
@@ -428,10 +459,11 @@ dialog.packing-review.packing-change-dialog.packing-review-overview {
   .packing-review-overview-item
   .preparation-photo {
   box-sizing: border-box;
-  inline-size: 34px;
-  block-size: 34px;
-  min-inline-size: 34px;
-  min-block-size: 34px;
+  inline-size: var(--packing-review-photo-size);
+  block-size: var(--packing-review-photo-size);
+  min-inline-size: var(--packing-review-photo-size);
+  min-block-size: var(--packing-review-photo-size);
+  aspect-ratio: 1;
   margin: 0;
   padding: 0 !important;
 }
@@ -457,28 +489,71 @@ dialog.packing-review.packing-change-dialog.packing-review-overview {
   border: 0;
   background: transparent;
   text-align: start;
-  font-size: 11px;
-  line-height: 1.3;
+  font-size: 14px;
+  line-height: 1.5;
 }
 .packing-change-dialog.packing-review-overview
   .packing-review-overview-select
   code.ce-code {
-  --ce-code-size: 12px;
+  --ce-code-size: 16px;
   margin: 0;
+}
+.packing-change-dialog.packing-review-overview[data-review-layout='compact']
+  .packing-review-overview-select {
+  font-size: 11px;
+  line-height: 1.3;
+}
+.packing-change-dialog.packing-review-overview[data-review-layout='compact']
+  .packing-review-overview-select
+  code.ce-code {
+  --ce-code-size: 12px;
 }
 .packing-review-overview-name,
 .packing-review-overview-code,
 .packing-review-overview-summary {
   display: block;
   inline-size: 100%;
+  overflow-wrap: anywhere;
+}
+.packing-review-overview[data-review-layout='compact']
+  :is(
+    .packing-review-overview-name,
+    .packing-review-overview-code,
+    .packing-review-overview-summary
+  ) {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
 .packing-review-overview-summary {
+  display: none;
   color: var(--muted);
   font-size: 10px;
   line-height: 1.2;
+}
+.packing-review-overview[data-review-layout='compact']
+  .packing-review-overview-summary {
+  display: block;
+}
+.packing-change-dialog.packing-review-overview
+  .packing-review-item
+  > .packing-review-inline {
+  display: block;
+  grid-column: 1 / -1;
+}
+.packing-change-dialog.packing-review-overview[data-review-layout='compact']
+  .packing-review-item
+  > .packing-review-inline {
+  display: none;
+}
+.packing-review-inline .packing-value-content {
+  font-size: 13px;
+}
+.packing-review-inline .packing-value-cell code.ce-code {
+  --ce-code-size: 16px;
+}
+.packing-review-inline .packing-value-table :is(th, td) {
+  padding-block: 5px;
 }
 .packing-review-overview-summary > b {
   margin-inline-end: 4px;

@@ -72,7 +72,7 @@ test('material Settings rules survive reload and backup, update recognition, and
     tab = dialog.getByRole('tab', { name: 'Materials', exact: true }),
     panel = dialog.getByRole('tabpanel', { name: 'Materials', exact: true })
   await tab.click()
-  await expect(panel.locator('tbody tr')).toHaveCount(8)
+  await expect(panel.locator('tbody tr[data-virtual-key]')).toHaveCount(84)
   const search = panel.getByRole('combobox', { name: 'Search material rules' })
   await search.fill('Glass')
   const glass = panel.locator('[data-material-rule=glass]'),

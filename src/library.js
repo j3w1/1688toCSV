@@ -33,6 +33,7 @@ import { formatCny } from './money-format.js'
 import { createSizeClassifier } from './size-vocabulary.js'
 import { openStoreImportDialog } from './store-import-dialog.js'
 import { productCartonDetails } from './carton-details.js'
+import { openCartonCapacityEditor } from './carton-packing-ui.js'
 import { mountOrderCharges } from './order-charges-ui.js'
 import { mountOperationsStrip, openOperationsDialog } from './operations-ui.js'
 import { mountPaymentLinks } from './payment-links-ui.js'
@@ -505,6 +506,38 @@ export async function startLibrary(
       dialog.querySelector('.product-details-body').before(sources)
     }
     return dialog
+  }
+  function editCartonCapacity({ orderId, entryId, accountId }) {
+    const record = records.find(
+        ({ snapshot }) =>
+          snapshot.orderId === orderId &&
+          (snapshot.accountId || 'local') === accountId
+      ),
+      item = record?.snapshot.items.find((item) => item.entryId === entryId)
+    if (!item) throw new Error('Source product unavailable in Orders.')
+    const row = {
+        ...item,
+        orderId,
+        sellerName: record.snapshot.sellerName,
+        record,
+      },
+      key = keyFor(row),
+      visible = filteredRows().some((item) => keyFor(item) === key),
+      input =
+        visible &&
+        productTable.ensureVisible(key)?.querySelector('.pack-size-cell input')
+    if (input) {
+      input.focus({ preventScroll: true })
+      input.select()
+      return
+    }
+    // Keep all filters and selections intact when they exclude this source row.
+    openCartonCapacityEditor({
+      item: row,
+      code: packing.preparedRows([row])[0]?.barcode,
+      controller: packing.cartonCapacityEditor(row),
+      loadPhoto: loadContextImage,
+    })
   }
   const productSelection = createRowSelection({
     selected: selectedRows,
@@ -1030,9 +1063,7 @@ export async function startLibrary(
         copy.firstChild.textContent = formatted
         preparationHelp(
           copy,
-          uiMessage(
-            'Copy this number without currency or thousands separators.'
-          )
+          uiMessage('Copy without currency symbols or separators.')
         )
         amount.append(copy)
       }
@@ -1070,7 +1101,7 @@ export async function startLibrary(
     preparationHelp(
       amounts,
       uiMessage(
-        'Only selected product rows are summed, across all filtered pages. After row discounts uses the saved Discount column, including already allocated seller adjustments. Shipping and other order-wide charges are not added or divided. This is not the order payable total.'
+        'Selected rows only. Net subtracts row discounts, including allocated seller adjustments. Shipping and order charges are excluded; this is not the order total.'
       )
     )
     const context = node('dl', undefined, 'selection-totals-context')
@@ -3217,6 +3248,7 @@ export async function startLibrary(
         }
       },
       onProductDetails: showProductDetails,
+      onEditCartonCapacity: editCartonCapacity,
       onRefreshOrder: (orderId) => refreshOrders([orderId]),
       loadImage: async (url) => {
         const result = await send('IMAGE_GET', { url })

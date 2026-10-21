@@ -30,11 +30,12 @@ export const APPEARANCE_MESSAGES = {
     },
   Appearance: { zh: '外观', es: 'Apariencia' },
   'Workspace appearance': { zh: '工作区外观', es: 'Apariencia del espacio' },
-  'Choose an orange-inspired palette for each mode. The header toggle switches between your light and dark palettes.':
+  'Choose a palette for each mode. Excel always uses the selected theme’s light colors. Choose Classic brown in both modes to match the reference.':
     {
-      zh: '为每种模式选择橙色系主题。顶部按钮可切换浅色与深色主题。',
-      es: 'Elige una paleta de tonos naranja para cada modo. El control superior cambia entre tus paletas clara y oscura.',
+      zh: '为每种模式选择主题。Excel始终使用所选主题的浅色配色。两种模式均选择“经典棕色”即可匹配参考图。',
+      es: 'Elige una paleta para cada modo. Excel siempre usa los colores claros del tema elegido. Elige Marrón clásico en ambos modos para coincidir con la referencia.',
     },
+  'Classic brown': { zh: '经典棕色', es: 'Marrón clásico' },
   'Warm orange': { zh: '暖橙', es: 'Naranja cálido' },
   '1688 orange': { zh: '1688 橙', es: 'Naranja 1688' },
   'Soft apricot': { zh: '柔和杏色', es: 'Albaricoque suave' },

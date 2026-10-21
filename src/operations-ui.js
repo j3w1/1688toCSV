@@ -32,12 +32,19 @@ function operationIcon(name) {
   return svg
 }
 
-/** One inline strip, with a neutral editor affordance even before any state is set. */
+/** Keep state actions together in a reserved trailing slot, independent of row text. */
 export function mountOperationsStrip(
   host,
   { record, entryId, storeOnly = false, onEdit }
 ) {
   const strip = el('span', undefined, 'operations-strip')
+  let rowContent
+  if (host.classList.contains('row-preparation')) {
+    rowContent = el('span', undefined, 'operations-row-content')
+    rowContent.append(...host.childNodes)
+    host.append(rowContent)
+    host.classList.add('operations-row')
+  }
   host.append(strip)
   function render(current) {
     record = current
@@ -66,9 +73,10 @@ export function mountOperationsStrip(
       const button = el(
         'button',
         undefined,
-        `operations-state operations-${indicator.tone}`
+        `operations-state operations-${indicator.tone}${indicator.icon === 'workflow' ? ' operations-overflow' : ''}`
       )
       button.type = 'button'
+      button.setAttribute('aria-haspopup', 'dialog')
       button.dataset.operation = indicator.kind
       bindAttribute(
         button,
@@ -93,7 +101,16 @@ export function mountOperationsStrip(
     }
   }
   render(record)
-  return { update: render, destroy: () => strip.remove() }
+  return {
+    update: render,
+    destroy() {
+      strip.remove()
+      if (rowContent) {
+        rowContent.replaceWith(...rowContent.childNodes)
+        host.classList.remove('operations-row')
+      }
+    },
+  }
 }
 
 function indicatorParams(indicator) {
@@ -192,7 +209,11 @@ function fillInput(input, value) {
 }
 
 function dateShortcuts(input) {
-  const actions = el('div', undefined, 'operations-shortcuts')
+  const actions = el(
+    'div',
+    undefined,
+    'operations-shortcuts operations-date-shortcuts'
+  )
   input.parentElement.append(actions)
   for (const [label, offset] of [
     ['Today', 0],
@@ -286,7 +307,11 @@ function sourceAmount(input, label, value) {
   } catch {
     return
   }
-  const actions = el('div', undefined, 'operations-shortcuts')
+  const actions = el(
+    'div',
+    undefined,
+    'operations-shortcuts operations-source-actions'
+  )
   input.parentElement.append(actions)
   shortcut(
     actions,

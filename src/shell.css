@@ -1027,6 +1027,17 @@ html:has(body.packing-active) {
   grid-row: 1 / span 2;
   padding: var(--space-5) var(--space-6) var(--space-4);
 }
+@media (min-width: 761px) {
+  #settings-content
+    .settings-panel
+    > :is(h3, .settings-section-heading):first-child,
+  #settings-content
+    .settings-panel
+    > .appearance-section:first-child
+    > .settings-section-heading {
+    padding-inline-end: 32px;
+  }
+}
 #settings-content .settings-footer {
   grid-column: 2;
   grid-row: 3;

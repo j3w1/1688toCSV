@@ -26,98 +26,50 @@ const xml = (value) =>
     )
 
 // The source letters identify the owner's reference even when payments are omitted.
-export const PACKING_WORKBOOK_COLUMNS = Object.freeze(
+const REFERENCE_WORKBOOK_COLUMNS = Object.freeze(
   [
     ['A', 'store', 'Store', 'TIENDA', '店铺', 18],
-    ['B', 'photo', 'Photo', 'FOTO', '图片', 23],
-    ['C', 'barcode', 'Barcode', 'COD.BARRAS', '条码', 28],
-    [
-      'D',
-      'description',
-      'Original description',
-      'DESCRIPCIÓN 中文',
-      '产品描述',
-      38,
-    ],
-    ['E', 'spanishName', 'Description', 'DESCRIPCIÓN', '产品名称', 27],
-    ['F', 'productNumber', 'Item', 'ITEM', '货号', 16],
-    ['G', 'sourceSize', 'Size', 'MEDIDAS', '尺寸', 15],
-    ['H', 'loadedBoxes', 'Loaded boxes', 'CAJAS CARGADO', '已装柜箱数', 13],
-    ['I', 'receivedBoxes', 'Received boxes', 'REAL CAJAS', '实收箱数', 13],
-    ['J', 'plannedBoxes', 'Planned boxes', 'CAJAS', '计划箱数', 12],
-    ['K', 'unitsPerCarton', 'Pcs/box', 'PZAS', '装箱数', 12],
-    ['L', 'quantity', 'Total quantity', 'CANT. TOTAL', '全部数量', 14],
-    [
-      'M',
-      'orderQuantity',
-      'Quantity / order',
-      'CANT X TIENDA',
-      '订单总数量',
-      15,
-    ],
-    ['N', 'sourceUnitPrice', 'Unit price · CNY', 'PRECIO RMB', '单价', 14],
-    ['O', 'orderShipping', 'Order shipping · CNY', 'ENVIO', '快递', 14],
-    ['P', 'discount', 'Row discount · CNY', 'DSCTO.', '折扣', 14],
+    ['B', 'photo', 'Photo', 'Foto', '图片', 23],
+    ['C', 'barcode', 'Code', 'Código', '标签货号', 18],
+    ['C-mark', 'cartonMark', 'Carton mark', 'Marca', '唛头', 20],
+    ['D', 'description', 'Details', 'Detalles', '原始描述', 36],
+    ['E', 'spanishName', 'Product', 'Producto', '产品名称', 22],
+    ['F', 'productNumber', 'Model', 'Modelo', '货号', 10],
+    ['G', 'sourceSize', 'Size', 'Medidas', '尺寸', 12],
+    ['H', 'loadedBoxes', 'Loaded boxes', 'Cajas carg.', '装柜箱数', 10],
+    ['I', 'receivedBoxes', 'Rcvd boxes', 'Cajas recib.', '实收箱数', 10],
+    ['J', 'plannedBoxes', 'Plan boxes', 'Cajas plan', '计划箱数', 9],
+    ['K', 'unitsPerCarton', 'Pcs/box', 'Pzas/caja', '每箱件数', 10],
+    ['L', 'quantity', 'Qty', 'Cantidad', '数量', 10],
+    ['M', 'orderQuantity', 'Order qty', 'Cant. pedido', '订单数量', 11],
+    ['N', 'sourceUnitPrice', 'Price 元', 'Precio 元', '原价 元', 11],
+    ['O', 'orderShipping', 'Freight 元', 'Envío 元', '运费 元', 11],
+    ['P', 'discount', 'Discount 元', 'Descuento 元', '折扣 元', 11],
     [
       'Q',
       'effectiveUnitPrice',
-      'Price + charges · CNY',
-      'PRECIO + CARGOS',
-      '单价含附加费用',
-      16,
+      'Price + fees 元',
+      'Precio + extras 元',
+      '含费单价 元',
+      12,
     ],
-    ['R', 'effectiveAmount', 'Subtotal · CNY', 'SUBTOTAL', '全价', 16],
-    ['S', 'cartonWeight', 'Weight kg/box', 'PESO', '单重量', 13],
-    [
-      'T',
-      'receivedWeight',
-      'Received weight · kg',
-      'PESO TOTAL',
-      '实收总重量',
-      15,
-    ],
-    ['U', 'loadedWeight', 'Loaded weight · kg', 'PESO CARGADO', '装柜重量', 15],
-    ['V', 'cartonLength', 'Length · cm', 'L', '长（厘米）', 11],
-    ['W', 'cartonWidth', 'Width · cm', 'A', '宽（厘米）', 11],
-    ['X', 'cartonHeight', 'Height · cm', 'P', '高（厘米）', 11],
-    ['Y', 'cartonVolume', 'Volume m³/box', 'CBM P.CAJA', '单体积', 14],
-    [
-      'Z',
-      'receivedVolume',
-      'Received volume · m³',
-      'SUBTOTAL CBM',
-      '实收总体积',
-      16,
-    ],
-    ['AA', 'loadedVolume', 'Loaded volume · m³', 'CBM CARGADO', '装柜体积', 16],
-    ['AB', 'orderAmount', 'Goods / order · CNY', 'TOTAL', '订单商品总额', 17],
-    ['AC', 'payments', 'Payments · CNY', 'PAGOS DEL MISTER', '付掉款', 17],
-    ['AD', 'deposits', 'Deposits · CNY', 'DEPOSITOS', '定金', 15],
-    ['AE', 'balance', 'Balance · CNY', 'SALDO TOTAL', '余款', 17],
-    [
-      'AF',
-      'totalLoadedWeight',
-      'Total loaded weight · kg',
-      'PESO TOTAL',
-      '装柜总重量',
-      18,
-    ],
-    [
-      'AG',
-      'totalLoadedVolume',
-      'Total loaded volume · m³',
-      'CBM TOTAL',
-      '装柜总体积',
-      18,
-    ],
-    [
-      'AH',
-      'totalLoadedBoxes',
-      'Total loaded boxes',
-      'CAJAS TOTAL',
-      '装柜总箱数',
-      17,
-    ],
+    ['R', 'effectiveAmount', 'Subtotal 元', 'Subtotal 元', '小计 元', 13],
+    ['S', 'cartonWeight', 'kg/box', 'kg/caja', 'kg/箱', 10],
+    ['T', 'receivedWeight', 'Received kg', 'kg recibidos', '实收 kg', 12],
+    ['U', 'loadedWeight', 'Loaded kg', 'kg cargados', '装柜 kg', 12],
+    ['V', 'cartonLength', 'L · cm', 'L · cm', '长 · cm', 10],
+    ['W', 'cartonWidth', 'W · cm', 'A · cm', '宽 · cm', 10],
+    ['X', 'cartonHeight', 'H · cm', 'H · cm', '高 · cm', 10],
+    ['Y', 'cartonVolume', 'm³/box', 'm³/caja', 'm³/箱', 12],
+    ['Z', 'receivedVolume', 'Received m³', 'm³ recibidos', '实收 m³', 12],
+    ['AA', 'loadedVolume', 'Loaded m³', 'm³ cargados', '装柜 m³', 12],
+    ['AB', 'orderAmount', 'Order 元', 'Pedido 元', '订单金额 元', 13],
+    ['AC', 'payments', 'Payments 元', 'PAGOS DEL MISTER 元', '付掉款 元', 17],
+    ['AD', 'deposits', 'Deposits 元', 'DEPOSITOS 元', '定金 元', 15],
+    ['AE', 'balance', 'Balance 元', 'SALDO TOTAL 元', '余款 元', 17],
+    ['AF', 'totalLoadedWeight', 'Total kg', 'Total kg', '总重 kg', 12],
+    ['AG', 'totalLoadedVolume', 'Total m³', 'Total m³', '总体积 m³', 12],
+    ['AH', 'totalLoadedBoxes', 'Total boxes', 'Total cajas', '总箱数', 11],
   ].map(([reference, key, en, es, zh, width]) =>
     Object.freeze({
       reference,
@@ -128,13 +80,133 @@ export const PACKING_WORKBOOK_COLUMNS = Object.freeze(
   )
 )
 
+export const PACKING_WORKBOOK_COLUMN_ORDER = Object.freeze([
+  'photo',
+  'barcode',
+  'cartonMark',
+  'spanishName',
+  'description',
+  'productNumber',
+  'sourceSize',
+  'quantity',
+  'unitsPerCarton',
+  'plannedBoxes',
+  'receivedBoxes',
+  'loadedBoxes',
+  'cartonWeight',
+  'cartonVolume',
+  'cartonLength',
+  'cartonWidth',
+  'cartonHeight',
+  'receivedWeight',
+  'receivedVolume',
+  'loadedWeight',
+  'loadedVolume',
+  'sourceUnitPrice',
+  'effectiveUnitPrice',
+  'discount',
+  'effectiveAmount',
+])
+export const PACKING_WORKBOOK_DEFAULT_COLUMNS = Object.freeze(
+  PACKING_WORKBOOK_COLUMN_ORDER.filter(
+    (key) =>
+      ![
+        'cartonLength',
+        'cartonWidth',
+        'cartonHeight',
+        'receivedWeight',
+        'receivedVolume',
+        'sourceUnitPrice',
+      ].includes(key)
+  )
+)
+export const PACKING_WORKBOOK_COLUMNS = Object.freeze(
+  REFERENCE_WORKBOOK_COLUMNS.filter((column) =>
+    PACKING_WORKBOOK_COLUMN_ORDER.includes(column.key)
+  )
+)
+const columnSections = [
+  {
+    keys: PACKING_WORKBOOK_COLUMN_ORDER.slice(0, 7),
+    labels: { en: 'Product', es: 'Producto', zh: '产品' },
+  },
+  {
+    keys: PACKING_WORKBOOK_COLUMN_ORDER.slice(7, 12),
+    labels: { en: 'Packing', es: 'Empaque', zh: '装箱' },
+  },
+  {
+    keys: PACKING_WORKBOOK_COLUMN_ORDER.slice(12, 21),
+    labels: { en: 'Measurements', es: 'Medidas', zh: '测量' },
+  },
+  {
+    keys: PACKING_WORKBOOK_COLUMN_ORDER.slice(21, 25),
+    labels: { en: 'Costs', es: 'Costos', zh: '费用' },
+  },
+]
+const boxStages = [
+  { key: 'plannedBoxes', name: 'planned', background: 0.03 },
+  { key: 'receivedBoxes', name: 'received', background: 0.06 },
+  { key: 'loadedBoxes', name: 'loaded', background: 0.1 },
+]
+
+function mixColor(background, accent, amount) {
+  return (
+    '#' +
+    background
+      .slice(1)
+      .match(/../g)
+      .map((channel, index) =>
+        Math.round(
+          parseInt(channel, 16) * (1 - amount) +
+            parseInt(accent.slice(1 + index * 2, 3 + index * 2), 16) * amount
+        )
+          .toString(16)
+          .padStart(2, '0')
+      )
+      .join('')
+  )
+}
+
+function boxStageColors(palette, stage) {
+  return {
+    boxStage: stage.name,
+    stageBackground: mixColor(palette.body, palette.header, stage.background),
+    stageHeader: palette.header,
+  }
+}
+
+function boxStageCell(cell, column, kind) {
+  const index = boxStages.findIndex((stage) => stage.key === column.key)
+  return index < 0
+    ? cell
+    : {
+        ...cell,
+        style:
+          18 + index * 3 + (kind === 'header' ? 0 : kind === 'total' ? 2 : 1),
+      }
+}
+
+function columnGroups(columns, language) {
+  const groups = []
+  columns.forEach((column, index) => {
+    const section = columnSections.find((section) =>
+      section.keys.includes(column.key)
+    )
+    const previous = groups.at(-1)
+    const label = section.labels[language]
+    if (previous?.label === label) previous.count++
+    else groups.push({ start: index, count: 1, label })
+  })
+  return groups
+}
+
 const words = {
   en: [
     'CONTAINER PACKING LIST',
     'Generated',
     'Order',
     'Totals',
-    'Unknown counts stay blank. Received and loaded boxes are confirmed separately for this packing month. Weight and volume totals include only entered counts and measurements. Price includes added charges before discounts; subtotal is after discounts. Order shipping is separate.',
+    'Planned → Received → Loaded. Blank = unknown; 0 = confirmed none. Received and loaded boxes are confirmed separately for this packing month. Weight and volume totals include only entered counts and measurements. Price includes added charges before discounts; subtotal is after discounts. Order shipping is separate.',
     'Packing month',
   ],
   es: [
@@ -142,7 +214,7 @@ const words = {
     'Generado',
     'Pedido',
     'TOTALES',
-    'Los valores desconocidos quedan en blanco. Las cajas recibidas y cargadas se confirman por separado para este mes. Peso y volumen suman solo cajas y medidas registradas. El precio incluye cargos antes de descuentos; el subtotal ya descuenta las rebajas. Envío aparte.',
+    'Planificadas → Recibidas → Cargadas. Vacío = desconocido; 0 = ninguna confirmada. Las cajas recibidas y cargadas se confirman por separado para este mes. Peso y volumen suman solo cajas y medidas registradas. El precio incluye cargos antes de descuentos; el subtotal ya descuenta las rebajas. Envío aparte.',
     'Mes de empaque',
   ],
   zh: [
@@ -150,9 +222,41 @@ const words = {
     '生成日期',
     '订单',
     '合计',
-    '未知箱数保持空白。实收箱数与装柜箱数按装箱月份分别确认。重量和体积只合计已填写的箱数及测量值。单价含附加费用但未扣折扣，小计已扣除折扣，订单运费单列。',
+    '计划 → 实收 → 装柜。空白 = 未知；0 = 确认无。实收箱数与装柜箱数按装箱月份分别确认。重量和体积只合计已填写的箱数及测量值。单价含附加费用但未扣折扣，小计已扣除折扣，订单运费在订单标题中单独显示。',
     '装箱月份',
   ],
+}
+
+const orderSummaryLabels = {
+  en: {
+    freight: 'Freight',
+    goods: 'Goods',
+    boxes: 'Loaded boxes',
+    weight: 'Loaded weight',
+    volume: 'Loaded volume',
+    known: 'known',
+  },
+  es: {
+    freight: 'Envío',
+    goods: 'Productos',
+    boxes: 'Cajas cargadas',
+    weight: 'Peso cargado',
+    volume: 'Vol. cargado',
+    known: 'conocido',
+  },
+  zh: {
+    freight: '运费',
+    goods: '商品金额',
+    boxes: '装柜箱数',
+    weight: '装柜重量',
+    volume: '装柜体积',
+    known: '已知',
+  },
+}
+
+function headingAmount(value) {
+  const match = String(value).match(/^(-?)(\d+)(?:\.(\d+))?$/)
+  return `${match[1]}${BigInt(match[2]).toLocaleString('en-GB')}.${(match[3] || '').padEnd(2, '0')} 元`
 }
 
 function decimal(value, { integer = false } = {}) {
@@ -264,28 +368,98 @@ const volumeColumns = new Set([
   'totalLoadedVolume',
 ])
 const numericStyle = (key, total = false) =>
-  moneyColumns.has(key)
-    ? total
-      ? 12
-      : 10
-    : weightColumns.has(key)
+  key === 'unitsPerCarton'
+    ? 18 + boxStages.length * 3
+    : moneyColumns.has(key)
       ? total
-        ? 13
-        : 11
-      : volumeColumns.has(key)
+        ? 12
+        : 10
+      : weightColumns.has(key)
         ? total
-          ? 15
-          : 14
-        : measurementColumns.has(key)
+          ? 13
+          : 11
+        : volumeColumns.has(key)
           ? total
-            ? 17
-            : 16
-          : total
-            ? 7
-            : 5
+            ? 15
+            : 14
+          : measurementColumns.has(key)
+            ? total
+              ? 17
+              : 16
+            : total
+              ? 7
+              : 5
+const numericColumns = new Set([
+  ...moneyColumns,
+  ...measurementColumns,
+  ...weightColumns,
+  ...volumeColumns,
+  'quantity',
+  'unitsPerCarton',
+  'plannedBoxes',
+  'receivedBoxes',
+  'loadedBoxes',
+  'totalLoadedBoxes',
+])
+const widthFormatters = new Map()
+
+function displayedNumber(key, value, language) {
+  if (value === '') return ''
+  if (key === 'barcode') return String(value)
+  if (!excelNumber(value)) return String(value)
+  const money = moneyColumns.has(key),
+    weight = weightColumns.has(key),
+    volume = volumeColumns.has(key)
+  const dimensions = measurementColumns.has(key) && !weight && !volume
+  const kind = money
+    ? 'money'
+    : weight
+      ? 'weight'
+      : volume
+        ? 'volume'
+        : dimensions
+          ? 'dimensions'
+          : 'count'
+  if (!widthFormatters.has(kind))
+    widthFormatters.set(
+      kind,
+      new Intl.NumberFormat('en-GB', {
+        minimumFractionDigits: money
+          ? 2
+          : weight || volume || dimensions
+            ? 1
+            : 0,
+        maximumFractionDigits: money
+          ? 2
+          : weight
+            ? 3
+            : volume
+              ? 6
+              : dimensions
+                ? 2
+                : 9,
+        useGrouping: money || !(weight || volume || dimensions),
+      })
+    )
+  return (
+    widthFormatters.get(kind).format(Number(value)) +
+    (money
+      ? ' 元'
+      : weight
+        ? ' kg'
+        : volume
+          ? ' m³'
+          : dimensions
+            ? ' cm'
+            : key === 'unitsPerCarton'
+              ? { en: '/box', es: '/ctn', zh: '/箱' }[language] || '/box'
+              : '')
+  )
+}
 
 const omittedColumns = new Set(['payments', 'deposits', 'balance'])
-const availableColumns = PACKING_WORKBOOK_COLUMNS.filter(
+const availableColumns = PACKING_WORKBOOK_COLUMNS
+const canonicalColumns = REFERENCE_WORKBOOK_COLUMNS.filter(
   (column) => !omittedColumns.has(column.key)
 )
 // OOXML width uses the Normal font's maximum digit width (Calibri 11 = 7px).
@@ -348,6 +522,38 @@ function projectColumns(plan, selected) {
   const positions = new Map(
     plan.columns.map((column, index) => [column.key, index])
   )
+  selected = selected.map((column) => {
+    const valueWidth =
+      numericColumns.has(column.key) || column.key === 'barcode'
+        ? plan.rows.reduce(
+            (largest, row) =>
+              !['product', 'total'].includes(row.kind)
+                ? largest
+                : Math.max(
+                    largest,
+                    textWidth(
+                      displayedNumber(
+                        column.key,
+                        row.cells[positions.get(column.key)]?.value ?? '',
+                        plan.language
+                      )
+                    ) * (column.key === 'barcode' ? 1.5 : 1)
+                  ),
+            0
+          )
+        : 0
+    const width = Math.max(
+      column.width,
+      Math.min(64, Math.ceil(valueWidth + 2))
+    )
+    const stage = boxStages.find((stage) => stage.key === column.key)
+    return {
+      ...column,
+      width,
+      pixelWidth: columnPixels(width),
+      ...(stage ? boxStageColors(plan.palette, stage) : {}),
+    }
+  })
   const letters = new Map(
     selected.map((column, index) => [
       columnName(positions.get(column.key)),
@@ -368,21 +574,27 @@ function projectColumns(plan, selected) {
     )
     return result
   }
-  const minHeight = selectedKeys.has('photo')
-    ? (plan.photoPixels + 12) * 0.75
-    : selectedKeys.has('barcode')
-      ? 52
-      : 32
+  const photoColumn = selected.find((column) => column.key === 'photo')
+  const photoHeight = photoColumn ? photoColumn.pixelWidth * 0.75 : undefined
+  const minHeight = Math.max(
+    selectedKeys.has('barcode') ? 52 : 32,
+    selectedKeys.has('cartonMark') ? plan.photoPixels * 0.75 : 0
+  )
   const lastColumn = columnName(selected.length - 1)
+  const groups = columnGroups(selected, plan.language)
   return {
     ...plan,
     columns: selected,
+    columnGroups: groups,
     lastColumn,
     rows: plan.rows.map((row) => {
+      if (row.kind === 'spacer') return { ...row, cells: [] }
       if (row.kind === 'header')
         return {
           ...row,
-          cells: selected.map((column) => row.cells[positions.get(column.key)]),
+          cells: selected.map((column) =>
+            boxStageCell(row.cells[positions.get(column.key)], column, row.kind)
+          ),
         }
       if (row.kind !== 'product' && row.kind !== 'total') {
         const width = selected.reduce(
@@ -402,7 +614,11 @@ function projectColumns(plan, selected) {
         }
       }
       const cells = selected.map((column) =>
-        projectCell(row.cells[positions.get(column.key)])
+        boxStageCell(
+          projectCell(row.cells[positions.get(column.key)]),
+          column,
+          row.kind
+        )
       )
       if (row.kind === 'total') {
         if (!cells[0]?.value && !cells[0]?.formula)
@@ -412,29 +628,34 @@ function projectColumns(plan, selected) {
       const lines = Math.max(
         1,
         ...selected.map((column, index) =>
-          ['photo', 'barcode'].includes(column.key)
+          ['photo', 'barcode', 'cartonMark'].includes(column.key)
             ? 1
             : wrappedLines(cells[index].value, column.width)
         )
       )
       return {
         ...row,
-        height: Math.max(minHeight, Math.min(240, lines * 15 + 16)),
+        height:
+          photoHeight ?? Math.max(minHeight, Math.min(240, lines * 15 + 16)),
         cells,
       }
     }),
-    merges:
-      selected.length === 1
+    merges: [
+      ...(selected.length === 1
         ? []
         : plan.merges.map((range) =>
             range.replace(/:[A-Z]+(\d+)$/, `:${lastColumn}$1`)
-          ),
+          )),
+    ],
     imageColumns: {
       photo: selectedKeys.has('photo')
         ? selected.findIndex((column) => column.key === 'photo')
         : undefined,
       code: selectedKeys.has('barcode')
         ? selected.findIndex((column) => column.key === 'barcode')
+        : undefined,
+      mark: selectedKeys.has('cartonMark')
+        ? selected.findIndex((column) => column.key === 'cartonMark')
         : undefined,
     },
   }
@@ -541,7 +762,7 @@ export function planPackingWorkbook(
     createdAt = new Date().toISOString(),
     style,
     columns: requestedColumns,
-    descriptionWidth = 48,
+    descriptionWidth = 36,
     photoSize = 'standard',
     includeOrderDetails = true,
     includeTotals = true,
@@ -553,8 +774,7 @@ export function planPackingWorkbook(
     throw new Error('Choose packing products to export.')
   if (!words[language]) language = 'en'
   const labels = words[language]
-  const selectedKeys =
-    requestedColumns ?? availableColumns.map((column) => column.key)
+  const selectedKeys = requestedColumns ?? PACKING_WORKBOOK_DEFAULT_COLUMNS
   if (
     !Array.isArray(selectedKeys) ||
     !selectedKeys.length ||
@@ -563,18 +783,23 @@ export function planPackingWorkbook(
     )
   )
     throw new Error('Choose at least one supported packing workbook column.')
-  const maximumDescriptionWidth = bounded(descriptionWidth, 48, 24, 60)
+  const maximumDescriptionWidth = bounded(descriptionWidth, 36, 24, 60)
   const photoPixels =
     { compact: 64, standard: 120, large: 160 }[photoSize] ??
     bounded(photoSize, 120, 48, 180)
-  const columns = availableColumns.map((column) => ({
+  const columns = canonicalColumns.map((column) => ({
     ...column,
     width:
       column.key === 'photo'
-        ? Math.ceil(((photoPixels + 12) / 7) * 100) / 100
-        : column.key === 'description'
-          ? descriptionColumnWidth(rows, column.key, maximumDescriptionWidth)
-          : column.width,
+        ? Math.round((photoPixels / 7) * 100) / 100
+        : column.key === 'cartonMark'
+          ? Math.max(
+              20,
+              Math.min(23, Math.round((photoPixels / 7) * 100) / 100)
+            )
+          : column.key === 'description'
+            ? descriptionColumnWidth(rows, column.key, maximumDescriptionWidth)
+            : column.width,
   }))
   const selected = [...new Set(selectedKeys)].map((key) =>
     columns.find((column) => column.key === key)
@@ -608,13 +833,7 @@ export function planPackingWorkbook(
     2
   )
   fullRow('note', labels[4], 33, 2)
-  addRow(
-    'header',
-    27,
-    columns.map((column) =>
-      textCell(column.labels[language === 'zh' ? 'es' : 'zh'], 3)
-    )
-  )
+  addRow('spacer', 6)
   addRow(
     'header',
     39,
@@ -639,13 +858,21 @@ export function planPackingWorkbook(
       ...new Set(sources.map((row) => row.packingMonth || '')),
     ]
     const mixedMonths = orderMonths.length > 1
-    if (includeOrderDetails)
-      fullRow(
-        'order',
-        `${store}    ·    ${labels[2]} ${++orderNumber}    ·    ${orderMonths.join(' / ')}`,
-        25,
-        6
-      )
+    const orderQuantity = numericTotal(
+      sources.map((row) => decimal(row.quantity ?? ''))
+    )
+    const quantityLabel = PACKING_WORKBOOK_COLUMNS.find(
+      (column) => column.key === 'quantity'
+    ).labels[language]
+    const orderHeading = includeOrderDetails
+      ? fullRow(
+          'order',
+          `${store}    ·    ${labels[2]} ${++orderNumber}    ·    ${orderMonths.join(' / ')}`,
+          25,
+          6
+        )
+      : undefined
+    const productStart = products.length
     let firstRow, currentMonth
     for (const row of sources) {
       const identity = JSON.stringify([
@@ -692,7 +919,13 @@ export function planPackingWorkbook(
       )
       set('store', textCell(first(row.storeNumber, row.sellerName)))
       set('barcode', textCell(first(row.barcode, row.baseCode), 8))
-      set('description', textCell(first(row.description, row.title)))
+      set(
+        'description',
+        textCell(
+          first(row.description, row.title),
+          row.sourceType === 'spreadsheet' ? 4 : 19 + boxStages.length * 3
+        )
+      )
       set('spanishName', textCell(row.spanishName))
       set('productNumber', textCell(first(row.productNumber, row.model)))
       set('sourceSize', textCell(row.sourceSize))
@@ -759,10 +992,6 @@ export function planPackingWorkbook(
         [key]
       )
     }
-    firstRow.cells[indexes.get('orderQuantity')] = orderSum(
-      'quantity',
-      sum(sources.map((row) => decimal(row.quantity ?? '')))
-    )
     firstRow.cells[indexes.get('orderAmount')] = orderSum(
       'effectiveAmount',
       sum(
@@ -782,6 +1011,62 @@ export function planPackingWorkbook(
       source.orderShipping ?? '',
       numericStyle('orderShipping', true)
     )
+    if (orderHeading) {
+      const words = orderSummaryLabels[language],
+        summary = [],
+        add = (
+          label,
+          value,
+          { money = false, unit = '', known = false } = {}
+        ) => {
+          if (value === '') return
+          summary.push(
+            `${label}${known ? ` (${words.known})` : ''}: ${money ? headingAmount(value) : `${value}${unit}`}`
+          )
+        },
+        orderProducts = products.slice(productStart),
+        ownerCells = new Map(
+          orderProducts
+            .filter((product) => product.cartonOwner)
+            .map((product) => [
+              batchIdentity(product.source),
+              sheetRows[product.row - 1].cells,
+            ])
+        ),
+        orderBatches = [...new Set(sources.map(batchIdentity))]
+      add(quantityLabel, orderQuantity, {
+        known: sources.some((row) => first(row.quantity) === ''),
+      })
+      add(words.freight, firstRow.cells[indexes.get('orderShipping')].value, {
+        money: true,
+      })
+      add(words.goods, firstRow.cells[indexes.get('orderAmount')].value, {
+        money: true,
+        known: sources.some(
+          (row) =>
+            first(
+              row.effectiveAmount,
+              row.lineNetAmount,
+              row.sourceAmount,
+              row.lineAmount
+            ) === ''
+        ),
+      })
+      for (const [key, label, unit] of [
+        ['loadedBoxes', words.boxes, ''],
+        ['loadedWeight', words.weight, ' kg'],
+        ['loadedVolume', words.volume, ' m³'],
+      ]) {
+        const values = orderBatches.map(
+          (id) => ownerCells.get(id)?.[indexes.get(key)]?.value ?? ''
+        )
+        add(label, numericTotal(values), { unit, known: values.includes('') })
+      }
+      if (summary.length) {
+        orderHeading.cells[0].value += `\n${summary.join(' · ')}`
+        orderHeading.height = 42
+      }
+    }
   }
   const lastProductRow = sheetRows.length
   const total = includeTotals
@@ -843,6 +1128,7 @@ export function planPackingWorkbook(
       imageColumns: {
         photo: indexes.get('photo'),
         code: indexes.get('barcode'),
+        mark: indexes.get('cartonMark'),
       },
     },
     selected
@@ -864,14 +1150,17 @@ function serializeCell(cell, row, column) {
 }
 
 function sheetXml(plan, images) {
-  const frozenColumns = Math.min(3, Math.max(0, plan.columns.length - 1))
+  const frozenColumns =
+    plan.columns[0]?.key === 'photo' && plan.columns[1]?.key === 'barcode'
+      ? 2
+      : 0
   const pane = plan.freezeHeaders
     ? `<pane ${frozenColumns ? `xSplit="${frozenColumns}" ` : ''}ySplit="5" topLeftCell="${columnName(frozenColumns)}6" activePane="${frozenColumns ? 'bottomRight' : 'bottomLeft'}" state="frozen"/>`
     : ''
   return `${XML_HEADER}<worksheet xmlns="${MAIN}" xmlns:r="${REL}"><sheetPr><pageSetUpPr fitToPage="1"/></sheetPr><dimension ref="A1:${plan.lastColumn}${plan.lastRow}"/><sheetViews><sheetView workbookViewId="0">${pane}</sheetView></sheetViews><sheetFormatPr defaultRowHeight="18"/><cols>${plan.columns.map((column, index) => `<col min="${index + 1}" max="${index + 1}" width="${column.width}" customWidth="1"/>`).join('')}</cols><sheetData>${plan.rows.map((row) => `<row r="${row.number}" ht="${row.height}" customHeight="1">${row.cells.map((cell, index) => serializeCell(cell, row.number, index)).join('')}</row>`).join('')}</sheetData>${plan.filters ? `<autoFilter ref="A5:${plan.lastColumn}${plan.lastProductRow}"/>` : ''}${plan.merges.length ? `<mergeCells count="${plan.merges.length}">${plan.merges.map((ref) => `<mergeCell ref="${ref}"/>`).join('')}</mergeCells>` : ''}<printOptions horizontalCentered="1"/><pageMargins left="0.25" right="0.25" top="0.4" bottom="0.4" header="0.2" footer="0.2"/><pageSetup paperSize="8" orientation="landscape" fitToWidth="1" fitToHeight="0"/><headerFooter><oddFooter>&amp;L1688toCSV&amp;R&amp;P / &amp;N</oddFooter></headerFooter>${images.length ? '<drawing r:id="drawing1"/>' : ''}</worksheet>`
 }
 
-function stylesXml(palette) {
+function stylesXml(palette, language) {
   const color = (key) =>
     (
       palette[key] ||
@@ -884,10 +1173,9 @@ function stylesXml(palette) {
     fill = 6,
     border = 0,
     format = 0,
-    centered = false,
-    vertical = 'center',
+    align = 'center',
   } = {}) =>
-    `<xf numFmtId="${format}" fontId="${font}" fillId="${fill}" borderId="${border}" xfId="0" applyFont="1" applyFill="1" applyNumberFormat="1" applyAlignment="1"><alignment vertical="${vertical}" wrapText="1" ${centered ? 'horizontal="center"' : ''}/></xf>`
+    `<xf numFmtId="${format}" fontId="${font}" fillId="${fill}" borderId="${border}" xfId="0" applyFont="1" applyFill="1" applyNumberFormat="1" applyAlignment="1"><alignment vertical="center" horizontal="${align}" wrapText="1"/></xf>`
   const fonts = [
     `<font><sz val="11"/><name val="Calibri"/><color rgb="FF${color('text')}"/></font>`,
     `<font><b/><sz val="20"/><name val="Calibri"/><color rgb="FF${color('text')}"/></font>`,
@@ -895,6 +1183,7 @@ function stylesXml(palette) {
     `<font><b/><sz val="11"/><name val="Calibri"/><color rgb="FF${color('text')}"/></font>`,
     `<font><sz val="9"/><name val="Calibri"/><color rgb="FF${color('muted')}"/></font>`,
     '<font><sz val="9"/><name val="Calibri"/><color rgb="FFFFFFFF"/></font>',
+    `<font><sz val="10"/><name val="Calibri"/><color rgb="FF${color('text')}"/></font>`,
   ]
   const fills = [
     '<fill><patternFill patternType="none"/></fill>',
@@ -911,35 +1200,55 @@ function stylesXml(palette) {
     xf(),
     xf({ font: 1 }),
     xf({ font: 4 }),
-    xf({ font: 2, fill: 2, border: 1, centered: true }),
+    xf({ font: 2, fill: 2, border: 1 }),
     xf({ border: 1 }),
-    xf({ border: 1, centered: true }),
+    xf({ border: 1 }),
     xf({ font: 3, fill: 3, border: 1 }),
-    xf({ font: 3, fill: 4, border: 1, centered: true }),
-    xf({ font: 4, border: 1, centered: true, vertical: 'bottom' }),
+    xf({ font: 3, fill: 4, border: 1 }),
+    xf({ font: 4, border: 1 }),
     xf({ font: 5, fill: 5, border: 1, format: 164 }),
-    xf({ border: 1, centered: true, format: 165 }),
-    xf({ border: 1, centered: true, format: 166 }),
-    xf({ font: 3, fill: 4, border: 1, centered: true, format: 165 }),
-    xf({ font: 3, fill: 4, border: 1, centered: true, format: 166 }),
-    xf({ border: 1, centered: true, format: 167 }),
-    xf({ font: 3, fill: 4, border: 1, centered: true, format: 167 }),
-    xf({ border: 1, centered: true, format: 168 }),
-    xf({ font: 3, fill: 4, border: 1, centered: true, format: 168 }),
+    xf({ border: 1, format: 165 }),
+    xf({ border: 1, format: 166 }),
+    xf({ font: 3, fill: 4, border: 1, format: 165 }),
+    xf({ font: 3, fill: 4, border: 1, format: 166 }),
+    xf({ border: 1, format: 167 }),
+    xf({ font: 3, fill: 4, border: 1, format: 167 }),
+    xf({ border: 1, format: 168 }),
+    xf({ font: 3, fill: 4, border: 1, format: 168 }),
   ]
   const borders = [
     '<border/>',
     `<border>${['left', 'right', 'top', 'bottom'].map((side) => `<${side} style="thin"><color rgb="FF${color('grid')}"/></${side}>`).join('')}<diagonal/></border>`,
+    `<border><left style="thin"><color rgb="FF${color('separator')}"/></left>${['right', 'top', 'bottom'].map((side) => `<${side} style="thin"><color rgb="FF${color('grid')}"/></${side}>`).join('')}<diagonal/></border>`,
   ]
+  for (const stage of boxStages) {
+    const colors = boxStageColors(palette, stage)
+    const backgroundFill = fills.length
+    for (const value of [colors.stageBackground, colors.stageHeader])
+      fills.push(
+        `<fill><patternFill patternType="solid"><fgColor rgb="FF${value.slice(1).toUpperCase()}"/><bgColor indexed="64"/></patternFill></fill>`
+      )
+    styles.push(
+      xf({ font: 2, fill: backgroundFill + 1, border: 2 }),
+      xf({ fill: backgroundFill, border: 2 }),
+      xf({ font: 3, fill: backgroundFill, border: 2 })
+    )
+  }
+  styles.push(xf({ border: 1, format: 169 }))
+  styles.push(xf({ font: 6, border: 1, align: 'left' }))
   return [
     XML_HEADER,
     `<styleSheet xmlns="${MAIN}">`,
-    `<numFmts count="5">${[
+    `<numFmts count="6">${[
       [164, ';;;'],
-      [165, '#,##0.00" CNY"'],
+      [165, '#,##0.00" 元"'],
       [166, '0.0##" kg"'],
       [167, '0.0#####" m³"'],
       [168, '0.0#" cm"'],
+      [
+        169,
+        `#,##0"${{ en: '/box', es: '/ctn', zh: '/箱' }[language] || '/box'}"`,
+      ],
     ]
       .map(
         ([id, format]) =>
@@ -1002,8 +1311,12 @@ async function prepareWorkbookImages(plan, prepareImages) {
         plan.imageColumns.code === undefined
           ? undefined
           : { maxWidth: 512, maxHeight: 128 },
+      mark:
+        plan.imageColumns.mark === undefined
+          ? undefined
+          : { maxWidth: 320, maxHeight: 240 },
     })
-    for (const kind of ['photo', 'code']) {
+    for (const kind of ['photo', 'code', 'mark']) {
       const column = plan.imageColumns[kind]
       if (column === undefined) continue
       const asset = assets?.[kind]
@@ -1017,7 +1330,7 @@ async function prepareWorkbookImages(plan, prepareImages) {
       const mimeType =
         asset.mimeType || (bytes[0] === 0x89 ? 'image/png' : 'image/jpeg')
       const size = imageSize(bytes, mimeType)
-      const max = kind === 'photo' ? [320, 240] : [512, 128]
+      const max = kind === 'code' ? [512, 128] : [320, 240]
       if (
         !size.width ||
         !size.height ||
@@ -1043,26 +1356,33 @@ async function prepareWorkbookImages(plan, prepareImages) {
         }
         cache.set(asset, media)
       }
-      const cellWidth = columnPixels(plan.columns[column].width)
+      const cellWidth = plan.columns[column].pixelWidth
       const cellHeight = plan.rows[product.row - 1].height / 0.75
       const box =
         kind === 'photo'
-          ? [
-              Math.min(plan.photoPixels, cellWidth - 12),
-              Math.min(plan.photoPixels, cellHeight - 12),
+          ? [cellWidth, cellHeight]
+          : [
+              cellWidth - 16,
+              Math.min(
+                kind === 'mark' ? plan.photoPixels : 47,
+                cellHeight - 16
+              ),
             ]
-          : [cellWidth - 16, Math.min(47, cellHeight - 16)]
-      const scale = Math.min(box[0] / size.width, box[1] / size.height)
-      const width = size.width * scale,
-        height = size.height * scale
+      const scale = Math.min(
+        box[0] / size.width,
+        box[1] / size.height,
+        kind === 'code' ? 0.5 : 1
+      )
+      const width = kind === 'photo' ? cellWidth : size.width * scale,
+        height = kind === 'photo' ? cellHeight : size.height * scale
       images.push({
         kind,
         row: product.row - 1,
         column,
         width,
         height,
-        x: (cellWidth - width) / 2,
-        y: (cellHeight - height) / 2,
+        x: kind === 'photo' ? 0 : (cellWidth - width) / 2,
+        y: kind === 'photo' ? 0 : (cellHeight - height) / 2,
         media,
       })
     }
@@ -1122,7 +1442,7 @@ export async function createPackingWorkbook(rows, options = {}) {
         ['styles', 'styles', 'styles.xml'],
       ]),
     ],
-    ['xl/styles.xml', stylesXml(plan.palette)],
+    ['xl/styles.xml', stylesXml(plan.palette, plan.language)],
     ['xl/worksheets/sheet1.xml', sheetXml(renderedPlan, images)],
   ]
   if (images.length)

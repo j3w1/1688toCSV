@@ -52,6 +52,7 @@ export function createVirtualTable({
   render,
   remove,
   paint,
+  pinned = () => [],
   limit = 100,
 }) {
   let entries = [],
@@ -144,8 +145,10 @@ export function createVirtualTable({
       { length: range.end - range.start },
       (_, index) => index + range.start
     )
-    const pinned = positions.get(activeKey())
-    if (pinned !== undefined && !indexes.includes(pinned)) indexes.push(pinned)
+    for (const key of [activeKey(), ...pinned(nodes)]) {
+      const index = positions.get(key)
+      if (index !== undefined && !indexes.includes(index)) indexes.push(index)
+    }
     indexes.sort((a, b) => a - b)
     const wantedKeys = new Set(indexes.map((index) => entries[index].key))
     for (const [key, element] of nodes)
@@ -243,6 +246,12 @@ export function createVirtualTable({
       range = tableWindow(entries, index, limit)
       update()
       return nodes.get(key)
+    },
+    destroy() {
+      cancelAnimationFrame(frame)
+      observer.disconnect()
+      scroller.removeEventListener('scroll', schedule)
+      body.removeEventListener('focusout', schedule)
     },
   }
 }

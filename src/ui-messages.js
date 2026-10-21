@@ -58,11 +58,10 @@ export const UI_MESSAGES = {
     zh: '压缩备份已损坏或不完整。',
     es: 'La copia comprimida está dañada o incompleta.',
   },
-  'The underline identifies the four-digit product number. CE and year/month stay together; code values are unchanged.':
-    {
-      zh: '下划线标出四位商品编号。CE 与年月保持相连；编码值不变。',
-      es: 'El subrayado identifica el número de producto de cuatro cifras. CE y el año/mes permanecen unidos; el valor del código no cambia.',
-    },
+  'Underline: four-digit product number.': {
+    zh: '下划线：四位商品编号。',
+    es: 'Subrayado: número de producto de cuatro cifras.',
+  },
   'Shortcut outside text fields': {
     zh: '非文本输入时的快捷键',
     es: 'Atajo fuera de los campos de texto',
@@ -169,6 +168,10 @@ export const UI_MESSAGES = {
     zh: '点击复制此内容。',
     es: 'Haz clic para copiar este valor.',
   },
+  'Click to copy': {
+    zh: '点击复制',
+    es: 'Haz clic para copiar',
+  },
   'Double-click for original product details. Click an attribute value to copy it.':
     {
       zh: '双击查看商品原始详情。点击属性内容即可复制。',
@@ -198,10 +201,10 @@ export const UI_MESSAGES = {
     zh: '匹配的完整订单：数量 {quantity}',
     es: 'Pedidos completos coincidentes: Cantidad {quantity}',
   },
-  'Only selected product rows are summed, across all filtered pages. After row discounts uses the saved Discount column, including already allocated seller adjustments. Shipping and other order-wide charges are not added or divided. This is not the order payable total.':
+  'Selected rows only. Net subtracts row discounts, including allocated seller adjustments. Shipping and order charges are excluded; this is not the order total.':
     {
-      zh: '仅合计所有筛选页面中选中的商品行。行优惠后金额使用已保存的“优惠”列，包括已分摊的卖家改价。不添加或分摊运费及其他订单级费用。此金额不是订单实付款。',
-      es: 'Solo se suman las filas seleccionadas de todas las páginas filtradas. El importe tras descuentos usa la columna Descuento guardada, incluidos los ajustes del vendedor ya repartidos. No se añaden ni reparten el envío ni otros cargos del pedido. No es el total a pagar del pedido.',
+      zh: '仅合计选中行。净额扣除行优惠，含已分摊的卖家改价。不含运费和订单费用，并非订单总额。',
+      es: 'Solo filas seleccionadas. El neto resta descuentos y ajustes del vendedor ya repartidos. Excluye envío y cargos del pedido; no es el total del pedido.',
     },
   'Previous photo': { zh: '上一张图片', es: 'Foto anterior' },
   'Next photo': { zh: '下一张图片', es: 'Foto siguiente' },
@@ -1231,7 +1234,7 @@ export const UI_MESSAGES = {
     es: 'Código CE base',
   },
   'Barcode code': {
-    zh: '条码货号',
+    zh: '标签货号',
     es: 'Código de barras',
   },
   'Product code · edit on the carton mark': {
@@ -1309,6 +1312,10 @@ export const UI_MESSAGES = {
   'No matching size rules.': {
     zh: '没有匹配的尺码规则。',
     es: 'No hay reglas de talla coincidentes.',
+  },
+  '{0} rules': {
+    zh: '{0} 条规则',
+    es: '{0} reglas',
   },
   '{0}–{1} of {2} rules': {
     zh: '第 {0}–{1} 条，共 {2} 条规则',

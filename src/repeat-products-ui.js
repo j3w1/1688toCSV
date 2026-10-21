@@ -1,8 +1,9 @@
-import { bindAttribute, bindText, message } from './i18n.js'
+import { bindAttribute, bindText, getLocale, message } from './i18n.js'
 import { element as el, orderReference, pinDialogActions } from './ui.js'
 import { packingValueComparison } from './packing-review.js'
 import { preparationHelp } from './preparation-help.js'
 import { productFeatures } from './product-features.js'
+import { setCodeText } from './code-display.js'
 
 /** One native modal reviews all source rows; no code changes happen on selection. */
 export async function openRepeatProductDialog({
@@ -21,7 +22,7 @@ export async function openRepeatProductDialog({
     message(
       linked
         ? 'This purchase will receive a different free product code. The other linked purchases keep their codes and source records.'
-        : 'Choose the original product from this store and packing month. Review every source row, variant, size and feature before sharing its codes. Purchase prices and quantities stay separate.'
+        : 'Match every variant in this purchase to the original product. The original may include additional sizes; prices and quantities stay separate.'
     )
   )
   const content = el('div', undefined, 'repeat-product-preview')
@@ -155,49 +156,120 @@ export async function openRepeatProductDialog({
   }
   if (!linked) {
     const candidates = await repository.getRepeatProductCandidates(source)
-    const label = el(
-      'label',
-      message('Original product and code'),
-      'repeat-product-choice'
-    )
-    chooser = el('select')
-    bindAttribute(chooser, 'aria-label', 'Original product and code')
-    const empty = el('option', message('Choose an existing product'))
-    empty.value = ''
-    chooser.append(empty)
+    chooser = el('fieldset', undefined, 'repeat-product-choice')
+    chooser.append(el('legend', message('Original product and code')))
+    const label = el('label', message('Search original products'))
+    const search = el('input')
+    search.type = 'search'
+    search.name = 'repeat-product-search'
+    search.id = `repeat-search-${crypto.randomUUID()}`
+    search.autocomplete = 'off'
+    search.spellcheck = false
+    search.setAttribute('autocorrect', 'off')
+    search.setAttribute('autocapitalize', 'off')
+    label.htmlFor = search.id
+    const list = el('div', undefined, 'repeat-product-candidates')
+    const empty = el('p', undefined, 'repeat-product-empty')
+    empty.setAttribute('role', 'status')
+    const name = `repeat-original-${crypto.randomUUID()}`
+    const choices = []
     candidates.forEach((candidate, index) => {
-      const option = el(
-        'option',
-        `${candidate.baseCode} · ${candidate.title} · ${candidate.orderId} · ${candidate.quantity ?? '—'}`
+      const choice = el('label', undefined, 'repeat-product-candidate')
+      choice.dataset.candidate = String(index)
+      const input = el('input')
+      input.type = 'radio'
+      input.name = name
+      input.value = String(index)
+      const details = el('span', undefined, 'repeat-product-candidate-details')
+      details.append(el('strong', candidate.title))
+      details.append(
+        bindText(el('small'), () => {
+          const day = candidate.purchasedAt?.slice(0, 10)
+          const date = day
+            ? new Date(`${day}T12:00:00Z`).toLocaleDateString(getLocale(), {
+                day: 'numeric',
+                month: 'short',
+                year: 'numeric',
+                timeZone: 'UTC',
+              })
+            : String(message('Date unavailable'))
+          return `${candidate.sellerName} · ${candidate.orderId} · ${date}`
+        })
       )
-      option.value = String(index)
-      chooser.append(option)
-    })
-    chooser.addEventListener('change', () => {
-      if (!chooser.value) {
-        sequence++
-        plan = undefined
-        checked.checked = false
-        apply.disabled = true
-        media?.forget(content)
-        content.replaceChildren()
-        return
-      }
-      void review(candidates[Number(chooser.value)])
-    })
-    label.append(chooser)
-    dialog.append(label)
-    if (!candidates.length) {
-      chooser.disabled = true
-      dialog.append(
-        el(
-          'p',
-          message(
-            'No matching complete product from this store and packing month is available. Prepare the original purchase and check its variants and sizes first.'
+      const variants = candidate.variants
+      for (const variant of variants) {
+        const row = el('span', undefined, 'repeat-product-candidate-variant')
+        const photo = variant.items?.[0]
+        if (photo && media)
+          row.append(media.photo(photo, { interactive: false }))
+        else if (photo?.thumbnail) {
+          const image = el('img')
+          image.src = photo.thumbnail
+          image.alt = ''
+          image.loading = 'lazy'
+          row.append(image)
+        }
+        const info = el('span')
+        const code = el('code', undefined, 'ce-code')
+        setCodeText(code, variant.barcode)
+        info.append(
+          code,
+          el(
+            'small',
+            message('Size {0} · Quantity {1}', {
+              0:
+                [variant.variant, variant.size].filter(Boolean).join(' · ') ||
+                '—',
+              1: variant.quantity ?? '—',
+            })
           )
+        )
+        row.append(info)
+        details.append(row)
+      }
+      choice.append(input, details)
+      input.addEventListener('change', () => {
+        if (input.checked) void review(candidate)
+      })
+      list.append(choice)
+      choices.push({ choice, candidate, variants })
+    })
+    const filter = () => {
+      const query = search.value.normalize('NFKC').trim().toLocaleLowerCase()
+      let visible = 0
+      for (const { choice, candidate, variants } of choices) {
+        const text = [
+          candidate.title,
+          candidate.sellerName,
+          candidate.orderId,
+          candidate.purchasedAt,
+          ...variants.flatMap((variant) => [
+            variant.barcode,
+            variant.variant,
+            variant.size,
+          ]),
+        ]
+          .filter(Boolean)
+          .join(' ')
+          .normalize('NFKC')
+          .toLocaleLowerCase()
+        choice.hidden = Boolean(query && !text.includes(query))
+        if (!choice.hidden) visible++
+      }
+      empty.hidden = visible > 0
+      bindText(
+        empty,
+        message(
+          candidates.length
+            ? 'No original products match this search. Clear it to see compatible variants.'
+            : 'No original product has matching variants from this store and packing month. Prepare the original purchase and check its sizes and features first.'
         )
       )
     }
+    search.addEventListener('input', filter)
+    chooser.append(label, search, list, empty)
+    dialog.append(chooser)
+    filter()
   }
   checked.addEventListener('change', () => {
     apply.disabled = busy || !plan || !checked.checked
@@ -238,6 +310,7 @@ export async function openRepeatProductDialog({
       () => {
         sequence++
         media?.forget(content)
+        if (chooser) media?.forget(chooser)
         const saved = dialog.returnValue === 'saved'
         dialog.remove()
         resolve(saved)

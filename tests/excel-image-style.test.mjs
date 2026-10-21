@@ -77,7 +77,7 @@ test('every preset and custom accent produces readable header text', () => {
   )
 })
 
-test('workspace exports snapshot the computed palette in every selected light and dark theme', () => {
+test('workspace exports use the selected theme light accent in either workspace mode', () => {
   let tokens
   const root = {
     ownerDocument: {
@@ -93,16 +93,14 @@ test('workspace exports snapshot the computed palette in every selected light an
       tokens = appearanceTokens({ [`${mode}Theme`]: theme.id }, mode)
       const style = workspaceExportStyle(root)
       const palette = excelImagePalette(style)
-      assert.equal(palette.header, tokens.accent)
-      assert.equal(palette.headerText, tokens['on-accent'])
-      assert.equal(palette.body, tokens.surface)
-      assert.equal(palette.store, tokens.selected)
-      assert.equal(palette.order, tokens.field)
-      assert.equal(palette.stripe, tokens.page)
-      assert.equal(palette.separator, tokens.border)
-      assert.equal(palette.grid, tokens.divider)
-      assert.equal(palette.text, tokens.text)
-      assert.equal(palette.muted, tokens.muted)
+      assert.equal(
+        palette.header,
+        appearanceTokens({ lightTheme: theme.id }, 'light').accent
+      )
+      assert.equal(palette.body, '#ffffff')
+      assert.equal(palette.text, '#24211c')
+      for (const background of ['body', 'store', 'order', 'stripe'])
+        assert.ok(contrastRatio('#000000', palette[background]) >= 15)
       for (const background of ['body', 'store', 'order', 'stripe'])
         for (const foreground of ['text', 'muted'])
           assert.ok(
@@ -118,8 +116,36 @@ test('workspace exports snapshot the computed palette in every selected light an
       const snapshot = structuredClone(style)
       tokens = appearanceTokens({}, mode === 'light' ? 'dark' : 'light')
       assert.deepEqual(style, snapshot)
-      assert.notDeepEqual(workspaceExportStyle(root), snapshot)
+      if (theme.id !== 'warm')
+        assert.notDeepEqual(workspaceExportStyle(root), snapshot)
     }
+})
+
+test('Classic brown reproduces the reference colors for Excel and image output in either mode', () => {
+  for (const mode of ['light', 'dark']) {
+    const tokens = appearanceTokens({ [`${mode}Theme`]: 'classic-brown' }, mode)
+    const root = {
+      ownerDocument: {
+        defaultView: {
+          getComputedStyle: () => ({
+            getPropertyValue: (name) => tokens[name.slice(2)] || '',
+          }),
+        },
+      },
+    }
+    assert.deepEqual(excelImagePalette(workspaceExportStyle(root)), {
+      header: '#5c3700',
+      headerText: '#ffffff',
+      store: '#efebe6',
+      order: '#f7f5f2',
+      stripe: '#fdfcfb',
+      separator: '#b6a58c',
+      grid: '#ded7cc',
+      body: '#ffffff',
+      text: '#24211c',
+      muted: '#746757',
+    })
+  }
 })
 
 test('workspace export fallback uses valid existing palette tokens when no styles are available', () => {

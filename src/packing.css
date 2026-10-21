@@ -745,6 +745,12 @@ select {
 .variant-scroll {
   overflow: auto;
 }
+.variant-scroll.virtual-variant-scroll {
+  max-block-size: min(720px, 70dvh);
+  scrollbar-gutter: stable;
+  overflow-anchor: none;
+  overscroll-behavior: contain;
+}
 .variants th,
 .variants td {
   padding: 4px 6px;
@@ -753,6 +759,11 @@ select {
   padding-block: 4px;
   font-size: 11px;
   line-height: 1.4;
+}
+.variants .virtual-table-spacer > td {
+  padding: 0;
+  border: 0;
+  line-height: 0;
 }
 .variants input {
   width: 100%;
@@ -2259,6 +2270,8 @@ html:has(body.packing-active) {
   border: 1px solid var(--border);
   border-radius: 6px;
   scrollbar-gutter: stable;
+  overflow-anchor: none;
+  scroll-padding-block-start: var(--virtual-table-heading-height, 36px);
 }
 .vocabulary-table {
   width: 100%;
@@ -2272,6 +2285,11 @@ html:has(body.packing-active) {
 }
 .vocabulary-table th:last-child {
   width: 40px;
+}
+.vocabulary-table .virtual-table-spacer > td {
+  padding: 0;
+  border: 0;
+  line-height: 0;
 }
 .vocabulary-table thead {
   position: sticky;
@@ -2322,7 +2340,7 @@ html:has(body.packing-active) {
   min-width: 0;
   margin-top: 5px;
 }
-.vocabulary-navigation {
+.vocabulary-status {
   display: flex;
   flex-wrap: wrap;
   justify-content: space-between;
@@ -2586,6 +2604,7 @@ html:has(body.packing-active) {
   }
 }
 .carton-capacity {
+  position: relative;
   display: flex;
   flex-wrap: wrap;
   align-items: center;
@@ -2613,6 +2632,25 @@ html:has(body.packing-active) {
   border-radius: 4px;
   background: var(--field);
 }
+.carton-capacity-unit {
+  margin-inline-start: 2px;
+  color: var(--muted);
+  font-size: 9px;
+  font-weight: 400;
+  line-height: 1;
+  white-space: nowrap;
+  pointer-events: none;
+}
+.carton-capacity-unit[hidden] {
+  display: none;
+}
+.carton-capacity:has(> .carton-capacity-unit) {
+  flex-wrap: nowrap;
+  gap: 2px;
+}
+.carton-capacity:has(> .carton-capacity-unit:not([hidden])) > input {
+  inline-size: 42px;
+}
 .carton-capacity input[aria-invalid='true'],
 .carton-capacity input[aria-invalid='true'] ~ .carton-capacity-status {
   color: var(--danger-text);
@@ -2629,6 +2667,68 @@ html:has(body.packing-active) {
   color: var(--quantity-text, var(--text));
   font-weight: 600;
 }
+.preparation-workspace .carton-capacity-readout .carton-capacity-edit {
+  min-inline-size: 24px;
+  min-block-size: 24px;
+  margin: 0;
+  padding: 1px 2px;
+  border: 0;
+  border-radius: 3px;
+  background: transparent;
+  font: inherit;
+}
+.carton-capacity-edit .ui-icon {
+  inline-size: 12px;
+  block-size: 12px;
+  margin: 0;
+}
+.carton-capacity-edit:hover {
+  background: var(--hover);
+}
+.carton-capacity-edit:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 1px;
+}
+.carton-capacity-dialog {
+  inline-size: min(440px, calc(100vw - 24px));
+  padding: 12px;
+}
+.carton-capacity-context {
+  display: flex;
+  align-items: start;
+  gap: 10px;
+  margin-block: 10px;
+  min-block-size: 0;
+  overflow: auto;
+  font-size: 12px;
+}
+.carton-capacity-context img {
+  inline-size: 64px;
+  block-size: 64px;
+  object-fit: contain;
+  flex: 0 0 64px;
+}
+.carton-capacity-context p {
+  margin: 3px 0;
+  overflow-wrap: anywhere;
+}
+.carton-capacity-dialog fieldset {
+  margin: 0;
+  padding: 6px 8px;
+  border: 1px solid var(--border);
+  border-radius: 5px;
+}
+.carton-capacity-dialog legend {
+  font-size: 11px;
+}
+.carton-capacity-dialog .carton-capacity {
+  margin: 0;
+}
+.carton-capacity-error {
+  margin: 6px 0 0;
+  color: var(--danger-text);
+  font-size: 11px;
+}
 .variant-facts .carton-capacity-readout {
   align-items: baseline;
   gap: 3px 5px;
@@ -2640,12 +2740,12 @@ html:has(body.packing-active) {
 }
 .variants col:nth-child(4),
 .variants .variant-carton-columns {
-  width: 388px;
+  width: 406px;
 }
 .variant-numeric-header,
 .variant-numeric-row {
   display: grid;
-  grid-template-columns: 40px 46px 42px 48px 48px 56px 66px;
+  grid-template-columns: 40px 64px 42px 48px 48px 56px 66px;
   gap: 4px;
   align-items: center;
   text-align: end;
@@ -2672,6 +2772,8 @@ html:has(body.packing-active) {
   display: inline-flex;
   margin: 0;
   font-size: 12px;
+  flex-wrap: nowrap;
+  gap: 2px;
 }
 .variant-measurement-cell {
   justify-self: end;
@@ -2691,7 +2793,7 @@ html:has(body.packing-active) {
   }
   .variant-numeric-header,
   .variant-numeric-row {
-    grid-template-columns: 36px 40px 40px 46px 46px 50px 58px;
+    grid-template-columns: 36px 60px 40px 46px 46px 50px 58px;
     justify-content: start;
   }
 }

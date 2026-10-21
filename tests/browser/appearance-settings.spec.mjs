@@ -52,6 +52,56 @@ async function save(dialog) {
   await expect(dialog).not.toBeVisible()
 }
 
+test('Classic brown remains a cancellable Settings draft and persists its light Excel colors in both modes', async ({
+  extension,
+}) => {
+  const page = await openWorkspace(extension)
+  const accent = () =>
+    page.evaluate(() =>
+      getComputedStyle(document.documentElement)
+        .getPropertyValue('--excel-accent')
+        .trim()
+    )
+  const before = await accent()
+  let dialog = await settings(page, 'Appearance')
+  for (const mode of ['Light', 'Dark'])
+    await dialog
+      .getByLabel(`${mode} palette`, { exact: true })
+      .selectOption('classic-brown')
+  await page.keyboard.press('Escape')
+  await expect(dialog).not.toBeVisible()
+  expect(await accent()).toBe(before)
+  dialog = await settings(page, 'Appearance')
+  for (const mode of ['Light', 'Dark']) {
+    await expect(
+      dialog.getByLabel(`${mode} palette`, { exact: true })
+    ).not.toHaveValue('classic-brown')
+    await dialog
+      .getByLabel(`${mode} palette`, { exact: true })
+      .selectOption('classic-brown')
+  }
+  await save(dialog)
+  await expect.poll(accent).toBe('#5c3700')
+  await page.reload()
+  await expect.poll(accent).toBe('#5c3700')
+  for (const mode of ['light', 'dark']) {
+    await page.locator('meta[name="color-scheme"]').evaluate((meta, mode) => {
+      meta.content = mode
+    }, mode)
+    await expect.poll(accent).toBe('#5c3700')
+    await expect(
+      page.locator('#sheet-body tr[data-selection-key]')
+    ).toHaveCount(3)
+  }
+  dialog = await settings(page, 'Appearance')
+  for (const mode of ['Light', 'Dark'])
+    await expect(
+      dialog.getByLabel(`${mode} palette`, { exact: true })
+    ).toHaveValue('classic-brown')
+  await page.keyboard.press('Escape')
+  expect(extension.unexpectedRequests).toEqual([])
+})
+
 test('tag picker ranks keyboard choices and Settings randomizes colors or removes a used tag with its scope', async ({
   extension,
 }) => {
@@ -295,10 +345,13 @@ test('Tags review action stays compact beside its heading on desktop and narrow 
   })
   for (const width of [1280, 768, 390]) {
     await page.setViewportSize({ width, height: 850 })
-    const [titleBox, actionBox, headerBox] = await Promise.all([
+    const [titleBox, actionBox, headerBox, closeBox] = await Promise.all([
       heading.boundingBox(),
       review.boundingBox(),
       header.boundingBox(),
+      dialog
+        .getByRole('button', { name: 'Close settings', exact: true })
+        .boundingBox(),
     ])
     expect(actionBox.height).toBeLessThanOrEqual(30)
     expect(actionBox.x).toBeGreaterThan(titleBox.x + titleBox.width)
@@ -313,6 +366,14 @@ test('Tags review action stays compact beside its heading on desktop and narrow 
     expect(
       await panel.evaluate((node) => node.scrollWidth <= node.clientWidth + 1)
     ).toBe(true)
+    const overlapsClose =
+      actionBox.x < closeBox.x + closeBox.width &&
+      actionBox.x + actionBox.width > closeBox.x &&
+      actionBox.y < closeBox.y + closeBox.height &&
+      actionBox.y + actionBox.height > closeBox.y
+    expect(overlapsClose, `Review action must clear Close at ${width}px`).toBe(
+      false
+    )
   }
 })
 

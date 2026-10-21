@@ -1,4 +1,27 @@
 export const REPEAT_PRODUCT_MESSAGES = {
+  'Match every variant in this purchase to the original product. The original may include additional sizes; prices and quantities stay separate.':
+    {
+      zh: '将此次采购的每个款式与原商品匹配。原商品可包含其他尺寸；各次采购的价格和数量分别保留。',
+      es: 'Relaciona cada variante de esta compra con el producto original. El original puede tener otras tallas; los precios y cantidades se conservan por separado.',
+    },
+  'Search original products': {
+    zh: '搜索原商品',
+    es: 'Buscar productos originales',
+  },
+  'Size {0} · Quantity {1}': {
+    zh: '尺寸 {0} · 数量 {1}',
+    es: 'Talla {0} · Cantidad {1}',
+  },
+  'No original products match this search. Clear it to see compatible variants.':
+    {
+      zh: '没有匹配的原商品。清空搜索可查看符合条件的款式。',
+      es: 'Ningún producto original coincide con la búsqueda. Bórrala para ver las variantes compatibles.',
+    },
+  'No original product has matching variants from this store and packing month. Prepare the original purchase and check its sizes and features first.':
+    {
+      zh: '同一店铺及装箱月份中没有款式匹配的原商品。请先准备原采购，并核对其尺寸及功能。',
+      es: 'No hay variantes coincidentes de esta tienda y mes de empaque. Prepara la compra original y comprueba sus tallas y características.',
+    },
   'Shared store identity requires a shared product': {
     zh: '共用店铺身份必须对应共用商品',
     es: 'La identidad de tienda compartida requiere un producto compartido',

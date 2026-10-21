@@ -1,19 +1,6 @@
 import { appearanceTokens, UI_LABEL_COLORS } from './appearance.js'
 import { orderTagColors } from './order-tags.js'
 
-/** Resolve the same explicit override/system preference used by theme.js. */
-export function currentExcelImageMode(
-  scheme = globalThis.document?.querySelector('meta[name="color-scheme"]')
-    ?.content,
-  systemDark = globalThis.matchMedia?.('(prefers-color-scheme: dark)')?.matches
-) {
-  return ['light', 'dark'].includes(scheme)
-    ? scheme
-    : systemDark
-      ? 'dark'
-      : 'light'
-}
-
 /** Capture colors, not settings references, for one open image-copy session. */
 export function createExcelImageBadges(preferences = {}, mode = 'light') {
   mode = mode === 'dark' ? 'dark' : 'light'

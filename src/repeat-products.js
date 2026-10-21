@@ -104,7 +104,7 @@ function variantIdentity(variant, snapshot, productWorkflow = {}) {
 }
 
 function matchedVariants(source, target) {
-  if (source.group.variants.length !== target.group.variants.length)
+  if (source.group.variants.length > target.group.variants.length)
     throw new Error(
       'The complete products must have matching variants, sizes and features.'
     )
@@ -189,8 +189,14 @@ export function repeatProductCandidates({ source, preparations, records }) {
       }
       try {
         const candidate = locate(reference, preparations, records)
-        assertCompatible(selected, candidate)
-        candidates.push({ ...reference, ...describe(candidate) })
+        const matches = assertCompatible(selected, candidate)
+        candidates.push({
+          ...reference,
+          ...describe(
+            candidate,
+            matches.map(({ target }) => target)
+          ),
+        })
       } catch {
         // Incompatible candidates are intentionally absent, never silently recoded.
       }
@@ -199,16 +205,28 @@ export function repeatProductCandidates({ source, preparations, records }) {
   return candidates
 }
 
-function describe({ preparation, record, group }) {
-  const selected = new Set(
-    group.variants.flatMap((variant) => variant.entryIds)
-  )
+function describe({ preparation, record, group }, variants = group.variants) {
+  const selected = new Set(variants.flatMap((variant) => variant.entryIds))
   return {
     title: group.spanishName || group.title,
     baseCode: group.baseCode,
     month: groupPackingMonth(preparation, group),
     sellerName: record.snapshot.sellerName,
     sourceType: record.snapshot.sourceType,
+    purchasedAt: record.snapshot.purchasedAt,
+    variants: variants.map((variant) => {
+      const ids = new Set(variant.entryIds)
+      const items = record.snapshot.items.filter((item) =>
+        ids.has(item.entryId)
+      )
+      return {
+        barcode: barcodeValue(group, variant),
+        variant: variant.variant,
+        size: variant.size,
+        quantity: quantity(items),
+        items,
+      }
+    }),
     items: record.snapshot.items.filter((item) => selected.has(item.entryId)),
     quantity: quantity(
       record.snapshot.items.filter((item) => selected.has(item.entryId))
@@ -329,13 +347,13 @@ export function planSharedProductLink({
       spanishName: to.group.spanishName,
       category: to.group.category,
     })
+  for (const variant of originalGroup.variants)
+    variant.sharedVariantId ||= newId()
   for (const { source: variant, target: match } of matches) {
-    const identity = match.sharedVariantId || newId()
     const old = originalGroup.variants.find((entry) => entry.id === match.id)
     const next = repeatGroup.variants.find((entry) => entry.id === variant.id)
-    old.sharedVariantId = identity
     Object.assign(next, {
-      sharedVariantId: identity,
+      sharedVariantId: old.sharedVariantId,
       variantSuffix: match.variantSuffix,
       sizeSuffix: match.sizeSuffix,
     })

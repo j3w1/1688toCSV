@@ -103,7 +103,7 @@ export function createExcelImageOptions(onChange, { rows = [] } = {}) {
   stylePanel.append(
     element(
       'p',
-      message('Export colors follow the current workspace theme.'),
+      message('Excel exports use the current theme in light mode.'),
       'excel-options-help'
     )
   )

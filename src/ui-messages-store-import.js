@@ -343,6 +343,36 @@ export const STORE_IMPORT_MESSAGES = {
   },
   'Carton details': { zh: '纸箱信息', es: 'Datos de la caja' },
   'Save carton details': { zh: '保存纸箱信息', es: 'Guardar datos de la caja' },
+  'One carton · optional': { zh: '单箱数据 · 选填', es: 'Una caja · opcional' },
+  'Save to apply changes': {
+    zh: '保存后应用修改',
+    es: 'Guarda para aplicar los cambios',
+  },
+  'Not saved yet': { zh: '尚未保存', es: 'Sin guardar' },
+  'Decrease cartons': { zh: '减少箱数', es: 'Reducir cajas' },
+  'Increase cartons': { zh: '增加箱数', es: 'Aumentar cajas' },
+  Weight: { zh: '重量', es: 'Peso' },
+  Length: { zh: '长度', es: 'Largo' },
+  'Manual volume': { zh: '手动体积', es: 'Volumen manual' },
+  'Volume per carton': { zh: '单箱体积', es: 'Volumen por caja' },
+  'Calculated from dimensions': {
+    zh: '按尺寸计算',
+    es: 'Calculado con las medidas',
+  },
+  'Using manual volume': { zh: '使用手动体积', es: 'Usando el volumen manual' },
+  'Volume not set': { zh: '未填写体积', es: 'Volumen sin definir' },
+  'Enter all three dimensions, or clear all three.': {
+    zh: '请填写全部三项尺寸，或全部清空。',
+    es: 'Completa las tres medidas o déjalas todas vacías.',
+  },
+  'Complete dimensions take priority. Manual volume is kept.': {
+    zh: '尺寸齐全时优先计算，手动体积会保留。',
+    es: 'Las medidas completas tienen prioridad. El volumen manual se conserva.',
+  },
+  'Carton dimensions must be greater than zero.': {
+    zh: '纸箱尺寸必须大于零。',
+    es: 'Las medidas de la caja deben ser mayores que cero.',
+  },
   'Measurements for one carton': {
     zh: '单箱测量值',
     es: 'Medidas de una caja',

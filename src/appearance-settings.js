@@ -19,7 +19,7 @@ export function mountAppearanceSettings(host, value, { onColorsReset } = {}) {
   const help = el(
     'p',
     m(
-      'Choose an orange-inspired palette for each mode. The header toggle switches between your light and dark palettes.'
+      'Choose a palette for each mode. Excel always uses the selected theme’s light colors. Choose Classic brown in both modes to match the reference.'
     ),
     'packing-help'
   )

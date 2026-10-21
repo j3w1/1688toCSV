@@ -120,11 +120,10 @@ import {
 import { createPreparationMedia, preparationHelp } from './preparation-media.js'
 import { createRowSelection } from './row-selection.js'
 import { createVirtualList } from './virtual-list.js'
+import { createVirtualTable } from './virtual-table.js'
+import { mountProductVocabulary } from './product-vocabulary-settings.js'
 import { copyExcelImage } from './excel-image-copy.js'
-import {
-  createExcelImageBadges,
-  currentExcelImageMode,
-} from './excel-image-badges.js'
+import { createExcelImageBadges } from './excel-image-badges.js'
 import { decorateIcon } from './icons.js'
 import {
   showErrorNotice,
@@ -279,6 +278,7 @@ export async function startPackingWorkspace({
   loadImage,
   setPackingExcluded,
   onProductDetails = () => {},
+  onEditCartonCapacity,
   onRefreshOrder,
 }) {
   const monthInput = $('packing-month')
@@ -312,7 +312,7 @@ export async function startPackingWorkspace({
     labelOrderId
   let packingExclusionSaving = false
   let exportingPacking = false
-  const variantPages = new Map()
+  const variantTables = new Map()
   const materialFields = new Set()
   const sourceAttributeFields = new Set()
   const cartonFields = new Map()
@@ -1074,20 +1074,13 @@ export async function startPackingWorkspace({
     packingOrders.clear()
     packingOrders.add(draft.orderId)
     current = drafts.indexOf(draft)
-    if (issue.variant)
-      variantPages.set(
-        issue.group.id,
-        Math.floor(
-          scopedVariants(draft, issue.group).findIndex(
-            (variant) => variant.id === issue.variant.id
-          ) / 50
-        )
-      )
     $('orders-view').hidden = true
     $('packing-view').hidden = false
     document.body.classList.add('packing-active')
     renderPreparation()
     if (issue.group) ensurePackingGroup(draft.orderId, issue.group.id)
+    if (issue.variant)
+      ensurePackingVariant(draft.orderId, issue.group.id, issue.variant.id)
     if (!issue.group || issue.field === 'seller')
       packingGroupList?.ensureVisible(`order:${draft.orderId}`)
     const host = document.querySelector(
@@ -1409,8 +1402,7 @@ export async function startPackingWorkspace({
   const logoUrl = () =>
     preferences.logoDataUrl ||
     new URL('assets/casa-elida.png', location.href).href
-  const getImageBadges = () =>
-    createExcelImageBadges(preferences, currentExcelImageMode())
+  const getImageBadges = () => createExcelImageBadges(preferences)
   function createCartonMarkRenderer() {
     const labelSettings = structuredClone(settings())
     const labelLogo = logoUrl()
@@ -1690,7 +1682,7 @@ export async function startPackingWorkspace({
     history.breakGroup()
   )
   async function showOrders() {
-    if (preparationBusy) return
+    if (preparationBusy) return false
     try {
       await flushSaves()
     } catch (error) {
@@ -1700,7 +1692,7 @@ export async function startPackingWorkspace({
       })
       updateSaveStatus()
       if (error.focusId) $(error.focusId)?.focus()
-      return
+      return false
     }
     preparationImageAbort?.abort()
     media.reset()
@@ -1716,6 +1708,7 @@ export async function startPackingWorkspace({
     $('orders-view').hidden = false
     document.body.classList.remove('packing-active')
     $('prepare-orders').focus()
+    return true
   }
   $('label-dialog')
     .querySelector('form')
@@ -2062,6 +2055,41 @@ export async function startPackingWorkspace({
         record.snapshot.orderId === row.orderId &&
         (!row.record || record.accountId === row.record.accountId)
     )
+  }
+  function cartonCapacityEditor(row) {
+    const record = packingRecord(row),
+      key = `${record?.snapshot.accountId || 'local'}/${row.orderId}/${row.entryId}`,
+      existing = cartonFields.get(key)
+    if (existing) {
+      existing.update({
+        quantity: row.quantity,
+        value: record?.unitsPerCarton?.[row.entryId],
+      })
+      return existing
+    }
+    const carton = mountCartonCapacity(el('div'), {
+      quantity: row.quantity,
+      value: record?.unitsPerCarton?.[row.entryId],
+      onSave: async (value) => {
+        const saved = await repository.setUnitsPerCarton(
+          row.orderId,
+          row.entryId,
+          value,
+          {
+            accountId: record?.snapshot.accountId || 'local',
+          }
+        )
+        const currentRecord = packingRecord(row)
+        if (!currentRecord) return
+        Object.assign(
+          currentRecord,
+          mergeProductAnnotations(currentRecord, saved)
+        )
+        channel?.postMessage('carton-capacity')
+      },
+    })
+    cartonFields.set(key, carton)
+    return carton
   }
   let linkedPaymentRecords,
     linkedPaymentRows = new Set()
@@ -5030,6 +5058,7 @@ export async function startPackingWorkspace({
               ),
             onExport: exportPackingList,
             loadImage,
+            renderCartonMark: createCartonMarkRenderer(),
           })
         } finally {
           exportingPacking = false
@@ -5284,6 +5313,8 @@ export async function startPackingWorkspace({
         : packingGroupList?.anchor() || packingScrollAnchor
     packingScrollAnchor = undefined
     packingGroupList?.destroy()
+    for (const table of variantTables.values()) table.destroy()
+    variantTables.clear()
     const available = new Set(scopedDrafts().map((draft) => draft.orderId))
     for (const id of packingOrders)
       if (!available.has(id)) packingOrders.delete(id)
@@ -5373,6 +5404,9 @@ export async function startPackingWorkspace({
               if (!watcher.connected()) state.watchers.delete(watcher)
         })
         if (group) {
+          const key = packingGroupKey(draft.orderId, group.id)
+          variantTables.get(key)?.destroy()
+          variantTables.delete(key)
           selectionStates.get(draft.orderId)?.cards.delete(group.id)
           codeFields.delete(group.id)
         }
@@ -5383,6 +5417,7 @@ export async function startPackingWorkspace({
       pinned: (nodes) => {
         const keys = new Set()
         for (const [key, node] of nodes) {
+          if (node.contains(document.activeElement)) keys.add(key)
           if (node.querySelector('[data-reorder-captured]')) keys.add(key)
           for (const fields of [
             cartonFields,
@@ -5420,18 +5455,10 @@ export async function startPackingWorkspace({
     return packingGroupList?.ensureVisible(packingGroupKey(orderId, groupId))
   }
   function ensurePackingVariant(orderId, groupId, variantId) {
-    const draft = drafts.find((entry) => entry.orderId === orderId)
-    const group = draft?.groups.find((entry) => entry.id === groupId)
-    if (!group) return
-    const index = scopedVariants(draft, group).findIndex(
-      (entry) => entry.id === variantId
-    )
-    const page = Math.max(0, Math.floor(index / 50))
-    if ((variantPages.get(groupId) || 0) !== page) {
-      variantPages.set(groupId, page)
-      renderPreparation()
-    }
     const card = ensurePackingGroup(orderId, groupId)
+    variantTables
+      .get(packingGroupKey(orderId, groupId))
+      ?.ensureVisible(variantId)
     return card?.querySelector(`[data-variant-id="${CSS.escape(variantId)}"]`)
   }
   function renderPackingOrder(host, draft, pageGroups, { chrome = true } = {}) {
@@ -5800,15 +5827,11 @@ export async function startPackingWorkspace({
       })
       preparationHelp(
         selectGroup,
-        uiMessage(
-          'Click to select this group. Click again to deselect; Shift-click selects a range.'
-        )
+        uiMessage('Variants: {0}', { 0: group.variants.length })
       )
       preparationHelp(
         title,
-        uiMessage(
-          'Click this header to select the group. Click again to deselect; Shift-click selects a range.'
-        )
+        uiMessage('Variants: {0}', { 0: group.variants.length })
       )
       const summary = el('div', undefined, 'product-summary')
       summary.append(title)
@@ -5958,14 +5981,7 @@ export async function startPackingWorkspace({
           )
         )
       }
-      const variantPage = Math.min(
-        variantPages.get(group.id) || 0,
-        Math.max(0, Math.ceil(scopedVariants(draft, group).length / 50) - 1)
-      )
-      for (const variant of scopedVariants(draft, group).slice(
-        variantPage * 50,
-        (variantPage + 1) * 50
-      )) {
+      function renderVariant(variant) {
         const row = el('tr')
         row.dataset.variantId = variant.id
         variantSelection.controller.bind(row, variant.id)
@@ -6335,16 +6351,36 @@ export async function startPackingWorkspace({
           quantityValue.firstChild.replaceWith(quantityDisplay)
           const capacity = cartonCapacityReadout(
             item,
-            cartonUnits[item.entryId]
+            cartonUnits[item.entryId],
+            {
+              onEdit:
+                onEditCartonCapacity && cartonRecord
+                  ? async () => {
+                      const live = getRecords().find(
+                        (record) =>
+                          record.snapshot.orderId === draft.orderId &&
+                          record.snapshot.accountId ===
+                            cartonRecord.snapshot.accountId
+                      )
+                      if (
+                        !live?.snapshot.items.some(
+                          (source) => source.entryId === item.entryId
+                        )
+                      )
+                        throw new Error('Source product unavailable in Orders.')
+                      if (await showOrders())
+                        await onEditCartonCapacity({
+                          orderId: draft.orderId,
+                          entryId: item.entryId,
+                          accountId: cartonRecord.snapshot.accountId || 'local',
+                        })
+                    }
+                  : undefined,
+              onError: (error) => showError(error.message),
+            }
           )
           capacity.firstChild.classList.add('sr-only')
           capacity.querySelector('small')?.classList.add('sr-only')
-          preparationHelp(
-            capacity,
-            uiMessage(
-              'Units packed inside one full carton. Leave blank if unknown. Saves automatically; leftovers need packing review. This does not change the ordered quantity.'
-            )
-          )
           const kg = el('div', undefined, 'variant-measurement-cell'),
             cbm = el('div', undefined, 'variant-measurement-cell')
           mountMeasurements({ kg, cbm }, item, cartonRecord, draft)
@@ -6549,35 +6585,61 @@ export async function startPackingWorkspace({
         )
         row.prepend(actionsCell)
         row.append(output)
-        body.append(row)
+        return row
       }
       table.append(body)
       scroll.append(table)
       card.append(scroll)
-      if (scopedVariants(draft, group).length > 50) {
-        const navigation = el('div', undefined, 'dialog-actions')
-        const previous = orderButton('Previous variants', () => {
-            variantPages.set(group.id, variantPage - 1)
-            renderPreparation()
-          }),
-          next = orderButton('Next variants', () => {
-            variantPages.set(group.id, variantPage + 1)
-            renderPreparation()
-          })
-        previous.disabled = variantPage === 0
-        next.disabled =
-          (variantPage + 1) * 50 >= scopedVariants(draft, group).length
-        navigation.append(
-          previous,
-          el(
-            'span',
-            `${variantPage + 1} / ${Math.ceil(scopedVariants(draft, group).length / 50)}`
-          ),
-          next
-        )
-        card.append(navigation)
-      }
       host.append(card)
+      scroll.classList.toggle(
+        'virtual-variant-scroll',
+        scopedVariants(draft, group).length > 100
+      )
+      const variants = createVirtualTable({
+        scroller: scroll,
+        body,
+        limit: 100,
+        render: (entries) =>
+          entries.map(({ variant }) => renderVariant(variant)),
+        remove: (row) => {
+          media.forget(row)
+          scheduleRowFieldCleanup()
+          for (const fields of [materialFields, sourceAttributeFields])
+            for (const entry of fields)
+              if (row.contains(entry.input || entry.host)) fields.delete(entry)
+          queueMicrotask(() => {
+            const state = codePreviewStates.get(draft)
+            if (state)
+              for (const watcher of state.watchers)
+                if (!watcher.connected()) state.watchers.delete(watcher)
+          })
+        },
+        pinned: (nodes) => {
+          const keys = new Set()
+          for (const [key, node] of nodes) {
+            if (node.querySelector('[data-reorder-captured]')) keys.add(key)
+            for (const fields of [
+              cartonFields,
+              measurementFields,
+              confirmationFields,
+              materialFields,
+            ])
+              for (const entry of fields.values())
+                if (entry.dirty() && node.contains(entry.input)) keys.add(key)
+          }
+          return keys
+        },
+        paint: () => {
+          if (body.isConnected) variantSelection.controller.paint()
+        },
+      })
+      variantTables.set(packingGroupKey(draft.orderId, group.id), variants)
+      variants.setItems(
+        scopedVariants(draft, group).map((variant) => ({
+          key: variant.id,
+          variant,
+        }))
+      )
     }
   }
 
@@ -7091,7 +7153,10 @@ export async function startPackingWorkspace({
     )
     const workbook = await createPackingWorkbook(fields, {
       ...options,
-      prepareImages: createPackingWorkbookImages(loadImage),
+      prepareImages: createPackingWorkbookImages(
+        loadImage,
+        createCartonMarkRenderer()
+      ),
     })
     saveFile(
       new Blob([workbook], {
@@ -7480,163 +7545,7 @@ export async function startPackingWorkspace({
         'packing-help'
       )
     )
-    const table = el('table', undefined, 'vocabulary-table'),
-      body = el('tbody'),
-      thead = el('thead'),
-      head = el('tr')
-    for (const name of [
-      'Title includes',
-      'Skip if it includes',
-      'Spanish name',
-      'Chinese category',
-      '',
-    ]) {
-      const th = el('th', uiMessage(name))
-      th.scope = 'col'
-      head.append(th)
-    }
-    thead.append(head)
-    table.append(thead, body)
-    let vocabularyPage = 0
-    const pageSize = 12
-    const vocabularySearch = field(
-      uiMessage('Search naming rules'),
-      '',
-      () => {
-        vocabularyPage = 0
-        renderVocabulary()
-      },
-      'search'
-    )
-    vocabularySearch.className = 'vocabulary-search'
-    const vocabularyCount = el('span', undefined, 'packing-help')
-    vocabularyCount.setAttribute('role', 'status')
-    const vocabularyNavigation = el('div', undefined, 'vocabulary-navigation')
-    const previousRules = button(uiMessage('Previous rules'), () => {
-      vocabularyPage--
-      renderVocabulary()
-    })
-    const nextRules = button(uiMessage('Next rules'), () => {
-      vocabularyPage++
-      renderVocabulary()
-    })
-    decorateIcon(previousRules, 'previous', { iconOnly: true })
-    decorateIcon(nextRules, 'next', { iconOnly: true })
-    preparationHelp(previousRules, uiMessage('Previous page of naming rules.'))
-    preparationHelp(nextRules, uiMessage('Next page of naming rules.'))
-    vocabularyNavigation.append(previousRules, vocabularyCount, nextRules)
-    function vocabularyRow(entry) {
-      const row = el('tr')
-      for (const [key, name] of [
-        ['match', 'Title includes'],
-        ['exclude', 'Skip if it includes'],
-        ['spanishName', 'Spanish name'],
-        ['category', 'Chinese category'],
-      ]) {
-        const td = el('td'),
-          input = el('input')
-        input.value = entry[key] || ''
-        bindAttribute(input, 'aria-label', uiMessage(name))
-        input.oninput = () =>
-          (entry[key] =
-            key === 'spanishName' ? input.value.toUpperCase() : input.value)
-        preparationHelp(
-          input,
-          key === 'match'
-            ? uiMessage(
-                'Words to match in the original title. Separate alternatives with |.'
-              )
-            : key === 'exclude'
-              ? uiMessage(
-                  'Ignore this rule if the title includes any of these words. Separate alternatives with |.'
-                )
-              : key === 'spanishName'
-                ? uiMessage('Short uppercase name printed on the barcode.')
-                : uiMessage('Chinese category printed on the carton mark.')
-        )
-        td.append(input)
-        row.append(td)
-      }
-      const td = el('td')
-      const remove = decorateIcon(
-        button(uiMessage('Remove naming rule'), () => {
-          value.vocabulary = value.vocabulary.filter((item) => item !== entry)
-          renderVocabulary()
-        }),
-        'trash',
-        { iconOnly: true }
-      )
-      preparationHelp(
-        remove,
-        uiMessage('Remove this naming rule when you save Settings.')
-      )
-      td.append(remove)
-      row.append(td)
-      body.append(row)
-    }
-    function renderVocabulary() {
-      const matches = searchMatcher(
-        vocabularySearch.querySelector('input').value
-      )
-      const matching = value.vocabulary.filter((entry) =>
-        matches([entry.match, entry.exclude, entry.spanishName, entry.category])
-      )
-      const pages = Math.max(1, Math.ceil(matching.length / pageSize))
-      vocabularyPage = Math.max(0, Math.min(vocabularyPage, pages - 1))
-      body.replaceChildren()
-      matching
-        .slice(vocabularyPage * pageSize, (vocabularyPage + 1) * pageSize)
-        .forEach(vocabularyRow)
-      const start = matching.length ? vocabularyPage * pageSize + 1 : 0,
-        end = Math.min((vocabularyPage + 1) * pageSize, matching.length)
-      bindText(
-        vocabularyCount,
-        uiMessage('{0}–{1} of {2} rules', {
-          0: start,
-          1: end,
-          2: matching.length,
-        })
-      )
-      if (!matching.length) {
-        const row = el('tr'),
-          cell = el('td', uiMessage('No matching rules.'), 'vocabulary-empty')
-        cell.colSpan = 5
-        row.append(cell)
-        body.append(row)
-      }
-      previousRules.disabled = vocabularyPage === 0
-      nextRules.disabled = vocabularyPage + 1 === pages
-    }
-    renderVocabulary()
-    const scroll = el('div', undefined, 'vocabulary-scroll'),
-      toolbar = el('div', undefined, 'vocabulary-toolbar')
-    scroll.append(table)
-    scroll.tabIndex = 0
-    scroll.setAttribute('role', 'region')
-    bindAttribute(scroll, 'aria-label', uiMessage('Naming rules'))
-    toolbar.append(
-      vocabularySearch,
-      decorateIcon(
-        button(uiMessage('Add rule'), () => {
-          const entry = { match: '', spanishName: '', category: '' }
-          value.vocabulary.unshift(entry)
-          vocabularySearch.querySelector('input').value = ''
-          vocabularyPage = 0
-          renderVocabulary()
-          body.querySelector('input')?.focus()
-        }),
-        'plus'
-      )
-    )
-    names.append(toolbar, scroll, vocabularyNavigation)
-    attachSearchSuggestions(vocabularySearch.querySelector('input'), () =>
-      value.vocabulary.flatMap((entry) => [
-        entry.spanishName,
-        entry.category,
-        ...String(entry.match || '').split('|'),
-        ...String(entry.exclude || '').split('|'),
-      ])
-    )
+    const nameRules = mountProductVocabulary(names, value)
     const sizeRules = mountSizeVocabulary(
       panels.get('settings-panel-sizes'),
       value
@@ -7648,6 +7557,14 @@ export async function startPackingWorkspace({
     const materialRules = mountMaterialVocabulary(
       panels.get('settings-panel-materials'),
       value
+    )
+    settingsDialog.addEventListener(
+      'close',
+      () => {
+        for (const rules of [nameRules, sizeRules, colorRules, materialRules])
+          rules.destroy()
+      },
+      { once: true }
     )
     const tagOptions = {
         getTagUsage: (name, scope) => repository.getTagUsage(name, { scope }),
@@ -7806,16 +7723,14 @@ export async function startPackingWorkspace({
               value.sizeVocabulary = sizeRules.validate()
             } catch (error) {
               selectTab('settings-panel-sizes')
+              sizeRules.revealError()?.focus()
               throw error
             }
             try {
               value.colorVocabulary = colorRules.validate()
             } catch (error) {
               selectTab('settings-panel-colors')
-              panels
-                .get('settings-panel-colors')
-                .querySelector('[aria-invalid="true"]')
-                ?.focus()
+              colorRules.revealError()?.focus()
               throw error
             }
             value.appearance = appearance.validate()
@@ -7823,10 +7738,7 @@ export async function startPackingWorkspace({
               value.materialVocabulary = materialRules.validate()
             } catch (error) {
               selectTab('settings-panel-materials')
-              panels
-                .get('settings-panel-materials')
-                .querySelector('[aria-invalid="true"]')
-                ?.focus()
+              materialRules.revealError()?.focus()
               throw error
             }
             value.settings.vocabularyInitialized = true
@@ -8026,6 +7938,7 @@ export async function startPackingWorkspace({
   }
   return {
     reload,
+    cartonCapacityEditor,
     refreshPhoto: (item, thumbnail) => media.updatePhoto(item, thumbnail),
     photoContext,
     sizeClassifier: () => createSizeClassifier(preferences.sizeVocabulary),
@@ -8147,36 +8060,7 @@ export async function startPackingWorkspace({
       host.append(bar)
       const record = packingRecord(row)
       if (measurementHosts) mountMeasurements(measurementHosts, row, record)
-      const cartonKey = `${record?.snapshot.accountId || 'local'}/${row.orderId}/${row.entryId}`
-      const existing = cartonFields.get(cartonKey)
-      if (existing) {
-        existing.update({
-          quantity: row.quantity,
-          value: record?.unitsPerCarton?.[row.entryId],
-        })
-        capacityHost.append(existing.control)
-        return
-      }
-      const carton = mountCartonCapacity(capacityHost, {
-        quantity: row.quantity,
-        value: record?.unitsPerCarton?.[row.entryId],
-        onSave: async (value) => {
-          const saved = await repository.setUnitsPerCarton(
-            row.orderId,
-            row.entryId,
-            value,
-            { accountId: record?.snapshot.accountId || 'local' }
-          )
-          const currentRecord = packingRecord(row)
-          if (!currentRecord) return
-          Object.assign(
-            currentRecord,
-            mergeProductAnnotations(currentRecord, saved)
-          )
-          channel?.postMessage('carton-capacity')
-        },
-      })
-      cartonFields.set(cartonKey, carton)
+      capacityHost.append(cartonCapacityEditor(row).control)
     },
   }
 }

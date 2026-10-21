@@ -224,12 +224,14 @@ test('order cards keep compact rows and centered controls in both themes', async
             getComputedStyle(card.querySelector('.order-seller')).fontSize
           ),
           iconGap: actions.left - seller.right,
+          actionEndGap: title.right - actions.right,
           controls: [
             ...card.querySelectorAll('.order-card-actions button'),
           ].map((button) => {
             const bounds = button.getBoundingClientRect()
             const glyph = button.querySelector('svg').getBoundingClientRect()
             return {
+              overflow: button.classList.contains('operations-overflow'),
               height: bounds.height,
               centerOffset:
                 bounds.top + bounds.height / 2 - (title.top + title.height / 2),
@@ -249,10 +251,11 @@ test('order cards keep compact rows and centered controls in both themes', async
       expect(layout.productRowHeight).toBeLessThanOrEqual(18)
       expect(layout.sellerFont).toBeGreaterThanOrEqual(12.5)
       expect(layout.iconGap).toBeGreaterThanOrEqual(0)
-      expect(layout.iconGap).toBeLessThanOrEqual(7)
+      expect(layout.actionEndGap).toBe(15)
       expect(layout.overflows).toBe(false)
       for (const control of layout.controls) {
-        expect(control.height).toBeLessThanOrEqual(18)
+        if (control.overflow) expect(control.height).toBe(24)
+        else expect(control.height).toBeLessThanOrEqual(18)
         expect(Math.abs(control.centerOffset)).toBeLessThanOrEqual(1)
         expect(Math.abs(control.glyphOffset)).toBeLessThanOrEqual(1)
       }

@@ -74,7 +74,7 @@ export const excelImageColumns = Object.freeze(
     },
     {
       key: 'barcode',
-      labels: ['Barcode code', 'Código de barras', '条码货号'],
+      labels: ['Barcode code', 'Código de barras', '标签货号'],
       width: 142,
     },
     {
@@ -84,7 +84,7 @@ export const excelImageColumns = Object.freeze(
     },
     {
       key: 'price',
-      labels: ['Unit price (CNY)', 'Precio unitario (CNY)', '单价（元）'],
+      labels: ['Price (元)', 'Precio (元)', '单价（元）'],
       width: 94,
       numeric: true,
     },
@@ -874,7 +874,7 @@ export function planExcelImage(
             column.width - PADDING * 2,
             column.key === 'barcode'
           )
-        if (column.key === 'price' && text.trim()) text = `¥ ${text}`
+        if (column.key === 'price' && text.trim()) text = `${text} 元`
         const font =
           column.key === 'quantity'
             ? QUANTITY_FONT
@@ -1087,7 +1087,7 @@ export async function renderExcelImage(
       )
     }
   }
-  function line(runs, center, top, lineHeight) {
+  function line(runs, center, top, lineHeight, align = 'center') {
     context.textAlign = 'left'
     context.textBaseline = 'alphabetic'
     let width = 0,
@@ -1103,7 +1103,7 @@ export async function renderExcelImage(
       return { ...run, width: bounds.width }
     })
     const baseline = top + (lineHeight - ascent - descent) / 2 + ascent
-    let left = center - width / 2
+    let left = align === 'left' ? center : center - width / 2
     const start = left
     for (const run of measured) {
       context.font = run.font
@@ -1197,17 +1197,20 @@ export async function renderExcelImage(
       top += height + 5
     }
   }
-  function description(cell, x, y, column, rowHeight) {
+  function description(cell, x, y, column, rowHeight, sourceType) {
     let top = y + (rowHeight - cell.height) / 2
     const center = x + column.width / 2
+    const align = sourceType === 'spreadsheet' ? 'center' : 'left'
+    const textX = align === 'left' ? x + PADDING : center
     for (const block of cell.blocks) {
       top += block.gapBefore
       for (const label of block.labelLines) {
         line(
           [{ text: label, font: block.labelFont, color: palette.muted }],
-          center,
+          textX,
           top,
-          block.lineHeight
+          block.lineHeight,
+          align
         )
         top += block.lineHeight
       }
@@ -1221,7 +1224,7 @@ export async function renderExcelImage(
             font: block.labelFont,
             color: palette.muted,
           })
-        line(runs, center, top, block.lineHeight)
+        line(runs, textX, top, block.lineHeight, align)
         top += block.lineHeight
       }
     }
@@ -1317,7 +1320,14 @@ export async function renderExcelImage(
         } else if (column.key === 'baseCode') {
           // Draw one mark after every row in its contiguous merged cell is painted.
         } else if (column.key === 'description')
-          description(row.cells[cellIndex], x, y, column, row.height)
+          description(
+            row.cells[cellIndex],
+            x,
+            y,
+            column,
+            row.height,
+            row.source.sourceType
+          )
         else text(row.cells[cellIndex], x, y, column, row.height)
         x += column.width
       }

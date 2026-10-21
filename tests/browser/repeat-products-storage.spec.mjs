@@ -1,4 +1,5 @@
 import { test, expect } from './extension-fixture.mjs'
+import { repeatSubsetFixture } from '../fixtures/repeat-subset-fixture.mjs'
 
 function sources() {
   return ['3', '27'].map((quantity, index) => {
@@ -105,9 +106,7 @@ test('repeat-product dialog previews both purchases, cancellation writes nothing
     name: 'Link repeat purchase',
     exact: true,
   })
-  await dialog
-    .getByRole('combobox', { name: 'Original product and code' })
-    .selectOption('0')
+  await dialog.locator('.repeat-product-candidate input').first().check()
   await expect(dialog.locator('.repeat-product-source')).toHaveCount(2)
   await expect(dialog.locator('.repeat-product-features')).toHaveText([
     'Lighting · Rotation',
@@ -132,9 +131,7 @@ test('repeat-product dialog previews both purchases, cancellation writes nothing
     name: 'Link repeat purchase',
     exact: true,
   })
-  await dialog
-    .getByRole('combobox', { name: 'Original product and code' })
-    .selectOption('0')
+  await dialog.locator('.repeat-product-candidate input').first().check()
   await expect(dialog.locator('.repeat-product-source')).toHaveCount(2)
   await dialog
     .getByRole('checkbox', {
@@ -443,4 +440,157 @@ test('unlinking uses a free code and removing the primary purchase preserves sur
     )
   ).toBe(true)
   expect(result.ownershipOrders).toContain('8702')
+})
+
+test('a single-size repeat selects the original S card, stores canonical subset reservations and unlinks without changing M/L', async ({
+  extension,
+}) => {
+  test.setTimeout(60000)
+  const data = repeatSubsetFixture()
+  const backup = {
+    format: '1688-order-library',
+    version: 3,
+    exportedAt: '2026-10-21T00:00:00.000Z',
+    orders: data.records,
+    preparations: data.preparations,
+    allocations: data.allocations,
+    issuedCodes: data.issuedCodes,
+    history: [],
+    images: [],
+  }
+  const seeded = await extension.inspector.evaluate(
+    (backup) => chrome.runtime.sendMessage({ type: 'BACKUP_RESTORE', backup }),
+    backup
+  )
+  expect(seeded.ok, seeded.error).toBe(true)
+  const page = await extension.context.newPage()
+  await page.addInitScript(() =>
+    localStorage.setItem('1688-library-purchase-months', '[]')
+  )
+  await page.goto(`${extension.extensionBaseUrl}/library.html`)
+  await expect(page.locator('.month-toggle')).toHaveCount(1)
+  for (const toggle of await page
+    .locator('.month-toggle[aria-expanded=false]')
+    .all())
+    await toggle.click()
+  const rows = page.locator('#sheet-body tr[data-selection-key]')
+  await expect(rows).toHaveCount(4)
+  const source = page.locator('#sheet-body tr[data-selection-key="8805/1"]')
+  await expect(source.locator('.row-code-copy')).toHaveText('CE26101005')
+  await source
+    .getByRole('button', { name: 'Link repeat purchase', exact: true })
+    .click()
+  const dialog = page.getByRole('dialog', {
+    name: 'Link repeat purchase',
+    exact: true,
+  })
+  await expect(dialog.locator('select, [role="combobox"]')).toHaveCount(0)
+  const candidate = dialog.locator('.repeat-product-candidate')
+  await expect(candidate).toHaveCount(1)
+  await expect(candidate.locator('code')).toHaveText('CE26101001S')
+  await expect(candidate.locator('[data-code-part="product"]')).toHaveText(
+    '1001'
+  )
+  await expect(candidate).toContainText('55cm')
+  await expect(candidate).toContainText('Quantity 3')
+  await expect(candidate.locator('img')).toHaveCount(1)
+  await page.setViewportSize({ width: 375, height: 900 })
+  const geometry = await dialog.evaluate((node) => ({
+    width: node.clientWidth,
+    content: node.scrollWidth,
+  }))
+  expect(geometry.content).toBeLessThanOrEqual(geometry.width)
+  const search = dialog.getByLabel('Search original products', { exact: true })
+  await search.fill('CE26101001M')
+  await expect(candidate).toBeHidden()
+  await expect(dialog.locator('.repeat-product-empty')).toContainText(
+    'No original products match this search'
+  )
+  await search.fill('55cm')
+  await expect(candidate).toBeVisible()
+  await page.setViewportSize({ width: 1280, height: 960 })
+  await candidate.locator('input').check()
+  await expect(dialog.locator('.repeat-product-source')).toHaveCount(4)
+  await dialog
+    .getByRole('checkbox', {
+      name: 'I checked the variants, sizes and features.',
+      exact: true,
+    })
+    .check()
+  await dialog
+    .getByRole('button', { name: 'Use the original codes', exact: true })
+    .click()
+  await expect(dialog).toHaveCount(0)
+  await expect(source.locator('.row-code-copy')).toHaveText('CE26101001S')
+  for (const [entryId, code] of [
+    ['1', 'CE26101001S'],
+    ['2', 'CE26101001M'],
+    ['3', 'CE26101001L'],
+  ]) {
+    await expect(
+      page.locator(
+        `#sheet-body tr[data-selection-key="8801/${entryId}"] .row-code-copy`
+      )
+    ).toHaveText(code)
+  }
+  const linked = await extension.inspector.evaluate(() =>
+    chrome.runtime.sendMessage({ type: 'BACKUP_EXPORT' })
+  )
+  expect(linked.ok, linked.error).toBe(true)
+  const owners = Object.fromEntries(
+    linked.data.issuedCodes
+      .filter((entry) => entry.kind === 'barcode')
+      .map((entry) => [entry.code, entry.members.length])
+  )
+  expect(owners).toEqual({ CE26101001S: 2, CE26101001M: 1, CE26101001L: 1 })
+  for (const record of data.records)
+    expect(
+      linked.data.orders.find(
+        (value) => value.snapshot.orderId === record.snapshot.orderId
+      ).snapshot
+    ).toEqual(record.snapshot)
+  await source
+    .getByRole('button', { name: 'Linked repeat purchase', exact: true })
+    .click()
+  const unlink = page.getByRole('dialog', {
+    name: 'Unlink repeat purchase',
+    exact: true,
+  })
+  await expect(unlink.locator('.repeat-product-source')).toHaveCount(1)
+  await unlink
+    .getByRole('checkbox', {
+      name: 'I checked the variants, sizes and features.',
+      exact: true,
+    })
+    .check()
+  await unlink
+    .getByRole('button', { name: 'Unlink and assign code', exact: true })
+    .click()
+  await expect(unlink).toHaveCount(0)
+  await expect(source.locator('.row-code-copy')).not.toHaveText('CE26101001S')
+  const detached = await extension.inspector.evaluate(() =>
+    chrome.runtime.sendMessage({ type: 'BACKUP_EXPORT' })
+  )
+  expect(detached.ok, detached.error).toBe(true)
+  const original = detached.data.preparations.find(
+    (draft) => draft.orderId === '8801'
+  ).groups[0]
+  expect(original.baseCode).toBe('CE26101001')
+  expect(original.variants.map((variant) => variant.sizeSuffix)).toEqual([
+    'S',
+    'M',
+    'L',
+  ])
+  expect(
+    detached.data.issuedCodes
+      .filter((entry) => entry.sharedProductId)
+      .every((entry) => entry.members.length === 1)
+  ).toBe(true)
+  for (const record of data.records)
+    expect(
+      detached.data.orders.find(
+        (value) => value.snapshot.orderId === record.snapshot.orderId
+      ).snapshot
+    ).toEqual(record.snapshot)
+  await page.close()
 })

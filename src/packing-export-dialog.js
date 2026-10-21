@@ -11,6 +11,8 @@ import { popupLanguageToggle } from './popup-language-toggle.js'
 import { setCodeText } from './code-display.js'
 import { planPackingWorkbook } from './packing-workbook.js'
 import { workspaceExportStyle } from './excel-image-style.js'
+import { createPackingWorkbookImages } from './packing-workbook-images.js'
+import { preparationHelp } from './preparation-help.js'
 import {
   packingExportColumns,
   readPackingExportOptions,
@@ -19,12 +21,13 @@ import {
   normalizePackingExportOptions,
 } from './packing-export-options.js'
 
-/** Configure a native editable workbook without allocating its images until Download. */
+/** Configure an editable workbook with small preview assets for five products. */
 export async function openPackingExportDialog({
   getRows,
   hasSelection = false,
   onExport,
   loadImage = async (source) => source,
+  renderCartonMark,
 }) {
   const modal = el('dialog', undefined, 'packing-export-dialog'),
     header = el('header', undefined, 'packing-export-header'),
@@ -55,7 +58,14 @@ export async function openPackingExportDialog({
   let options = readPackingExportOptions(),
     busy = false,
     storageFailed = false
-  const photos = new Map()
+  const prepareImages = createPackingWorkbookImages(loadImage, renderCartonMark)
+  const imageUrls = new Set()
+  let previewVersion = 0
+  function clearPreviewImages() {
+    previewVersion++
+    for (const url of imageUrls) URL.revokeObjectURL(url)
+    imageUrls.clear()
+  }
   if (!hasSelection) options.scope = 'all'
   const local = (value, params) => t(value, params, getLanguage(modal))
   const columnName = (key) =>
@@ -178,7 +188,7 @@ export async function openPackingExportDialog({
     flags,
     el(
       'p',
-      m('Export colors follow the current workspace theme.'),
+      m('Excel exports use the current theme in light mode.'),
       'packing-export-note'
     )
   )
@@ -274,6 +284,7 @@ export async function openPackingExportDialog({
     width.value = options.descriptionWidth
     widthValue.textContent = String(options.descriptionWidth)
     renderChoices()
+    clearPreviewImages()
     preview.replaceChildren()
     const rows = getRows(options.scope),
       selected = selectedPackingExportColumns(options)
@@ -295,44 +306,60 @@ export async function openPackingExportDialog({
     try {
       const plan = planPackingWorkbook(rows, exportOptions()),
         table = el('table'),
+        columnSizes = el('colgroup'),
         head = el('thead'),
         body = el('tbody'),
         tr = el('tr')
-      for (const column of plan.columns)
-        tr.append(el('th', column.labels[getLanguage(modal)]))
+      tr.className = 'packing-export-headings'
+      for (const [key, value] of Object.entries(plan.palette))
+        preview.style.setProperty(`--packing-export-${key}`, value)
+      for (const column of plan.columns) {
+        const col = el('col')
+        col.style.inlineSize = `${column.pixelWidth}px`
+        columnSizes.append(col)
+        const th = el('th', column.labels[getLanguage(modal)])
+        th.scope = 'col'
+        if (column.boxStage) {
+          th.dataset.boxStage = column.boxStage
+          th.style.background = column.stageHeader
+          th.style.color = plan.palette.headerText
+        }
+        tr.append(th)
+      }
+      table.style.inlineSize = `${plan.columns.reduce((total, column) => total + column.pixelWidth, 0)}px`
       head.append(tr)
       for (const row of plan.rows
         .filter((row) => row.kind === 'product')
         .slice(0, 5)) {
         const tr = el('tr')
+        tr.style.blockSize = `${row.height / 0.75}px`
         row.cells.forEach((cell, index) => {
           const td = el('td'),
-            key = plan.columns[index].key
-          td.style.maxInlineSize = `${Math.min(420, plan.columns[index].width * 7)}px`
+            key = plan.columns[index].key,
+            content = el('div', undefined, 'packing-export-value')
+          td.dataset.column = key
+          if (plan.columns[index].boxStage) {
+            td.dataset.boxStage = plan.columns[index].boxStage
+            td.style.background = plan.columns[index].stageBackground
+          }
+          content.style.maxBlockSize = `${row.height / 0.75 - 12}px`
           if (key === 'barcode' && cell.value) {
             const code = el('code', undefined, 'ce-code')
             setCodeText(code, cell.value)
-            td.append(code)
-          } else if (key === 'photo') {
-            const product = rows[body.childElementCount]
-            if (product?.thumbnail) {
-              const image = el('img')
-              image.style.inlineSize =
-                image.style.blockSize = `${Math.min(120, plan.photoPixels)}px`
-              image.alt = ''
-              td.append(image)
-              void (async () => {
-                try {
-                  if (!photos.has(product.thumbnail))
-                    photos.set(product.thumbnail, loadImage(product.thumbnail))
-                  const loaded = await photos.get(product.thumbnail)
-                  if (image.isConnected)
-                    image.src =
-                      typeof loaded === 'string' ? loaded : loaded.dataUrl
-                } catch {
-                  image.remove()
-                }
-              })()
+            content.append(code)
+          } else if (key === 'photo' || key === 'cartonMark') {
+            if (
+              key === 'cartonMark' &&
+              !rows[body.childElementCount]?.chineseCategory?.trim()
+            ) {
+              content.textContent = '—'
+              preparationHelp(
+                td,
+                m(
+                  'Add a Chinese category in Preparation to generate a carton mark.'
+                )
+              )
+              td.append(content)
             }
           } else if (
             cell.type === 'number' &&
@@ -350,7 +377,7 @@ export async function openPackingExportDialog({
                 'cartonWidth',
                 'cartonHeight',
               ].includes(key)
-            td.textContent =
+            content.textContent =
               new Intl.NumberFormat(getLanguage(modal), {
                 minimumFractionDigits: money ? 2 : 0,
                 maximumFractionDigits: money
@@ -368,19 +395,69 @@ export async function openPackingExportDialog({
                 : volume
                   ? ' m³'
                   : money
-                    ? ' CNY'
+                    ? ' 元'
                     : dimension
                       ? ' cm'
-                      : '')
-          } else td.textContent = String(cell.value ?? '')
-          if (key === 'description') td.style.whiteSpace = 'pre-line'
+                      : key === 'unitsPerCarton'
+                        ? { en: '/box', es: '/ctn', zh: '/箱' }[
+                            getLanguage(modal)
+                          ] || '/box'
+                        : '')
+          } else content.textContent = String(cell.value ?? '')
+          if (key === 'description') {
+            content.style.whiteSpace = 'pre-line'
+            td.style.textAlign =
+              rows[body.childElementCount]?.sourceType === 'spreadsheet'
+                ? 'center'
+                : 'start'
+            preparationHelp(td, () => String(cell.value ?? ''))
+          }
           if (cell.type === 'number') td.classList.add('numeric')
+          if (!['photo', 'cartonMark'].includes(key)) td.append(content)
           tr.append(td)
         })
         body.append(tr)
       }
-      table.append(head, body)
+      table.append(columnSizes, head, body)
       preview.append(table)
+      const version = previewVersion
+      void (async () => {
+        const limits = {
+          ...(selected.includes('photo')
+            ? { photo: { maxWidth: 320, maxHeight: 240 } }
+            : {}),
+          ...(selected.includes('cartonMark')
+            ? { mark: { maxWidth: 320, maxHeight: 240 } }
+            : {}),
+        }
+        for (const [index, product] of rows.slice(0, 5).entries()) {
+          if (version !== previewVersion) return
+          try {
+            const assets = await prepareImages(product, limits)
+            if (version !== previewVersion) return
+            for (const [column, asset] of [
+              ['photo', assets.photo],
+              ['cartonMark', assets.mark],
+            ]) {
+              if (!asset) continue
+              const cell = body.children[index]?.querySelector(
+                `td[data-column="${column}"]`
+              )
+              if (!cell) continue
+              const image = el('img')
+              image.alt = ''
+              image.src = URL.createObjectURL(asset.bytes)
+              imageUrls.add(image.src)
+              cell.replaceChildren(image)
+            }
+          } catch (error) {
+            if (version !== previewVersion) return
+            bindText(status, m(error.message))
+            download.disabled = true
+            return
+          }
+        }
+      })()
     } catch (error) {
       preview.append(el('p', local(error.message)))
       download.disabled = true
@@ -422,6 +499,7 @@ export async function openPackingExportDialog({
       'close',
       () => {
         stopLanguage()
+        clearPreviewImages()
         modal.remove()
         resolve(modal.returnValue === 'exported')
       },

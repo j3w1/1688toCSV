@@ -159,6 +159,14 @@ test('an agent prepares, exports and prints through stable data-action controls'
   expect(workbook.toString('latin1')).toContain('xl/drawings/drawing1.xml')
   expect(workbook.toString('latin1')).toContain('xl/media/')
   const archive = XLSX.CFB.read(workbook, { type: 'buffer' })
+  const drawing = Buffer.from(
+    archive.FileIndex[
+      archive.FullPaths.findIndex((path) =>
+        path.endsWith('/xl/drawings/drawing1.xml')
+      )
+    ].content
+  ).toString('utf8')
+  expect(drawing).toContain('name="mark-')
   const photoIndex = archive.FullPaths.findIndex((path) =>
     path.endsWith('.jpg')
   )
@@ -207,13 +215,16 @@ test('an agent prepares, exports and prints through stable data-action controls'
   const table = XLSX.utils.sheet_to_json(sheet, { header: 1, defval: '' })
   expect(table[4]).toContain('Loaded boxes')
   expect(table[4].join(' ')).not.toMatch(/Payments|Deposits|Balance/)
-  const product = table.find((row) => row[2] === summary.products[0].code)
-  expect(product[7]).toBe(0)
-  expect(product[8]).toBe(6)
-  expect(product[19]).toBe(57)
-  expect(product[20]).toBe(0)
-  expect(product[25]).toBe(0.75)
-  expect(product[26]).toBe(0)
+  const headings = table[4]
+  const exported = table.find(
+    (row) => row[headings.indexOf('Code')] === summary.products[0].code
+  )
+  expect(headings).not.toContain('Store')
+  expect(headings[headings.indexOf('Code') + 1]).toBe('Carton mark')
+  expect(exported[headings.indexOf('Loaded boxes')]).toBe(0)
+  expect(exported[headings.indexOf('Rcvd boxes')]).toBe(6)
+  expect(exported[headings.indexOf('Loaded kg')]).toBe(0)
+  expect(exported[headings.indexOf('Loaded m³')]).toBe(0)
   expect(
     await page
       .locator('.packing-order-sections')

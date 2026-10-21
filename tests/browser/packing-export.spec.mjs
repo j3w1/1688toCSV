@@ -28,6 +28,25 @@ test('packing export previews persistent columns, order, scope and layout before
   const page = await extension.context.newPage()
   await page.setViewportSize({ width: 1280, height: 900 })
   await page.goto(`${extension.extensionBaseUrl}/library.html`)
+  await page.getByRole('button', { name: 'Settings', exact: true }).click()
+  const appearance = page.getByRole('dialog', { name: 'Settings', exact: true })
+  for (const mode of ['Light', 'Dark'])
+    await appearance
+      .getByLabel(`${mode} palette`, { exact: true })
+      .selectOption('classic-brown')
+  await appearance
+    .getByRole('button', { name: 'Save settings', exact: true })
+    .click()
+  await expect(appearance).not.toBeVisible()
+  await expect
+    .poll(() =>
+      page.evaluate(() =>
+        getComputedStyle(document.documentElement)
+          .getPropertyValue('--excel-accent')
+          .trim()
+      )
+    )
+    .toBe('#5c3700')
   await page.locator('#select-rows').click()
   await page.locator('#prepare-orders').click()
   await page.locator('[data-action="review-proceed"]').click()
@@ -40,7 +59,55 @@ test('packing export previews persistent columns, order, scope and layout before
   await view.locator('[data-action="export-packing-list"]').click()
   const dialog = page.locator('.packing-export-dialog')
   await expect(dialog).toBeVisible()
-  await expect(dialog.locator('.packing-export-preview th')).toHaveCount(31)
+  await expect(
+    dialog.locator('.packing-export-preview .packing-export-headings th')
+  ).toHaveCount(19)
+  await expect(dialog.locator('input[value="cartonMark"]')).toBeChecked()
+  await expect(dialog.locator('input[value="store"]')).toHaveCount(0)
+  await expect(dialog.locator('input[value="orderQuantity"]')).toHaveCount(0)
+  await expect(dialog.locator('.packing-export-preview thead tr')).toHaveCount(
+    1
+  )
+  await expect(dialog.locator('.packing-export-preview table')).toHaveCSS(
+    'background-color',
+    'rgb(255, 255, 255)'
+  )
+  for (const [size, pixels] of [
+    ['compact', 64],
+    ['standard', 120],
+    ['large', 160],
+  ]) {
+    await dialog
+      .locator(`[data-option="photoSize"][data-value="${size}"]`)
+      .click()
+    const cells = dialog.locator(
+      '.packing-export-preview td[data-column="photo"]'
+    )
+    await expect(cells).toHaveCount(3)
+    await expect
+      .poll(() =>
+        cells
+          .locator('img')
+          .evaluateAll((images) =>
+            images.every((image) => image.complete && image.naturalWidth > 0)
+          )
+      )
+      .toBe(true)
+    for (const cell of await cells.all()) {
+      const photo = await cell.locator('img').boundingBox()
+      const bounds = await cell.boundingBox()
+      expect(Math.abs(bounds.width - bounds.height)).toBeLessThanOrEqual(1)
+      expect(Math.abs(bounds.width - pixels)).toBeLessThanOrEqual(1)
+      expect(Math.abs(photo.width - bounds.width)).toBeLessThanOrEqual(1)
+      expect(Math.abs(photo.height - bounds.height)).toBeLessThanOrEqual(1)
+      expect(Math.abs(photo.x - bounds.x)).toBeLessThanOrEqual(1)
+      expect(Math.abs(photo.y - bounds.y)).toBeLessThanOrEqual(1)
+    }
+  }
+  await dialog
+    .locator('[data-option="photoSize"][data-value="standard"]')
+    .click()
+  await dialog.screenshot({ path: 'work/packing-export-redesign.png' })
   expect(
     await extension.inspector.evaluate(() => chrome.downloads.search({}))
   ).toHaveLength(0)
@@ -62,9 +129,11 @@ test('packing export previews persistent columns, order, scope and layout before
   )
   await quantityLeft.click()
   await quantityLeft.click()
-  await expect(dialog.locator('.packing-export-preview th').first()).toHaveText(
-    'Total quantity'
-  )
+  await expect(
+    dialog
+      .locator('.packing-export-preview .packing-export-headings th')
+      .first()
+  ).toHaveText('Qty')
   await dialog.locator('[data-option="scope"][data-value="selected"]').click()
   await dialog
     .locator('[data-option="photoSize"][data-value="compact"]')
@@ -93,10 +162,14 @@ test('packing export previews persistent columns, order, scope and layout before
     .getByRole('button', { name: 'Close export', exact: true })
     .click()
   await view.locator('[data-action="export-packing-list"]').click()
-  await expect(dialog.locator('.packing-export-preview th')).toHaveCount(5)
-  await expect(dialog.locator('.packing-export-preview th').first()).toHaveText(
-    'Total quantity'
-  )
+  await expect(
+    dialog.locator('.packing-export-preview .packing-export-headings th')
+  ).toHaveCount(5)
+  await expect(
+    dialog
+      .locator('.packing-export-preview .packing-export-headings th')
+      .first()
+  ).toHaveText('Qty')
   await expect(
     dialog.locator('[data-option="scope"][data-value="selected"]')
   ).toHaveAttribute('aria-pressed', 'true')
@@ -114,18 +187,21 @@ test('packing export previews persistent columns, order, scope and layout before
   expect(await page.evaluate(() => document.documentElement.lang)).toBe(
     workspaceLanguage
   )
+  await dialog.locator('[data-language="zh"]').click()
+  await expect(dialog.locator('.packing-export-headings th').nth(1)).toHaveText(
+    '标签货号'
+  )
+  expect(await page.evaluate(() => document.documentElement.lang)).toBe(
+    workspaceLanguage
+  )
   await dialog.locator('[data-language="en"]').click()
   const theme = await page.evaluate(() => ({
     accent: getComputedStyle(document.documentElement)
-      .getPropertyValue('--accent')
+      .getPropertyValue('--excel-accent')
       .trim()
       .slice(1)
       .toUpperCase(),
-    body: getComputedStyle(document.documentElement)
-      .getPropertyValue('--surface')
-      .trim()
-      .slice(1)
-      .toUpperCase(),
+    body: 'FFFFFF',
   }))
   await download.click()
   await expect(dialog).toHaveCount(0)
@@ -145,11 +221,11 @@ test('packing export previews persistent columns, order, scope and layout before
   const workbook = XLSX.read(bytes, { type: 'buffer' }),
     sheet = workbook.Sheets[workbook.SheetNames[0]]
   expect(XLSX.utils.sheet_to_json(sheet, { header: 1 })[4]).toEqual([
-    'Total quantity',
-    'Barcode',
-    'Original description',
-    'Weight kg/box',
-    'Volume m³/box',
+    'Qty',
+    'Code',
+    'Details',
+    'kg/box',
+    'm³/box',
   ])
   const archive = XLSX.CFB.read(bytes, { type: 'buffer' })
   const xml = (name) =>
@@ -159,7 +235,27 @@ test('packing export previews persistent columns, order, scope and layout before
       ].content
     ).toString('utf8')
   expect(xml('/xl/styles.xml')).toContain(theme.accent)
+  expect(theme.accent).toBe('5C3700')
+  expect(xml('/xl/styles.xml')).toContain('EFEBE6')
+  expect(xml('/xl/styles.xml')).toContain('DED7CC')
   expect(xml('/xl/styles.xml')).toContain(theme.body)
+  const descriptionStyle = Number(
+    xml('/xl/worksheets/sheet1.xml').match(/<c r="C7" s="(\d+)"/)[1]
+  )
+  const cellStyles = xml('/xl/styles.xml')
+    .match(/<cellXfs\b[^>]*>([\s\S]*?)<\/cellXfs>/)[1]
+    .match(/<xf\b[^>]*>/g)
+  const fontId = Number(cellStyles[descriptionStyle].match(/fontId="(\d+)"/)[1])
+  const fonts = [...xml('/xl/styles.xml').matchAll(/<font>([\s\S]*?)<\/font>/g)]
+  expect(fonts[fontId][1]).toContain('<sz val="10"')
+  const headerStyle = Number(
+    xml('/xl/worksheets/sheet1.xml').match(/<c r="A5" s="(\d+)"/)[1]
+  )
+  const headerFont = Number(cellStyles[headerStyle].match(/fontId="(\d+)"/)[1])
+  const headerFill = Number(cellStyles[headerStyle].match(/fillId="(\d+)"/)[1])
+  const fills = [...xml('/xl/styles.xml').matchAll(/<fill>([\s\S]*?)<\/fill>/g)]
+  expect(fonts[headerFont][1]).toContain('FFFFFFFF')
+  expect(fills[headerFill][1]).toContain('FF5C3700')
   expect(xml('/xl/worksheets/sheet1.xml')).not.toContain('<pane ')
   expect(xml('/xl/worksheets/sheet1.xml')).not.toContain('<autoFilter ')
   expect(xml('/xl/worksheets/sheet1.xml')).not.toContain('#REF!')
@@ -168,11 +264,15 @@ test('packing export previews persistent columns, order, scope and layout before
   await page.reload()
   await page.locator('#view-packing').click()
   await page.locator('[data-action="export-packing-list"]').click()
-  await expect(dialog.locator('.packing-export-preview th')).toHaveCount(5)
+  await expect(
+    dialog.locator('.packing-export-preview .packing-export-headings th')
+  ).toHaveCount(5)
   await dialog
     .getByRole('button', { name: 'Restore default columns', exact: true })
     .click()
-  await expect(dialog.locator('.packing-export-preview th')).toHaveCount(31)
+  await expect(
+    dialog.locator('.packing-export-preview .packing-export-headings th')
+  ).toHaveCount(19)
   await expect(
     dialog.locator('[data-option="scope"][data-value="selected"]')
   ).toHaveAttribute('aria-pressed', 'true')

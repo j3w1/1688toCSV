@@ -1,9 +1,6 @@
 import { message as uiMessage, getLanguage } from './i18n.js'
 import { planExcelImage, renderExcelImage } from './excel-image.js'
-import {
-  createExcelImageBadges,
-  currentExcelImageMode,
-} from './excel-image-badges.js'
+import { createExcelImageBadges } from './excel-image-badges.js'
 import {
   selectedExcelImageColumns,
   createExcelImageOptions,
@@ -20,7 +17,7 @@ export async function copyExcelImage(
     signal,
     columns,
     language = getLanguage(),
-    badges = createExcelImageBadges({}, currentExcelImageMode()),
+    badges = createExcelImageBadges(),
     errorOptions,
   }
 ) {

@@ -1,11 +1,7 @@
 import {
   message as uiMessage,
-  bindText,
   bindAttribute,
   isMessage,
-  t,
-  getLocale,
-  getLanguage,
   onLanguageChange,
 } from './i18n.js'
 import {
@@ -141,27 +137,27 @@ export async function reviewPackingChanges({
   proceed = 'Apply changes',
   alternate,
   media,
-  itemKind = 'groups',
   overview = false,
 }) {
   const modal = el('dialog', undefined, 'packing-review packing-change-dialog')
   modal.classList.toggle('packing-review-overview', overview)
+  if (overview) modal.dataset.reviewLayout = 'expanded'
   bindAttribute(modal, 'aria-label', title)
+  const explanationText = el(
+    'p',
+    isMessage(explanation) ? explanation : uiMessage(explanation)
+  )
   modal.append(
     el('h2', isMessage(title) ? title : uiMessage(title)),
-    el('p', isMessage(explanation) ? explanation : uiMessage(explanation))
+    explanationText
   )
   const list = el('div', undefined, 'packing-review-list')
-  // Bound live photos while making every affected group available by page.
-  let page = 0
-  const pageStatus = el('span')
-  const previous = el('button', uiMessage('Previous')),
-    next = el('button', uiMessage('Next'))
   const fitHost = overview
     ? el('div', undefined, 'packing-review-overview-fit')
     : null
   let fitObserver,
     fitFrame,
+    stopLanguageFit,
     columns = 1
   const valuesFor = (change) =>
     change.values || [
@@ -171,6 +167,23 @@ export async function reviewPackingChanges({
         kind: 'code',
       },
     ]
+  function changeContent(change, className) {
+    const content = el('div', undefined, className)
+    if (change.order) content.append(el('small', change.order))
+    if (change.sourceDescription && change.sourceDescription !== change.name)
+      content.append(
+        el('p', String(change.sourceDescription), 'packing-review-source')
+      )
+    content.append(packingValueComparison(valuesFor(change)))
+    if (change.detail)
+      content.append(
+        el(
+          'p',
+          isMessage(change.detail) ? change.detail : uiMessage(change.detail)
+        )
+      )
+    return content
+  }
   function renderOverview(change, index) {
     const card = el(
       'article',
@@ -196,7 +209,7 @@ export async function reviewPackingChanges({
     select.append(
       el(
         'span',
-        change.sourceDescription || change.name || uiMessage('Product group'),
+        change.name || change.sourceDescription || uiMessage('Product group'),
         'packing-review-overview-name'
       )
     )
@@ -248,27 +261,20 @@ export async function reviewPackingChanges({
     bindAttribute(close, 'aria-label', uiMessage('Close'))
     heading.append(name, close)
     detail.append(heading)
-    if (change.order) detail.append(el('small', change.order))
-    if (change.sourceDescription && change.sourceDescription !== change.name)
-      detail.append(el('p', change.sourceDescription))
-    detail.append(packingValueComparison(valuesFor(change)))
-    if (change.detail)
-      detail.append(
-        el(
-          'p',
-          isMessage(change.detail) ? change.detail : uiMessage(change.detail)
-        )
-      )
+    const clearDetail = () =>
+      detail.querySelector('.packing-review-detail-content')?.remove()
     const hide = () => {
       if (nativePopover) detail.hidePopover()
       else detail.hidden = true
+      clearDetail()
       select.setAttribute('aria-expanded', 'false')
       select.focus()
     }
     close.onclick = hide
-    detail.addEventListener('toggle', (event) =>
+    detail.addEventListener('toggle', (event) => {
       select.setAttribute('aria-expanded', String(event.newState === 'open'))
-    )
+      if (event.newState !== 'open') clearDetail()
+    })
     detail.addEventListener('keydown', (event) => {
       if (event.key !== 'Escape') return
       event.preventDefault()
@@ -279,8 +285,13 @@ export async function reviewPackingChanges({
       for (const open of list.querySelectorAll('.packing-review-detail')) {
         if (open === detail) continue
         if (nativePopover && open.matches(':popover-open')) open.hidePopover()
-        else if (!nativePopover) open.hidden = true
+        else if (!nativePopover) {
+          open.hidden = true
+          open.querySelector('.packing-review-detail-content')?.remove()
+        }
       }
+      if (!detail.querySelector('.packing-review-detail-content'))
+        detail.append(changeContent(change, 'packing-review-detail-content'))
       if (nativePopover) detail.showPopover()
       else detail.hidden = false
       select.setAttribute('aria-expanded', 'true')
@@ -300,11 +311,51 @@ export async function reviewPackingChanges({
         Math.max(0, Math.min(buttons.length - 1, index + offset))
       ]?.focus()
     }
-    card.append(select, detail)
+    card.append(select, changeContent(change, 'packing-review-inline'), detail)
     return card
   }
   function fitOverview() {
-    if (!fitHost?.clientWidth || !fitHost.clientHeight) return
+    if (!fitHost?.clientWidth) return
+    const view = document.defaultView
+    if (!view?.getComputedStyle || !view.innerHeight) return
+    const availableHeight = () => {
+      const bodyStyle = view.getComputedStyle(fitHost.parentElement),
+        explanationStyle = view.getComputedStyle(explanationText),
+        modalStyle = view.getComputedStyle(modal)
+      const pixels = (style, property) => parseFloat(style[property]) || 0
+      return (
+        Math.min(920, view.innerHeight - 24) -
+        modal.querySelector('.scroll-dialog-header').getBoundingClientRect()
+          .height -
+        explanationText.getBoundingClientRect().height -
+        pixels(explanationStyle, 'marginTop') -
+        pixels(explanationStyle, 'marginBottom') -
+        pixels(bodyStyle, 'paddingTop') -
+        pixels(bodyStyle, 'paddingBottom') -
+        pixels(modalStyle, 'borderTopWidth') -
+        pixels(modalStyle, 'borderBottomWidth')
+      )
+    }
+    // Measure the real localized text, codes and changed fields. A three-variant
+    // group should not get the same density as dozens of single-code groups.
+    modal.dataset.reviewLayout = 'expanded'
+    list.style.setProperty('--packing-review-scale', '1')
+    modal.dataset.overviewScale = '1'
+    columns = 1
+    list.style.gridTemplateColumns = 'minmax(0, 1fr)'
+    if (list.scrollHeight <= availableHeight() + 1) return
+    if (changes.length > 1) {
+      modal.dataset.reviewLayout = 'detailed-grid'
+      columns = Math.min(
+        changes.length,
+        Math.max(1, Math.floor(fitHost.clientWidth / 360))
+      )
+      list.style.gridTemplateColumns = `repeat(${columns}, minmax(0, 1fr))`
+      if (list.scrollHeight <= availableHeight() + 1) return
+    }
+    // Only dense batches need the fitted overview. Every complete comparison
+    // remains available through its card, with no main scrollbar or pager.
+    modal.dataset.reviewLayout = 'compact'
     columns = Math.max(1, Math.floor(fitHost.clientWidth / 175))
     list.style.gridTemplateColumns = `repeat(${columns}, minmax(0, 1fr))`
     const scale = Math.min(
@@ -314,6 +365,17 @@ export async function reviewPackingChanges({
     list.style.setProperty('--packing-review-scale', String(scale))
     modal.dataset.overviewScale = String(scale)
   }
+  function scheduleFit() {
+    if (typeof requestAnimationFrame !== 'function') {
+      fitOverview()
+      return
+    }
+    if (fitFrame !== undefined) cancelAnimationFrame(fitFrame)
+    fitFrame = requestAnimationFrame(() => {
+      fitFrame = undefined
+      fitOverview()
+    })
+  }
   function render() {
     media?.forget(list)
     list.replaceChildren()
@@ -321,7 +383,7 @@ export async function reviewPackingChanges({
       list.append(...changes.map(renderOverview))
       return
     }
-    for (const change of changes.slice(page * 12, (page + 1) * 12)) {
+    for (const change of changes) {
       const card = el('article', undefined, 'packing-review-item')
       if (change.photo && media) card.append(media.photo(change.photo))
       const content = el('div')
@@ -342,32 +404,7 @@ export async function reviewPackingChanges({
       card.append(content)
       list.append(card)
     }
-    previous.disabled = page === 0
-    next.disabled = (page + 1) * 12 >= changes.length
-    bindText(
-      pageStatus,
-      uiMessage(
-        itemKind === 'products'
-          ? '{0}–{1} of {2} products'
-          : '{0}–{1} of {2} groups',
-        {
-          0: Math.min(changes.length, page * 12 + 1),
-          1: Math.min(changes.length, (page + 1) * 12),
-          2: changes.length,
-        }
-      )
-    )
   }
-  previous.onclick = () => {
-    page--
-    render()
-  }
-  next.onclick = () => {
-    page++
-    render()
-  }
-  const pages = el('div', undefined, 'dialog-actions')
-  if (!overview && changes.length > 12) pages.append(previous, pageStatus, next)
   const actions = el('div', undefined, 'dialog-actions')
   const cancel = el('button', uiMessage('Cancel')),
     apply = el(
@@ -394,7 +431,7 @@ export async function reviewPackingChanges({
   if (overview) {
     fitHost.append(list)
     modal.append(fitHost, actions)
-  } else modal.append(list, pages, actions)
+  } else modal.append(list, actions)
   pinDialogActions(modal, actions)
   enableLightDismiss(modal)
   document.body.append(modal)
@@ -413,19 +450,21 @@ export async function reviewPackingChanges({
       }
     modal.onclose = () => {
       fitObserver?.disconnect()
+      stopLanguageFit?.()
+      document.defaultView?.removeEventListener('resize', scheduleFit)
       if (fitFrame !== undefined) cancelAnimationFrame(fitFrame)
       media?.forget(list)
       modal.remove()
       resolve(confirmed)
     }
     modal.showModal()
-    if (overview && typeof ResizeObserver === 'function') {
-      fitObserver = new ResizeObserver(() => {
-        if (fitFrame !== undefined) cancelAnimationFrame(fitFrame)
-        fitFrame = requestAnimationFrame(fitOverview)
-      })
-      fitObserver.observe(fitHost)
-      fitObserver.observe(list)
+    if (overview) {
+      if (typeof ResizeObserver === 'function') {
+        fitObserver = new ResizeObserver(scheduleFit)
+        fitObserver.observe(document.documentElement)
+      }
+      document.defaultView?.addEventListener('resize', scheduleFit)
+      stopLanguageFit = onLanguageChange(scheduleFit, modal)
       fitOverview()
     }
     cancel.focus()

@@ -1,4 +1,8 @@
 export const PACKING_EXPORT_MESSAGES = {
+  'Add a Chinese category in Preparation to generate a carton mark.': {
+    es: 'Añade una categoría en chino en Preparación para generar la marca de caja.',
+    zh: '在备货中添加中文品类，即可生成唛头。',
+  },
   'Close export': { es: 'Cerrar exportación', zh: '关闭导出' },
   'Download Excel': { es: 'Descargar Excel', zh: '下载 Excel' },
   'Products to export': { es: 'Productos a exportar', zh: '导出商品' },
@@ -36,9 +40,9 @@ export const PACKING_EXPORT_MESSAGES = {
       es: 'La vista previa muestra los primeros 5 productos. El Excel incluye todos los productos del alcance elegido.',
       zh: '预览显示前 5 个商品。Excel 包含所选范围内的全部商品。',
     },
-  'Export colors follow the current workspace theme.': {
-    es: 'Los colores siguen el tema actual del espacio de trabajo.',
-    zh: '导出颜色跟随当前工作区主题。',
+  'Excel exports use the current theme in light mode.': {
+    es: 'Excel usa el tema actual en modo claro.',
+    zh: 'Excel 导出使用当前主题的浅色模式。',
   },
   'Image details': { es: 'Detalles de imagen', zh: '图片详情' },
   'Reset image details': {

@@ -10,7 +10,7 @@ export const SUMMARY_MESSAGES = {
     es: 'Cantidad de pedidos coincidentes',
   },
   'Copy {0}': { zh: '复制{0}', es: 'Copiar {0}' },
-  'Copy this number without currency or thousands separators.': {
+  'Copy without currency symbols or separators.': {
     zh: '复制原始数字，不含货币符号或千位分隔符。',
     es: 'Copia el número sin símbolo de moneda ni separadores de miles.',
   },

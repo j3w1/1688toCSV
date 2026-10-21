@@ -3,18 +3,60 @@ import { fileURLToPath } from 'node:url'
 import { build } from 'esbuild'
 import { test, expect } from './extension-fixture.mjs'
 
-let helpSource
+let helpSource, libraryStyle
 test.beforeAll(async () => {
   const result = await build({
-    entryPoints: [
-      fileURLToPath(new URL('../../src/preparation-help.js', import.meta.url)),
-    ],
+    stdin: {
+      contents: `export { preparationHelp } from './preparation-help.js';
+        export { productContextHelp } from './item-context-help.js';
+        export { copyTextButton } from './ui.js';
+        export { setLanguage } from './i18n.js';`,
+      resolveDir: fileURLToPath(new URL('../../src/', import.meta.url)),
+      sourcefile: 'preparation-help-fixture.js',
+    },
     bundle: true,
     format: 'iife',
     globalName: 'PreparationHelp',
     write: false,
   })
   helpSource = result.outputFiles[0].text
+  const css = await build({
+    entryPoints: [
+      fileURLToPath(new URL('../../src/library.css', import.meta.url)),
+    ],
+    bundle: true,
+    write: false,
+  })
+  libraryStyle = css.outputFiles[0].text
+})
+
+test('copy helpers use short translated wording while accessible labels retain the item value', async ({
+  extension,
+}) => {
+  const page = await helpFixture(extension)
+  await page.evaluate(() => {
+    const copy = PreparationHelp.copyTextButton('18', { label: 'Copy Pcs/box' })
+    copy.id = 'compact-copy'
+    document.querySelector('dialog').append(copy)
+  })
+  for (const [language, text] of [
+    ['en', 'Click to copy'],
+    ['es', 'Haz clic para copiar'],
+    ['zh', '点击复制'],
+  ]) {
+    await page.mouse.move(1, 1)
+    await page.evaluate(
+      (language) => PreparationHelp.setLanguage(language, { persist: false }),
+      language
+    )
+    await page.locator('#compact-copy').hover()
+    await expect(page.getByRole('tooltip')).toHaveText(text)
+    await expect(page.locator('#compact-copy')).toHaveAttribute(
+      'aria-label',
+      /18$/
+    )
+  }
+  await page.close()
 })
 
 async function helpFixture(
@@ -186,6 +228,148 @@ for (const fallback of [false, true]) {
     await page.close()
   })
 }
+
+for (const fallback of [false, true]) {
+  for (const rich of [false, true]) {
+    test(`${fallback ? 'fallback' : 'native'} ${rich ? 'rich context' : 'text helper'} follows movement inside a large row and flips at viewport edges`, async ({
+      extension,
+    }) => {
+      const page = await helpFixture(extension, { fallback })
+      await page.setViewportSize({ width: 1000, height: 720 })
+      await page.addStyleTag({ content: libraryStyle })
+      await page.evaluate((rich) => {
+        document.querySelector('dialog').close()
+        const row = document.createElement('div')
+        row.id = 'large-hover-row'
+        row.tabIndex = 0
+        row.style.cssText = 'position:fixed;inset:20px;background:#ddd;'
+        row.textContent = 'Synthetic large product row'
+        row.dataset.selected = 'true'
+        document.body.append(row)
+        if (rich) {
+          PreparationHelp.productContextHelp(row, {
+            getProduct: () => ({
+              entryId: 'synthetic-hover',
+              description: 'Synthetic hover product',
+              orderId: '1001',
+              quantity: '10',
+              price: '2.50',
+              thumbnail: 'delayed-photo',
+            }),
+            getRecord: () => ({
+              snapshot: { sellerName: 'Synthetic supplier' },
+            }),
+            loadImage: () =>
+              new Promise((resolve) => {
+                window.resolveHoverImage = resolve
+              }),
+          })
+        } else
+          preparationHelp(
+            row,
+            'A text helper follows the mouse across this row.'
+          )
+      }, rich)
+      const tooltip = page.getByRole('tooltip')
+      await page.mouse.move(80, 80)
+      await expect(tooltip).toBeVisible()
+      await expect(tooltip).toHaveCSS('pointer-events', 'none')
+      const id = await tooltip.getAttribute('id')
+      const first = await tooltip.boundingBox()
+      expect(Math.abs(first.x - 92)).toBeLessThanOrEqual(1)
+      expect(Math.abs(first.y - 92)).toBeLessThanOrEqual(1)
+      await page.mouse.move(180, 140, { steps: 5 })
+      await expect.poll(async () => (await tooltip.boundingBox()).x).toBe(192)
+      const moved = await tooltip.boundingBox()
+      expect(Math.abs(moved.y - 152)).toBeLessThanOrEqual(1)
+      await expect(tooltip).toHaveAttribute('id', id)
+      const point = { x: 972, y: 692 }
+      await page.mouse.move(point.x, point.y, { steps: 5 })
+      await expect
+        .poll(async () => {
+          const box = await tooltip.boundingBox()
+          return Math.round(box.x + box.width)
+        })
+        .toBe(point.x - 12)
+      const edge = await tooltip.boundingBox()
+      expect(edge.x).toBeGreaterThanOrEqual(8)
+      expect(edge.y).toBeGreaterThanOrEqual(8)
+      expect(
+        Math.abs(edge.y + edge.height - (point.y - 12))
+      ).toBeLessThanOrEqual(1)
+      expect(edge.x + edge.width).toBeLessThanOrEqual(992)
+      expect(edge.y + edge.height).toBeLessThanOrEqual(712)
+      if (rich) {
+        await expect(tooltip.locator('img')).toHaveCount(1)
+        await page.evaluate(() =>
+          window.resolveHoverImage('data:image/png;base64,broken')
+        )
+        await expect(tooltip.locator('img')).toHaveCount(0)
+        await expect
+          .poll(async () =>
+            Math.round(
+              (await tooltip.boundingBox()).y +
+                (await tooltip.boundingBox()).height
+            )
+          )
+          .toBe(point.y - 12)
+        const reflowed = await tooltip.boundingBox()
+        expect(reflowed.y).toBeGreaterThan(edge.y)
+      }
+      await expect(page.locator('#large-hover-row')).toHaveAttribute(
+        'data-selected',
+        'true'
+      )
+      await page.mouse.move(5, 5)
+      await expect(tooltip).toHaveCount(0)
+      await page.locator('#large-hover-row').evaluate((row) => {
+        row.style.cssText =
+          'position:fixed;left:30px;top:60px;width:600px;height:120px;'
+      })
+      await page.keyboard.press('Tab')
+      await page.locator('#large-hover-row').focus()
+      await expect(tooltip).toBeVisible()
+      const keyboard = await tooltip.boundingBox()
+      expect(Math.abs(keyboard.x - 30)).toBeLessThanOrEqual(1)
+      expect(Math.abs(keyboard.y - 188)).toBeLessThanOrEqual(1)
+      await page.close()
+    })
+  }
+}
+
+test('moving onto a nested action suppresses its row helper and follows the action’s pointer instead', async ({
+  extension,
+}) => {
+  const page = await helpFixture(extension)
+  await page.evaluate(() => {
+    document.querySelector('dialog').close()
+    const row = document.createElement('div')
+    row.id = 'hover-parent'
+    row.style.cssText =
+      'position:fixed;left:20px;top:20px;width:600px;height:300px;'
+    const action = document.createElement('button')
+    action.id = 'nested-action'
+    action.style.cssText =
+      'position:absolute;left:200px;top:50px;width:180px;height:50px;'
+    action.textContent = 'Nested action'
+    row.append(action)
+    document.body.append(row)
+    preparationHelp(row, 'Row helper')
+    preparationHelp(action, 'Nested action helper')
+  })
+  await page.mouse.move(50, 50)
+  await expect(page.getByRole('tooltip')).toHaveText('Row helper')
+  await page.mouse.move(240, 85)
+  await expect(page.getByRole('tooltip')).toHaveCount(0)
+  await expect(page.getByRole('tooltip')).toHaveText('Nested action helper')
+  await page.mouse.move(280, 100)
+  await expect
+    .poll(async () => (await page.getByRole('tooltip').boundingBox()).x)
+    .toBe(292)
+  await page.mouse.move(5, 5)
+  await expect(page.getByRole('tooltip')).toHaveCount(0)
+  await page.close()
+})
 
 test('hints replace each other and close when a field is removed or its dialog closes', async ({
   extension,

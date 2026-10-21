@@ -23,7 +23,7 @@ export async function workbookCodeImage(
   const canvas = document.createElement('canvas')
   const context = canvas.getContext('2d')
   const scale = 2
-  let fontSize = 22 * scale
+  let fontSize = 16 * scale
   const font = () =>
     `${CE_CODE_DESIGN.fontWeight} ${fontSize}px ${CE_CODE_DESIGN.fontFamily}`
   context.font = font()
@@ -72,18 +72,71 @@ export async function workbookCodeImage(
 }
 
 /** Decode one image at a time and retain only small assets, never original pixels. */
-export function createPackingWorkbookImages(loadImage) {
+export function createPackingWorkbookImages(loadImage, renderCartonMark) {
   const photos = new Map()
+  const marks = new Map()
   return async (row, limits) => {
     const code = limits.code
       ? await workbookCodeImage(row.barcode || row.baseCode, limits.code)
       : undefined
-    if (!limits.photo) return { code }
+    const result = { code }
+    if (
+      limits.mark &&
+      row.baseCode &&
+      row.chineseCategory?.trim() &&
+      renderCartonMark
+    ) {
+      const key = JSON.stringify([row.baseCode, row.chineseCategory])
+      if (!marks.has(key)) {
+        const create = async () => {
+          const blob = await renderCartonMark(row)
+          const image = new Image()
+          const url = URL.createObjectURL(blob)
+          const canvas = document.createElement('canvas')
+          try {
+            image.src = url
+            await image.decode()
+            const scale = Math.min(
+              1,
+              limits.mark.maxWidth / image.naturalWidth,
+              limits.mark.maxHeight / image.naturalHeight
+            )
+            canvas.width = Math.max(1, Math.floor(image.naturalWidth * scale))
+            canvas.height = Math.max(1, Math.floor(image.naturalHeight * scale))
+            const context = canvas.getContext('2d')
+            context.fillStyle = '#fff'
+            context.fillRect(0, 0, canvas.width, canvas.height)
+            context.drawImage(image, 0, 0, canvas.width, canvas.height)
+            return {
+              bytes: await imageBlob(canvas),
+              width: canvas.width,
+              height: canvas.height,
+              mimeType: 'image/png',
+            }
+          } finally {
+            image.removeAttribute('src')
+            URL.revokeObjectURL(url)
+            canvas.width = canvas.height = 0
+          }
+        }
+        if (marks.size >= 24) marks.delete(marks.keys().next().value)
+        const pending = create()
+        marks.set(key, pending)
+        try {
+          await pending
+        } catch (error) {
+          marks.delete(key)
+          throw error
+        }
+      }
+      result.mark = await marks.get(key)
+    }
+    if (!limits.photo) return result
     const edit = row.photoEdits?.[0]
     const source = edit
       ? row.photos?.[0] || row.thumbnail
       : row.thumbnail || row.photos?.[0]
-    if (!source) return { code }
+    if (!source) return result
     const signature = JSON.stringify(edit || {})
     const cached = photos.get(source)
     let photo = cached?.signature === signature ? cached.asset : undefined
@@ -97,28 +150,19 @@ export function createPackingWorkbookImages(loadImage) {
       try {
         image.src = url
         await image.decode()
-        const ratio = Math.min(
-          1,
-          limits.photo.maxWidth / image.naturalWidth,
-          limits.photo.maxHeight / image.naturalHeight
+        canvas.width = canvas.height = Math.min(
+          limits.photo.maxWidth,
+          limits.photo.maxHeight
         )
-        canvas.width = edit
-          ? Math.min(limits.photo.maxWidth, limits.photo.maxHeight)
-          : Math.max(1, Math.round(image.naturalWidth * ratio))
-        canvas.height = edit
-          ? canvas.width
-          : Math.max(1, Math.round(image.naturalHeight * ratio))
         const context = canvas.getContext('2d')
         context.fillStyle = edit?.background || '#fff'
         context.fillRect(0, 0, canvas.width, canvas.height)
-        const rect = edit
-          ? photoPlacement(
-              image.naturalWidth,
-              image.naturalHeight,
-              canvas.width,
-              edit
-            )
-          : { x: 0, y: 0, width: canvas.width, height: canvas.height }
+        const rect = photoPlacement(
+          image.naturalWidth,
+          image.naturalHeight,
+          canvas.width,
+          edit
+        )
         context.drawImage(image, rect.x, rect.y, rect.width, rect.height)
         if (edit?.tags?.length)
           drawPhotoVariantTags(
@@ -143,6 +187,6 @@ export function createPackingWorkbookImages(loadImage) {
       if (photos.size >= 24) photos.delete(photos.keys().next().value)
       photos.set(source, { signature, asset: photo })
     }
-    return { photo, code }
+    return { ...result, photo }
   }
 }

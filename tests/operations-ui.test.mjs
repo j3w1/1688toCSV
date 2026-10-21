@@ -126,10 +126,37 @@ test('empty workflow has one compact accessible affordance and stops row-selecti
   assert.equal(host.querySelectorAll('button').length, 1)
   assert.match(button.getAttribute('aria-label'), /Edit operations/)
   assert.equal(button.querySelector('svg').getAttribute('aria-hidden'), 'true')
+  assert.ok(button.classList.contains('operations-overflow'))
+  assert.equal(button.getAttribute('aria-haspopup'), 'dialog')
   button.click()
   assert.equal(edits, 1)
   assert.equal(selections, 0)
   assert.equal(host.querySelector('table, details'), null)
+})
+
+test('a reserved product action slot preserves existing controls and unwraps cleanly', (t) => {
+  const { document, record } = fixture(t)
+  const row = document.createElement('div')
+  row.className = 'row-preparation'
+  const code = document.createElement('button')
+  const name = document.createElement('span')
+  name.textContent = 'A long variable product name'
+  let copies = 0
+  code.addEventListener('click', () => copies++)
+  row.append(code, name)
+  const controller = mountOperationsStrip(row, { record, entryId: '1' })
+  assert.deepEqual(
+    [...row.querySelector('.operations-row-content').childNodes],
+    [code, name]
+  )
+  assert.ok(row.lastElementChild.classList.contains('operations-strip'))
+  code.click()
+  assert.equal(copies, 1)
+  controller.update(record)
+  assert.equal(row.querySelectorAll('.operations-row-content').length, 1)
+  controller.destroy()
+  assert.deepEqual([...row.childNodes], [code, name])
+  assert.equal(row.classList.contains('operations-row'), false)
 })
 
 test('feature editor supports custom per-piece costs, payment treatment, removal and translations', async (t) => {

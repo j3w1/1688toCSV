@@ -510,7 +510,7 @@ test('52 imported groups use a fitted assignment grid without pagers or main scr
   const cards = review.locator('.packing-review-overview-item')
   await expect(cards).toHaveCount(52)
   await expect(
-    cards.first().locator('.packing-review-overview-name')
+    cards.first().locator('.packing-review-inline .packing-review-source')
   ).toContainText('SYN-1')
   await expect(
     review.getByRole('button', { name: /^(Previous|Next)$/ })
@@ -569,6 +569,10 @@ test('52 imported groups use a fitted assignment grid without pagers or main scr
   for (const width of [720, 390]) {
     await page.setViewportSize({ width, height: 700 })
     await fitted()
+    if (width === 390)
+      await review.screenshot({
+        path: 'work/packing-assignment-grid-narrow.png',
+      })
   }
   await cards.last().locator('.packing-review-overview-select').click()
   await expect(detail).toBeVisible()

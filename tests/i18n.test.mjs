@@ -407,9 +407,7 @@ test('packing menu, pagination, recovery and copy feedback translate their owned
     'Copy label',
     'Could not copy. Try again.',
     'Copy failed. Try again.',
-    'Click to copy this value.',
-    'Click to copy the order number.',
-    'Click to copy the store name.',
+    'Click to copy',
     'Retry',
   ]
   try {

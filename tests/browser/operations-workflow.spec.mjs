@@ -1,5 +1,12 @@
 import { test, expect } from './extension-fixture.mjs'
+import { chromium } from '@playwright/test'
+import { build } from 'esbuild'
+import { fileURLToPath } from 'node:url'
 import { createDemoRecords } from '../../preview/library-fixture.js'
+import {
+  allocatePreparation,
+  createPreparation,
+} from '../../src/packing-model.js'
 
 function snapshot(
   orderId = '1001',
@@ -345,7 +352,10 @@ test('stale combined edits and tied conflicting backups fail atomically', async 
   )
 })
 
-async function openWorkspace(extension, { tags = false } = {}) {
+async function openWorkspace(
+  extension,
+  { tags = false, prepared = false } = {}
+) {
   const [record] = await extension.inspector.evaluate(
     `(${createDemoRecords.toString()})(document)`
   )
@@ -356,20 +366,40 @@ async function openWorkspace(extension, { tags = false } = {}) {
     }
     record.productTagsUpdatedAt = '2026-10-01T12:00:00.000Z'
   }
+  let preparation = {}
+  if (prepared) {
+    record.snapshot.sellerMemberLogin = 'synthetic-action-placement'
+    const draft = createPreparation(record.snapshot, '2026-10')
+    for (const [index, group] of draft.groups.entries()) {
+      group.category = '合成'
+      group.spanishName = ['TAZA', 'CESTA DE ALMACENAMIENTO CON TAPA', 'CAJA'][
+        index
+      ]
+    }
+    const allocated = allocatePreparation(draft, [], [], {
+      snapshot: record.snapshot,
+    })
+    preparation = {
+      preparations: [{ ...allocated.preparation, revision: 1 }],
+      allocations: allocated.allocations,
+      issuedCodes: allocated.issuedCodes,
+    }
+  }
   const restored = await extension.inspector.evaluate(
-    (record) =>
+    ({ record, preparation }) =>
       chrome.runtime.sendMessage({
         type: 'BACKUP_RESTORE',
         backup: {
           format: '1688-order-library',
-          version: 1,
+          version: preparation.preparations ? 3 : 1,
           exportedAt: new Date().toISOString(),
           orders: [record],
           history: [],
           images: [],
+          ...preparation,
         },
       }),
-    record
+    { record, preparation }
   )
   expect(restored.ok, restored.error).toBe(true)
   const page = await extension.context.newPage()
@@ -382,6 +412,113 @@ async function openWorkspace(extension, { tags = false } = {}) {
   )
   return { page, record }
 }
+
+test('workflow ellipses keep a reserved trailing column across variable names, cards and packing rows', async ({
+  extension,
+}) => {
+  const { page } = await openWorkspace(extension, { prepared: true })
+  for (const width of [1280, 820, 375]) {
+    await page.setViewportSize({ width, height: 960 })
+    const rows = await page
+      .locator('#sheet-body .row-preparation')
+      .evaluateAll((bars) =>
+        bars.map((bar) => {
+          const bounds = bar.getBoundingClientRect()
+          const content = bar
+            .querySelector('.operations-row-content')
+            .getBoundingClientRect()
+          const action = bar
+            .querySelector('.operations-overflow')
+            .getBoundingClientRect()
+          return {
+            right: action.right,
+            endGap: bounds.right - action.right,
+            gap: action.left - content.right,
+            height: action.height,
+            width: action.width,
+            contentOverflows:
+              bar.querySelector('.operations-row-content').scrollWidth >
+              bar.querySelector('.operations-row-content').clientWidth,
+          }
+        })
+      )
+    expect(rows).toHaveLength(3)
+    expect(
+      Math.max(...rows.map((row) => row.right)) -
+        Math.min(...rows.map((row) => row.right))
+    ).toBeLessThanOrEqual(1)
+    for (const row of rows) {
+      expect(row.endGap).toBeLessThanOrEqual(1)
+      expect(row.gap).toBeGreaterThanOrEqual(7)
+      expect(row.height).toBe(24)
+      expect(row.width).toBe(24)
+      expect(row.contentOverflows).toBe(false)
+    }
+    const card = page.locator('.order-card').first()
+    const ends = []
+    for (const title of ['A', 'Synthetic store with a longer display name']) {
+      await card.locator('.order-seller').evaluate((node, title) => {
+        node.textContent = title
+      }, title)
+      const bounds = await card.locator('.operations-overflow').boundingBox()
+      ends.push(bounds.x + bounds.width)
+    }
+    expect(Math.abs(ends[0] - ends[1])).toBeLessThanOrEqual(1)
+    const first = page.locator('#sheet-body .operations-overflow').first()
+    await first.focus()
+    await expect(first).toBeFocused()
+    await expect(first).toHaveAttribute('aria-haspopup', 'dialog')
+  }
+  await page.setViewportSize({ width: 1280, height: 960 })
+  await page.locator('#packing-month').fill('2026-10')
+  await page
+    .getByRole('button', { name: 'Prepare packing list', exact: true })
+    .click()
+  const packing = page.locator('#packing-view')
+  await expect(packing).toBeVisible()
+  for (const width of [1280, 375]) {
+    await page.setViewportSize({ width, height: 960 })
+    const headings = await packing
+      .locator('.variant-heading')
+      .evaluateAll((nodes) =>
+        nodes.map((heading) => {
+          const bounds = heading.getBoundingClientRect()
+          const workflow = heading
+            .querySelector('.variant-workflow')
+            .getBoundingClientRect()
+          const action = heading
+            .querySelector('.operations-overflow')
+            .getBoundingClientRect()
+          const editors = [...heading.querySelectorAll('input')].map((input) =>
+            input.getBoundingClientRect()
+          )
+          return {
+            endGap: bounds.right - workflow.right,
+            height: action.height,
+            overlaps: editors.some(
+              (input) =>
+                input.left < action.right &&
+                input.right > action.left &&
+                input.top < action.bottom &&
+                input.bottom > action.top
+            ),
+            overflows: heading.scrollWidth > heading.clientWidth,
+          }
+        })
+      )
+    expect(headings.length).toBeGreaterThan(1)
+    for (const heading of headings) {
+      expect(heading.endGap).toBeLessThanOrEqual(1)
+      expect(heading.height).toBe(24)
+      expect(heading.overlaps).toBe(false)
+      expect(heading.overflows).toBe(false)
+    }
+  }
+  await packing.screenshot({
+    path: test.info().outputPath('workflow-trailing-actions.png'),
+  })
+  await page.close()
+})
 
 test('order and product status controls stay compact, save exceptions and preserve selection', async ({
   extension,
@@ -600,4 +737,312 @@ test('Settings migration shows reviewed conversions and keeps unresolved tags', 
   expect(Object.values(backup.data.orders[0].productTags)[0]).toEqual([
     'Descriptivo',
   ])
+})
+
+test('workflow scope tabs, status pills, quick dates and source amounts keep compact popup-only sizes', async ({
+  extension,
+}) => {
+  const { page, record } = await openWorkspace(extension),
+    before = await extension.inspector.evaluate(() =>
+      chrome.runtime.sendMessage({ type: 'BACKUP_EXPORT' })
+    )
+  for (const language of ['en', 'es', 'zh']) {
+    await page.locator(`#language-toggle [data-language=${language}]`).click()
+    await page.locator('.order-card .operations-strip button').first().click()
+    const dialog = page.locator('.operations-dialog'),
+      panel = dialog.locator('.operations-panel:visible'),
+      delay = panel.locator('[data-field="delay-state"]')
+    await delay.locator('input[value="delayed"]').locator('..').click()
+    await panel
+      .locator('[data-field="warehouse-state"] input[value="partial"]')
+      .locator('..')
+      .click()
+    await panel
+      .locator('[data-field="missing-labels"] input[value="false"]')
+      .locator('..')
+      .click()
+    await expect(delay.locator('input[value="delayed"]')).toBeChecked()
+    await expect(
+      delay.locator('input:checked + span .operations-choice-marker')
+    ).toBeVisible()
+    await page.keyboard.press('Tab')
+    await delay.locator('input[value="delayed"]').focus()
+    expect(
+      await delay
+        .locator('input:checked + span')
+        .evaluate((node) => getComputedStyle(node).outlineWidth)
+    ).toBe('2px')
+    await page.keyboard.press('ArrowLeft')
+    await expect(delay.locator('input[value="none"]')).toBeChecked()
+    await page.keyboard.press('ArrowRight')
+    await expect(delay.locator('input[value="delayed"]')).toBeChecked()
+    for (const width of [1280, 390]) {
+      await page.setViewportSize({ width, height: 960 })
+      const sizes = await dialog.evaluate((dialog) => {
+        const boxes = (selector) =>
+          [...dialog.querySelectorAll(selector)]
+            .map((node) => node.getBoundingClientRect())
+            .filter(({ height }) => height > 0)
+            .map(({ height }) => height)
+        return {
+          input: {
+            coarse: matchMedia('(pointer: coarse)').matches,
+            hover: matchMedia('(any-hover: hover)').matches,
+          },
+          tabs: boxes('.operations-tabs button'),
+          choices: boxes('.operations-option > span'),
+          dates: boxes('.operations-date-shortcuts button'),
+          sources: boxes('.operations-source-actions button'),
+          footer: boxes('.operations-actions button'),
+          overflow: dialog.scrollWidth > dialog.clientWidth,
+          sourceBackgrounds: [
+            ...dialog.querySelectorAll(
+              '.operations-panel:not([hidden]) .operations-source-actions button'
+            ),
+          ].map((node) => getComputedStyle(node).backgroundColor),
+        }
+      })
+      expect(sizes.input.coarse).toBe(false)
+      expect(sizes.overflow).toBe(false)
+      for (const height of [...sizes.tabs, ...sizes.choices]) {
+        expect(height).toBeGreaterThanOrEqual(24)
+        expect(height).toBeLessThanOrEqual(30)
+      }
+      expect(sizes.dates.length).toBeGreaterThan(0)
+      expect(sizes.sources).toHaveLength(2)
+      for (const height of [...sizes.dates, ...sizes.sources]) {
+        expect(height).toBeGreaterThanOrEqual(22)
+        expect(height).toBeLessThanOrEqual(26)
+      }
+      for (const height of sizes.footer) expect(height).toBeLessThanOrEqual(32)
+      expect(sizes.sourceBackgrounds).toEqual([
+        'rgba(0, 0, 0, 0)',
+        'rgba(0, 0, 0, 0)',
+      ])
+      if (language === 'en') {
+        await panel.locator('[name="labels-dispatched-on"]').focus()
+        await page.mouse.move(1, 1)
+        await dialog.locator('.operations-body').evaluate((body) => {
+          body.scrollTop = 0
+        })
+        await dialog.screenshot({
+          path: `work/operations-controls-${width === 1280 ? 'wide' : 'narrow'}.png`,
+        })
+      }
+    }
+    if (language === 'en') {
+      const date = panel.locator('[name="labels-dispatched-on"]'),
+        actions = date.locator('..').locator('.operations-date-shortcuts')
+      await actions.getByRole('button', { name: 'Today', exact: true }).click()
+      const today = await date.inputValue()
+      expect(today).toMatch(/^\d{4}-\d{2}-\d{2}$/)
+      await actions
+        .getByRole('button', { name: 'Yesterday', exact: true })
+        .click()
+      expect(await date.inputValue()).not.toBe(today)
+      await actions.getByRole('button', { name: 'Clear', exact: true }).click()
+      await expect(date).toHaveValue('')
+      await panel
+        .locator('[name="refund-actualPaid"]')
+        .locator('..')
+        .locator('.operations-source-actions button')
+        .click()
+      await expect(panel.locator('[name="refund-actualPaid"]')).toHaveValue(
+        record.snapshot.totals.payable
+      )
+    }
+    await dialog
+      .locator('.operations-actions > button[type="button"]')
+      .last()
+      .click()
+    await expect(dialog).toHaveCount(0)
+  }
+  const after = await extension.inspector.evaluate(() =>
+    chrome.runtime.sendMessage({ type: 'BACKUP_EXPORT' })
+  )
+  expect(after.data.orders).toEqual(before.data.orders)
+})
+
+test('touch-only workflow controls retain larger targets without changing compact desktop or trailing row controls', async ({
+  extension,
+}) => {
+  const { page } = await openWorkspace(extension),
+    session = await extension.context.newCDPSession(page)
+  await session.send('Emulation.setTouchEmulationEnabled', {
+    enabled: true,
+    maxTouchPoints: 1,
+  })
+  expect(
+    await page.evaluate(
+      () => matchMedia('(pointer: coarse) and (any-hover: none)').matches
+    )
+  ).toBe(true)
+  await page.locator('.order-card .operations-strip button').first().click()
+  const dialog = page.locator('.operations-dialog')
+  const heights = await dialog.evaluate((dialog) =>
+    [
+      ...dialog.querySelectorAll(
+        '.operations-tabs button, .operations-option > span, .operations-date-shortcuts button, .operations-source-actions button, .operations-actions button'
+      ),
+    ]
+      .map((node) => node.getBoundingClientRect().height)
+      .filter((height) => height > 0)
+  )
+  expect(heights.length).toBeGreaterThan(10)
+  for (const height of heights) expect(height).toBeGreaterThanOrEqual(48)
+  await dialog
+    .locator('.operations-actions > button[type="button"]')
+    .last()
+    .click()
+  const overflow = page.locator('.order-card .operations-overflow').first()
+  const bounds = await overflow.boundingBox()
+  expect(bounds.height).toBeLessThanOrEqual(26)
+  await session.detach()
+})
+
+test('packing order-header ellipses stay square and trailing with baseline and touch pointers', async ({
+  extension,
+}) => {
+  const { page } = await openWorkspace(extension, { prepared: true })
+  await page.locator('#packing-month').fill('2026-10')
+  await page
+    .getByRole('button', { name: 'Prepare packing list', exact: true })
+    .click()
+  const packing = page.locator('#packing-view'),
+    session = await extension.context.newCDPSession(page)
+  await expect(packing).toBeVisible()
+  for (const touchOnly of [false, true]) {
+    if (touchOnly)
+      await session.send('Emulation.setTouchEmulationEnabled', {
+        enabled: true,
+        maxTouchPoints: 1,
+      })
+    const coarse = await page.evaluate(
+      () => matchMedia('(pointer: coarse)').matches
+    )
+    if (touchOnly) expect(coarse).toBe(true)
+    for (const width of [1280, 820, 375]) {
+      await page.setViewportSize({ width, height: 960 })
+      const controls = await packing
+        .locator('.packing-order-header .operations-overflow')
+        .evaluateAll((buttons) =>
+          buttons.map((button) => {
+            const box = button.getBoundingClientRect(),
+              title = button.closest('h2').getBoundingClientRect(),
+              style = getComputedStyle(button)
+            return {
+              width: box.width,
+              height: box.height,
+              endGap: title.right - box.right,
+              padding: style.paddingBlockStart,
+              minHeight: style.minHeight,
+            }
+          })
+        )
+      expect(controls.length).toBeGreaterThan(0)
+      for (const control of controls) {
+        expect(control.width).toBe(coarse ? 26 : 24)
+        expect(control.height).toBe(coarse ? 26 : 24)
+        expect(control.endGap).toBeLessThanOrEqual(1)
+      }
+    }
+  }
+  await packing
+    .locator('.packing-order-header')
+    .first()
+    .screenshot({ path: 'work/packing-order-overflow-coarse.png' })
+  await session.detach()
+})
+
+test('native hybrid input keeps Operations compact and packing order-header ellipses square', async () => {
+  const script = await build({
+    stdin: {
+      contents: `export { openOperationsDialog, mountOperationsStrip } from './operations-ui.js';`,
+      resolveDir: fileURLToPath(new URL('../../src/', import.meta.url)),
+    },
+    bundle: true,
+    format: 'iife',
+    globalName: 'Operations',
+    write: false,
+  })
+  const styles = await Promise.all(
+    ['library', 'operations', 'packing', 'shell'].map(async (name) => {
+      const result = await build({
+        entryPoints: [
+          fileURLToPath(new URL(`../../dist/${name}.css`, import.meta.url)),
+        ],
+        bundle: true,
+        write: false,
+      })
+      return result.outputFiles[0].text
+    })
+  )
+  const browser = await chromium.launch({
+    channel: process.env.EXTENSION_TEST_CHANNEL || 'chromium',
+    headless: true,
+    args: [
+      '--blink-settings=primaryPointerType=2,availablePointerTypes=6,primaryHoverType=1,availableHoverTypes=2',
+    ],
+  })
+  try {
+    const page = await browser.newPage({
+      viewport: { width: 1280, height: 960 },
+    })
+    await page.route('https://operations-fixture.test/', (route) =>
+      route.fulfill({
+        contentType: 'text/html',
+        body: '<!doctype html><html lang="en"><head><meta name="color-scheme" content="dark"></head><body><section id="packing-view" class="preparation-workspace"><header class="packing-order-header"><h2>Synthetic hybrid store</h2></header></section></body></html>',
+      })
+    )
+    await page.goto('https://operations-fixture.test/')
+    for (const content of styles) await page.addStyleTag({ content })
+    await page.addScriptTag({ content: script.outputFiles[0].text })
+    expect(
+      await page.evaluate(() => ({
+        coarse: matchMedia('(pointer: coarse)').matches,
+        fine: matchMedia('(any-pointer: fine)').matches,
+        hover: matchMedia('(any-hover: hover)').matches,
+        touchOnly: matchMedia('(any-hover: none)').matches,
+      }))
+    ).toEqual({ coarse: true, fine: true, hover: true, touchOnly: false })
+    await page.evaluate((snapshot) => {
+      window.hybridRecord = { snapshot }
+      Operations.mountOperationsStrip(document.querySelector('h2'), {
+        record: window.hybridRecord,
+        onEdit() {},
+      })
+    }, snapshot())
+    const header = page.locator('.packing-order-header .operations-overflow'),
+      bounds = await header.boundingBox()
+    expect(bounds.width).toBe(26)
+    expect(bounds.height).toBe(26)
+    await page.evaluate(() => {
+      void Operations.openOperationsDialog({
+        record: window.hybridRecord,
+        repository: {},
+      })
+    })
+    const dialog = page.locator('.operations-dialog')
+    await expect(dialog).toBeVisible()
+    const sizes = await dialog.evaluate((dialog) => {
+      const heights = (selector) =>
+        [...dialog.querySelectorAll(selector)]
+          .map((node) => node.getBoundingClientRect().height)
+          .filter((height) => height > 0)
+      return {
+        tabs: heights('.operations-tabs button'),
+        choices: heights('.operations-option > span'),
+        shortcuts: heights('.operations-shortcut'),
+        footer: heights('.operations-actions button'),
+      }
+    })
+    for (const height of [...sizes.tabs, ...sizes.choices])
+      expect(height).toBeLessThanOrEqual(30)
+    for (const height of sizes.shortcuts) expect(height).toBeLessThanOrEqual(26)
+    for (const height of sizes.footer) expect(height).toBeLessThanOrEqual(32)
+    await dialog.locator('input[name="labels-dispatched-on"]').focus()
+    await dialog.screenshot({ path: 'work/operations-controls-hybrid.png' })
+  } finally {
+    await browser.close()
+  }
 })

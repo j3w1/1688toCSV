@@ -9,7 +9,10 @@ async function backup(extension) {
   return response.data
 }
 
-async function openOrders(extension, { missingSeller = false } = {}) {
+async function openOrders(
+  extension,
+  { missingSeller = false, oneGroup = false } = {}
+) {
   const [record] = await extension.inspector.evaluate(
     `(${createDemoRecords.toString()})(document)`
   )
@@ -23,13 +26,19 @@ async function openOrders(extension, { missingSeller = false } = {}) {
   if (missingSeller) record.snapshot.sellerUnavailable = true
   else delete record.snapshot.sellerUnavailable
   for (const [index, item] of record.snapshot.items.entries()) {
-    item.title = index < 2 ? '合成玻璃罐' : '合成收纳盒'
-    item.productNumber = index < 2 ? 'SYNTHETIC-JAR' : 'SYNTHETIC-BOX'
+    const jar = oneGroup || index < 2,
+      size = oneGroup
+        ? `${300 + index * 200}ml`
+        : index === 0
+          ? '300ml'
+          : '500ml'
+    item.title = jar ? '合成玻璃罐' : '合成收纳盒'
+    item.productNumber = jar ? 'SYNTHETIC-JAR' : 'SYNTHETIC-BOX'
     item.skuProperties = [
       { label: '颜色', value: '透明' },
-      { label: '尺寸', value: index === 0 ? '300ml' : '500ml' },
+      { label: '尺寸', value: size },
     ]
-    item.description = `${item.title}\n颜色：透明\n尺寸：${index === 0 ? '300ml' : '500ml'}`
+    item.description = `${item.title}\n颜色：透明\n尺寸：${size}`
   }
   const restored = await extension.inspector.evaluate(
     (record) =>
@@ -71,6 +80,49 @@ function expectPackingUnchanged(actual, before) {
   for (const key of ['preparations', 'allocations', 'issuedCodes', 'orders'])
     expect(actual[key]).toEqual(before[key])
 }
+
+test('one group with three selected variants shows every full code inline and Assign only saves exactly that proposal', async ({
+  extension,
+}) => {
+  const { page, record, view } = await openOrders(extension, { oneGroup: true })
+  await page.setViewportSize({ width: 1440, height: 1000 })
+  await page.locator('#select-rows').click()
+  const before = await backup(extension),
+    review = await reviewSelection(page)
+  await expect(review.locator('.packing-review-item')).toHaveCount(1)
+  await expect(review).toHaveAttribute('data-review-layout', 'expanded')
+  const inline = review.locator('.packing-review-inline'),
+    codes = await inline.locator('.packing-value-after code').allTextContents()
+  expect(codes).toHaveLength(4)
+  expect(codes[0]).toMatch(/^CE2610\d{4}$/)
+  for (const code of codes.slice(1))
+    expect(code).toMatch(new RegExp(`^${codes[0]}[A-Z0-9]+$`))
+  for (const code of await inline.locator('.packing-value-after code').all()) {
+    await expect(code).toBeInViewport()
+    await expect(code.locator('[data-code-part="product"]')).toHaveCount(1)
+  }
+  expectPackingUnchanged(await backup(extension), before)
+  await review.screenshot({
+    path: 'work/adaptive-assignment-real-three-variants.png',
+  })
+  await review.locator('[data-action="review-assign-only"]').click()
+  await expect(view).toBeHidden()
+  const after = await backup(extension)
+  expect(after.orders).toEqual(before.orders)
+  expect(after.preparations).toHaveLength(1)
+  expect(after.preparations[0].groups).toHaveLength(1)
+  const group = after.preparations[0].groups[0]
+  expect(group.baseCode).toBe(codes[0])
+  expect(
+    group.variants.map(
+      (variant) =>
+        `${group.baseCode}${variant.variantSuffix}${variant.sizeSuffix}`
+    )
+  ).toEqual(codes.slice(1))
+  expect(group.variants.flatMap((variant) => variant.entryIds).sort()).toEqual(
+    record.snapshot.items.map((item) => item.entryId).sort()
+  )
+})
 
 test('one new product reviews its proposed code and helpers before saving; cancel reserves nothing and an assigned reopen needs no review', async ({
   extension,

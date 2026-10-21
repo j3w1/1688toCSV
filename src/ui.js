@@ -3,7 +3,6 @@ import {
   bindText,
   bindAttribute,
   isMessage,
-  t,
   getLocale,
   getLanguage,
   onLanguageChange,
@@ -43,7 +42,6 @@ export function copyTextButton(
   value,
   { label = 'Copy text', className = '' } = {}
 ) {
-  const sourceLabel = isMessage(label) ? label.source : label
   const button = element(
     'button',
     String(value ?? ''),
@@ -58,18 +56,7 @@ export function copyTextButton(
       1: value,
     })
   )
-  preparationHelp(
-    button,
-    className.split(/\s+/).includes('ce-code')
-      ? () => `${t('Click to copy this value.')} ${t(CODE_READING_HELP)}`
-      : uiMessage(
-          sourceLabel === 'Copy order number'
-            ? 'Click to copy the order number.'
-            : sourceLabel === 'Copy store name'
-              ? 'Click to copy the store name.'
-              : 'Click to copy this value.'
-        )
-  )
+  preparationHelp(button, uiMessage('Click to copy'))
   const status = element('span', undefined, 'copy-text-feedback')
   status.setAttribute('role', 'status')
   status.setAttribute('aria-live', 'polite')

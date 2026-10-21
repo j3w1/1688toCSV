@@ -126,6 +126,13 @@ try {
     .waitFor()
   await group.getByAltText('Carton mark preview').waitFor()
   await group.getByAltText('Barcode preview').first().waitFor()
+  const packingPreviews = page.locator(
+    '#packing-view .preparation-label-preview img:not([hidden])'
+  )
+  await expect(packingPreviews).toHaveCount(6)
+  await packingPreviews.evaluateAll((images) =>
+    Promise.all(images.map((image) => image.decode()))
+  )
   await page.locator('#packing-view h1').click()
   await page.mouse.move(0, 0)
   await page
@@ -185,6 +192,10 @@ try {
     .locator('#settings-dialog')
     .screenshot({ path: 'screenshots/settings.png' })
   await page.getByRole('tab', { name: 'Appearance', exact: true }).click()
+  for (const mode of ['Light', 'Dark'])
+    await page
+      .getByLabel(`${mode} palette`, { exact: true })
+      .selectOption('classic-brown')
   await page.mouse.move(0, 0)
   await page
     .locator('#settings-dialog')

@@ -11,6 +11,7 @@ import {
 const detailOrigin = 'https://air.1688.com'
 const detailPath = '/app/ctf-page/trade-order-detail/index.html'
 const amountPattern = '(?:\\d{1,3}(?:,\\d{3})+|\\d+)(?:\\.\\d+)?'
+const orderDiscountLabels = new Set(['店铺优惠', '活动优惠', '跨店满减'])
 const text = (node) => node?.textContent?.trim() || ''
 const compact = (value) => value.replace(/\s+/g, '')
 
@@ -169,12 +170,15 @@ function readTotals(appQuery) {
       if (/^(?:减少|增加|减|增|加|[+−-])/.test(value.trim()))
         totals.orderAdjustment = readAmount(value, label, { signed: true })
       else unsignedAdjustment = readAmount(value, label)
-    } else if (label.includes('优惠') || label === '元宝') {
+    } else if (
+      label.includes('优惠') ||
+      label === '元宝' ||
+      orderDiscountLabels.has(label)
+    ) {
       const discount = readAmount(value, label, { signed: true })
       if (discount < 0n) throw new Error(`${label} is not a reduction.`)
       totals.sourceDiscount += discount
-      if (['店铺优惠', '活动优惠'].includes(label))
-        orderEligibleDiscount += discount
+      if (orderDiscountLabels.has(label)) orderEligibleDiscount += discount
       if (label === '批发优惠') wholesaleDiscount += discount
     } else
       throw Object.assign(new Error(`Unsupported order total: ${label}.`), {

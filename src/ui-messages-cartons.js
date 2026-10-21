@@ -1,4 +1,16 @@
 export const CARTON_MESSAGES = {
+  'Edit Pcs/box in Orders': {
+    zh: '在订单中编辑每箱件数',
+    es: 'Editar unidades por caja en Pedidos',
+  },
+  'Edit in Orders. Packing changes save first.': {
+    zh: '前往订单编辑，先保存装箱更改。',
+    es: 'Edita en Pedidos. Primero se guardan los cambios de empaque.',
+  },
+  'Source product unavailable in Orders.': {
+    zh: '订单中已找不到原始商品。',
+    es: 'Producto original no disponible en Pedidos.',
+  },
   Planned: { zh: '计划', es: 'Previstas' },
   Loaded: { zh: '装柜', es: 'Cargadas' },
   'Received boxes': { zh: '实收箱数', es: 'Cajas recibidas' },
@@ -43,6 +55,7 @@ export const CARTON_MESSAGES = {
   },
   Unknown: { zh: '未知', es: 'Desconocido' },
   'Pcs/box': { zh: '每箱件数', es: 'Pzas/caja' },
+  '/box': { zh: '/箱', es: '/ctn' },
   'kg/box': { zh: '千克/箱', es: 'kg/caja' },
   'm³/box': { zh: '立方米/箱', es: 'm³/caja' },
   'Carton measurements changed in another tab. Reload before saving your edits.':
@@ -90,10 +103,10 @@ export const CARTON_MESSAGES = {
     zh: '{0} 个整箱 + {1} 件余量 · 请确认装箱',
     es: '{0} cajas completas + {1} unidades sueltas · Revisar empaque',
   },
-  'Units packed inside one full carton. Leave blank if unknown. Saves automatically; leftovers need packing review. This does not change the ordered quantity.':
+  'Units per full carton. Blank: unknown. Saves automatically; review loose units.':
     {
-      zh: '一个整箱内的商品件数。不确定时留空。自动保存；余量需要确认装箱方式。不会更改订购数量。',
-      es: 'Unidades dentro de una caja completa. Déjalo vacío si no lo sabes. Se guarda automáticamente; los sobrantes requieren revisión. No cambia la cantidad pedida.',
+      zh: '每个整箱的件数。留空表示未知，自动保存；余量需确认。',
+      es: 'Unidades por caja completa. En blanco: desconocido. Guardado automático; revisa los sobrantes.',
     },
   'Pcs/box: {0} · {1}': {
     zh: '每箱件数：{0} · {1}',

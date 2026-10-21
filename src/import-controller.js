@@ -220,6 +220,7 @@ export function createImportController({
       if (order.state === 'failed')
         Object.assign(order, { state: 'pending', error: '' })
     job.state = 'running'
+    job.readerReopens = 0
     delete job.dismissedAt
     job.error = ''
     job.attention = null
@@ -310,6 +311,18 @@ export function createImportController({
     return null
   }
 
+  async function reopenReader(job) {
+    if ((job.readerReopens || 0) >= 2)
+      throw new Error(
+        'The browser repeatedly closed the import tab. Resume to try again.'
+      )
+    job.readerReopens = (job.readerReopens || 0) + 1
+    job.workerTabId = null
+    job.detailNavigationPending = false
+    await write(job)
+    return 'continue'
+  }
+
   async function details(job) {
     const order = job.orders.find((item) => item.state === 'pending')
     if (!order) {
@@ -334,7 +347,7 @@ export function createImportController({
       return 'wait'
     }
     const tab = await browser.getDetailTab(job.workerTabId, job.id)
-    if (!tab) throw new Error('The import tab was closed. Resume to reopen it.')
+    if (!tab) return reopenReader(job)
     if (
       !job.detailNavigationPending &&
       job.currentOrderId &&
@@ -364,7 +377,16 @@ export function createImportController({
         job.detailStage = 'loading'
         await write(job)
       }
-      await browser.navigateDetailTab(job.workerTabId, order.sourceUrl, job.id)
+      try {
+        await browser.navigateDetailTab(
+          job.workerTabId,
+          order.sourceUrl,
+          job.id
+        )
+      } catch (error) {
+        if (error.readerMissing) return reopenReader(job)
+        throw error
+      }
       job.detailNavigationPending = false
       await write(job)
       return 'wait'
@@ -408,6 +430,7 @@ export function createImportController({
       })
       saved = true
       order.state = 'done'
+      job.readerReopens = 0
       order.error = ''
       order.savedRows = snapshot.items.length
       job.detailError = ''

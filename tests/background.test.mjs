@@ -834,6 +834,86 @@ test('reader navigation failures do not create more tabs and total API failure r
   assert.equal(blocked.saved.size, 0)
 })
 
+test('refresh bypasses phantom background and window tab IDs without pausing', async () => {
+  const s = setup()
+  s.saved.set('10001', {
+    snapshot: { orderId: '10001', sourceUrl: url('10001'), items: [{}] },
+  })
+  const create = s.chrome.tabs.create,
+    update = s.chrome.tabs.update,
+    methods = []
+  s.chrome.tabs.create = async (options) => {
+    methods.push(options.active ? 'visible' : 'background')
+    if (!options.active)
+      return { id: 801538846, url: 'about:blank', status: 'loading' }
+    return create(options)
+  }
+  s.chrome.tabs.update = async (id, options) => {
+    if (!s.tabs.has(id)) throw new Error(`No tab with id: ${id}.`)
+    return update(id, options)
+  }
+  s.chrome.windows = {
+    async create(options) {
+      methods.push('window')
+      return { tabs: [{ id: 801538847, url: options.url }] }
+    },
+  }
+  const response = await s.send({ type: 'REFRESH_ORDERS', orderIds: ['10001'] })
+  await settle()
+  const job = () => s.jobs.get(response.data.id)
+  assert.deepEqual(methods, ['background', 'window', 'visible'])
+  assert.equal(job().state, 'running')
+  assert.equal(job().visibleReader, true)
+  const reader = job().workerTabId
+  s.tabs.get(reader).status = 'complete'
+  s.chrome.tabs.onUpdated.emit(reader, { status: 'complete' })
+  await settle()
+  assert.equal(job().state, 'completed')
+  assert.equal(job().completed, 1)
+})
+
+test('a vanished reader ID is replaced without losing pending orders and repeated loss stays bounded', async () => {
+  const s = setup({ orderIds: ['10001', '10002'] })
+  const response = await s.send(
+    { type: 'IMPORT_START', scope: 'selected', orderIds: ['10001', '10002'] },
+    sender
+  )
+  await settle()
+  const job = () => s.jobs.get(response.data.id)
+  const previous = job().workerTabId
+  s.tabs.delete(previous)
+  s.chrome.alarms.onAlarm.emit({ name: 'order-import' })
+  await settle()
+  assert.notEqual(job().workerTabId, previous)
+  assert.equal(job().state, 'running')
+  assert.equal(job().completed, 0)
+  for (const orderId of ['10001', '10002']) {
+    const reader = job().workerTabId
+    assert.equal(detailUrl(s.tabs.get(reader).url), url(orderId))
+    s.tabs.get(reader).status = 'complete'
+    s.chrome.tabs.onUpdated.emit(reader, { status: 'complete' })
+    await settle()
+  }
+  assert.equal(job().state, 'completed')
+  assert.equal(s.saved.size, 2)
+  const unstable = setup()
+  const started = await unstable.send(
+    { type: 'IMPORT_START', scope: 'selected', orderIds: ['10001'] },
+    sender
+  )
+  await settle()
+  for (let attempt = 0; attempt < 3; attempt++) {
+    unstable.tabs.delete(unstable.jobs.get(started.data.id).workerTabId)
+    unstable.chrome.alarms.onAlarm.emit({ name: 'order-import' })
+    await settle()
+  }
+  const stopped = unstable.jobs.get(started.data.id)
+  assert.equal(stopped.state, 'paused')
+  assert.match(stopped.error, /repeatedly closed/)
+  assert.equal(unstable.calls.filter(([type]) => type === 'create').length, 3)
+  assert.equal(unstable.saved.size, 0)
+})
+
 test('a browser that rejects background tabs can still read in an unfocused window', async () => {
   const s = setup({ orderIds: ['10001'], rejectInactive: true })
   const windows = []

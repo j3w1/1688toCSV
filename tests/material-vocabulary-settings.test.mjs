@@ -18,6 +18,7 @@ import {
   validatePackingPreferences,
 } from '../src/packing-model.js'
 import { validateBackup } from '../src/database.js'
+import { virtualTableDom } from './virtual-table-dom.mjs'
 
 const rule = (index) => ({
   id: `material-${index}`,
@@ -49,6 +50,7 @@ function setup(t, materialVocabulary) {
     if (previous) Object.defineProperty(globalThis, 'document', previous)
     else delete globalThis.document
   })
+  const flush = virtualTableDom(t, window)
   const value = materialVocabulary === undefined ? {} : { materialVocabulary },
     host = document.querySelector('section'),
     editor = mountMaterialVocabulary(host, value)
@@ -56,7 +58,9 @@ function setup(t, materialVocabulary) {
     [...host.querySelectorAll('button')].find(
       (node) => (node.getAttribute('aria-label') || node.textContent) === label
     )
-  const rows = () => [...host.querySelectorAll('tbody tr')]
+  const rows = () => [
+    ...host.querySelectorAll('tbody tr:not(.virtual-table-spacer)'),
+  ]
   const fill = (input, text) => {
     input.value = text
     input.dispatchEvent(new window.Event('input', { bubbles: true }))
@@ -67,6 +71,7 @@ function setup(t, materialVocabulary) {
     host,
     value,
     editor,
+    flush,
     button,
     rows,
     fill,
@@ -232,20 +237,19 @@ test('changing recognition rules refreshes suggestions and keeps authored materi
   }
 })
 
-test('material settings show a detached defaults draft bounded to eight rules', (t) => {
+test('material settings show all small defaults in a detached draft without a pager', (t) => {
   const { value, rows, button, host } = setup(t)
-  assert.equal(rows().length, 8)
+  assert.equal(rows().length, 84)
   assert.notEqual(value.materialVocabulary, MATERIAL_VOCABULARY)
   assert.notEqual(
     value.materialVocabulary[0].aliases,
     MATERIAL_VOCABULARY[0].aliases
   )
-  assert.equal(button('Previous material rules').disabled, true)
-  button('Next material rules').click()
-  assert.equal(rows().length, 8)
+  assert.equal(button('Previous material rules'), undefined)
+  assert.equal(button('Next material rules'), undefined)
   assert.equal(
-    host.querySelector('.vocabulary-navigation [role=status]').textContent,
-    '9–16 of 84 rules'
+    host.querySelector('.vocabulary-status [role=status]').textContent,
+    '84 rules'
   )
   assert.equal(
     host.querySelector('.vocabulary-scroll').getAttribute('role'),
@@ -253,14 +257,14 @@ test('material settings show a detached defaults draft bounded to eight rules', 
   )
 })
 
-test('material settings edits survive paging and translated search without saving', (t) => {
+test('material settings edits survive translated search without saving', (t) => {
   const { value, rows, button, fill, search, editor } = setup(t)
   const first = rows()[0]
   fill(first.querySelector('[name=aliases]'), '晶透新材质|glass')
   fill(first.querySelector('[name=en]'), 'Clear glass')
   fill(first.querySelector('[name=es]'), 'Vidrio claro')
-  button('Next material rules').click()
-  button('Previous material rules').click()
+  fill(search, 'unmatched')
+  fill(search, '')
   assert.equal(rows()[0].querySelector('[name=en]').value, 'Clear glass')
   fill(search, 'Vidrio claro')
   assert.equal(rows().length, 1)
@@ -294,31 +298,27 @@ test('adding clears search and removing returns to the prior material draft', (t
   assert.deepEqual(value.materialVocabulary, rules)
 })
 
-test('invalid material aliases on another page are revealed and stay editable', (t) => {
-  const rules = Array.from({ length: 10 }, (_, index) => rule(index))
-  rules[9].aliases = ['seller-0']
+test('invalid offscreen material aliases are revealed and stay editable', (t) => {
+  const rules = Array.from({ length: 250 }, (_, index) => rule(index))
+  rules[249].aliases = ['seller-0']
   const { editor, rows, host, fill, search } = setup(t, rules)
   fill(search, 'seller-3')
   assert.throws(() => editor.validate(), /appears in more than one rule/)
   assert.equal(search.value, '')
   assert.equal(
-    host.querySelector('.vocabulary-navigation [role=status]').textContent,
-    '9–10 of 10 rules'
+    host.querySelector('.vocabulary-status [role=status]').textContent,
+    '250 rules'
   )
-  assert.equal(
-    rows()[1].querySelector('[name=aliases]').getAttribute('aria-invalid'),
-    'true'
-  )
+  const invalid = host.querySelector('[aria-invalid=true]')
+  assert.equal(invalid.getAttribute('aria-invalid'), 'true')
   assert.match(
     host.querySelector('.appearance-validation').textContent,
     /seller-0/
   )
-  fill(rows()[1].querySelector('[name=aliases]'), 'seller-9')
-  assert.equal(
-    rows()[1].querySelector('[name=aliases]').hasAttribute('aria-invalid'),
-    false
-  )
-  assert.equal(editor.validate().length, 10)
+  fill(invalid, 'seller-249')
+  assert.equal(invalid.hasAttribute('aria-invalid'), false)
+  assert.equal(editor.validate().length, 250)
+  assert.ok(rows().length <= 100)
 })
 
 test('material row validation waits until focus leaves and clears while correcting', (t) => {
@@ -376,5 +376,5 @@ test('material rule limit disables Add without increasing the draft', (t) => {
   assert.equal(button('Add material rule').disabled, true)
   button('Add material rule').click()
   assert.equal(value.materialVocabulary.length, 500)
-  assert.equal(rows().length, 8)
+  assert.equal(rows().length, 100)
 })

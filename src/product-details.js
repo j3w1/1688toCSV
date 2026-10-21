@@ -55,10 +55,12 @@ export function openProductDetails(
   const source = productAttributes(item)
   const dialog = el('dialog', undefined, 'product-details-dialog')
   dialog.dataset.productEntryId = item.entryId || ''
-  let tagEditor, closing
+  let tagEditor, cartonEditor, closing
   // Dismissal and navigation share one transition: only its first callback runs.
   const closeDetails = (onClosed) => {
     if (closing) return closing
+    if (cartonEditor?.dataset.saveState === 'saving')
+      return Promise.resolve(false)
     if (!dialog.open) return Promise.resolve(false)
     closing = (async () => {
       tagEditor?.setBusy(true)
@@ -89,7 +91,7 @@ export function openProductDetails(
     label: message('Close product details'),
   })
   close.addEventListener('click', () => void closeDetails())
-  heading.append(el('h2', message('Original product details')), close)
+  heading.append(el('h2', message('Original product details')))
   const tools = el('div', undefined, 'product-details-tools')
   const copyAll = el('button', message('Copy description'))
   decorateIcon(copyAll, 'copy')
@@ -104,7 +106,8 @@ export function openProductDetails(
   decorateIcon(order, 'store')
   order.addEventListener('click', () => void closeDetails(onOrder))
   order.disabled = !onOrder
-  tools.append(copyAll, order)
+  tools.append(order)
+  const navigation = [close, order]
   if (onOperations) {
     const operations = decorateIcon(
       el('button', message('Operations')),
@@ -112,19 +115,28 @@ export function openProductDetails(
     )
     operations.addEventListener('click', () => void closeDetails(onOperations))
     tools.append(operations)
+    navigation.push(operations)
   }
+  heading.append(tools, close)
   const top = el('div', undefined, 'product-details-top')
-  top.append(heading, tools)
+  top.append(heading)
   const content = el('div', undefined, 'product-details-scroll')
   const identity = el('div', undefined, 'product-details-identity')
   if (item.sellerName)
     identity.append(
       copyTextButton(item.sellerName, { label: 'Copy store name' })
     )
-  if (item.orderId)
-    identity.append(
-      orderReference(item.orderId, { sourceType: item.sourceType })
-    )
+  if (item.orderId) {
+    const reference = orderReference(item.orderId, {
+        sourceType: item.sourceType,
+      }),
+      copyOrder = reference.querySelector('button'),
+      feedback = copyOrder.querySelector('.copy-text-feedback')
+    decorateIcon(copyOrder, 'copy', { iconOnly: true })
+    copyOrder.removeAttribute('title')
+    if (feedback) copyOrder.append(feedback)
+    identity.append(reference)
+  }
   const body = el('div', undefined, 'product-details-body')
   const data = el('div', undefined, 'product-details-data')
   const title = el('h3')
@@ -145,8 +157,7 @@ export function openProductDetails(
   for (const field of source.fields) add(field.label, field.value)
   add('单价', item.price)
   add('数量', item.quantity)
-  data.append(title, fields)
-  if (carton) mountCartonDetails(data, carton)
+  data.append(identity, title, fields)
   if (item.thumbnail) {
     const photoColumn = el('div', undefined, 'product-details-photo')
     const photoButton = el('button', undefined, 'product-photo-button')
@@ -175,16 +186,25 @@ export function openProductDetails(
     })()
   }
   body.append(data)
+  const cartonHost = el('div', undefined, 'product-details-carton')
+  if (carton)
+    cartonEditor = mountCartonDetails(cartonHost, {
+      ...carton,
+      onBusyChange: (busy) => {
+        for (const action of navigation) action.disabled = busy
+        order.disabled = busy || !onOrder
+        carton.onBusyChange?.(busy)
+      },
+    })
   const original = el('section', undefined, 'product-original-description')
-  original.append(
-    el('h3', message('Original description')),
-    el('pre', source.description)
-  )
-  content.append(identity, body, original)
+  const originalHeading = el('div', undefined, 'product-original-heading')
+  originalHeading.append(el('h3', message('Original description')), copyAll)
+  original.append(originalHeading, el('pre', source.description))
+  content.append(body, cartonHost, original)
   dialog.append(top, content)
   if (typeof tags?.save === 'function') {
     const tagHost = el('div')
-    body.after(tagHost)
+    original.before(tagHost)
     tagEditor = mountProductTags(tagHost, tags)
   }
   dialog.addEventListener(

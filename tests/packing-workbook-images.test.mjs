@@ -40,6 +40,9 @@ function canvasDocument() {
         fillRect(...bounds) {
           drawings.push({ kind: 'underline', color: this.fillStyle, bounds })
         },
+        drawImage(image, ...bounds) {
+          drawings.push({ kind: 'photo', bounds })
+        },
       }
       canvas.getContext = () => context
       canvas.toBlob = (callback) => callback(new Blob(['synthetic raster']))
@@ -100,4 +103,110 @@ test('omitted picture columns do not generate artwork or read source photos', as
   )
   assert.equal(loaded, false)
   assert.equal(await workbookCodeImage(''), undefined)
+})
+
+test('workbook photo assets are always square and retain the product aspect ratio', async () => {
+  const oldDocument = Object.getOwnPropertyDescriptor(globalThis, 'document')
+  const oldImage = Object.getOwnPropertyDescriptor(globalThis, 'Image')
+  try {
+    for (const [width, height] of [
+      [200, 200],
+      [100, 200],
+      [200, 100],
+    ]) {
+      const { document, drawings } = canvasDocument()
+      Object.defineProperty(globalThis, 'document', {
+        configurable: true,
+        value: document,
+      })
+      Object.defineProperty(globalThis, 'Image', {
+        configurable: true,
+        value: class {
+          naturalWidth = width
+          naturalHeight = height
+          async decode() {}
+          removeAttribute() {}
+        },
+      })
+      const prepare = createPackingWorkbookImages(
+        async () => new Blob(['synthetic source'])
+      )
+      const result = await prepare(
+        { thumbnail: 'synthetic source' },
+        { photo: { maxWidth: 320, maxHeight: 240 } }
+      )
+      assert.equal(result.photo.width, 240)
+      assert.equal(result.photo.height, 240)
+      const [x, y, drawnWidth, drawnHeight] = drawings.find(
+        (draw) => draw.kind === 'photo'
+      ).bounds
+      assert.equal(drawnWidth / drawnHeight, width / height)
+      assert.equal(x + drawnWidth / 2, 120)
+      assert.equal(y + drawnHeight / 2, 120)
+      if (width === height)
+        assert.deepEqual([x, y, drawnWidth, drawnHeight], [0, 0, 240, 240])
+    }
+  } finally {
+    if (oldDocument) Object.defineProperty(globalThis, 'document', oldDocument)
+    else delete globalThis.document
+    if (oldImage) Object.defineProperty(globalThis, 'Image', oldImage)
+    else delete globalThis.Image
+  }
+})
+
+test('carton marks reuse bounded artwork for the same group, omit missing categories and propagate failures', async (t) => {
+  const oldDocument = Object.getOwnPropertyDescriptor(globalThis, 'document')
+  const oldImage = Object.getOwnPropertyDescriptor(globalThis, 'Image')
+  t.after(() => {
+    if (oldDocument) Object.defineProperty(globalThis, 'document', oldDocument)
+    else delete globalThis.document
+    if (oldImage) Object.defineProperty(globalThis, 'Image', oldImage)
+    else delete globalThis.Image
+  })
+  const { document } = canvasDocument()
+  Object.defineProperty(globalThis, 'document', {
+    configurable: true,
+    value: document,
+  })
+  Object.defineProperty(globalThis, 'Image', {
+    configurable: true,
+    value: class {
+      naturalWidth = 1200
+      naturalHeight = 800
+      async decode() {}
+      removeAttribute() {}
+    },
+  })
+  let calls = 0
+  const prepare = createPackingWorkbookImages(
+    () => {
+      throw new Error('No photo requested')
+    },
+    async () => {
+      calls++
+      return new Blob(['synthetic carton mark'])
+    }
+  )
+  const limits = { mark: { maxWidth: 320, maxHeight: 240 } }
+  const row = { baseCode: 'CE26101001', chineseCategory: '玻璃' }
+  const first = await prepare(row, limits)
+  assert.equal(first.mark.width, 320)
+  assert.equal(first.mark.height, 213)
+  assert.equal(first.mark.mimeType, 'image/png')
+  assert.ok(first.mark.bytes instanceof Blob)
+  assert.equal(
+    (await prepare({ ...row, barcode: 'CE26101001S' }, limits)).mark,
+    first.mark
+  )
+  assert.equal(calls, 1)
+  assert.equal(
+    (await prepare({ ...row, chineseCategory: '' }, limits)).mark,
+    undefined
+  )
+  await prepare(row, {})
+  assert.equal(calls, 1)
+  const fail = createPackingWorkbookImages(undefined, async () => {
+    throw new Error('Mark failed')
+  })
+  await assert.rejects(fail(row, limits), /Mark failed/)
 })
