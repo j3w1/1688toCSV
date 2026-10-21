@@ -1,5 +1,10 @@
 import { test, expect, holdPreparationWrites } from './extension-fixture.mjs'
 import { createDemoRecords } from '../../preview/library-fixture.js'
+import {
+  packingRemovalAction,
+  finishOrganizing,
+  openOrganizing,
+} from './packing-organize-helpers.mjs'
 
 async function backup(extension) {
   const response = await extension.inspector.evaluate(() =>
@@ -130,6 +135,7 @@ async function setup(
 }
 
 async function saved(view) {
+  await finishOrganizing(view.page())
   await expect(view.locator('#preparation-content')).not.toHaveAttribute(
     'disabled'
   )
@@ -202,10 +208,7 @@ test('saved removal restores the same products and codes and can be redone', asy
 }) => {
   const { page, view, original } = await setup(extension)
   const group = view.locator('.preparation-group').first()
-  const action = group.getByRole('button', {
-    name: 'Remove group',
-    exact: true,
-  })
+  const action = await packingRemovalAction(group, 'group')
   await action.focus()
   await action.click()
   const review = page.getByRole('dialog', {
@@ -279,9 +282,7 @@ test('removing the final group filters the order picker and undo restores that o
   const picker = view.getByLabel('Show packing orders', { exact: true })
   await picker.selectOption(firstId)
   for (let groups = 2; groups > 0; groups--) {
-    const remove = view
-      .getByRole('button', { name: 'Remove group', exact: true })
-      .first()
+    const remove = await packingRemovalAction(view, 'group')
     await remove.focus()
     await remove.click()
     const review = page.getByRole('dialog', {
@@ -336,9 +337,7 @@ test('removal reviews and discards saved session edits while retaining kept sibl
     .fill('Cotton')
   await saved(view)
   const edited = await backup(extension)
-  const remove = group
-    .getByRole('button', { name: 'Remove product', exact: true })
-    .first()
+  const remove = await packingRemovalAction(group, 'product')
   await remove.focus()
   await remove.click()
   const review = page.getByRole('dialog', {
@@ -352,9 +351,9 @@ test('removal reviews and discards saved session edits while retaining kept sibl
   )
   await expect(review).toContainText('This product stays in packing')
   await review.getByRole('button', { name: 'Cancel', exact: true }).click()
+  await finishOrganizing(page)
   expect(groups(await backup(extension))).toEqual(groups(edited))
-  await remove.focus()
-  await remove.click()
+  await (await packingRemovalAction(group, 'product')).click()
   await review
     .getByRole('button', { name: 'Remove from packing', exact: true })
     .click()
@@ -395,10 +394,6 @@ test('removal resolves a restored-code collision against its candidate and recor
     .fill(originalA.baseCode)
   await saved(view)
   const beforeRemoval = await backup(extension)
-  const remove = groupA.getByRole('button', {
-    name: 'Remove group',
-    exact: true,
-  })
   const review = page.getByRole('dialog', {
     name: 'Remove from packing?',
     exact: true,
@@ -408,8 +403,7 @@ test('removal resolves a restored-code collision against its candidate and recor
     exact: true,
   })
   async function requestRemoval() {
-    await remove.focus()
-    await remove.click()
+    await (await packingRemovalAction(groupA, 'group')).click()
     await review
       .getByRole('button', { name: 'Remove from packing', exact: true })
       .click()
@@ -438,6 +432,7 @@ test('removal resolves a restored-code collision against its candidate and recor
     .getByRole('button', { name: 'Cancel removal', exact: true })
     .click()
   await expect(conflict).toBeHidden()
+  await finishOrganizing(page)
   await expect(groupA).toHaveCount(1)
   expect((await backup(extension)).preparations).toEqual(
     beforeRemoval.preparations
@@ -515,10 +510,7 @@ test('an owning product revealed from a conflict retains its saved baseline when
   await saved(view)
   await group.getByLabel('Chinese category', { exact: true }).fill('陶瓷')
   await saved(view)
-  const remove = group.getByRole('button', {
-    name: 'Remove group',
-    exact: true,
-  })
+  const remove = await packingRemovalAction(group, 'group')
   await remove.focus()
   await remove.click()
   const review = page.getByRole('dialog', {
@@ -552,10 +544,7 @@ for (const action of ['Reset order and codes', 'Restore previous packing'])
     const keptVariant = originalGroup.variants[1]
     const removedVariant = originalGroup.variants[0]
     const removedRow = group.locator(`[data-variant-id="${removedVariant.id}"]`)
-    const remove = removedRow.getByRole('button', {
-      name: 'Remove product',
-      exact: true,
-    })
+    const remove = await packingRemovalAction(removedRow, 'product')
     await remove.focus()
     await remove.click()
     await page
@@ -653,6 +642,7 @@ test('saved arrangement undo and redo restore every affected order together', as
       .map((draft) => draft.orderId)
   const before = await orderIds()
   expect(before).toEqual(['7300000000000000000', '7300000000000000001'])
+  await openOrganizing(view.page())
   await view
     .getByRole('button', { name: 'Arrange packing', exact: true })
     .click()
@@ -713,6 +703,7 @@ test('a saved arrangement affecting only one hidden order remains undoable and r
   expect(getOrder(original, visibleId).packingPosition).toBe(0)
   expect(getOrder(original, hiddenId).packingPosition).toBeUndefined()
   await expect(view.locator('.packing-order-section')).toHaveCount(1)
+  await openOrganizing(view.page())
   await view
     .getByRole('button', { name: 'Arrange packing', exact: true })
     .click()
@@ -818,12 +809,7 @@ test('removal can correct a different owning order and undo both the correction 
     .fill(target.baseCode)
   await saved(view)
   const beforeRemoval = await backup(extension)
-  await targetGroup
-    .getByRole('button', { name: 'Remove group', exact: true })
-    .focus()
-  await targetGroup
-    .getByRole('button', { name: 'Remove group', exact: true })
-    .click()
+  await (await packingRemovalAction(targetGroup, 'group')).click()
   await page
     .getByRole('dialog', { name: 'Remove from packing?', exact: true })
     .getByRole('button', { name: 'Remove from packing', exact: true })
@@ -843,6 +829,7 @@ test('removal can correct a different owning order and undo both the correction 
     .getByRole('button', { name: 'Apply corrections', exact: true })
     .click()
   await expect(conflict).toBeHidden()
+  await finishOrganizing(page)
   await expect(targetGroup).toHaveCount(0)
   const removed = await backup(extension)
   expect(

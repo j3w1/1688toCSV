@@ -1,7 +1,13 @@
 import { test, expect } from './extension-fixture.mjs'
 import { createDemoRecords } from '../../preview/library-fixture.js'
+import {
+  createPreparation,
+  allocatePreparation,
+} from '../../src/packing-model.js'
+import { validateCartonBatch } from '../../src/carton-batches.js'
+import { repeatProductStoreIdentity } from '../../src/repeat-products.js'
 
-async function seed(extension) {
+async function seed(extension, { physical = false } = {}) {
   const [record] = await extension.inspector.evaluate(
     `(${createDemoRecords.toString()})(document)`
   )
@@ -23,20 +29,72 @@ async function seed(extension) {
       { label: '颜色', value: ['红色', '白色', '黑色'][index] },
     ]
   }
+  const preparation = createPreparation(record.snapshot, '2026-10')
+  for (const group of preparation.groups) {
+    group.spanishName = 'FLORERO'
+    group.category = '玻璃'
+  }
+  const allocation = physical
+      ? allocatePreparation({ ...preparation, revision: 1 }, [], [], {
+          snapshot: record.snapshot,
+        })
+      : { allocations: [], issuedCodes: [] },
+    first = record.snapshot.items[0],
+    owner =
+      physical &&
+      allocation.preparation.groups.find((group) =>
+        group.variants.some((variant) =>
+          variant.entryIds.includes(first.entryId)
+        )
+      ),
+    batches = physical
+      ? [
+          validateCartonBatch({
+            id: 'synthetic-measurement-cartons',
+            accountId: record.snapshot.accountId,
+            storeId: repeatProductStoreIdentity(record.snapshot),
+            month: '2026-10',
+            groups: [{ orderId: record.snapshot.orderId, groupId: owner.id }],
+            mark: { orderId: record.snapshot.orderId, groupId: owner.id },
+            contents: [
+              {
+                orderId: record.snapshot.orderId,
+                entryId: first.entryId,
+                quantity: first.quantity,
+              },
+            ],
+            count: 4,
+            received: null,
+            loaded: null,
+            len: '70',
+            wid: '50',
+            ht: '30',
+            weightBasis: 'carton',
+            weight: '20.5',
+            suppliedCbm: '0.21',
+            revision: 1,
+            updatedAt: record.snapshot.observedAt,
+          }),
+        ]
+      : []
   const result = await extension.inspector.evaluate(
-    (record) =>
+    ({ record, allocation, batches, physical }) =>
       chrome.runtime.sendMessage({
         type: 'BACKUP_RESTORE',
         backup: {
           format: '1688-order-library',
-          version: 1,
+          version: 4,
           exportedAt: new Date().toISOString(),
           orders: [record],
           history: [],
           images: [],
+          preparations: physical ? [allocation.preparation] : [],
+          allocations: allocation.allocations,
+          issuedCodes: allocation.issuedCodes,
+          cartonBatches: batches,
         },
       }),
-    record
+    { record, allocation, batches, physical }
   )
   expect(result.ok, result.error).toBe(true)
   const page = await extension.context.newPage()
@@ -55,18 +113,6 @@ async function backup(extension) {
 }
 const kg = (row) =>
   row.getByRole('textbox', { name: 'Weight (kg/box)', exact: true })
-const cbm = (row) =>
-  row.getByRole('textbox', { name: 'Volume (m³/box)', exact: true })
-async function expectMinimalMeasurement(input, fontSize = '12px') {
-  await expect(input).toHaveCSS('font-size', fontSize)
-  await expect(input).toHaveCSS('height', '23px')
-  await expect(input).toHaveCSS('min-height', '23px')
-  await expect(input).toHaveCSS('margin', '0px')
-  await expect(input).toHaveCSS('padding', '1px 3px')
-  const box = await input.boundingBox()
-  expect(box.height).toBe(23)
-  expect(box.width).toBeLessThanOrEqual(70)
-}
 async function commit(input, value) {
   await input.fill(value)
   await input.press('Enter')
@@ -75,174 +121,204 @@ async function commit(input, value) {
 async function prepare(page) {
   await page.locator('#select-rows').click()
   await page.locator('#prepare-orders').click()
-  await page
-    .getByRole('dialog', { name: 'Assign product codes?' })
-    .getByRole('button', { name: 'Assign codes and prepare', exact: true })
-    .click()
   const packing = page.locator('#packing-view')
+  const review = page.getByRole('dialog', {
+    name: 'Assign product codes?',
+    exact: true,
+  })
+  await expect
+    .poll(async () => (await packing.isVisible()) || (await review.isVisible()))
+    .toBe(true)
+  if (await review.isVisible())
+    await review
+      .getByRole('button', { name: 'Assign codes and prepare', exact: true })
+      .click()
   await expect(packing).toBeVisible()
   return packing
 }
+async function openBatch(page, packing) {
+  await packing.locator('.packing-group-cartons-edit').first().click()
+  const dialog = page.getByRole('dialog', {
+    name: 'Carton batches',
+    exact: true,
+  })
+  await expect(dialog).toBeVisible()
+  return dialog
+}
+const batchValue = (dialog, key) => dialog.locator(`input[name="${key}"]`)
+async function saveBatch(dialog, key, value) {
+  await batchValue(dialog, key).fill(value)
+  await dialog
+    .getByRole('button', { name: 'Save carton details', exact: true })
+    .click()
+  await expect(dialog.locator('.carton-batch-status')).toHaveText('Saved')
+  await dialog.getByRole('button', { name: 'Done', exact: true }).click()
+  await expect(dialog).toHaveCount(0)
+}
 
-test('compact Orders measurement editors format decimals, preserve dimensions, clear explicitly and survive reload', async ({
+test('Orders keeps compact kg editing while CBM opens XYZ and never replaces dimensions with a volume field', async ({
   extension,
 }) => {
-  const { page, rows, record } = await seed(extension)
-  await expect(kg(rows.first())).toHaveValue('20.5')
+  const { page, rows, record } = await seed(extension),
+    first = rows.first()
+  await expect(kg(first)).toHaveValue('20.5')
   await expect(
-    kg(rows.first()).locator('..').locator('.carton-measurement-unit')
-  ).toBeVisible()
+    first.getByRole('textbox', { name: 'Volume (m³/box)', exact: true })
+  ).toHaveCount(0)
   await expect(
-    kg(rows.nth(1)).locator('..').locator('.carton-measurement-unit')
-  ).toBeHidden()
-  expect(
-    await kg(rows.first()).evaluate((input) => getComputedStyle(input).fontSize)
-  ).toBe(
-    await rows
-      .first()
-      .locator('.quantity-cell')
-      .evaluate((cell) => getComputedStyle(cell).fontSize)
-  )
-  await expect(cbm(rows.first())).toHaveValue('0.105')
-  for (const input of [kg(rows.first()), cbm(rows.first())]) {
-    await expectMinimalMeasurement(
-      input,
-      await rows
-        .first()
-        .locator('.quantity-cell')
-        .evaluate((cell) => getComputedStyle(cell).fontSize)
-    )
-    await expect(input).toHaveCSS('background-color', 'rgba(0, 0, 0, 0)')
-    await expect(input).toHaveCSS('border-top-color', 'rgba(0, 0, 0, 0)')
-  }
-  // Generic dialog text fields add margins and padding; compact editors must
-  // keep their own footprint even when a review popup contains one.
-  await page.evaluate(() => {
-    const modal = document.createElement('dialog')
-    modal.dataset.testMeasurement = 'true'
-    modal.append(document.querySelector('.carton-measurement').cloneNode(true))
-    document.body.append(modal)
-    modal.showModal()
-  })
-  await expectMinimalMeasurement(
-    page.locator('[data-test-measurement] input'),
-    await page
-      .locator('[data-test-measurement]')
-      .evaluate((el) => getComputedStyle(el).fontSize)
-  )
-  await page.evaluate(() => {
-    const modal = document.querySelector('[data-test-measurement]')
-    modal.close()
-    modal.remove()
-  })
-  await commit(kg(rows.first()), '025,2500')
-  await expect(kg(rows.first())).toHaveValue('25.25')
+    first.getByRole('button', { name: 'Edit carton dimensions', exact: true })
+  ).toHaveText('0.105 m³')
+  const bounds = await kg(first).boundingBox()
+  expect(bounds.height).toBe(23)
+  expect(bounds.width).toBeLessThanOrEqual(70)
+  await commit(kg(first), '025,2500')
   let saved = await backup(extension)
   expect(
     saved.orders[0].cartonDetails[record.snapshot.items[0].entryId]
   ).toEqual({ kg: '25.25', cbm: '0.21', len: '70', wid: '50', ht: '30' })
-  await commit(cbm(rows.first()), '0,1250')
-  await expect(cbm(rows.first()).locator('..')).not.toHaveClass(/is-calculated/)
+  await first
+    .getByRole('button', { name: 'Edit carton dimensions', exact: true })
+    .click()
+  const details = page.getByRole('dialog', {
+      name: 'Original product details',
+      exact: true,
+    }),
+    panel = details.locator('.product-carton-details')
+  await expect(panel.locator('input[name="cbm"]')).toHaveCount(0)
+  await panel.locator('input[name="len"]').fill('80,125')
+  await panel
+    .getByRole('button', { name: 'Save carton details', exact: true })
+    .click()
+  await expect(panel.locator('.product-carton-status')).toHaveText('Saved')
+  await expect(panel.locator('.product-carton-volume-value')).toHaveText(
+    '0.1201875'
+  )
+  await details
+    .getByRole('button', { name: 'Close product details', exact: true })
+    .click()
+  await expect(details).toHaveCount(0)
   saved = await backup(extension)
   expect(
     saved.orders[0].cartonDetails[record.snapshot.items[0].entryId]
-  ).toEqual({ kg: '25.25', cbm: '0.125' })
-  await kg(rows.first()).fill('-')
-  await kg(rows.first()).blur()
-  await expect(kg(rows.first())).toHaveAttribute('aria-invalid', 'true')
+  ).toEqual({ kg: '25.25', cbm: '0.21', len: '80.125', wid: '50', ht: '30' })
+  await kg(first).fill('-')
+  await kg(first).blur()
+  await expect(kg(first)).toHaveAttribute('aria-invalid', 'true')
   expect(
     (await backup(extension)).orders[0].cartonDetails[
       record.snapshot.items[0].entryId
     ].kg
   ).toBe('25.25')
-  await commit(kg(rows.first()), '0')
+  await commit(kg(first), '0')
   await page.reload()
   await expect(kg(rows.first())).toHaveValue('0')
   await expect(
-    kg(rows.first()).locator('..').locator('.carton-measurement-unit')
-  ).toBeVisible()
-  await expect(cbm(rows.first())).toHaveValue('0.125')
+    rows
+      .first()
+      .getByRole('button', { name: 'Edit carton dimensions', exact: true })
+  ).toHaveText('0.1201875 m³')
   await commit(kg(rows.first()), '')
   await page.reload()
   await expect(kg(rows.first())).toHaveValue('')
-  await expect(
-    kg(rows.first()).locator('..').locator('.carton-measurement-unit')
-  ).toBeHidden()
-  await expect(
-    cbm(rows.first()).locator('..').locator('.carton-measurement-unit')
-  ).toBeVisible()
-  await page.setViewportSize({ width: 1440, height: 1000 })
-  expect(
-    await page
-      .locator('.table-scroll')
-      .evaluate((el) => el.scrollWidth - el.clientWidth)
-  ).toBeLessThanOrEqual(1)
+  await expect(rows.first().locator('.carton-measurement-unit')).toBeHidden()
 })
 
-test('packing measurements undo, redo and roll back on removal while preserving the table layout', async ({
+test('prepared measurement changes travel through batch history without losing exact dimensions or supplier volume', async ({
   extension,
 }) => {
-  const { page, record } = await seed(extension)
-  const packing = await prepare(page)
-  const rows = packing.locator('tr[data-variant-id]')
-  const first = rows.first()
-  await expect(first.locator('.variant-numeric-header')).toHaveText(
-    'QuantityPcs/boxkg/boxm³/box'
+  const { page } = await seed(extension, { physical: true }),
+    packing = await prepare(page)
+  let dialog = await openBatch(page, packing)
+  await expect(batchValue(dialog, 'weight')).toHaveValue('20.5')
+  await expect(dialog.locator('.product-carton-supplied')).toContainText(
+    '0.21 m³'
   )
+  await saveBatch(dialog, 'weight', '30,750000000000000001')
+  let saved = await backup(extension)
+  expect(saved.cartonBatches[0].weight).toBe('30.750000000000000001')
+  dialog = await openBatch(page, packing)
+  await saveBatch(dialog, 'ht', '40')
+  saved = await backup(extension)
+  expect(saved.cartonBatches[0]).toMatchObject({
+    weight: '30.750000000000000001',
+    len: '70',
+    wid: '50',
+    ht: '40',
+    suppliedCbm: '0.21',
+  })
+  await packing.getByRole('button', { name: 'Undo', exact: true }).click()
+  await expect
+    .poll(async () => (await backup(extension)).cartonBatches[0].ht)
+    .toBe('30')
+  expect((await backup(extension)).cartonBatches[0].weight).toBe(
+    '30.750000000000000001'
+  )
+  await packing.getByRole('button', { name: 'Redo', exact: true }).click()
+  await expect
+    .poll(async () => (await backup(extension)).cartonBatches[0].ht)
+    .toBe('40')
+  const first = packing.locator('tr[data-variant-id]').first()
   await expect(first.locator('.variant-code-design')).toHaveCSS(
     '--ce-code-size',
     '16px'
   )
-  await expectMinimalMeasurement(kg(first))
-  await expectMinimalMeasurement(cbm(first))
-  await expect(first.locator('.carton-measurement-unit:visible')).toHaveCount(2)
-  await page.setViewportSize({ width: 1440, height: 1000 })
-  await page.mouse.move(1, 1)
-  await page.screenshot({ path: 'work/minimal-carton-measurements.png' })
-  await commit(kg(first), '30.75')
-  await commit(cbm(first), '0.15')
-  await packing.getByRole('button', { name: 'Undo', exact: true }).click()
-  await expect(cbm(rows.first())).toHaveValue('0.105')
-  await expect(kg(rows.first())).toHaveValue('30.75')
-  await packing.getByRole('button', { name: 'Redo', exact: true }).click()
-  await expect(cbm(rows.first())).toHaveValue('0.15')
+  await expect(packing.locator('.packing-group-cartons')).toHaveCount(1)
+  await expect(packing.locator('.packing-carton-chip')).toHaveCount(1)
+  await expect(packing.locator('.packing-carton-chip')).toContainText(
+    '70 × 50 × 40 cm'
+  )
+  dialog = await openBatch(page, packing)
+  await expect(dialog.locator('.carton-batch-summary')).toContainText('0.14 m³')
+  await expect(dialog.locator('.product-carton-supplied')).toContainText(
+    '0.21 m³'
+  )
+  await dialog.getByRole('button', { name: 'Done', exact: true }).click()
+  await expect(first.locator('.variant-numeric-header')).toHaveText(
+    'QuantityPcs/box'
+  )
   await expect(
-    packing.getByRole('spinbutton', { name: 'Pcs/box', exact: true })
+    first.getByRole('textbox', { name: 'Volume (m³/box)', exact: true })
   ).toHaveCount(0)
-  const sourceId = record.snapshot.items[0].entryId
-  await first
-    .getByRole('button', { name: 'Remove product', exact: true })
-    .focus()
-  await first
-    .getByRole('button', { name: 'Remove product', exact: true })
-    .click()
-  const review = page.getByRole('dialog', {
-    name: 'Remove from packing?',
-    exact: true,
-  })
-  await expect(review).toContainText('30.75 kg')
-  await expect(review).toContainText('20.5 kg')
-  await review
-    .getByRole('button', { name: 'Remove from packing', exact: true })
-    .click()
-  let saved = await backup(extension)
-  expect(saved.orders[0].cartonDetails[sourceId]).toEqual({
-    kg: '20.5',
-    cbm: '0.21',
-    len: '70',
-    wid: '50',
-    ht: '30',
-  })
-  await packing.getByRole('button', { name: 'Undo', exact: true }).click()
-  await expect(kg(rows.first())).toHaveValue('30.75')
-  await expect(cbm(rows.first())).toHaveValue('0.15')
-  await packing.getByRole('button', { name: 'Redo', exact: true }).click()
-  saved = await backup(extension)
-  expect(saved.orders[0].cartonDetails[sourceId].kg).toBe('20.5')
+})
+
+test('prepared tables keep carton data once per group and compact product quantity/capacity at every viewport width', async ({
+  extension,
+}) => {
+  const { page } = await seed(extension, { physical: true }),
+    packing = await prepare(page),
+    rows = packing.locator('tr[data-variant-id]')
+  await expect(packing.locator('.packing-group-cartons')).toHaveCount(1)
+  await expect(packing.locator('.packing-carton-chip')).toHaveCount(1)
+  await expect(packing.locator('.packing-carton-chip')).toContainText(
+    '70 × 50 × 30 cm'
+  )
+  await expect(rows.first().locator('.variant-numeric-header')).toHaveText(
+    'QuantityPcs/box'
+  )
   for (const width of [1440, 1000, 390]) {
     await page.setViewportSize({ width, height: 1000 })
-    await expect(kg(rows.first())).toBeVisible()
-    await expect(cbm(rows.first())).toBeVisible()
+    for (const [row, capacity] of [
+      [
+        rows.first(),
+        rows.first().getByRole('button', { name: 'Pcs/box', exact: true }),
+      ],
+      [rows.nth(1), rows.nth(1).locator('.carton-capacity-readout')],
+    ]) {
+      await expect(
+        row.getByRole('textbox', { name: 'Volume (m³/box)', exact: true })
+      ).toHaveCount(0)
+      await expect(row.locator('.carton-measurement')).toHaveCount(0)
+      const columns = await row.locator('.variant-carton-columns').boundingBox()
+      for (const readout of [row.locator('.variant-quantity'), capacity]) {
+        await expect(readout).toBeVisible()
+        const bounds = await readout.boundingBox()
+        expect(bounds.height).toBeLessThanOrEqual(32)
+        expect(bounds.x + bounds.width).toBeLessThanOrEqual(
+          columns.x + columns.width + 1
+        )
+      }
+    }
+    await expect(packing.locator('.packing-group-cartons-edit')).toBeVisible()
     expect(
       await page.evaluate(
         () =>
@@ -250,69 +326,22 @@ test('packing measurements undo, redo and roll back on removal while preserving 
           document.documentElement.clientWidth
       )
     ).toBeLessThanOrEqual(1)
-    const bounds = await rows
-      .first()
-      .locator('.variant-carton-columns')
-      .boundingBox()
-    const input = await cbm(rows.first()).boundingBox()
-    expect(input.x + input.width).toBeLessThanOrEqual(
-      bounds.x + bounds.width + 1
-    )
-  }
-  await page.setViewportSize({ width: 1440, height: 1000 })
-  await page.screenshot({ path: 'work/packing-carton-measurements.png' })
-})
-
-test('blank and populated preparation measurements keep a quiet compact field on hover and focus', async ({
-  extension,
-}) => {
-  const { page } = await seed(extension)
-  const packing = await prepare(page)
-  const rows = packing.locator('tr[data-variant-id]')
-  for (const row of [rows.first(), rows.nth(1)]) {
-    for (const input of [kg(row), cbm(row)]) {
-      await page.mouse.move(1, 1)
-      await expectMinimalMeasurement(input)
-      const bounds = await input.boundingBox()
-      const quantity = await row.locator('.variant-quantity').boundingBox()
-      expect(
-        Math.abs(
-          bounds.y + bounds.height / 2 - (quantity.y + quantity.height / 2)
-        )
-      ).toBeLessThanOrEqual(2)
-      const unit = input.locator('..').locator('.carton-measurement-unit')
-      if ((await input.inputValue()) === '') {
-        await expect(input).toHaveAttribute('placeholder', '—')
-        await expect(unit).toBeHidden()
-      } else await expect(unit).toBeVisible()
-      await input.hover()
-      await expectMinimalMeasurement(input)
-      for (const side of ['top', 'right', 'left'])
-        await expect(input).toHaveCSS(
-          `border-${side}-color`,
-          'rgba(0, 0, 0, 0)'
-        )
-      await input.focus()
-      await expectMinimalMeasurement(input)
-      await expect(input).toHaveCSS('outline-style', 'solid')
-      await expect(input).toHaveCSS('outline-width', '2px')
-      await input.blur()
-    }
   }
 })
 
-test('a preserved dirty measurement cannot overwrite a same-field edit broadcast from another tab', async ({
+test('an invalid Orders measurement survives broadcasts and cannot overwrite another tab’s newer value', async ({
   extension,
 }) => {
-  const { page, rows, record } = await seed(extension)
-  const draft = kg(rows.first())
+  const { page, rows, record } = await seed(extension),
+    draft = kg(rows.first())
   await draft.fill('-')
   const other = await extension.context.newPage()
   await other.clock.setFixedTime(new Date('2026-10-15T04:00:00Z'))
   await other.goto(`${extension.extensionBaseUrl}/library.html`)
-  const otherRow = other.locator('#sheet-body tr[data-selection-key]').first()
-  await commit(kg(otherRow), '6')
-  // A clean sibling reflects the broadcast while the first editor keeps its draft.
+  await commit(
+    kg(other.locator('#sheet-body tr[data-selection-key]').first()),
+    '6'
+  )
   await commit(
     kg(other.locator('#sheet-body tr[data-selection-key]').nth(1)),
     '7'
@@ -330,38 +359,28 @@ test('a preserved dirty measurement cannot overwrite a same-field edit broadcast
   ).toBe('6')
 })
 
-test('removing a packing product refuses to discard a newer measurement edited in Orders', async ({
+test('a batch editor retains its stale draft and rejects overwriting a newer physical measurement from another tab', async ({
   extension,
 }) => {
-  const { page, record } = await seed(extension)
-  const packing = await prepare(page)
-  const first = packing.locator('tr[data-variant-id]').first()
-  await commit(kg(first), '5')
+  const { page } = await seed(extension, { physical: true }),
+    packing = await prepare(page),
+    dialog = await openBatch(page, packing)
+  await batchValue(dialog, 'weight').fill('-')
   const other = await extension.context.newPage()
   await other.clock.setFixedTime(new Date('2026-10-15T04:00:00Z'))
   await other.goto(`${extension.extensionBaseUrl}/library.html`)
-  await commit(
-    kg(other.locator('#sheet-body tr[data-selection-key]').first()),
-    '6'
-  )
-  await expect(kg(first)).toHaveValue('6')
-  await first
-    .getByRole('button', { name: 'Remove product', exact: true })
-    .focus()
-  await first
-    .getByRole('button', { name: 'Remove product', exact: true })
+  await other.locator('#view-packing').click()
+  const otherPacking = other.locator('#packing-view'),
+    otherDialog = await openBatch(other, otherPacking)
+  await saveBatch(otherDialog, 'weight', '6')
+  await expect(batchValue(dialog, 'weight')).toHaveValue('-')
+  await batchValue(dialog, 'weight').fill('5')
+  await dialog
+    .getByRole('button', { name: 'Save carton details', exact: true })
     .click()
-  await expect(
-    page.getByRole('dialog', { name: 'Remove from packing?', exact: true })
-  ).toHaveCount(0)
-  await expect(packing).toContainText('changed in another tab')
-  const saved = await backup(extension)
-  expect(
-    saved.orders[0].cartonDetails[record.snapshot.items[0].entryId].kg
-  ).toBe('6')
-  expect(
-    saved.preparations[0].groups.flatMap((group) =>
-      group.variants.flatMap((variant) => variant.entryIds)
-    )
-  ).toContain(record.snapshot.items[0].entryId)
+  await expect(dialog.locator('.carton-batch-status')).toContainText(
+    'changed in another tab'
+  )
+  await expect(batchValue(dialog, 'weight')).toHaveValue('5')
+  expect((await backup(extension)).cartonBatches[0].weight).toBe('6')
 })

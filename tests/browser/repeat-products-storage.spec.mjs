@@ -71,6 +71,73 @@ async function setup(extension) {
   return page
 }
 
+test('a carton marked by one linked purchase prints once when all selected contents belong to its same-code counterpart', async ({
+  extension,
+}) => {
+  const storagePage = await setup(extension)
+  const backup = await storagePage.evaluate(async () => {
+    const plan = await repeatLibrary.previewRepeatProductLink({
+      source: repeatRef(1),
+      target: repeatRef(0),
+    })
+    await repeatLibrary.linkRepeatProduct(plan)
+    await repeatLibrary.saveCartonBatch(
+      {
+        id: 'synthetic-zero-piece-mark-owner',
+        accountId: 'local',
+        month: '2026-10',
+        storeId: '["1688","synthetic-repeat-supplier"]',
+        mark: { orderId: repeatRef(0).orderId, groupId: repeatRef(0).groupId },
+        groups: [
+          { orderId: repeatRef(1).orderId, groupId: repeatRef(1).groupId },
+        ],
+        contents: [
+          { orderId: repeatRef(1).orderId, entryId: '1', quantity: '27' },
+        ],
+        cartonNumber: '1',
+        count: 1,
+        len: '40',
+        wid: '30',
+        ht: '25',
+        weightBasis: 'carton',
+        weight: '9.5',
+        received: 1,
+        loaded: 0,
+      },
+      { expectedRevision: 0 }
+    )
+    return repeatLibrary.exportBackup()
+  })
+  for (const record of backup.orders)
+    record.snapshot.purchasedAt = '2026-10-15T12:00:00+08:00'
+  const restored = await extension.inspector.evaluate(
+    (backup) => chrome.runtime.sendMessage({ type: 'BACKUP_RESTORE', backup }),
+    backup
+  )
+  expect(restored.ok, restored.error).toBe(true)
+  const page = await extension.context.newPage()
+  await page.clock.setFixedTime(new Date('2026-10-15T04:00:00Z'))
+  await page.goto(`${extension.extensionBaseUrl}/library.html`)
+  await expect(page.locator('#sheet-body tr[data-selection-key]')).toHaveCount(
+    2
+  )
+  await page.locator('#sheet-body tr[data-selection-key="8702/1"]').click()
+  await page.locator('#orders-print-actions .copy-actions-trigger').click()
+  await page.locator('#print-carton-marks').click()
+  const dialog = page.getByRole('dialog', {
+    name: 'Print carton marks',
+    exact: true,
+  })
+  await expect(dialog).toBeVisible()
+  await expect(dialog.getByLabel(/^Quantity for /)).toHaveCount(1)
+  await expect(dialog.getByLabel(/^Quantity for /)).toHaveValue('1')
+  const code = backup.preparations.find((prep) => prep.orderId === '8701')
+    .groups[0].baseCode
+  await expect(dialog.getByLabel(/^Quantity for /)).toHaveAccessibleName(
+    `Quantity for ${code}`
+  )
+})
+
 test('repeat-product dialog previews both purchases, cancellation writes nothing and applying keeps both selected rows', async ({
   extension,
 }) => {

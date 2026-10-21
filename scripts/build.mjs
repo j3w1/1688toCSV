@@ -45,6 +45,7 @@ await cp(path.join(root, 'src/assets'), path.join(output, 'assets'), {
 for (const resource of [
   'library.html',
   'library.css',
+  'carton-batches.css',
   'store-import.css',
   'order-charges.css',
   'operations.css',
@@ -79,6 +80,7 @@ const resources = [
   manifest.background.service_worker,
   'library.html',
   'library.css',
+  'carton-batches.css',
   'photo-viewer.css',
   'copy-actions.css',
   'code-design.css',
@@ -94,6 +96,12 @@ const resources = [
   'assets/casa-elida.png',
 ]
 for (const resource of resources) await readFile(path.join(output, resource))
+// Every linked workspace stylesheet must also reach the packaged extension.
+const workspaceHtml = await readFile(path.join(output, 'library.html'), 'utf8')
+for (const [, resource] of workspaceHtml.matchAll(
+  /<link\b[^>]*\bhref="([^"]+\.css)"/g
+))
+  await readFile(path.join(output, resource))
 console.log(
   `Built complete extension ${pkg.version} → dist (${resources.length} manifest resources verified)`
 )

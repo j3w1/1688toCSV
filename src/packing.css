@@ -1170,13 +1170,10 @@ select {
 .preparation-label-preview .label-placeholder[hidden] {
   display: none;
 }
-.variants col:nth-child(2),
-.variants th:nth-child(2),
+.variants col:first-child,
+.variants th:first-child,
 .variants .variant-photos {
   width: 84px;
-}
-.variants col:first-child {
-  width: 54px;
 }
 .variants .variant-actions {
   width: 54px;
@@ -2738,7 +2735,7 @@ html:has(body.packing-active) {
 .variant-facts .carton-capacity-readout small {
   color: var(--muted);
 }
-.variants col:nth-child(4),
+.variants col:nth-child(3),
 .variants .variant-carton-columns {
   width: 406px;
 }
@@ -2826,4 +2823,297 @@ html:has(body.packing-active) {
 .variants .variant-order-facts .copyable-text {
   color: inherit;
   font: inherit;
+}
+
+/* Preparation has no management gutters; Organize owns structural controls. */
+.packing-normal .product-overview {
+  grid-template-columns: minmax(0, 1fr) 100px;
+}
+.packing-normal .variants col:nth-child(2) {
+  width: auto;
+}
+.packing-normal .variants col:first-child {
+  width: 84px;
+}
+.packing-normal .variant-photos > .photo-copy-square > .preparation-photo {
+  inline-size: 74px;
+  block-size: 74px;
+  min-inline-size: 74px;
+  min-block-size: 74px;
+}
+.packing-organize-toolbar {
+  gap: 4px 6px;
+  align-items: center;
+}
+.packing-organize-modes {
+  display: inline-flex;
+  padding: 2px;
+  gap: 2px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+}
+.preparation-workspace .packing-organize-toolbar button {
+  min-block-size: 30px;
+  padding: 4px 7px;
+  font-size: 12px;
+}
+.packing-organize-modes [aria-pressed='true'] {
+  background: var(--selected);
+  color: var(--text);
+  border-color: var(--control-accent);
+}
+.packing-organize-count {
+  margin-inline-end: auto;
+  color: var(--muted);
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+}
+.packing-organize-remove:not(:disabled) {
+  color: var(--danger-text);
+}
+.packing-organize-list .packing-organize-card {
+  display: grid;
+  grid-template-columns: 20px 26px 42px minmax(0, 1fr) auto auto;
+  align-items: center;
+  gap: 8px;
+  margin: 4px 12px;
+  padding: 6px 8px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--panel);
+}
+.packing-organize-list .packing-organize-card.is-selected {
+  background: var(--selected);
+}
+.packing-organize-card input[type='checkbox'] {
+  inline-size: 16px;
+  block-size: 16px;
+  margin: 0;
+  padding: 0;
+}
+.packing-organize-card .reorder-handle,
+.packing-organize-order-header .reorder-handle {
+  inline-size: 26px;
+  min-inline-size: 26px;
+  block-size: 30px;
+  min-block-size: 30px;
+  padding: 0;
+  opacity: 1;
+  touch-action: none;
+  -webkit-user-select: none;
+  user-select: none;
+}
+.packing-organize-card > .photo-copy-tile,
+.packing-organize-card > .photo-copy-tile > .preparation-photo {
+  inline-size: 42px;
+  min-inline-size: 42px;
+  block-size: 42px;
+  min-block-size: 42px;
+}
+.packing-organize-card .packing-organize-photo-empty {
+  inline-size: 42px;
+  block-size: 42px;
+  border-radius: 5px;
+  background: var(--field);
+}
+.packing-organize-identity {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 2px 8px;
+  min-inline-size: 0;
+}
+.packing-organize-identity .ce-code {
+  font-size: 16px;
+}
+.packing-organize-identity strong {
+  color: var(--product-name);
+  font-size: 12px;
+}
+.packing-organize-description {
+  flex-basis: 100%;
+  color: var(--muted);
+  font-size: 11px;
+  line-height: 1.35;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.packing-organize-quantity {
+  color: var(--quantity-text);
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+.packing-group-cartons {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 5px 8px;
+  margin: 2px 10px 7px;
+  font-size: 11px;
+  color: var(--muted);
+}
+.preparation-workspace .packing-group-cartons button,
+.preparation-workspace .carton-batch-readout,
+.product-carton-batch-context button {
+  min-block-size: 28px;
+  padding: 3px 7px;
+  margin: 0;
+  font: inherit;
+}
+.packing-carton-chip {
+  border-color: var(--border);
+  background: var(--field);
+}
+.carton-batch-readout {
+  min-inline-size: 32px;
+  border: 0;
+  background: transparent;
+  color: var(--quantity-text, var(--text));
+}
+.packing-normal .variants .variant-carton-columns,
+.packing-normal .variants col.variant-carton-columns,
+.packing-normal .variants col:nth-child(3) {
+  width: 154px;
+}
+.packing-normal .variant-numeric-header,
+.packing-normal .variant-numeric-row {
+  grid-template-columns: 50px 80px;
+  gap: 6px;
+}
+.product-carton-batch-context {
+  display: flex;
+  gap: 10px;
+  align-items: center;
+  flex-wrap: wrap;
+}
+.product-carton-batch-context button {
+  margin-inline-start: auto;
+}
+@media (pointer: coarse) {
+  .preparation-workspace .packing-group-cartons button,
+  .preparation-workspace .carton-batch-readout,
+  .product-carton-batch-context button {
+    min-block-size: 44px;
+  }
+}
+.packing-organize-card.packing-organize-product {
+  grid-template-columns: 20px 26px 42px minmax(0, 1fr) auto;
+}
+.packing-organize-card.is-dragging,
+.packing-organize-list .packing-order-section.is-dragging {
+  opacity: 0.55;
+}
+.packing-organize-list
+  :is(.packing-organize-card, .packing-order-section).drop-before {
+  box-shadow: inset 0 3px var(--control-accent);
+}
+.packing-organize-list
+  :is(.packing-organize-card, .packing-order-section).drop-after {
+  box-shadow: inset 0 -3px var(--control-accent);
+}
+.packing-organize-product-context {
+  position: sticky;
+  inset-block-start: 0;
+  z-index: 2;
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 6px 10px;
+  margin: 0 12px 6px;
+  padding: 8px;
+  background: var(--panel);
+  border-block-end: 1px solid var(--border);
+}
+.packing-organize-product-context .ce-code {
+  font-size: 16px;
+}
+.packing-organize-product-context small {
+  color: var(--muted);
+}
+.packing-organize-product-context > button {
+  margin-inline-start: auto;
+}
+.packing-organize-picker {
+  inline-size: min(540px, calc(100vw - 24px));
+  padding: 8px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--panel);
+  color: var(--text);
+  box-shadow: 0 8px 28px #0004;
+}
+.packing-organize-picker > input {
+  inline-size: 100%;
+  min-block-size: 32px;
+  margin-block-end: 6px;
+  box-sizing: border-box;
+}
+.packing-organize-picker-list {
+  max-block-size: min(360px, 50vh);
+  overflow: auto;
+}
+.preparation-workspace .packing-organize-group-choice {
+  display: flex;
+  align-items: center;
+  gap: 5px 8px;
+  inline-size: 100%;
+  min-block-size: 38px;
+  margin: 2px 0;
+  padding: 5px 8px;
+  text-align: start;
+}
+.packing-organize-group-choice small {
+  margin-inline-start: auto;
+  color: var(--muted);
+}
+@media (max-width: 600px) {
+  .packing-normal .product-overview {
+    grid-template-columns: minmax(0, 1fr) 84px;
+  }
+  .packing-normal .variants tbody tr {
+    grid-template-columns: minmax(0, 1fr) 128px;
+  }
+  .packing-normal .variants .variant-photos {
+    grid-column: 1;
+  }
+  .packing-normal .variants .variant-option {
+    grid-column: 1 / -1;
+  }
+  .packing-normal .variants td:last-child {
+    grid-column: 2;
+  }
+  .packing-normal .variants .variant-carton-columns {
+    grid-column: 1 / -1;
+  }
+  .packing-normal .carton-preview {
+    grid-column: 2;
+  }
+  .packing-organize-list .packing-organize-card {
+    gap: 5px;
+    margin-inline: 4px;
+    padding-inline: 5px;
+  }
+  .packing-organize-description {
+    display: none;
+  }
+  .packing-organize-quantity {
+    white-space: normal;
+    max-inline-size: 76px;
+  }
+}
+@media (hover: none), (pointer: coarse) {
+  .packing-organize-card .reorder-handle,
+  .packing-organize-order-header .reorder-handle,
+  .preparation-workspace .packing-organize-toolbar button {
+    min-inline-size: 44px;
+    min-block-size: 44px;
+  }
+  .packing-organize-list .packing-organize-card {
+    grid-template-columns: 20px 44px 42px minmax(0, 1fr) auto auto;
+  }
+  .packing-organize-list .packing-organize-card.packing-organize-product {
+    grid-template-columns: 20px 44px 42px minmax(0, 1fr) auto;
+  }
 }

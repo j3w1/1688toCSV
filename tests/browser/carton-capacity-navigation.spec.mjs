@@ -100,6 +100,7 @@ test('the empty capacity action saves pending packing edits and focuses its exac
   )
   expect(backup.data.orders[0].snapshot).toEqual(record.snapshot)
   expect(backup.data.orders[0].unitsPerCarton).toEqual({ [item.entryId]: 12 })
+  expect(backup.data.cartonBatches).toEqual([])
 })
 
 test('a filtered-out source uses its existing Orders controller without changing filters or selection', async ({
@@ -156,4 +157,11 @@ test('a filtered-out source uses its existing Orders controller without changing
   ).toHaveCount(1)
   await page.locator('#view-packing').click()
   await expect(readout(page, item.entryId)).toContainText('8')
+  const saved = await extension.inspector.evaluate(() =>
+    chrome.runtime.sendMessage({ type: 'BACKUP_EXPORT' })
+  )
+  expect(saved.ok, saved.error).toBe(true)
+  expect(saved.data.orders[0].unitsPerCarton[item.entryId]).toBe(8)
+  expect(saved.data.orders[0].snapshot).toEqual(record.snapshot)
+  expect(saved.data.cartonBatches).toEqual([])
 })

@@ -16,6 +16,7 @@ import { EXCLUSION_MESSAGES } from './ui-messages-exclusions.js'
 import { SHELL_MESSAGES } from './ui-messages-shell.js'
 import { PRINT_MESSAGES } from './ui-messages-print.js'
 import { CARTON_MESSAGES } from './ui-messages-cartons.js'
+import { CARTON_BATCH_MESSAGES } from './ui-messages-carton-batches.js'
 import { STORE_IMPORT_MESSAGES } from './ui-messages-store-import.js'
 import { STORE_DETAILS_MESSAGES } from './ui-messages-store-details.js'
 import { PHOTO_TAG_MESSAGES } from './ui-messages-photo-tags.js'
@@ -24,9 +25,11 @@ import { SUMMARY_MESSAGES } from './ui-messages-summary.js'
 import { OPERATIONS_MESSAGES } from './ui-messages-operations.js'
 import { PAYMENT_LINK_MESSAGES } from './ui-messages-payment-links.js'
 import { REPEAT_PRODUCT_MESSAGES } from './ui-messages-repeat-products.js'
+import { ORGANIZE_MESSAGES } from './ui-messages-organize.js'
 
 // Explicit interface messages only; original seller, product and label values are never translated.
 export const UI_MESSAGES = {
+  ...ORGANIZE_MESSAGES,
   ...OPERATIONS_MESSAGES,
   ...PAYMENT_LINK_MESSAGES,
   ...REPEAT_PRODUCT_MESSAGES,
@@ -70,6 +73,7 @@ export const UI_MESSAGES = {
   ...SHELL_MESSAGES,
   ...PRINT_MESSAGES,
   ...CARTON_MESSAGES,
+  ...CARTON_BATCH_MESSAGES,
   ...STORE_IMPORT_MESSAGES,
   ...STORE_DETAILS_MESSAGES,
   ...PHOTO_TAG_MESSAGES,

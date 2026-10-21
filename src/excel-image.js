@@ -22,8 +22,8 @@ const MAX_EDGE = 8192
 const CACHE_BYTES = 4 * 1024 * 1024
 const PADDING = 10
 const LINE_HEIGHT = 20
-const PHOTO_SIZE = 126
-const PHOTO_PADDING = 3
+const PHOTO_SIZE = 132
+const PHOTO_PADDING = 0
 const MARK_PADDING = 8
 const FONT_FAMILY =
   '"Segoe UI", "Microsoft YaHei", "Noto Sans CJK SC", sans-serif'

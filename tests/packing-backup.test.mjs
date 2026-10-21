@@ -377,18 +377,20 @@ test('packing backup omits unrelated history, allocations, image blobs and globa
   const restored = validateBackup(scoped)
   assert.deepEqual(Object.keys(scoped).sort(), [
     'allocations',
+    'cartonBatches',
     'exportedAt',
     'format',
     'history',
     'images',
     'issuedCodes',
+    'omittedCartonBatchIds',
     'orders',
     'packingPreferences',
     'packingScope',
     'preparations',
     'version',
   ])
-  assert.equal(scoped.version, 3)
+  assert.equal(scoped.version, 4)
   assert.equal(scoped.orders.length, 1)
   assert.deepEqual(scoped.orders[0].snapshot, snapshot)
   assert.deepEqual(scoped.history, [])

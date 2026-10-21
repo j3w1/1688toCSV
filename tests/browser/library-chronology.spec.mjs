@@ -1,5 +1,9 @@
 import { test, expect } from './extension-fixture.mjs'
 import { createDemoRecords } from '../../preview/library-fixture.js'
+import {
+  openOrganizing,
+  finishOrganizing,
+} from './packing-organize-helpers.mjs'
 
 test('a newly saved matching order returns both lists to their newest position and preserves filters and product selection', async ({
   extension,
@@ -216,17 +220,28 @@ test('main order and product views retain purchase chronology and source rows af
       .evaluateAll((groups) => groups.map((group) => group.dataset.groupId))
   const originalGroups = await groupIds()
   expect(originalGroups.length).toBeGreaterThan(1)
+  await openOrganizing(page)
+  const organizingGroups = view.locator('.packing-organize-group')
+  await expect(organizingGroups).toHaveCount(originalGroups.length)
   await view
-    .getByRole('button', {
-      name: 'Move group 1; use Up or Down arrows',
-      exact: true,
-    })
-    .press('ArrowDown')
+    .locator(
+      `.packing-organize-group[data-group-id="${originalGroups[0]}"] input[type="checkbox"]`
+    )
+    .check()
+  await view.getByRole('button', { name: 'Move down', exact: true }).click()
   const arranged = [
     originalGroups[1],
     originalGroups[0],
     ...originalGroups.slice(2),
   ]
+  await expect
+    .poll(() =>
+      organizingGroups.evaluateAll((groups) =>
+        groups.map((group) => group.dataset.groupId)
+      )
+    )
+    .toEqual(arranged)
+  await finishOrganizing(page)
   await expect.poll(groupIds).toEqual(arranged)
   await view.page().locator('#view-orders').click()
   await page.getByRole('button', { name: 'Show all', exact: true }).click()

@@ -63,6 +63,14 @@ function cleanRef(ref) {
     ref.entryIds.every((entryId) => text(entryId))
       ? { entryIds: [...new Set(ref.entryIds)] }
       : {}),
+    ...(Array.isArray(ref.cartonBatchIds) &&
+    ref.cartonBatchIds.length &&
+    ref.cartonBatchIds.length <= 10000 &&
+    ref.cartonBatchIds.every(
+      (id) => typeof id === 'string' && id && id.length <= 512
+    )
+      ? { cartonBatchIds: [...new Set(ref.cartonBatchIds)] }
+      : {}),
   }
 }
 export const refKey = (ref) =>

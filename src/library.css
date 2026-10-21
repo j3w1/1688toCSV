@@ -1081,14 +1081,21 @@ tbody tr:hover {
 .photo-copy-tile > .photo-copy-source {
   grid-area: 1 / 1;
   margin: 0;
+  padding: 0 !important;
+  overflow: hidden;
 }
 .photo-copy-tile > .photo-copy-source img {
   display: block;
 }
+.photo-copy-tile.photo-copy-square {
+  inline-size: max-content;
+  max-inline-size: none;
+  flex-shrink: 0;
+}
 .photo-copy-tile > .photo-copy-button.icon-button {
   position: absolute;
-  inset-block-start: 0;
-  inset-inline-end: 0;
+  inset-block-start: 2px;
+  inset-inline-end: 2px;
   display: inline-flex;
   align-items: center;
   justify-content: center;
@@ -1106,6 +1113,44 @@ tbody tr:hover {
   padding: 2px;
   opacity: 0;
   pointer-events: none;
+  z-index: 1;
+}
+.photo-copy-tile.photo-copy-square > .photo-copy-source {
+  position: relative;
+  display: grid;
+  aspect-ratio: 1;
+  box-sizing: border-box;
+  border: 0;
+}
+.photo-copy-square > .preparation-photo {
+  inline-size: 64px;
+  block-size: 64px;
+  min-inline-size: 0;
+  min-block-size: 0;
+}
+.thumb-cell .photo-copy-square > .product-photo-button {
+  inline-size: 74px;
+  block-size: 74px;
+}
+.photo-copy-square > .photo-copy-source > img {
+  grid-area: 1 / 1;
+  inline-size: 100% !important;
+  block-size: 100% !important;
+  object-fit: contain;
+  border: 0;
+  border-radius: inherit;
+  box-sizing: border-box;
+}
+.photo-copy-square > .photo-copy-source > span {
+  grid-area: 1 / 1;
+  align-self: center;
+  justify-self: center;
+}
+@media (hover: none) {
+  .photo-copy-tile:focus-within > .photo-copy-button.icon-button {
+    opacity: 0.94;
+    pointer-events: auto;
+  }
 }
 .photo-copy-tile:hover > .photo-copy-button,
 .photo-copy-tile:has(:focus-visible) > .photo-copy-button {
@@ -1921,7 +1966,7 @@ dialog a {
   pointer-events: none;
 }
 .product-carton-details {
-  padding: 12px;
+  padding: 10px;
   border: 1px solid var(--border);
   border-radius: 12px;
   background: color-mix(in srgb, var(--surface), var(--control-accent) 3%);
@@ -1945,7 +1990,11 @@ dialog a {
 }
 .product-carton-details form {
   display: grid;
-  gap: 10px;
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 320px), 1fr));
+  min-inline-size: 0;
+  max-inline-size: 100%;
+  align-items: start;
+  gap: 9px 18px;
 }
 .product-carton-details fieldset {
   min-inline-size: 0;
@@ -1956,7 +2005,7 @@ dialog a {
 .product-carton-basics,
 .product-carton-dimension-fields {
   display: grid;
-  grid-template-columns: repeat(3, minmax(0, 1fr));
+  grid-template-columns: 130px 138px;
   align-items: start;
   gap: 10px;
 }
@@ -1966,7 +2015,7 @@ dialog a {
 .product-carton-field label,
 .product-carton-dimensions legend {
   display: block;
-  margin-block-end: 4px;
+  margin: 0 0 4px;
   padding: 0;
   color: var(--muted);
   font-size: 11px;
@@ -1986,15 +2035,31 @@ dialog a {
 .product-carton-details .product-carton-control input {
   flex: 1;
   min-inline-size: 0;
-  inline-size: 100%;
+  inline-size: 4ch;
+  width: 4ch;
   min-block-size: 32px;
+  block-size: 32px;
+  height: 32px;
   box-sizing: border-box;
+  margin: 0;
   padding: 4px 7px;
   border: 0;
   outline: 0;
   background: transparent;
   font-size: 13px;
   font-variant-numeric: tabular-nums;
+}
+.product-carton-geometry {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  min-inline-size: 0;
+}
+.product-carton-cube {
+  flex: none;
+  inline-size: 52px;
+  block-size: 50px;
+  color: var(--control-accent);
 }
 .product-carton-unit {
   flex: none;
@@ -2010,6 +2075,8 @@ dialog a {
 .product-carton-stepper button {
   min-inline-size: 0;
   min-block-size: 32px;
+  block-size: 32px;
+  height: 32px;
   padding: 0;
   border: 0;
   border-radius: 6px;
@@ -2029,7 +2096,10 @@ dialog a {
   margin-block-end: 6px;
 }
 .product-carton-dimension-fields {
-  grid-template-columns: minmax(0, 1fr) auto minmax(0, 1fr) auto minmax(0, 1fr);
+  grid-template-columns: minmax(64px, 76px) auto minmax(64px, 76px) auto minmax(
+      64px,
+      76px
+    );
   gap: 7px;
 }
 .product-carton-times {
@@ -2044,11 +2114,12 @@ dialog a {
   line-height: 1.4;
 }
 .product-carton-volume {
+  grid-column: 1 / -1;
   display: grid;
   grid-template-columns: minmax(0, 1fr) minmax(0, 1.4fr);
   align-items: center;
   gap: 2px 12px;
-  padding-block: 9px;
+  padding-block: 6px;
   border-block: 1px solid var(--divider);
 }
 .product-carton-volume-label {
@@ -2078,6 +2149,7 @@ dialog a {
   font-size: 10px;
 }
 .product-carton-footer {
+  grid-column: 1 / -1;
   display: flex;
   align-items: center;
   justify-content: space-between;
@@ -2095,15 +2167,34 @@ dialog a {
   font-size: 11px;
   overflow-wrap: anywhere;
 }
+.product-carton-supplied {
+  grid-column: 1 / -1;
+  margin: 0;
+  color: var(--muted);
+  font-size: 10px;
+}
 .product-carton-details[data-save-state='error'] .product-carton-status {
   color: var(--danger-text);
+}
+@media (max-width: 880px) {
+  .product-carton-details form {
+    grid-template-columns: minmax(0, 1fr);
+  }
 }
 @media (max-width: 580px) {
   .product-carton-basics {
     grid-template-columns: minmax(105px, 0.9fr) minmax(0, 1.1fr);
   }
-  .product-carton-basics > .product-carton-field:last-child {
-    grid-column: 1 / -1;
+  .product-carton-geometry {
+    gap: 6px;
+  }
+  .product-carton-cube {
+    inline-size: 40px;
+  }
+  .product-carton-dimension-fields {
+    grid-template-columns:
+      minmax(56px, 76px) auto minmax(56px, 76px)
+      auto minmax(56px, 76px);
   }
 }
 @media (pointer: coarse) {
@@ -2111,6 +2202,8 @@ dialog a {
   .product-carton-stepper button,
   .product-carton-footer button {
     min-block-size: 48px;
+    block-size: 48px;
+    height: 48px;
   }
   .product-carton-stepper {
     grid-template-columns: 48px minmax(0, 1fr) 48px;
@@ -3213,9 +3306,49 @@ button.copyable-text:hover {
 }
 .packing-export-columns {
   display: grid;
-  grid-template-rows: auto auto minmax(0, 1fr);
+  grid-template-rows: auto auto auto minmax(0, 1fr);
   gap: 8px;
   min-block-size: 0;
+}
+.packing-export-sheet-tabs {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin: 0;
+  padding: 0;
+  border: 0;
+}
+.packing-export-sheet-tabs legend {
+  margin-block-end: 4px;
+  font-size: 11px;
+}
+.packing-export-sheet-tabs label {
+  display: flex;
+  align-items: center;
+  flex: 1;
+  gap: 5px;
+  min-block-size: 30px;
+  margin: 0;
+  padding-inline: 8px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  font-size: 12px;
+}
+.packing-export-sheet-tabs label:has(:checked) {
+  background: var(--selected);
+  border-color: var(--accent);
+}
+.packing-export-sheet-tabs input {
+  margin: 0;
+  accent-color: var(--accent);
+}
+.packing-export-preview .packing-export-context td {
+  border-block: 1px dashed var(--packing-export-header);
+}
+@media (pointer: coarse) {
+  .packing-export-sheet-tabs label {
+    min-block-size: 48px;
+  }
 }
 .packing-export-columns > label {
   display: grid;

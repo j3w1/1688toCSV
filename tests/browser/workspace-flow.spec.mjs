@@ -403,7 +403,7 @@ test('workspace hints are compact, leave with the pointer and dismiss when editi
   const settings = page.getByRole('button', { name: 'Settings', exact: true })
   await settings.hover()
   const tooltip = page.getByRole('tooltip')
-  await expect(tooltip.locator(':scope > span').first()).toHaveText(
+  await expect(tooltip.locator(':scope > div').first()).toHaveText(
     'Label layout, naming rules, backup and restore.'
   )
   await expect(tooltip.locator('kbd')).toHaveText('Alt+Shift+S')

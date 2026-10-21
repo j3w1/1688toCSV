@@ -666,7 +666,12 @@ test('red-packet payment reduction imports separately alongside customization an
   await expect(library.locator('#order-details')).toContainText(
     'Red-packet discount (payment only)'
   )
-  await expect(library.locator('#order-details')).toContainText('¥ −1.25')
+  await expect(
+    library
+      .locator('#order-details dt')
+      .filter({ hasText: /^Red-packet discount \(payment only\)$/ })
+      .locator('xpath=following-sibling::dd[1]')
+  ).toHaveText('−¥1.25')
 })
 
 test('unsupported totals promptly retain bounded financial evidence, continue other orders and survive successful retry in a report', async ({
@@ -803,7 +808,12 @@ test('customization services survive complete import without changing copied pro
   await expect(library.locator('#order-details')).toContainText(
     'Customization service'
   )
-  await expect(library.locator('#order-details')).toContainText('¥ 12.50')
+  await expect(
+    library
+      .locator('#order-details dt')
+      .filter({ hasText: /^Customization service$/ })
+      .locator('xpath=following-sibling::dd[1]')
+  ).toHaveText('¥12.50')
 })
 
 test('selected import reaches persistent spreadsheet and clipboard through real extension messaging', async ({

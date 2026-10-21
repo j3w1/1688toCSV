@@ -1,6 +1,7 @@
 // File names and machine-readable summaries for workspace exports, so an
 // automation agent can find each file and check what it contains.
 import { printText } from './print-language.js'
+import { cartonBatchMetrics } from './carton-batches.js'
 
 export const SUMMARY_FORMAT = '1688-export-summary'
 
@@ -121,9 +122,11 @@ const packingDetailFields = [
 /** Which orders, products and quantities a packing-list export holds. */
 export function packingSummary({
   rows,
+  cartonBatches,
   file,
   exportedAt = new Date().toISOString(),
 }) {
+  const authoritative = Array.isArray(cartonBatches)
   const orders = new Map()
   const products = []
   for (const row of rows) {
@@ -157,12 +160,16 @@ export function packingSummary({
     }
     const details = Object.fromEntries(
       packingDetailFields.flatMap((field) => {
+        if (authoritative && /Boxes$|^cartons$|^carton/.test(field)) return []
         const value = exactAmount(row[field], field)
         return value === undefined ? [] : [[field, value]]
       })
     )
     products.push({
       orderId: row.orderId,
+      ...(authoritative
+        ? { accountId: row.accountId || 'local', entryId: row.entryId }
+        : {}),
       code: row.barcode || row.baseCode || '',
       name: row.spanishName || '',
       quantity: exactQuantity(row.quantity),
@@ -193,14 +200,56 @@ export function packingSummary({
         : {}),
     })
   }
+  const identity = (row, accountId = row.accountId || 'local') =>
+      JSON.stringify([accountId, String(row.orderId), String(row.entryId)]),
+    included = new Map(rows.map((row) => [identity(row), row.packingMonth])),
+    inScope = (content, batch) =>
+      included.get(identity(content, batch.accountId || 'local')) ===
+      batch.month,
+    batches = authoritative
+      ? cartonBatches
+          .filter(
+            (batch) =>
+              !batch.deletedAt &&
+              batch.contents?.some((content) => inScope(content, batch))
+          )
+          .map((batch) => ({
+            id: batch.id,
+            accountId: batch.accountId,
+            month: batch.month,
+            storeId: batch.storeId,
+            code: batch.baseCode || '',
+            ...(batch.cartonNumber ? { cartonNumber: batch.cartonNumber } : {}),
+            ...(batch.mark ? { mark: { ...batch.mark } } : {}),
+            contents: batch.contents.map((content) => ({
+              orderId: content.orderId,
+              entryId: content.entryId,
+              code: content.barcode || '',
+              quantity: String(content.quantity),
+            })),
+            count: batch.count,
+            received: batch.received,
+            loaded: batch.loaded,
+            len: batch.len || '',
+            wid: batch.wid || '',
+            ht: batch.ht || '',
+            weightBasis: batch.weightBasis,
+            weight: batch.weight || '',
+            includedInTotals:
+              !batch.needsReview &&
+              batch.contents.every((content) => inScope(content, batch)),
+            ...cartonBatchMetrics(batch),
+          }))
+      : undefined
   return {
     format: SUMMARY_FORMAT,
-    version: 1,
+    version: authoritative ? 2 : 1,
     kind: 'packing-list',
     exportedAt,
     files: [file, summaryFileName(file)],
     orders: [...orders.values()],
     products,
+    ...(authoritative ? { cartonBatches: batches } : {}),
     totals: {
       orders: orders.size,
       products: products.length,

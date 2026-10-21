@@ -58,7 +58,7 @@ const measure = (value) =>
 // The browser acceptance suite checks the actual canvas raster and font output.
 async function withCanvas(
   work,
-  { bitmapHeight = 252, headerWidthScale = 1, measureFontSize = false } = {}
+  { bitmapHeight = 264, headerWidthScale = 1, measureFontSize = false } = {}
 ) {
   const previousDocument = globalThis.document
   const previousBitmap = globalThis.createImageBitmap
@@ -138,7 +138,7 @@ async function withCanvas(
     },
   }
   globalThis.createImageBitmap = async (_, options) => {
-    assert.ok([252, 312].includes(options.resizeWidth))
+    assert.ok([264, 312].includes(options.resizeWidth))
     const mark = options.resizeWidth === 312
     const bitmap = {
       width: options.resizeWidth,
@@ -1286,8 +1286,8 @@ test('Headers and numeric cells center while 1688 descriptions retain a readable
         10
     )
     const [, photoX, photoY, photoWidth, photoHeight] = state.draws[0]
-    assert.equal(photoWidth, 126)
-    assert.equal(photoHeight, 126)
+    assert.equal(photoWidth, 132)
+    assert.equal(photoHeight, 132)
     assert.equal(photoX + photoWidth / 2, centers.thumbnail)
     assert.equal(photoY + photoHeight / 2, rowCenter)
   }))
@@ -1311,9 +1311,9 @@ test('Large financial values remain complete and portrait photos fit the availab
       }
       await renderExcelImage(plan, { loadImage: async () => png })
       const [, , photoY, photoWidth, photoHeight] = state.draws[0]
-      assert.ok(photoWidth <= 126)
-      assert.ok(photoHeight <= plan.rows[0].height - 6)
-      assert.equal(photoWidth / photoHeight, 1 / 3)
+      assert.ok(photoWidth <= 132)
+      assert.ok(photoHeight <= plan.rows[0].height)
+      assert.equal(photoWidth / photoHeight, 264 / 756)
       assert.equal(
         photoY + photoHeight / 2,
         plan.headerHeight + 1 + plan.rows[0].height / 2
@@ -1806,7 +1806,7 @@ test('Photo cache evicts before exceeding its bounded retained memory', async ()
       })
       assert.equal(loads, plan.rowCount)
       // One just-decoded bitmap may coexist with the retained cache before eviction.
-      assert.ok(state.peakLiveBytes <= 4 * 1024 * 1024 + 252 * 756 * 4)
+      assert.ok(state.peakLiveBytes <= 4 * 1024 * 1024 + 264 * 756 * 4)
       assert.ok(state.bitmaps.every((bitmap) => bitmap.closed))
     },
     { bitmapHeight: 756 }
@@ -2093,14 +2093,14 @@ test('Real canvas output preserves centered rich text, black/white code badges a
     barcodeTop = barcodeBottom
   }
   assert.ok(actual.calls.some((call) => call.text.endsWith(' 元')))
-  const photos = actual.photos.filter((photo) => photo.bitmapWidth === 252)
+  const photos = actual.photos.filter((photo) => photo.bitmapWidth === 264)
   const marks = actual.photos.filter((photo) => photo.bitmapWidth === 312)
   assert.equal(photos.length, 2)
   assert.equal(marks.length, 1)
   let y = actual.plan.headerHeight + 1
   for (const [index, photo] of photos.entries()) {
     const [left, top, width, height] = photo.args
-    assert.equal(width, 126)
+    assert.equal(width, 132)
     assert.equal(width / height, photo.bitmapWidth / photo.bitmapHeight)
     assert.equal(left + width / 2, 117)
     assert.equal(top + height / 2, y + actual.plan.rows[index].height / 2)

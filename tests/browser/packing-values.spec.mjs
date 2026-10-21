@@ -193,6 +193,8 @@ test('preparation keeps facts compact and read-only beside a visible label edito
 }) => {
   const { page, view } = await openPacking(extension, undefined, [10, 8, 10])
   const row = view.locator('tr[data-variant-id]').first()
+  const group = view.locator('.preparation-group').first()
+  const cartons = group.locator(':scope > .packing-group-cartons')
   const facts = row.locator('.variant-numeric-row')
   const capacity = facts.locator('.carton-capacity-readout')
   await expect(capacity).toContainText('10')
@@ -223,21 +225,33 @@ test('preparation keeps facts compact and read-only beside a visible label edito
     .evaluateAll((cells) =>
       cells.map((cell) => cell.getBoundingClientRect().width)
     )
-  expect(widths[0]).toBeLessThanOrEqual(58)
-  expect(widths[1]).toBeLessThanOrEqual(96)
-  expect(widths[2]).toBeGreaterThan(rowBounds.width * 0.35)
+  await expect(row.locator(':scope > td')).toHaveClass([
+    'variant-photos',
+    'variant-option',
+    'variant-carton-columns',
+    '',
+  ])
+  expect(widths[0]).toBeCloseTo(84, 0)
+  expect(widths[1]).toBeGreaterThan(rowBounds.width * 0.35)
+  expect(widths[2]).toBeCloseTo(154, 0)
+  expect(widths[3]).toBeCloseTo(156, 0)
   await expect(row.locator('.variant-numeric-header > span')).toHaveText([
     'Quantity',
     'Pcs/box',
-    'Planned',
-    'Received',
-    'Loaded',
-    'kg/box',
-    'm³/box',
   ])
-  // The seven source/count/measurement fields require the existing 388px track.
-  expect(widths[3]).toBeLessThanOrEqual(388)
-  expect(widths[4]).toBeLessThanOrEqual(176)
+  await expect(
+    row.locator('.carton-measurement, .variant-actions')
+  ).toHaveCount(0)
+  await expect(
+    view.locator(
+      '.reorder-handle, .packing-item-actions, .packing-remove-button'
+    )
+  ).toHaveCount(0)
+  await expect(cartons).toContainText('Set up cartons')
+  await expect(
+    cartons.getByRole('button', { name: 'Cartons', exact: true })
+  ).toBeVisible()
+  await expect(cartons.locator('input, textarea')).toHaveCount(0)
 
   for (const width of [1440, 768, 390]) {
     await page.setViewportSize({ width, height: 1000 })
@@ -248,6 +262,19 @@ test('preparation keeps facts compact and read-only beside a visible label edito
     const carton = view.locator('.carton-preview').first()
     await expect(editor).toBeVisible()
     await expect(carton).toBeVisible()
+    await expect(cartons).toBeVisible()
+    const numericBounds = await row
+      .locator('.variant-carton-columns')
+      .boundingBox()
+    for (const readout of [row.locator('.variant-quantity'), capacity]) {
+      await expect(readout).toBeVisible()
+      const bounds = await readout.boundingBox()
+      expect(bounds.height).toBeLessThanOrEqual(32)
+      expect(bounds.x).toBeGreaterThanOrEqual(numericBounds.x - 1)
+      expect(bounds.x + bounds.width).toBeLessThanOrEqual(
+        numericBounds.x + numericBounds.width + 1
+      )
+    }
     const within = await row.evaluate((node) => {
       const bounds = node.getBoundingClientRect()
       return [...node.querySelectorAll('td')].every((cell) => {
@@ -256,7 +283,7 @@ test('preparation keeps facts compact and read-only beside a visible label edito
       })
     })
     expect(within).toBe(true)
-    for (const control of [editor, carton]) {
+    for (const control of [editor, carton, cartons]) {
       const bounds = await control.boundingBox()
       expect(bounds.x).toBeGreaterThanOrEqual(0)
       expect(bounds.x + bounds.width).toBeLessThanOrEqual(width)

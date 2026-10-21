@@ -8,8 +8,10 @@ import {
   savePackingExportOptions,
 } from '../src/packing-export-options.js'
 import {
-  PACKING_WORKBOOK_COLUMN_ORDER,
-  PACKING_WORKBOOK_DEFAULT_COLUMNS,
+  PACKING_PRODUCT_COLUMN_ORDER as PACKING_WORKBOOK_COLUMN_ORDER,
+  PACKING_PRODUCT_DEFAULT_COLUMNS as PACKING_WORKBOOK_DEFAULT_COLUMNS,
+  PACKING_CARTON_DEFAULT_COLUMNS,
+  PACKING_WORKBOOK_COLUMN_ORDER as LEGACY_COLUMN_ORDER,
 } from '../src/packing-workbook.js'
 
 test('packing export choices retain only supported columns in the chosen order and preserve explicit clears', () => {
@@ -18,8 +20,12 @@ test('packing export choices retain only supported columns in the chosen order a
     selectedPackingExportColumns(defaults),
     PACKING_WORKBOOK_DEFAULT_COLUMNS
   )
-  assert.equal(selectedPackingExportColumns(defaults).length, 19)
-  assert.equal(defaults.order.length, 25)
+  assert.equal(selectedPackingExportColumns(defaults).length, 13)
+  assert.equal(defaults.order.length, 14)
+  assert.deepEqual(
+    selectedPackingExportColumns(defaults, 'cartons'),
+    PACKING_CARTON_DEFAULT_COLUMNS
+  )
   assert.ok(!defaults.order.includes('store'))
   assert.ok(!defaults.order.includes('orderQuantity'))
   assert.equal(defaults.scope, 'all')
@@ -102,7 +108,49 @@ test('the former untouched column layout upgrades without resetting authored exp
     'quantity',
   ])
   const all = normalizePackingExportOptions({ ...value, selected: value.order })
-  assert.equal(selectedPackingExportColumns(all).length, 25)
+  assert.equal(selectedPackingExportColumns(all).length, 14)
+})
+
+test('authored physical columns migrate to Cartons without resetting product order or explicit clears', () => {
+  const migrated = normalizePackingExportOptions({
+    layoutVersion: 2,
+    order: [
+      'loadedBoxes',
+      'barcode',
+      'cartonVolume',
+      'cartonWeight',
+      'quantity',
+    ],
+    selected: ['barcode', 'quantity', 'loadedBoxes', 'cartonWeight'],
+  })
+  assert.deepEqual(selectedPackingExportColumns(migrated), [
+    'barcode',
+    'quantity',
+  ])
+  assert.deepEqual(selectedPackingExportColumns(migrated, 'cartons'), [
+    'loaded',
+    'weight',
+    'batch',
+    'cartonMark',
+    'contents',
+  ])
+  const changed = normalizePackingExportOptions({
+    ...migrated,
+    cartons: { order: ['loaded', 'count'], selected: [] },
+  })
+  assert.deepEqual(selectedPackingExportColumns(changed, 'cartons'), [])
+  assert.deepEqual(normalizePackingExportOptions(changed), changed)
+  const authoredOrder = [...LEGACY_COLUMN_ORDER].reverse(),
+    authored = normalizePackingExportOptions({
+      layoutVersion: 2,
+      order: authoredOrder,
+      selected: [...LEGACY_COLUMN_ORDER],
+    })
+  assert.deepEqual(
+    selectedPackingExportColumns(authored),
+    authoredOrder.filter((key) => PACKING_WORKBOOK_COLUMN_ORDER.includes(key))
+  )
+  assert.ok(authored.selected.includes('sourceUnitPrice'))
 })
 
 test('packing workbook options save independently and stay available after a denied storage write', () => {

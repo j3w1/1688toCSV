@@ -3,6 +3,7 @@ import {
   planSharedProductUnlink,
   repeatProductCandidates,
 } from './repeat-products.js'
+import { planCartonBatchChanges } from './carton-batch-changes.js'
 
 /** Planning is read-only; expected revisions and source observations guard the atomic save. */
 export function createRepeatProductsRepository({
@@ -11,9 +12,10 @@ export function createRepeatProductsRepository({
   savePreparations,
 }) {
   async function load() {
-    return read(['orders', 'preparations'], async (tx) => ({
+    return read(['orders', 'preparations', 'cartonBatches'], async (tx) => ({
       records: await requested(tx.objectStore('orders').getAll()),
       preparations: await requested(tx.objectStore('preparations').getAll()),
+      batches: await requested(tx.objectStore('cartonBatches').getAll()),
     }))
   }
   const options = (plan, preview) => ({
@@ -25,7 +27,27 @@ export function createRepeatProductsRepository({
     allowSharedProductEdits: true,
     capturePrevious: !preview,
     preview,
+    allowCartonReview: true,
+    ...(!preview && plan.cartons?.changes.length
+      ? { cartonBatchChanges: plan.cartons.changes }
+      : {}),
   })
+  function planCartons(plan, state) {
+    const changed = new Set(
+      plan.preparations.map((prep) =>
+        JSON.stringify([prep.accountId, prep.orderId])
+      )
+    )
+    plan.cartons = planCartonBatchChanges({
+      ...state,
+      beforePreparations: state.preparations,
+      afterPreparations: state.preparations
+        .filter(
+          (prep) => !changed.has(JSON.stringify([prep.accountId, prep.orderId]))
+        )
+        .concat(plan.preparations),
+    })
+  }
   function assertPlan(plan, operation) {
     if (
       plan?.operation !== operation ||
@@ -53,6 +75,7 @@ export function createRepeatProductsRepository({
         plan.preparations,
         options(plan, true)
       )
+      planCartons(plan, state)
       return plan
     },
     async linkRepeatProduct(plan) {
@@ -112,6 +135,7 @@ export function createRepeatProductsRepository({
           }
         })
       )
+      planCartons(plan, state)
       return plan
     },
     async unlinkRepeatProduct(plan) {

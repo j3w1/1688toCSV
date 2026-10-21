@@ -1,5 +1,6 @@
 import { columnName, createZip } from './xlsx-writer.js'
 import { excelImagePalette } from './excel-image-style.js'
+import { cartonBatchMetrics } from './carton-batches.js'
 
 const encoder = new TextEncoder()
 const XML_HEADER = '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>'
@@ -32,6 +33,7 @@ const REFERENCE_WORKBOOK_COLUMNS = Object.freeze(
     ['B', 'photo', 'Photo', 'Foto', '图片', 23],
     ['C', 'barcode', 'Code', 'Código', '标签货号', 18],
     ['C-mark', 'cartonMark', 'Carton mark', 'Marca', '唛头', 20],
+    ['C-ref', 'cartonReferences', 'Cartons', 'Cajas', '箱批', 14],
     ['D', 'description', 'Details', 'Detalles', '原始描述', 36],
     ['E', 'spanishName', 'Product', 'Producto', '产品名称', 22],
     ['F', 'productNumber', 'Model', 'Modelo', '货号', 10],
@@ -125,6 +127,56 @@ export const PACKING_WORKBOOK_COLUMNS = Object.freeze(
     PACKING_WORKBOOK_COLUMN_ORDER.includes(column.key)
   )
 )
+export const PACKING_PRODUCT_COLUMN_ORDER = Object.freeze([
+  'photo',
+  'barcode',
+  'cartonMark',
+  'spanishName',
+  'description',
+  'productNumber',
+  'sourceSize',
+  'quantity',
+  'unitsPerCarton',
+  'cartonReferences',
+  'effectiveUnitPrice',
+  'discount',
+  'effectiveAmount',
+  'sourceUnitPrice',
+])
+export const PACKING_PRODUCT_DEFAULT_COLUMNS = Object.freeze(
+  PACKING_PRODUCT_COLUMN_ORDER.filter((key) => key !== 'sourceUnitPrice')
+)
+export const PACKING_PRODUCT_COLUMNS = Object.freeze(
+  PACKING_PRODUCT_COLUMN_ORDER.map((key) =>
+    REFERENCE_WORKBOOK_COLUMNS.find((column) => column.key === key)
+  )
+)
+export const PACKING_CARTON_COLUMNS = Object.freeze(
+  [
+    ['batch', 'Batch', 'Lote', '箱批', 12],
+    ['cartonMark', 'Carton mark', 'Marca', '唛头', 20],
+    ['contents', 'Contents', 'Contenido', '内装商品', 42],
+    ['count', 'Cartons', 'Cajas', '箱数', 9],
+    ['received', 'Received', 'Recibidas', '实收', 9],
+    ['loaded', 'Loaded', 'Cargadas', '装柜', 9],
+    ['len', 'L · cm', 'L · cm', '长 · cm', 9],
+    ['wid', 'W · cm', 'A · cm', '宽 · cm', 9],
+    ['ht', 'H · cm', 'H · cm', '高 · cm', 9],
+    ['weightBasis', 'Weight basis', 'Peso por', '重量方式', 12],
+    ['weight', 'Weight kg', 'Peso kg', '重量 kg', 10],
+    ['volumePerCarton', 'm³/box', 'm³/caja', 'm³/箱', 11],
+    ['totalWeight', 'Total kg', 'Total kg', '总重 kg', 12],
+    ['totalVolume', 'Total m³', 'Total m³', '总体积 m³', 12],
+    ['loadedWeight', 'Loaded kg', 'kg cargados', '装柜 kg', 12],
+    ['loadedVolume', 'Loaded m³', 'm³ cargados', '装柜 m³', 12],
+  ].map(([key, en, es, zh, width]) =>
+    Object.freeze({ key, labels: Object.freeze({ en, es, zh }), width })
+  )
+)
+export const PACKING_CARTON_COLUMN_ORDER = Object.freeze(
+  PACKING_CARTON_COLUMNS.map(({ key }) => key)
+)
+export const PACKING_CARTON_DEFAULT_COLUMNS = PACKING_CARTON_COLUMN_ORDER
 const columnSections = [
   {
     keys: PACKING_WORKBOOK_COLUMN_ORDER.slice(0, 7),
@@ -193,7 +245,11 @@ function columnGroups(columns, language) {
       section.keys.includes(column.key)
     )
     const previous = groups.at(-1)
-    const label = section.labels[language]
+    const label = (section?.labels || {
+      en: 'Packing',
+      es: 'Empaque',
+      zh: '装箱',
+    })[language]
     if (previous?.label === label) previous.count++
     else groups.push({ start: index, count: 1, label })
   })
@@ -755,7 +811,7 @@ function cartonBatches(rows) {
 }
 
 /** Pure worksheet plan: source transactions never deduplicate by product code. */
-export function planPackingWorkbook(
+function planProductWorksheet(
   rows,
   {
     language = 'es',
@@ -768,19 +824,33 @@ export function planPackingWorkbook(
     includeTotals = true,
     freezeHeaders = true,
     filters = true,
+    cartonBatches: physicalBatches,
+    productReferences,
+    productCapacities,
+    productMarks,
   } = {}
 ) {
   if (!Array.isArray(rows) || !rows.length)
     throw new Error('Choose packing products to export.')
   if (!words[language]) language = 'en'
-  const labels = words[language]
-  const selectedKeys = requestedColumns ?? PACKING_WORKBOOK_DEFAULT_COLUMNS
+  const labels = [...words[language]]
+  const authoritative = Array.isArray(physicalBatches)
+  if (authoritative)
+    labels[4] = {
+      en: 'Product quantities and costs appear once per purchase. Pcs/box: Shared = mixed contents; Varies = uneven exact cartons; Batch = aggregate contents. References open Cartons, where physical totals appear once.',
+      es: 'Cantidades y costos aparecen una vez por compra. Pzas/caja: Compartida = mezcla; Varía = cajas exactas desiguales; Lote = contenido total del lote. Las referencias abren Cajas, donde los totales físicos aparecen una vez.',
+      zh: '商品数量及金额按采购明细仅列一次。每箱件数：共箱 = 混装；不同 = 各箱准确件数不同；整批 = 批次合计。箱批链接打开纸箱表，实物合计仅列一次。',
+    }[language]
+  const supported = authoritative ? PACKING_PRODUCT_COLUMNS : availableColumns
+  const selectedKeys =
+    requestedColumns ??
+    (authoritative
+      ? PACKING_PRODUCT_DEFAULT_COLUMNS
+      : PACKING_WORKBOOK_DEFAULT_COLUMNS)
   if (
     !Array.isArray(selectedKeys) ||
     !selectedKeys.length ||
-    selectedKeys.some(
-      (key) => !availableColumns.some((column) => column.key === key)
-    )
+    selectedKeys.some((key) => !supported.some((column) => column.key === key))
   )
     throw new Error('Choose at least one supported packing workbook column.')
   const maximumDescriptionWidth = bounded(descriptionWidth, 36, 24, 60)
@@ -901,7 +971,8 @@ export function planPackingWorkbook(
         if (indexes.has(key)) cells[indexes.get(key)] = cell
       }
       const batch = batches.get(batchIdentity(row))
-      const cartonOwner = batch.complete && batch.owner === row
+      const cartonOwner =
+        !authoritative && batch.complete && batch.owner === row
       const counts = Object.fromEntries(
         ['receivedBoxes', 'loadedBoxes'].map((key) => [
           key,
@@ -929,13 +1000,33 @@ export function planPackingWorkbook(
       set('spanishName', textCell(row.spanishName))
       set('productNumber', textCell(first(row.productNumber, row.model)))
       set('sourceSize', textCell(row.sourceSize))
+      const identityKey = `${productIdentity(row)}:${row.packingMonth}`,
+        references = productReferences?.get(productIdentity(row)) || [],
+        capacity = authoritative
+          ? productCapacities.get(identityKey)
+          : { value: row.unitsPerCarton ?? '' },
+        mark = productMarks?.get(identityKey)
+      set('cartonReferences', {
+        ...textCell(productCartonReferenceText(row, references, language)),
+        ...(references.length ? { hyperlink: references[0].location } : {}),
+      })
+      if (authoritative)
+        set('cartonMark', {
+          ...textCell(mark?.text ?? row.baseCode ?? '', 8),
+          ...(references.length ? { hyperlink: references[0].location } : {}),
+        })
+      set(
+        'unitsPerCarton',
+        capacity?.status
+          ? textCell(batchWords[language][capacity.status])
+          : numberCell(capacity?.value ?? '', numericStyle('unitsPerCarton'))
+      )
       for (const [key, value] of Object.entries({
         ...counts,
         ...details,
         plannedBoxes: cartonOwner
           ? decimal(batch.plannedBoxes, { integer: true })
           : '',
-        unitsPerCarton: row.unitsPerCarton ?? '',
         quantity: row.quantity ?? '',
         sourceUnitPrice: first(row.sourceUnitPrice, row.price),
         discount: row.discount ?? '',
@@ -972,6 +1063,16 @@ export function planPackingWorkbook(
       current.cells = cells
       products.push({
         source: row,
+        ...(mark
+          ? {
+              hideMark: !mark.code,
+              markSource: {
+                ...row,
+                baseCode: mark.code,
+                chineseCategory: mark.category,
+              },
+            }
+          : {}),
         row: n,
         cartonOwner,
         cartonComplete: batch.complete,
@@ -1052,11 +1153,13 @@ export function planPackingWorkbook(
             ) === ''
         ),
       })
-      for (const [key, label, unit] of [
-        ['loadedBoxes', words.boxes, ''],
-        ['loadedWeight', words.weight, ' kg'],
-        ['loadedVolume', words.volume, ' m³'],
-      ]) {
+      for (const [key, label, unit] of authoritative
+        ? []
+        : [
+            ['loadedBoxes', words.boxes, ''],
+            ['loadedWeight', words.weight, ' kg'],
+            ['loadedVolume', words.volume, ' m³'],
+          ]) {
         const values = orderBatches.map(
           (id) => ownerCells.get(id)?.[indexes.get(key)]?.value ?? ''
         )
@@ -1135,6 +1238,575 @@ export function planPackingWorkbook(
   )
 }
 
+const productIdentity = (row, accountId = row.accountId || 'local') =>
+  JSON.stringify([accountId, String(row.orderId), String(row.entryId)])
+
+function productCapacity(row, batches) {
+  const relevant = batches.filter(
+    (batch) =>
+      !batch.deletedAt &&
+      batch.month === row.packingMonth &&
+      batch.contents?.some(
+        (content) =>
+          productIdentity(content, batch.accountId || 'local') ===
+          productIdentity(row)
+      )
+  )
+  if (!relevant.length) return { value: row.unitsPerCarton ?? '' }
+  if (relevant.some((batch) => batch.needsReview)) return { status: 'review' }
+  if (relevant.some((batch) => batch.contents.length > 1))
+    return { status: 'shared' }
+  if (
+    relevant.some(
+      (batch) => Number.isSafeInteger(batch.count) && batch.count > 1
+    )
+  )
+    return { status: 'batchContents' }
+  const capacities = relevant.map((batch) => {
+    if (batch.count !== 1) return ''
+    const quantity = String(batch.contents[0].quantity)
+    return /^\d+$/.test(quantity) ? quantity : ''
+  })
+  if (capacities.some((value) => value === ''))
+    return relevant.every(
+      (batch) => Number.isSafeInteger(batch.count) && batch.count > 0
+    )
+      ? { status: 'varies' }
+      : { value: '' }
+  if (capacities.some((value) => value !== capacities[0]))
+    return { status: 'varies' }
+  const allocated = relevant.reduce(
+    (total, batch) => total + BigInt(batch.contents[0].quantity),
+    0n
+  )
+  if (String(allocated) !== String(row.quantity)) return { value: '' }
+  return { value: capacities[0] }
+}
+
+function productCartonReferenceText(row, references, language) {
+  if (!references.length) return ''
+  const labels = batchWords[language],
+    crossMark = references.some(
+      (reference) => reference.markCode && reference.markCode !== row.baseCode
+    ),
+    shared = crossMark || references.some((reference) => reference.shared),
+    exact = references.every((reference) => reference.count === 1),
+    knownCount = references.every((reference) =>
+      Number.isSafeInteger(reference.count)
+    ),
+    count = knownCount
+      ? references
+          .reduce((total, reference) => total + BigInt(reference.count), 0n)
+          .toString()
+      : '',
+    unit = count === '1' ? labels.cartonOne : labels.cartonMany,
+    names = references.map((reference) =>
+      crossMark && reference.markCode
+        ? `${reference.label} (${reference.markCode})`
+        : reference.label
+    )
+  if (
+    references.length === 1 &&
+    !shared &&
+    references[0].count === 1 &&
+    !references[0].cartonNumber
+  )
+    return names[0]
+  return [
+    shared ? labels.shared : '',
+    !exact
+      ? references.length === 1
+        ? labels.batchContents
+        : `${references.length} ${labels.batches}`
+      : '',
+    count === '' ? '' : `${count} ${unit}`,
+    names.join(', '),
+  ]
+    .filter(Boolean)
+    .join(' · ')
+}
+
+function productCartonMark(row, batches, references, language) {
+  if (!batches.length) return undefined
+  const codes = [
+    ...new Set(batches.map((batch) => batch.baseCode).filter(Boolean)),
+  ]
+  if (batches.some((batch) => batch.needsReview) || codes.length !== 1)
+    return {
+      code: '',
+      text:
+        references
+          .map((reference) =>
+            reference.markCode
+              ? `${reference.markCode} · ${reference.label}`
+              : reference.label
+          )
+          .join('\n') || batchWords[language].review,
+    }
+  const [code] = codes,
+    batch = batches.find((batch) => batch.baseCode === code)
+  return {
+    code,
+    text: code,
+    category:
+      batch.category ||
+      batch.chineseCategory ||
+      (row.baseCode === code ? row.chineseCategory : ''),
+  }
+}
+
+const batchWords = {
+  en: {
+    products: 'Products',
+    cartons: 'Cartons',
+    title: 'PHYSICAL CARTONS',
+    note: 'A numbered row is one exact carton. Other rows show aggregate batch contents, without assuming each carton’s contents. Product references identify shared physical context. Blank = unknown; 0 = confirmed none. Shared context is excluded from totals.',
+    partial: 'Shared context — excluded from totals',
+    review: 'Needs review',
+    carton: 'Per carton',
+    batch: 'Batch total',
+    contents: 'Contents',
+    totals: 'Totals',
+    supplied: 'Supplied volume',
+    shared: 'Shared',
+    varies: 'Varies',
+    cartonOne: 'carton',
+    cartonMany: 'cartons',
+    batches: 'batches',
+    batchContents: 'Batch',
+  },
+  es: {
+    products: 'Productos',
+    cartons: 'Cajas',
+    title: 'CAJAS FÍSICAS',
+    note: 'Una fila numerada es una caja exacta. Las demás muestran el contenido total del lote, sin suponer el contenido de cada caja. Las referencias identifican el contexto físico compartido. Vacío = desconocido; 0 = ninguna confirmada. El contexto compartido no suma a los totales.',
+    partial: 'Contexto compartido — excluido de totales',
+    review: 'Revisar',
+    carton: 'Por caja',
+    batch: 'Total del lote',
+    contents: 'Contenido',
+    totals: 'Totales',
+    supplied: 'Volumen informado',
+    shared: 'Compartida',
+    varies: 'Varía',
+    cartonOne: 'caja',
+    cartonMany: 'cajas',
+    batches: 'lotes',
+    batchContents: 'Lote',
+  },
+  zh: {
+    products: '商品',
+    cartons: '纸箱',
+    title: '实物装箱清单',
+    note: '编号行是一箱的准确内装数量。其他行显示整批合计，不推算每箱分配。商品引用显示共享纸箱背景。空白 = 未知；0 = 确认无。共享背景信息不计入合计。',
+    partial: '共享背景信息 — 不计入合计',
+    review: '待核对',
+    carton: '每箱',
+    batch: '整批',
+    contents: '内装商品',
+    totals: '合计',
+    supplied: '供应商体积',
+    shared: '共箱',
+    varies: '不同',
+    cartonOne: '箱',
+    cartonMany: '箱',
+    batches: '批',
+    batchContents: '整批',
+  },
+}
+
+function cartonNumericStyle(key, total = false) {
+  if (['weight', 'totalWeight', 'loadedWeight'].includes(key))
+    return numericStyle('cartonWeight', total)
+  if (['volumePerCarton', 'totalVolume', 'loadedVolume'].includes(key))
+    return numericStyle('cartonVolume', total)
+  if (['len', 'wid', 'ht'].includes(key))
+    return numericStyle('cartonLength', total)
+  return total ? 7 : 5
+}
+
+function planCartonWorksheet(rows, options) {
+  const language =
+      options.language === undefined
+        ? 'es'
+        : batchWords[options.language]
+          ? options.language
+          : 'en',
+    labels = batchWords[language],
+    requested = options.cartonColumns ?? PACKING_CARTON_DEFAULT_COLUMNS
+  if (
+    !Array.isArray(requested) ||
+    !requested.length ||
+    requested.some((key) => !PACKING_CARTON_COLUMN_ORDER.includes(key))
+  )
+    throw new Error('Choose at least one supported carton column.')
+  const columns = [...new Set(requested)].map((key) => {
+      const column = PACKING_CARTON_COLUMNS.find((column) => column.key === key)
+      return { ...column, pixelWidth: columnPixels(column.width) }
+    }),
+    positions = new Map(columns.map((column, index) => [column.key, index])),
+    address = (key, number) => `${columnName(positions.get(key))}${number}`,
+    lastColumn = columnName(columns.length - 1),
+    sheetRows = [],
+    merges = [],
+    products = [],
+    records = [],
+    included = new Set(rows.map((row) => productIdentity(row))),
+    sourceById = new Map(rows.map((row) => [productIdentity(row), row])),
+    productReferences = new Map(),
+    add = (kind, height, cells = []) => {
+      const row = { number: sheetRows.length + 1, kind, height, cells }
+      sheetRows.push(row)
+      return row
+    },
+    full = (kind, value, height = 25, style = 6) => {
+      const row = add(kind, height, [textCell(value, style)])
+      if (columns.length > 1)
+        merges.push(`A${row.number}:${lastColumn}${row.number}`)
+      return row
+    }
+  full('title', labels.title, 30, 1)
+  full(
+    'metadata',
+    `${words[language][1]}: ${String(options.createdAt ?? new Date().toISOString()).slice(0, 10)} · ${words[language][5]}: ${[...new Set(rows.map((row) => row.packingMonth).filter(Boolean))].join(' / ')}`,
+    23,
+    2
+  )
+  full('note', labels.note, 42, 2)
+  add('spacer', 6)
+  add(
+    'header',
+    39,
+    columns.map((column) => textCell(column.labels[language], 3))
+  )
+  let index = 0
+  const seenBatches = new Set()
+  for (const batch of options.cartonBatches) {
+    index++
+    if (batch.deletedAt) continue
+    if (seenBatches.has(batch.id))
+      throw new Error(
+        'A physical carton batch occurs twice in the packing workbook.'
+      )
+    seenBatches.add(batch.id)
+    const members = batch.contents || [],
+      inScope = (content) => {
+        const row = sourceById.get(
+          productIdentity(content, batch.accountId || 'local')
+        )
+        return row && row.packingMonth === batch.month
+      },
+      intersects = members.some(inScope),
+      complete = members.length > 0 && members.every(inScope)
+    if (
+      !intersects &&
+      !(
+        batch.needsReview &&
+        rows.some((row) =>
+          batch.groups?.some(
+            (group) =>
+              String(group.orderId) === String(row.orderId) &&
+              (!group.groupId || String(group.groupId) === String(row.groupId))
+          )
+        )
+      )
+    )
+      continue
+    const label = batch.label || `C${String(index).padStart(3, '0')}`,
+      displayLabel = batch.cartonNumber
+        ? `${String(batch.cartonNumber).startsWith('#') ? '' : '#'}${batch.cartonNumber}`
+        : label,
+      metric = cartonBatchMetrics(batch)
+    records.push({
+      batch,
+      label,
+      displayLabel,
+      metric,
+      complete,
+      includedInTotals: complete && !batch.needsReview,
+    })
+  }
+  const grouped = new Map()
+  for (const record of records.filter((record) => record.includedInTotals)) {
+    const key = JSON.stringify([
+      record.batch.accountId,
+      record.batch.storeId,
+      record.batch.month,
+      record.batch.baseCode,
+    ])
+    if (!grouped.has(key)) grouped.set(key, [])
+    grouped.get(key).push(record)
+  }
+  const writeBatch = (record, context = false) => {
+    const { batch, label, displayLabel, metric } = record,
+      row = add(context ? 'context' : 'carton', 83),
+      n = row.number,
+      fallback = (key) =>
+        numberCell(metric[key] ?? '', cartonNumericStyle(key)),
+      calculated = (key, dependencies, build) =>
+        dependencies.every(
+          (dependency) =>
+            positions.has(dependency) &&
+            (first(batch[dependency], metric[dependency]) === '' ||
+              excelNumber(first(batch[dependency], metric[dependency])))
+        )
+          ? formulaCell(
+              build((dependency) => address(dependency, n)),
+              metric[key] ?? '',
+              cartonNumericStyle(key),
+              dependencies
+            )
+          : fallback(key),
+      contents = (batch.contents || [])
+        .map((content) => {
+          const source = sourceById.get(
+              productIdentity(content, batch.accountId || 'local')
+            ),
+            code = content.barcode || source?.barcode || content.entryId,
+            order = String(content.orderId)
+          return `${code} × ${content.quantity} · ${words[language][2]} ${order}`
+        })
+        .join('\n'),
+      values = {
+        batch: textCell(
+          `${displayLabel}${batch.needsReview ? ` · ${labels.review}` : ''}`
+        ),
+        cartonMark: textCell(batch.baseCode || ''),
+        contents: textCell(contents),
+        count: numberCell(batch.count ?? ''),
+        received: numberCell(batch.received ?? ''),
+        loaded: numberCell(batch.loaded ?? ''),
+        len: numberCell(batch.len ?? '', cartonNumericStyle('len')),
+        wid: numberCell(batch.wid ?? '', cartonNumericStyle('wid')),
+        ht: numberCell(batch.ht ?? '', cartonNumericStyle('ht')),
+        weightBasis: textCell(
+          batch.weightBasis === 'batch' ? labels.batch : labels.carton
+        ),
+        weight: numberCell(batch.weight ?? '', cartonNumericStyle('weight')),
+        volumePerCarton: calculated(
+          'volumePerCarton',
+          ['len', 'wid', 'ht'],
+          (a) =>
+            `IF(AND(ISNUMBER(${a('len')}),ISNUMBER(${a('wid')}),ISNUMBER(${a('ht')}),${a('len')}>0,${a('wid')}>0,${a('ht')}>0),${a('len')}*${a('wid')}*${a('ht')}/1000000,${first(batch.suppliedCbm) !== '' ? decimal(batch.suppliedCbm) : '""'})`
+        ),
+        totalWeight: calculated(
+          'totalWeight',
+          ['weight', 'count'],
+          (a) =>
+            `IF(ISNUMBER(${a('count')}),IF(${a('count')}=0,0,IF(ISNUMBER(${a('weight')}),${a('weight')}${batch.weightBasis === 'batch' ? '' : `*${a('count')}`},"")),"")`
+        ),
+        totalVolume: calculated(
+          'totalVolume',
+          ['volumePerCarton', 'count'],
+          (a) =>
+            `IF(ISNUMBER(${a('count')}),IF(${a('count')}=0,0,IF(ISNUMBER(${a('volumePerCarton')}),${a('volumePerCarton')}*${a('count')},"")),"")`
+        ),
+        loadedWeight: calculated(
+          'loadedWeight',
+          ['weight', 'count', 'loaded'],
+          (a) =>
+            batch.weightBasis === 'batch'
+              ? `IF(ISNUMBER(${a('loaded')}),IF(${a('loaded')}=0,0,IF(AND(ISNUMBER(${a('count')}),ISNUMBER(${a('weight')}),${a('loaded')}=${a('count')}),${a('weight')},"")),"")`
+              : `IF(ISNUMBER(${a('loaded')}),IF(${a('loaded')}=0,0,IF(ISNUMBER(${a('weight')}),${a('loaded')}*${a('weight')},"")),"")`
+        ),
+        loadedVolume: calculated(
+          'loadedVolume',
+          ['volumePerCarton', 'loaded'],
+          (a) =>
+            `IF(ISNUMBER(${a('loaded')}),IF(${a('loaded')}=0,0,IF(ISNUMBER(${a('volumePerCarton')}),${a('volumePerCarton')}*${a('loaded')},"")),"")`
+        ),
+      }
+    row.cells = columns.map((column) => values[column.key])
+    record.row = n
+    record.context = context
+    const contentsColumn = columns.find((column) => column.key === 'contents')
+    if (contentsColumn)
+      row.height = Math.max(
+        row.height,
+        Math.min(409, wrappedLines(contents, contentsColumn.width) * 13 + 12)
+      )
+    const source = {
+      ...batch,
+      barcode: batch.baseCode,
+      chineseCategory: batch.category || batch.chineseCategory,
+      thumbnail: batch.thumbnail,
+      quantity: metric.quantity,
+    }
+    products.push({ source, row: n })
+    const location = `'${labels.cartons}'!A${n}`
+    for (const content of batch.contents || []) {
+      const identity = productIdentity(content, batch.accountId || 'local')
+      if (
+        !included.has(identity) ||
+        sourceById.get(identity)?.packingMonth !== batch.month
+      )
+        continue
+      if (!productReferences.has(identity)) productReferences.set(identity, [])
+      productReferences.get(identity).push({
+        label: `${displayLabel}${context ? ' *' : ''}`,
+        location,
+        batchId: batch.id,
+        batchLabel: label,
+        cartonNumber: batch.cartonNumber || '',
+        markCode: batch.baseCode || '',
+        count: batch.count,
+        shared: batch.contents.length > 1,
+      })
+    }
+  }
+  for (const records of grouped.values()) {
+    const { batch } = records[0]
+    full(
+      'group',
+      [batch.sellerName || batch.storeId, batch.baseCode, batch.month]
+        .filter(Boolean)
+        .join(' · ')
+    )
+    for (const record of records) writeBatch(record)
+  }
+  const lastIncludedRow = sheetRows.length
+  const contextual = records.filter((record) => !record.includedInTotals)
+  if (contextual.length) {
+    full('context-heading', labels.partial, 28, 7)
+    for (const record of contextual) writeBatch(record, true)
+  }
+  const lastProductRow = sheetRows.length
+  if (options.includeTotals !== false) {
+    const total = add(
+      'total',
+      32,
+      columns.map(() => textCell('', 7))
+    )
+    for (const key of [
+      'count',
+      'received',
+      'loaded',
+      'totalWeight',
+      'totalVolume',
+      'loadedWeight',
+      'loadedVolume',
+    ]) {
+      if (!positions.has(key)) continue
+      const cells = records
+          .filter((record) => record.includedInTotals)
+          .map((record) => sheetRows[record.row - 1].cells[positions.get(key)]),
+        range = `${address(key, 6)}:${address(key, lastIncludedRow)}`,
+        values = cells.map((cell) => cell.value),
+        value = numericTotal(values)
+      total.cells[positions.get(key)] =
+        cells.length &&
+        values.every((value) => value === '' || excelNumber(value))
+          ? formulaCell(
+              `IF(COUNT(${range})=0,"",SUM(${range}))`,
+              value,
+              cartonNumericStyle(key, true)
+            )
+          : numberCell('', cartonNumericStyle(key, true))
+    }
+    const labelPosition = columns.findIndex((column) =>
+      ['batch', 'contents', 'cartonMark'].includes(column.key)
+    )
+    if (labelPosition >= 0)
+      total.cells[labelPosition] = textCell(labels.totals, 7)
+  }
+  return {
+    language,
+    name: labels.cartons,
+    columns,
+    rows: sheetRows,
+    merges,
+    products,
+    createdAt: String(options.createdAt ?? new Date().toISOString()),
+    palette: excelImagePalette(options.style),
+    lastColumn,
+    lastRow: sheetRows.length,
+    lastProductRow,
+    photoPixels: 100,
+    freezeHeaders: options.freezeHeaders !== false,
+    filters: options.filters !== false,
+    imageColumns: { mark: positions.get('cartonMark') },
+    records,
+    productReferences,
+  }
+}
+
+/** Physical batches own carton totals; purchase lines own product and cost data. */
+export function planPackingWorkbook(rows, options = {}) {
+  if (!Array.isArray(options.cartonBatches))
+    return planProductWorksheet(rows, options)
+  if (!Array.isArray(rows) || !rows.length)
+    throw new Error('Choose packing products to export.')
+  const batchesByProduct = new Map()
+  for (const batch of options.cartonBatches) {
+    if (batch.deletedAt) continue
+    for (const content of batch.contents || []) {
+      const key = `${productIdentity(content, batch.accountId || 'local')}:${batch.month}`
+      if (!batchesByProduct.has(key)) batchesByProduct.set(key, [])
+      batchesByProduct.get(key).push(batch)
+    }
+  }
+  const language = batchWords[options.language]
+      ? options.language
+      : options.language === undefined
+        ? 'es'
+        : 'en',
+    cartons = planCartonWorksheet(rows, options),
+    productCapacities = new Map(
+      rows.map((row) => {
+        const key = `${productIdentity(row)}:${row.packingMonth}`
+        return [key, productCapacity(row, batchesByProduct.get(key) || [])]
+      })
+    ),
+    productMarks = new Map(
+      rows.map((row) => {
+        const key = `${productIdentity(row)}:${row.packingMonth}`
+        return [
+          key,
+          productCartonMark(
+            row,
+            batchesByProduct.get(key) || [],
+            cartons.productReferences.get(productIdentity(row)) || [],
+            language
+          ),
+        ]
+      })
+    ),
+    products = planProductWorksheet(rows, {
+      ...options,
+      productReferences: cartons.productReferences,
+      productCapacities,
+      productMarks,
+    }),
+    labels = batchWords[products.language]
+  products.name = labels.products
+  const productsByIdentity = new Map(
+    products.products.map((product) => [
+      productIdentity(product.source),
+      product,
+    ])
+  )
+  for (const record of cartons.records) {
+    const matching = record.batch.contents
+      .map((content) =>
+        productsByIdentity.get(
+          productIdentity(content, record.batch.accountId || 'local')
+        )
+      )
+      .find(Boolean)
+    const column = cartons.columns.findIndex(
+      (column) => column.key === 'contents'
+    )
+    if (matching && column >= 0)
+      cartons.rows[record.row - 1].cells[column].hyperlink =
+        `'${labels.products}'!A${matching.row}`
+  }
+  return {
+    ...products,
+    sheets: [products, cartons],
+    cartonRecords: cartons.records,
+  }
+}
+
 function serializeCell(cell, row, column) {
   const ref = `${columnName(column)}${row}`,
     style = ` s="${cell.style}"`
@@ -1157,7 +1829,16 @@ function sheetXml(plan, images) {
   const pane = plan.freezeHeaders
     ? `<pane ${frozenColumns ? `xSplit="${frozenColumns}" ` : ''}ySplit="5" topLeftCell="${columnName(frozenColumns)}6" activePane="${frozenColumns ? 'bottomRight' : 'bottomLeft'}" state="frozen"/>`
     : ''
-  return `${XML_HEADER}<worksheet xmlns="${MAIN}" xmlns:r="${REL}"><sheetPr><pageSetUpPr fitToPage="1"/></sheetPr><dimension ref="A1:${plan.lastColumn}${plan.lastRow}"/><sheetViews><sheetView workbookViewId="0">${pane}</sheetView></sheetViews><sheetFormatPr defaultRowHeight="18"/><cols>${plan.columns.map((column, index) => `<col min="${index + 1}" max="${index + 1}" width="${column.width}" customWidth="1"/>`).join('')}</cols><sheetData>${plan.rows.map((row) => `<row r="${row.number}" ht="${row.height}" customHeight="1">${row.cells.map((cell, index) => serializeCell(cell, row.number, index)).join('')}</row>`).join('')}</sheetData>${plan.filters ? `<autoFilter ref="A5:${plan.lastColumn}${plan.lastProductRow}"/>` : ''}${plan.merges.length ? `<mergeCells count="${plan.merges.length}">${plan.merges.map((ref) => `<mergeCell ref="${ref}"/>`).join('')}</mergeCells>` : ''}<printOptions horizontalCentered="1"/><pageMargins left="0.25" right="0.25" top="0.4" bottom="0.4" header="0.2" footer="0.2"/><pageSetup paperSize="8" orientation="landscape" fitToWidth="1" fitToHeight="0"/><headerFooter><oddFooter>&amp;L1688toCSV&amp;R&amp;P / &amp;N</oddFooter></headerFooter>${images.length ? '<drawing r:id="drawing1"/>' : ''}</worksheet>`
+  const links = plan.rows.flatMap((row) =>
+    row.cells.flatMap((cell, column) =>
+      cell.hyperlink
+        ? [
+            `<hyperlink ref="${columnName(column)}${row.number}" location="${xml(cell.hyperlink)}" display="${xml(cell.value)}"/>`,
+          ]
+        : []
+    )
+  )
+  return `${XML_HEADER}<worksheet xmlns="${MAIN}" xmlns:r="${REL}"><sheetPr><pageSetUpPr fitToPage="1"/></sheetPr><dimension ref="A1:${plan.lastColumn}${plan.lastRow}"/><sheetViews><sheetView workbookViewId="0">${pane}</sheetView></sheetViews><sheetFormatPr defaultRowHeight="18"/><cols>${plan.columns.map((column, index) => `<col min="${index + 1}" max="${index + 1}" width="${column.width}" customWidth="1"/>`).join('')}</cols><sheetData>${plan.rows.map((row) => `<row r="${row.number}" ht="${row.height}" customHeight="1">${row.cells.map((cell, index) => serializeCell(cell, row.number, index)).join('')}</row>`).join('')}</sheetData>${plan.filters ? `<autoFilter ref="A5:${plan.lastColumn}${plan.lastProductRow}"/>` : ''}${plan.merges.length ? `<mergeCells count="${plan.merges.length}">${plan.merges.map((ref) => `<mergeCell ref="${ref}"/>`).join('')}</mergeCells>` : ''}${links.length ? `<hyperlinks>${links.join('')}</hyperlinks>` : ''}<printOptions horizontalCentered="1"/><pageMargins left="0.25" right="0.25" top="0.4" bottom="0.4" header="0.2" footer="0.2"/><pageSetup paperSize="8" orientation="landscape" fitToWidth="1" fitToHeight="0"/><headerFooter><oddFooter>&amp;L1688toCSV&amp;R&amp;P / &amp;N</oddFooter></headerFooter>${images.length ? '<drawing r:id="drawing1"/>' : ''}</worksheet>`
 }
 
 function stylesXml(palette, language) {
@@ -1302,7 +1983,7 @@ async function prepareWorkbookImages(plan, prepareImages) {
     cache = new Map()
   let totalBytes = 0
   for (const product of plan.products) {
-    const assets = await prepareImages(product.source, {
+    const assets = await prepareImages(product.markSource || product.source, {
       photo:
         plan.imageColumns.photo === undefined
           ? undefined
@@ -1312,7 +1993,7 @@ async function prepareWorkbookImages(plan, prepareImages) {
           ? undefined
           : { maxWidth: 512, maxHeight: 128 },
       mark:
-        plan.imageColumns.mark === undefined
+        product.hideMark || plan.imageColumns.mark === undefined
           ? undefined
           : { maxWidth: 320, maxHeight: 240 },
     })
@@ -1397,35 +2078,48 @@ function drawingXml(images) {
 /** Editable cells plus bounded, composed raster assets. No original photos are fetched here. */
 export async function createPackingWorkbook(rows, options = {}) {
   const plan = planPackingWorkbook(rows, options)
-  const images = await prepareWorkbookImages(plan, options.prepareImages)
-  // Preserve the editable code string while its standard raster badge is visible.
-  const codeRows = new Set(
-    images
-      .filter((image) => image.kind === 'code')
-      .map((image) => image.row + 1)
-  )
-  const renderedPlan = {
-    ...plan,
-    rows: plan.rows.map((row) =>
-      codeRows.has(row.number)
-        ? {
-            ...row,
-            cells: row.cells.map((cell, column) =>
-              column === plan.imageColumns.code ? { ...cell, style: 9 } : cell
-            ),
-          }
-        : row
-    ),
+  const sheets = plan.sheets || [{ ...plan, name: 'Packing list' }],
+    prepared = [],
+    media = []
+  for (const sheet of sheets) {
+    const images = await prepareWorkbookImages(sheet, options.prepareImages)
+    for (const asset of new Set(images.map((image) => image.media))) {
+      asset.id = media.length + 1
+      media.push(asset)
+    }
+    const codeRows = new Set(
+      images
+        .filter((image) => image.kind === 'code')
+        .map((image) => image.row + 1)
+    )
+    prepared.push({
+      ...sheet,
+      images,
+      rows: sheet.rows.map((row) =>
+        codeRows.has(row.number)
+          ? {
+              ...row,
+              cells: row.cells.map((cell, column) =>
+                column === sheet.imageColumns.code
+                  ? { ...cell, style: 9 }
+                  : cell
+              ),
+            }
+          : row
+      ),
+    })
   }
-  const media = [
-    ...new Map(images.map((image) => [image.media.id, image.media])).values(),
-  ]
+  if (
+    media.reduce((total, asset) => total + asset.bytes.length, 0) >
+    24 * 1024 * 1024
+  )
+    throw new Error('Packing workbook images exceed the export size limit.')
   const relationships = (items) =>
     `${XML_HEADER}<Relationships xmlns="${PACKAGE_REL}">${items.map(([id, type, target]) => `<Relationship Id="${id}" Type="${REL}/${type}" Target="${xml(target)}"/>`).join('')}</Relationships>`
   const files = [
     [
       '[Content_Types].xml',
-      `${XML_HEADER}<Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types"><Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/><Default Extension="xml" ContentType="application/xml"/>${[...new Set(media.map((asset) => asset.extension))].map((extension) => `<Default Extension="${extension}" ContentType="image/${extension === 'jpg' ? 'jpeg' : 'png'}"/>`).join('')}<Override PartName="/xl/workbook.xml" ContentType="${MIME}.sheet.main+xml"/><Override PartName="/xl/styles.xml" ContentType="${MIME}.styles+xml"/><Override PartName="/xl/worksheets/sheet1.xml" ContentType="${MIME}.worksheet+xml"/>${images.length ? '<Override PartName="/xl/drawings/drawing1.xml" ContentType="application/vnd.openxmlformats-officedocument.drawing+xml"/>' : ''}</Types>`,
+      `${XML_HEADER}<Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types"><Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/><Default Extension="xml" ContentType="application/xml"/>${[...new Set(media.map((asset) => asset.extension))].map((extension) => `<Default Extension="${extension}" ContentType="image/${extension === 'jpg' ? 'jpeg' : 'png'}"/>`).join('')}<Override PartName="/xl/workbook.xml" ContentType="${MIME}.sheet.main+xml"/><Override PartName="/xl/styles.xml" ContentType="${MIME}.styles+xml"/>${prepared.map((sheet, index) => `<Override PartName="/xl/worksheets/sheet${index + 1}.xml" ContentType="${MIME}.worksheet+xml"/>${sheet.images.length ? `<Override PartName="/xl/drawings/drawing${index + 1}.xml" ContentType="application/vnd.openxmlformats-officedocument.drawing+xml"/>` : ''}`).join('')}</Types>`,
     ],
     [
       '_rels/.rels',
@@ -1433,40 +2127,52 @@ export async function createPackingWorkbook(rows, options = {}) {
     ],
     [
       'xl/workbook.xml',
-      `${XML_HEADER}<workbook xmlns="${MAIN}" xmlns:r="${REL}"><bookViews><workbookView/></bookViews><sheets><sheet name="Packing list" sheetId="1" r:id="sheet1"/></sheets><definedNames><definedName name="_xlnm.Print_Titles" localSheetId="0">'Packing list'!$1:$5</definedName><definedName name="_xlnm.Print_Area" localSheetId="0">'Packing list'!$A$1:$${plan.lastColumn}$${plan.lastRow}</definedName></definedNames><calcPr calcId="191029" fullCalcOnLoad="1" forceFullCalc="1"/></workbook>`,
+      `${XML_HEADER}<workbook xmlns="${MAIN}" xmlns:r="${REL}"><bookViews><workbookView/></bookViews><sheets>${prepared.map((sheet, index) => `<sheet name="${xml(sheet.name)}" sheetId="${index + 1}" r:id="sheet${index + 1}"/>`).join('')}</sheets><definedNames>${prepared.map((sheet, index) => `<definedName name="_xlnm.Print_Titles" localSheetId="${index}">'${xml(sheet.name)}'!$1:$5</definedName><definedName name="_xlnm.Print_Area" localSheetId="${index}">'${xml(sheet.name)}'!$A$1:$${sheet.lastColumn}$${sheet.lastRow}</definedName>`).join('')}</definedNames><calcPr calcId="191029" fullCalcOnLoad="1" forceFullCalc="1"/></workbook>`,
     ],
     [
       'xl/_rels/workbook.xml.rels',
       relationships([
-        ['sheet1', 'worksheet', 'worksheets/sheet1.xml'],
+        ...prepared.map((_sheet, index) => [
+          `sheet${index + 1}`,
+          'worksheet',
+          `worksheets/sheet${index + 1}.xml`,
+        ]),
         ['styles', 'styles', 'styles.xml'],
       ]),
     ],
     ['xl/styles.xml', stylesXml(plan.palette, plan.language)],
-    ['xl/worksheets/sheet1.xml', sheetXml(renderedPlan, images)],
   ]
-  if (images.length)
+  for (const [index, sheet] of prepared.entries()) {
+    const number = index + 1,
+      images = sheet.images
+    files.push([`xl/worksheets/sheet${number}.xml`, sheetXml(sheet, images)])
+    if (!images.length) continue
     files.push(
       [
-        'xl/worksheets/_rels/sheet1.xml.rels',
-        relationships([['drawing1', 'drawing', '../drawings/drawing1.xml']]),
+        `xl/worksheets/_rels/sheet${number}.xml.rels`,
+        relationships([
+          ['drawing1', 'drawing', `../drawings/drawing${number}.xml`],
+        ]),
       ],
-      ['xl/drawings/drawing1.xml', drawingXml(images)],
+      [`xl/drawings/drawing${number}.xml`, drawingXml(images)],
       [
-        'xl/drawings/_rels/drawing1.xml.rels',
+        `xl/drawings/_rels/drawing${number}.xml.rels`,
         relationships(
-          media.map((asset) => [
+          [...new Set(images.map((image) => image.media))].map((asset) => [
             `image${asset.id}`,
             'image',
             `../media/image${asset.id}.${asset.extension}`,
           ])
         ),
-      ],
-      ...media.map((asset) => [
-        `xl/media/image${asset.id}.${asset.extension}`,
-        asset.bytes,
-      ])
+      ]
     )
+  }
+  files.push(
+    ...media.map((asset) => [
+      `xl/media/image${asset.id}.${asset.extension}`,
+      asset.bytes,
+    ])
+  )
   return createZip(
     files.map(([name, data]) => ({
       name,

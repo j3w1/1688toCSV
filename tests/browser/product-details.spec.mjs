@@ -1,7 +1,10 @@
 import { test, expect } from './extension-fixture.mjs'
 import { createDemoRecords } from '../../preview/library-fixture.js'
 
-async function workspace(extension, { longDescription = false } = {}) {
+async function workspace(
+  extension,
+  { longDescription = false, cartonDetails } = {}
+) {
   const [record] = await extension.inspector.evaluate(
     `(${createDemoRecords.toString()})(document)`
   )
@@ -10,6 +13,8 @@ async function workspace(extension, { longDescription = false } = {}) {
   record.snapshot.sellerShopOrigin =
     'https://synthetic-product-details.1688.com'
   const [structured, legacy, minimal] = record.snapshot.items
+  if (cartonDetails)
+    record.cartonDetails = { [structured.entryId]: cartonDetails }
   structured.title = '合成规格测试玻璃花瓶'
   structured.productNumber = 'ABC-42'
   structured.skuProperties = [
@@ -360,7 +365,8 @@ test('original product and carton panels stay compact, always visible and usable
       carton.getByRole('heading', { name: heading, exact: true })
     ).toBeVisible()
     await expect(details.locator('details, summary')).toHaveCount(0)
-    await expect(carton.locator('input')).toHaveCount(6)
+    await expect(carton.locator('input')).toHaveCount(5)
+    await expect(carton.locator('input[name=cbm]')).toHaveCount(0)
     await expect(carton.locator('.product-carton-volume-source')).toHaveText(
       source
     )
@@ -415,7 +421,7 @@ test('original product and carton panels stay compact, always visible and usable
         expect(layout.fullWidth).toBeLessThanOrEqual(1)
         expect(layout.photo.width).toBeLessThanOrEqual(96)
         expect(layout.photo.height).toBe(layout.photo.width)
-        expect(layout.inputBorders).toEqual(Array(6).fill('0px'))
+        expect(layout.inputBorders).toEqual(Array(5).fill('0px'))
         expect(
           Math.max(...layout.dimensions.map(({ top }) => top)) -
             Math.min(...layout.dimensions.map(({ top }) => top))
@@ -440,10 +446,13 @@ test('original product and carton panels stay compact, always visible and usable
   expect((await backup(extension)).orders).toEqual(before.orders)
 })
 
-test('carton details require an explicit valid save, retain exact per-carton values and recover pending and failed writes', async ({
+test('carton details validate XYZ, retain read-only supplied volume and recover pending and failed writes', async ({
   extension,
 }) => {
-  const { page, record } = await workspace(extension),
+  const manual = '0.123456789123456789',
+    { page, record } = await workspace(extension, {
+      cartonDetails: { cbm: manual },
+    }),
     entryId = record.snapshot.items[0].entryId,
     before = await backup(extension)
   await page
@@ -459,31 +468,36 @@ test('carton details require an explicit valid save, retain exact per-carton val
     })
   for (const name of ['len', 'wid', 'ht'])
     await expect(input(name)).toHaveValue('')
+  await expect(input('cbm')).toHaveCount(0)
+  await expect(carton.locator('.product-carton-volume-value')).toHaveText(
+    manual
+  )
+  await expect(carton.locator('.product-carton-volume-source')).toHaveText(
+    'Supplied volume'
+  )
+  await expect(carton.locator('.product-carton-supplied')).toHaveText(
+    `Supplied volume: ${manual} m³ · read-only`
+  )
   await carton
-    .getByRole('button', { name: 'Increase cartons', exact: true })
+    .getByRole('button', { name: 'Increase Cartons', exact: true })
     .click()
   await expect(input('boxes')).toHaveValue('1')
   await carton
-    .getByRole('button', { name: 'Increase cartons', exact: true })
+    .getByRole('button', { name: 'Increase Cartons', exact: true })
     .click()
   await carton
-    .getByRole('button', { name: 'Decrease cartons', exact: true })
+    .getByRole('button', { name: 'Decrease Cartons', exact: true })
     .click()
   await expect(input('boxes')).toHaveValue('1')
   await input('kg').fill('0')
-  await input('cbm').fill('0')
-  await expect(carton.locator('.product-carton-volume-value')).toHaveText('0')
-  expect((await backup(extension)).orders).toEqual(before.orders)
   await save.click()
   await expect(carton.locator('.product-carton-status')).toHaveText('Saved')
   let saved = await backup(extension)
   expect(saved.orders[0].cartonDetails[entryId]).toEqual({
     boxes: '1',
     kg: '0',
-    cbm: '0',
+    cbm: manual,
   })
-  const manual = '0.123456789123456789'
-  await input('cbm').fill(manual)
   await input('len').fill('58.5')
   await save.click()
   await expect(input('wid')).toBeFocused()
@@ -492,21 +506,12 @@ test('carton details require an explicit valid save, retain exact per-carton val
   ).toBe(true)
   expect((await backup(extension)).orders).toEqual(saved.orders)
   await input('wid').fill('35.2')
-  await input('ht').fill('47')
-  await expect(carton.locator('.product-carton-volume-value')).toHaveText(
-    '0.0967824'
-  )
-  await expect(input('cbm')).toHaveValue(manual)
-  await expect(carton.locator('.product-carton-volume-source')).toHaveText(
-    'Calculated from dimensions'
-  )
   await input('ht').fill('0')
   await save.click()
   await expect(input('ht')).toBeFocused()
   expect(await input('ht').evaluate((input) => input.validationMessage)).toBe(
-    'Carton dimensions must be greater than zero.'
+    'Carton dimensions must be greater than zero'
   )
-  await input('ht').fill('47')
   await page.evaluate(() => {
     window.holdCartonSave = true
     window.failCartonSave = true
@@ -538,22 +543,24 @@ test('carton details require an explicit valid save, retain exact per-carton val
       return result
     }
   })
+  await input('ht').fill('47')
   await save.click()
   await expect
     .poll(() => page.evaluate(() => window.cartonSaveStarted))
     .toBe(true)
   await expect(save).toBeDisabled()
-  for (const control of ['boxes', 'kg', 'cbm', 'len', 'wid', 'ht'])
-    await expect(input(control)).toBeDisabled()
-  await expect(
-    details.getByRole('button', { name: 'Close product details', exact: true })
-  ).toBeDisabled()
-  await expect(
-    details.getByRole('button', { name: 'Order details', exact: true })
-  ).toBeDisabled()
-  await expect(
-    details.getByRole('button', { name: 'Operations', exact: true })
-  ).toBeDisabled()
+  await expect(details).toHaveAttribute('aria-busy', 'true')
+  await expect(carton.locator('.product-carton-volume-value')).toHaveText(
+    '0.0967824'
+  )
+  await expect(carton.locator('.product-carton-volume-source')).toHaveText(
+    'Calculated from dimensions'
+  )
+  await expect(carton.locator('.product-carton-supplied')).toHaveText(
+    `Supplied volume: ${manual} m³ · read-only`
+  )
+  for (const control of ['boxes', 'kg', 'len', 'wid', 'ht'])
+    await expect(input(control)).toBeEnabled()
   await page.keyboard.press('Escape')
   await expect(details).toBeVisible()
   await page.evaluate(() => {
@@ -562,7 +569,10 @@ test('carton details require an explicit valid save, retain exact per-carton val
   await expect(carton.locator('.product-carton-status')).toContainText(
     'Your draft is still here.'
   )
-  await expect(input('cbm')).toHaveValue(manual)
+  await expect(input('cbm')).toHaveCount(0)
+  await expect(carton.locator('.product-carton-volume-value')).toHaveText(
+    '0.0967824'
+  )
   await expect(input('len')).toHaveValue('58.5')
   await expect(input('ht')).toHaveValue('47')
   await expect(save).toBeEnabled()
@@ -579,12 +589,16 @@ test('carton details require an explicit valid save, retain exact per-carton val
     ht: '47',
   })
   expect(saved.orders[0].snapshot).toEqual(before.orders[0].snapshot)
-  for (const name of ['kg', 'cbm', 'len', 'wid', 'ht'])
-    await input(name).fill('')
-  await expect(carton.locator('.product-carton-volume-value')).toHaveText('—')
-  await save.click()
+  for (const name of ['kg', 'len', 'wid', 'ht']) await input(name).fill('')
+  await expect(carton.locator('.product-carton-volume-value')).toHaveText(
+    manual
+  )
+  await expect(carton.locator('.product-carton-volume-source')).toHaveText(
+    'Supplied volume'
+  )
   await expect(carton.locator('.product-carton-status')).toHaveText('Saved')
   expect((await backup(extension)).orders[0].cartonDetails[entryId]).toEqual({
     boxes: '1',
+    cbm: manual,
   })
 })

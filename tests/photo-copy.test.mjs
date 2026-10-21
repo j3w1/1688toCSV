@@ -68,3 +68,23 @@ test('thumbnail copy retains source controls and disables missing or explicitly 
     copy.click()
   }
 })
+
+test('product copy frames match square source photos without squaring rectangular export previews', (t) => {
+  const document = setup(t)
+  for (const className of [
+    'preparation-photo',
+    'product-photo-button',
+    'store-import-photo-button',
+  ]) {
+    const photo = document.createElement('button')
+    photo.className = className
+    photo.append(document.createElement('img'))
+    const tile = photoCopyTile(photo, () => {})
+    assert.equal(tile.classList.contains('photo-copy-square'), true)
+    assert.equal(tile.querySelector('.photo-copy-source'), photo)
+  }
+  const preview = document.createElement('button')
+  preview.className = 'prepared-image-zoom'
+  const tile = photoCopyTile(preview, () => {})
+  assert.equal(tile.classList.contains('photo-copy-square'), false)
+})

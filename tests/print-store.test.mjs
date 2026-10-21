@@ -17,6 +17,29 @@ function memoryStorage() {
   }
 }
 
+test('recent physical marks retain numbered carton identities even when their contents use another code group', () => {
+  const storage = memoryStorage(),
+    store = createPrintStore(storage)
+  const ref = {
+    orderId: '101',
+    groupId: 'physical-mark',
+    variantId: null,
+    cartonBatchIds: ['carton-1', 'carton-2', 'carton-1'],
+  }
+  const job = store.recordJob({
+    kind: 'marks',
+    products: [{ code: 'CE26101001', quantity: 2, refs: [ref] }],
+  })
+  assert.deepEqual(job.products[0].refs[0].cartonBatchIds, [
+    'carton-1',
+    'carton-2',
+  ])
+  assert.deepEqual(
+    createPrintStore(storage).recentJobs()[0].products[0].refs,
+    job.products[0].refs
+  )
+})
+
 test('recent shared labels retain every source reference and refuse a partial or split recovery', () => {
   const storage = memoryStorage()
   const store = createPrintStore(storage)

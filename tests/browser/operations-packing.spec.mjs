@@ -290,13 +290,45 @@ test('reviewed payment links preserve source totals, skip payment rows and expor
     ),
     { type: 'buffer' }
   )
-  const table = XLSX.utils.sheet_to_json(
-    workbook.Sheets[workbook.SheetNames[0]],
-    { header: 1, defval: '' }
-  )
-  const product = table.find((row) => row[2] === summary.products[0].code)
-  expect(product[16]).toBe(162)
-  expect(product[17]).toBe(486)
+  const productHeaders = {
+      Products: {
+        code: 'Code',
+        price: 'Price + fees 元',
+        subtotal: 'Subtotal 元',
+      },
+      Productos: {
+        code: 'Código',
+        price: 'Precio + extras 元',
+        subtotal: 'Subtotal 元',
+      },
+      商品: { code: '标签货号', price: '含费单价 元', subtotal: '小计 元' },
+    },
+    sheetName = workbook.SheetNames.find((name) => productHeaders[name])
+  expect(sheetName).toBeTruthy()
+  const columnLabels = productHeaders[sheetName],
+    table = XLSX.utils.sheet_to_json(workbook.Sheets[sheetName], {
+      header: 1,
+      defval: '',
+    }),
+    header = table.find(
+      (row) =>
+        row.includes(columnLabels.code) &&
+        row.includes(columnLabels.price) &&
+        row.includes(columnLabels.subtotal)
+    )
+  expect(header).toBeTruthy()
+  const column = (label) => {
+      const index = header.indexOf(label)
+      expect(index, `Missing ${label} column`).toBeGreaterThanOrEqual(0)
+      return index
+    },
+    codeColumn = column(columnLabels.code),
+    productRows = table.filter(
+      (row) => row[codeColumn] === summary.products[0].code
+    )
+  expect(productRows).toHaveLength(1)
+  expect(productRows[0][column(columnLabels.price)]).toBe(162)
+  expect(productRows[0][column(columnLabels.subtotal)]).toBe(486)
   expect(summary.products[0].productFeatures).toBe('Lighting · Rotation')
   await page.screenshot({ path: 'work/operations-packing.png' })
   expect(extension.unexpectedRequests).toEqual([])

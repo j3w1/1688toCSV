@@ -5,7 +5,7 @@ import {
   allocatePreparation,
 } from '../../src/packing-model.js'
 
-test('one large packing group scrolls every variant with bounded rows, full selection and retained decimal drafts', async ({
+test('one large packing group scrolls every variant with bounded rows, full selection and retained invalid code drafts', async ({
   extension,
 }) => {
   const [record] = await extension.inspector.evaluate(
@@ -57,7 +57,7 @@ test('one large packing group scrolls every variant with bounded rows, full sele
     (backup) => chrome.runtime.sendMessage({ type: 'BACKUP_RESTORE', backup }),
     {
       format: '1688-order-library',
-      version: 3,
+      version: 4,
       exportedAt: '2026-10-21T08:00:00.000Z',
       orders: [record],
       history: [],
@@ -65,6 +65,7 @@ test('one large packing group scrolls every variant with bounded rows, full sele
       preparations: [preparation],
       allocations: allocated.allocations,
       issuedCodes: allocated.issuedCodes,
+      cartonBatches: [],
     }
   )
   expect(restored.ok, restored.error).toBe(true)
@@ -102,17 +103,24 @@ test('one large packing group scrolls every variant with bounded rows, full sele
   expect(await rows.count()).toBeLessThanOrEqual(101)
   await page.keyboard.press('Control+Home')
   await expect(first).toBeFocused()
-  const weight = first.getByRole('textbox', {
-    name: 'Weight (kg/box)',
+  await expect(
+    first.getByRole('textbox', {
+      name: 'Weight (kg/box)',
+      exact: true,
+    })
+  ).toHaveCount(0)
+  const ending = first.getByRole('textbox', {
+    name: `Variant code ${firstId}`,
     exact: true,
   })
-  await weight.fill('12..')
+  await ending.fill('12..')
   await scroll.evaluate((node) => (node.scrollTop = node.scrollHeight))
   await expect(last).toBeAttached()
-  await expect(weight).toBeFocused()
-  await expect(weight).toHaveValue('12..')
+  await expect(ending).toBeFocused()
+  await expect(ending).toHaveValue('12..')
+  await expect(ending).toHaveAttribute('aria-invalid', 'true')
   expect(await rows.count()).toBeLessThanOrEqual(101)
-  await weight.fill('12.5')
+  await ending.fill('ZZ')
   await view
     .getByRole('heading', { name: 'Prepare packing list', exact: true })
     .click()
@@ -121,14 +129,23 @@ test('one large packing group scrolls every variant with bounded rows, full sele
       const response = await extension.inspector.evaluate(() =>
         chrome.runtime.sendMessage({ type: 'BACKUP_EXPORT' })
       )
-      return response.data.orders[0].cartonDetails?.['900000']?.kg
+      expect(response.ok, response.error).toBe(true)
+      return response.data.preparations[0].groups[0].variants.find(
+        (variant) => variant.id === firstId
+      ).variantSuffix
     })
-    .toBe('12.5')
+    .toBe('ZZ')
   await scroll.evaluate((node) => (node.scrollTop = 0))
   await expect(
-    first.getByRole('textbox', { name: 'Weight (kg/box)', exact: true })
-  ).toHaveValue('12.5')
+    first.getByRole('textbox', { name: `Variant code ${firstId}`, exact: true })
+  ).toHaveValue('ZZ')
   await expect(view.locator('.preparation-copy-scope')).toHaveText(
     '250 selected products · 1 orders'
   )
+  const saved = await extension.inspector.evaluate(() =>
+    chrome.runtime.sendMessage({ type: 'BACKUP_EXPORT' })
+  )
+  expect(saved.ok, saved.error).toBe(true)
+  expect(saved.data.orders[0].snapshot).toEqual(record.snapshot)
+  expect(saved.data.cartonBatches).toEqual([])
 })

@@ -416,7 +416,7 @@ export async function startLibrary(
           }
         : undefined,
       carton: record
-        ? {
+        ? packing?.cartonDetailsOptions(row) || {
             value: productCartonDetails(row, record),
             onSave: async (value) => {
               await packing?.flush()

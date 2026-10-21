@@ -26,6 +26,13 @@ import {
   validateCartonConfirmationMetadata,
   mergeCartonConfirmations,
 } from './carton-confirmations.js'
+import { createCartonBatchesRepository } from './carton-batches-repository.js'
+import {
+  validateCartonBatch,
+  createLegacyCartonBatches,
+  cartonBatchIssues,
+  assertCartonBatchEvidence,
+} from './carton-batches.js'
 const productAnnotationFields = [
   [
     'productWorkflow',
@@ -801,7 +808,7 @@ async function transaction(database, stores, mode, run) {
 
 export function validateBackup(input) {
   object(input, 'Backup')
-  if (input.format !== BACKUP_FORMAT || ![1, 2, 3].includes(input.version))
+  if (input.format !== BACKUP_FORMAT || ![1, 2, 3, 4].includes(input.version))
     throw new Error('Unsupported order-library backup')
   date(input.exportedAt, 'exportedAt')
   if (!Array.isArray(input.orders) || !Array.isArray(input.history))
@@ -855,6 +862,7 @@ export function validateBackup(input) {
       preparations: [],
       allocations: [],
       issuedCodes: [],
+      cartonBatches: [],
     }
   for (const field of ['preparations', 'allocations', 'issuedCodes'])
     if (!Array.isArray(input[field]))
@@ -927,6 +935,38 @@ export function validateBackup(input) {
   const inPackingScope = (record) =>
     !scopedOrderKeys ||
     scopedOrderKeys.has(JSON.stringify(keyFor(record.snapshot)))
+  if (input.version === 4 && !Array.isArray(input.cartonBatches))
+    throw new Error('Backup cartonBatches must be an array')
+  const cartonBatches = (
+    input.cartonBatches ?? createLegacyCartonBatches(orders, preparations)
+  ).map(validateCartonBatch)
+  if (
+    new Set(cartonBatches.map((batch) => batch.id)).size !==
+    cartonBatches.length
+  )
+    throw new Error('Backup contains duplicate carton batches')
+  assertCartonBatchEvidence(cartonBatches, orders, {
+    history,
+    packingScope: packingScope?.orders,
+    preparations: scopedPreparations,
+  })
+  for (const batch of cartonBatches) {
+    if (batch.deletedAt) continue
+    const issues = cartonBatchIssues(batch, orders, preparations, cartonBatches)
+    if (issues.length) {
+      const changedSource = batch.contents.some((item) =>
+        orders.some(
+          (record) =>
+            record.snapshot.accountId === batch.accountId &&
+            record.snapshot.orderId === item.orderId &&
+            record.snapshot.observedAt > batch.updatedAt
+        )
+      )
+      if (!batch.needsReview && !batch.legacyKeys?.length && !changedSource)
+        throw new Error(issues[0])
+      batch.needsReview = true
+    }
+  }
   return {
     orders: orders
       .filter(
@@ -961,6 +1001,7 @@ export function validateBackup(input) {
     ...state,
     packingPreferences,
     packingScope,
+    cartonBatches,
   }
 }
 
@@ -995,7 +1036,7 @@ function validatePreparationMembership(preparation, order, history) {
 /** Extension-origin IndexedDB is the only durable store for orders and import jobs. */
 export async function openDatabase({ name = '1688-order-library' } = {}) {
   const database = await new Promise((resolve, reject) => {
-    const request = globalThis.indexedDB.open(name, 3)
+    const request = globalThis.indexedDB.open(name, 4)
     let blocked = false
     request.onupgradeneeded = (event) => {
       const db = request.result
@@ -1035,6 +1076,32 @@ export async function openDatabase({ name = '1688-order-library' } = {}) {
           tx.abort()
         })
       }
+      if (event.oldVersion < 4) {
+        const batches = db.createObjectStore('cartonBatches', { keyPath: 'id' })
+        batches.createIndex('accountMonth', ['accountId', 'month'])
+        // Freeze historical defaults once during the schema upgrade. Later
+        // capacity and measurement edits remain proposals until Apply.
+        const tx = request.transaction
+        void Promise.all([
+          requested(tx.objectStore('orders').getAll()),
+          requested(tx.objectStore('preparations').getAll()),
+        ])
+          .then(([records, preparations]) => {
+            for (const batch of createLegacyCartonBatches(
+              records,
+              preparations
+            ))
+              batches.put(batch)
+          })
+          .catch((error) => {
+            reject(error)
+            try {
+              tx.abort()
+            } catch {
+              // A failed request may already have aborted the upgrade.
+            }
+          })
+      }
     }
     request.onsuccess = () => {
       if (blocked) request.result.close()
@@ -1053,6 +1120,12 @@ export async function openDatabase({ name = '1688-order-library' } = {}) {
   database.onversionchange = () => database.close()
   const read = (stores, run) => transaction(database, stores, 'readonly', run)
   const write = (stores, run) => transaction(database, stores, 'readwrite', run)
+  const cartonBatchesRepository = createCartonBatchesRepository({
+    read,
+    write,
+    requested,
+    nextEditTimestamp,
+  })
 
   async function replaceActiveCodes(
     tx,
@@ -1338,6 +1411,8 @@ export async function openDatabase({ name = '1688-order-library' } = {}) {
       preview = false,
       preserveNaming = false,
       cartonMeasurements = [],
+      cartonBatchChanges = [],
+      allowCartonReview = false,
       suffixBaselines = [],
       expectedSnapshots = [],
       allowSharedProductEdits = false,
@@ -1429,10 +1504,12 @@ export async function openDatabase({ name = '1688-order-library' } = {}) {
     return (preview ? read : write)(
       [
         'orders',
+        'history',
         'preparations',
         'packingAllocations',
         'issuedCodes',
         'packingPreferences',
+        'cartonBatches',
       ],
       async (tx) => {
         const store = tx.objectStore('preparations')
@@ -1608,8 +1685,47 @@ export async function openDatabase({ name = '1688-order-library' } = {}) {
           issuedCodes = result.issuedCodes
           results.push(preparation)
         }
-        // No writes occur until every draft and reservation has been checked.
+        const nextPreparations = previousPreparations
+          .filter(
+            (entry) =>
+              !selectedKeys.has(
+                JSON.stringify([entry.accountId, entry.orderId])
+              )
+          )
+          .concat(results)
+        const physical = await requested(
+          tx.objectStore('cartonBatches').getAll()
+        )
+        const changedBatchIds = new Set(
+          cartonBatchChanges.map(
+            (change) => change.after?.id || change.batch?.id
+          )
+        )
+        const affected = physical.filter(
+          (batch) =>
+            !batch.deletedAt &&
+            !batch.needsReview &&
+            !changedBatchIds.has(batch.id) &&
+            !cartonBatchIssues(batch, orders, previousPreparations, physical)
+              .length &&
+            cartonBatchIssues(batch, orders, nextPreparations, physical).length
+        )
+        if (affected.length && !(preview && allowCartonReview)) {
+          const error = new Error(
+            'Review the affected cartons before changing their products or packing month.'
+          )
+          error.code = 'CARTON_BATCHES_AFFECTED'
+          error.cartonBatches = affected
+          throw error
+        }
+        // No writes occur until every draft, reservation and physical batch has been checked.
         if (!preview) {
+          if (cartonBatchChanges.length)
+            await cartonBatchesRepository.apply(tx, cartonBatchChanges, {
+              records: orders,
+              preparations: nextPreparations,
+              allowReview: allowCartonReview,
+            })
           for (const result of measurementResults)
             if (result.changed) tx.objectStore('orders').put(result.order)
           tx.objectStore('packingAllocations').clear()
@@ -1626,6 +1742,7 @@ export async function openDatabase({ name = '1688-order-library' } = {}) {
   }
 
   return {
+    ...cartonBatchesRepository.api,
     ...createOperationsRepository({
       read,
       write,
@@ -2217,11 +2334,28 @@ export async function openDatabase({ name = '1688-order-library' } = {}) {
           'packingPreferences',
           'issuedCodes',
           'packingAllocations',
+          'cartonBatches',
           'images',
         ],
         async (tx) => {
           const allOrders = await requested(tx.objectStore('orders').getAll())
           const removed = new Set(ids)
+          const cartonBatches = await requested(
+            tx.objectStore('cartonBatches').getAll()
+          )
+          if (
+            cartonBatches.some(
+              (batch) =>
+                batch.accountId === accountId &&
+                !batch.deletedAt &&
+                (batch.contents.some((item) => removed.has(item.orderId)) ||
+                  batch.groups.some((group) => removed.has(group.orderId)) ||
+                  (batch.mark && removed.has(batch.mark.orderId)))
+            )
+          )
+            throw new Error(
+              'Remove this order’s active carton batches before deleting it.'
+            )
           for (const record of allOrders)
             if (
               record.snapshot.accountId === accountId &&
@@ -2298,7 +2432,7 @@ export async function openDatabase({ name = '1688-order-library' } = {}) {
       )
     },
 
-    async exportBackup({ orderIds, accountId = 'local' } = {}) {
+    async exportBackup({ orderIds, accountId = 'local', packingScope } = {}) {
       const includedIds =
         orderIds === undefined
           ? null
@@ -2307,7 +2441,7 @@ export async function openDatabase({ name = '1688-order-library' } = {}) {
                 identifier(id, 'Backup order ID')
               )
             )
-      return read(
+      return write(
         [
           'orders',
           'history',
@@ -2316,8 +2450,10 @@ export async function openDatabase({ name = '1688-order-library' } = {}) {
           'packingAllocations',
           'issuedCodes',
           'packingPreferences',
+          'cartonBatches',
         ],
         async (tx) => {
+          const physical = await cartonBatchesRepository.seed(tx)
           let orders = await requested(tx.objectStore('orders').getAll())
           let history = await requested(tx.objectStore('history').getAll())
           let images = await requested(tx.objectStore('images').getAll())
@@ -2369,19 +2505,33 @@ export async function openDatabase({ name = '1688-order-library' } = {}) {
             ])
             images = images.filter((entry) => photoUrls.has(entry.url))
           }
-          return {
+          const backup = {
             format: BACKUP_FORMAT,
-            version: 3,
+            version: 4,
             exportedAt: new Date().toISOString(),
             orders,
             history,
             images,
             preparations,
+            cartonBatches: physical.batches.filter(
+              (batch) =>
+                !includedIds ||
+                (batch.accountId === accountId &&
+                  batch.contents.every((item) => includedIds.has(item.orderId)))
+            ),
             ...activePackingState(preparations, allocations, issuedCodes),
             packingPreferences: preferences
               ? { value: preferences.value, updatedAt: preferences.updatedAt }
               : null,
           }
+          // Scope physical cartons only after the packing planner has seen
+          // every intersecting batch, so omitted linked purchases are reported.
+          return packingScope
+            ? createPackingBackup(
+                { ...backup, cartonBatches: physical.batches },
+                packingScope
+              )
+            : backup
         }
       )
     },
@@ -2399,6 +2549,7 @@ export async function openDatabase({ name = '1688-order-library' } = {}) {
           'packingAllocations',
           'issuedCodes',
           'packingPreferences',
+          'cartonBatches',
         ],
         async (tx) => {
           const orders = tx.objectStore('orders')
@@ -2526,6 +2677,13 @@ export async function openDatabase({ name = '1688-order-library' } = {}) {
               }
             }
           }
+          // Physical allocations may depend on an older source quantity. Make
+          // its evidence visible to merged-batch validation in this transaction.
+          for (const record of backup.history) {
+            const key = [...keyFor(record.snapshot), record.snapshot.observedAt]
+            if (!(await requested(history.getKey(key)))) history.put(record)
+          }
+          await cartonBatchesRepository.restore(tx, backup.cartonBatches || [])
           await shareRestoredWechat(tx)
           const mergedOrders = await requested(orders.getAll())
           validatePaymentGraph(mergedOrders)
@@ -2533,10 +2691,6 @@ export async function openDatabase({ name = '1688-order-library' } = {}) {
             await requested(tx.objectStore('preparations').getAll()),
             { orders: mergedOrders }
           )
-          for (const record of backup.history) {
-            const key = [...keyFor(record.snapshot), record.snapshot.observedAt]
-            if (!(await requested(history.getKey(key)))) history.put(record)
-          }
           for (const image of backup.images) {
             const existing = await requested(
               tx.objectStore('images').get(image.url)
@@ -2967,6 +3121,7 @@ import {
   validateCartonDetails,
 } from './store-order.js'
 import {
+  createPackingBackup,
   isPackingPreparationSubset,
   mergePackingPreparation,
   selectPackingOrder,

@@ -7,6 +7,10 @@ import {
 import { test, expect, holdPreparationWrites } from './extension-fixture.mjs'
 import { createDemoRecords } from '../../preview/library-fixture.js'
 import { readFile } from 'node:fs/promises'
+import {
+  openOrganizing,
+  finishOrganizing,
+} from './packing-organize-helpers.mjs'
 
 async function newWorkspacePage(extension) {
   const page = await extension.context.newPage()
@@ -534,15 +538,18 @@ test('group selection, code editors and their accessible help stay independent',
   await select.click()
   await expect(group).not.toHaveClass(/is-selected/)
   // The clear corner of the header is a selection target, independent of its
-  // code editor and drag grip. A second click removes the selection.
+  // code editor. A second click removes the selection.
   await title.click({ position: { x: 2, y: 2 } })
   await expect(group).toHaveClass(/is-selected/)
   await title.click({ position: { x: 2, y: 2 } })
   await expect(group).not.toHaveClass(/is-selected/)
-  await group
-    .getByRole('group', { name: 'Group actions', exact: true })
-    .getByRole('button', { name: /^Move group 1;/ })
-    .click()
+  await openOrganizing(page)
+  const organizingGroup = dialog.locator('.packing-organize-group').first()
+  await organizingGroup.locator('.reorder-handle').click()
+  await expect(
+    organizingGroup.locator('input[type="checkbox"]')
+  ).not.toBeChecked()
+  await finishOrganizing(page)
   await expect(select).toHaveAttribute('aria-pressed', 'false')
   await code.click()
   await expect(select).toHaveAttribute('aria-pressed', 'false')
@@ -1363,7 +1370,7 @@ test('Copy Excel image freezes selected rows with current-language headings, sup
   ).toBe(true)
   expect(drawing.text.join('')).not.toContain('TEST-BOX')
   for (const item of record.snapshot.items.slice(0, 2)) {
-    expect(drawing.text).toContain(`¥ ${item.price}`)
+    expect(drawing.text).toContain(`${item.price} 元`)
     expect(drawing.text).toContain(item.quantity)
     expect(drawing.runs.find((run) => run.text === item.quantity).font).toMatch(
       /^(?:700|bold) /
@@ -1958,12 +1965,24 @@ test('preparation selects groups and variant rows by range without changing edit
     await expect(first).toHaveCSS('box-shadow', 'none')
   }
 
-  // Inputs, drag grips, photos and preview buttons never select their row/card.
-  await rows
-    .nth(1)
-    .getByRole('button', { name: /^Move product 2;/ })
+  // Organize grips use a separate selection and preserve export row selection.
+  await openOrganizing(page)
+  await dialog
+    .locator('.packing-organize-group')
+    .first()
+    .getByRole('button', { name: 'Products', exact: true })
     .click()
+  const organizingProduct = dialog.locator('.packing-organize-product').nth(1)
+  await organizingProduct.locator('.reorder-handle').click()
+  await expect(
+    organizingProduct.locator('input[type="checkbox"]')
+  ).not.toBeChecked()
+  await finishOrganizing(page)
+  await expect(rows.nth(0)).toHaveAttribute('aria-selected', 'true')
   await expect(rows.nth(1)).toHaveAttribute('aria-selected', 'false')
+  await expect(secondRow).toHaveAttribute('aria-selected', 'true')
+
+  // Inputs, photos and preview buttons never select their row/card.
   await rows.nth(1).getByLabel('Product variant', { exact: true }).click()
   await expect(rows.nth(1)).toHaveAttribute('aria-selected', 'false')
   await rows.nth(1).locator('.preparation-photo').first().click()
@@ -2419,7 +2438,7 @@ for (const action of ['Copy Excel image', 'Copy group codes', 'Copy columns']) {
       expect(text.join('')).toContain('500 ml')
       expect(text.join('')).not.toContain('TEST-BOX')
       for (const item of record.snapshot.items.slice(0, 2)) {
-        expect(text).toContain(`¥ ${item.price}`)
+        expect(text).toContain(`${item.price} 元`)
         expect(text).toContain(item.quantity)
       }
       const image = await page.evaluate(async () => {

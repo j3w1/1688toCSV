@@ -140,6 +140,15 @@ try {
     .waitFor({ state: 'hidden' })
   await page.evaluate(() => window.scrollTo(0, 0))
   await page.screenshot({ path: 'screenshots/preparation.png' })
+  await page.getByRole('button', { name: 'Organize', exact: true }).click()
+  await expect(page.locator('.packing-organize-group').first()).toBeVisible()
+  await expect(page.locator('#packing-view .variants')).toHaveCount(0)
+  await page
+    .locator('#packing-view img')
+    .evaluateAll((images) => Promise.all(images.map((image) => image.decode())))
+  await page.mouse.move(0, 0)
+  await page.screenshot({ path: 'screenshots/packing-organize.png' })
+  await page.getByRole('button', { name: 'Done', exact: true }).click()
   await page
     .getByRole('button', { name: 'More copy formats', exact: true })
     .click()

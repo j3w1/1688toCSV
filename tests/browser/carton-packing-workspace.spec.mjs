@@ -136,6 +136,14 @@ test('capacities autosave before assignment, copy in preparation and require rev
     .click()
   const packing = page.locator('#packing-view')
   await expect(packing).toBeVisible()
+  const prepared = await extension.inspector.evaluate(() =>
+    chrome.runtime.sendMessage({ type: 'BACKUP_EXPORT' })
+  )
+  expect(prepared.ok, prepared.error).toBe(true)
+  expect(prepared.data.cartonBatches).toEqual([])
+  expect(prepared.data.orders[0].unitsPerCarton).toEqual(
+    backup.data.orders[0].unitsPerCarton
+  )
   await expect(
     packing.getByRole('spinbutton', { name: 'Pcs/box', exact: true })
   ).toHaveCount(0)
@@ -269,6 +277,11 @@ test('a shared carton code sums exact capacities per product and never guesses w
     .click()
   const packing = page.locator('#packing-view')
   await expect(packing.locator('.preparation-group')).toHaveCount(1)
+  const prepared = await extension.inspector.evaluate(() =>
+    chrome.runtime.sendMessage({ type: 'BACKUP_EXPORT' })
+  )
+  expect(prepared.ok, prepared.error).toBe(true)
+  expect(prepared.data.cartonBatches).toEqual([])
   const openPrint = async () => {
     await packing.locator('[data-action="open-print-menu"]').click()
     await packing.locator('[data-action="print-carton-marks"]').click()
@@ -281,6 +294,7 @@ test('a shared carton code sums exact capacities per product and never guesses w
   ).toHaveCount(0)
   await print.getByRole('button', { name: 'Cancel', exact: true }).click()
   await page.keyboard.press('Escape')
+  await expect(packing).toBeHidden()
   const row = page.locator('#sheet-body tr[data-selection-key]').nth(2)
   await row.getByRole('spinbutton', { name: 'Pcs/box', exact: true }).fill('')
   await row
@@ -289,6 +303,15 @@ test('a shared carton code sums exact capacities per product and never guesses w
   await expect(row.locator('.carton-capacity-status')).toHaveText('Saved')
   await page.locator('#prepare-orders').click()
   await expect(packing).toBeVisible()
+  const cleared = await extension.inspector.evaluate(() =>
+    chrome.runtime.sendMessage({ type: 'BACKUP_EXPORT' })
+  )
+  expect(cleared.ok, cleared.error).toBe(true)
+  expect(cleared.data.orders[0].unitsPerCarton).toEqual({
+    [record.snapshot.items[0].entryId]: 10,
+    [record.snapshot.items[1].entryId]: 12,
+  })
+  expect(cleared.data.cartonBatches).toEqual([])
   print = await openPrint()
   await expect(print.getByLabel(/^Quantity for /)).toHaveValue('')
   await expect(print.locator('.print-carton-breakdown')).toHaveCount(3)
@@ -359,6 +382,15 @@ test('capacity changes refresh an already open preparation and its next print co
   await expect(packing.locator('.carton-capacity-readout')).toContainText(
     '2 full cartons'
   )
+  const saved = await extension.inspector.evaluate(() =>
+    chrome.runtime.sendMessage({ type: 'BACKUP_EXPORT' })
+  )
+  expect(saved.ok, saved.error).toBe(true)
+  expect(saved.data.orders[0].unitsPerCarton).toEqual({
+    [record.snapshot.items[0].entryId]: 20,
+  })
+  expect(saved.data.orders[0].snapshot).toEqual(record.snapshot)
+  expect(saved.data.cartonBatches).toEqual([])
   await viewer.bringToFront()
   await packing.locator('[data-action="open-print-menu"]').click()
   await packing.locator('[data-action="print-carton-marks"]').click()

@@ -721,6 +721,16 @@ body > main {
     flex: 1 1 100%;
     justify-content: flex-start;
   }
+  .action-bar .selection-totals-grid {
+    /* Give the amounts full tracks so changing digit counts cannot add a line
+       and move the product table when the viewport is divided between panes. */
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    row-gap: 4px;
+  }
+  .action-bar .selection-totals-grid > [data-selection-total='gross'] {
+    padding-inline-start: 0;
+    border-inline-start: 0;
+  }
   .action-bar .packing-launch {
     padding-inline-start: 0;
     border-inline-start: 0;

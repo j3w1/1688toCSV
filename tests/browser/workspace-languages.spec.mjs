@@ -122,7 +122,8 @@ for (const language of ['en', 'es', 'zh']) {
       await title.click()
       await expect(row).toHaveAttribute('aria-selected', 'false')
       expect(await layout(), `deselection at ${width}px`).toEqual(before)
-      await row.focus()
+      // Exercise Select All from the row focused by the actual click handler.
+      await expect(row).toBeFocused()
       await page.keyboard.press('ControlOrMeta+a')
       await expect(
         page.locator('#sheet-body tr[aria-selected="true"]')

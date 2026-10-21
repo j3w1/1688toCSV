@@ -547,10 +547,10 @@ test('52 imported groups use a fitted assignment grid without pagers or main scr
     .boundingBox()
   const cornerBounds = await corner.boundingBox()
   expect(cornerBounds.x + cornerBounds.width).toBeCloseTo(
-    photoBounds.x + photoBounds.width,
+    photoBounds.x + photoBounds.width - 2,
     0
   )
-  expect(cornerBounds.y).toBeCloseTo(photoBounds.y, 0)
+  expect(cornerBounds.y).toBeCloseTo(photoBounds.y + 2, 0)
   expect(cornerBounds.width).toBeLessThanOrEqual(16)
   await mkdir(new URL('../../work/', import.meta.url), { recursive: true })
   await review.screenshot({ path: 'work/packing-assignment-grid-wide.png' })

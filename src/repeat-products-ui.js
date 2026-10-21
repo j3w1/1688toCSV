@@ -4,6 +4,7 @@ import { packingValueComparison } from './packing-review.js'
 import { preparationHelp } from './preparation-help.js'
 import { productFeatures } from './product-features.js'
 import { setCodeText } from './code-display.js'
+import { cartonBatchReviewChanges } from './carton-batch-review.js'
 
 /** One native modal reviews all source rows; no code changes happen on selection. */
 export async function openRepeatProductDialog({
@@ -127,6 +128,17 @@ export async function openRepeatProductDialog({
             })
           )
         )
+      row.append(details)
+      content.append(row)
+    }
+    for (const change of cartonBatchReviewChanges(plan?.cartons)) {
+      const row = el('article', undefined, 'repeat-product-source')
+      const details = el('div')
+      details.append(
+        el('strong', change.name),
+        packingValueComparison(change.values),
+        el('small', change.detail)
+      )
       row.append(details)
       content.append(row)
     }
@@ -287,7 +299,7 @@ export async function openRepeatProductDialog({
       const saved = linked
         ? await repository.unlinkRepeatProduct(plan)
         : await repository.linkRepeatProduct(plan)
-      await onSaved?.(saved)
+      await onSaved?.(saved, plan)
       dialog.returnValue = 'saved'
       dialog.close()
     } catch (failure) {

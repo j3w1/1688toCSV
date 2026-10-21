@@ -15,6 +15,7 @@ import { createPackingWorkbookImages } from './packing-workbook-images.js'
 import { preparationHelp } from './preparation-help.js'
 import {
   packingExportColumns,
+  packingCartonExportColumns,
   readPackingExportOptions,
   savePackingExportOptions,
   selectedPackingExportColumns,
@@ -24,6 +25,7 @@ import {
 /** Configure an editable workbook with small preview assets for five products. */
 export async function openPackingExportDialog({
   getRows,
+  getCartonBatches = () => [],
   hasSelection = false,
   onExport,
   loadImage = async (source) => source,
@@ -42,6 +44,7 @@ export async function openPackingExportDialog({
     search = el('input'),
     choices = el('div', undefined, 'packing-export-column-list'),
     actions = el('div', undefined, 'packing-export-column-actions'),
+    sheets = el('fieldset', undefined, 'packing-export-sheet-tabs'),
     main = el('section', undefined, 'packing-export-main'),
     controls = el('div', undefined, 'packing-export-controls'),
     preview = el('div', undefined, 'packing-export-preview'),
@@ -56,6 +59,7 @@ export async function openPackingExportDialog({
     status = el('p'),
     download = el('button', m('Download Excel'), 'primary')
   let options = readPackingExportOptions(),
+    activeSheet = 'products',
     busy = false,
     storageFailed = false
   const prepareImages = createPackingWorkbookImages(loadImage, renderCartonMark)
@@ -68,8 +72,14 @@ export async function openPackingExportDialog({
   }
   if (!hasSelection) options.scope = 'all'
   const local = (value, params) => t(value, params, getLanguage(modal))
+  const availableColumns = () =>
+    activeSheet === 'cartons'
+      ? packingCartonExportColumns
+      : packingExportColumns
+  const sheetOptions = () =>
+    activeSheet === 'cartons' ? options.cartons : options
   const columnName = (key) =>
-    packingExportColumns.find((column) => column.key === key).labels[
+    availableColumns().find((column) => column.key === key).labels[
       getLanguage(modal)
     ]
   heading.id = `packing-export-${crypto.randomUUID()}`
@@ -82,7 +92,27 @@ export async function openPackingExportDialog({
   status.setAttribute('role', 'status')
   const languages = popupLanguageToggle(modal)
   header.append(heading, languages, close)
-  columns.append(searchLabel, actions, choices)
+  sheets.append(el('legend', m('Worksheet')))
+  for (const [value, title] of [
+    ['products', 'Products'],
+    ['cartons', 'Cartons'],
+  ]) {
+    const label = el('label', m(title)),
+      radio = el('input')
+    radio.type = 'radio'
+    radio.name = `packing-sheet-${heading.id}`
+    radio.value = value
+    radio.checked = value === activeSheet
+    radio.onchange = () => {
+      if (!radio.checked) return
+      activeSheet = value
+      search.value = ''
+      render()
+    }
+    label.prepend(radio)
+    sheets.append(label)
+  }
+  columns.append(sheets, searchLabel, actions, choices)
   main.append(controls, note, preview)
   content.append(columns, main)
   footer.append(status, download)
@@ -96,21 +126,22 @@ export async function openPackingExportDialog({
     [
       'Select all columns',
       () => {
-        options.selected = packingExportColumns.map(({ key }) => key)
+        sheetOptions().selected = availableColumns().map(({ key }) => key)
       },
     ],
     [
       'Clear columns',
       () => {
-        options.selected = []
+        sheetOptions().selected = []
       },
     ],
     [
       'Restore default columns',
       () => {
         const defaults = normalizePackingExportOptions()
-        options.order = defaults.order
-        options.selected = defaults.selected
+        const restored = activeSheet === 'cartons' ? defaults.cartons : defaults
+        sheetOptions().order = restored.order
+        sheetOptions().selected = restored.selected
       },
     ],
   ]) {
@@ -195,8 +226,9 @@ export async function openPackingExportDialog({
   function renderChoices() {
     const query = search.value.normalize('NFKC').trim().toLowerCase()
     choices.replaceChildren()
-    const selected = selectedPackingExportColumns(options)
-    for (const key of options.order) {
+    const selected = selectedPackingExportColumns(options, activeSheet),
+      current = sheetOptions()
+    for (const key of current.order) {
       const name = columnName(key)
       if (
         query &&
@@ -204,7 +236,7 @@ export async function openPackingExportDialog({
           name,
           key,
           ...Object.values(
-            packingExportColumns.find((column) => column.key === key).labels
+            availableColumns().find((column) => column.key === key).labels
           ),
         ]
           .join(' ')
@@ -219,12 +251,12 @@ export async function openPackingExportDialog({
         moves = el('span', undefined, 'packing-export-moves')
       row.dataset.column = key
       check.type = 'checkbox'
-      check.checked = options.selected.includes(key)
+      check.checked = current.selected.includes(key)
       check.value = key
       check.onchange = () => {
-        options.selected = check.checked
-          ? [...options.selected, key]
-          : options.selected.filter((entry) => entry !== key)
+        current.selected = check.checked
+          ? [...current.selected, key]
+          : current.selected.filter((entry) => entry !== key)
         persist()
         choices.querySelector(`input[value="${key}"]`)?.focus()
       }
@@ -246,9 +278,9 @@ export async function openPackingExportDialog({
           const next = [...selected]
           next.splice(at, 1)
           next.splice(at + offset, 0, key)
-          options.order = [
+          current.order = [
             ...next,
-            ...options.order.filter((entry) => !next.includes(entry)),
+            ...current.order.filter((entry) => !next.includes(entry)),
           ]
           persist()
           const move = choices.querySelector(
@@ -269,6 +301,8 @@ export async function openPackingExportDialog({
     return {
       ...options,
       columns: selectedPackingExportColumns(options),
+      cartonColumns: selectedPackingExportColumns(options, 'cartons'),
+      cartonBatches: getCartonBatches(options.scope),
       language: getLanguage(modal),
       style: workspaceExportStyle(),
     }
@@ -287,8 +321,11 @@ export async function openPackingExportDialog({
     clearPreviewImages()
     preview.replaceChildren()
     const rows = getRows(options.scope),
-      selected = selectedPackingExportColumns(options)
-    download.disabled = busy || !selected.length || !rows.length
+      selected = selectedPackingExportColumns(options, activeSheet),
+      ready =
+        selectedPackingExportColumns(options).length &&
+        selectedPackingExportColumns(options, 'cartons').length
+    download.disabled = busy || !ready || !rows.length
     bindText(
       status,
       m('Products: {0} · Columns: {1}', { 0: rows.length, 1: selected.length })
@@ -304,7 +341,8 @@ export async function openPackingExportDialog({
       return
     }
     try {
-      const plan = planPackingWorkbook(rows, exportOptions()),
+      const workbook = planPackingWorkbook(rows, exportOptions()),
+        plan = workbook.sheets[activeSheet === 'cartons' ? 1 : 0],
         table = el('table'),
         columnSizes = el('colgroup'),
         head = el('thead'),
@@ -328,10 +366,27 @@ export async function openPackingExportDialog({
       }
       table.style.inlineSize = `${plan.columns.reduce((total, column) => total + column.pixelWidth, 0)}px`
       head.append(tr)
+      bindText(
+        note,
+        activeSheet === 'cartons'
+          ? m(
+              'Carton totals include complete batches only. Shared context is marked and excluded from totals.'
+            )
+          : m(
+              'Preview shows the first 5 products. The workbook includes every product in the chosen scope.'
+            )
+      )
       for (const row of plan.rows
-        .filter((row) => row.kind === 'product')
+        .filter((row) => ['product', 'carton', 'context'].includes(row.kind))
         .slice(0, 5)) {
         const tr = el('tr')
+        if (row.kind === 'context') {
+          tr.className = 'packing-export-context'
+          preparationHelp(tr, m('Shared context — excluded from totals'))
+        }
+        const source = plan.products.find(
+          (product) => product.row === row.number
+        )?.source
         tr.style.blockSize = `${row.height / 0.75}px`
         row.cells.forEach((cell, index) => {
           const td = el('td'),
@@ -348,10 +403,7 @@ export async function openPackingExportDialog({
             setCodeText(code, cell.value)
             content.append(code)
           } else if (key === 'photo' || key === 'cartonMark') {
-            if (
-              key === 'cartonMark' &&
-              !rows[body.childElementCount]?.chineseCategory?.trim()
-            ) {
+            if (key === 'cartonMark' && !source?.chineseCategory?.trim()) {
               content.textContent = '—'
               preparationHelp(
                 td,
@@ -367,16 +419,14 @@ export async function openPackingExportDialog({
             Number.isFinite(Number(cell.value)) &&
             Math.abs(Number(cell.value)) <= Number.MAX_SAFE_INTEGER
           ) {
-            const weight = /Weight$/.test(key),
-              volume = /Volume$/.test(key),
+            const weight = /Weight$/.test(key) || key === 'weight',
+              volume = /Volume$/.test(key) || key === 'volumePerCarton',
               money =
                 /Price$|Amount$/.test(key) ||
                 ['orderShipping', 'discount'].includes(key),
-              dimension = [
-                'cartonLength',
-                'cartonWidth',
-                'cartonHeight',
-              ].includes(key)
+              dimension =
+                ['cartonLength', 'cartonWidth', 'cartonHeight'].includes(key) ||
+                ['len', 'wid', 'ht'].includes(key)
             content.textContent =
               new Intl.NumberFormat(getLanguage(modal), {
                 minimumFractionDigits: money ? 2 : 0,
@@ -407,9 +457,7 @@ export async function openPackingExportDialog({
           if (key === 'description') {
             content.style.whiteSpace = 'pre-line'
             td.style.textAlign =
-              rows[body.childElementCount]?.sourceType === 'spreadsheet'
-                ? 'center'
-                : 'start'
+              source?.sourceType === 'spreadsheet' ? 'center' : 'start'
             preparationHelp(td, () => String(cell.value ?? ''))
           }
           if (cell.type === 'number') td.classList.add('numeric')
@@ -430,10 +478,10 @@ export async function openPackingExportDialog({
             ? { mark: { maxWidth: 320, maxHeight: 240 } }
             : {}),
         }
-        for (const [index, product] of rows.slice(0, 5).entries()) {
+        for (const [index, product] of plan.products.slice(0, 5).entries()) {
           if (version !== previewVersion) return
           try {
-            const assets = await prepareImages(product, limits)
+            const assets = await prepareImages(product.source, limits)
             if (version !== previewVersion) return
             for (const [column, asset] of [
               ['photo', assets.photo],
@@ -488,7 +536,9 @@ export async function openPackingExportDialog({
       content.inert = false
       close.disabled = false
       for (const button of languages.children) button.disabled = false
-      download.disabled = !selectedPackingExportColumns(options).length
+      download.disabled =
+        !selectedPackingExportColumns(options).length ||
+        !selectedPackingExportColumns(options, 'cartons').length
     }
   }
   document.body.append(modal)

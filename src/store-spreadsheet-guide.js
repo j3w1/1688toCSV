@@ -215,7 +215,7 @@ export function mountStoreSpreadsheetGuide(
     ),
     section(
       'Keep carton measurements separate',
-      'cbm is decimal m³. Put centimetre dimensions in cbmx, cbmy and cbmz. When all three exist, their calculated volume takes priority: x × y × z ÷ 1,000,000.'
+      'cbm is supplier volume per carton. Put complete centimetre dimensions in cbmx, cbmy and cbmz. In the workspace, volume is calculated from Length × Width × Height ÷ 1,000,000; supplied volume stays read-only until dimensions supersede it.'
     ),
     section(
       'Keep combined variants together until review',
@@ -227,7 +227,15 @@ export function mountStoreSpreadsheetGuide(
     ),
     section(
       'Keep packing exceptions explicit',
-      'Review loose units and shared cartons separately from ordered quantities. Never infer fractional or mixed cartons. Add and explain extra order costs separately.'
+      'After preparation, open Cartons for the code group. Pack together, Separate variants and Use all remaining fill proposals; Apply carton contents saves the allocation. Review leftovers instead of assuming another carton. Add extra order costs separately.'
+    ),
+    section(
+      'Choose contents and carton mark',
+      'Use Exact carton for one numbered carton’s actual contents, or Batch for combined totals. Groups from one purchase can mix; choose the physical carton mark separately, even when its group contributes no pieces. Group codes identify carton marks; full variant codes identify product labels. Other purchases need explicit product links within the same account, store and packing month. Unequal cartons do not imply a common pieces-per-box value.'
+    ),
+    section(
+      'Confirm cartons independently',
+      'Different carton dimensions or weights need separate batches. Choose Per carton or Batch total for weight; partial batch-total weight stays unknown. Received and loaded counts are independent: blank is unknown and zero confirms none. They never change received product pieces.'
     ),
     section(
       'Confirm the purchase date',

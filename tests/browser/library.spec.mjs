@@ -126,8 +126,11 @@ test('photo copy appears only on hover or keyboard focus without changing select
   await expect(copy).toHaveCSS('pointer-events', 'auto')
   const corner = await copy.boundingBox(),
     thumbnail = await photo.boundingBox()
-  expect(corner.x + corner.width).toBeCloseTo(thumbnail.x + thumbnail.width, 0)
-  expect(corner.y).toBeCloseTo(thumbnail.y, 0)
+  expect(corner.x + corner.width).toBeCloseTo(
+    thumbnail.x + thumbnail.width - 2,
+    0
+  )
+  expect(corner.y).toBeCloseTo(thumbnail.y + 2, 0)
   expect(corner.width).toBe(24)
   await page.mouse.move(0, 0)
   await expect(copy).toHaveCSS('opacity', '0')
@@ -155,6 +158,9 @@ test('photo copy appears only on hover or keyboard focus without changing select
       await page.mouse.move(0, 0)
       await expect(copy).toHaveCSS('opacity', '0')
       await expect(copy).toHaveCSS('pointer-events', 'none')
+      await photo.focus()
+      await expect(copy).toHaveCSS('opacity', '0.94')
+      await expect(copy).toHaveCSS('pointer-events', 'auto')
     }
     const copyBounds = await copy.boundingBox()
     const photoBounds = await photo.boundingBox()

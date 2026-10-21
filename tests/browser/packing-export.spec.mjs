@@ -61,7 +61,7 @@ test('packing export previews persistent columns, order, scope and layout before
   await expect(dialog).toBeVisible()
   await expect(
     dialog.locator('.packing-export-preview .packing-export-headings th')
-  ).toHaveCount(19)
+  ).toHaveCount(13)
   await expect(dialog.locator('input[value="cartonMark"]')).toBeChecked()
   await expect(dialog.locator('input[value="store"]')).toHaveCount(0)
   await expect(dialog.locator('input[value="orderQuantity"]')).toHaveCount(0)
@@ -120,8 +120,8 @@ test('packing export previews persistent columns, order, scope and layout before
     'barcode',
     'description',
     'quantity',
-    'cartonWeight',
-    'cartonVolume',
+    'cartonReferences',
+    'effectiveAmount',
   ])
     await dialog.locator(`input[value="${key}"]`).check()
   const quantityLeft = dialog.locator(
@@ -134,6 +134,19 @@ test('packing export previews persistent columns, order, scope and layout before
       .locator('.packing-export-preview .packing-export-headings th')
       .first()
   ).toHaveText('Qty')
+  await dialog.getByRole('radio', { name: 'Cartons', exact: true }).check()
+  await expect(
+    dialog.locator('.packing-export-preview .packing-export-headings th')
+  ).toHaveCount(16)
+  await dialog
+    .getByRole('button', { name: 'Clear columns', exact: true })
+    .click()
+  for (const key of ['batch', 'count', 'loaded', 'totalVolume'])
+    await dialog.locator(`input[value="${key}"]`).check()
+  await expect(
+    dialog.locator('.packing-export-preview .packing-export-headings th')
+  ).toHaveCount(4)
+  await dialog.getByRole('radio', { name: 'Products', exact: true }).check()
   await dialog.locator('[data-option="scope"][data-value="selected"]').click()
   await dialog
     .locator('[data-option="photoSize"][data-value="compact"]')
@@ -220,12 +233,13 @@ test('packing export previews persistent columns, order, scope and layout before
   await writeFile('work/packing-export-selected-synthetic.xlsx', bytes)
   const workbook = XLSX.read(bytes, { type: 'buffer' }),
     sheet = workbook.Sheets[workbook.SheetNames[0]]
+  expect(workbook.SheetNames).toEqual(['Products', 'Cartons'])
   expect(XLSX.utils.sheet_to_json(sheet, { header: 1 })[4]).toEqual([
     'Qty',
     'Code',
     'Details',
-    'kg/box',
-    'm³/box',
+    'Cartons',
+    'Subtotal 元',
   ])
   const archive = XLSX.CFB.read(bytes, { type: 'buffer' })
   const xml = (name) =>
@@ -272,7 +286,18 @@ test('packing export previews persistent columns, order, scope and layout before
     .click()
   await expect(
     dialog.locator('.packing-export-preview .packing-export-headings th')
-  ).toHaveCount(19)
+  ).toHaveCount(13)
+  await dialog.getByRole('radio', { name: 'Cartons', exact: true }).check()
+  await expect(
+    dialog.locator('.packing-export-preview .packing-export-headings th')
+  ).toHaveCount(4)
+  await dialog
+    .getByRole('button', { name: 'Restore default columns', exact: true })
+    .click()
+  await expect(
+    dialog.locator('.packing-export-preview .packing-export-headings th')
+  ).toHaveCount(16)
+  await dialog.getByRole('radio', { name: 'Products', exact: true }).check()
   await expect(
     dialog.locator('[data-option="scope"][data-value="selected"]')
   ).toHaveAttribute('aria-pressed', 'true')

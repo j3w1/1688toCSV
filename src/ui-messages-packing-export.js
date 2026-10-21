@@ -1,4 +1,19 @@
 export const PACKING_EXPORT_MESSAGES = {
+  Worksheet: { es: 'Hoja', zh: '工作表' },
+  Cartons: { es: 'Cajas', zh: '纸箱' },
+  'Choose at least one supported carton column.': {
+    es: 'Selecciona al menos una columna de cajas.',
+    zh: '请至少选择一列纸箱数据。',
+  },
+  'Carton totals include complete batches only. Shared context is marked and excluded from totals.':
+    {
+      es: 'Los totales suman solo lotes completos. El contexto compartido se identifica y no suma.',
+      zh: '合计仅包含完整箱批。共享背景信息会标记，且不计入合计。',
+    },
+  'Shared context — excluded from totals': {
+    es: 'Contexto compartido — excluido de totales',
+    zh: '共享背景信息 — 不计入合计',
+  },
   'Add a Chinese category in Preparation to generate a carton mark.': {
     es: 'Añade una categoría en chino en Preparación para generar la marca de caja.',
     zh: '在备货中添加中文品类，即可生成唛头。',

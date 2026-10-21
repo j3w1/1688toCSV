@@ -28,10 +28,10 @@ export const STORE_IMPORT_MESSAGES = {
       zh: '数字可带单位，如 6元、20.5 KG 或 0.14 CBM。含义不清的值需要审核。kg 和 cbm 始终表示每箱数值。',
       es: 'Los números pueden incluir unidades, como 6元, 20.5 KG o 0.14 CBM. Revisa los valores ambiguos. kg y cbm siempre corresponden a una caja.',
     },
-  'cbm is decimal m³. Put centimetre dimensions in cbmx, cbmy and cbmz. When all three exist, their calculated volume takes priority: x × y × z ÷ 1,000,000.':
+  'cbm is supplier volume per carton. Put complete centimetre dimensions in cbmx, cbmy and cbmz. In the workspace, volume is calculated from Length × Width × Height ÷ 1,000,000; supplied volume stays read-only until dimensions supersede it.':
     {
-      zh: 'cbm 为十进制立方米。厘米尺寸分别填入 cbmx、cbmy、cbmz。三项齐全时，优先使用计算体积：x × y × z ÷ 1,000,000。',
-      es: 'cbm expresa m³ decimales. Pon las dimensiones en centímetros en cbmx, cbmy y cbmz. Si existen las tres, tiene prioridad su volumen calculado: x × y × z ÷ 1,000,000.',
+      zh: 'cbm 是供应商提供的每箱体积。完整厘米尺寸分别填入 cbmx、cbmy、cbmz。工作区按长 × 宽 × 高 ÷ 1,000,000 计算体积；填写完整尺寸前，供应商体积仅供查看。',
+      es: 'cbm es el volumen por caja indicado por el proveedor. Pon las medidas completas en centímetros en cbmx, cbmy y cbmz. El espacio de trabajo calcula largo × ancho × alto ÷ 1,000,000; el volumen indicado es de solo lectura hasta completar las medidas.',
     },
   'abcd shares one quantity and amount across A–D. Enter the actual split during review; never duplicate the totals or assume equal quantities. abs, abm and abl mean A/B in sizes S, M and L.':
     {
@@ -43,10 +43,28 @@ export const STORE_IMPORT_MESSAGES = {
       zh: '每件商品都需要照片。图片锚定范围或合并的 pic 单元格覆盖对应行时，不同商品组可以共用照片。审核时请确认共用照片。缺失或无法读取的照片会阻止导入。正方形缩略图保持比例，并保留原图。',
       es: 'Cada producto necesita foto. Una foto puede servir a distintos grupos si su anclaje o celda pic combinada cubre sus filas. Confirma las fotos compartidas al revisar. Las fotos ausentes o ilegibles bloquean la importación. Las miniaturas cuadradas conservan las proporciones y los originales.',
     },
-  'Review loose units and shared cartons separately from ordered quantities. Never infer fractional or mixed cartons. Add and explain extra order costs separately.':
+  'After preparation, open Cartons for the code group. Pack together, Separate variants and Use all remaining fill proposals; Apply carton contents saves the allocation. Review leftovers instead of assuming another carton. Add extra order costs separately.':
     {
-      zh: '零散件和共箱安排应与订购数量分开审核，不推断分数箱或混装箱。额外订单费用需单独添加并说明。',
-      es: 'Revisa las unidades sueltas y cajas compartidas aparte de lo pedido. No supongas cajas fraccionadas o mixtas. Añade y explica los costes extra por separado.',
+      zh: '备货后，在货号组打开“纸箱”。“合箱”“分开款式”和“使用全部剩余数量”可填写方案，再用“应用箱内商品”保存分配。零散件需核对，不自动增加纸箱。额外订单费用单独记录。',
+      es: 'Tras preparar, abre Cajas para el grupo. Embalar juntos, Separar variantes y Usar todo lo restante rellenan propuestas; Aplicar contenido guarda el reparto. Revisa los sobrantes sin suponer otra caja. Registra los costes extra aparte.',
+    },
+  'Choose contents and carton mark': {
+    zh: '选择箱内商品与实际唛头',
+    es: 'Elige contenido y marca de caja',
+  },
+  'Use Exact carton for one numbered carton’s actual contents, or Batch for combined totals. Groups from one purchase can mix; choose the physical carton mark separately, even when its group contributes no pieces. Group codes identify carton marks; full variant codes identify product labels. Other purchases need explicit product links within the same account, store and packing month. Unequal cartons do not imply a common pieces-per-box value.':
+    {
+      zh: '“逐箱登记”记录一个箱号的实际商品，“整批登记”记录多箱合计。同一采购中的不同商品组可以混装；实际唛头单独选择，即使该唛头组没有商品装入此箱。分组货号用于唛头，完整款式货号用于商品标签。跨采购装箱须在同一账户、店铺和装箱月份内明确关联商品。各箱件数不同时，不推定统一的每箱件数。',
+      es: 'Usa Caja individual para el contenido real de una caja numerada, o Lote para los totales conjuntos. Puedes mezclar grupos de una compra y elegir la marca física aparte, aunque su grupo no aporte piezas. Los códigos de grupo identifican las marcas; los códigos completos, las etiquetas de producto. Otras compras necesitan vínculos explícitos de productos de la misma cuenta, tienda y mes. Las cajas desiguales no implican una capacidad común.',
+    },
+  'Confirm cartons independently': {
+    zh: '独立确认纸箱数量',
+    es: 'Confirmar las cajas por separado',
+  },
+  'Different carton dimensions or weights need separate batches. Choose Per carton or Batch total for weight; partial batch-total weight stays unknown. Received and loaded counts are independent: blank is unknown and zero confirms none. They never change received product pieces.':
+    {
+      zh: '纸箱尺寸或重量不同时分批记录。重量可选“每箱”或“整批”；整批重量不按部分箱数推算。实收与装柜箱数独立，留空表示未知，零表示确认没有，不会更改商品实收件数。',
+      es: 'Las cajas de distintas medidas o pesos necesitan lotes separados. Elige Por caja o Total del lote; el peso de una parte queda desconocido con un total de lote. Recibidas y cargadas son independientes: vacío es desconocido y cero confirma ninguna. No cambian las piezas recibidas.',
     },
   'Confirm the purchase date in the form. The filename identifies the store, not the date.':
     {

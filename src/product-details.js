@@ -6,6 +6,7 @@ import { photoCopyTile } from './photo-copy.js'
 import { preparationHelp } from './preparation-help.js'
 import { mountProductTags } from './product-tags-ui.js'
 import { mountCartonDetails } from './carton-details-ui.js'
+import { setCodeText } from './code-display.js'
 
 /** Display helpers never rewrite the source row or the values exported to Excel. */
 export function createProductDescription(item) {
@@ -59,13 +60,12 @@ export function openProductDetails(
   // Dismissal and navigation share one transition: only its first callback runs.
   const closeDetails = (onClosed) => {
     if (closing) return closing
-    if (cartonEditor?.dataset.saveState === 'saving')
-      return Promise.resolve(false)
     if (!dialog.open) return Promise.resolve(false)
     closing = (async () => {
       tagEditor?.setBusy(true)
       try {
         await tagEditor?.flush()
+        await cartonEditor?.flush?.()
         dialog.close()
         onClosed?.()
         return true
@@ -187,12 +187,31 @@ export function openProductDetails(
   }
   body.append(data)
   const cartonHost = el('div', undefined, 'product-details-carton')
-  if (carton)
+  if (carton?.openBatches) {
+    const panel = el(
+      'section',
+      undefined,
+      'product-carton-details product-carton-batch-context'
+    )
+    const code = el('code', undefined, 'ce-code'),
+      summary = el('span')
+    setCodeText(code, carton.baseCode)
+    bindText(summary, carton.summary)
+    const edit = el('button', message('Edit cartons'))
+    decorateIcon(edit, 'carton')
+    edit.addEventListener('click', () => {
+      void carton
+        .openBatches()
+        .then(() => bindText(summary, carton.summary))
+        .catch((error) => bindText(summary, message(error.message)))
+    })
+    panel.append(code, summary, edit)
+    cartonHost.append(panel)
+  } else if (carton)
     cartonEditor = mountCartonDetails(cartonHost, {
       ...carton,
       onBusyChange: (busy) => {
-        for (const action of navigation) action.disabled = busy
-        order.disabled = busy || !onOrder
+        dialog.setAttribute('aria-busy', String(busy))
         carton.onBusyChange?.(busy)
       },
     })
@@ -211,6 +230,7 @@ export function openProductDetails(
     'close',
     () => {
       tagEditor?.destroy()
+      cartonEditor?.destroy?.()
       dialog.remove()
     },
     { once: true }

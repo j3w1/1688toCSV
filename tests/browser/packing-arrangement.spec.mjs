@@ -1,6 +1,10 @@
 import { test, expect } from './extension-fixture.mjs'
 import { createDemoRecords } from '../../preview/library-fixture.js'
 import { revealCopyActions } from './copy-actions-helpers.mjs'
+import {
+  openOrganizing,
+  finishOrganizing,
+} from './packing-organize-helpers.mjs'
 
 async function setup(
   extension,
@@ -99,6 +103,7 @@ test('arrangement persists, retains codes and exports the final manual order', a
 }) => {
   const { page, view, records, response } = await setup(extension)
   const arrange = async (name) => {
+    await openOrganizing(page)
     await view
       .getByRole('button', { name: 'Arrange packing', exact: true })
       .click()
@@ -109,6 +114,7 @@ test('arrangement persists, retains codes and exports the final manual order', a
     await expect(view.locator('.preparation-save-status')).toHaveText(
       'Saved automatically'
     )
+    await finishOrganizing(page)
   }
   const ids = () =>
     view
@@ -136,6 +142,7 @@ test('arrangement persists, retains codes and exports the final manual order', a
     records[2].snapshot.orderId,
     records[1].snapshot.orderId,
   ])
+  await openOrganizing(page)
   await view
     .locator('.packing-order-header > .reorder-handle')
     .first()
@@ -143,6 +150,7 @@ test('arrangement persists, retains codes and exports the final manual order', a
   await expect(view.locator('.preparation-save-status')).toHaveText(
     'Saved automatically'
   )
+  await finishOrganizing(page)
   const finalOrder = await ids()
   await expect(
     view.getByRole('button', { name: 'Undo', exact: true })
@@ -340,6 +348,7 @@ test('arranging a selected subset preserves the hidden order slot and saved revi
 }) => {
   const { page, view, records } = await setup(extension)
   const arrange = async (name) => {
+    await openOrganizing(page)
     await view
       .getByRole('button', { name: 'Arrange packing', exact: true })
       .click()
@@ -350,6 +359,7 @@ test('arranging a selected subset preserves the hidden order slot and saved revi
     await expect(view.locator('.preparation-save-status')).toHaveText(
       'Saved automatically'
     )
+    await finishOrganizing(page)
   }
   await arrange('Group code')
   const saved = await extension.inspector.evaluate(() =>
@@ -433,6 +443,7 @@ test('an arrangement revision conflict preserves the batch and reloads the ident
     chrome.runtime.sendMessage({ type: 'BACKUP_EXPORT' })
   )
   await page.bringToFront()
+  await openOrganizing(page)
   await view
     .getByRole('button', { name: 'Arrange packing', exact: true })
     .click()
@@ -455,6 +466,7 @@ test('an arrangement revision conflict preserves the batch and reloads the ident
   await notice
     .getByRole('button', { name: 'Reload saved version', exact: true })
     .click()
+  await finishOrganizing(page)
   await expect(
     view
       .locator(`[data-packing-order="${editedId}"] .group-name-editor`)
@@ -472,6 +484,7 @@ test('an arrangement revision conflict preserves the batch and reloads the ident
       .sort((a, b) => a.packingPosition - b.packingPosition)
       .map((prep) => prep.orderId)
   )
+  await openOrganizing(page)
   await view
     .getByRole('button', { name: 'Arrange packing', exact: true })
     .click()
@@ -482,5 +495,6 @@ test('an arrangement revision conflict preserves the batch and reloads the ident
   await expect(view.locator('.preparation-save-status')).toHaveText(
     'Saved automatically'
   )
+  await finishOrganizing(page)
   await expect(view.locator('.error-notice')).toHaveCount(0)
 })

@@ -8,6 +8,10 @@ import { UI_MESSAGES } from '../../src/ui-messages.js'
 import { preparationColumns } from '../../src/preparation-clipboard.js'
 import { readFile } from 'node:fs/promises'
 import { readBackupFile } from '../../src/backup-file.js'
+import {
+  openOrganizing,
+  finishOrganizing,
+} from './packing-organize-helpers.mjs'
 
 const codeOwners = (codes) =>
   codes
@@ -784,8 +788,11 @@ test('keyboard group moves and pointer product moves persist and export in the d
   )
   const [jar, box] = first.groups
   const order = view.locator(`[data-packing-order="${first.orderId}"]`)
+  await openOrganizing(page)
   await order
-    .getByRole('button', { name: 'Move group 1; use Up or Down arrows' })
+    .locator(
+      `.packing-organize-group[data-group-id="${jar.id}"] .reorder-handle`
+    )
     .press('ArrowDown')
   await expect
     .poll(async () => {
@@ -795,6 +802,7 @@ test('keyboard group moves and pointer product moves persist and export in the d
       return saved.groups.map((group) => group.id)
     })
     .toEqual([box.id, jar.id])
+  await finishOrganizing(page)
   await expect
     .poll(() =>
       order
@@ -803,10 +811,13 @@ test('keyboard group moves and pointer product moves persist and export in the d
     )
     .toEqual([box.baseCode, jar.baseCode])
   const jarCard = order.locator(`[data-group-id="${jar.id}"]`)
-  const rows = jarCard.locator('.variants tbody tr')
-  const grip = rows.nth(1).getByRole('button', {
-    name: 'Move product 2; use Up or Down arrows',
-  })
+  await openOrganizing(page)
+  await order
+    .locator(`.packing-organize-group[data-group-id="${jar.id}"]`)
+    .getByRole('button', { name: 'Products', exact: true })
+    .click()
+  const rows = view.locator('.packing-organize-product')
+  const grip = rows.nth(1).locator('.reorder-handle')
   await grip.scrollIntoViewIfNeeded()
   const from = await grip.boundingBox()
   const to = await rows.first().boundingBox()
@@ -824,6 +835,7 @@ test('keyboard group moves and pointer product moves persist and export in the d
       return saved.groups[1].variants.map((variant) => variant.id)
     })
     .toEqual(jar.variants.map((variant) => variant.id).reverse())
+  await finishOrganizing(page)
   await expect(view.locator('.preparation-copy-scope')).toHaveText(
     '6 selected products · 2 orders'
   )
@@ -831,9 +843,19 @@ test('keyboard group moves and pointer product moves persist and export in the d
   const current = reordered.preparations.find(
     (entry) => entry.orderId === first.orderId
   )
+  // The first Organize move materializes missing global order positions once.
+  // Its sibling keeps all authoring data and is not rewritten by the product move.
+  expect(current.packingPosition).toBe(0)
   expect(
     reordered.preparations.find((entry) => entry.orderId === second.orderId)
-  ).toEqual(second)
+  ).toEqual({
+    ...second,
+    packingPosition: 1,
+    revision: second.revision + 1,
+    updatedAt: new Date(Date.parse(second.updatedAt) + 1).toISOString(),
+  })
+  expect(reordered.orders).toEqual(original.orders)
+  expect(reordered.cartonBatches).toEqual(original.cartonBatches)
   expect(codeOwners(reordered.issuedCodes)).toEqual(
     codeOwners(original.issuedCodes)
   )
@@ -999,9 +1021,12 @@ test('reset order and codes retains current names while previous packing restore
   await expect(view.locator('.preparation-save-status')).toHaveText(
     'Saved automatically'
   )
+  await openOrganizing(page)
   await view
-    .getByRole('button', { name: 'Move group 1; use Up or Down arrows' })
+    .locator('.packing-organize-group .reorder-handle')
+    .first()
     .press('ArrowDown')
+  await finishOrganizing(page)
   await expect(form).toBeEnabled()
   await expect.poll(productCodes).toEqual([movedCodes[1], 'CE26129998'])
   await expect

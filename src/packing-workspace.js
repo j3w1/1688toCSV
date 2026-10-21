@@ -49,6 +49,17 @@ import {
   cartonCapacityReadout,
 } from './carton-packing-ui.js'
 import { mountCartonMeasurement } from './carton-measurements-ui.js'
+import { openCartonBatchEditor } from './carton-batches-ui.js'
+import { planCartonBatchChanges } from './carton-batch-changes.js'
+import { cartonBatchReviewChanges } from './carton-batch-review.js'
+import {
+  cartonBatchScope,
+  cartonBatchMetrics,
+  cartonBatchProjection,
+  cartonBatchIssues,
+  cartonBatchMark,
+  cartonProductPacking,
+} from './carton-batches.js'
 import { mountCartonConfirmation } from './carton-confirmations-ui.js'
 import { popupLanguageToggle } from './popup-language-toggle.js'
 import { resolveOperations } from './operations-workflow.js'
@@ -74,7 +85,14 @@ import {
 } from './copy-actions.js'
 import { copyTable } from './clipboard.js'
 import { copySourceImages } from './source-image-copy.js'
-import { reorderHandle, movedKeys } from './packing-reorder.js'
+import { movedKeys } from './packing-reorder.js'
+import {
+  createOrganizeState,
+  mountPackingOrganizer,
+  moveOrganizeKeys,
+  organizeGroupKey,
+  organizeProductKey,
+} from './packing-organize.js'
 import {
   orderedPreparations,
   arrangePreparations,
@@ -131,7 +149,6 @@ import {
   clearErrorNotices,
 } from './error-notice.js'
 import { validateBackup, mergeProductAnnotations } from './database.js'
-import { createPackingBackup } from './packing-backup.js'
 import { normalizePrice } from './money.js'
 import {
   element as el,
@@ -295,11 +312,14 @@ export async function startPackingWorkspace({
     current = 0,
     packingScrollAnchor,
     packingGroupList
+  let physicalBatches = []
   const channel = globalThis.BroadcastChannel
     ? new BroadcastChannel('1688-preparation')
     : null
   const scopeEntries = new Map(),
     packingOrders = new Set()
+  const organizeState = createOrganizeState()
+  let organizeView
   let copyButtons = [],
     copyActionPanel,
     arrangementPanel,
@@ -358,14 +378,6 @@ export async function startPackingWorkspace({
     host.hidden = !host.hasChildNodes()
     titles.hidden = !titles.hasChildNodes()
   }
-  function packingItemActions(label, grip, remove) {
-    const host = el('div', undefined, 'packing-item-actions')
-    host.setAttribute('role', 'group')
-    bindAttribute(host, 'aria-label', uiMessage(label))
-    remove.classList.add('packing-remove-button')
-    host.append(grip, remove)
-    return host
-  }
   let syncPackingOrderPicker = () => {}
   onLanguageChange(() => {
     for (const entry of sourceAttributeFields) {
@@ -403,6 +415,489 @@ export async function startPackingWorkspace({
     return group.variants.filter((variant) =>
       variant.entryIds.some((id) => entries.has(id))
     )
+  }
+  function organizeGroups() {
+    return visibleDrafts().flatMap((draft) => {
+      const source = getRecords().find(
+        ({ snapshot }) => snapshot.orderId === draft.orderId
+      )?.snapshot
+      const items = new Map(
+        (source?.items || []).map((item) => [item.entryId, item])
+      )
+      const scope = scopeEntries.get(draft.orderId) || new Set()
+      return scopedGroups(draft).map((group) => {
+        const products = scopedVariants(draft, group).map((variant) => {
+          const entryIds = variant.entryIds.filter((id) => scope.has(id))
+          const sourceItems = entryIds
+            .map((id) => items.get(id))
+            .filter(Boolean)
+          return {
+            key: organizeProductKey(draft.orderId, group.id, variant.id),
+            draft,
+            orderId: draft.orderId,
+            groupId: group.id,
+            variantId: variant.id,
+            entryIds,
+            code: group.baseCode
+              ? `${group.baseCode}${variant.variantSuffix || ''}${variant.sizeSuffix || ''}`
+              : '',
+            name: variant.spanishName || group.spanishName,
+            title: [variant.variant, variant.size].filter(Boolean).join(' · '),
+            quantity: sourceItems.reduce(
+              (sum, item) => sum + Number(item.quantity || 0),
+              0
+            ),
+            photo: sourceItems.find((item) => item.thumbnail),
+          }
+        })
+        return {
+          key: organizeGroupKey(draft.orderId, group.id),
+          draft,
+          orderId: draft.orderId,
+          groupId: group.id,
+          code: group.baseCode,
+          name: group.spanishName,
+          title: group.category || group.title,
+          storeName:
+            source?.sellerName || draft.sellerId || t('Seller unavailable'),
+          products,
+          quantity: products.reduce(
+            (sum, product) => sum + product.quantity,
+            0
+          ),
+          photo: products.find((product) => product.photo)?.photo,
+        }
+      })
+    })
+  }
+  async function changeOrganize(active, mode, groupKey) {
+    await flushSaves()
+    if (active && !organizeState.active) {
+      organizeState.normalAnchor = packingGroupList?.anchor() || null
+      organizeState.mode = 'groups'
+    }
+    organizeState.active = active
+    if (mode) organizeState.mode = mode
+    if (groupKey) organizeState.groupKey = groupKey
+    packingScrollAnchor = active ? null : organizeState.normalAnchor
+    renderPreparation()
+  }
+  function replaceVisibleOrder(keys, orderedKeys) {
+    const visible = new Set(orderedKeys)
+    let index = 0
+    return keys.map((key) => (visible.has(key) ? orderedKeys[index++] : key))
+  }
+  async function saveOrganizeOrder(next, focusKey) {
+    await applyOrderArrangement(next, true)
+    await flushSaves()
+    if (focusKey) organizeView?.focus(focusKey)
+  }
+  async function moveOrganizeSelection(direction) {
+    await flushSaves()
+    const next = drafts.map((draft) => {
+      if (!visibleDrafts().some((entry) => entry.orderId === draft.orderId))
+        return draft
+      if (organizeState.mode === 'groups') {
+        const selected = new Set(
+          scopedGroups(draft)
+            .filter((group) =>
+              organizeState.groups.has(
+                organizeGroupKey(draft.orderId, group.id)
+              )
+            )
+            .map((group) => group.id)
+        )
+        const keys = scopedGroups(draft).map((group) => group.id)
+        return reorderPreparationGroups(
+          draft,
+          replaceVisibleOrder(
+            draft.groups.map((group) => group.id),
+            moveOrganizeKeys(keys, selected, direction)
+          )
+        )
+      }
+      const group = draft.groups.find(
+        (group) =>
+          organizeGroupKey(draft.orderId, group.id) === organizeState.groupKey
+      )
+      if (!group) return draft
+      const selected = new Set(
+        scopedVariants(draft, group)
+          .filter((variant) =>
+            organizeState.products.has(
+              organizeProductKey(draft.orderId, group.id, variant.id)
+            )
+          )
+          .map((variant) => variant.id)
+      )
+      const keys = scopedVariants(draft, group).map((variant) => variant.id)
+      return reorderPreparationVariants(
+        draft,
+        group.id,
+        replaceVisibleOrder(
+          group.variants.map((variant) => variant.id),
+          moveOrganizeKeys(keys, selected, direction)
+        )
+      )
+    })
+    await saveOrganizeOrder(next)
+  }
+  async function dragOrganize(mode, entry, target, after) {
+    if (!entry || !target || entry.orderId !== target.orderId) return
+    await flushSaves()
+    const index = drafts.findIndex((draft) => draft.orderId === entry.orderId)
+    const draft = drafts[index]
+    let candidate
+    if (mode === 'groups') {
+      const keys = scopedGroups(draft).map((group) => group.id)
+      candidate = reorderPreparationGroups(
+        draft,
+        replaceVisibleOrder(
+          draft.groups.map((group) => group.id),
+          movedKeys(keys, entry.groupId, target.groupId, after)
+        )
+      )
+    } else {
+      if (entry.groupId !== target.groupId) return
+      const group = draft.groups.find((group) => group.id === entry.groupId)
+      const keys = scopedVariants(draft, group).map((variant) => variant.id)
+      candidate = reorderPreparationVariants(
+        draft,
+        group.id,
+        replaceVisibleOrder(
+          group.variants.map((variant) => variant.id),
+          movedKeys(keys, entry.variantId, target.variantId, after)
+        )
+      )
+    }
+    await saveOrganizeOrder(
+      drafts.map((draft, position) => (position === index ? candidate : draft)),
+      entry.key
+    )
+  }
+  async function removeOrganizedProducts(entries) {
+    if (!entries.length) return
+    await flushSaves()
+    physicalBatches = await repository.listCartonBatches({
+      includeDeleted: true,
+    })
+    const plans = entries
+      .map(({ draft, entryIds }) => planPackingRemoval(draft, entryIds))
+      .filter(Boolean)
+    if (!plans.length) return false
+    const removed = new Set(
+      plans.flatMap((plan) =>
+        plan.ids.map((id) => `${plan.draft.orderId}/${id}`)
+      )
+    )
+    const candidates = plans.map((plan) => plan.candidate)
+    const finalPreparations = [...preparations.values()]
+      .filter(
+        (prep) =>
+          !candidates.some((candidate) => candidate.orderId === prep.orderId)
+      )
+      .concat(candidates)
+    const beforePhysical = {},
+      afterPhysical = {}
+    const physicalChanges = []
+    for (const batch of physicalBatches) {
+      if (batch.deletedAt) continue
+      const contents = batch.contents.filter(
+        (item) => !removed.has(`${item.orderId}/${item.entryId}`)
+      )
+      if (contents.length === batch.contents.length) continue
+      beforePhysical[batch.id] = batch
+      let after
+      if (!contents.length)
+        after = { ...batch, deletedAt: new Date().toISOString() }
+      else {
+        const groups = []
+        for (const item of contents) {
+          const prep = finalPreparations.find(
+            (candidate) =>
+              candidate.accountId === batch.accountId &&
+              candidate.orderId === item.orderId
+          )
+          const group = prep?.groups.find((candidate) =>
+            candidate.variants.some((variant) =>
+              variant.entryIds.includes(item.entryId)
+            )
+          )
+          if (
+            group &&
+            !groups.some(
+              (ref) => ref.orderId === item.orderId && ref.groupId === group.id
+            )
+          )
+            groups.push({ orderId: item.orderId, groupId: group.id })
+        }
+        after = {
+          ...batch,
+          mark: cartonBatchMark(batch),
+          contents,
+          groups: groups.length ? groups : batch.groups,
+          needsReview: true,
+        }
+        if (
+          cartonBatchIssues(
+            after,
+            getRecords(),
+            finalPreparations,
+            physicalBatches
+          ).length
+        )
+          after.needsReview = true
+      }
+      afterPhysical[batch.id] = after
+      physicalChanges.push({ after, expectedRevision: batch.revision })
+    }
+    const otherCartons = planCartonBatchChanges({
+      batches: physicalBatches.filter(
+        (batch) => !Object.hasOwn(afterPhysical, batch.id)
+      ),
+      records: getRecords(),
+      beforePreparations: [...preparations.values()],
+      afterPreparations: finalPreparations,
+    })
+    physicalChanges.push(...otherCartons.changes)
+    Object.assign(beforePhysical, otherCartons.before)
+    Object.assign(afterPhysical, otherCartons.after)
+    const physicalCards = physicalChanges.map(({ after }) => ({
+      name: uiMessage('Carton batch'),
+      values: [
+        {
+          label: uiMessage('Contents'),
+          before: beforePhysical[after.id].contents
+            .map((item) => `${item.quantity} · ${item.orderId}/${item.entryId}`)
+            .join(', '),
+          after: after.deletedAt
+            ? uiMessage('Removed from packing')
+            : after.contents
+                .map(
+                  (item) => `${item.quantity} · ${item.orderId}/${item.entryId}`
+                )
+                .join(', '),
+        },
+      ],
+      detail: uiMessage(
+        after.deletedAt
+          ? 'This empty carton batch leaves packing. Undo restores its measurements and confirmations.'
+          : 'Carton measurements and confirmations stay. Review the remaining contents before shipping.'
+      ),
+    }))
+    if (
+      !(await reviewPackingChanges({
+        title: uiMessage('Remove from packing?'),
+        explanation: uiMessage(
+          '{count} selected products will leave this packing. Their preparation edits from this session will be discarded, including saved edits. Previously prepared products return to their earlier values; newly prepared products become unassigned. Review any shared group changes below. Original order data is kept.',
+          { count: removed.size }
+        ),
+        changes: [...plans.flatMap((plan) => plan.changes), ...physicalCards],
+        itemKind: 'products',
+        proceed: uiMessage('Remove from packing'),
+        media,
+      }))
+    )
+      return false
+    const options = {
+      preserveNaming: true,
+      suffixBaselines: plans
+        .map((plan) => sessionBaselines.get(plan.draft.orderId))
+        .filter(Boolean),
+      cartonMeasurements: plans.flatMap((plan) =>
+        Object.keys(plan.beforeCartons).length
+          ? [
+              {
+                orderId: plan.draft.orderId,
+                accountId: plan.draft.accountId,
+                edits: measurementChanges(
+                  plan.beforeCartons,
+                  plan.afterCartons
+                ),
+              },
+            ]
+          : []
+      ),
+      cartonBatchChanges: physicalChanges,
+      allowCartonReview: true,
+    }
+    let results
+    const related = []
+    try {
+      results = await repository.savePreparations(candidates, options)
+    } catch (error) {
+      if (!error.conflict) throw error
+      const orderId =
+        error.conflict.requestedOwner?.orderId || candidates[0].orderId
+      results = await resolveConflict(orderId, {
+        candidate:
+          candidates.find((candidate) => candidate.orderId === orderId) ||
+          candidates[0],
+        candidates,
+        error,
+        discard: true,
+        returnAll: true,
+        saveOptions: { ...options, recordHistory: false },
+        onRelatedSaved: (before, saved) => {
+          for (const result of saved)
+            if (!plans.some((plan) => plan.draft.orderId === result.orderId))
+              related.push({
+                before: before.find((prep) => prep.orderId === result.orderId),
+                after: result,
+              })
+        },
+      })
+      if (!results) return false
+    }
+    const byOrder = new Map(results.map((result) => [result.orderId, result]))
+    physicalBatches = await repository.listCartonBatches({
+      includeDeleted: true,
+    })
+    for (const id of Object.keys(afterPhysical))
+      afterPhysical[id] =
+        physicalBatches.find((batch) => batch.id === id) || afterPhysical[id]
+    history.recordBatch([
+      ...plans.map((plan, index) => ({
+        orderId: plan.draft.orderId,
+        before: preparationHistorySnapshot(plan.draft),
+        after: preparationHistorySnapshot(byOrder.get(plan.draft.orderId)),
+        beforeScope: JSON.stringify([
+          ...(scopeEntries.get(plan.draft.orderId) || []),
+        ]),
+        afterScope: JSON.stringify(
+          [...(scopeEntries.get(plan.draft.orderId) || [])].filter(
+            (id) => !plan.ids.includes(id)
+          )
+        ),
+        ...(Object.keys(plan.beforeCartons).length
+          ? {
+              beforeCartons: JSON.stringify(plan.beforeCartons),
+              afterCartons: JSON.stringify(plan.afterCartons),
+            }
+          : {}),
+        ...(index === 0 && physicalChanges.length
+          ? {
+              beforePhysical: JSON.stringify(beforePhysical),
+              afterPhysical: JSON.stringify(afterPhysical),
+            }
+          : {}),
+      })),
+      ...related
+        .filter((change) => change.before)
+        .map((change) => ({
+          orderId: change.after.orderId,
+          before: preparationHistorySnapshot(change.before),
+          after: preparationHistorySnapshot(change.after),
+        })),
+    ])
+    for (const plan of plans) {
+      const result = byOrder.get(plan.draft.orderId)
+      acceptDraft(result)
+      rememberPreparation(result)
+      historySaved.set(plan.draft.orderId, result)
+      rememberSessionCartonValues(plan.draft.orderId, plan.afterCartons)
+      const scope = scopeEntries.get(plan.draft.orderId)
+      for (const id of plan.ids) scope?.delete(id)
+      selectionStates.delete(plan.draft.orderId)
+    }
+    await reload()
+    await changed({ reload: true })
+    channel?.postMessage('changed')
+    renderPreparation()
+    updateLaunchActions()
+    return true
+  }
+  function mountOrganize(host) {
+    organizeView = mountPackingOrganizer({
+      host,
+      groups: organizeGroups(),
+      state: organizeState,
+      photo: (item) => media.photo(item),
+      actionButton: prepButton,
+      actions: {
+        mode: (mode) => changeOrganize(true, mode),
+        group: (key) => changeOrganize(true, 'products', key),
+        done: () => changeOrganize(false),
+        moveSelected: moveOrganizeSelection,
+        drag: (mode, entry, target, after) => {
+          void preparationAction(() =>
+            dragOrganize(mode, entry, target, after)
+          ).catch(showError)
+        },
+        dragOrder: (key, target, after) => {
+          void preparationAction(async () => {
+            await flushSaves()
+            const visible = movedKeys(
+              visibleDrafts().map((draft) => draft.orderId),
+              key,
+              target,
+              after
+            )
+            const ids = replaceVisibleOrder(
+              drafts.map((draft) => draft.orderId),
+              visible
+            )
+            await saveOrganizeOrder(
+              ids.map((id) => drafts.find((draft) => draft.orderId === id)),
+              `organize-order:${key}`
+            )
+          }).catch(showError)
+        },
+        remove: removeOrganizedProducts,
+        travel,
+        forget: (node) => media.forget(node),
+        arrange: (host) => {
+          const arrangeActions = [
+            ['store', 'Store'],
+            ['code', 'Group code'],
+            ['store-code', 'Store, then group code'],
+          ].map(([mode, label]) =>
+            prepButton(label, async () => {
+              await flushSaves()
+              const sources = new Map(
+                getRecords().map(({ snapshot }) => [snapshot.orderId, snapshot])
+              )
+              const scope = new Map(
+                visibleDrafts().map((draft) => [
+                  draft.orderId,
+                  scopedGroups(draft).map((group) => group.id),
+                ])
+              )
+              await applyOrderArrangement(
+                arrangePreparations(
+                  drafts,
+                  visibleDrafts().map((draft) => draft.orderId),
+                  mode,
+                  sources,
+                  scope
+                )
+              )
+            })
+          )
+          arrangementPanel = mountCopyActions(host, {
+            label: 'Arrange',
+            ariaLabel: 'Arrange packing',
+            panelLabel: 'Arrange packing',
+            symbol: 'packing',
+            groups: [
+              { label: 'Arrange displayed orders', actions: arrangeActions },
+            ],
+          })
+        },
+      },
+    })
+    selectionToolbar = organizeView.output
+    undoButton = organizeView.undo
+    redoButton = organizeView.redo
+    toolbarResize = new ResizeObserver(() => {
+      document.documentElement.style.setProperty(
+        '--packing-selection-height',
+        `${organizeView.output.getBoundingClientRect().height}px`
+      )
+    })
+    toolbarResize.observe(organizeView.output)
+    updateSaveStatus()
+    updateHistoryButtons()
   }
   function materialControl(draft, variants, label, applyLabel) {
     const scope = scopeEntries.get(draft.orderId) || new Set()
@@ -725,7 +1220,218 @@ export async function startPackingWorkspace({
     ])
     updateHistoryButtons()
   }
+  function physicalAuthoring(batch) {
+    if (!batch) return null
+    const { revision, updatedAt, deletedAt, needsReview, ...value } = batch
+    return JSON.stringify({ ...value, deleted: Boolean(deletedAt) })
+  }
+  function recordPhysicalHistory(orderId, before, after) {
+    const draft =
+      drafts.find((entry) => entry.orderId === orderId) ||
+      preparations.get(orderId)
+    if (!draft) return
+    const snapshot = preparationHistorySnapshot(draft)
+    historySaved.set(orderId, draft)
+    history.recordBatch([
+      {
+        orderId,
+        before: snapshot,
+        after: snapshot,
+        beforePhysical: JSON.stringify(before),
+        afterPhysical: JSON.stringify(after),
+      },
+    ])
+    updateHistoryButtons()
+  }
+  async function updatePhysicalBatches() {
+    physicalBatches = await repository.listCartonBatches({
+      includeDeleted: true,
+    })
+    await changed({ reload: true })
+    channel?.postMessage('changed')
+  }
+  async function editCartonBatches(draft, group) {
+    await flushSaves()
+    physicalBatches = await repository.listCartonBatches({
+      includeDeleted: true,
+    })
+    const scope = cartonBatchScope(getRecords(), [...preparations.values()], {
+      accountId: draft.accountId,
+      orderId: draft.orderId,
+      groupId: group.id,
+    })
+    await openCartonBatchEditor({
+      scope,
+      batches: physicalBatches,
+      loadPhoto: loadImage,
+      renderMark: async (markScope) =>
+        blobData(
+          await createCartonMarkRenderer()({
+            baseCode: markScope.baseCode,
+            chineseCategory: markScope.category,
+          })
+        ),
+      onSave: async (batch, options) => {
+        const before =
+          physicalBatches.find((entry) => entry.id === batch.id) || null
+        const saved = await repository.saveCartonBatch(batch, options)
+        recordPhysicalHistory(
+          draft.orderId,
+          { [batch.id]: before },
+          { [batch.id]: saved }
+        )
+        await updatePhysicalBatches()
+        return saved
+      },
+      onRemove: async (batch, options) => {
+        const before = physicalBatches.find((entry) => entry.id === batch.id)
+        const saved = await repository.removeCartonBatch(batch, options)
+        recordPhysicalHistory(
+          draft.orderId,
+          { [batch.id]: before },
+          { [batch.id]: saved }
+        )
+        await updatePhysicalBatches()
+        return saved
+      },
+    })
+    if (!$('packing-view').hidden) renderPreparation()
+  }
+  function groupCartonSummary(draft, group) {
+    const keys = new Set(group.variants.flatMap((variant) => variant.entryIds))
+    const batches = physicalBatches.filter(
+      (batch) =>
+        !batch.deletedAt &&
+        batch.accountId === draft.accountId &&
+        (batch.month === groupPackingMonth(draft, group) ||
+          batch.needsReview) &&
+        ((cartonBatchMark(batch)?.orderId === draft.orderId &&
+          cartonBatchMark(batch)?.groupId === group.id) ||
+          batch.contents.some(
+            (item) => item.orderId === draft.orderId && keys.has(item.entryId)
+          ))
+    )
+    if (batches.some((batch) => batch.needsReview))
+      return uiMessage('Review cartons')
+    const count =
+      batches.length && batches.every((batch) => batch.count !== null)
+        ? batches.reduce((sum, batch) => sum + batch.count, 0)
+        : null
+    return batches.length
+      ? uiMessage('{0} batches · {1} cartons', {
+          0: batches.length,
+          1: count ?? '—',
+        })
+      : uiMessage('Set up cartons')
+  }
+  function groupCartonControl(draft, group) {
+    const host = el('section', undefined, 'packing-group-cartons')
+    const edit = button(
+      uiMessage('Cartons'),
+      () => editCartonBatches(draft, group),
+      'packing-group-cartons-edit'
+    )
+    decorateIcon(edit, 'carton')
+    const summary = el('span', groupCartonSummary(draft, group))
+    host.append(edit, summary)
+    const groups = new Set(
+      group.variants.flatMap((variant) => variant.entryIds)
+    )
+    const matching = physicalBatches.filter(
+      (batch) =>
+        !batch.deletedAt &&
+        batch.accountId === draft.accountId &&
+        (batch.month === groupPackingMonth(draft, group) ||
+          batch.needsReview) &&
+        ((cartonBatchMark(batch)?.orderId === draft.orderId &&
+          cartonBatchMark(batch)?.groupId === group.id) ||
+          batch.contents.some(
+            (item) => item.orderId === draft.orderId && groups.has(item.entryId)
+          ))
+    )
+    for (const batch of matching) {
+      const value = cartonBatchMetrics(batch)
+      const chip = button(
+        `${batch.needsReview ? `${t('Review cartons')} · ${batch.month} · ` : ''}${batch.cartonNumber ? `#${batch.cartonNumber}` : `${batch.count ?? '—'} ${t('Cartons')}`} · ${value.quantity} ${t('Pieces')} · ${batch.len && batch.wid && batch.ht ? `${batch.len} × ${batch.wid} × ${batch.ht} cm` : value.volumePerCarton ? `${value.volumePerCarton} m³` : '—'}${value.totalWeight ? ` · ${value.totalWeight} kg` : ''}`,
+        () => editCartonBatches(draft, group),
+        'packing-carton-chip'
+      )
+      const mark = cartonBatchMark(batch)
+      const code = preparations
+        .get(mark?.orderId)
+        ?.groups.find((group) => group.id === mark?.groupId)?.baseCode
+      if (code && code !== group.baseCode)
+        chip.prepend(el('code', code, 'ce-code'), ' · ')
+      preparationHelp(
+        chip,
+        `${batch.contents
+          .map((content) => {
+            const owner = membership.get(
+              `${content.orderId}/${content.entryId}`
+            )
+            let code = content.entryId
+            try {
+              if (owner) code = barcodeValue(owner.group, owner.variant)
+            } catch {}
+            return `${code} × ${content.quantity}`
+          })
+          .join(
+            ' · '
+          )}\n${value.totalWeight || '—'} kg · ${value.totalVolume || '—'} m³`
+      )
+      host.append(chip)
+    }
+    return host
+  }
   function mountMeasurements(hosts, item, record, draft) {
+    const match = membership.get(`${record.snapshot.orderId}/${item.entryId}`)
+    if (match) {
+      const batches = physicalBatches.filter(
+        (batch) =>
+          !batch.deletedAt &&
+          batch.accountId === record.snapshot.accountId &&
+          batch.month === groupPackingMonth(match.prep, match.group) &&
+          batch.contents.some(
+            (entry) =>
+              entry.orderId === record.snapshot.orderId &&
+              entry.entryId === item.entryId
+          )
+      )
+      for (const field of ['kg', 'cbm']) {
+        const value =
+          batches.length === 1 && batches[0].contents.length === 1
+            ? cartonBatchMetrics(batches[0])[
+                field === 'kg' ? 'kgPerCarton' : 'volumePerCarton'
+              ]
+            : ''
+        const readout = button(
+          batches.length > 1
+            ? uiMessage('{0} batches', { 0: batches.length })
+            : batches.length && batches[0].contents.length > 1
+              ? uiMessage('Shared')
+              : value === ''
+                ? '—'
+                : `${value} ${field === 'kg' ? 'kg' : 'm³'}`,
+          () => editCartonBatches(match.prep, match.group),
+          'carton-batch-readout'
+        )
+        bindAttribute(
+          readout,
+          'aria-label',
+          uiMessage(
+            field === 'kg' ? 'Edit carton weight' : 'Edit carton dimensions'
+          )
+        )
+        preparationHelp(
+          readout,
+          uiMessage(
+            'Cartons belong to the code group. Open to edit contents and measurements.'
+          )
+        )
+        hosts[field].append(readout)
+      }
+      return
+    }
     for (const field of ['kg', 'cbm']) {
       const key = `${draft ? 'packing' : 'orders'}/${record.snapshot.accountId}/${record.snapshot.orderId}/${item.entryId}/${field}`
       const currentValue = () => {
@@ -734,6 +1440,30 @@ export async function startPackingWorkspace({
           packingRecord({ orderId: record.snapshot.orderId }) || record
         )
         return field === 'cbm' ? cartonVolume(details) : details.kg
+      }
+      if (field === 'cbm') {
+        const value = currentValue()
+        const readout = button(
+          value === '' ? '—' : `${value} m³`,
+          () =>
+            onProductDetails({
+              ...item,
+              orderId: record.snapshot.orderId,
+              record,
+            }),
+          'carton-batch-readout'
+        )
+        bindAttribute(
+          readout,
+          'aria-label',
+          uiMessage('Edit carton dimensions')
+        )
+        preparationHelp(
+          readout,
+          uiMessage('Volume is calculated from carton dimensions.')
+        )
+        hosts[field].append(readout)
+        continue
       }
       let editor = measurementFields.get(key)
       if (editor) {
@@ -796,6 +1526,45 @@ export async function startPackingWorkspace({
       if (field === 'cbm')
         updateVolumeHelp(editor, productCartonDetails(item, record))
     }
+  }
+  function physicalCapacityReadout(item, prep, group) {
+    const packing = cartonProductPacking(
+      {
+        accountId: prep.accountId,
+        orderId: prep.orderId,
+        entryId: item.entryId,
+        month: groupPackingMonth(prep, group),
+      },
+      physicalBatches
+    )
+    if (!packing.batches.length) return null
+    const shared = packing.batches.some((batch) => batch.contents.length > 1)
+    const text = packing.needsReview
+      ? uiMessage('Review cartons')
+      : packing.uniformCapacity
+        ? `${packing.uniformCapacity}${t('/box')}`
+        : uiMessage(shared ? 'Shared' : 'Varies')
+    const control = button(
+      text,
+      () => editCartonBatches(prep, group),
+      'carton-batch-readout'
+    )
+    bindAttribute(control, 'aria-label', uiMessage('Pcs/box'))
+    preparationHelp(
+      control,
+      () =>
+        `${packing.cartons === '' ? '—' : packing.cartons} ${t('Cartons')}\n${packing.batches
+          .map((batch) => {
+            const allocation = batch.contents.find(
+              (content) =>
+                content.orderId === prep.orderId &&
+                content.entryId === item.entryId
+            )
+            return `${batch.cartonNumber ? `#${batch.cartonNumber}` : `${batch.count ?? '—'} ${t('Cartons')}`} · ${allocation.quantity} ${t('Pieces')}${batch.contents.length > 1 ? ` · ${t('Shared')}` : ''}`
+          })
+          .join('\n')}`
+    )
+    return control
   }
   function mountConfirmations(host, item, record, draft, group) {
     const month = groupPackingMonth(draft, group)
@@ -1534,7 +2303,7 @@ export async function startPackingWorkspace({
     const reset = resetButtons.get(draft.orderId)
     if (reset) reset.disabled = !hasDefaultPackingChanges(draft)
   }
-  function rememberSavedPreparations(before, results) {
+  function rememberSavedPreparations(before, results, cartonPlan) {
     const previous = new Map(before.map((draft) => [draft.orderId, draft]))
     const changes = results.flatMap((result) => {
       const old = previous.get(result.orderId)
@@ -1548,6 +2317,10 @@ export async function startPackingWorkspace({
           ]
         : []
     })
+    if (changes.length && cartonPlan?.changes.length) {
+      changes[0].beforePhysical = JSON.stringify(cartonPlan.before)
+      changes[0].afterPhysical = JSON.stringify(cartonPlan.after)
+    }
     // Saved operations restore through the repository, including a single
     // hidden order whose rank was normalized while arranging the open packing.
     history.recordBatch(changes)
@@ -1579,6 +2352,30 @@ export async function startPackingWorkspace({
           restored = await repository.savePreparations(candidates, {
             preserveNaming: true,
             suffixBaselines: candidates,
+            allowSharedProductEdits: true,
+            allowCartonReview: true,
+            cartonBatchChanges: changes.flatMap((change) =>
+              Object.entries(change.physical || {}).map(([id, target]) => {
+                const live = physicalBatches.find((batch) => batch.id === id)
+                const expected = change.expectedPhysical?.[id]
+                if (
+                  physicalAuthoring(
+                    live?.deletedAt && !expected ? null : live
+                  ) !== physicalAuthoring(expected)
+                )
+                  throw new Error(
+                    'These cartons changed after this action. Reload before using Undo or Redo.'
+                  )
+                return {
+                  after: target || {
+                    ...live,
+                    deletedAt: new Date().toISOString(),
+                  },
+                  expectedRevision: live?.revision ?? 0,
+                  restore: true,
+                }
+              })
+            ),
             cartonMeasurements: changes
               .filter((change) => change.cartons)
               .map((change) => ({
@@ -1746,7 +2543,9 @@ export async function startPackingWorkspace({
       ) {
         event.preventDefault()
         event.stopPropagation()
-        void showOrders()
+        if (organizeState.active)
+          void preparationAction(() => changeOrganize(false)).catch(showError)
+        else void showOrders()
         return
       }
       if (
@@ -1758,7 +2557,10 @@ export async function startPackingWorkspace({
         return
       event.preventDefault()
       event.stopPropagation()
-      selectPackingRows(event.key.toLowerCase() === 'a')
+      if (organizeState.active) {
+        if (event.key.toLowerCase() === 'a') organizeView?.selectAll()
+        else organizeView?.clear()
+      } else selectPackingRows(event.key.toLowerCase() === 'a')
     },
     true
   )
@@ -1781,6 +2583,9 @@ export async function startPackingWorkspace({
       (await repository.listPreparations()).map((item) => [item.orderId, item])
     )
     preferences = await repository.getPackingPreferences()
+    physicalBatches = await repository.listCartonBatches({
+      includeDeleted: true,
+    })
     configureColorVocabulary(preferences.colorVocabulary)
     configureMaterialVocabulary(preferences.materialVocabulary)
     applyAppearance(preferences.appearance)
@@ -1825,20 +2630,80 @@ export async function startPackingWorkspace({
     { once: true }
   )
   async function saved(draft, options = {}) {
-    const { recordHistory = true, ...saveOptions } = options
+    const { recordHistory = true, reviewedCartons, ...saveOptions } = options
     const before =
       drafts.find((entry) => entry.orderId === draft.orderId) ||
       preparations.get(draft.orderId)
-    const result = await repository.savePreparation(draft, {
-      expectedRevision: draft.revision,
-      ...saveOptions,
-    })
-    if (recordHistory && before) rememberSavedPreparations([before], [result])
+    const preview = reviewedCartons
+      ? null
+      : await previewWithCartons([draft], saveOptions)
+    const cartonPlan = reviewedCartons || preview.cartons
+    if (
+      !reviewedCartons &&
+      cartonPlan.changes.length &&
+      !(await reviewPackingChanges({
+        title: uiMessage('Review affected cartons'),
+        explanation: uiMessage(
+          'Review the physical cartons before changing their products. Measurements and confirmations are preserved.'
+        ),
+        changes: cartonBatchReviewChanges(cartonPlan),
+        proceed: uiMessage('Apply changes'),
+        media,
+      }))
+    )
+      throw new Error(
+        'Carton changes were not applied. Your draft is still here.'
+      )
+    const result = await repository.savePreparation(
+      preview?.preparations[0] || draft,
+      {
+        expectedRevision: draft.revision,
+        ...saveOptions,
+        ...cartonSaveOptions(cartonPlan),
+      }
+    )
+    if (cartonPlan.changes.length)
+      physicalBatches = await repository.listCartonBatches({
+        includeDeleted: true,
+      })
+    if (recordHistory && before)
+      rememberSavedPreparations([before], [result], cartonPlan)
     else historySaved.set(result.orderId, result)
     rememberPreparation(result)
     changed()
     channel?.postMessage('changed')
     return result
+  }
+  async function previewWithCartons(inputs, options = {}) {
+    const previews = await repository.previewPreparations(inputs, {
+      ...options,
+      allowCartonReview: true,
+    })
+    physicalBatches = await repository.listCartonBatches({
+      includeDeleted: true,
+    })
+    const before = [...preparations.values()]
+    const keys = new Set(
+      previews.map((prep) => JSON.stringify([prep.accountId, prep.orderId]))
+    )
+    return {
+      preparations: previews,
+      cartons: planCartonBatchChanges({
+        batches: physicalBatches,
+        records: getRecords(),
+        beforePreparations: before,
+        afterPreparations: before
+          .filter(
+            (prep) => !keys.has(JSON.stringify([prep.accountId, prep.orderId]))
+          )
+          .concat(previews),
+      }),
+    }
+  }
+  function cartonSaveOptions(plan) {
+    return plan?.changes.length
+      ? { cartonBatchChanges: plan.changes, allowCartonReview: true }
+      : {}
   }
   function rememberPreparation(result) {
     const previous = preparations.get(result.orderId)
@@ -2560,13 +3425,15 @@ export async function startPackingWorkspace({
         expectedRevisions: eligible.map((draft) => draft.revision || 0),
         preserveNaming: true,
       }
+      let cartonPlan
       if (eligible.length) {
         progress.update('Checking product codes', undefined, undefined, counts)
         await yieldUI()
+        const preview = await previewWithCartons(eligible, options)
+        cartonPlan = preview.cartons
+        Object.assign(options, cartonSaveOptions(cartonPlan))
         const previews = new Map(
-          (await repository.previewPreparations(eligible, options)).map(
-            (draft) => [draft.orderId, draft]
-          )
+          preview.preparations.map((draft) => [draft.orderId, draft])
         )
         candidates = candidates.map(
           (draft) => previews.get(draft.orderId) || draft
@@ -2714,7 +3581,7 @@ export async function startPackingWorkspace({
                   ),
             }
           ),
-          changes,
+          changes: [...changes, ...cartonBatchReviewChanges(cartonPlan)],
           proceed: hasMove
             ? uiMessage('Change codes and prepare')
             : uiMessage('Assign codes and prepare'),
@@ -2763,6 +3630,10 @@ export async function startPackingWorkspace({
         return
       }
       drafts = arrangeOpenedDrafts(candidates)
+      organizeState.active = false
+      organizeState.groups.clear()
+      organizeState.products.clear()
+      organizeState.anchors.clear()
       scopeEntries.clear()
       for (const scope of plan.scope)
         scopeEntries.set(scope.orderId, new Set(scope.entryIds))
@@ -2984,11 +3855,13 @@ export async function startPackingWorkspace({
       repository,
       media,
       beforeOpen: flushSaves,
-      onSaved: async (results) => {
+      onSaved: async (results, plan) => {
+        const before = results
+          .map((result) => preparations.get(result.orderId))
+          .filter(Boolean)
+        rememberSavedPreparations(before, results, plan?.cartons)
         for (const result of results) {
           acceptDraft(result)
-          // Linking changes several orders; older per-order Undo cannot split it.
-          history.clear(result.orderId)
         }
         await reload()
         if (!$('packing-view').hidden) renderPreparation()
@@ -3171,10 +4044,11 @@ export async function startPackingWorkspace({
     if (!previous && !hasDefaultPackingChanges(draft)) return
     const restore = previous ? restorePreviousPacking : restoreDefaultPacking
     const restoring = restore(draft)
-    const [candidate] = await repository.previewPreparations([restoring], {
+    const preview = await previewWithCartons([restoring], {
       preserveNaming: true,
       suffixBaselines: [restoring],
     })
+    const [candidate] = preview.preparations
     if (
       !(await reviewPackingChanges({
         title: previous
@@ -3187,9 +4061,12 @@ export async function startPackingWorkspace({
           : uiMessage(
               'This restores this order’s default grouping, source order, product codes and barcode endings. Current names are retained where their groups still exist. Manual reordering and code edits will be replaced. Other orders are unchanged.'
             ),
-        changes: previous
-          ? reviewChanges([draft], [candidate])
-          : resetReviewChanges(draft, candidate),
+        changes: [
+          ...(previous
+            ? reviewChanges([draft], [candidate])
+            : resetReviewChanges(draft, candidate)),
+          ...cartonBatchReviewChanges(preview.cartons),
+        ],
         proceed: previous
           ? uiMessage('Restore previous packing')
           : uiMessage('Reset order and codes'),
@@ -3204,6 +4081,7 @@ export async function startPackingWorkspace({
       expectedRevision: draft.revision,
       preserveNaming: true,
       recordHistory: false,
+      reviewedCartons: preview.cartons,
       suffixBaselines: [restoring],
     })
     acceptDraft(result)
@@ -3228,6 +4106,12 @@ export async function startPackingWorkspace({
         after: preparationHistorySnapshot(result),
         beforeScope,
         afterScope,
+        ...(preview.cartons.changes.length
+          ? {
+              beforePhysical: JSON.stringify(preview.cartons.before),
+              afterPhysical: JSON.stringify(preview.cartons.after),
+            }
+          : {}),
       },
     ])
     selectionStates.delete(result.orderId)
@@ -3315,8 +4199,7 @@ export async function startPackingWorkspace({
       }
     })
   }
-  async function removePackingProducts(draft, entryIds) {
-    await flushSaves()
+  function planPackingRemoval(draft, entryIds) {
     const ids = [...new Set(entryIds)]
     if (!ids.length) return
     const record = getRecords().find(
@@ -3500,89 +4383,7 @@ export async function startPackingWorkspace({
         },
       ]
     })
-    if (
-      !(await reviewPackingChanges({
-        title: uiMessage('Remove from packing?'),
-        explanation: uiMessage(
-          '{count} selected products will leave this packing. Their preparation edits from this session will be discarded, including saved edits. Previously prepared products return to their earlier values; newly prepared products become unassigned. Review any shared group changes below. Original order data is kept.',
-          { count: ids.length }
-        ),
-        changes,
-        itemKind: 'products',
-        proceed: uiMessage('Remove from packing'),
-        media,
-      }))
-    )
-      return
-    const beforeScope = JSON.stringify([
-      ...(scopeEntries.get(draft.orderId) || []),
-    ])
-    const afterScope = JSON.stringify(
-      JSON.parse(beforeScope).filter((id) => !removed.has(id))
-    )
-    const saveOptions = {
-      recordHistory: false,
-      preserveNaming: true,
-      suffixBaselines: [sessionBaselines.get(draft.orderId)].filter(Boolean),
-      cartonMeasurements: Object.keys(beforeCartons).length
-        ? [
-            {
-              orderId: draft.orderId,
-              accountId: draft.accountId,
-              edits: measurementChanges(beforeCartons, afterCartons),
-            },
-          ]
-        : [],
-    }
-    let result
-    const relatedCorrections = []
-    try {
-      result = await saved(candidate, saveOptions)
-    } catch (error) {
-      if (!error.conflict) throw error
-      result = await resolveConflict(draft.orderId, {
-        candidate,
-        error,
-        saveOptions,
-        discard: true,
-        onRelatedSaved(before, results) {
-          for (const result of results) {
-            const old = before.find((entry) => entry.orderId === result.orderId)
-            if (old)
-              relatedCorrections.push({
-                orderId: result.orderId,
-                before: preparationHistorySnapshot(old),
-                after: preparationHistorySnapshot(result),
-              })
-          }
-        },
-      })
-    }
-    if (!result) return
-    history.recordBatch([
-      ...relatedCorrections,
-      {
-        orderId: draft.orderId,
-        before: preparationHistorySnapshot(draft),
-        after: preparationHistorySnapshot(result),
-        beforeScope,
-        afterScope,
-        ...(Object.keys(beforeCartons).length
-          ? {
-              beforeCartons: JSON.stringify(beforeCartons),
-              afterCartons: JSON.stringify(afterCartons),
-            }
-          : {}),
-      },
-    ])
-    acceptDraft(result)
-    rememberSessionCartonValues(draft.orderId, afterCartons)
-    if (Object.keys(beforeCartons).length) await changed({ reload: true })
-    const scope = scopeEntries.get(draft.orderId)
-    for (const id of ids) scope?.delete(id)
-    selectionStates.delete(draft.orderId)
-    renderPreparation()
-    updateLaunchActions()
+    return { draft, ids, candidate, changes, beforeCartons, afterCartons }
   }
   async function applySelectedGrouping(operation) {
     await flushSaves()
@@ -3597,7 +4398,8 @@ export async function startPackingWorkspace({
     const before = candidates.map((candidate) =>
       drafts.find((draft) => draft.orderId === candidate.orderId)
     )
-    const preview = await repository.previewPreparations(candidates)
+    const preparationPreview = await previewWithCartons(candidates)
+    const preview = preparationPreview.preparations
     const titles = {
       share: 'Share one barcode?',
       separate: 'Separate the original product rows?',
@@ -3618,11 +4420,10 @@ export async function startPackingWorkspace({
       !(await reviewPackingChanges({
         title: uiMessage(titles[operation]),
         explanation: uiMessage(explanations[operation]),
-        changes: groupingReviewChanges(
-          availability.entries,
-          preview,
-          getRecords()
-        ),
+        changes: [
+          ...groupingReviewChanges(availability.entries, preview, getRecords()),
+          ...cartonBatchReviewChanges(preparationPreview.cartons),
+        ],
         itemKind: 'products',
         proceed: uiMessage('Apply changes'),
         media,
@@ -3637,8 +4438,9 @@ export async function startPackingWorkspace({
         for (const id of variant.entryIds) selected.get(draft.orderId).add(id)
     const results = await repository.savePreparations(preview, {
       expectedRevisions: before.map((draft) => draft.revision),
+      ...cartonSaveOptions(preparationPreview.cartons),
     })
-    rememberSavedPreparations(before, results)
+    rememberSavedPreparations(before, results, preparationPreview.cartons)
     for (const result of results) {
       acceptDraft(result)
       selectionStates.delete(result.orderId)
@@ -3697,9 +4499,18 @@ export async function startPackingWorkspace({
     const previous = preparations.get(orderId)
     // Keep corrections isolated until the complete final ownership set can be
     // checked and committed together. The same order shares one proposal.
-    const proposals = new Map([[orderId, draft]])
-    const baselines = new Map([[orderId, previous]])
-    const initialProposals = new Map([[orderId, structuredClone(draft)]])
+    const proposals = new Map(
+      (options.candidates || [draft]).map((prep) => [
+        prep.orderId,
+        prep.orderId === orderId ? draft : structuredClone(prep),
+      ])
+    )
+    const baselines = new Map(
+      [...proposals.keys()].map((id) => [id, preparations.get(id)])
+    )
+    const initialProposals = new Map(
+      [...proposals].map(([id, prep]) => [id, structuredClone(prep)])
+    )
     const editorKey = (id, groupId) => JSON.stringify([id, groupId])
     const requestedGroupId = error?.conflict?.requestedOwner?.groupId
     let group =
@@ -3832,6 +4643,9 @@ export async function startPackingWorkspace({
         const candidates = [...proposals.values()].filter(
           (proposal) =>
             proposal.orderId === orderId ||
+            options.candidates?.some(
+              (candidate) => candidate.orderId === proposal.orderId
+            ) ||
             !samePreparation(proposal, initialProposals.get(proposal.orderId))
         )
         const { recordHistory = true, ...saveOptions } =
@@ -3873,7 +4687,7 @@ export async function startPackingWorkspace({
         }
         changed()
         channel?.postMessage('changed')
-        resolved = result
+        resolved = options.returnAll ? results : result
         modal.close()
         if (!options.candidate) renderPreparation()
       } catch (failure) {
@@ -4562,16 +5376,15 @@ export async function startPackingWorkspace({
     reloadPreparationButton = prepButton('Reload saved version', () =>
       reloadSavedOrder([...saveErrors.keys()][0])
     )
-    actions.append(
-      undoButton,
-      redoButton,
-      saveStatus,
-      resolveButton,
-      reloadPreparationButton
-    )
+    if (!organizeState.active) actions.append(undoButton, redoButton)
+    actions.append(saveStatus, resolveButton, reloadPreparationButton)
     header.append(heading, actions)
     const commandBar = el('div', undefined, 'packing-command-bar')
     commandBar.append(header)
+    if (organizeState.active) {
+      host.append(commandBar)
+      return
+    }
     const toolbar = el('div', undefined, 'packing-top-tools')
     const filter = el('select')
     bindAttribute(filter, 'aria-label', uiMessage('Show packing orders'))
@@ -4795,43 +5608,7 @@ export async function startPackingWorkspace({
       clear = button(uiMessage('Clear selection'), () =>
         selectPackingRows(false)
       )
-    const arrange = el('div', undefined, 'packing-arrange')
-    const arrangeActions = [
-      ['store', 'Store'],
-      ['code', 'Group code'],
-      ['store-code', 'Store, then group code'],
-    ].map(([mode, label]) =>
-      prepButton(label, async () => {
-        await flushSaves()
-        const sources = new Map(
-          getRecords().map(({ snapshot }) => [snapshot.orderId, snapshot])
-        )
-        const groupScope = new Map(
-          visibleDrafts().map((draft) => [
-            draft.orderId,
-            scopedGroups(draft).map((group) => group.id),
-          ])
-        )
-        await applyOrderArrangement(
-          arrangePreparations(
-            drafts,
-            visibleDrafts().map((draft) => draft.orderId),
-            mode,
-            sources,
-            groupScope
-          )
-        )
-        await flushSaves()
-      })
-    )
-    arrangementPanel = mountCopyActions(arrange, {
-      label: 'Arrange',
-      ariaLabel: 'Arrange packing',
-      panelLabel: 'Arrange packing',
-      symbol: 'packing',
-      groups: [{ label: 'Arrange displayed orders', actions: arrangeActions }],
-    })
-    toolbar.append(filter, open, arrange)
+    toolbar.append(filter, open)
     commandBar.append(toolbar)
     const output = el(
       'div',
@@ -5001,22 +5778,29 @@ export async function startPackingWorkspace({
           })
         ),
       ].sort()
-      const backup = createPackingBackup(
-        await repository.exportBackup({ orderIds: [...selection.keys()] }),
-        {
+      const backup = await repository.exportBackup({
+        orderIds: [...selection.keys()],
+        packingScope: {
           months,
           orders: [...selection].map(([orderId, ids]) => ({
             accountId: preparations.get(orderId).accountId,
             orderId,
             entryIds: [...ids],
           })),
-        }
-      )
+        },
+      })
       await downloadBackup(
         backup,
         `1688-packing-${months.length === 1 ? months[0] : 'mixed-months'}`
       )
-      feedback(uiMessage('Packing backup saved'))
+      feedback(
+        backup.omittedCartonBatchIds.length
+          ? uiMessage(
+              'Packing backup saved · {0} partial carton batches omitted. Back up all linked purchases to include them.',
+              [backup.omittedCartonBatchIds.length]
+            )
+          : uiMessage('Packing backup saved')
+      )
     })
     backupButton = backup
     decorateIcon(backup, 'download')
@@ -5048,6 +5832,10 @@ export async function startPackingWorkspace({
           )
           await openPackingExportDialog({
             hasSelection: selected.size > 0,
+            getCartonBatches: () =>
+              cartonBatchProjection(physicalBatches, getRecords(), [
+                ...preparations.values(),
+              ]),
             getRows: (scope) =>
               packingWorkbookFields(
                 scope === 'selected'
@@ -5078,6 +5866,13 @@ export async function startPackingWorkspace({
       uiMessage(
         'Choose products, columns and layout for an editable Excel packing list. Your export options are remembered.'
       )
+    )
+    const organize = prepButton('Organize', () => changeOrganize(true))
+    organize.dataset.action = 'organize-packing'
+    decorateIcon(organize, 'packing')
+    preparationHelp(
+      organize,
+      uiMessage('Reorder or remove groups and products.')
     )
     const copyActions = el('div', undefined, 'packing-copy-actions')
     copyActionPanel = mountProductCopyActions(copyActions, {
@@ -5192,6 +5987,7 @@ export async function startPackingWorkspace({
       copyActions,
       printing,
       grouping,
+      organize,
       exportList
     )
     host.append(commandBar, output)
@@ -5312,7 +6108,10 @@ export async function startPackingWorkspace({
         ? null
         : packingGroupList?.anchor() || packingScrollAnchor
     packingScrollAnchor = undefined
+    organizeView?.destroy()
+    organizeView = null
     packingGroupList?.destroy()
+    packingGroupList = null
     for (const table of variantTables.values()) table.destroy()
     variantTables.clear()
     const available = new Set(scopedDrafts().map((draft) => draft.orderId))
@@ -5341,8 +6140,16 @@ export async function startPackingWorkspace({
     sourceAttributeFields.clear()
     confirmationScope.clear()
     const host = $('preparation-content')
+    host.classList.toggle('packing-organizing', organizeState.active)
+    host.classList.toggle('packing-normal', !organizeState.active)
     host.replaceChildren()
     renderPackingHeader(host)
+    if (organizeState.active) {
+      copyScope = null
+      copyButtons = []
+      mountOrganize(host)
+      return
+    }
     const groups = visibleDrafts().flatMap((draft) =>
       scopedGroups(draft).map((group) => ({ draft, group }))
     )
@@ -5498,39 +6305,6 @@ export async function startPackingWorkspace({
     const source = orderRecord?.snapshot
     if (chrome) {
       const orderHeader = el('header', undefined, 'packing-order-header')
-      orderHeader.append(
-        reorderHandle({
-          key: draft.orderId,
-          label: source?.sellerName || draft.orderId,
-          items: () => visibleDrafts().map((entry) => entry.orderId),
-          element: (id) =>
-            document.querySelector(`[data-packing-order="${CSS.escape(id)}"]`),
-          move: (key, target, after) => {
-            void preparationAction(async () => {
-              await flushSaves()
-              const positions = movedKeys(
-                drafts.map((entry) => entry.orderId),
-                key,
-                target,
-                after
-              )
-              await applyOrderArrangement(
-                positions.map((id) =>
-                  drafts.find((entry) => entry.orderId === id)
-                ),
-                true
-              )
-              await flushSaves()
-              packingGroupList?.ensureVisible(`order:${key}`)
-              document
-                .querySelector(
-                  `[data-packing-order="${CSS.escape(key)}"] .reorder-handle`
-                )
-                ?.focus()
-            }).catch((error) => showError(error))
-          },
-        })
-      )
       const identity = el('div')
       const sellerHeading = el('h2')
       sellerHeading.append(
@@ -5755,34 +6529,6 @@ export async function startPackingWorkspace({
       })
       codeFields.set(group.id, productInput)
       title.append(
-        reorderHandle({
-          key: group.id,
-          label: uiMessage('group {0}', { 0: draft.groups.indexOf(group) + 1 }),
-          items: () => scopedGroups(draft).map((entry) => entry.id),
-          element: (id) =>
-            packingGroupList?.element(packingGroupKey(draft.orderId, id)),
-          move: (key, target, after) => {
-            void preparationAction(async () => {
-              const live = drafts[index]
-              const moved = reorderPreparationGroups(
-                live,
-                movedKeys(
-                  live.groups.map((entry) => entry.id),
-                  key,
-                  target,
-                  after
-                )
-              )
-              drafts[index] = moved
-              current = index
-              renderPreparation()
-              ensurePackingGroup(draft.orderId, key)
-              document
-                .querySelector(`[data-group-id="${key}"] .reorder-handle`)
-                ?.focus()
-            }).catch((error) => showError(error.message))
-          },
-        }),
         selectGroup,
         preparationHelp(
           productInput,
@@ -5792,28 +6538,6 @@ export async function startPackingWorkspace({
         )
       )
       repeatProductControl(title, draft, group)
-      const removeGroup = orderButton('Remove group', () =>
-        removePackingProducts(
-          draft,
-          group.variants
-            .flatMap((variant) => variant.entryIds)
-            .filter((id) => scopeEntries.get(draft.orderId)?.has(id))
-        )
-      )
-      decorateIcon(removeGroup, 'trash', {
-        iconOnly: true,
-        label: uiMessage('Remove group'),
-      })
-      const groupActions = packingItemActions(
-        'Group actions',
-        title.querySelector('.reorder-handle'),
-        preparationHelp(
-          removeGroup,
-          uiMessage(
-            'Remove this group’s displayed products from packing and discard their preparation edits from this session. Original order data is kept.'
-          )
-        )
-      )
       const groupName = el('input')
       groupName.className = 'group-name-editor'
       groupName.dataset.packingField = 'name'
@@ -5918,8 +6642,9 @@ export async function startPackingWorkspace({
         originalTitle.append(el('p', group.title))
         summary.append(originalTitle)
       }
-      overview.append(groupActions, summary, carton)
+      overview.append(summary, carton)
       card.append(overview)
+      card.append(groupCartonControl(draft, group))
       const scroll = el('div', undefined, 'variant-scroll'),
         table = el('table', undefined, 'variants'),
         head = el('tr')
@@ -5931,10 +6656,9 @@ export async function startPackingWorkspace({
       )
       table.setAttribute('aria-multiselectable', 'true')
       const columns = el('colgroup')
-      for (let column = 0; column < 5; column++) columns.append(el('col'))
+      for (let column = 0; column < 4; column++) columns.append(el('col'))
       table.append(columns)
       for (const label of [
-        'Product actions',
         'Photo',
         'Product variant',
         'Carton details',
@@ -5985,36 +6709,6 @@ export async function startPackingWorkspace({
         const row = el('tr')
         row.dataset.variantId = variant.id
         variantSelection.controller.bind(row, variant.id)
-        const moveProduct = reorderHandle({
-          key: variant.id,
-          label: uiMessage('product {0}', {
-            0: group.variants.indexOf(variant) + 1,
-          }),
-          items: () => scopedVariants(draft, group).map((entry) => entry.id),
-          element: (id) => card.querySelector(`[data-variant-id="${id}"]`),
-          move: (key, target, after) => {
-            void preparationAction(async () => {
-              const live = drafts[index],
-                liveGroup = live.groups.find((entry) => entry.id === group.id)
-              drafts[index] = reorderPreparationVariants(
-                live,
-                group.id,
-                movedKeys(
-                  liveGroup.variants.map((entry) => entry.id),
-                  key,
-                  target,
-                  after
-                )
-              )
-              current = index
-              renderPreparation()
-              ensurePackingVariant(draft.orderId, group.id, key)
-              document
-                .querySelector(`[data-variant-id="${key}"] .reorder-handle`)
-                ?.focus()
-            }).catch((error) => showError(error.message))
-          },
-        })
         const photoCell = el('td', undefined, 'variant-photos')
         const items = variant.entryIds
           .filter((id) => scopeEntries.get(draft.orderId)?.has(id))
@@ -6326,15 +7020,7 @@ export async function startPackingWorkspace({
         const cartonUnits = cartonRecord?.unitsPerCarton || {}
         const measurementCell = el('td', undefined, 'variant-carton-columns')
         const numericHeader = el('div', undefined, 'variant-numeric-header')
-        for (const label of [
-          'Quantity',
-          'Pcs/box',
-          'Planned',
-          'Received',
-          'Loaded',
-          'kg/box',
-          'm³/box',
-        ])
+        for (const label of ['Quantity', 'Pcs/box'])
           numericHeader.append(el('span', uiMessage(label)))
         measurementCell.append(numericHeader)
         for (const item of items) {
@@ -6349,6 +7035,12 @@ export async function startPackingWorkspace({
             BigInt(item.quantity).toLocaleString(getLocale())
           )
           quantityValue.firstChild.replaceWith(quantityDisplay)
+          const physicalCapacity = physicalCapacityReadout(item, draft, group)
+          if (physicalCapacity) {
+            measurements.append(quantityValue, physicalCapacity)
+            measurementCell.append(measurements)
+            continue
+          }
           const capacity = cartonCapacityReadout(
             item,
             cartonUnits[item.entryId],
@@ -6381,12 +7073,7 @@ export async function startPackingWorkspace({
           )
           capacity.firstChild.classList.add('sr-only')
           capacity.querySelector('small')?.classList.add('sr-only')
-          const kg = el('div', undefined, 'variant-measurement-cell'),
-            cbm = el('div', undefined, 'variant-measurement-cell')
-          mountMeasurements({ kg, cbm }, item, cartonRecord, draft)
           measurements.append(quantityValue, capacity)
-          mountConfirmations(measurements, item, cartonRecord, draft, group)
-          measurements.append(kg, cbm)
           measurementCell.append(measurements)
           const carton = productCartonDetails(item, cartonRecord)
           if (carton.boxes !== undefined)
@@ -6558,32 +7245,6 @@ export async function startPackingWorkspace({
               'barcode'
             )
           )
-        const removeProduct = orderButton('Remove product', () =>
-          removePackingProducts(
-            draft,
-            variant.entryIds.filter((id) =>
-              scopeEntries.get(draft.orderId)?.has(id)
-            )
-          )
-        )
-        decorateIcon(removeProduct, 'trash', {
-          iconOnly: true,
-          label: uiMessage('Remove product'),
-        })
-        const actionsCell = el('td', undefined, 'variant-actions')
-        actionsCell.append(
-          packingItemActions(
-            'Product actions',
-            moveProduct,
-            preparationHelp(
-              removeProduct,
-              uiMessage(
-                'Remove this product from packing and discard its preparation edits from this session. Original order data is kept.'
-              )
-            )
-          )
-        )
-        row.prepend(actionsCell)
         row.append(output)
         return row
       }
@@ -6877,6 +7538,121 @@ export async function startPackingWorkspace({
         }
       }
     }
+    if (kind === 'mark') {
+      const batches = cartonBatchProjection(physicalBatches, getRecords(), [
+        ...preparations.values(),
+      ])
+      for (const batch of batches) {
+        if (
+          !batch.contents.some((content) =>
+            selected.has(`${content.orderId}/${content.entryId}`)
+          )
+        )
+          continue
+        const mark = cartonBatchMark(batch),
+          prep = preparations.get(mark.orderId),
+          group = prep?.groups.find((group) => group.id === mark.groupId)
+        if (!group) continue
+        const existing = items.get(group.baseCode)
+        if (existing) {
+          const refs = existing.refs || [existing.ref]
+          if (
+            !refs.some(
+              (ref) =>
+                ref.orderId === mark.orderId && ref.groupId === mark.groupId
+            )
+          ) {
+            refs.push({
+              orderId: mark.orderId,
+              groupId: mark.groupId,
+              variantId: null,
+              entryIds: group.variants.flatMap((variant) => variant.entryIds),
+            })
+            existing.refs = refs
+          }
+          const source = getRecords().find(
+            (record) => record.snapshot.orderId === mark.orderId
+          )?.snapshot
+          if (!existing.orders.some((order) => order.orderId === mark.orderId))
+            existing.orders.push({
+              orderId: mark.orderId,
+              seller: source?.sellerName || batch.sellerName,
+            })
+          continue
+        }
+        const { item, problem } = printEntry(prep, group, null, 'mark')
+        if (problem) {
+          problems.set(problem.code, problem)
+          continue
+        }
+        item.refs = [item.ref]
+        item.orders = [
+          ...new Map(
+            batch.contents.map((content) => [
+              content.orderId,
+              { orderId: content.orderId, seller: batch.sellerName },
+            ])
+          ).values(),
+        ]
+        items.set(item.code, item)
+      }
+      for (const item of [...items.values()]) {
+        const refs = item.refs || [item.ref]
+        const matching = batches.filter((batch) => {
+          const group = cartonBatchMark(batch)
+          return refs.some(
+            (ref) =>
+              ref.orderId === group.orderId && ref.groupId === group.groupId
+          )
+        })
+        if (!matching.length) {
+          if (
+            batches.some((batch) =>
+              batch.contents.some((content) =>
+                refs.some(
+                  (ref) =>
+                    ref.orderId === content.orderId &&
+                    ref.entryIds?.includes(content.entryId)
+                )
+              )
+            )
+          )
+            items.delete(item.code)
+          continue
+        }
+        const complete = matching.every(
+          (batch) =>
+            !batch.needsReview &&
+            batch.count !== null &&
+            batch.contents.every((entry) =>
+              selected.has(`${entry.orderId}/${entry.entryId}`)
+            )
+        )
+        const total = matching.reduce(
+          (sum, batch) => sum + (batch.count ?? 0),
+          0
+        )
+        item.cartonPacking = {
+          total,
+          exact: complete,
+          requiresReview: !complete,
+          rows: matching.map((batch) => ({
+            batchId: batch.id,
+            explicit: true,
+            status: complete ? 'exact' : 'partial',
+            fullCartons: batch.count ?? 0,
+            remainder: null,
+            unitsPerCarton: null,
+          })),
+        }
+        item.known = complete ? total : null
+        item.quantity = complete ? total : ''
+        item.refs = refs.map((ref) => ({
+          ...ref,
+          cartonBatchIds: matching.map((batch) => batch.id),
+        }))
+      }
+    }
     return { items: [...items.values()], problems: [...problems.values()] }
   }
   /** Current print entries at the job's product references (order, group, variant). */
@@ -6885,6 +7661,29 @@ export async function startPackingWorkspace({
     const seen = new Set()
     for (const product of products) {
       for (const ref of product.refs || (product.ref ? [product.ref] : [])) {
+        if (kind === 'mark' && ref.cartonBatchIds?.length) {
+          for (const batch of physicalBatches.filter(
+            (batch) => !batch.deletedAt && ref.cartonBatchIds.includes(batch.id)
+          )) {
+            for (const content of batch.contents) {
+              const key = `${content.orderId}/${content.entryId}`
+              if (seen.has(key)) continue
+              const record = getRecords().find(
+                (record) =>
+                  record.snapshot.accountId === batch.accountId &&
+                  record.snapshot.orderId === content.orderId
+              )
+              const item = record?.snapshot.items.find(
+                (item) => item.entryId === content.entryId
+              )
+              if (item) {
+                rows.push({ ...item, orderId: content.orderId })
+                seen.add(key)
+              }
+            }
+          }
+          continue
+        }
         const prep = preparations.get(ref.orderId)
         const record = getRecords().find(
           (record) => record.snapshot.orderId === ref.orderId
@@ -7164,7 +7963,11 @@ export async function startPackingWorkspace({
       }),
       file
     )
-    const summary = packingSummary({ rows: fields, file })
+    const summary = packingSummary({
+      rows: fields,
+      file,
+      cartonBatches: options.cartonBatches,
+    })
     saveFile(
       new Blob([JSON.stringify(summary, null, 2)], {
         type: 'application/json',
@@ -7990,6 +8793,15 @@ export async function startPackingWorkspace({
         ),
       ]
     },
+    cartonDetailsOptions(row) {
+      const match = membership.get(`${row.orderId}/${row.entryId}`)
+      if (!match) return null
+      return {
+        summary: () => groupCartonSummary(match.prep, match.group),
+        baseCode: match.group.baseCode,
+        openBatches: () => editCartonBatches(match.prep, match.group),
+      }
+    },
     decorateRow(host, row, capacityHost = host, measurementHosts) {
       scheduleRowFieldCleanup()
       const matched = membership.get(`${row.orderId}/${row.entryId}`),
@@ -8060,7 +8872,9 @@ export async function startPackingWorkspace({
       host.append(bar)
       const record = packingRecord(row)
       if (measurementHosts) mountMeasurements(measurementHosts, row, record)
-      capacityHost.append(cartonCapacityEditor(row).control)
+      const physicalCapacity =
+        matched && physicalCapacityReadout(row, matched.prep, matched.group)
+      capacityHost.append(physicalCapacity || cartonCapacityEditor(row).control)
     },
   }
 }

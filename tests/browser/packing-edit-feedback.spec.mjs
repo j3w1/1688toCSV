@@ -1,6 +1,10 @@
 import { test, expect } from './extension-fixture.mjs'
 import { readBackupFile } from '../../src/backup-file.js'
 import { createDemoRecords } from '../../preview/library-fixture.js'
+import {
+  packingRemovalAction,
+  finishOrganizing,
+} from './packing-organize-helpers.mjs'
 import { readFile } from 'node:fs/promises'
 
 for (const theme of ['dark', 'light']) {
@@ -607,10 +611,10 @@ test(
     await expect(
       view.getByLabel('Packing backup file', { exact: true })
     ).toHaveCount(0)
-    const remove = view
-      .locator('.preparation-group')
-      .last()
-      .getByRole('button', { name: 'Remove group', exact: true })
+    const remove = await packingRemovalAction(
+      view.locator('.preparation-group').last(),
+      'group'
+    )
     await remove.focus()
     await remove.click()
     const removal = page.getByRole('dialog', {
@@ -621,6 +625,7 @@ test(
       .getByRole('button', { name: 'Remove from packing', exact: true })
       .click()
     await expect(removal).toBeHidden()
+    await finishOrganizing(page)
     await expect(view.locator('.variants tbody tr')).toHaveCount(2)
     const clear = view.getByRole('button', {
       name: 'Clear selection',
@@ -678,20 +683,40 @@ test(
   }
 )
 
-test('packing backup includes orders on other pages and outside the display filter', async ({
+test('packing backup includes offscreen orders and orders outside the display filter', async ({
   extension,
 }) => {
   const { page, view, records } = await openPacking(extension, {
     orderCount: 11,
   })
-  await view.getByRole('button', { name: 'Next groups', exact: true }).click()
-  await expect(view.locator('.preparation-group')).toHaveCount(2)
-  await expect(view.locator('.packing-pages')).toContainText(
-    '2 / 2 · 22 groups'
+  const sections = view.locator('.packing-order-section'),
+    visualOrders = await sections.evaluateAll((nodes) =>
+      nodes.map((node) => node.dataset.packingOrder)
+    ),
+    first = sections.first(),
+    last = sections.last(),
+    scroll = view.locator('.packing-order-sections')
+  expect(visualOrders).toHaveLength(11)
+  expect([...visualOrders].sort()).toEqual(
+    records.map((record) => record.snapshot.orderId).sort()
   )
+  await expect(last.locator('.preparation-group')).toHaveCount(0)
+  await expect(view.locator('.packing-pages')).toHaveCount(0)
+  await expect(
+    view.getByRole('button', { name: 'Next groups', exact: true })
+  ).toHaveCount(0)
+  await scroll.focus()
+  await scroll.evaluate((node) => {
+    node.scrollTop = node.scrollHeight
+    node.dispatchEvent(new Event('scroll'))
+  })
+  await expect(last.locator('.preparation-group')).toHaveCount(2)
+  await expect(first.locator('.preparation-group')).toHaveCount(0)
   await view
     .getByLabel('Show packing orders', { exact: true })
-    .selectOption({ index: 1 })
+    .selectOption(visualOrders[0])
+  await expect(sections).toHaveCount(1)
+  await expect(sections).toHaveAttribute('data-packing-order', visualOrders[0])
   await expect(view.locator('.preparation-group')).toHaveCount(2)
   await view
     .getByRole('button', { name: 'Clear selection', exact: true })
@@ -1307,8 +1332,7 @@ test('legacy suffixes survive a valid edit followed by Undo, Redo and session re
   await expect(sizeCode).not.toHaveAttribute('aria-invalid', 'true')
   await view.getByRole('button', { name: 'Redo', exact: true }).click()
   await expect.poll(storedSize).toBe('L')
-  await row.getByRole('button', { name: 'Remove product', exact: true }).focus()
-  await row.getByRole('button', { name: 'Remove product', exact: true }).click()
+  await (await packingRemovalAction(row, 'product')).click()
   const review = page.getByRole('dialog', {
     name: 'Remove from packing?',
     exact: true,
@@ -1317,5 +1341,6 @@ test('legacy suffixes survive a valid edit followed by Undo, Redo and session re
     .getByRole('button', { name: 'Remove from packing', exact: true })
     .click()
   await expect(review).toBeHidden()
+  await finishOrganizing(page)
   await expect.poll(storedSize).toBe('A')
 })
