@@ -610,6 +610,12 @@ test('image columns reorder, persist across copying and reload, and use the sele
   ]) {
     await dialog.locator(`[data-column="${key}"] .excel-column-toggle`).click()
   }
+  // The toggles regenerate the image and can resize the dialog. Start the
+  // native drag only after the current preview is ready and decoded.
+  await expect(dialog.locator('.image-copy-submit')).toBeEnabled({
+    timeout: 20_000,
+  })
+  await dialog.locator('.copy-preview img').evaluate((image) => image.decode())
   await dialog
     .locator('[data-column="quantity"] .excel-column-grip')
     .dragTo(dialog.locator('[data-column="price"]'))

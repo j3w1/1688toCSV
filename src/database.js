@@ -1,3 +1,10 @@
+import {
+  otherOrderSnapshot,
+  validateOtherPhoto,
+  validateOtherSnapshotPhotos,
+  assertUniqueOtherReferences,
+} from './other-orders.js'
+
 const SNAPSHOT_VERSION = 1
 const BACKUP_FORMAT = '1688-order-library'
 const productAnnotationFields = [
@@ -164,6 +171,28 @@ function validateAmounts(items, totals) {
 
 function validateSnapshot(input) {
   object(input, 'Snapshot')
+  const other = input.source === 'other'
+  if (input.source !== undefined && !['1688', 'other'].includes(input.source))
+    throw new Error('Order source must be 1688 or other')
+  if (
+    other &&
+    (input.accountId !== 'local' ||
+      input.sourceUrl !== '' ||
+      !input.purchasedAt ||
+      typeof input.reference !== 'string' ||
+      !input.reference.trim() ||
+      input.reference.length > 160 ||
+      /[\u0000-\u001f]/.test(input.reference) ||
+      typeof input.sellerName !== 'string' ||
+      input.sellerName.length > 160 ||
+      /[\u0000-\u001f]/.test(input.sellerName) ||
+      ['sellerMemberLogin', 'sellerShopOrigin', 'sellerUnavailable'].some(
+        (key) => Object.hasOwn(input, key)
+      ))
+  )
+    throw new Error(
+      'Other-source orders need a supplier, reference and date, with no 1688 source URL or account identity'
+    )
   if (input.schemaVersion !== SNAPSHOT_VERSION)
     throw new Error('Unsupported snapshot schema version')
   if (!Array.isArray(input.items) || !input.items.length)
@@ -172,7 +201,9 @@ function validateSnapshot(input) {
     object(item, 'Product row')
     return {
       entryId: identifier(item.entryId, 'entryId'),
-      thumbnail: string(item.thumbnail, 'thumbnail'),
+      thumbnail: other
+        ? validateOtherPhoto(item.thumbnail)
+        : string(item.thumbnail, 'thumbnail'),
       description: string(item.description, 'description', { empty: false }),
       ...(item.title !== undefined
         ? { title: string(item.title, 'Product title') }
@@ -227,7 +258,9 @@ function validateSnapshot(input) {
     schemaVersion: SNAPSHOT_VERSION,
     accountId: string(input.accountId, 'accountId', { empty: false }),
     orderId,
-    sourceUrl: detailUrl(input.sourceUrl, orderId),
+    sourceUrl: other ? '' : detailUrl(input.sourceUrl, orderId),
+    ...(input.source !== undefined ? { source: input.source } : {}),
+    ...(other ? { reference: input.reference.trim() } : {}),
     sellerName: string(input.sellerName, 'sellerName', { empty: false }),
     ...(input.sellerUnavailable ? { sellerUnavailable: true } : {}),
     ...(input.sellerMemberLogin !== undefined
@@ -420,6 +453,13 @@ function comparable(snapshot) {
 }
 
 function reconcile(snapshot, previous) {
+  if (
+    previous &&
+    (snapshot.source === 'other') !== (previous.snapshot.source === 'other')
+  )
+    throw new Error(
+      'An existing order cannot change between 1688 and another source'
+    )
   // Purchase time is immutable. The detail timeline can differ slightly from
   // the list's creation time; later reads must not move an order between dates.
   if (previous?.snapshot.purchasedAt)
@@ -590,11 +630,20 @@ export function validateBackup(input) {
     if (current.has(key)) throw new Error('Backup contains duplicate order IDs')
     current.set(key, record)
   }
+  assertUniqueOtherReferences(
+    orders,
+    'Backup contains duplicate other-source supplier references'
+  )
   const historyKeys = new Set()
   for (const record of history) {
     const owner = current.get(JSON.stringify(keyFor(record.snapshot)))
     if (!owner || record.snapshot.observedAt >= owner.snapshot.observedAt)
       throw new Error('Backup history must precede its current order')
+    if (
+      (record.snapshot.source === 'other') !==
+      (owner.snapshot.source === 'other')
+    )
+      throw new Error('Backup history must keep the same order source')
     const key = JSON.stringify([
       ...keyFor(record.snapshot),
       record.snapshot.observedAt,
@@ -1118,7 +1167,31 @@ export async function openDatabase({ name = '1688-order-library' } = {}) {
   }
 
   return {
+    async createOtherOrder(input) {
+      const snapshot = validateSnapshot(otherOrderSnapshot(input))
+      await validateOtherSnapshotPhotos(snapshot)
+      return write(['orders', 'packingPreferences'], async (tx) => {
+        const orders = tx.objectStore('orders')
+        const existing = await requested(orders.getAll())
+        assertUniqueOtherReferences([...existing, { snapshot }])
+        if (await requested(orders.getKey(keyFor(snapshot))))
+          throw new Error(
+            'The new internal order ID is already used; try again'
+          )
+        const result = reconcile(snapshot)
+        const preferences = await packingPreferencesFor(tx)
+        result.order.namingSuggestions = orderNamingSuggestions(
+          snapshot,
+          createNameSuggester(preferences.vocabulary)
+        )
+        orders.add(result.order)
+        return result
+      })
+    },
+
     async saveSnapshot(input) {
+      if (input?.source === 'other')
+        throw new Error('Create other-source orders through order entry')
       const snapshot = validateSnapshot(input)
       return write(
         ['orders', 'history', 'preparations', 'packingPreferences'],
@@ -1500,6 +1573,8 @@ export async function openDatabase({ name = '1688-order-library' } = {}) {
       // Validate every record before opening a write transaction. A malformed
       // trailing record must never leave a partially restored library.
       const backup = validateBackup(input)
+      for (const record of [...backup.orders, ...backup.history])
+        await validateOtherSnapshotPhotos(record.snapshot)
       return write(
         [
           'orders',
@@ -1609,6 +1684,9 @@ export async function openDatabase({ name = '1688-order-library' } = {}) {
               }
             }
           }
+          // Reconciliation can keep a newer local snapshot. Validate the actual
+          // final records, not a projection which assumes incoming ids replace it.
+          assertUniqueOtherReferences(await requested(orders.getAll()))
           for (const record of backup.history) {
             const key = [...keyFor(record.snapshot), record.snapshot.observedAt]
             if (!(await requested(history.getKey(key)))) history.put(record)

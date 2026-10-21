@@ -44,6 +44,7 @@ import {
 import { mountColorVocabulary } from './color-vocabulary-settings.js'
 import { mountAppearanceSettings } from './appearance-settings.js'
 import { applyAppearance, labelColorKey } from './appearance.js'
+import { orderSource } from './other-orders.js'
 import { openImageCopyDialog, imageBatchPlans } from './image-copy-dialog.js'
 import {
   mountCopyActions,
@@ -2324,7 +2325,7 @@ export async function startPackingWorkspace({
     const source = getRecords().find(
       (record) => record.snapshot.orderId === orderId
     )?.snapshot
-    if (!source) return
+    if (!source || orderSource(source) !== '1688') return
     selectedOrderOpening = true
     try {
       if (!globalThis.chrome?.tabs) {
@@ -3345,7 +3346,12 @@ export async function startPackingWorkspace({
           owner.spanishName || owner.groupTitle || uiMessage('Original product')
         ),
         el('small', owner.sellerName),
-        orderReference(owner.orderId),
+        orderReference(owner.orderId, {
+          snapshot: getRecords().find(
+            (record) => record.snapshot.orderId === owner.orderId
+          )?.snapshot,
+          sourceLink: owner.orderExists,
+        }),
         ...(owner.variant ? [el('p', owner.variant)] : []),
         el('code', code, 'ce-code conflict-occupied-code'),
         el('p', uiMessage('This code is currently assigned here.'))
@@ -3896,7 +3902,13 @@ export async function startPackingWorkspace({
       'open-selected-order'
     )
     decorateIcon(open, 'external')
-    open.disabled = packingOrders.size !== 1
+    open.disabled =
+      packingOrders.size !== 1 ||
+      orderSource(
+        getRecords().find(
+          (record) => record.snapshot.orderId === [...packingOrders][0]
+        )?.snapshot
+      ) !== '1688'
     const selectAll = button(uiMessage('Select all'), () =>
         selectPackingRows(true)
       ),
@@ -4528,7 +4540,7 @@ export async function startPackingWorkspace({
     )
     identity.append(sellerHeading)
     const orderNumber = el('span', undefined, 'packing-order-number')
-    orderNumber.append(orderReference(draft.orderId))
+    orderNumber.append(orderReference(draft.orderId, { snapshot: source }))
     identity.append(orderNumber)
     const restoreActions = el('div', undefined, 'packing-restore-actions')
     const reset = orderButton('Reset order and codes', () =>
@@ -5567,7 +5579,13 @@ export async function startPackingWorkspace({
             .filter((id) => selected.has(`${orderId}/${id}`))
             .reduce((sum, id) => sum + (quantityOf.get(id) || 0), 0)
           const existing = items.get(item.code)
-          const source = { orderId, seller: record.snapshot.sellerName || '' }
+          const source = {
+            orderId,
+            seller: record.snapshot.sellerName || '',
+            ...(record.snapshot.source === 'other'
+              ? { source: 'other', reference: record.snapshot.reference }
+              : {}),
+          }
           if (existing) {
             existing.quantity += kind === 'mark' ? 0 : units
             if (!existing.orders.some((entry) => entry.orderId === orderId))
@@ -5609,7 +5627,13 @@ export async function startPackingWorkspace({
         items.push({
           ...item,
           orders: [
-            { orderId: ref.orderId, seller: record.snapshot.sellerName || '' },
+            {
+              orderId: ref.orderId,
+              seller: record.snapshot.sellerName || '',
+              ...(record.snapshot.source === 'other'
+                ? { source: 'other', reference: record.snapshot.reference }
+                : {}),
+            },
           ],
         })
       else problems.push(problem)

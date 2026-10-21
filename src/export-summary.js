@@ -91,6 +91,9 @@ export function packingSummary({
       orders.set(row.orderId, {
         orderId: row.orderId,
         seller: row.sellerName || '',
+        ...(row.source === 'other'
+          ? { source: 'other', reference: row.orderReference }
+          : {}),
       })
     products.push({
       orderId: row.orderId,
@@ -131,6 +134,9 @@ export function printSummary({
         orders.set(source.orderId, {
           orderId: source.orderId,
           seller: source.seller || '',
+          ...(source.source === 'other'
+            ? { source: 'other', reference: source.reference }
+            : {}),
         })
   const products = items.map((item) => ({
     code: item.code,

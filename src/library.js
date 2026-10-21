@@ -12,6 +12,8 @@ import {
 } from './i18n.js'
 import { copyTable, copySingleImage, pngThumbnail } from './clipboard.js'
 import { openDatabase } from './database.js'
+import { openOtherOrderDialog } from './other-order-dialog.js'
+import { orderSource } from './other-orders.js'
 import {
   confirmScope,
   copied,
@@ -307,45 +309,48 @@ export async function startLibrary(
           snapshot.orderId === row.orderId &&
           (!row.record || accountId === row.record.accountId)
       ) || row.record
-    const details = openProductDetails(row, {
-      tags:
-        record && repository?.setProductTags
-          ? {
-              selected: record.productTags?.[row.entryId] || [],
-              definitions: productTagDefinitions,
-              save: async (names) => {
-                await send('LIBRARY_PRODUCT_TAGS', {
-                  orderId: row.orderId,
-                  entryId: row.entryId,
-                  tags: names,
-                  accountId: record.accountId || 'local',
-                })
-                await refresh()
-                return productTagDefinitions
-              },
-            }
-          : undefined,
-      loadPhoto: async (url) => {
-        const result = await send('IMAGE_GET', { url })
-        return typeof result === 'string' ? result : result.dataUrl
-      },
-      onPhoto: () =>
-        void photos.open(
-          row,
-          sourceItems.length > 1 || !row.record ? sourceItems : filteredRows()
-        ),
-      onOrder: () =>
-        record &&
-        void openDetails(record).catch((error) =>
-          feedback(error.message, true)
-        ),
-      copyPhoto: async () => {
-        const result = await send('IMAGE_GET', { url: row.thumbnail })
-        await copySingleImage(
-          typeof result === 'string' ? result : result.dataUrl
-        )
-      },
-    })
+    const details = openProductDetails(
+      { ...row, record },
+      {
+        tags:
+          record && repository?.setProductTags
+            ? {
+                selected: record.productTags?.[row.entryId] || [],
+                definitions: productTagDefinitions,
+                save: async (names) => {
+                  await send('LIBRARY_PRODUCT_TAGS', {
+                    orderId: row.orderId,
+                    entryId: row.entryId,
+                    tags: names,
+                    accountId: record.accountId || 'local',
+                  })
+                  await refresh()
+                  return productTagDefinitions
+                },
+              }
+            : undefined,
+        loadPhoto: async (url) => {
+          const result = await send('IMAGE_GET', { url })
+          return typeof result === 'string' ? result : result.dataUrl
+        },
+        onPhoto: () =>
+          void photos.open(
+            row,
+            sourceItems.length > 1 || !row.record ? sourceItems : filteredRows()
+          ),
+        onOrder: () =>
+          record &&
+          void openDetails(record).catch((error) =>
+            feedback(error.message, true)
+          ),
+        copyPhoto: async () => {
+          const result = await send('IMAGE_GET', { url: row.thumbnail })
+          await copySingleImage(
+            typeof result === 'string' ? result : result.dataUrl
+          )
+        },
+      }
+    )
     const { dialog } = details
     productDetailsEditor = details
     dialog.addEventListener(
@@ -613,6 +618,7 @@ export async function startLibrary(
           'LIBRARY_PRODUCT_TAGS',
           'LIBRARY_PACKING_EXCLUSION',
           'LIBRARY_REMOVE',
+          'OTHER_ORDER_CREATE',
         ].includes(type)
       ) {
         if (
@@ -623,6 +629,8 @@ export async function startLibrary(
             'Pause the import before removing orders or restoring a backup.'
           )
         let result
+        if (type === 'OTHER_ORDER_CREATE')
+          result = await repository.createOtherOrder(data.order)
         if (type === 'BACKUP_RESTORE')
           result = await repository.restoreBackup(data.backup)
         if (type === 'LIBRARY_NOTES')
@@ -716,6 +724,7 @@ export async function startLibrary(
           order.sellerName,
           order.sellerMemberLogin,
           order.orderId,
+          order.reference,
           ...record.tags,
         ]) &&
         (!selectedMonths.size || selectedMonths.has(purchaseMonth(order))) &&
@@ -758,6 +767,7 @@ export async function startLibrary(
               item.productNumber,
               order.sellerName,
               order.orderId,
+              order.reference,
               record.notes,
               ...record.tags,
               ...(record.productTags?.[item.entryId] || []),
@@ -771,6 +781,9 @@ export async function startLibrary(
           orderId: order.orderId,
           sellerName: order.sellerName,
           sellerMemberLogin: order.sellerMemberLogin,
+          ...(order.source === 'other'
+            ? { source: 'other', orderReference: order.reference }
+            : {}),
           record,
         }))
     })
@@ -1109,6 +1122,7 @@ export async function startLibrary(
       reference.append(
         orderReference(order.orderId, {
           className: 'order-reference',
+          snapshot: order,
         }),
         node(
           'span',
@@ -1119,6 +1133,20 @@ export async function startLibrary(
         )
       )
       const meta = node('div', undefined, 'order-card-meta')
+      const source = orderSource(order)
+      const sourceBadge = node(
+        'span',
+        uiMessage(
+          source === 'other'
+            ? 'Other source'
+            : source === '1688'
+              ? '1688'
+              : 'Source unknown'
+        ),
+        'order-source'
+      )
+      sourceBadge.dataset.source = source || 'unknown'
+      meta.append(sourceBadge)
       meta.append(
         statusBadge(order.status),
         dateBadge(order),
@@ -1140,7 +1168,9 @@ export async function startLibrary(
     updateOrderActions()
   }
   function updateOrderActions() {
-    const matching = scopedOrders()
+    const matching = scopedOrders().filter(
+      (record) => orderSource(record.snapshot) === '1688'
+    )
     bindText(
       $('refresh-orders'),
       uiMessage('Refresh {0} order{1}', {
@@ -1159,7 +1189,9 @@ export async function startLibrary(
     )
     const running = jobs.some((job) => job.state === 'running')
     $('refresh-orders').disabled = !matching.length || running
-    $('refresh-all').disabled = !records.length || running
+    $('refresh-all').disabled =
+      !records.some((record) => orderSource(record.snapshot) === '1688') ||
+      running
     $('remove-orders').disabled = !selectedOrders.size
   }
   function renderRows() {
@@ -1218,6 +1250,7 @@ export async function startLibrary(
           shop,
           orderReference(row.orderId, {
             className: 'order-section-number',
+            snapshot: row.record.snapshot,
           }),
           dateBadge(row.record.snapshot),
           statusBadge(row.record.snapshot.status),
@@ -1979,6 +2012,7 @@ export async function startLibrary(
     identity.append(
       orderReference(order.orderId, {
         className: 'order-reference',
+        snapshot: order,
       })
     )
     const sellerHeading = node('h2')
@@ -2324,10 +2358,40 @@ export async function startLibrary(
     )
   }
   action('refresh-orders', () =>
-    refreshOrders(scopedOrders().map(({ snapshot }) => snapshot.orderId))
+    refreshOrders(
+      scopedOrders()
+        .filter((record) => orderSource(record.snapshot) === '1688')
+        .map(({ snapshot }) => snapshot.orderId)
+    )
   )
   action('refresh-all', () =>
-    refreshOrders(records.map((record) => record.snapshot.orderId))
+    refreshOrders(
+      records
+        .filter((record) => orderSource(record.snapshot) === '1688')
+        .map((record) => record.snapshot.orderId)
+    )
+  )
+  action('add-other-order', () =>
+    openOtherOrderDialog({
+      save: async (order) => {
+        const result = await send('OTHER_ORDER_CREATE', { order })
+        $('order-search').value =
+          $('search').value =
+          $('date-from').value =
+          $('date-to').value =
+            ''
+        $('status-filter').value = ''
+        $('changes-only').checked = false
+        selectedOrders.clear()
+        selectedOrders.add(result.order.snapshot.orderId)
+        selectedMonths.clear()
+        selectedMonths.add(purchaseMonth(result.order.snapshot))
+        expandedMonths.add(purchaseMonth(result.order.snapshot))
+        page = orderPage = 0
+        await refresh()
+        feedback(uiMessage('Order added from another source.'))
+      },
+    })
   )
   action('clear-months', () => {
     selectedMonths.clear()

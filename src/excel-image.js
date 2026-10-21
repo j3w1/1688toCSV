@@ -247,6 +247,7 @@ function snapshot(row, index, columns) {
   const values = {}
   for (const key of [
     'orderId',
+    'orderReference',
     'entryId',
     'sellerName',
     'sellerMemberLogin',
@@ -753,7 +754,7 @@ export function planExcelImage(
           details.seller && (source.sellerName || source.sellerMemberLogin),
           details.orderNumber &&
             source.orderId &&
-            `${orderLabel} ${source.orderId}`,
+            `${orderLabel} ${source.orderReference || source.orderId}`,
         ]
           .filter(Boolean)
           .join('  ·  ')
