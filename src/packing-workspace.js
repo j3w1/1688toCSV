@@ -51,6 +51,7 @@ import {
 import { mountCartonMeasurement } from './carton-measurements-ui.js'
 import { mountCartonConfirmation } from './carton-confirmations-ui.js'
 import { popupLanguageToggle } from './popup-language-toggle.js'
+import { resolveOperations } from './operations-workflow.js'
 import { createProductDescription } from './product-details.js'
 import {
   setCodeText,
@@ -146,6 +147,7 @@ import {
   preparationTable,
   preparationCopyFields,
   preparationOrderFields,
+  preparationFeatureFields,
   writeTable,
   labelClipboard,
 } from './preparation-clipboard.js'
@@ -1471,6 +1473,7 @@ export async function startPackingWorkspace({
     settings,
     logoUrl,
     getPhotoContext: photoContext,
+    getSizeClassifier: () => createSizeClassifier(preferences.sizeVocabulary),
     onPhotoEdit: async (item, edit) => {
       const owner = photoOwners.get(item)
       const record = getRecords().find(({ snapshot }) =>
@@ -2265,11 +2268,14 @@ export async function startPackingWorkspace({
               ? `${old.baseCode}${saved.variantSuffix}${saved.sizeSuffix}`
               : ''
           const afterCode = `${group.baseCode}${variant.variantSuffix}${variant.sizeSuffix}`
-          if (beforeCode !== afterCode)
+          const repeatsProductCode =
+            beforeCode === (old?.baseCode || '') && afterCode === group.baseCode
+          if (beforeCode !== afterCode && !repeatsProductCode)
             values.push({
-              label:
-                [variant.variant, variant.size].filter(Boolean).join(' · ') ||
-                uiMessage('Barcode'),
+              label: uiMessage('Barcode'),
+              context: [variant.variant, variant.size]
+                .filter(Boolean)
+                .join(' · '),
               before: beforeCode || uiMessage('Not prepared'),
               after: afterCode,
               kind: 'code',
@@ -2297,6 +2303,7 @@ export async function startPackingWorkspace({
             })
         return {
           name: group.spanishName || group.title,
+          sourceDescription: group.title,
           order: source?.sellerName || draft.sellerId,
           orderId: draft.orderId,
           before: old?.baseCode,
@@ -2656,6 +2663,7 @@ export async function startPackingWorkspace({
           )
         })
         const reviewResult = await reviewPackingChanges({
+          overview: true,
           title: hasMove
             ? uiMessage('Move selected products to this packing month?')
             : uiMessage('Assign product codes?'),
@@ -7088,6 +7096,17 @@ export async function startPackingWorkspace({
     if (!rows.length) throw new Error('Select product rows to copy.')
     const sizeClassifier = createSizeClassifier(preferences.sizeVocabulary)
     rows = rows.map((row) => preparationCopyFields(row, sizeClassifier))
+    const records = new Map(
+      getRecords().map((record) => [record.snapshot.orderId, record])
+    )
+    const featureSources = rows.map((row) =>
+      structuredClone(
+        resolveOperations(
+          records.get(row.orderId) || row.record || {},
+          row.entryId
+        ).effective.features
+      )
+    )
     const modal = el(
       'dialog',
       undefined,
@@ -7107,7 +7126,15 @@ export async function startPackingWorkspace({
             const columns = fields.selected()
             if (!columns.length)
               throw new Error('Select at least one column to copy.')
-            await writeTable(preparationTable(rows, columns, headers(), t))
+            const translate = (source, params) =>
+              t(source, params, getLanguage(modal))
+            const localized = rows.map((row, index) => ({
+              ...row,
+              ...preparationFeatureFields(featureSources[index], translate),
+            }))
+            await writeTable(
+              preparationTable(localized, columns, headers(), translate)
+            )
           }),
         'primary'
       ),
@@ -7981,6 +8008,7 @@ export async function startPackingWorkspace({
     reload,
     refreshPhoto: (item, thumbnail) => media.updatePhoto(item, thumbnail),
     photoContext,
+    sizeClassifier: () => createSizeClassifier(preferences.sizeVocabulary),
     flush: flushSaves,
     preparedRows,
     copyLabels: (kind, rows) =>

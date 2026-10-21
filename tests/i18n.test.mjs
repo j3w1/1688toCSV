@@ -23,7 +23,88 @@ import {
   getLanguage,
   getLocale,
   onLanguageChange,
+  createLanguageScope,
+  inheritLanguageScope,
+  LANGUAGE_PREFERENCE,
 } from '../src/i18n.js'
+
+test('popup scopes translate owned bindings, new content and nested messages without changing workspace state or sibling popups', async (context) => {
+  const { document, window } = parseHTML(
+    '<html><body><p data-i18n="Photo"></p><dialog id="first"><h2 data-i18n="Photo"></h2><input value="Seller text"></dialog><dialog id="second"><h2 data-i18n="Photo"></h2></dialog></body></html>'
+  )
+  const stored = new Map([[LANGUAGE_PREFERENCE, 'en']])
+  for (const [key, value] of Object.entries({
+    document,
+    MutationObserver: window.MutationObserver,
+    localStorage: {
+      getItem: (key) => stored.get(key),
+      setItem: (key, value) => stored.set(key, value),
+    },
+  })) {
+    const previous = Object.getOwnPropertyDescriptor(globalThis, key)
+    Object.defineProperty(globalThis, key, { value, configurable: true })
+    context.after(() =>
+      previous
+        ? Object.defineProperty(globalThis, key, previous)
+        : delete globalThis[key]
+    )
+  }
+  setLanguage('en', { persist: false })
+  const first = document.querySelector('#first'),
+    second = document.querySelector('#second'),
+    input = first.querySelector('input')
+  localize(document)
+  createLanguageScope(first)
+  createLanguageScope(second, 'zh')
+  let calls = 0,
+    popupCalls = 0
+  const stop = onLanguageChange(() => calls++)
+  const stopPopup = onLanguageChange(() => popupCalls++, first)
+  context.after(() => {
+    stop()
+    stopPopup()
+    setLanguage('en', { persist: false })
+  })
+  const detail = document.createElement('p')
+  first.append(detail)
+  bindText(detail, message('Order {0}', { 0: () => message('Photo') }))
+  setLanguage('es', { scope: first })
+  assert.equal(first.querySelector('h2').textContent, 'Foto')
+  assert.equal(detail.textContent, 'Pedido Foto')
+  assert.equal(second.querySelector('h2').textContent, '图片')
+  assert.equal(document.querySelector('body > p').textContent, 'Photo')
+  assert.equal(getLanguage(), 'en')
+  assert.equal(getLocale(first), 'es-PE')
+  assert.equal(document.documentElement.lang, 'en')
+  assert.equal(stored.get(LANGUAGE_PREFERENCE), 'en')
+  assert.equal(calls, 0)
+  assert.equal(popupCalls, 1)
+  assert.equal(input.value, 'Seller text')
+  const added = document.createElement('p')
+  bindText(added, () => `${t('Photo')} · ${getLocale()}`)
+  first.append(added)
+  await new Promise((resolve) => setTimeout(resolve, 0))
+  assert.equal(added.textContent, 'Foto · es-PE')
+  const nested = document.createElement('dialog')
+  inheritLanguageScope(nested, input)
+  const caption = document.createElement('p')
+  bindText(caption, 'Photo')
+  nested.append(caption)
+  document.body.append(nested)
+  await new Promise((resolve) => setTimeout(resolve, 0))
+  assert.equal(caption.textContent, 'Foto')
+  setLanguage('zh', { scope: first })
+  assert.equal(caption.textContent, 'Foto')
+  setLanguage('es', { persist: false })
+  assert.equal(first.querySelector('h2').textContent, '图片')
+  assert.equal(second.querySelector('h2').textContent, '图片')
+  assert.equal(caption.textContent, 'Foto')
+  assert.equal(document.querySelector('body > p').textContent, 'Foto')
+  assert.equal(t(message('Photo'), {}, 'en'), 'Photo')
+  assert.equal(getLanguage(), 'es')
+  for (const root of [first, second, nested])
+    root.dispatchEvent(new window.Event('close'))
+})
 
 test('three interface languages translate explicit messages and preserve inserted source values', () => {
   try {

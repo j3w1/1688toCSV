@@ -14,6 +14,7 @@ export function photoCopyTile(
   } = {}
 ) {
   const tile = element('div', undefined, 'photo-copy-tile')
+  photoButton.classList.add('photo-copy-source')
   const copy = element('button', undefined, 'photo-copy-button')
   copy.type = 'button'
   copy.disabled = disabled || !copyTask

@@ -410,6 +410,10 @@ test('one embedded photo imports into every covered product group with one origi
   await expect(dialog.locator('.store-import-product img')).toHaveCount(3)
   await expect(dialog.locator('.store-import-issue.is-error')).toHaveCount(0)
   const shared = dialog.locator('[data-issue-code="photo-shared"]')
+  const workspace = await page.evaluate(() => ({
+    lang: document.documentElement.lang,
+    preference: localStorage.getItem('1688-workspace-language'),
+  }))
   await expect(shared).toHaveCount(1)
   await expect(shared).toContainText('Shared product photo')
   await expect(shared).toContainText('Group 1')
@@ -425,6 +429,23 @@ test('one embedded photo imports into every covered product group with one origi
       .locator(`.popup-language-toggle [data-language="${language}"]`)
       .click()
     await expect(shared).toContainText(title)
+    expect(
+      await page.evaluate(() => ({
+        lang: document.documentElement.lang,
+        preference: localStorage.getItem('1688-workspace-language'),
+      }))
+    ).toEqual(workspace)
+    await expect(page.locator('#import-store-sheet')).toHaveText(
+      'Import spreadsheet'
+    )
+    if (language === 'es') {
+      await dialog.locator('.store-import-photos button').first().click()
+      const photo = page.locator('.product-photo-dialog')
+      await expect(photo).toHaveAttribute('lang', 'es')
+      await expect(photo.locator('h2')).not.toHaveText('Product photo')
+      await photo.locator('.dialog-close').click()
+      await expect(dialog).toHaveAttribute('lang', 'es')
+    }
   }
   await dialog.getByLabel('Purchase date', { exact: true }).fill('2026-10-20')
   await dialog.locator('input[name="photosReviewed"]').check()
@@ -446,6 +467,118 @@ test('one embedded photo imports into every covered product group with one origi
   expect(new Set(items.flatMap((item) => item.photos)).size).toBe(1)
   expect(saved.images).toHaveLength(1)
   expect(saved.orders[0].snapshot.totals.payable).toBe('130.00')
+  await page.close()
+})
+
+test('52 imported groups use a fitted assignment grid without pagers or main scrollbars and preserve source descriptions', async ({
+  extension,
+}) => {
+  const { page, dialog, file } = await openImport(extension)
+  await page.setViewportSize({ width: 1280, height: 900 })
+  const products = Array.from({ length: 52 }, (_, index) => [
+    '',
+    `SYN-${index + 1} · 碗 · 6"`,
+    1,
+    10,
+    1,
+    10,
+    index + 1,
+    '',
+  ])
+  await file.setInputFiles(
+    workbookFile({
+      rows: [
+        ['pic', 'desc', 'boxes', 'perbox', 'price', 'amount', 'group', 'var'],
+        ...products,
+        ['total', 520, 'total'],
+      ],
+      photoSpans: [{ from: 1, to: 53 }],
+    })
+  )
+  await expect(dialog.locator('.store-import-product')).toHaveCount(52)
+  await dialog.locator('input[name="allReviews"]').check()
+  await dialog.locator('input[name="purchaseDate"]').fill('2026-10-20')
+  await dialog.locator('input[name="photosReviewed"]').check()
+  await dialog
+    .getByRole('button', { name: 'Import order', exact: true })
+    .click()
+  await expect(dialog).toHaveCount(0)
+  const source = (await backup(extension)).orders[0].snapshot
+  await page.locator('#select-rows').click()
+  await page.locator('#prepare-orders').click()
+  const review = page.locator('.packing-review-overview')
+  const cards = review.locator('.packing-review-overview-item')
+  await expect(cards).toHaveCount(52)
+  await expect(
+    cards.first().locator('.packing-review-overview-name')
+  ).toContainText('SYN-1')
+  await expect(
+    review.getByRole('button', { name: /^(Previous|Next)$/ })
+  ).toHaveCount(0)
+  await expect(review.locator('.order-reference-pair')).toHaveCount(0)
+  const fitted = async () => {
+    await expect
+      .poll(() =>
+        cards.last().evaluate((card) => {
+          const rect = card.getBoundingClientRect(),
+            host = card
+              .closest('.packing-review-overview-fit')
+              .getBoundingClientRect()
+          return rect.bottom <= host.bottom + 1 && rect.top >= host.top - 1
+        })
+      )
+      .toBe(true)
+    expect(
+      await review
+        .locator('.scroll-dialog-content')
+        .evaluate(
+          (node) =>
+            node.scrollHeight <= node.clientHeight + 1 &&
+            node.scrollWidth <= node.clientWidth + 1
+        )
+    ).toBe(true)
+  }
+  await fitted()
+  await cards.first().locator('.photo-copy-tile').hover()
+  const corner = cards.first().locator('.photo-copy-button')
+  const photoBounds = await cards
+    .first()
+    .locator('.photo-copy-source')
+    .boundingBox()
+  const cornerBounds = await corner.boundingBox()
+  expect(cornerBounds.x + cornerBounds.width).toBeCloseTo(
+    photoBounds.x + photoBounds.width,
+    0
+  )
+  expect(cornerBounds.y).toBeCloseTo(photoBounds.y, 0)
+  expect(cornerBounds.width).toBeLessThanOrEqual(16)
+  await mkdir(new URL('../../work/', import.meta.url), { recursive: true })
+  await review.screenshot({ path: 'work/packing-assignment-grid-wide.png' })
+  const selector = cards.first().locator('.packing-review-overview-select')
+  await selector.click()
+  const detail = review.locator('.packing-review-detail:popover-open')
+  await expect(detail).toBeVisible()
+  await expect(detail.locator('.packing-value-after code')).toHaveCount(1)
+  await expect(detail).toContainText('Product code')
+  expect(
+    (await detail.locator('.packing-value-label').allTextContents()).join(' ')
+  ).not.toContain('SYN-1')
+  await detail.locator('.packing-review-detail-close').press('Escape')
+  await expect(detail).toHaveCount(0)
+  await expect(selector).toBeFocused()
+  for (const width of [720, 390]) {
+    await page.setViewportSize({ width, height: 700 })
+    await fitted()
+  }
+  await cards.last().locator('.packing-review-overview-select').click()
+  await expect(detail).toBeVisible()
+  expect((await detail.boundingBox()).width).toBeGreaterThan(300)
+  await detail.locator('.packing-review-detail-close').click()
+  await review.locator('[data-action="review-proceed"]').click()
+  await expect(page.locator('#packing-view')).toBeVisible()
+  const prepared = await backup(extension)
+  expect(prepared.preparations[0].groups).toHaveLength(52)
+  expect(prepared.orders[0].snapshot).toEqual(source)
   await page.close()
 })
 

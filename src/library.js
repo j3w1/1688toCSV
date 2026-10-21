@@ -29,6 +29,7 @@ import {
   progressPresentation,
 } from './import-progress.js'
 import { createPhotoViewer } from './photo-viewer.js'
+import { createSizeClassifier } from './size-vocabulary.js'
 import { openStoreImportDialog } from './store-import-dialog.js'
 import { productCartonDetails } from './carton-details.js'
 import { mountOrderCharges } from './order-charges-ui.js'
@@ -344,6 +345,8 @@ export async function startLibrary(
     },
     {
       getProductContext: (item) => packing?.photoContext(item),
+      getSizeClassifier: () =>
+        packing?.sizeClassifier() ?? createSizeClassifier(),
       onEdit: async (item, edit) => {
         const store = repository || (await openDatabase())
         const sourceItem = records
@@ -2983,6 +2986,8 @@ export async function startLibrary(
     void (async () => {
       await packing?.flush()
       await openStoreImportDialog({
+        getSizeClassifier: () =>
+          packing?.sizeClassifier() ?? createSizeClassifier(),
         repository: repository || (await openDatabase()),
         onImported: async () => {
           await refresh()

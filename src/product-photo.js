@@ -6,12 +6,24 @@ export const DEFAULT_PHOTO_EDIT = Object.freeze({
   background: '#ffffff',
 })
 
-export const DEFAULT_PHOTO_TAG_SCALE = 2.75
+export const DEFAULT_PHOTO_TAG_SCALE = 2
+export const PHOTO_TAG_TEXT_LIMIT = 64
+
+/** Photo annotations are plain single-line text, separate from product codes. */
+export function validPhotoTagText(value) {
+  return (
+    typeof value === 'string' &&
+    Boolean(value.trim()) &&
+    value.length <= PHOTO_TAG_TEXT_LIMIT &&
+    !/[\u0000-\u001f\u007f-\u009f\u2028\u2029]/u.test(value)
+  )
+}
 
 /** Start new annotations larger without changing existing authored artwork. */
 export function photoEditDraft(saved = {}) {
   return {
     ...DEFAULT_PHOTO_EDIT,
+    pointerScale: 1,
     tagScale: saved.tags?.length ? 1 : DEFAULT_PHOTO_TAG_SCALE,
     ...structuredClone(saved),
   }
@@ -48,10 +60,8 @@ export function validatePhotoVariantTags(tags) {
     )
       throw new Error('Photo variant tag identifiers must be unique')
     ids.add(tag.id)
-    if (typeof tag.code !== 'string' || !/^[A-Z0-9]{1,8}$/.test(tag.code))
-      throw new Error(
-        'Photo variant tag codes require 1–8 uppercase letters or digits'
-      )
+    if (!validPhotoTagText(tag.code))
+      throw new Error('Photo tag text must contain 1–64 characters on one line')
     const result = { id: tag.id, code: tag.code }
     for (const field of ['x', 'y', 'labelX', 'labelY']) {
       if (!Number.isFinite(tag[field]) || tag[field] < 0 || tag[field] > 1)
@@ -142,7 +152,7 @@ export function photoVariantTagLayout(
     size * 0.08 * tagScale,
     ink.ascent + ink.descent + padding * 2
   )
-  // At the largest size, fit long codes as one shape, preserving the relative
+  // At the largest size, fit long text as one shape, preserving the relative
   // text/padding/dot/line geometry instead of clipping letters out of a badge.
   const requestedWidth = Math.max(
     minimumHeight,

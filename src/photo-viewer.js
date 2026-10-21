@@ -19,10 +19,20 @@ import {
   reprojectPhotoVariantTags,
 } from './product-photo.js'
 import { mountPhotoVariantTagEditor } from './photo-variant-tag-editor.js'
+import { createSizeClassifier } from './size-vocabulary.js'
+import {
+  recognizedPhotoSize,
+  hasPhotoSizeTag,
+  addPhotoSizeTag,
+} from './photo-size-tag.js'
 
 export function createPhotoViewer(
   loadImage,
-  { onEdit, getProductContext = () => ({}) } = {}
+  {
+    onEdit,
+    getProductContext = () => ({}),
+    getSizeClassifier = createSizeClassifier,
+  } = {}
 ) {
   let current = null
 
@@ -77,6 +87,8 @@ export function createPhotoViewer(
       counter = el('span', undefined, 'photo-gallery-count'),
       events = new AbortController()
     const editButton = el('button', uiMessage('Edit photo')),
+      addSizeTag = el('button', uiMessage('Add size tag'), 'photo-size-tag'),
+      sizeTagControl = el('span', undefined, 'photo-size-tag-action'),
       editor = el('section', undefined, 'product-photo-editor'),
       mode = el('select'),
       background = el('input'),
@@ -89,7 +101,56 @@ export function createPhotoViewer(
       editCanvasReady = false,
       editingVersion = 0,
       draftEdit = { ...DEFAULT_PHOTO_EDIT }
-    let savingPhoto = false
+    let savingPhoto = false,
+      recognizedSize = ''
+    addSizeTag.type = 'button'
+    addSizeTag.dataset.action = 'add-size-tag'
+    sizeTagControl.append(addSizeTag)
+    sizeTagControl.setAttribute('role', 'group')
+    bindAttribute(sizeTagControl, 'aria-label', uiMessage('Add size tag'))
+    function updateSizeTagControl() {
+      const saved = gallery[index].photoEdits?.[gallery[index].photoIndex]
+      const duplicate = hasPhotoSizeTag(saved, recognizedSize)
+      addSizeTag.hidden = editing
+      sizeTagControl.hidden = editing
+      addSizeTag.disabled =
+        !onEdit ||
+        !ready ||
+        !originalData ||
+        savingPhoto ||
+        !recognizedSize ||
+        duplicate ||
+        (saved?.tags?.length || 0) >= 50
+      sizeTagControl.tabIndex = addSizeTag.disabled ? 0 : -1
+      editButton.disabled = !ready || !originalData || savingPhoto
+      bindText(
+        addSizeTag,
+        recognizedSize
+          ? uiMessage('Add size tag · {0}', { 0: recognizedSize })
+          : uiMessage('Add size tag')
+      )
+      preparationHelp(
+        sizeTagControl,
+        !onEdit
+          ? uiMessage('This photo is read-only.')
+          : !recognizedSize
+            ? uiMessage(
+                'No size was recognized in this product’s original description.'
+              )
+            : duplicate
+              ? uiMessage('This photo already has a tag for {0}.', {
+                  0: recognizedSize,
+                })
+              : (saved?.tags?.length || 0) >= 50
+                ? uiMessage(
+                    'Photo variant tags must contain at most 50 callouts'
+                  )
+                : uiMessage(
+                    'Add recognized size {0} to this photo. You can move or edit it with Edit photo.',
+                    { 0: recognizedSize }
+                  )
+      )
+    }
     editor.hidden = true
     const sliders = {}
     const editControl = (label, control) => {
@@ -214,11 +275,12 @@ export function createPhotoViewer(
       }
     }
     editButton.onclick = () => {
-      if (!originalData) return
+      if (!originalData || savingPhoto) return
       editing = true
       editCanvasReady = false
       editor.hidden = false
       editButton.hidden = true
+      updateSizeTagControl()
       draftEdit = photoEditDraft(
         gallery[index].photoEdits?.[gallery[index].photoIndex]
       )
@@ -244,18 +306,20 @@ export function createPhotoViewer(
       editor.hidden = true
       void showPhoto(index)
     }
-    apply.onclick = async () => {
-      if (savingPhoto || !tagEditor.valid()) return
-      tagEditor.cancelPlacement()
+    async function savePhotoEdit(edit, message) {
+      if (savingPhoto || !originalData || !onEdit || !ready) return
       savingPhoto = true
+      const selected = gallery[index],
+        version = loadVersion,
+        sourceData = originalData
       apply.disabled = true
+      updateSizeTagControl()
       for (const control of editor.querySelectorAll('input,select,button'))
         control.disabled = true
       previous.disabled = next.disabled = true
-      const selected = gallery[index],
-        edit = structuredClone(draftEdit)
       try {
-        const thumbnail = await squareProductPhoto(originalData, edit)
+        const thumbnail = await squareProductPhoto(sourceData, edit)
+        if (!modal.open || version !== loadVersion) return
         await onEdit(selected.photoSource, {
           photoIndex: selected.photoIndex,
           thumbnail,
@@ -270,12 +334,17 @@ export function createPhotoViewer(
           [selected.photoIndex]: edit,
         }
         selected.photoEdits = selected.photoSource.photoEdits
-        await displayPhoto(thumbnail, () => modal.open, true)
+        if (!modal.open || version !== loadVersion) return
+        await displayPhoto(
+          thumbnail,
+          () => modal.open && version === loadVersion,
+          true
+        )
         editing = false
         tagEditor.reset()
         editor.hidden = true
         editButton.hidden = false
-        bindText(status, uiMessage('Photo saved. Original preserved.'))
+        bindText(status, uiMessage(message))
       } catch (error) {
         bindText(status, uiMessage(error.message))
       } finally {
@@ -286,6 +355,34 @@ export function createPhotoViewer(
         next.disabled = index === gallery.length - 1
         apply.disabled = false
         tagEditor.refresh()
+        updateSizeTagControl()
+      }
+    }
+    apply.onclick = async () => {
+      if (savingPhoto || !tagEditor.valid()) return
+      tagEditor.cancelPlacement()
+      await savePhotoEdit(
+        structuredClone(draftEdit),
+        'Photo saved. Original preserved.'
+      )
+    }
+    addSizeTag.onclick = async () => {
+      if (addSizeTag.disabled || editing) return
+      try {
+        const edit = addPhotoSizeTag(
+          gallery[index].photoEdits?.[gallery[index].photoIndex],
+          recognizedSize,
+          {
+            context: document.createElement('canvas').getContext('2d'),
+          }
+        )
+        if (edit)
+          await savePhotoEdit(
+            edit,
+            'Size tag saved. Use Edit photo to move or edit it.'
+          )
+      } catch (error) {
+        bindText(status, uiMessage(error.message))
       }
     }
     let image = el('img'),
@@ -560,6 +657,7 @@ export function createPhotoViewer(
       actual,
       fullscreen,
       editButton,
+      sizeTagControl,
       navigation
     )
     identity.append(title, code)
@@ -598,10 +696,15 @@ export function createPhotoViewer(
       editor.hidden = true
       originalData = undefined
       originalSize = undefined
+      recognizedSize = recognizedPhotoSize(
+        selected.photoSource,
+        getSizeClassifier()
+      )
       editButton.hidden = !onEdit
       editButton.disabled = true
       stopDrag()
       ready = false
+      updateSizeTagControl()
       image.hidden = true
       image.removeAttribute('src')
       viewport.classList.remove('can-pan')
@@ -690,6 +793,7 @@ export function createPhotoViewer(
         for (const button of [plus, fit, actual]) button.disabled = false
         resize()
         editButton.disabled = false
+        updateSizeTagControl()
         bindText(
           status,
           uiMessage(

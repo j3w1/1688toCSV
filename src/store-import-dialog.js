@@ -7,6 +7,8 @@ import { analyzeStoreSheet } from './store-workbook-model.js'
 import { createPhotoViewer } from './photo-viewer.js'
 import { squareProductPhoto } from './product-photo.js'
 import { popupLanguageToggle } from './popup-language-toggle.js'
+import { photoCopyTile } from './photo-copy.js'
+import { copySingleImage } from './clipboard.js'
 
 const positiveInteger = (value) =>
   /^\d+$/.test(String(value ?? '')) &&
@@ -245,7 +247,7 @@ function appendIssue(host, issue, { check, index, context, openPhoto } = {}) {
         tile.onclick = () => openPhoto?.(row, index)
       }
       tile.append(image)
-      photos.append(tile)
+      photos.append(photoCopyTile(tile, () => copySingleImage(source)))
     }
     visual.append(photos)
   }
@@ -341,7 +343,11 @@ function fact(label, value) {
 }
 
 /** File parsing and review stay local; only a fully valid submission is saved. */
-export function openStoreImportDialog({ repository, onImported = () => {} }) {
+export function openStoreImportDialog({
+  repository,
+  onImported = () => {},
+  getSizeClassifier,
+}) {
   const dialog = el('dialog', undefined, 'store-import-dialog'),
     form = el('form', undefined, 'store-import-form'),
     header = el('header', undefined, 'store-import-header'),
@@ -420,6 +426,7 @@ export function openStoreImportDialog({ repository, onImported = () => {} }) {
     updateReviews()
   })
   const photoViewer = createPhotoViewer(async (source) => source, {
+    getSizeClassifier,
     onEdit: async (row, { photoIndex, thumbnail, edit }) => {
       row.photoEdits = { ...row.photoEdits, [photoIndex]: edit }
       if (photoIndex === 0) row.thumbnail = thumbnail
@@ -636,7 +643,13 @@ export function openStoreImportDialog({ repository, onImported = () => {} }) {
         view.addEventListener('click', () => {
           void photoViewer.open(row, analysis.rows, index)
         })
-        images.append(view)
+        images.append(
+          photoCopyTile(view, () =>
+            copySingleImage(
+              typeof source === 'string' ? source : source.dataUrl
+            )
+          )
+        )
       }
       if (!images.childElementCount)
         images.append(el('span', m('Photo missing'), 'is-error'))

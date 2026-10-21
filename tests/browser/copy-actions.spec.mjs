@@ -274,11 +274,26 @@ test('packing copy formats remain selection-only and Escape dismisses them befor
   await expect(view).toBeVisible()
   await revealCopyActions(page)
   await panel.getByRole('button', { name: 'Copy columns', exact: true }).click()
-  const dialog = page.getByRole('dialog', {
-    name: 'Copy preparation columns',
-    exact: true,
-  })
+  const dialog = page.locator('.preparation-column-dialog')
   await expect(dialog).toBeVisible()
+  const languageBefore = await page.evaluate(() => ({
+    lang: document.documentElement.lang,
+    preference: localStorage.getItem('1688-workspace-language'),
+  }))
+  await dialog.locator('.popup-language-toggle [data-language="es"]').click()
+  await expect(dialog).toHaveAttribute('lang', 'es')
+  await dialog.locator('button.primary').click()
+  const spanish = await page.evaluate(() => navigator.clipboard.readText())
+  expect(spanish.split('\r\n')[0]).toContain('Cantidad')
+  expect(
+    await page.evaluate(() => ({
+      lang: document.documentElement.lang,
+      preference: localStorage.getItem('1688-workspace-language'),
+    }))
+  ).toEqual(languageBefore)
+  await expect(page.locator('#import-store-sheet')).toHaveText(
+    'Import spreadsheet'
+  )
   await page.keyboard.press('Escape')
   await expect(dialog).toBeHidden()
   await expect(view).toBeVisible()

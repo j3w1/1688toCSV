@@ -9,6 +9,7 @@ import {
   onLanguageChange,
   textMessage,
   attributeMessage,
+  inheritLanguageScope,
 } from './i18n.js'
 import { decorateIcon, icon } from './icons.js'
 import { preparationHelp } from './preparation-help.js'
@@ -151,7 +152,10 @@ export function enableLightDismiss(dialog) {
 
 export function element(tag, text, className) {
   const node = document.createElement(tag)
-  if (tag === 'dialog') enableLightDismiss(node)
+  if (tag === 'dialog') {
+    enableLightDismiss(node)
+    inheritLanguageScope(node)
+  }
   if (isMessage(text)) bindText(node, text)
   else if (text !== undefined) node.textContent = text
   if (className) node.className = className

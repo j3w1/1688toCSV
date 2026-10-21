@@ -9,7 +9,7 @@ async function buildResources() {
       contents: `export { openPrintDialog } from './src/print-dialog.js';
         export { DEFAULT_LABEL_SETTINGS } from './src/labels.js';
         export { applyCodeDesign } from './src/code-design.js';
-        export { setLanguage } from './src/i18n.js';
+        export { setLanguage, getLanguage, onLanguageChange, bindText, message } from './src/i18n.js';
         export { copyExcelImage } from './src/excel-image-copy.js';`,
       resolveDir: root,
     },
@@ -55,16 +55,25 @@ export async function openPrintDialogFixture(extension, options = {}) {
 /** Reopen the same synthetic dialog, optionally with caller-supplied print items. */
 export async function showPrintDialog(
   page,
-  { kind = 'marks', language = 'en', items, settings, logoUrl = '' } = {}
+  {
+    kind = 'marks',
+    language = 'en',
+    items,
+    settings,
+    logoUrl = '',
+    job = null,
+  } = {}
 ) {
   await page.evaluate(
-    ({ kind, language, items, settings, logoUrl }) => {
-      Print.setLanguage(language, { persist: false })
+    ({ kind, language, items, settings, logoUrl, job }) => {
+      if (Print.getLanguage() !== language)
+        Print.setLanguage(language, { persist: false })
       document.querySelector('#launch').onclick = () =>
         Print.openPrintDialog({
           kind,
           settings: settings ?? structuredClone(Print.DEFAULT_LABEL_SETTINGS),
           logoUrl,
+          job,
           items:
             items ??
             [1, 3, 0].map((quantity, index) => {
@@ -86,7 +95,7 @@ export async function showPrintDialog(
             }),
         })
     },
-    { kind, language, items, settings, logoUrl }
+    { kind, language, items, settings, logoUrl, job }
   )
   await page.locator('#launch').click()
   return page.locator('.print-dialog')

@@ -213,6 +213,7 @@ export function openImageCopyDialog({
   createOptions,
   interactivePreview = false,
   languageToggle = false,
+  language,
   onLanguageChange,
   errorOptions,
   signal,
@@ -231,6 +232,7 @@ export function openImageCopyDialog({
   const headingActions = element('div', undefined, 'image-copy-heading-actions')
   const languages = languageToggle
     ? popupLanguageToggle(dialog, {
+        language,
         onChange(language) {
           onLanguageChange?.(language)
           refresh(true)

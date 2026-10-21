@@ -5,7 +5,6 @@ import {
   getLocale,
   getLanguage,
   onLanguageChange,
-  setLanguage,
 } from './i18n.js'
 import { popupLanguageToggle } from './popup-language-toggle.js'
 import { embedPdfCaptions } from './print-captions.js'
@@ -115,8 +114,8 @@ function choice(name, options, current) {
   return { group, value: () => inputs.find((input) => input.checked)?.value }
 }
 
-const formatDate = (iso) =>
-  new Date(iso).toLocaleString(getLocale(), {
+const formatDate = (iso, scope) =>
+  new Date(iso).toLocaleString(getLocale(scope), {
     day: 'numeric',
     month: 'short',
     hour: '2-digit',
@@ -138,7 +137,6 @@ export function openPrintDialog({
   job = null,
   store = createPrintStore(),
 }) {
-  if (job?.language) setLanguage(job.language)
   const marks = kind === 'marks'
   const quantityStep = marks ? 1 : 5
   const normalize = marks ? normalizeMarkLayout : normalizeLabelLayout
@@ -167,7 +165,7 @@ export function openPrintDialog({
     uiMessage('Close this dialog. Paper and sheet settings are remembered.')
   )
   const actions = el('div', undefined, 'dialog-actions')
-  const languages = popupLanguageToggle(dialog)
+  const languages = popupLanguageToggle(dialog, { language: job?.language })
   actions.append(languages, cancel, exportButton)
   dialog.append(heading, actions)
   const body = pinDialogActions(dialog, actions)
@@ -188,7 +186,7 @@ export function openPrintDialog({
       note,
       uiMessage(
         'Regenerated from the print job of {0}. Product data may have changed since; check the preview before printing.',
-        { 0: () => formatDate(job.date) }
+        { 0: () => formatDate(job.date, dialog) }
       )
     )
     left.append(note)
@@ -934,14 +932,14 @@ export function openPrintDialog({
           slots: state.slots,
           layout: state.layout,
           page: index,
-          language: state.language ?? getLanguage(),
+          language: state.language ?? getLanguage(dialog),
         })
       : labelPageOps({
           plan: state.plan,
           grid: state.grid,
           layout: state.layout,
           page: index,
-          language: state.language ?? getLanguage(),
+          language: state.language ?? getLanguage(dialog),
         })
   const pageOps = (index) => opsFor({ plan, grid, slots, layout }, index)
 
@@ -1009,7 +1007,7 @@ export function openPrintDialog({
       plan = null
     }
     page = Math.min(page, Math.max(0, (plan?.pages || 1) - 1))
-    const locale = getLocale()
+    const locale = getLocale(dialog)
     const count = (value) => () => value.toLocaleString(locale)
     if (error) bindText(summary, uiMessage(error))
     else if (marks)
@@ -1203,7 +1201,7 @@ export function openPrintDialog({
 
   async function drawPreview() {
     const token = ++renderToken
-    const language = getLanguage()
+    const language = getLanguage(dialog)
     const context = preview.getContext('2d')
     preview.dataset.previewState = 'loading'
     preview.setAttribute('aria-busy', 'true')
@@ -1227,7 +1225,7 @@ export function openPrintDialog({
         const part = el('span', undefined, 'print-page-run')
         part.append(
           el('code', run.key, 'ce-code'),
-          el('span', `× ${run.count.toLocaleString(getLocale())}`)
+          el('span', `× ${run.count.toLocaleString(getLocale(dialog))}`)
         )
         return part
       })
@@ -1284,7 +1282,7 @@ export function openPrintDialog({
       slots,
       layout,
       caps: new Map(caps),
-      language: getLanguage(),
+      language: getLanguage(dialog),
     }
     try {
       const pages = Array.from({ length: state.plan.pages }, (_, index) =>
@@ -1403,7 +1401,7 @@ export function openPrintDialog({
 
   async function exportCalibration() {
     if (busy || closed) return
-    const language = getLanguage()
+    const language = getLanguage(dialog)
     const pdf = createPdf({ title: printText('calibration', language) })
     const preset = store.presets().find((entry) => entry.id === layout.preset)
     const captions = await embedPdfCaptions(
@@ -1460,7 +1458,7 @@ export function openPrintDialog({
   })
   const stopLanguage = onLanguageChange(() => {
     if (!closed && !busy) update()
-  })
+  }, dialog)
   dialog.addEventListener('close', stopLanguage, { once: true })
   document.body.append(dialog)
   update()

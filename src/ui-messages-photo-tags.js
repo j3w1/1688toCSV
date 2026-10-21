@@ -1,4 +1,45 @@
 export const PHOTO_TAG_MESSAGES = {
+  'Add size tag': { zh: '添加尺寸标记', es: 'Añadir medida' },
+  'Add size tag · {0}': { zh: '添加尺寸标记 · {0}', es: 'Añadir medida · {0}' },
+  'This photo is read-only.': {
+    zh: '此照片为只读。',
+    es: 'Esta foto es de solo lectura.',
+  },
+  'Add recognized size {0} to this photo. You can move or edit it with Edit photo.':
+    {
+      zh: '将识别出的尺寸 {0} 添加到此照片。可在“编辑照片”中移动或修改。',
+      es: 'Añade la medida reconocida {0} a esta foto. Puedes moverla o modificarla en Editar foto.',
+    },
+  'No size was recognized in this product’s original description.': {
+    zh: '未在此商品的原始描述中识别到尺寸。',
+    es: 'No se reconoció ninguna medida en la descripción original de este producto.',
+  },
+  'This photo already has a tag for {0}.': {
+    zh: '此照片已有尺寸 {0} 的标记。',
+    es: 'Esta foto ya tiene una etiqueta para {0}.',
+  },
+  'Size tag saved. Use Edit photo to move or edit it.': {
+    zh: '尺寸标记已保存。可在“编辑照片”中移动或修改。',
+    es: 'Medida guardada. Usa Editar foto para moverla o modificarla.',
+  },
+  'Photo tag text must contain 1–64 characters on one line': {
+    zh: '照片标记文字必须为单行，长度为 1–64 个字符',
+    es: 'El texto de la etiqueta debe tener entre 1 y 64 caracteres en una sola línea',
+  },
+  'Use any text up to 64 characters. These photo tags do not change the product barcode.':
+    {
+      zh: '可输入任意文字，最多 64 个字符。照片标记不会修改商品条码。',
+      es: 'Usa cualquier texto de hasta 64 caracteres. Estas etiquetas no cambian el código de barras.',
+    },
+  'Enter tag text, choose Add tag, then click its product in the photo. Drag the dot or label to position it.':
+    {
+      zh: '输入标记文字，点击添加标记，再点击照片中的商品。拖动定位点或标签调整位置。',
+      es: 'Escribe el texto, pulsa Añadir etiqueta y haz clic en el producto de la foto. Arrastra el punto o la etiqueta para colocarlo.',
+    },
+  'Select a tag, enter its new text, then choose Rename tag.': {
+    zh: '选择标记，输入新文字，再点击重命名。',
+    es: 'Selecciona una etiqueta, escribe el nuevo texto y pulsa Renombrar.',
+  },
   'Tag size': { zh: '标记大小', es: 'Tamaño de etiquetas' },
   'Pointer size': { zh: '定位点大小', es: 'Tamaño del punto' },
   'Invert pointer': { zh: '反转定位点颜色', es: 'Invertir punto' },

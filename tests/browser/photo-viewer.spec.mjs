@@ -2,7 +2,7 @@ import { test, expect } from './extension-fixture.mjs'
 import { createDemoRecords } from '../../preview/library-fixture.js'
 import { mkdir } from 'node:fs/promises'
 
-async function openPhoto(extension) {
+async function openPhoto(extension, { sourceSize, photoEdit } = {}) {
   const records = await extension.inspector.evaluate(
     `(${createDemoRecords.toString()})(document)`
   )
@@ -19,6 +19,12 @@ async function openPhoto(extension) {
   })
   for (const record of records)
     for (const item of record.snapshot.items) item.thumbnail = thumbnail
+  if (sourceSize !== undefined) {
+    records[0].snapshot.items[0].description = `Synthetic plate\n尺寸：${sourceSize}`
+    records[0].snapshot.items[1].description =
+      'Synthetic product without dimensions'
+  }
+  if (photoEdit) records[0].snapshot.items[0].photoEdits = { 0: photoEdit }
   const result = await extension.inspector.evaluate(
     async (orders) =>
       chrome.runtime.sendMessage({
@@ -50,7 +56,7 @@ async function openPhoto(extension) {
     viewport = photo.locator('.photo-viewport'),
     image = viewport.locator('img')
   await expect(image).toBeVisible()
-  await expect(image).toHaveJSProperty('naturalWidth', 2400)
+  await expect(image).toHaveJSProperty('naturalWidth', photoEdit ? 640 : 2400)
   return { page, trigger, photo, viewport, image }
 }
 
@@ -476,6 +482,173 @@ async function savedPhotoEdit(extension) {
   })
 }
 
+test('recognized size adds a saved editable photo tag, preserves existing edits and explains unavailable sizes', async ({
+  extension,
+}) => {
+  const existing = {
+    fit: 'contain',
+    scale: 1.15,
+    x: 0,
+    y: 0,
+    background: '#dce7f3',
+    tagScale: 2.5,
+    pointerScale: 1.25,
+    tags: [
+      {
+        id: 'original-tag',
+        code: 'A',
+        x: 0.3,
+        y: 0.4,
+        labelX: 0.15,
+        labelY: 0.15,
+      },
+    ],
+  }
+  const { page, photo, trigger } = await openPhoto(extension, {
+    sourceSize: '26.5cm',
+    photoEdit: existing,
+  })
+  const button = photo.getByRole('button', {
+    name: 'Add size tag · 26.5cm',
+    exact: true,
+  })
+  await expect(button).toBeEnabled()
+  await expect(button).toHaveCSS('font-size', '13px')
+  await button.click()
+  await expect(photo.getByRole('status')).toHaveText(
+    'Size tag saved. Use Edit photo to move or edit it.'
+  )
+  await expect(button).toBeDisabled()
+  await mkdir('work', { recursive: true })
+  await photo.screenshot({ path: 'work/photo-recognized-size-tag.png' })
+  const saved = await savedPhotoEdit(extension)
+  expect(saved.tags.map((tag) => tag.code)).toEqual(['A', '26.5cm'])
+  expect(saved.tags[1]).toMatchObject({ x: 0.75, y: 0.5 })
+  expect(saved.tags[1].labelX).toBeGreaterThan(0.5)
+  expect(saved.tags[1].labelY).toBeGreaterThan(0.5)
+  expect(saved.tags[0]).toEqual(existing.tags[0])
+  for (const key of ['fit', 'scale', 'background', 'tagScale', 'pointerScale'])
+    expect(saved[key]).toEqual(existing[key])
+  await startEditing(photo)
+  const sizeTag = photo.getByRole('button', {
+    name: 'Select tag 26.5cm',
+    exact: true,
+  })
+  await expect(sizeTag).toBeVisible()
+  await sizeTag.click()
+  const point = photo.getByRole('button', {
+    name: 'Move point for tag 26.5cm',
+    exact: true,
+  })
+  const before = await point.boundingBox()
+  await point.press('ArrowRight')
+  expect((await point.boundingBox()).x).toBeGreaterThan(before.x)
+  await photo.getByLabel('Variant tag', { exact: true }).fill('26.5cm / 大盘')
+  await photo.getByRole('button', { name: 'Rename tag', exact: true }).click()
+  await photo.getByRole('button', { name: 'Save photo', exact: true }).click()
+  await expect(photo.getByRole('status')).toHaveText(
+    'Photo saved. Original preserved.'
+  )
+  await photo
+    .getByRole('button', { name: 'Close product photo', exact: true })
+    .click()
+  await page.reload()
+  await trigger.click()
+  await startEditing(photo)
+  await expect(
+    photo.getByRole('button', { name: 'Select tag 26.5cm / 大盘', exact: true })
+  ).toBeVisible()
+  await photo.getByRole('button', { name: 'Cancel', exact: true }).click()
+  await photo.getByRole('button', { name: 'Next photo', exact: true }).click()
+  await expect(photo.locator('.photo-viewport img')).toBeVisible()
+  const missing = photo.getByRole('button', {
+    name: 'Add size tag',
+    exact: true,
+  })
+  await expect(missing).toBeDisabled()
+  await page.keyboard.press('Tab')
+  await photo.locator('.photo-size-tag-action').focus()
+  await expect(photo.getByRole('tooltip')).toHaveText(
+    'No size was recognized in this product’s original description.'
+  )
+  await page.keyboard.press('Escape')
+  await expect(photo).toBeVisible()
+  await photo
+    .getByRole('button', { name: 'Close product photo', exact: true })
+    .click()
+  const backup = await extension.inspector.evaluate(() =>
+    chrome.runtime.sendMessage({ type: 'BACKUP_EXPORT' })
+  )
+  expect(backup.ok, backup.error).toBe(true)
+  const source = backup.data.orders.find((order) =>
+    order.snapshot.items.some(
+      (item) => item.description === 'Synthetic plate\n尺寸：26.5cm'
+    )
+  ).snapshot.items[0]
+  expect(source.description).toBe('Synthetic plate\n尺寸：26.5cm')
+  expect(source.photoEdits['0'].tags).toHaveLength(2)
+  await page.close()
+})
+
+test('photo annotations accept free text and preserve it with 200% tag and 100% pointer defaults', async ({
+  extension,
+}) => {
+  const { page, trigger, photo } = await openPhoto(extension)
+  await startEditing(photo)
+  await expect(
+    photo.getByRole('slider', { name: 'Tag size', exact: true })
+  ).toHaveAttribute('aria-valuetext', '200%')
+  await expect(
+    photo.getByRole('slider', { name: 'Pointer size', exact: true })
+  ).toHaveAttribute('aria-valuetext', '100%')
+  const field = photo.getByRole('textbox', { name: 'Variant tag', exact: true })
+  await expect(field).not.toHaveAttribute('pattern')
+  await placeTag(page, photo, '20.5cm', 0.35, 0.45)
+  await placeTag(page, photo, '大盘 · 8.5"', 0.6, 0.6)
+  await expect(
+    photo.getByRole('button', { name: 'Select tag 20.5cm', exact: true })
+  ).toBeVisible()
+  await expect(
+    photo.getByRole('button', { name: 'Select tag 大盘 · 8.5"', exact: true })
+  ).toBeVisible()
+  await photo
+    .getByRole('button', { name: 'Select tag 20.5cm', exact: true })
+    .click()
+  await field.fill('Small / blue')
+  await photo.getByRole('button', { name: 'Rename tag', exact: true }).click()
+  await photo.getByRole('button', { name: 'Save photo', exact: true }).click()
+  await expect(photo.getByRole('status')).toHaveText(
+    'Photo saved. Original preserved.'
+  )
+  const saved = await savedPhotoEdit(extension)
+  expect(saved.tags.map((tag) => tag.code)).toEqual([
+    'Small / blue',
+    '大盘 · 8.5"',
+  ])
+  expect(saved.tagScale).toBe(2)
+  expect(saved.pointerScale).toBe(1)
+  await photo
+    .getByRole('button', { name: 'Close product photo', exact: true })
+    .click()
+  await trigger.click()
+  await startEditing(photo)
+  await photo
+    .getByRole('button', { name: 'Select tag Small / blue', exact: true })
+    .click()
+  await expect(field).toHaveValue('Small / blue')
+  await expect(field).toHaveCSS('text-transform', 'none')
+  await photo.getByRole('button', { name: 'Add tag A', exact: true }).click()
+  await photo
+    .getByRole('button', { name: 'Use tag size XL', exact: true })
+    .click()
+  await expect(field).toHaveValue('AXL')
+  await photo.getByRole('button', { name: 'Cancel', exact: true }).click()
+  await photo
+    .getByRole('button', { name: 'Close product photo', exact: true })
+    .click()
+  await page.close()
+})
+
 test('photo tags place, rename and move with pointer and keyboard, then survive save and reload', async ({
   extension,
 }) => {
@@ -555,10 +728,10 @@ test('photo tags place, rename and move with pointer and keyboard, then survive 
   const tagGeometry = await readTagGeometry()
   await expect(
     photo.getByRole('slider', { name: 'Tag size', exact: true })
-  ).toHaveAttribute('aria-valuetext', '275%')
+  ).toHaveAttribute('aria-valuetext', '200%')
   await choosePhotoScale(
     photo.getByRole('slider', { name: 'Tag size', exact: true }),
-    550
+    400
   )
   const largerGeometry = await readTagGeometry()
   expect(largerGeometry).toHaveLength(2)
@@ -571,8 +744,9 @@ test('photo tags place, rename and move with pointer and keyboard, then survive 
     for (const dimension of ['width', 'height'])
       expect(
         Math.abs(largerGeometry[i][dimension] - tagGeometry[i][dimension] * 2)
-        // SVG style serialization rounds normalized bounds to four decimals.
-      ).toBeLessThanOrEqual(2.001)
+        // Each independently measured glyph edge can round at the two font sizes;
+        // text and dot scale remain exact above, while badge ink can differ by 4px.
+      ).toBeLessThanOrEqual(4.001)
   }
   await mkdir('work', { recursive: true })
   await photo.screenshot({ path: 'work/photo-variant-tags.png' })
@@ -582,7 +756,7 @@ test('photo tags place, rename and move with pointer and keyboard, then survive 
   )
   const edit = await savedPhotoEdit(extension)
   expect(edit.tags.map((tag) => tag.code)).toEqual(['AX', 'BL'])
-  expect(edit.tagScale).toBe(5.5)
+  expect(edit.tagScale).toBe(4)
   expect(edit.tags[0].x).toBeCloseTo(0.355, 2)
   expect(edit.tags[0].y).toBeCloseTo(0.47, 2)
   expect(edit.tags[0].labelX).toBeCloseTo(
@@ -597,7 +771,7 @@ test('photo tags place, rename and move with pointer and keyboard, then survive 
   await startEditing(photo)
   await expect(
     photo.getByRole('slider', { name: 'Tag size', exact: true })
-  ).toHaveAttribute('aria-valuetext', '550%')
+  ).toHaveAttribute('aria-valuetext', '400%')
   await expect(
     photo.getByRole('button', { name: 'Select tag AX', exact: true })
   ).toBeVisible()
@@ -614,8 +788,11 @@ test('photo tag validation, cancel, reset and removal preserve the saved edit un
 }) => {
   const { page, photo } = await openPhoto(extension)
   await startEditing(photo)
-  await photo.getByLabel('Variant tag', { exact: true }).fill('!')
+  await photo.getByLabel('Variant tag', { exact: true }).fill('   ')
   await photo.getByRole('button', { name: 'Add tag', exact: true }).click()
+  await expect(
+    photo.getByLabel('Variant tag', { exact: true })
+  ).toHaveAttribute('aria-invalid', 'true')
   await expect(photo.locator('.photo-tag-label')).toHaveCount(0)
   await placeTag(page, photo, 'A', 0.4, 0.5)
   await photo.getByRole('button', { name: 'Save photo', exact: true }).click()
@@ -900,7 +1077,7 @@ test('pointer presets resize every circle independently and stay local to each p
   )
   const saved = await savedPhotoEdit(extension)
   expect(saved.pointerScale).toBe(2.5)
-  expect(saved.tagScale).toBe(2.75)
+  expect(saved.tagScale).toBe(2)
   await photo.getByRole('button', { name: 'Next photo', exact: true }).click()
   await startEditing(photo)
   await expect(pointer).toHaveAttribute('aria-valuetext', '100%')

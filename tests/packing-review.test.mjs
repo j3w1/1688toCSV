@@ -1,7 +1,10 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
 import { parseHTML } from 'linkedom'
-import { packingValueComparison } from '../src/packing-review.js'
+import {
+  packingValueComparison,
+  reviewPackingChanges,
+} from '../src/packing-review.js'
 import { message, setLanguage } from '../src/i18n.js'
 
 test('packing comparisons identify changed codes and empty restored fields without hiding original values', () => {
@@ -80,5 +83,181 @@ test('packing comparisons identify changed codes and empty restored fields witho
     setLanguage('en', { persist: false })
     if (originalDocument === undefined) delete globalThis.document
     else globalThis.document = originalDocument
+  }
+})
+
+test('variant descriptions stay raw context beside a barcode change rather than a replacement field', () => {
+  const originalDocument = globalThis.document
+  globalThis.document = parseHTML('<html><body></body></html>').document
+  const description = '货号: SYN-CUP / 碗 · 6"'
+  const values = [
+    {
+      label: message('Barcode'),
+      context: description,
+      before: message('Not prepared'),
+      after: 'CE26101307AS',
+      kind: 'code',
+    },
+    {
+      label: message('Barcode'),
+      context: 'Quantity',
+      before: 'CE26101307BL',
+      after: 'CE26101307BM',
+      kind: 'code',
+    },
+  ]
+  try {
+    const comparison = packingValueComparison(values)
+    const contexts = [...comparison.querySelectorAll('.packing-value-context')]
+    assert.deepEqual(
+      contexts.map((node) => node.textContent),
+      [description, 'Quantity']
+    )
+    const rows = [...comparison.querySelectorAll('.packing-value-row')]
+    assert.equal(
+      rows[0].querySelector('th[scope="row"] > span').textContent,
+      'Barcode'
+    )
+    assert.equal(
+      rows[0].querySelector('.packing-value-before').textContent,
+      'Not prepared'
+    )
+    assert.equal(
+      rows[0].querySelector('.packing-value-after').textContent,
+      'CE26101307AS'
+    )
+    assert.equal(
+      comparison.querySelectorAll('[data-code-part="product"]').length,
+      3
+    )
+
+    setLanguage('es', { persist: false })
+    assert.equal(
+      rows[0].querySelector('th[scope="row"] > span').textContent,
+      'Código de barras'
+    )
+    assert.deepEqual(
+      contexts.map((node) => node.textContent),
+      [description, 'Quantity']
+    )
+    assert.equal(values[0].context, description)
+    assert.equal(values[1].context, 'Quantity')
+    assert.equal(values[0].after, 'CE26101307AS')
+  } finally {
+    setLanguage('en', { persist: false })
+    if (originalDocument === undefined) delete globalThis.document
+    else globalThis.document = originalDocument
+  }
+})
+
+test('preparation overview includes all 52 cards and opens every complete change without a pager', async () => {
+  const originalDocument = globalThis.document,
+    originalDialog = globalThis.HTMLDialogElement
+  const { document, HTMLElement } = parseHTML('<html><body></body></html>')
+  globalThis.document = document
+  globalThis.HTMLDialogElement = { prototype: { closedBy: 'any' } }
+  const originalShowModal = HTMLElement.prototype.showModal
+  const originalClose = HTMLElement.prototype.close
+  HTMLElement.prototype.showModal = function () {
+    this.setAttribute('open', '')
+  }
+  HTMLElement.prototype.close = function () {
+    this.removeAttribute('open')
+    this.onclose?.()
+  }
+  const changes = Array.from({ length: 52 }, (_, index) => {
+    const after = `CE261013${String(index + 1).padStart(2, '0')}`
+    return {
+      name: `Synthetic cup ${index + 1} · 6"`,
+      order: 'Synthetic store',
+      orderId: '1234567890123456789',
+      after,
+      values: [
+        {
+          label: message('Product code'),
+          before: message('Not prepared'),
+          after,
+          kind: 'code',
+        },
+        {
+          label: message('Material'),
+          before: '',
+          after: '玻璃',
+        },
+      ],
+      detail: message('1 product rows · 1 variants'),
+    }
+  })
+  try {
+    const result = reviewPackingChanges({
+      title: message('Assign product codes?'),
+      explanation: message('Review the product codes in this order.'),
+      changes,
+      overview: true,
+    })
+    const dialog = document.querySelector('.packing-review-overview')
+    const cards = [...dialog.querySelectorAll('.packing-review-item')]
+    assert.equal(cards.length, 52)
+    assert.equal(
+      dialog.querySelectorAll('.packing-review-overview-select').length,
+      52
+    )
+    assert.equal(dialog.querySelectorAll('.packing-review-detail').length, 52)
+    assert.equal(dialog.querySelectorAll('.packing-value-row').length, 104)
+    assert.equal(
+      dialog.querySelectorAll('.packing-review-overview-summary').length,
+      52
+    )
+    assert.equal(
+      cards[0].querySelector('.packing-review-overview-summary').textContent,
+      '+2Product code · Material'
+    )
+    assert.equal(dialog.querySelectorAll('.order-reference-pair').length, 0)
+    assert.equal(
+      dialog.querySelectorAll('.scroll-dialog-content > .dialog-actions')
+        .length,
+      0
+    )
+    assert.equal(
+      dialog.querySelectorAll('[data-code-part="product"]').length,
+      104
+    )
+
+    for (const index of [0, 51]) {
+      const select = cards[index].querySelector(
+        '.packing-review-overview-select'
+      )
+      const detail = cards[index].querySelector('.packing-review-detail')
+      assert.equal(detail.hidden, true)
+      select.click()
+      assert.equal(detail.hidden, false)
+      assert.equal(select.getAttribute('aria-expanded'), 'true')
+      assert.equal(
+        detail.querySelector('strong').textContent,
+        changes[index].name
+      )
+      assert.equal(
+        detail.querySelector('.packing-value-after code').textContent,
+        changes[index].after
+      )
+      assert.equal(detail.querySelectorAll('.packing-value-row').length, 2)
+      detail.querySelector('.packing-review-detail-close').click()
+      assert.equal(detail.hidden, true)
+      assert.equal(select.getAttribute('aria-expanded'), 'false')
+    }
+    dialog.querySelector('[data-action="review-cancel"]').click()
+    assert.equal(await result, false)
+    assert.equal(document.querySelector('.packing-review-overview'), null)
+    assert.equal(changes[51].name, 'Synthetic cup 52 · 6"')
+    assert.equal(changes[51].values[1].after, '玻璃')
+  } finally {
+    if (originalShowModal === undefined) delete HTMLElement.prototype.showModal
+    else HTMLElement.prototype.showModal = originalShowModal
+    if (originalClose === undefined) delete HTMLElement.prototype.close
+    else HTMLElement.prototype.close = originalClose
+    if (originalDocument === undefined) delete globalThis.document
+    else globalThis.document = originalDocument
+    if (originalDialog === undefined) delete globalThis.HTMLDialogElement
+    else globalThis.HTMLDialogElement = originalDialog
   }
 })

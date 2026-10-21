@@ -75,6 +75,11 @@ test('photo copy appears only on hover or keyboard focus without changing select
   await row.locator('.photo-copy-tile').hover()
   await expect(copy).toHaveCSS('opacity', '0.94')
   await expect(copy).toHaveCSS('pointer-events', 'auto')
+  const corner = await copy.boundingBox(),
+    thumbnail = await photo.boundingBox()
+  expect(corner.x + corner.width).toBeCloseTo(thumbnail.x + thumbnail.width, 0)
+  expect(corner.y).toBeCloseTo(thumbnail.y, 0)
+  expect(corner.width).toBe(24)
   await page.mouse.move(0, 0)
   await expect(copy).toHaveCSS('opacity', '0')
   await row.focus()

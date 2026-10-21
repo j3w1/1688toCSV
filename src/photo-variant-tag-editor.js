@@ -1,5 +1,11 @@
 import { element as el } from './ui.js'
-import { bindAttribute, bindText, message as m } from './i18n.js'
+import {
+  bindAttribute,
+  bindText,
+  message as m,
+  t,
+  getLanguage,
+} from './i18n.js'
 import { preparationHelp } from './preparation-help.js'
 import { decorateIcon } from './icons.js'
 import {
@@ -8,11 +14,12 @@ import {
   PHOTO_TAG_SCALE,
   PHOTO_POINTER_SCALE,
   nearestPhotoTagCorner,
+  PHOTO_TAG_TEXT_LIMIT,
+  validPhotoTagText,
 } from './product-photo.js'
 import { DEFAULT_SIZE_VOCABULARY } from './size-vocabulary.js'
 
 const clamp = (value) => Math.max(0, Math.min(1, value))
-const validCode = (value) => /^[A-Z0-9]{1,8}$/.test(value)
 const sizeSuffixes = [
   ...new Set(DEFAULT_SIZE_VOCABULARY.map(({ suffix }) => suffix)),
 ].sort((a, b) => b.length - a.length)
@@ -20,6 +27,7 @@ const quickSizes = DEFAULT_SIZE_VOCABULARY.map(({ suffix }) => suffix).filter(
   (suffix) => ['XS', 'S', 'M', 'L', 'XL'].includes(suffix)
 )
 const splitCode = (code) => {
+  if (!/^[A-Z0-9]{1,8}$/.test(code)) return { model: '', size: '' }
   const size = sizeSuffixes.find((suffix) => code.endsWith(suffix)) || ''
   return { model: size ? code.slice(0, -size.length) : code, size }
 }
@@ -86,8 +94,7 @@ export function mountPhotoVariantTagEditor({
   code.id = `photo-variant-code-${crypto.randomUUID()}`
   codeLabel.htmlFor = code.id
   code.value = ''
-  code.maxLength = 8
-  code.pattern = '[A-Za-z0-9]{1,8}'
+  code.maxLength = PHOTO_TAG_TEXT_LIMIT
   code.required = true
   code.autocomplete = 'off'
   code.setAttribute('autocorrect', 'off')
@@ -161,7 +168,7 @@ export function mountPhotoVariantTagEditor({
   preparationHelp(
     code,
     m(
-      'Use 1–8 letters or numbers. These photo tags do not change the product barcode.'
+      'Use any text up to 64 characters. These photo tags do not change the product barcode.'
     )
   )
   preparationHelp(
@@ -185,7 +192,7 @@ export function mountPhotoVariantTagEditor({
   preparationHelp(
     add,
     m(
-      'Enter a variant code, choose Add tag, then click its product in the photo. Drag the dot or label to position it.'
+      'Enter tag text, choose Add tag, then click its product in the photo. Drag the dot or label to position it.'
     )
   )
   preparationHelp(
@@ -194,7 +201,7 @@ export function mountPhotoVariantTagEditor({
   )
   preparationHelp(
     rename,
-    m('Select a tag, enter its new code, then choose Rename tag.')
+    m('Select a tag, enter its new text, then choose Rename tag.')
   )
   let selected = null,
     placing = false,
@@ -232,6 +239,7 @@ export function mountPhotoVariantTagEditor({
     selected = id
     const tag = tags().find((tag) => tag.id === id)
     if (tag) code.value = tag.code
+    code.setCustomValidity('')
     setPlacing(false)
     code.removeAttribute('aria-invalid')
     refresh()
@@ -415,13 +423,26 @@ export function mountPhotoVariantTagEditor({
       chip.setAttribute('aria-pressed', String(selected === tag.id))
     }
   }
-  function beginPlacement() {
-    if (!active() || saving() || tags().length >= 50) return
-    if (!validCode(code.value.toUpperCase())) {
+  function validInput() {
+    const valid = validPhotoTagText(code.value)
+    code.setCustomValidity(
+      valid
+        ? ''
+        : t(
+            'Photo tag text must contain 1–64 characters on one line',
+            {},
+            getLanguage(code)
+          )
+    )
+    if (!valid) {
+      code.setAttribute('aria-invalid', 'true')
       code.reportValidity()
       code.focus()
-      return
     }
+    return valid
+  }
+  function beginPlacement() {
+    if (!active() || saving() || tags().length >= 50 || !validInput()) return
     selected = null
     setPlacing(true)
     bindText(status, m('Click the photo to place the variant tag.'))
@@ -443,15 +464,9 @@ export function mountPhotoVariantTagEditor({
       useQuickCode(`${parts.model}${parts.size === value ? '' : value}`)
     })
   function useQuickCode(value) {
-    if (value.length > code.maxLength) {
-      bindText(
-        status,
-        m('Photo variant tag codes require 1–8 uppercase letters or digits')
-      )
-      return
-    }
     selected = null
     code.value = value
+    code.setCustomValidity('')
     code.removeAttribute('aria-invalid')
     if (value) beginPlacement()
     else {
@@ -476,11 +491,7 @@ export function mountPhotoVariantTagEditor({
     refresh()
   })
   listen(rename, 'click', () => {
-    if (!selected || !validCode(code.value)) {
-      code.reportValidity()
-      code.focus()
-      return
-    }
+    if (!selected || !validInput()) return
     const tag = tags().find((tag) => tag.id === selected)
     if (tag) {
       tag.code = code.value
@@ -488,7 +499,7 @@ export function mountPhotoVariantTagEditor({
     }
   })
   listen(code, 'input', () => {
-    code.value = code.value.toUpperCase()
+    code.setCustomValidity('')
     code.removeAttribute('aria-invalid')
     setPlacing(placing)
   })
@@ -499,7 +510,7 @@ export function mountPhotoVariantTagEditor({
     else add.click()
   })
   listen(code, 'blur', () => {
-    if (selected && !validCode(code.value))
+    if (selected && !validPhotoTagText(code.value))
       code.setAttribute('aria-invalid', 'true')
   })
   listen(
@@ -547,17 +558,13 @@ export function mountPhotoVariantTagEditor({
       if (!placing) return
       event.preventDefault()
       event.stopPropagation()
-      if (!validCode(code.value.toUpperCase()) || tags().length >= 50) {
-        code.reportValidity()
-        code.focus()
-        return
-      }
+      if (tags().length >= 50 || !validInput()) return
       const p = point(event)
       if (p.x < 0 || p.x > 1 || p.y < 0 || p.y > 1) return
       const tag = nearestPhotoTagCorner(
         {
           id: crypto.randomUUID(),
-          code: code.value.toUpperCase(),
+          code: code.value,
           x: p.x,
           y: p.y,
         },
@@ -608,11 +615,7 @@ export function mountPhotoVariantTagEditor({
   return {
     refresh,
     valid() {
-      if (!selected || validCode(code.value)) return true
-      code.setAttribute('aria-invalid', 'true')
-      code.reportValidity()
-      code.focus()
-      return false
+      return !selected || validInput()
     },
     paint(transform) {
       overlay.style.transform = transform
@@ -622,6 +625,7 @@ export function mountPhotoVariantTagEditor({
       selected = null
       setPlacing(false)
       code.value = ''
+      code.setCustomValidity('')
       code.removeAttribute('aria-invalid')
       refresh()
     },

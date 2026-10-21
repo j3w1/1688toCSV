@@ -161,7 +161,11 @@ for (const kind of ['labels', 'marks']) {
         () => document.documentElement.scrollWidth <= innerWidth
       )
     ).toBe(true)
-    await page.evaluate(() => Print.setLanguage('es', { persist: false }))
+    await page.evaluate(() =>
+      Print.setLanguage('es', {
+        scope: document.querySelector('.print-dialog'),
+      })
+    )
     await expect(
       dialog.getByRole('button', { name: 'Ajustar página', exact: true })
     ).toBeVisible()

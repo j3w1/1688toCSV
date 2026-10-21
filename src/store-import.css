@@ -266,10 +266,15 @@
   flex: 0 0 54px;
   inline-size: 54px;
 }
-.store-import-issue-photos > :is(button, span) {
+.store-import-issue-photos > .photo-copy-tile {
   display: block;
   inline-size: 54px;
   block-size: 54px;
+}
+.store-import-issue-photos > .photo-copy-tile > .photo-copy-source {
+  display: block;
+  inline-size: 100%;
+  block-size: 100%;
   min-inline-size: 0;
   min-block-size: 0;
   padding: 0;
@@ -278,7 +283,7 @@
   background: #fff;
   overflow: hidden;
 }
-.store-import-issue-photos:has(> :nth-child(2)) > :is(button, span) {
+.store-import-issue-photos:has(> :nth-child(2)) > .photo-copy-tile {
   inline-size: 25px;
   block-size: 25px;
 }
@@ -413,6 +418,10 @@
   gap: 4px;
   flex-wrap: wrap;
   align-content: start;
+}
+.store-import-photos > .photo-copy-tile {
+  inline-size: 54px;
+  block-size: 54px;
 }
 .store-import-photos .store-import-photo-button {
   inline-size: 54px;
@@ -692,6 +701,10 @@
     gap: 8px;
   }
   .store-import-photos .store-import-photo-button {
+    inline-size: 50px;
+    block-size: 50px;
+  }
+  .store-import-photos > .photo-copy-tile {
     inline-size: 50px;
     block-size: 50px;
   }

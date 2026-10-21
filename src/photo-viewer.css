@@ -119,7 +119,6 @@
   font:
     700 12px/1.2 Arial,
     sans-serif;
-  text-transform: uppercase;
   color: #fff;
   background: #000;
   border: 0;
@@ -414,8 +413,8 @@
   padding: 4px 10px;
   font-size: 13px;
 }
-.photo-zoom-actions button:first-child,
-.photo-zoom-actions button:nth-child(3) {
+.photo-zoom-actions > button:first-child,
+.photo-zoom-actions > button:nth-child(3) {
   min-width: 34px;
   font-size: 19px;
 }

@@ -7,12 +7,30 @@ import {
   preparationColumns,
   preparationCopyFields,
   preparationOrderFields,
+  preparationFeatureFields,
   normalizePreparationColumnPreference,
   selectedPreparationColumns,
   DEFAULT_PREPARATION_COLUMNS,
 } from '../src/preparation-clipboard.js'
 import { createSizeClassifier } from '../src/size-vocabulary.js'
 import { UI_MESSAGES } from '../src/ui-messages.js'
+import { t, getLanguage } from '../src/i18n.js'
+
+test('popup export language translates generated feature wording while retaining custom text and workspace language', () => {
+  const features = {
+    lighting: true,
+    custom: { name: '20.5cm / 大盘', unitCost: '2.50', included: false },
+  }
+  const baseline = getLanguage()
+  const values = preparationFeatureFields(features, (source, params) =>
+    t(source, params, 'es')
+  )
+  assert.equal(values.productFeatures, 'Iluminación · 20.5cm / 大盘')
+  assert.match(values.productFeatureCosts, /^20\.5cm \/ 大盘 \(¥2\.50 /)
+  assert.ok(!values.productFeatureCosts.includes('per piece'))
+  assert.ok(!values.productFeatureCosts.includes('Added cost'))
+  assert.equal(getLanguage(), baseline)
+})
 
 const row = {
   orderId: '1',

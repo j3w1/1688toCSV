@@ -62,10 +62,10 @@ export function selectedExcelImageColumns(
   return order.filter((key) => selected.includes(key))
 }
 
-const columnLabel = (column) => column.labels?.[getLanguage()] || column.label
-
 export function createExcelImageOptions(onChange, { rows = [] } = {}) {
   const fieldset = element('fieldset', undefined, 'excel-image-options')
+  const columnLabel = (column) =>
+    column.labels?.[getLanguage(fieldset)] || column.label
   const identity = element('label', undefined, 'excel-order-details-toggle')
   const showOrderDetails = element('input')
   showOrderDetails.type = 'checkbox'

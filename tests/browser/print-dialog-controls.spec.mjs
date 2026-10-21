@@ -77,7 +77,11 @@ for (const kind of ['labels', 'marks']) {
     expect(buttonBox.y + buttonBox.height).toBeLessThanOrEqual(
       inputBox.y + inputBox.height
     )
-    await page.evaluate(() => Print.setLanguage('es', { persist: false }))
+    await page.evaluate(() =>
+      Print.setLanguage('es', {
+        scope: document.querySelector('.print-dialog'),
+      })
+    )
     await expect(first).toHaveAccessibleName(
       `Sumar ${step} a la cantidad solicitada de CE26100101`
     )
@@ -276,7 +280,9 @@ test('print helpers explain visual changes on hover and keyboard focus and trans
     'Larger gaps can fit fewer labels per page.'
   )
   const originalGap = await gap.elementHandle()
-  await page.evaluate(() => Print.setLanguage('es', { persist: false }))
+  await page.evaluate(() =>
+    Print.setLanguage('es', { scope: document.querySelector('.print-dialog') })
+  )
   expect(
     await originalGap.evaluate((node) => ({
       connected: node.isConnected,

@@ -158,6 +158,23 @@ export function selectedPreparationColumns(preference) {
   return order.filter((key) => selected.includes(key))
 }
 
+/** Only generated feature wording is translated; custom feature names stay data. */
+export function preparationFeatureFields(rawFeatures, translate = t) {
+  const features = productFeatures(rawFeatures)
+  const featureName = (feature) =>
+    rawFeatures[feature.key] === true ? translate(feature.name) : feature.name
+  return {
+    productFeatures: features.map(featureName).join(' · '),
+    productFeatureCosts: features
+      .filter((feature) => moneyToCents(feature.unitCost) > 0n)
+      .map(
+        (feature) =>
+          `${featureName(feature)} (¥${feature.unitCost} ${translate('per piece')}; ${translate(feature.included ? 'Already recorded' : 'Added cost')})`
+      )
+      .join(' · '),
+  }
+}
+
 /** Snapshot metadata is copied per source entry, never inferred from another row. */
 export function preparationOrderFields(
   row,
@@ -176,21 +193,11 @@ export function preparationOrderFields(
         ? orderCostAdjustments(record).get(row.entryId)
         : {})
   const rawFeatures = resolveOperations(record, row.entryId).effective.features
-  const features = productFeatures(rawFeatures)
-  const featureName = (feature) =>
-    rawFeatures[feature.key] === true ? t(feature.name) : feature.name
   return {
     ...cost,
     sourceType: order.sourceType ?? '',
     linkedPaymentReasons: cost?.linkedPaymentReasons?.join(' · ') || '',
-    productFeatures: features.map(featureName).join(' · '),
-    productFeatureCosts: features
-      .filter((feature) => moneyToCents(feature.unitCost) > 0n)
-      .map(
-        (feature) =>
-          `${featureName(feature)} (¥${feature.unitCost} ${t('per piece')}; ${t(feature.included ? 'Already recorded' : 'Added cost')})`
-      )
-      .join(' · '),
+    ...preparationFeatureFields(rawFeatures),
     additionalChargeReasons: (record.additionalCharges || [])
       .map((charge) => `${charge.reason} (¥${charge.amount})`)
       .join(' · '),

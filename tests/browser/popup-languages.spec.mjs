@@ -1,6 +1,9 @@
 import { mkdir, readFile, writeFile } from 'node:fs/promises'
 import { test, expect } from './extension-fixture.mjs'
-import { openPrintDialogFixture } from './print-dialog-fixture.mjs'
+import {
+  openPrintDialogFixture,
+  showPrintDialog,
+} from './print-dialog-fixture.mjs'
 
 async function expectCompactLanguageChoices(group) {
   const sizes = await group.locator('button').evaluateAll((buttons) =>
@@ -39,6 +42,15 @@ async function downloadedBytes(extension, download) {
     })
     .toBe(true)
   return readFile(entry.filename)
+}
+
+async function workspaceLanguage(page) {
+  return page.evaluate(() => ({
+    language: document.documentElement.lang,
+    preference: localStorage.getItem('1688-workspace-language'),
+    changes: window.workspaceLanguageChanges ?? 0,
+    text: document.querySelector('#workspace-language-probe')?.textContent,
+  }))
 }
 
 for (const kind of ['labels', 'marks']) {
@@ -84,12 +96,23 @@ for (const kind of ['labels', 'marks']) {
       }
     })
     const languages = dialog.locator('.popup-language-toggle')
+    await page.evaluate(() => {
+      Print.setLanguage('en')
+      window.workspaceLanguageChanges = 0
+      Print.onLanguageChange(() => window.workspaceLanguageChanges++)
+      const probe = document.createElement('p')
+      probe.id = 'workspace-language-probe'
+      Print.bindText(probe, Print.message('Orders'))
+      document.querySelector('main').append(probe)
+    })
+    const workspace = await workspaceLanguage(page)
     await expectCompactLanguageChoices(languages)
     for (const [language, expected] of [
       ['es', kind === 'marks' ? 'Caja 1 de 3' : 'Etiquetas CE'],
       ['zh', kind === 'marks' ? '第 1/3 箱' : 'CE 标签'],
     ]) {
       await languages.locator(`[data-language="${language}"]`).click()
+      expect(await workspaceLanguage(page)).toEqual(workspace)
       await expect(
         languages.locator(`[data-language="${language}"]`)
       ).toHaveAttribute('aria-pressed', 'true')
@@ -181,11 +204,24 @@ for (const kind of ['labels', 'marks']) {
     const chinese = await preview.evaluate((canvas) => canvas.toDataURL())
     await page.evaluate(() => {
       Print.setLanguage('es', { persist: false })
-      Print.setLanguage('zh', { persist: false })
     })
+    await expect(languages.locator('[data-language="zh"]')).toHaveAttribute(
+      'aria-pressed',
+      'true'
+    )
+    await expect(dialog).toHaveAttribute('lang', 'zh-CN')
     await expect(preview).toHaveAttribute('data-preview-state', 'ready')
     expect(await preview.evaluate((canvas) => canvas.toDataURL())).toBe(chinese)
     await dialog.locator('[data-action="close-print-dialog"]').click()
+    const job = await page.evaluate(
+      () => JSON.parse(localStorage.getItem('1688-print-recent'))[0]
+    )
+    await page.evaluate(() => Print.setLanguage('en'))
+    const previousLanguage = await workspaceLanguage(page)
+    const reopened = await showPrintDialog(page, { kind, job })
+    await expect(reopened).toHaveAttribute('lang', 'zh-CN')
+    expect(await workspaceLanguage(page)).toEqual(previousLanguage)
+    await reopened.locator('[data-action="close-print-dialog"]').click()
     await page.close()
   })
 }
@@ -238,6 +274,7 @@ test('Excel image language toggle regenerates the image without changing selecte
   const preference = await page.evaluate(() =>
     localStorage.getItem('1688-excel-image-columns')
   )
+  const workspace = await workspaceLanguage(page)
   for (const [language, label] of [
     ['es', 'Cantidad'],
     ['zh', '数量'],
@@ -249,6 +286,7 @@ test('Excel image language toggle regenerates the image without changing selecte
     await dialog
       .locator(`.popup-language-toggle [data-language="${language}"]`)
       .click()
+    expect(await workspaceLanguage(page)).toEqual(workspace)
     await expect(dialog.locator('.copy-preview img')).toHaveCount(1)
     await expect
       .poll(() =>

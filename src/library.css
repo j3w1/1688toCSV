@@ -1067,27 +1067,37 @@ tbody tr:hover {
 }
 .photo-copy-tile {
   position: relative;
+  display: inline-grid;
   inline-size: fit-content;
   max-inline-size: 100%;
+  vertical-align: top;
+}
+.photo-copy-tile > .photo-copy-source {
+  grid-area: 1 / 1;
+  margin: 0;
+}
+.photo-copy-tile > .photo-copy-source img {
+  display: block;
 }
 .photo-copy-tile > .photo-copy-button.icon-button {
   position: absolute;
-  inset-block-start: 3px;
-  inset-inline-end: 3px;
+  inset-block-start: 0;
+  inset-inline-end: 0;
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  inline-size: 24px;
-  min-inline-size: 24px;
-  block-size: 24px;
-  min-block-size: 24px;
+  inline-size: min(24px, 45%);
+  min-inline-size: 0;
+  block-size: auto;
+  min-block-size: 0;
+  aspect-ratio: 1;
   margin: 0;
   border: 1px solid var(--border);
   border-radius: 4px;
   background: var(--field);
   color: var(--muted);
   line-height: 1;
-  padding: 4px;
+  padding: 2px;
   opacity: 0;
   pointer-events: none;
 }
@@ -1097,8 +1107,8 @@ tbody tr:hover {
   pointer-events: auto;
 }
 .photo-copy-tile > .photo-copy-button.icon-button > .ui-icon {
-  inline-size: 13px;
-  block-size: 13px;
+  inline-size: min(13px, 100%);
+  block-size: min(13px, 100%);
   margin: 0;
 }
 .thumb-cell .product-photo-button {

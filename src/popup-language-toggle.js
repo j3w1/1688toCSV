@@ -5,10 +5,12 @@ import {
   message,
   onLanguageChange,
   setLanguage,
+  createLanguageScope,
 } from './i18n.js'
 
-/** The same language choice as the workspace, without remounting draft fields. */
-export function popupLanguageToggle(dialog, { onChange } = {}) {
+/** Translate only this popup and its exports, without remounting draft fields. */
+export function popupLanguageToggle(dialog, { onChange, language } = {}) {
+  createLanguageScope(dialog, language)
   const group = element(
     'div',
     undefined,
@@ -27,21 +29,21 @@ export function popupLanguageToggle(dialog, { onChange } = {}) {
     button.lang = language === 'zh' ? 'zh-CN' : language
     bindAttribute(button, 'aria-label', message(name))
     bindAttribute(button, 'title', message(name))
-    button.onclick = () => setLanguage(language)
+    button.onclick = () => setLanguage(language, { scope: dialog })
     group.append(button)
   }
   const update = () => {
     for (const button of group.children)
       button.setAttribute(
         'aria-pressed',
-        String(button.dataset.language === getLanguage())
+        String(button.dataset.language === getLanguage(dialog))
       )
   }
   update()
   const stop = onLanguageChange((language) => {
     update()
     onChange?.(language)
-  })
+  }, dialog)
   dialog.addEventListener('close', stop, { once: true })
   return group
 }

@@ -3,7 +3,8 @@ import {
   bindAttribute,
   bindText,
   message as m,
-  t,
+  t as translate,
+  getLanguage,
   onLanguageChange,
 } from './i18n.js'
 import { decorateIcon } from './icons.js'
@@ -17,6 +18,8 @@ import {
 } from './preparation-clipboard.js'
 
 export function createPreparationColumnPicker(container, onChange = () => {}) {
+  const t = (source, params) =>
+    translate(source, params, getLanguage(container))
   let preference
   try {
     preference = normalizePreparationColumnPreference(
@@ -238,7 +241,7 @@ export function createPreparationColumnPicker(container, onChange = () => {}) {
     )
   }
   search.oninput = render
-  const stopLanguage = onLanguageChange(render)
+  const stopLanguage = onLanguageChange(render, container)
   render()
   return {
     selected: chosen,

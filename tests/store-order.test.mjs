@@ -167,6 +167,24 @@ test('marked source properties, supplied CBM and composition settings survive im
       background: '#ffffff',
       pointerScale: 2.5,
       invertPointer: true,
+      tags: [
+        {
+          id: 'measurement',
+          code: '20.5cm',
+          x: 0.5,
+          y: 0.5,
+          labelX: 0.9,
+          labelY: 0.1,
+        },
+        {
+          id: 'custom',
+          code: '大盘 · Black & white',
+          x: 0.4,
+          y: 0.6,
+          labelX: 0.1,
+          labelY: 0.9,
+        },
+      ],
     },
   }
   const built = await createStoreOrder(input, { now, orderId: '98765' })
@@ -208,7 +226,21 @@ test('full backup validates originals larger than the CDN thumbnail cache limit'
 test('packing backup carries gallery originals and carton annotation clocks for selected products', async () => {
   const source = fixture()
   source.rows[0].photoEdits = {
-    0: { pointerScale: 4, tagScale: 2, invertPointer: false },
+    0: {
+      pointerScale: 4,
+      tagScale: 2,
+      invertPointer: false,
+      tags: [
+        {
+          id: 'free-text',
+          code: '大盘 20.5cm <A>',
+          x: 0.5,
+          y: 0.5,
+          labelX: 0.1,
+          labelY: 0.1,
+        },
+      ],
+    },
   }
   const built = await createStoreOrder(source, { now, orderId: '98765' })
   const input = backup(built)

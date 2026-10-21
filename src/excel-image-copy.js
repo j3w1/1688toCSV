@@ -71,6 +71,7 @@ export async function copyExcelImage(
     signal,
     interactivePreview: true,
     languageToggle: true,
+    language,
     onLanguageChange: (value) => {
       outputLanguage = value
     },

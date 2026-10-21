@@ -15,6 +15,8 @@ import {
   PHOTO_POINTER_SCALE,
   validatePhotoVariantTags,
   photoEditDraft,
+  PHOTO_TAG_TEXT_LIMIT,
+  validPhotoTagText,
 } from '../src/product-photo.js'
 import { validatePhotoEdits } from '../src/store-order.js'
 import {
@@ -23,9 +25,10 @@ import {
   productCartonDetails,
 } from '../src/carton-details.js'
 
-test('new photo annotations start at 275% while saved and legacy tags keep their size', () => {
-  assert.equal(photoEditDraft().tagScale, 2.75)
-  assert.equal(photoEditDraft({ fit: 'cover' }).tagScale, 2.75)
+test('new photo annotations start at 200% with 100% pointers while saved and legacy tags keep their size', () => {
+  assert.equal(photoEditDraft().tagScale, 2)
+  assert.equal(photoEditDraft().pointerScale, 1)
+  assert.equal(photoEditDraft({ fit: 'cover' }).tagScale, 2)
   const legacy = { tags: [{ id: 'old', code: 'A', x: 0.3, y: 0.4 }] }
   const draft = photoEditDraft(legacy)
   assert.equal(draft.tagScale, 1)
@@ -33,6 +36,7 @@ test('new photo annotations start at 275% while saved and legacy tags keep their
   assert.equal(legacy.tags[0].code, 'A')
   assert.equal(photoEditDraft({ ...legacy, tagScale: 1.88 }).tagScale, 1.88)
   assert.equal(photoEditDraft({ tags: [], tagScale: 4 }).tagScale, 4)
+  assert.equal(photoEditDraft({ pointerScale: 2.5 }).pointerScale, 2.5)
 })
 
 test('square photos preserve aspect ratio and center or crop without stretching', () => {
@@ -108,9 +112,6 @@ test('photo edits validate bounded callouts without changing older edit schemas'
     [variantTag, variantTag],
     [{ ...variantTag, id: '' }],
     [{ ...variantTag, id: 'x'.repeat(81) }],
-    [{ ...variantTag, code: 'a' }],
-    [{ ...variantTag, code: 'ABCDEFGHI' }],
-    [{ ...variantTag, code: '<A>' }],
     [{ ...variantTag, x: -0.01 }],
     [{ ...variantTag, y: 1.01 }],
     [{ ...variantTag, labelX: Infinity }],
@@ -120,6 +121,66 @@ test('photo edits validate bounded callouts without changing older edit schemas'
     assert.throws(
       () => validatePhotoEdits({ 0: { tags } }, 1),
       /Photo variant tag/
+    )
+  }
+})
+
+test('visual photo annotations retain plain text, case, punctuation, spaces and Unicode', () => {
+  for (const code of [
+    'a',
+    '20.5cm',
+    '大盘 · 8.5"',
+    'Black & white',
+    '<b>Not markup</b>',
+    'AS / BL',
+    '🔴 red',
+    'x'.repeat(PHOTO_TAG_TEXT_LIMIT),
+  ]) {
+    assert.equal(validPhotoTagText(code), true)
+    const tag = { ...variantTag, code }
+    assert.deepEqual(validatePhotoEdits({ 0: { tags: [tag] } }, 1), {
+      0: { tags: [tag] },
+    })
+    assert.equal(
+      reprojectPhotoVariantTags([tag], { width: 640, height: 640 }, {}, {})[0]
+        .code,
+      code
+    )
+    const context = drawingContext()
+    for (const scale of [0.6, 2.75, 6]) {
+      const [layout] = drawPhotoVariantTags(context, [tag], 640, scale)
+      assert.ok(layout.badge.x >= 0 && layout.badge.y >= 0)
+      assert.ok(layout.badge.x + layout.badge.width <= 640)
+      assert.ok(layout.badge.y + layout.badge.height <= 640)
+      assert.equal(
+        context.calls.filter(({ method }) => method === 'fillText').at(-1)
+          .args[0],
+        code
+      )
+    }
+  }
+  for (const code of [
+    '',
+    '   ',
+    'x'.repeat(PHOTO_TAG_TEXT_LIMIT + 1),
+    'a\nb',
+    'a\rb',
+    'a\tb',
+    'a\u0000b',
+    'a\u007fb',
+    'a\u0085b',
+    'a\u2028b',
+    'a\u2029b',
+    20.5,
+    null,
+    undefined,
+    {},
+    [],
+  ]) {
+    assert.equal(validPhotoTagText(code), false)
+    assert.throws(
+      () => validatePhotoEdits({ 0: { tags: [{ ...variantTag, code }] } }, 1),
+      /Photo tag text/
     )
   }
 })
