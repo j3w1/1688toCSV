@@ -14,6 +14,7 @@ import {
   PHOTO_TAG_SCALE,
   PHOTO_POINTER_SCALE,
   validatePhotoVariantTags,
+  photoEditDraft,
 } from '../src/product-photo.js'
 import { validatePhotoEdits } from '../src/store-order.js'
 import {
@@ -21,6 +22,18 @@ import {
   cartonPackingForItems,
   productCartonDetails,
 } from '../src/carton-details.js'
+
+test('new photo annotations start at 275% while saved and legacy tags keep their size', () => {
+  assert.equal(photoEditDraft().tagScale, 2.75)
+  assert.equal(photoEditDraft({ fit: 'cover' }).tagScale, 2.75)
+  const legacy = { tags: [{ id: 'old', code: 'A', x: 0.3, y: 0.4 }] }
+  const draft = photoEditDraft(legacy)
+  assert.equal(draft.tagScale, 1)
+  draft.tags[0].code = 'B'
+  assert.equal(legacy.tags[0].code, 'A')
+  assert.equal(photoEditDraft({ ...legacy, tagScale: 1.88 }).tagScale, 1.88)
+  assert.equal(photoEditDraft({ tags: [], tagScale: 4 }).tagScale, 4)
+})
 
 test('square photos preserve aspect ratio and center or crop without stretching', () => {
   assert.deepEqual(photoPlacement(800, 200, 400), {

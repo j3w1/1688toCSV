@@ -2640,12 +2640,12 @@ html:has(body.packing-active) {
 }
 .variants col:nth-child(4),
 .variants .variant-carton-columns {
-  width: 238px;
+  width: 388px;
 }
 .variant-numeric-header,
 .variant-numeric-row {
   display: grid;
-  grid-template-columns: 44px 46px 56px 66px;
+  grid-template-columns: 40px 46px 42px 48px 48px 56px 66px;
   gap: 4px;
   align-items: center;
   text-align: end;
@@ -2691,9 +2691,30 @@ html:has(body.packing-active) {
   }
   .variant-numeric-header,
   .variant-numeric-row {
-    grid-template-columns: 40px 42px minmax(48px, 56px) minmax(56px, 66px);
+    grid-template-columns: 36px 40px 40px 46px 46px 50px 58px;
     justify-content: start;
   }
+}
+.variant-planned-boxes {
+  color: var(--muted);
+  font-variant-numeric: tabular-nums;
+}
+.variants .variant-shared-boxes {
+  grid-column: span 2;
+  justify-self: center;
+  padding: 2px 4px;
+  font-size: 10px;
+  white-space: nowrap;
+}
+.carton-confirmation input {
+  color: var(--quantity-text);
+  font-variant-numeric: tabular-nums;
+}
+.packing-selection-toolbar .packing-export-button {
+  flex: none;
+  margin-inline-start: 4px;
+  min-block-size: 36px;
+  white-space: nowrap;
 }
 .variants .product-attributes {
   margin: 0;

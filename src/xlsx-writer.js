@@ -67,7 +67,8 @@ function sheetXml({ header, rows, numeric }) {
 <worksheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main">${freeze}<sheetData>${lines.join('')}</sheetData></worksheet>`
 }
 
-function zip(files) {
+/** Deterministic stored ZIP shared by the simple and illustrated workbooks. */
+export function createZip(files) {
   const chunks = []
   const central = []
   let offset = 0
@@ -168,7 +169,7 @@ export function createXlsx({
     ],
     ['xl/worksheets/sheet1.xml', sheetXml({ header, rows, numeric })],
   ]
-  return zip(
+  return createZip(
     files.map(([fileName, text]) => ({
       name: fileName,
       data: encoder.encode(text),

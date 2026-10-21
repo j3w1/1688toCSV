@@ -33,11 +33,13 @@ export function reorderHandle({ key, label, items, element, move }) {
       element(id)?.classList.remove('drop-before', 'drop-after')
     element(key)?.classList.remove('is-dragging')
     handle.classList.remove('dragging')
+    delete handle.dataset.reorderCaptured
     drag = null
   }
   handle.addEventListener('pointerdown', (event) => {
     if (event.button !== 0) return
     drag = { x: event.clientX, y: event.clientY, target: null, after: false }
+    handle.dataset.reorderCaptured = ''
     handle.setPointerCapture(event.pointerId)
   })
   handle.addEventListener('pointermove', (event) => {
@@ -68,8 +70,21 @@ export function reorderHandle({ key, label, items, element, move }) {
         target.classList.add(drag.after ? 'drop-after' : 'drop-before')
       }
     }
-    if (event.clientY < 80) window.scrollBy(0, -24)
-    else if (event.clientY > innerHeight - 80) window.scrollBy(0, 24)
+    const scroller = handle.closest('.packing-order-sections')
+    const bounds = scroller?.getBoundingClientRect() || {
+      top: 0,
+      bottom: innerHeight,
+    }
+    const delta =
+      event.clientY < bounds.top + 80
+        ? -24
+        : event.clientY > bounds.bottom - 80
+          ? 24
+          : 0
+    if (delta) {
+      if (scroller) scroller.scrollBy(0, delta)
+      else window.scrollBy(0, delta)
+    }
   })
   handle.addEventListener('pointerup', (event) => {
     if (!drag) return

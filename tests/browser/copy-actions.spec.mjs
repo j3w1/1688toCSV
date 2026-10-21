@@ -197,7 +197,6 @@ test('packing copy formats remain selection-only and Escape dismisses them befor
     'Packing',
     'Labels & codes',
     'Options',
-    'Export',
     'Backup',
   ])
   await expect(trigger).toBeEnabled()
@@ -233,10 +232,16 @@ test('packing copy formats remain selection-only and Escape dismisses them befor
   await page.screenshot({
     path: test.info().outputPath('copy-menu-preparation-wide.png'),
   })
-  const exportPacking = panel.locator('[data-action="export-packing-list"]')
+  const exportPacking = view.locator(
+    '.packing-selection-toolbar [data-action="export-packing-list"]'
+  )
+  await expect(exportPacking).toBeEnabled()
+  await expect(
+    panel.locator('[data-action="export-packing-list"]')
+  ).toHaveCount(0)
   const exportBounds = await exportPacking.boundingBox()
-  const panelBounds = await panel.boundingBox()
-  expect(exportBounds.width).toBeGreaterThan(panelBounds.width * 0.8)
+  expect(exportBounds.height).toBeLessThanOrEqual(42)
+  expect(exportBounds.y + exportBounds.height).toBeLessThanOrEqual(900)
   expect(
     await exportPacking.evaluate((button) => {
       const text = [...button.childNodes].find(

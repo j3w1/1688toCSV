@@ -15,6 +15,7 @@ import {
   productPhotoGallery,
   squareProductPhoto,
   DEFAULT_PHOTO_EDIT,
+  photoEditDraft,
   reprojectPhotoVariantTags,
 } from './product-photo.js'
 import { mountPhotoVariantTagEditor } from './photo-variant-tag-editor.js'
@@ -218,12 +219,9 @@ export function createPhotoViewer(
       editCanvasReady = false
       editor.hidden = false
       editButton.hidden = true
-      draftEdit = {
-        ...DEFAULT_PHOTO_EDIT,
-        ...structuredClone(
-          gallery[index].photoEdits?.[gallery[index].photoIndex] || {}
-        ),
-      }
+      draftEdit = photoEditDraft(
+        gallery[index].photoEdits?.[gallery[index].photoIndex]
+      )
       tagEditor.reset()
       setEditorControls()
       void renderEdit()
@@ -235,7 +233,7 @@ export function createPhotoViewer(
       )
     }
     reset.onclick = () => {
-      draftEdit = { ...DEFAULT_PHOTO_EDIT }
+      draftEdit = photoEditDraft()
       tagEditor.reset()
       setEditorControls()
       void renderEdit()

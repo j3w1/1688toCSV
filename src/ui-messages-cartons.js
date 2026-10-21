@@ -1,4 +1,41 @@
 export const CARTON_MESSAGES = {
+  Planned: { zh: '计划', es: 'Previstas' },
+  Loaded: { zh: '装柜', es: 'Cargadas' },
+  'Received boxes': { zh: '实收箱数', es: 'Cajas recibidas' },
+  'Loaded boxes': { zh: '装柜箱数', es: 'Cajas cargadas' },
+  'Shared boxes': { zh: '共用箱数', es: 'Cajas compartidas' },
+  'Confirmed boxes must be a nonnegative whole number': {
+    zh: '确认箱数必须为非负整数',
+    es: 'Las cajas confirmadas deben ser un número entero no negativo',
+  },
+  'Confirmed boxes received for this packing month. Blank means unknown; zero means none. Shared supplier rows are counted once. Saves automatically.':
+    {
+      zh: '本装箱月份确认收到的箱数。空白表示未知，0 表示没有。共用供应商行仅计一次。自动保存。',
+      es: 'Cajas recibidas confirmadas para este mes de empaque. En blanco: desconocido; cero: ninguna. Las filas compartidas del proveedor se cuentan una vez. Se guarda automáticamente.',
+    },
+  'Confirmed boxes loaded into the container for this packing month. Blank means unknown; zero means none. Shared supplier rows are counted once. Saves automatically.':
+    {
+      zh: '本装箱月份确认装柜的箱数。空白表示未知，0 表示没有。共用供应商行仅计一次。自动保存。',
+      es: 'Cajas cargadas en el contenedor para este mes de empaque. En blanco: desconocido; cero: ninguna. Las filas compartidas se cuentan una vez. Se guarda automáticamente.',
+    },
+  'These variants share one supplier row. Edit its carton counts once.': {
+    zh: '这些规格共用一个供应商行，只需填写一次箱数。',
+    es: 'Estas variantes comparten una fila del proveedor. Edita sus cajas una sola vez.',
+  },
+  'Include every variant of this supplier row in the same packing month to confirm its boxes.':
+    {
+      zh: '请将此供应商行的所有规格加入同一个装箱月份，再确认箱数。',
+      es: 'Incluye todas las variantes de esta fila del proveedor en el mismo mes de empaque para confirmar sus cajas.',
+    },
+  'Preparing packing workbook…': {
+    zh: '正在生成装箱 Excel…',
+    es: 'Preparando el Excel de empaque…',
+  },
+  'Export every product in this packing list with photos, costs and planned, received and loaded boxes. Selection does not limit the export.':
+    {
+      zh: '导出本装箱单的所有商品，包含图片、费用和计划、实收、装柜箱数。勾选范围不影响导出。',
+      es: 'Exporta todos los productos de esta lista con fotos, costos y cajas previstas, recibidas y cargadas. La selección no limita la exportación.',
+    },
   Reviewed: { zh: '已确认', es: 'Revisado' },
   'Carton count unknown. Enter the actual count manually.': {
     zh: '箱数未知，请手动输入实际箱数。',

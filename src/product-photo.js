@@ -6,6 +6,17 @@ export const DEFAULT_PHOTO_EDIT = Object.freeze({
   background: '#ffffff',
 })
 
+export const DEFAULT_PHOTO_TAG_SCALE = 2.75
+
+/** Start new annotations larger without changing existing authored artwork. */
+export function photoEditDraft(saved = {}) {
+  return {
+    ...DEFAULT_PHOTO_EDIT,
+    tagScale: saved.tags?.length ? 1 : DEFAULT_PHOTO_TAG_SCALE,
+    ...structuredClone(saved),
+  }
+}
+
 const quarterSteps = (from, to) =>
   Array.from({ length: (to - from) * 4 + 1 }, (_, index) => from + index / 4)
 

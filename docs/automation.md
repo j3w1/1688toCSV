@@ -43,14 +43,14 @@ Products has no page controls. Scroll `.table-scroll` or use row keyboard naviga
 
 ### Workspace: Packing list
 
-| `data-action`         | Accessible name     | Does                                                                       |
-| --------------------- | ------------------- | -------------------------------------------------------------------------- |
-| `select-all-rows`     | Select all          | Selects every product in the open packing list.                            |
-| `clear-selection`     | Clear selection     | Clears the selection.                                                      |
-| `open-copy-menu`      | More copy formats   | Opens the Copy menu.                                                       |
-| `export-packing-list` | Export packing list | In the Copy menu: saves the whole open packing list (no selection needed). |
-| `open-print-menu`     | More print formats  | Opens the Print menu.                                                      |
-| `open-grouping-menu`  | Grouping tools      | Opens the grouping menu.                                                   |
+| `data-action`         | Accessible name     | Does                                                                                             |
+| --------------------- | ------------------- | ------------------------------------------------------------------------------------------------ |
+| `select-all-rows`     | Select all          | Selects every product in the open packing list.                                                  |
+| `clear-selection`     | Clear selection     | Clears the selection.                                                                            |
+| `open-copy-menu`      | More copy formats   | Opens the Copy menu.                                                                             |
+| `export-packing-list` | Export packing list | Directly in the bottom packing toolbar: saves the whole open packing list (no selection needed). |
+| `open-print-menu`     | More print formats  | Opens the Print menu.                                                                            |
+| `open-grouping-menu`  | Grouping tools      | Opens the grouping menu.                                                                         |
 
 ### Store spreadsheet format guide
 
@@ -123,7 +123,7 @@ Files download through the browser's normal download folder. Names are predictab
 | Carton marks | `CE-carton-marks-2026-10-19-153012-<n>-products.pdf` (`-1-product.pdf` for one) | same name, `.json` |
 | Calibration  | `CE-print-calibration-2026-10-19-153012.pdf`                                    | none               |
 
-The packing list uses the columns chosen in **Copy → Chosen columns** and one row per product, like **Copy values**.
+The packing workbook uses its own complete 31-column layout, independently of **Copy → Chosen columns**. It includes Chinese/current-language headings, small embedded photos and standard code badges, native values and received/loaded weight and volume formulas. Payment/deposit/balance columns are omitted. The companion JSON retains detailed cost evidence and carton batch/month identities. The **Received boxes** and **Loaded boxes** fields in Packing autosave nonnegative whole confirmations; blank is unknown and zero confirms none. Export flushes these pending edits before freezing the file. Physical counts belong to the source carton batch and packing month, not the barcode or 1688 delivery status.
 
 Each summary is JSON:
 
@@ -149,6 +149,6 @@ Label and carton-mark summaries use `"kind": "labels"` or `"carton-marks"` and l
 
 1. On the 1688 order list, tick orders, click `import-selected`, then `confirm-import`. Wait until `#workspace-status` leaves `importing`. If it shows `needs-sign-in`, stop and ask a person.
 2. In the workspace, set `packing-month`, choose orders (`choose-order` + Space), click `select-all-rows` and `prepare-packing-list`, then `review-proceed` if a review appears.
-3. In the packing list, `open-copy-menu` → `export-packing-list`.
+3. In the packing list, click `export-packing-list` directly in the bottom toolbar.
 4. `select-all-rows`, `open-print-menu` → `print-labels` → `export-pdf`; then `print-carton-marks` → `export-pdf`.
 5. Read `data-files` on `#workspace-status`, then open each summary to check what was exported.

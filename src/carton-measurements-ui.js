@@ -5,29 +5,54 @@ import { preparationHelp } from './preparation-help.js'
 
 /** Quiet inline editors share one validation/save path in both tables. */
 export function mountCartonMeasurement(host, { field, value, onSave }) {
-  let saved = normalizeCartonMeasurement(value, field)
+  return mountCartonNumber(host, {
+    field,
+    value,
+    onSave,
+    normalize: (value) => normalizeCartonMeasurement(value, field),
+    label: field === 'kg' ? 'Weight (kg/box)' : 'Volume (m³/box)',
+    unit: field === 'kg' ? 'kg' : 'm³',
+    help:
+      field === 'kg'
+        ? 'Weight of one carton in kg. Leave blank if unknown. Decimals may use a dot or comma. Saves automatically.'
+        : 'Volume of one carton in m³. Leave blank if unknown. Decimals may use a dot or comma. Saves automatically.',
+  })
+}
+
+/** A shared commit path retains pending numeric drafts during virtual scrolling. */
+export function mountCartonNumber(
+  host,
+  {
+    field,
+    value,
+    onSave,
+    normalize,
+    label: labelText,
+    help,
+    unit: unitText = '',
+    inputMode = 'decimal',
+    pattern = '(?:[0-9]+(?:[.,][0-9]+)?|[.,][0-9]+)',
+  }
+) {
+  let saved = normalize(value)
   const control = el('div', undefined, 'carton-measurement'),
     input = el('input'),
-    unit = el('span', field === 'kg' ? 'kg' : 'm³', 'carton-measurement-unit'),
-    label = el(
-      'label',
-      m(field === 'kg' ? 'Weight (kg/box)' : 'Volume (m³/box)'),
-      'sr-only'
-    ),
+    unit = el('span', unitText, 'carton-measurement-unit'),
+    label = el('label', m(labelText), 'sr-only'),
     status = el('span', undefined, 'carton-measurement-status sr-only')
   control.dataset.field = field
   input.type = 'text'
-  input.inputMode = 'decimal'
+  input.inputMode = inputMode
   input.autocomplete = 'off'
   input.spellcheck = false
   input.setAttribute('enterkeyhint', 'done')
-  input.setAttribute('pattern', '(?:[0-9]+(?:[.,][0-9]+)?|[.,][0-9]+)')
+  input.setAttribute('pattern', pattern)
   input.id = `carton-${field}-${crypto.randomUUID()}`
   input.value = saved
   unit.setAttribute('aria-hidden', 'true')
   const updateUnit = () => {
     try {
-      unit.hidden = normalizeCartonMeasurement(input.value, field) === ''
+      unit.hidden = !unitText || normalize(input.value) === ''
     } catch {
       unit.hidden = true
     }
@@ -39,26 +64,14 @@ export function mountCartonMeasurement(host, { field, value, onSave }) {
   status.setAttribute('role', 'status')
   status.setAttribute('aria-live', 'polite')
   input.setAttribute('aria-describedby', status.id)
-  preparationHelp(
-    input,
-    m(
-      field === 'kg'
-        ? 'Weight of one carton in kg. Leave blank if unknown. Decimals may use a dot or comma. Saves automatically.'
-        : 'Volume of one carton in m³. Leave blank if unknown. Decimals may use a dot or comma. Saves automatically.'
-    )
-  )
+  preparationHelp(input, m(help))
   control.append(label, input, unit, status)
   host.append(control)
   let timer, work
   const parse = () => {
     // Never turn a browser's bad input state into an explicit blank clear.
-    if (input.validity?.badInput)
-      throw new Error(
-        field === 'kg'
-          ? 'Weight must be a nonnegative decimal in kg'
-          : 'Volume must be a nonnegative decimal in m³'
-      )
-    return normalizeCartonMeasurement(input.value, field)
+    if (input.validity?.badInput) return normalize('!')
+    return normalize(input.value)
   }
   const dirty = () => {
     try {
@@ -144,7 +157,7 @@ export function mountCartonMeasurement(host, { field, value, onSave }) {
     dirty,
     update(next) {
       if (dirty() || work) return false
-      saved = normalizeCartonMeasurement(next.value, field)
+      saved = normalize(next.value)
       input.value = saved
       updateUnit()
       return true

@@ -21,6 +21,11 @@ import {
   repeatProductStoreIdentity,
 } from './repeat-products.js'
 import { createRepeatProductsRepository } from './repeat-products-repository.js'
+import {
+  editCartonConfirmation,
+  validateCartonConfirmationMetadata,
+  mergeCartonConfirmations,
+} from './carton-confirmations.js'
 const productAnnotationFields = [
   [
     'productWorkflow',
@@ -434,7 +439,7 @@ function latestStoreWechat(records) {
   return newest
 }
 
-function validateRecord(input) {
+function validateRecord(input, sourceSnapshots = []) {
   object(input, 'Order record')
   if (!Number.isSafeInteger(input.revision) || input.revision < 1)
     throw new Error('Order revision must be a positive integer')
@@ -511,6 +516,10 @@ function validateRecord(input) {
       input.cartonDetailsUpdatedAt,
       'Carton details updatedAt'
     )
+  Object.assign(
+    record,
+    validateCartonConfirmationMetadata(input, record, sourceSnapshots)
+  )
   if (input.additionalCharges !== undefined)
     record.additionalCharges = validateAdditionalCharges(
       input.additionalCharges
@@ -675,6 +684,11 @@ function reconcile(snapshot, previous) {
           .filter((field) => previous?.[field] !== undefined)
           .map((field) => [field, previous[field]])
       ),
+      ...Object.fromEntries(
+        ['cartonConfirmations', 'cartonConfirmationClocks']
+          .filter((field) => previous?.[field] !== undefined)
+          .map((field) => [field, previous[field]])
+      ),
       ...(previous?.additionalCharges !== undefined
         ? { additionalCharges: previous.additionalCharges }
         : {}),
@@ -792,8 +806,22 @@ export function validateBackup(input) {
   date(input.exportedAt, 'exportedAt')
   if (!Array.isArray(input.orders) || !Array.isArray(input.history))
     throw new Error('Backup orders and history must be arrays')
-  const orders = input.orders.map(validateRecord)
-  const history = input.history.map(validateRecord)
+  const sourceSnapshots = new Map()
+  for (const record of [...input.orders, ...input.history]) {
+    const snapshot = record?.snapshot
+    const key = JSON.stringify([snapshot?.accountId, snapshot?.orderId])
+    if (!sourceSnapshots.has(key)) sourceSnapshots.set(key, [])
+    if (snapshot) sourceSnapshots.get(key).push(snapshot)
+  }
+  const validatedRecord = (record) =>
+    validateRecord(
+      record,
+      sourceSnapshots.get(
+        JSON.stringify([record?.snapshot?.accountId, record?.snapshot?.orderId])
+      ) || []
+    )
+  const orders = input.orders.map(validatedRecord)
+  const history = input.history.map(validatedRecord)
   if (input.images !== undefined && !Array.isArray(input.images))
     throw new Error('Backup images must be an array')
   const images = (input.images ?? []).map(validateImage)
@@ -918,7 +946,12 @@ export function validateBackup(input) {
                 (scope) =>
                   scope.accountId === record.snapshot.accountId &&
                   scope.orderId === record.snapshot.orderId
-              ).entryIds
+              ).entryIds,
+              preparations.find(
+                (preparation) =>
+                  preparation.accountId === record.snapshot.accountId &&
+                  preparation.orderId === record.snapshot.orderId
+              )
             )
           : record
       ),
@@ -1926,6 +1959,51 @@ export async function openDatabase({ name = '1688-order-library' } = {}) {
       })
     },
 
+    async setCartonConfirmation(
+      orderId,
+      entryId,
+      month,
+      field,
+      value,
+      { accountId = 'local' } = {}
+    ) {
+      identifier(orderId, 'Order ID')
+      identifier(entryId, 'Carton confirmation entry ID')
+      return write(['orders'], async (tx) => {
+        const store = tx.objectStore('orders')
+        const order = await requested(store.get([accountId, orderId]))
+        if (!order) throw new Error('Order was not found')
+        const edited = editCartonConfirmation(
+          order,
+          entryId,
+          month,
+          field,
+          value
+        )
+        if (
+          JSON.stringify(order.cartonConfirmations || {}) ===
+            JSON.stringify(edited.cartonConfirmations) &&
+          order.cartonConfirmationClocks?.[edited.entryId]?.[month]
+        )
+          return order
+        const result = {
+          ...order,
+          cartonConfirmations: edited.cartonConfirmations,
+          cartonConfirmationClocks: {
+            ...order.cartonConfirmationClocks,
+            [edited.entryId]: {
+              ...order.cartonConfirmationClocks?.[edited.entryId],
+              [month]: nextEditTimestamp(
+                order.cartonConfirmationClocks?.[edited.entryId]?.[month]
+              ),
+            },
+          },
+        }
+        store.put(result)
+        return result
+      })
+    },
+
     async setUnitsPerCarton(
       orderId,
       entryId,
@@ -2435,6 +2513,7 @@ export async function openDatabase({ name = '1688-order-library' } = {}) {
                 next
               )
               next = mergeAdditionalCharges(previous, incoming, next)
+              next = mergeCartonConfirmations(previous, incoming, next)
               next = mergeStoreWechat(previous, incoming, next)
               next = mergeOperations(previous, incoming, next)
               next = mergePaymentLinks(previous, incoming, next)

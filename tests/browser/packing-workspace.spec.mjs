@@ -3251,15 +3251,16 @@ test('combining, separating, splitting and merging preserve source rows and curr
   expect(extension.unexpectedRequests).toEqual([])
 })
 
-test('merging product groups across pages preserves source rows and releases unused codes', async ({
+test('continuous packing groups preserve selection and pending edits across a bounded window', async ({
   extension,
 }) => {
+  const totalGroups = 121
   const [record] = await extension.inspector.evaluate(
     `(${createDemoRecords.toString()})(document)`
   )
   record.snapshot.sellerMemberLogin = 'synthetic-paged-preparation'
   const template = record.snapshot.items[0]
-  record.snapshot.items = Array.from({ length: 21 }, (_, index) => {
+  record.snapshot.items = Array.from({ length: totalGroups }, (_, index) => {
     const number = String(index + 1).padStart(2, '0')
     return {
       ...template,
@@ -3275,12 +3276,12 @@ test('merging product groups across pages preserves source rows and releases unu
     }
   })
   record.snapshot.totals = {
-    goodsGross: '21.00',
+    goodsGross: `${totalGroups}.00`,
     shipping: '0.00',
     sourceDiscount: '0.00',
     orderAdjustment: '0.00',
-    goodsNet: '21.00',
-    payable: '21.00',
+    goodsNet: `${totalGroups}.00`,
+    payable: `${totalGroups}.00`,
   }
   record.changedEntryIds = []
   const restored = await extension.inspector.evaluate(
@@ -3315,14 +3316,45 @@ test('merging product groups across pages preserves source rows and releases unu
   await waitForAutosave(dialog)
   const before = await packingBackup(extension)
   const first = before.preparations[0].groups[0]
-  const last = before.preparations[0].groups[20]
-  await groups.first().locator('.group-select').click()
-  await dialog.getByRole('button', { name: 'Next groups', exact: true }).click()
-  await expect(groups).toHaveCount(1)
-  await groups
-    .first()
-    .locator('.group-select')
-    .click({ modifiers: ['Control'] })
+  const last = before.preparations[0].groups[totalGroups - 1]
+  const firstGroup = dialog.locator(`[data-group-id="${first.id}"]`)
+  const lastGroup = dialog.locator(`[data-group-id="${last.id}"]`)
+  const scroller = dialog.locator('.packing-order-sections')
+  await expect(
+    dialog.getByRole('button', { name: 'Next groups', exact: true })
+  ).toHaveCount(0)
+  await firstGroup.locator('.group-select').click()
+  const editor = firstGroup.getByLabel('Spanish short name', { exact: true })
+  await editor.fill('PENDING WINDOW EDIT')
+  await scroller.evaluate((node) => {
+    node.scrollTop = node.scrollHeight
+  })
+  await expect(lastGroup).toBeVisible()
+  await expect(editor).toBeFocused()
+  await expect(editor).toHaveValue('PENDING WINDOW EDIT')
+  expect(await groups.count()).toBeLessThanOrEqual(21)
+  await lastGroup.locator('.group-select').click({ modifiers: ['Control'] })
+  for (const width of [1280, 390]) {
+    await page.setViewportSize({ width, height: 720 })
+    await expect
+      .poll(() =>
+        page.evaluate(() => document.documentElement.scrollHeight - innerHeight)
+      )
+      .toBeLessThanOrEqual(1)
+    const bounds = await scroller.boundingBox()
+    expect(bounds.height).toBeGreaterThan(40)
+    expect(bounds.y + bounds.height).toBeLessThanOrEqual(720)
+  }
+  await page.setViewportSize({ width: 1280, height: 900 })
+  await scroller.evaluate((node) => {
+    node.scrollTop = 0
+  })
+  await firstGroup.locator('.group-select').focus()
+  await page.keyboard.press('Control+End')
+  await expect(lastGroup.locator('.group-select')).toBeFocused()
+  await expect(dialog.locator('.preparation-copy-scope')).toContainText(
+    '2 selected products'
+  )
   await clickGroupingAction(page, 'Merge products')
   await page
     .locator('.packing-review')
@@ -3341,7 +3373,7 @@ test('merging product groups across pages preserves source rows and releases unu
   )
   await expect(groups.first().locator('.variants tbody tr')).toHaveCount(2)
   const after = await savePreparationAndRead(extension, dialog)
-  expect(after.preparations[0].groups).toHaveLength(20)
+  expect(after.preparations[0].groups).toHaveLength(totalGroups - 1)
   expect(after.preparations[0].groups[0].id).toBe(first.id)
   expect(after.preparations[0].groups[0].baseCode).toBe(first.baseCode)
   expect(
@@ -3364,8 +3396,8 @@ test('merging product groups across pages preserves source rows and releases unu
         `${group.baseCode}${variant.variantSuffix}${variant.sizeSuffix}`
     )
   )
-  expect(new Set(currentBases).size).toBe(20)
-  expect(new Set(currentBarcodes).size).toBe(21)
+  expect(new Set(currentBases).size).toBe(totalGroups - 1)
+  expect(new Set(currentBarcodes).size).toBe(totalGroups)
   expect(
     after.issuedCodes
       .filter((issued) => issued.kind === 'base')

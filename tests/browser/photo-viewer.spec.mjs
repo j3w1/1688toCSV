@@ -553,9 +553,12 @@ test('photo tags place, rename and move with pointer and keyboard, then survive 
       })
     )
   const tagGeometry = await readTagGeometry()
+  await expect(
+    photo.getByRole('slider', { name: 'Tag size', exact: true })
+  ).toHaveAttribute('aria-valuetext', '275%')
   await choosePhotoScale(
     photo.getByRole('slider', { name: 'Tag size', exact: true }),
-    200
+    550
   )
   const largerGeometry = await readTagGeometry()
   expect(largerGeometry).toHaveLength(2)
@@ -579,7 +582,7 @@ test('photo tags place, rename and move with pointer and keyboard, then survive 
   )
   const edit = await savedPhotoEdit(extension)
   expect(edit.tags.map((tag) => tag.code)).toEqual(['AX', 'BL'])
-  expect(edit.tagScale).toBe(2)
+  expect(edit.tagScale).toBe(5.5)
   expect(edit.tags[0].x).toBeCloseTo(0.355, 2)
   expect(edit.tags[0].y).toBeCloseTo(0.47, 2)
   expect(edit.tags[0].labelX).toBeCloseTo(
@@ -594,7 +597,7 @@ test('photo tags place, rename and move with pointer and keyboard, then survive 
   await startEditing(photo)
   await expect(
     photo.getByRole('slider', { name: 'Tag size', exact: true })
-  ).toHaveAttribute('aria-valuetext', '200%')
+  ).toHaveAttribute('aria-valuetext', '550%')
   await expect(
     photo.getByRole('button', { name: 'Select tag AX', exact: true })
   ).toBeVisible()
@@ -897,7 +900,7 @@ test('pointer presets resize every circle independently and stay local to each p
   )
   const saved = await savedPhotoEdit(extension)
   expect(saved.pointerScale).toBe(2.5)
-  expect(saved).not.toHaveProperty('tagScale')
+  expect(saved.tagScale).toBe(2.75)
   await photo.getByRole('button', { name: 'Next photo', exact: true }).click()
   await startEditing(photo)
   await expect(pointer).toHaveAttribute('aria-valuetext', '100%')

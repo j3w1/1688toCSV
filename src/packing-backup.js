@@ -7,6 +7,7 @@ import {
 } from './packing-model.js'
 import { preparationAuthoring } from './product-vocabulary.js'
 import { paymentSourceDependencies } from './payment-links.js'
+import { cartonBatchesForItems } from './carton-confirmations.js'
 
 const key = (entry) =>
   JSON.stringify([entry.accountId ?? 'local', entry.orderId])
@@ -201,8 +202,30 @@ export function selectPackingPreparation(preparation, ids) {
   return result
 }
 
-export function selectPackingOrder(order, ids) {
+export function selectPackingOrder(order, ids, preparation) {
   const selected = new Set(ids)
+  const confirmedBatches = new Set(
+    cartonBatchesForItems(order, ids)
+      .filter((batch) => batch.complete)
+      .map((batch) => batch.entryId)
+  )
+  const confirmationMonths = new Map()
+  if (preparation) {
+    const selectedByMonth = new Map()
+    for (const group of preparation.groups) {
+      const month = groupPackingMonth(preparation, group)
+      if (!selectedByMonth.has(month)) selectedByMonth.set(month, new Set())
+      for (const id of group.variants.flatMap((variant) => variant.entryIds))
+        if (selected.has(id)) selectedByMonth.get(month).add(id)
+    }
+    for (const [month, monthIds] of selectedByMonth)
+      for (const batch of cartonBatchesForItems(order, monthIds)) {
+        if (!batch.complete) continue
+        if (!confirmationMonths.has(batch.entryId))
+          confirmationMonths.set(batch.entryId, new Set())
+        confirmationMonths.get(batch.entryId).add(month)
+      }
+  }
   const result = structuredClone(order)
   if (result.productTags)
     result.productTags = Object.fromEntries(
@@ -220,6 +243,22 @@ export function selectPackingOrder(order, ids) {
     result.cartonDetails = Object.fromEntries(
       Object.entries(result.cartonDetails).filter(([id]) => selected.has(id))
     )
+  for (const field of ['cartonConfirmations', 'cartonConfirmationClocks'])
+    if (result[field])
+      result[field] = Object.fromEntries(
+        Object.entries(result[field])
+          .filter(([id]) => confirmedBatches.has(id))
+          .map(([id, months]) => [
+            id,
+            Object.fromEntries(
+              Object.entries(months).filter(
+                ([month]) =>
+                  !preparation || confirmationMonths.get(id)?.has(month)
+              )
+            ),
+          ])
+          .filter(([, months]) => Object.keys(months).length)
+      )
   if (result.packingExcludedEntryIds)
     result.packingExcludedEntryIds = result.packingExcludedEntryIds.filter(
       (id) => selected.has(id)
@@ -289,7 +328,13 @@ export function createPackingBackup(backup, selection) {
   const selectedOrders = backup.orders
     .filter((order) => selected.has(key(order.snapshot)))
     .map((order) =>
-      selectPackingOrder(order, selected.get(key(order.snapshot)))
+      selectPackingOrder(
+        order,
+        selected.get(key(order.snapshot)),
+        backup.preparations.find(
+          (preparation) => key(preparation) === key(order.snapshot)
+        )
+      )
     )
   const dependencies = paymentSourceDependencies(backup.orders, selectedOrders)
   if (dependencies.length)

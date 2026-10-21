@@ -119,6 +119,10 @@ export function createVirtualTable({
   }
   function update() {
     measuring = true
+    scroller.style.setProperty(
+      '--virtual-table-heading-height',
+      `${headingHeight()}px`
+    )
     const nextWidth = scroller.clientWidth
     if (nextWidth && width && Math.abs(nextWidth - width) > 1) {
       // Keep the old offsets until measure captures the visible logical anchor.

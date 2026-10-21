@@ -797,6 +797,24 @@ test('empty library gives a starting action and narrow widths contain table over
       .locator('.table-scroll')
       .evaluate((el) => el.scrollWidth > el.clientWidth)
   ).toBe(true)
+  for (const viewport of [
+    { width: 1280, height: 720 },
+    { width: 390, height: 720 },
+    { width: 320, height: 700 },
+  ]) {
+    await page.setViewportSize(viewport)
+    await expect
+      .poll(() =>
+        page.evaluate(() => document.documentElement.scrollHeight - innerHeight)
+      )
+      .toBeLessThanOrEqual(1)
+    for (const selector of ['.orders-pane', '.sheet-pane']) {
+      const bounds = await page.locator(selector).boundingBox()
+      expect(bounds.height).toBeGreaterThan(0)
+      expect(bounds.y).toBeGreaterThanOrEqual(0)
+      expect(bounds.y + bounds.height).toBeLessThanOrEqual(viewport.height)
+    }
+  }
 })
 test('copy images only produces one picture per selected row', async ({
   extension,

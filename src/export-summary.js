@@ -87,6 +87,9 @@ function exactAmount(value, field) {
 }
 
 const packingDetailFields = [
+  'plannedBoxes',
+  'receivedBoxes',
+  'loadedBoxes',
   'cartons',
   'cartonWeight',
   'cartonVolume',
@@ -151,6 +154,13 @@ export function packingSummary({
       name: row.spanishName || '',
       quantity: exactQuantity(row.quantity),
       ...details,
+      ...(row.packingMonth ? { packingMonth: row.packingMonth } : {}),
+      ...(row.cartonBatchId
+        ? {
+            cartonBatchId: row.cartonBatchId,
+            cartonBatchComplete: row.cartonBatchComplete === true,
+          }
+        : {}),
       ...(row.storeNumber !== undefined &&
       row.storeNumber !== null &&
       String(row.storeNumber).trim()

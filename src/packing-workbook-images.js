@@ -1,0 +1,148 @@
+import { CE_CODE_DESIGN, codeDesignMetrics } from './code-design.js'
+import { codeParts } from './code-display.js'
+import { photoPlacement, drawPhotoVariantTags } from './product-photo.js'
+
+const imageBlob = (canvas, mime = 'image/png') =>
+  new Promise((resolve, reject) =>
+    canvas.toBlob(
+      (blob) =>
+        blob
+          ? resolve(blob)
+          : reject(new Error('Packing image could not be created.')),
+      mime,
+      0.86
+    )
+  )
+
+/** The same rounded code badge and product-number reading aid as table images. */
+export async function workbookCodeImage(
+  value,
+  { maxWidth = 512, maxHeight = 128 } = {}
+) {
+  if (!value) return undefined
+  const canvas = document.createElement('canvas')
+  const context = canvas.getContext('2d')
+  const scale = 2
+  let fontSize = 22 * scale
+  const font = () =>
+    `${CE_CODE_DESIGN.fontWeight} ${fontSize}px ${CE_CODE_DESIGN.fontFamily}`
+  context.font = font()
+  context.fontKerning = 'none'
+  const original = codeDesignMetrics(fontSize)
+  const metrics = context.measureText(value)
+  const naturalWidth = metrics.width + original.paddingInline * 2
+  const naturalHeight =
+    metrics.actualBoundingBoxAscent +
+    metrics.actualBoundingBoxDescent +
+    original.paddingBlock * 2
+  fontSize *= Math.min(1, maxWidth / naturalWidth, maxHeight / naturalHeight)
+  context.font = font()
+  const bounds = context.measureText(value)
+  const design = codeDesignMetrics(fontSize)
+  const ink = bounds.actualBoundingBoxAscent + bounds.actualBoundingBoxDescent
+  canvas.width = Math.ceil(bounds.width + design.paddingInline * 2)
+  canvas.height = Math.ceil(ink + design.paddingBlock * 2)
+  context.font = font()
+  context.fontKerning = 'none'
+  context.fillStyle = CE_CODE_DESIGN.background
+  context.beginPath()
+  context.roundRect(0, 0, canvas.width, canvas.height, design.radius)
+  context.fill()
+  const x = (canvas.width - bounds.width) / 2
+  const baseline = (canvas.height - ink) / 2 + bounds.actualBoundingBoxAscent
+  context.fillStyle = CE_CODE_DESIGN.foreground
+  context.fillText(value, x, baseline)
+  const parts = codeParts(value)
+  if (parts) {
+    context.fillRect(
+      x + context.measureText(parts[0]).width,
+      Math.round(baseline + fontSize * 0.18),
+      context.measureText(parts[1]).width,
+      scale
+    )
+  }
+  const result = {
+    bytes: await imageBlob(canvas),
+    width: canvas.width,
+    height: canvas.height,
+    mimeType: 'image/png',
+  }
+  canvas.width = canvas.height = 0
+  return result
+}
+
+/** Decode one image at a time and retain only small assets, never original pixels. */
+export function createPackingWorkbookImages(loadImage) {
+  const photos = new Map()
+  return async (row, limits) => {
+    const code = await workbookCodeImage(
+      row.barcode || row.baseCode,
+      limits.code
+    )
+    const edit = row.photoEdits?.[0]
+    const source = edit
+      ? row.photos?.[0] || row.thumbnail
+      : row.thumbnail || row.photos?.[0]
+    if (!source) return { code }
+    const signature = JSON.stringify(edit || {})
+    const cached = photos.get(source)
+    let photo = cached?.signature === signature ? cached.asset : undefined
+    if (!photo) {
+      const loaded = await loadImage(source)
+      const blob =
+        loaded instanceof Blob ? loaded : await (await fetch(loaded)).blob()
+      const image = new Image()
+      const url = URL.createObjectURL(blob)
+      const canvas = document.createElement('canvas')
+      try {
+        image.src = url
+        await image.decode()
+        const ratio = Math.min(
+          1,
+          limits.photo.maxWidth / image.naturalWidth,
+          limits.photo.maxHeight / image.naturalHeight
+        )
+        canvas.width = edit
+          ? Math.min(limits.photo.maxWidth, limits.photo.maxHeight)
+          : Math.max(1, Math.round(image.naturalWidth * ratio))
+        canvas.height = edit
+          ? canvas.width
+          : Math.max(1, Math.round(image.naturalHeight * ratio))
+        const context = canvas.getContext('2d')
+        context.fillStyle = edit?.background || '#fff'
+        context.fillRect(0, 0, canvas.width, canvas.height)
+        const rect = edit
+          ? photoPlacement(
+              image.naturalWidth,
+              image.naturalHeight,
+              canvas.width,
+              edit
+            )
+          : { x: 0, y: 0, width: canvas.width, height: canvas.height }
+        context.drawImage(image, rect.x, rect.y, rect.width, rect.height)
+        if (edit?.tags?.length)
+          drawPhotoVariantTags(
+            context,
+            edit.tags,
+            canvas.width,
+            edit.tagScale ?? 1,
+            edit.pointerScale ?? 1,
+            edit.invertPointer ?? false
+          )
+        photo = {
+          bytes: await imageBlob(canvas, 'image/jpeg'),
+          width: canvas.width,
+          height: canvas.height,
+          mimeType: 'image/jpeg',
+        }
+      } finally {
+        image.removeAttribute('src')
+        URL.revokeObjectURL(url)
+        canvas.width = canvas.height = 0
+      }
+      if (photos.size >= 24) photos.delete(photos.keys().next().value)
+      photos.set(source, { signature, asset: photo })
+    }
+    return { photo, code }
+  }
+}

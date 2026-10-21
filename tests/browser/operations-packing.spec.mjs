@@ -260,7 +260,6 @@ test('reviewed payment links preserve source totals, skip payment rows and expor
   await workflow.getByRole('button', { name: 'Cancel', exact: true }).click()
   const downloads = []
   page.on('download', (download) => downloads.push(download))
-  await revealCopyActions(page)
   await page
     .getByRole('button', { name: 'Export packing list', exact: true })
     .click()
@@ -291,11 +290,13 @@ test('reviewed payment links preserve source totals, skip payment rows and expor
     { type: 'buffer' }
   )
   const table = XLSX.utils.sheet_to_json(
-    workbook.Sheets[workbook.SheetNames[0]]
+    workbook.Sheets[workbook.SheetNames[0]],
+    { header: 1, defval: '' }
   )
-  expect(table[0]['Linked cost']).toBe(456)
-  expect(table[0]['Amount with charges']).toBe(486)
-  expect(table[0]['Product features']).toBe('Lighting · Rotation')
+  const product = table.find((row) => row[2] === summary.products[0].code)
+  expect(product[16]).toBe(162)
+  expect(product[17]).toBe(486)
+  expect(summary.products[0].productFeatures).toBe('Lighting · Rotation')
   await page.screenshot({ path: 'work/operations-packing.png' })
   expect(extension.unexpectedRequests).toEqual([])
 })

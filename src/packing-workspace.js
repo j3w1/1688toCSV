@@ -49,6 +49,7 @@ import {
   cartonCapacityReadout,
 } from './carton-packing-ui.js'
 import { mountCartonMeasurement } from './carton-measurements-ui.js'
+import { mountCartonConfirmation } from './carton-confirmations-ui.js'
 import { popupLanguageToggle } from './popup-language-toggle.js'
 import { createProductDescription } from './product-details.js'
 import {
@@ -117,6 +118,7 @@ import {
 } from './preparation-removal.js'
 import { createPreparationMedia, preparationHelp } from './preparation-media.js'
 import { createRowSelection } from './row-selection.js'
+import { createVirtualList } from './virtual-list.js'
 import { copyExcelImage } from './excel-image-copy.js'
 import {
   createExcelImageBadges,
@@ -146,11 +148,15 @@ import {
   preparationOrderFields,
   writeTable,
   labelClipboard,
-  preparationGrid,
-  selectedPreparationColumns,
-  PREPARATION_COLUMN_PREFERENCE,
 } from './preparation-clipboard.js'
-import { createXlsx } from './xlsx-writer.js'
+import { createPackingWorkbook } from './packing-workbook.js'
+import { createPackingWorkbookImages } from './packing-workbook-images.js'
+import { readExcelImagePreference } from './excel-image-options.js'
+import {
+  cartonBatchForItem,
+  cartonConfirmationForItem,
+  mergeCartonConfirmations,
+} from './carton-confirmations.js'
 import { saveFile, announceExport, uniqueFileName } from './save-file.js'
 import {
   packingListFileName,
@@ -285,7 +291,8 @@ export async function startPackingWorkspace({
     editor,
     drafts = [],
     current = 0,
-    groupPage = 0
+    packingScrollAnchor,
+    packingGroupList
   const channel = globalThis.BroadcastChannel
     ? new BroadcastChannel('1688-preparation')
     : null
@@ -302,11 +309,14 @@ export async function startPackingWorkspace({
     opening = false,
     labelOrderId
   let packingExclusionSaving = false
+  let exportingPacking = false
   const variantPages = new Map()
   const materialFields = new Set()
   const sourceAttributeFields = new Set()
   const cartonFields = new Map()
   const measurementFields = new Map()
+  const confirmationFields = new Map()
+  const confirmationScope = new Map()
   let rowFieldCleanupPending = false
   function scheduleRowFieldCleanup() {
     if (rowFieldCleanupPending) return
@@ -315,7 +325,11 @@ export async function startPackingWorkspace({
       rowFieldCleanupPending = false
       // Virtual rows are built as one detached batch, then mounted together.
       // Only prune after mounting so later rows cannot evict earlier editors.
-      for (const fields of [cartonFields, measurementFields])
+      for (const fields of [
+        cartonFields,
+        measurementFields,
+        confirmationFields,
+      ])
         for (const [key, entry] of fields)
           if (!entry.input.isConnected && !entry.dirty()) fields.delete(key)
     })
@@ -504,7 +518,7 @@ export async function startPackingWorkspace({
         0,
         drafts.findIndex((draft) => draft.orderId === activeId)
       )
-      groupPage = 0
+      packingScrollAnchor = null
       renderPreparation()
       changed()
       channel?.postMessage('changed')
@@ -616,12 +630,13 @@ export async function startPackingWorkspace({
         selected: state.groups,
         additive: true,
         getKeys: () => state.keys,
+        ensureVisible: (id) => ensurePackingGroup(draft.orderId, id),
         onChange: () => {
+          for (const id of state.groups) {
+            state.variants.get(id)?.selected.clear()
+            state.variants.get(id)?.controller.paint()
+          }
           for (const [id, card] of state.cards) {
-            if (state.groups.has(id)) {
-              state.variants.get(id)?.selected.clear()
-              state.variants.get(id)?.controller.paint()
-            }
             card.classList.toggle('is-selected', state.groups.has(id))
           }
           updatePreparationCopyScope()
@@ -642,6 +657,8 @@ export async function startPackingWorkspace({
         variants.controller = createRowSelection({
           selected: variants.selected,
           getKeys: () => variants.keys,
+          ensureVisible: (id) =>
+            ensurePackingVariant(draft.orderId, group.id, id),
           onChange: () => {
             state.groups.delete(group.id)
             state.controller.paint()
@@ -776,6 +793,108 @@ export async function startPackingWorkspace({
       }
       if (field === 'cbm')
         updateVolumeHelp(editor, productCartonDetails(item, record))
+    }
+  }
+  function mountConfirmations(host, item, record, draft, group) {
+    const month = groupPackingMonth(draft, group)
+    const batch = cartonBatchForItem(record, item.entryId)
+    const scopeKey = `${draft.orderId}/${month}`
+    if (!confirmationScope.has(scopeKey))
+      confirmationScope.set(
+        scopeKey,
+        new Set(
+          scopedGroups(draft)
+            .filter((entry) => groupPackingMonth(draft, entry) === month)
+            .flatMap((entry) =>
+              scopedVariants(draft, entry).flatMap(
+                (variant) => variant.entryIds
+              )
+            )
+            .filter((id) => scopeEntries.get(draft.orderId)?.has(id))
+        )
+      )
+    const complete = batch.entryIds.every((id) =>
+      confirmationScope.get(scopeKey).has(id)
+    )
+    const planned = cartonPackingForItems(record, batch.entryIds)
+    host.append(
+      el(
+        'span',
+        complete && planned.exact ? String(planned.total) : '—',
+        'variant-planned-boxes'
+      )
+    )
+    if (batch.entryId !== item.entryId) {
+      const shared = button(
+        uiMessage('Shared boxes'),
+        () => {
+          const ownerGroup = scopedGroups(draft).find((entry) =>
+            entry.variants.some((variant) =>
+              variant.entryIds.includes(batch.entryId)
+            )
+          )
+          const ownerVariant = ownerGroup?.variants.find((variant) =>
+            variant.entryIds.includes(batch.entryId)
+          )
+          if (!ownerVariant) return
+          ensurePackingVariant(draft.orderId, ownerGroup.id, ownerVariant.id)
+          $('preparation-content')
+            .querySelector(
+              `.variant-numeric-row[data-entry-id="${batch.entryId}"] .carton-confirmation input`
+            )
+            ?.focus({ preventScroll: true })
+        },
+        'variant-shared-boxes'
+      )
+      preparationHelp(
+        shared,
+        uiMessage(
+          'These variants share one supplier row. Edit its carton counts once.'
+        )
+      )
+      shared.disabled = !complete
+      host.append(shared)
+      return
+    }
+    const liveRecord = () => packingRecord({ orderId: draft.orderId }) || record
+    for (const field of ['received', 'loaded']) {
+      const holder = el('div', undefined, 'variant-measurement-cell')
+      const key = `${record.snapshot.accountId}/${draft.orderId}/${batch.entryId}/${month}/${field}`
+      const value = () =>
+        cartonConfirmationForItem(liveRecord(), batch.entryId, month)[field]
+      let controller = confirmationFields.get(key)
+      if (!controller) {
+        controller = mountCartonConfirmation(holder, {
+          field,
+          value: value(),
+          onSave: async (value) => {
+            const result = await repository.setCartonConfirmation(
+              draft.orderId,
+              batch.entryId,
+              month,
+              field,
+              value,
+              { accountId: record.snapshot.accountId }
+            )
+            const live = liveRecord()
+            Object.assign(live, mergeCartonConfirmations(live, result))
+            channel?.postMessage('carton-capacity')
+          },
+        })
+        confirmationFields.set(key, controller)
+      } else {
+        controller.update({ value: value() })
+        holder.append(controller.control)
+      }
+      controller.input.disabled = !complete
+      if (!complete)
+        preparationHelp(
+          holder,
+          uiMessage(
+            'Include every variant of this supplier row in the same packing month to confirm its boxes.'
+          )
+        )
+      host.append(holder)
     }
   }
   function updateVolumeHelp(editor, details) {
@@ -953,13 +1072,6 @@ export async function startPackingWorkspace({
     packingOrders.clear()
     packingOrders.add(draft.orderId)
     current = drafts.indexOf(draft)
-    groupPage = Math.max(
-      0,
-      Math.floor(
-        scopedGroups(draft).findIndex((group) => group.id === issue.group?.id) /
-          20
-      )
-    )
     if (issue.variant)
       variantPages.set(
         issue.group.id,
@@ -973,6 +1085,9 @@ export async function startPackingWorkspace({
     $('packing-view').hidden = false
     document.body.classList.add('packing-active')
     renderPreparation()
+    if (issue.group) ensurePackingGroup(draft.orderId, issue.group.id)
+    if (!issue.group || issue.field === 'seller')
+      packingGroupList?.ensureVisible(`order:${draft.orderId}`)
     const host = document.querySelector(
       `[data-packing-order="${CSS.escape(draft.orderId)}"]`
     )
@@ -1187,6 +1302,10 @@ export async function startPackingWorkspace({
     updateSaveStatus()
   }
   async function flushSaves() {
+    for (const [key, entry] of confirmationFields) {
+      await entry.flush()
+      if (!entry.input.isConnected) confirmationFields.delete(key)
+    }
     await flushMeasurements()
     for (const [key, entry] of cartonFields) {
       await entry.flush()
@@ -1546,7 +1665,7 @@ export async function startPackingWorkspace({
         await changed({ reload: true })
         channel?.postMessage('changed')
       }
-      groupPage = 0
+      packingScrollAnchor = null
       renderPreparation()
     } finally {
       arrangementSaving = previousSaving
@@ -1651,9 +1770,11 @@ export async function startPackingWorkspace({
     if (
       !pendingSaves.size &&
       !saveWork &&
-      ![...cartonFields.values(), ...measurementFields.values()].some((field) =>
-        field.dirty()
-      )
+      ![
+        ...cartonFields.values(),
+        ...measurementFields.values(),
+        ...confirmationFields.values(),
+      ].some((field) => field.dirty())
     )
       return
     event.preventDefault()
@@ -2612,7 +2733,7 @@ export async function startPackingWorkspace({
       packingOrders.clear()
       if (drafts.length === 1) packingOrders.add(drafts[0].orderId)
       current = 0
-      groupPage = 0
+      packingScrollAnchor = null
       history.clear()
       checkpoints.clear()
       historySaved.clear()
@@ -3500,6 +3621,29 @@ export async function startPackingWorkspace({
     }
     await reload()
     renderPreparation()
+    // Regrouping can remove the old scroll anchor or move its selected rows into
+    // another card. Reveal the saved destination rather than an unrelated tail.
+    const affected = new Map()
+    for (const { draft, variants } of availability.entries) {
+      if (!affected.has(draft.orderId)) affected.set(draft.orderId, new Set())
+      for (const variant of variants)
+        for (const id of variant.entryIds) affected.get(draft.orderId).add(id)
+    }
+    const destination = selectedGroupingEntries().find(({ draft, variants }) =>
+      variants.some((variant) =>
+        variant.entryIds.some((id) => affected.get(draft.orderId)?.has(id))
+      )
+    )
+    if (destination) {
+      const { draft, group, variants } = destination
+      const state = preparationSelection(draft)
+      const target = state.groups.has(group.id)
+        ? ensurePackingGroup(draft.orderId, group.id)?.querySelector(
+            '.group-select'
+          )
+        : ensurePackingVariant(draft.orderId, group.id, variants[0].id)
+      target?.focus({ preventScroll: true })
+    }
     changed()
     channel?.postMessage('changed')
   }
@@ -4088,12 +4232,8 @@ export async function startPackingWorkspace({
             scopeEntries.set(owner.orderId, entries)
             packingOrders.clear()
             packingOrders.add(owner.orderId)
-            groupPage = Math.floor(
-              scopedGroups(ownerDraft).findIndex(
-                (entry) => entry.id === owningGroupId
-              ) / 20
-            )
             renderPreparation()
+            ensurePackingGroup(owner.orderId, owningGroupId)
             document
               .querySelector(`[data-group-id="${CSS.escape(owningGroupId)}"]`)
               ?.scrollIntoView({ block: 'center' })
@@ -4597,7 +4737,7 @@ export async function startPackingWorkspace({
     filter.onchange = () => {
       packingOrders.clear()
       if (filter.value) packingOrders.add(filter.value)
-      groupPage = 0
+      packingScrollAnchor = null
       renderPreparation()
     }
     const open = button(
@@ -4853,25 +4993,38 @@ export async function startPackingWorkspace({
     const exportList = button(
       uiMessage('Export packing list'),
       async (target) => {
+        if (exportingPacking) return
         const rows = scopedDrafts().flatMap((draft) =>
           preparationCopyRows(draft, { selectedOnly: false })
         )
         if (!rows.length) return
-        await flushSaves()
-        exportPackingList(rows)
+        exportingPacking = true
+        target.disabled = true
+        try {
+          await flushSaves()
+          feedback(uiMessage('Preparing packing workbook…'))
+          await exportPackingList(preparedRows(rows))
+        } finally {
+          exportingPacking = false
+          const live = $('packing-view').querySelector(
+            '[data-action="export-packing-list"]'
+          )
+          if (live) live.disabled = false
+        }
       }
     )
+    exportList.disabled = exportingPacking
     exportList.dataset.action = 'export-packing-list'
+    exportList.classList.add('primary', 'packing-export-button')
     decorateIcon(exportList, 'download')
     preparationHelp(
       exportList,
       uiMessage(
-        'Save the whole open packing list as an Excel file with your chosen columns, plus a small JSON summary of its orders, products and quantities.'
+        'Export every product in this packing list with photos, costs and planned, received and loaded boxes. Selection does not limit the export.'
       )
     )
     const copyActions = el('div', undefined, 'packing-copy-actions')
     copyActionPanel = mountProductCopyActions(copyActions, {
-      exportList,
       image: imageCopy,
       values: sourceCopies[0],
       photos: sourceCopies[1],
@@ -4977,7 +5130,14 @@ export async function startPackingWorkspace({
         'Export print-ready A4 PDFs of labels or carton marks for the selected products.'
       )
     )
-    output.append(copyScope, selectionActions, copyActions, printing, grouping)
+    output.append(
+      copyScope,
+      selectionActions,
+      copyActions,
+      printing,
+      grouping,
+      exportList
+    )
     host.append(commandBar, output)
     toolbarResize = new ResizeObserver(() => {
       document.documentElement.style.setProperty(
@@ -5059,7 +5219,7 @@ export async function startPackingWorkspace({
     const restoredMonths = currentPackingMonths()
     if (restoredMonths.length === 1) monthInput.value = restoredMonths[0]
     current = 0
-    groupPage = 0
+    packingScrollAnchor = null
     history.clear()
     checkpoints.clear()
     historySaved.clear()
@@ -5091,6 +5251,12 @@ export async function startPackingWorkspace({
     feedback(uiMessage('Packing restored. Newer local edits were kept.'))
   }
   function renderPreparation() {
+    const scrollAnchor =
+      packingScrollAnchor === null
+        ? null
+        : packingGroupList?.anchor() || packingScrollAnchor
+    packingScrollAnchor = undefined
+    packingGroupList?.destroy()
     const available = new Set(scopedDrafts().map((draft) => draft.orderId))
     for (const id of packingOrders)
       if (!available.has(id)) packingOrders.delete(id)
@@ -5115,27 +5281,35 @@ export async function startPackingWorkspace({
     detachPreparationSelection()
     materialFields.clear()
     sourceAttributeFields.clear()
+    confirmationScope.clear()
     const host = $('preparation-content')
     host.replaceChildren()
     renderPackingHeader(host)
     const groups = visibleDrafts().flatMap((draft) =>
       scopedGroups(draft).map((group) => ({ draft, group }))
     )
-    groupPage = Math.min(
-      groupPage,
-      Math.max(0, Math.ceil(groups.length / 20) - 1)
-    )
-    const pageGroups = groups.slice(groupPage * 20, (groupPage + 1) * 20)
     const body = el('div', undefined, 'packing-order-sections')
+    body.tabIndex = 0
+    body.setAttribute('role', 'region')
+    bindAttribute(body, 'aria-label', uiMessage('Prepare packing list'))
+    const sections = []
     for (const draft of visibleDrafts()) {
-      const selected = pageGroups
-        .filter((entry) => entry.draft === draft)
-        .map((entry) => entry.group)
+      const selected = scopedGroups(draft)
       if (!selected.length) continue
       const orderHost = el('section', undefined, 'packing-order-section')
       orderHost.dataset.packingOrder = draft.orderId
       body.append(orderHost)
-      renderPackingOrder(orderHost, draft, selected)
+      sections.push({
+        element: orderHost,
+        entries: [
+          { key: `order:${draft.orderId}`, draft, heading: true },
+          ...selected.map((group) => ({
+            key: packingGroupKey(draft.orderId, group.id),
+            draft,
+            group,
+          })),
+        ],
+      })
     }
     if (!groups.length)
       body.append(
@@ -5147,32 +5321,63 @@ export async function startPackingWorkspace({
         )
       )
     host.append(body)
-    if (groups.length > 20) {
-      const nav = el('nav', undefined, 'packing-pages')
-      const previous = prepButton('Previous groups', () => {
-          groupPage--
-          renderPreparation()
-        }),
-        next = prepButton('Next groups', () => {
-          groupPage++
-          renderPreparation()
+    packingGroupList = createVirtualList({
+      scroller: body,
+      sections,
+      render: ({ draft, group }) => {
+        const holder = el(
+          'div',
+          undefined,
+          group ? undefined : 'packing-order-chrome'
+        )
+        renderPackingOrder(holder, draft, group ? [group] : [], {
+          chrome: !group,
         })
-      previous.disabled = groupPage === 0
-      next.disabled = (groupPage + 1) * 20 >= groups.length
-      nav.append(
-        previous,
-        el(
-          'span',
-          uiMessage('{0} / {1} · {2} groups', {
-            0: groupPage + 1,
-            1: Math.ceil(groups.length / 20),
-            2: groups.length,
-          })
-        ),
-        next
-      )
-      host.append(nav)
-    }
+        return group ? holder.firstElementChild : holder
+      },
+      remove: (node, { draft, group }) => {
+        media.forget(node)
+        scheduleRowFieldCleanup()
+        scheduleRowFieldCleanup()
+        queueMicrotask(() => {
+          const state = codePreviewStates.get(draft)
+          if (state)
+            for (const watcher of state.watchers)
+              if (!watcher.connected()) state.watchers.delete(watcher)
+        })
+        if (group) {
+          selectionStates.get(draft.orderId)?.cards.delete(group.id)
+          codeFields.delete(group.id)
+        }
+        for (const fields of [materialFields, sourceAttributeFields])
+          for (const entry of fields)
+            if (node.contains(entry.input || entry.host)) fields.delete(entry)
+      },
+      pinned: (nodes) => {
+        const keys = new Set()
+        for (const [key, node] of nodes) {
+          if (node.querySelector('[data-reorder-captured]')) keys.add(key)
+          for (const fields of [
+            cartonFields,
+            measurementFields,
+            confirmationFields,
+            materialFields,
+          ])
+            for (const entry of fields.values())
+              if (entry.dirty() && node.contains(entry.input)) keys.add(key)
+          if (node.querySelector('[data-packing-tool-dirty]')) keys.add(key)
+        }
+        return keys
+      },
+      paint: () => {
+        for (const state of selectionStates.values()) {
+          state.controller.paint()
+          for (const variant of state.variants.values())
+            variant.controller.paint()
+        }
+      },
+    })
+    packingGroupList.update(scrollAnchor)
     updateSaveStatus()
     updateHistoryButtons()
     updatePreparationCopyScope()
@@ -5181,7 +5386,28 @@ export async function startPackingWorkspace({
       for (const variant of state.variants.values()) variant.controller.paint()
     }
   }
-  function renderPackingOrder(host, draft, pageGroups) {
+  function packingGroupKey(orderId, groupId) {
+    return `group:${orderId}/${groupId}`
+  }
+  function ensurePackingGroup(orderId, groupId) {
+    return packingGroupList?.ensureVisible(packingGroupKey(orderId, groupId))
+  }
+  function ensurePackingVariant(orderId, groupId, variantId) {
+    const draft = drafts.find((entry) => entry.orderId === orderId)
+    const group = draft?.groups.find((entry) => entry.id === groupId)
+    if (!group) return
+    const index = scopedVariants(draft, group).findIndex(
+      (entry) => entry.id === variantId
+    )
+    const page = Math.max(0, Math.floor(index / 50))
+    if ((variantPages.get(groupId) || 0) !== page) {
+      variantPages.set(groupId, page)
+      renderPreparation()
+    }
+    const card = ensurePackingGroup(orderId, groupId)
+    return card?.querySelector(`[data-variant-id="${CSS.escape(variantId)}"]`)
+  }
+  function renderPackingOrder(host, draft, pageGroups, { chrome = true } = {}) {
     const index = drafts.indexOf(draft)
     const selection = preparationSelection(draft)
     const costRecords = getRecords(),
@@ -5216,201 +5442,216 @@ export async function startPackingWorkspace({
       ({ snapshot }) => snapshot.orderId === draft.orderId
     )
     const source = orderRecord?.snapshot
-    const orderHeader = el('header', undefined, 'packing-order-header')
-    orderHeader.append(
-      reorderHandle({
-        key: draft.orderId,
-        label: source?.sellerName || draft.orderId,
-        items: () => visibleDrafts().map((entry) => entry.orderId),
-        element: (id) =>
-          document.querySelector(`[data-packing-order="${CSS.escape(id)}"]`),
-        move: (key, target, after) => {
-          void preparationAction(async () => {
-            await flushSaves()
-            const positions = movedKeys(
-              drafts.map((entry) => entry.orderId),
-              key,
-              target,
-              after
-            )
-            await applyOrderArrangement(
-              positions.map((id) =>
-                drafts.find((entry) => entry.orderId === id)
-              ),
-              true
-            )
-            await flushSaves()
-            document
-              .querySelector(
-                `[data-packing-order="${CSS.escape(key)}"] .reorder-handle`
+    if (chrome) {
+      const orderHeader = el('header', undefined, 'packing-order-header')
+      orderHeader.append(
+        reorderHandle({
+          key: draft.orderId,
+          label: source?.sellerName || draft.orderId,
+          items: () => visibleDrafts().map((entry) => entry.orderId),
+          element: (id) =>
+            document.querySelector(`[data-packing-order="${CSS.escape(id)}"]`),
+          move: (key, target, after) => {
+            void preparationAction(async () => {
+              await flushSaves()
+              const positions = movedKeys(
+                drafts.map((entry) => entry.orderId),
+                key,
+                target,
+                after
               )
-              ?.focus()
-          }).catch((error) => showError(error))
-        },
-      })
-    )
-    const identity = el('div')
-    const sellerHeading = el('h2')
-    sellerHeading.append(
-      copyTextButton(
-        source?.sellerName || draft.sellerId || t('Seller unavailable'),
-        { label: uiMessage('Copy store name') }
-      )
-    )
-    operationsStrip(sellerHeading, orderRecord)
-    identity.append(sellerHeading)
-    const orderNumber = el('span', undefined, 'packing-order-number')
-    orderNumber.append(
-      orderReference(draft.orderId, { sourceType: source?.sourceType })
-    )
-    identity.append(orderNumber)
-    const restoreActions = el('div', undefined, 'packing-restore-actions')
-    const reset = orderButton('Reset order and codes', () =>
-      restorePacking(draft, false)
-    )
-    decorateIcon(reset, 'refresh')
-    reset.disabled = !hasDefaultPackingChanges(draft)
-    resetButtons.set(draft.orderId, reset)
-    const previous = orderButton('Restore previous packing', () =>
-      restorePacking(draft, true)
-    )
-    decorateIcon(previous, 'undo')
-    previous.disabled = !draft.previousPacking
-    restoreActions.append(reset, previous)
-    orderHeader.append(
-      identity,
-      el(
-        'span',
-        uiMessage('{0} groups · {1}', {
-          0: scopedGroups(draft).length,
-          1: () =>
-            [
-              ...new Set(
-                scopedGroups(draft).map((group) =>
-                  groupPackingMonth(draft, group)
+              await applyOrderArrangement(
+                positions.map((id) =>
+                  drafts.find((entry) => entry.orderId === id)
+                ),
+                true
+              )
+              await flushSaves()
+              packingGroupList?.ensureVisible(`order:${key}`)
+              document
+                .querySelector(
+                  `[data-packing-order="${CSS.escape(key)}"] .reorder-handle`
                 )
-              ),
-            ]
-              .map(monthLabel)
-              .join(', '),
-        }),
-        'packing-help'
-      ),
-      restoreActions
-    )
-    host.append(orderHeader)
-    if (source?.sellerUnavailable || !draft.sellerId) {
-      const help = el(
-        'p',
-        uiMessage(
-          'Seller unavailable on the source page. Enter the seller’s 1688 member login to assign label codes. Reuse the same login for this seller’s other orders.'
+                ?.focus()
+            }).catch((error) => showError(error))
+          },
+        })
+      )
+      const identity = el('div')
+      const sellerHeading = el('h2')
+      sellerHeading.append(
+        copyTextButton(
+          source?.sellerName || draft.sellerId || t('Seller unavailable'),
+          { label: uiMessage('Copy store name') }
+        )
+      )
+      operationsStrip(sellerHeading, orderRecord)
+      identity.append(sellerHeading)
+      const orderNumber = el('span', undefined, 'packing-order-number')
+      orderNumber.append(
+        orderReference(draft.orderId, { sourceType: source?.sourceType })
+      )
+      identity.append(orderNumber)
+      const restoreActions = el('div', undefined, 'packing-restore-actions')
+      const reset = orderButton('Reset order and codes', () =>
+        restorePacking(draft, false)
+      )
+      decorateIcon(reset, 'refresh')
+      reset.disabled = !hasDefaultPackingChanges(draft)
+      resetButtons.set(draft.orderId, reset)
+      const previous = orderButton('Restore previous packing', () =>
+        restorePacking(draft, true)
+      )
+      decorateIcon(previous, 'undo')
+      previous.disabled = !draft.previousPacking
+      restoreActions.append(reset, previous)
+      orderHeader.append(
+        identity,
+        el(
+          'span',
+          uiMessage('{0} groups · {1}', {
+            0: scopedGroups(draft).length,
+            1: () =>
+              [
+                ...new Set(
+                  scopedGroups(draft).map((group) =>
+                    groupPackingMonth(draft, group)
+                  )
+                ),
+              ]
+                .map(monthLabel)
+                .join(', '),
+          }),
+          'packing-help'
         ),
-        'packing-help'
+        restoreActions
       )
-      help.id = `preparation-seller-help-${draft.orderId}`
-      const seller = field(
-        uiMessage('Seller member login (required)'),
-        draft.sellerId,
+      host.append(orderHeader)
+      if (source?.sellerUnavailable || !draft.sellerId) {
+        const help = el(
+          'p',
+          uiMessage(
+            'Seller unavailable on the source page. Enter the seller’s 1688 member login to assign label codes. Reuse the same login for this seller’s other orders.'
+          ),
+          'packing-help'
+        )
+        help.id = `preparation-seller-help-${draft.orderId}`
+        const seller = field(
+          uiMessage('Seller member login (required)'),
+          draft.sellerId,
+          (value) => {
+            draft.sellerId = value
+          }
+        )
+        const input = seller.querySelector('input')
+        input.id = `preparation-seller-${draft.orderId}`
+        seller.htmlFor = input.id
+        input.required = true
+        input.autocomplete = 'off'
+        input.autocapitalize = 'off'
+        input.setAttribute('autocorrect', 'off')
+        input.spellcheck = false
+        input.setAttribute('aria-describedby', help.id)
+        host.append(help, seller)
+      }
+      const categories = new Set(
+        scopedGroups(draft).map((group) => group.category)
+      )
+      const names = new Set(
+        scopedGroups(draft).map((group) => group.spanishName)
+      )
+      let categoryValue = categories.size === 1 ? [...categories][0] : ''
+      let spanishValue = names.size === 1 ? [...names][0] : ''
+      let categoryChanged = false,
+        spanishChanged = false
+      const orderTools = el('section', undefined, 'order-tools')
+      bindAttribute(orderTools, 'aria-label', uiMessage('Order tools'))
+      const orderSpanish = field(
+        uiMessage('Spanish'),
+        spanishValue,
         (value) => {
-          draft.sellerId = value
+          spanishValue = value.toUpperCase()
+          spanishChanged = true
+          orderSpanish.querySelector('input').dataset.packingToolDirty = ''
         }
       )
-      const input = seller.querySelector('input')
-      input.id = `preparation-seller-${draft.orderId}`
-      seller.htmlFor = input.id
-      input.required = true
-      input.autocomplete = 'off'
-      input.autocapitalize = 'off'
-      input.setAttribute('autocorrect', 'off')
-      input.spellcheck = false
-      input.setAttribute('aria-describedby', help.id)
-      host.append(help, seller)
+      orderSpanish.querySelector('input').dataset.packingField = 'spanishName'
+      bindAttribute(
+        orderSpanish.querySelector('input'),
+        'placeholder',
+        names.size > 1
+          ? uiMessage('Mixed names')
+          : uiMessage('Name all products')
+      )
+      const orderCategory = field(
+        uiMessage('Chinese'),
+        categoryValue,
+        (value) => {
+          categoryValue = value
+          categoryChanged = true
+          orderCategory.querySelector('input').dataset.packingToolDirty = ''
+        }
+      )
+      orderCategory.querySelector('input').dataset.packingField = 'category'
+      bindAttribute(
+        orderCategory.querySelector('input'),
+        'placeholder',
+        categories.size > 1
+          ? uiMessage('Mixed categories')
+          : uiMessage('Add a category')
+      )
+      const applyCategory = orderButton('Apply to order', () => {
+        for (const group of scopedGroups(draft)) {
+          if (categoryChanged) group.category = categoryValue
+          if (spanishChanged) {
+            group.spanishName = spanishValue
+            for (const variant of group.variants) variant.spanishName = ''
+          }
+        }
+        renderPreparation()
+      })
+      bindAttribute(
+        orderSpanish.querySelector('input'),
+        'aria-label',
+        uiMessage('Spanish category for order')
+      )
+      bindAttribute(
+        orderCategory.querySelector('input'),
+        'aria-label',
+        uiMessage('Chinese category for order')
+      )
+      orderTools.append(
+        el('span', uiMessage('For this order'), 'order-category-label'),
+        preparationHelp(
+          orderSpanish,
+          uiMessage(
+            'Use one Spanish label name for every product in this order.'
+          )
+        ),
+        preparationHelp(
+          orderCategory,
+          uiMessage(
+            'One Chinese name for all carton marks in this order. For example, 玻璃 means glass.'
+          )
+        ),
+        preparationHelp(
+          applyCategory,
+          uiMessage(
+            'Apply the names you changed to all products in this order. Other fields stay as they are.'
+          )
+        )
+      )
+      orderTools.append(
+        materialControl(
+          draft,
+          scopedGroups(draft).flatMap((group) => scopedVariants(draft, group)),
+          'Material for order',
+          'Apply material to order'
+        )
+      )
+      host.append(orderTools)
+      updateHistoryButtons()
     }
-    const categories = new Set(
-      scopedGroups(draft).map((group) => group.category)
-    )
-    const names = new Set(scopedGroups(draft).map((group) => group.spanishName))
-    let categoryValue = categories.size === 1 ? [...categories][0] : ''
-    let spanishValue = names.size === 1 ? [...names][0] : ''
-    let categoryChanged = false,
-      spanishChanged = false
-    const orderTools = el('section', undefined, 'order-tools')
-    bindAttribute(orderTools, 'aria-label', uiMessage('Order tools'))
-    const orderSpanish = field(uiMessage('Spanish'), spanishValue, (value) => {
-      spanishValue = value.toUpperCase()
-      spanishChanged = true
-    })
-    orderSpanish.querySelector('input').dataset.packingField = 'spanishName'
-    bindAttribute(
-      orderSpanish.querySelector('input'),
-      'placeholder',
-      names.size > 1 ? uiMessage('Mixed names') : uiMessage('Name all products')
-    )
-    const orderCategory = field(
-      uiMessage('Chinese'),
-      categoryValue,
-      (value) => {
-        categoryValue = value
-        categoryChanged = true
-      }
-    )
-    orderCategory.querySelector('input').dataset.packingField = 'category'
-    bindAttribute(
-      orderCategory.querySelector('input'),
-      'placeholder',
-      categories.size > 1
-        ? uiMessage('Mixed categories')
-        : uiMessage('Add a category')
-    )
-    const applyCategory = orderButton('Apply to order', () => {
-      for (const group of scopedGroups(draft)) {
-        if (categoryChanged) group.category = categoryValue
-        if (spanishChanged) {
-          group.spanishName = spanishValue
-          for (const variant of group.variants) variant.spanishName = ''
-        }
-      }
-      renderPreparation()
-    })
-    bindAttribute(
-      orderSpanish.querySelector('input'),
-      'aria-label',
-      uiMessage('Spanish category for order')
-    )
-    bindAttribute(
-      orderCategory.querySelector('input'),
-      'aria-label',
-      uiMessage('Chinese category for order')
-    )
-    orderTools.append(
-      el('span', uiMessage('For this order'), 'order-category-label'),
-      preparationHelp(
-        orderSpanish,
-        uiMessage('Use one Spanish label name for every product in this order.')
-      ),
-      preparationHelp(
-        orderCategory,
-        uiMessage(
-          'One Chinese name for all carton marks in this order. For example, 玻璃 means glass.'
-        )
-      ),
-      preparationHelp(
-        applyCategory,
-        uiMessage(
-          'Apply the names you changed to all products in this order. Other fields stay as they are.'
-        )
-      )
-    )
-    orderTools.append(
-      materialControl(
-        draft,
-        scopedGroups(draft).flatMap((group) => scopedVariants(draft, group)),
-        'Material for order',
-        'Apply material to order'
-      )
-    )
-    host.append(orderTools)
-    updateHistoryButtons()
     for (const group of pageGroups) {
       const card = el('section', undefined, 'preparation-group'),
         title = el('h3'),
@@ -5464,7 +5705,8 @@ export async function startPackingWorkspace({
           key: group.id,
           label: uiMessage('group {0}', { 0: draft.groups.indexOf(group) + 1 }),
           items: () => scopedGroups(draft).map((entry) => entry.id),
-          element: (id) => host.querySelector(`[data-group-id="${id}"]`),
+          element: (id) =>
+            packingGroupList?.element(packingGroupKey(draft.orderId, id)),
           move: (key, target, after) => {
             void preparationAction(async () => {
               const live = drafts[index]
@@ -5480,6 +5722,7 @@ export async function startPackingWorkspace({
               drafts[index] = moved
               current = index
               renderPreparation()
+              ensurePackingGroup(draft.orderId, key)
               document
                 .querySelector(`[data-group-id="${key}"] .reorder-handle`)
                 ?.focus()
@@ -5722,6 +5965,7 @@ export async function startPackingWorkspace({
               )
               current = index
               renderPreparation()
+              ensurePackingVariant(draft.orderId, group.id, key)
               document
                 .querySelector(`[data-variant-id="${key}"] .reorder-handle`)
                 ?.focus()
@@ -6039,7 +6283,15 @@ export async function startPackingWorkspace({
         const cartonUnits = cartonRecord?.unitsPerCarton || {}
         const measurementCell = el('td', undefined, 'variant-carton-columns')
         const numericHeader = el('div', undefined, 'variant-numeric-header')
-        for (const label of ['Quantity', 'Pcs/box', 'kg/box', 'm³/box'])
+        for (const label of [
+          'Quantity',
+          'Pcs/box',
+          'Planned',
+          'Received',
+          'Loaded',
+          'kg/box',
+          'm³/box',
+        ])
           numericHeader.append(el('span', uiMessage(label)))
         measurementCell.append(numericHeader)
         for (const item of items) {
@@ -6069,7 +6321,9 @@ export async function startPackingWorkspace({
           const kg = el('div', undefined, 'variant-measurement-cell'),
             cbm = el('div', undefined, 'variant-measurement-cell')
           mountMeasurements({ kg, cbm }, item, cartonRecord, draft)
-          measurements.append(quantityValue, capacity, kg, cbm)
+          measurements.append(quantityValue, capacity)
+          mountConfirmations(measurements, item, cartonRecord, draft, group)
+          measurements.append(kg, cbm)
           measurementCell.append(measurements)
           const carton = productCartonDetails(item, cartonRecord)
           if (carton.boxes !== undefined)
@@ -6763,63 +7017,58 @@ export async function startPackingWorkspace({
         }))
     )
   }
-  /** Packing list as .xlsx (chosen columns) plus its JSON summary. */
-  function exportPackingList(rows) {
+  /** Full editable packing workbook, independent of chosen clipboard columns. */
+  async function exportPackingList(rows) {
     const sizeClassifier = createSizeClassifier(preferences.sizeVocabulary)
-    const fields = rows.map((row) => preparationCopyFields(row, sizeClassifier))
-    let preference
-    try {
-      preference = JSON.parse(
-        localStorage.getItem(PREPARATION_COLUMN_PREFERENCE)
+    const records = new Map(
+      getRecords().map((record) => [record.snapshot.orderId, record])
+    )
+    const selected = new Set(
+      rows.map((row) => `${row.orderId}/${row.entryId}/${row.packingMonth}`)
+    )
+    const fields = rows.map((row) => {
+      const record = records.get(row.orderId)
+      const batch = cartonBatchForItem(record, row.entryId)
+      const complete = batch.entryIds.every((id) =>
+        selected.has(`${row.orderId}/${id}/${row.packingMonth}`)
       )
-    } catch {}
-    const columns = selectedPreparationColumns(preference)
-    if (fields.some((row) => Number(row.additionalCharge) > 0))
-      for (const key of [
-        'effectiveUnitPrice',
-        'additionalCharge',
-        'effectiveAmount',
-        'additionalChargeReasons',
-      ])
-        if (!columns.includes(key)) columns.push(key)
-    if (fields.some((row) => Number(row.linkedPaymentCharge) > 0))
-      for (const key of [
-        'effectiveUnitPrice',
-        'linkedPaymentCharge',
-        'effectiveAmount',
-        'linkedPaymentReasons',
-      ])
-        if (!columns.includes(key)) columns.push(key)
-    if (fields.some((row) => Number(row.featureCharge) > 0))
-      for (const key of [
-        'effectiveUnitPrice',
-        'featureCharge',
-        'effectiveAmount',
-      ])
-        if (!columns.includes(key)) columns.push(key)
-    if (fields.some((row) => row.productFeatureCosts))
-      if (!columns.includes('productFeatureCosts'))
-        columns.push('productFeatureCosts')
-    if (fields.some((row) => row.productFeatures))
-      if (!columns.includes('productFeatures')) columns.push('productFeatures')
-    const grid = preparationGrid(fields, columns, t)
+      const planned = cartonPackingForItems(record, batch.entryIds)
+      const counts = cartonConfirmationForItem(
+        record,
+        row.entryId,
+        row.packingMonth
+      )
+      return {
+        ...preparationCopyFields(row, sizeClassifier),
+        cartonBatchId: batch.entryId,
+        cartonBatchEntryIds: batch.entryIds,
+        cartonBatchComplete: complete,
+        plannedBoxes:
+          complete && row.entryId === batch.entryId && planned.exact
+            ? planned.total
+            : '',
+        receivedBoxes:
+          complete && row.entryId === batch.entryId
+            ? (counts.received ?? '')
+            : '',
+        loadedBoxes:
+          complete && row.entryId === batch.entryId
+            ? (counts.loaded ?? '')
+            : '',
+      }
+    })
     const file = uniqueFileName(
       packingListFileName(fields.map((row) => row.sellerName))
     )
+    const workbook = await createPackingWorkbook(fields, {
+      language: getLanguage(),
+      style: readExcelImagePreference().style,
+      prepareImages: createPackingWorkbookImages(loadImage),
+    })
     saveFile(
-      new Blob(
-        [
-          createXlsx({
-            sheetName: t('Packing list'),
-            header: grid.titles,
-            rows: grid.values,
-            numeric: grid.numeric,
-          }),
-        ],
-        {
-          type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
-        }
-      ),
+      new Blob([workbook], {
+        type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+      }),
       file
     )
     const summary = packingSummary({ rows: fields, file })

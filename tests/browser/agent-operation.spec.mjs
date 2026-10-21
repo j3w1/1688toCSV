@@ -1,5 +1,6 @@
-import { readFile } from 'node:fs/promises'
+import { readFile, writeFile } from 'node:fs/promises'
 import { basename } from 'node:path'
+import * as XLSX from 'xlsx'
 import { test, expect } from './extension-fixture.mjs'
 import { createDemoRecords } from '../../preview/library-fixture.js'
 
@@ -9,6 +10,24 @@ async function open(extension) {
   const records = await extension.inspector.evaluate(
     `(${createDemoRecords.toString()})(document)`
   )
+  // A saved composition may have no cached composed thumbnail, e.g. after restore.
+  records.find(
+    (record) => record.snapshot.orderId === '900000000000000003'
+  ).snapshot.items[0].photoEdits = {
+    0: {
+      tagScale: 2.75,
+      tags: [
+        {
+          id: 'synthetic-tag',
+          code: 'AX',
+          x: 0.5,
+          y: 0.5,
+          labelX: 0.8,
+          labelY: 0.15,
+        },
+      ],
+    },
+  }
   const restored = await extension.inspector.evaluate(
     (orders) =>
       chrome.runtime.sendMessage({
@@ -105,7 +124,25 @@ test('an agent prepares, exports and prints through stable data-action controls'
   ])
     await expect(action(page, name)).toHaveCount(1)
   // Export the whole packing list: .xlsx plus its JSON summary.
-  await action(page, 'open-copy-menu').click()
+  const receivedBoxes = page
+    .getByLabel('Received boxes', { exact: true })
+    .first()
+  await receivedBoxes.fill('1.5')
+  await receivedBoxes.blur()
+  await expect(receivedBoxes).toHaveAttribute('aria-invalid', 'true')
+  await page.getByLabel('Received boxes', { exact: true }).first().fill('6')
+  await page.getByLabel('Loaded boxes', { exact: true }).first().fill('0')
+  await page
+    .locator('#packing-view')
+    .getByLabel('Weight (kg/box)', { exact: true })
+    .first()
+    .fill('9.5')
+  await page
+    .locator('#packing-view')
+    .getByLabel('Volume (m³/box)', { exact: true })
+    .first()
+    .fill('0.125')
+  // Export flushes edits even while their quiet autosave timer is pending.
   await action(page, 'export-packing-list').click()
   let files = await downloads(extension, 2)
   const xlsx = files.find((file) => file.filename.endsWith('.xlsx'))
@@ -115,8 +152,39 @@ test('an agent prepares, exports and prints through stable data-action controls'
   )
   expect(summaryFile.filename).toBe(xlsx.filename.replace(/\.xlsx$/, '.json'))
   const workbook = await readFile(xlsx.filename)
+  await writeFile('work/packing-workbook-synthetic.xlsx', workbook)
   expect(workbook.subarray(0, 2).toString('latin1')).toBe('PK')
   expect(workbook.toString('latin1')).toContain('xl/worksheets/sheet1.xml')
+  expect(workbook.toString('latin1')).toContain('xl/drawings/drawing1.xml')
+  expect(workbook.toString('latin1')).toContain('xl/media/')
+  const archive = XLSX.CFB.read(workbook, { type: 'buffer' })
+  const photoIndex = archive.FullPaths.findIndex((path) =>
+    path.endsWith('.jpg')
+  )
+  const raster = await page.evaluate(async (bytes) => {
+    const bitmap = await createImageBitmap(
+      new Blob([new Uint8Array(bytes)], { type: 'image/jpeg' })
+    )
+    const canvas = document.createElement('canvas')
+    canvas.width = bitmap.width
+    canvas.height = bitmap.height
+    const context = canvas.getContext('2d')
+    context.drawImage(bitmap, 0, 0)
+    const pixels = context.getImageData(0, 0, canvas.width, canvas.height).data
+    let black = 0
+    for (let index = 0; index < pixels.length; index += 4)
+      if (
+        pixels[index] < 40 &&
+        pixels[index + 1] < 40 &&
+        pixels[index + 2] < 40
+      )
+        black++
+    const dimensions = [bitmap.width, bitmap.height]
+    bitmap.close()
+    return { black, dimensions }
+  }, Array.from(archive.FileIndex[photoIndex].content))
+  expect(raster.black).toBeGreaterThan(500)
+  expect(raster.dimensions).toEqual([240, 240])
   const summary = JSON.parse(await readFile(summaryFile.filename, 'utf8'))
   expect(summary).toMatchObject({
     format: '1688-export-summary',
@@ -127,6 +195,30 @@ test('an agent prepares, exports and prints through stable data-action controls'
     basename(xlsx.filename),
     basename(summaryFile.filename),
   ])
+  expect(summary.products[0]).toMatchObject({
+    receivedBoxes: '6',
+    loadedBoxes: '0',
+    cartonWeight: '9.5',
+    cartonVolume: '0.125',
+    packingMonth: '2026-10',
+  })
+  const sheet = XLSX.read(workbook, { type: 'buffer' }).Sheets['Packing list']
+  const table = XLSX.utils.sheet_to_json(sheet, { header: 1, defval: '' })
+  expect(table[4]).toContain('Loaded boxes')
+  expect(table[4].join(' ')).not.toMatch(/Payments|Deposits|Balance/)
+  const product = table.find((row) => row[2] === summary.products[0].code)
+  expect(product[7]).toBe(0)
+  expect(product[8]).toBe(6)
+  expect(product[19]).toBe(57)
+  expect(product[20]).toBe(0)
+  expect(product[25]).toBe(0.75)
+  expect(product[26]).toBe(0)
+  expect(
+    await page
+      .locator('.packing-order-sections')
+      .evaluate((node) => node.scrollWidth - node.clientWidth)
+  ).toBeLessThanOrEqual(1)
+  await page.screenshot({ path: 'work/packing-export-workspace.png' })
   expect(summary.orders).toEqual([
     { orderId: '900000000000000003', seller: expect.any(String) },
   ])
