@@ -3,6 +3,8 @@ import { localImageAsset } from './images.js'
 import {
   validatePhotoVariantTags,
   validatePhotoTagScale,
+  validatePhotoPointerScale,
+  validatePhotoPointerInversion,
 } from './product-photo.js'
 
 const positiveDecimal = /^(?:0|[1-9]\d*)(?:\.\d+)?$/
@@ -196,6 +198,10 @@ export function validatePhotoEdits(edits, count) {
         result.tags = validatePhotoVariantTags(edit.tags)
       if (edit.tagScale !== undefined)
         result.tagScale = validatePhotoTagScale(edit.tagScale)
+      if (edit.pointerScale !== undefined)
+        result.pointerScale = validatePhotoPointerScale(edit.pointerScale)
+      if (edit.invertPointer !== undefined)
+        result.invertPointer = validatePhotoPointerInversion(edit.invertPointer)
       return [index, result]
     })
   )

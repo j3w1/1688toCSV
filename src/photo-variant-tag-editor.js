@@ -2,10 +2,43 @@ import { element as el } from './ui.js'
 import { bindAttribute, bindText, message as m } from './i18n.js'
 import { preparationHelp } from './preparation-help.js'
 import { decorateIcon } from './icons.js'
-import { photoVariantTagLayout, drawPhotoVariantTags } from './product-photo.js'
+import {
+  photoVariantTagLayout,
+  drawPhotoVariantTags,
+  PHOTO_TAG_SCALE,
+  PHOTO_POINTER_SCALE,
+  nearestPhotoTagCorner,
+} from './product-photo.js'
+import { DEFAULT_SIZE_VOCABULARY } from './size-vocabulary.js'
 
 const clamp = (value) => Math.max(0, Math.min(1, value))
 const validCode = (value) => /^[A-Z0-9]{1,8}$/.test(value)
+const sizeSuffixes = [
+  ...new Set(DEFAULT_SIZE_VOCABULARY.map(({ suffix }) => suffix)),
+].sort((a, b) => b.length - a.length)
+const quickSizes = DEFAULT_SIZE_VOCABULARY.map(({ suffix }) => suffix).filter(
+  (suffix) => ['XS', 'S', 'M', 'L', 'XL'].includes(suffix)
+)
+const splitCode = (code) => {
+  const size = sizeSuffixes.find((suffix) => code.endsWith(suffix)) || ''
+  return { model: size ? code.slice(0, -size.length) : code, size }
+}
+const nearestScaleStop = (value, stops) =>
+  stops.reduce(
+    (nearest, stop, index) =>
+      Math.abs(stop - value) < Math.abs(stops[nearest] - value)
+        ? index
+        : nearest,
+    0
+  )
+
+function showScale(input, output, value, { stops }) {
+  // An older continuous value remains exact in the draft. Only moving the
+  // indexed control chooses a new standard size; opening or saving does not.
+  input.value = String(nearestScaleStop(value, stops))
+  output.textContent = `${Number((value * 100).toFixed(8))}%`
+  input.setAttribute('aria-valuetext', output.textContent)
+}
 
 /** Transparent, keyboard-operable handles sit over the same rendered callouts. */
 export function mountPhotoVariantTagEditor({
@@ -27,29 +60,66 @@ export function mountPhotoVariantTagEditor({
     remove = el('button', m('Remove tag')),
     entry = el('div', undefined, 'photo-tag-entry'),
     tools = el('div', undefined, 'photo-tag-tools'),
+    quick = el('div', undefined, 'photo-tag-quick'),
+    quickPalette = el('div', undefined, 'photo-tag-palette'),
+    quickSize = el('div', undefined, 'photo-tag-quick'),
+    custom = el('div', undefined, 'photo-tag-custom'),
+    scales = el('div', undefined, 'photo-tag-scales'),
     sizeControl = el('div', undefined, 'photo-tag-size'),
     sizeLabel = el('label', m('Tag size')),
     sizeInput = el('input'),
     sizeValue = el('span', '100%'),
+    pointerControl = el('div', undefined, 'photo-tag-size photo-pointer-size'),
+    pointerLabel = el('label', m('Pointer size')),
+    pointerInput = el('input'),
+    pointerValue = el('span', '100%'),
+    invert = el('button', undefined, 'photo-pointer-invert'),
     list = el('div', undefined, 'photo-variant-tag-list'),
     overlay = el('div', undefined, 'photo-variant-tag-overlay'),
     artwork = document.createElement('canvas'),
     context = artwork.getContext('2d'),
     handles = new Map(),
-    chips = new Map()
+    chips = new Map(),
+    quickButtons = new Map(),
+    quickSizeButtons = new Map()
   code.type = 'text'
   code.id = `photo-variant-code-${crypto.randomUUID()}`
   codeLabel.htmlFor = code.id
-  code.value = 'A'
+  code.value = ''
   code.maxLength = 8
   code.pattern = '[A-Za-z0-9]{1,8}'
   code.required = true
   code.autocomplete = 'off'
+  code.setAttribute('autocorrect', 'off')
+  code.setAttribute('autocapitalize', 'off')
   code.spellcheck = false
   code.placeholder = 'A / AX'
   for (const button of [add, rename, remove]) button.type = 'button'
   list.setAttribute('role', 'group')
   bindAttribute(list, 'aria-label', m('Photo variant tags'))
+  quick.setAttribute('role', 'group')
+  bindAttribute(quick, 'aria-label', m('Quick model tags'))
+  quick.append(el('span', m('Color / model'), 'photo-tag-quick-label'))
+  for (const value of ['A', 'B', 'C', 'D', 'E']) {
+    const button = el('button', value, 'photo-tag-quick-button')
+    button.type = 'button'
+    bindAttribute(button, 'aria-label', m('Add tag {0}', { 0: value }))
+    button.setAttribute('aria-pressed', 'false')
+    quickButtons.set(value, button)
+    quick.append(button)
+  }
+  quickSize.setAttribute('role', 'group')
+  bindAttribute(quickSize, 'aria-label', m('Quick size tags'))
+  quickSize.append(el('span', m('Size'), 'photo-tag-quick-label'))
+  for (const value of quickSizes) {
+    const button = el('button', value, 'photo-tag-quick-button')
+    button.type = 'button'
+    bindAttribute(button, 'aria-label', m('Use tag size {0}', { 0: value }))
+    button.setAttribute('aria-pressed', 'false')
+    quickSizeButtons.set(value, button)
+    quickSize.append(button)
+  }
+  quickPalette.append(quick, quickSize)
   entry.append(code, add)
   tools.append(rename, remove)
   for (const [button, name] of [
@@ -59,14 +129,31 @@ export function mountPhotoVariantTagEditor({
   ])
     decorateIcon(button, name, { iconOnly: true })
   sizeInput.type = 'range'
-  sizeInput.min = '0.6'
-  sizeInput.max = '2.5'
-  sizeInput.step = '0.05'
-  sizeInput.value = '1'
+  sizeInput.min = '0'
+  sizeInput.max = String(PHOTO_TAG_SCALE.stops.length - 1)
+  sizeInput.step = '1'
+  sizeInput.value = String(PHOTO_TAG_SCALE.stops.indexOf(1))
   sizeInput.id = `photo-tags-size-${crypto.randomUUID()}`
   sizeLabel.htmlFor = sizeInput.id
   sizeControl.append(sizeLabel, sizeInput, sizeValue)
-  controls.append(codeLabel, entry, tools, list, sizeControl)
+  pointerInput.type = 'range'
+  pointerInput.min = '0'
+  pointerInput.max = String(PHOTO_POINTER_SCALE.stops.length - 1)
+  pointerInput.step = '1'
+  pointerInput.value = String(PHOTO_POINTER_SCALE.stops.indexOf(1))
+  pointerInput.id = `photo-pointer-size-${crypto.randomUUID()}`
+  pointerLabel.htmlFor = pointerInput.id
+  invert.type = 'button'
+  bindAttribute(invert, 'aria-label', m('Invert pointer'))
+  bindAttribute(invert, 'title', m('Invert pointer'))
+  invert.setAttribute('aria-pressed', 'false')
+  const swatch = el('i', undefined, 'photo-pointer-swatch')
+  swatch.setAttribute('aria-hidden', 'true')
+  invert.append(swatch)
+  pointerControl.append(pointerLabel, pointerInput, pointerValue, invert)
+  custom.append(codeLabel, entry, tools)
+  scales.append(sizeControl, pointerControl)
+  controls.append(quickPalette, custom, list, scales)
   if (actions) controls.append(actions)
   host.append(controls)
   overlay.append(artwork)
@@ -81,6 +168,18 @@ export function mountPhotoVariantTagEditor({
     sizeInput,
     m(
       'Resize every tag, point and connecting line in this photo together. Save photo to keep this size.'
+    )
+  )
+  preparationHelp(
+    pointerInput,
+    m(
+      'Resize every pointing circle in this photo without changing the labels or lines. Save photo to keep this size.'
+    )
+  )
+  preparationHelp(
+    invert,
+    m(
+      'Use white lines and white circles with black centers on dark products. Labels stay black with white text. Save photo to keep this setting.'
     )
   )
   preparationHelp(
@@ -118,11 +217,22 @@ export function mountPhotoVariantTagEditor({
       iconOnly: true,
       label: m(value ? 'Cancel placement' : 'Add tag'),
     })
+    syncQuickButtons()
+  }
+  function syncQuickButtons() {
+    const parts = splitCode(code.value)
+    for (const [values, part] of [
+      [quickButtons, parts.model],
+      [quickSizeButtons, parts.size],
+    ])
+      for (const [value, button] of values)
+        button.setAttribute('aria-pressed', String(part === value))
   }
   function choose(id) {
     selected = id
     const tag = tags().find((tag) => tag.id === id)
     if (tag) code.value = tag.code
+    setPlacing(false)
     code.removeAttribute('aria-invalid')
     refresh()
   }
@@ -142,7 +252,8 @@ export function mountPhotoVariantTagEditor({
         { ...tag, labelX: clamp(px), labelY: clamp(py) },
         size,
         context,
-        getEdit().tagScale ?? 1
+        getEdit().tagScale ?? 1,
+        getEdit().pointerScale ?? 1
       )
       tag.labelX = (badge.x + badge.width / 2) / size
       tag.labelY = (badge.y + badge.height / 2) / size
@@ -205,15 +316,39 @@ export function mountPhotoVariantTagEditor({
     if (artwork.width !== size) artwork.width = artwork.height = size
     context.clearRect(0, 0, size, size)
     if (enabled)
-      drawPhotoVariantTags(context, values, size, getEdit().tagScale ?? 1)
+      drawPhotoVariantTags(
+        context,
+        values,
+        size,
+        getEdit().tagScale ?? 1,
+        getEdit().pointerScale ?? 1,
+        getEdit().invertPointer ?? false
+      )
     sizeInput.disabled = !enabled || saving()
-    sizeInput.value = String(getEdit().tagScale ?? 1)
-    sizeValue.textContent = `${Math.round(Number(sizeInput.value) * 100)}%`
+    showScale(sizeInput, sizeValue, getEdit().tagScale ?? 1, PHOTO_TAG_SCALE)
+    pointerInput.disabled = !enabled || saving()
+    invert.disabled = !enabled || saving()
+    invert.setAttribute(
+      'aria-pressed',
+      String(getEdit().invertPointer ?? false)
+    )
+    showScale(
+      pointerInput,
+      pointerValue,
+      getEdit().pointerScale ?? 1,
+      PHOTO_POINTER_SCALE
+    )
     code.disabled = !enabled || saving()
+    syncQuickButtons()
     if (!ids.has(selected)) selected = null
     remove.disabled = !selected || saving()
     rename.disabled = !enabled || !selected || saving()
     add.disabled = !enabled || values.length >= 50 || saving()
+    for (const button of [
+      ...quickButtons.values(),
+      ...quickSizeButtons.values(),
+    ])
+      button.disabled = add.disabled
     for (const [id, pair] of handles)
       if (!ids.has(id)) {
         pair.point.remove()
@@ -238,7 +373,8 @@ export function mountPhotoVariantTagEditor({
         tag,
         size,
         context,
-        getEdit().tagScale ?? 1
+        getEdit().tagScale ?? 1,
+        getEdit().pointerScale ?? 1
       )
       for (const kind of ['point', 'label'])
         bindAttribute(
@@ -279,11 +415,8 @@ export function mountPhotoVariantTagEditor({
       chip.setAttribute('aria-pressed', String(selected === tag.id))
     }
   }
-  listen(add, 'click', () => {
-    if (placing) {
-      setPlacing(false)
-      return
-    }
+  function beginPlacement() {
+    if (!active() || saving() || tags().length >= 50) return
     if (!validCode(code.value.toUpperCase())) {
       code.reportValidity()
       code.focus()
@@ -294,10 +427,52 @@ export function mountPhotoVariantTagEditor({
     bindText(status, m('Click the photo to place the variant tag.'))
     viewport.focus({ preventScroll: true })
     refresh()
+  }
+  listen(add, 'click', () => {
+    if (placing) setPlacing(false)
+    else beginPlacement()
   })
+  for (const [value, button] of quickButtons)
+    listen(button, 'click', () => {
+      const parts = splitCode(code.value)
+      useQuickCode(`${parts.model === value ? '' : value}${parts.size}`)
+    })
+  for (const [value, button] of quickSizeButtons)
+    listen(button, 'click', () => {
+      const parts = splitCode(code.value)
+      useQuickCode(`${parts.model}${parts.size === value ? '' : value}`)
+    })
+  function useQuickCode(value) {
+    if (value.length > code.maxLength) {
+      bindText(
+        status,
+        m('Photo variant tag codes require 1–8 uppercase letters or digits')
+      )
+      return
+    }
+    selected = null
+    code.value = value
+    code.removeAttribute('aria-invalid')
+    if (value) beginPlacement()
+    else {
+      setPlacing(false)
+      refresh()
+    }
+  }
   listen(remove, 'click', removeSelected)
   listen(sizeInput, 'input', () => {
-    getEdit().tagScale = Number(sizeInput.value)
+    getEdit().tagScale =
+      PHOTO_TAG_SCALE.stops[Math.round(Number(sizeInput.value))]
+    refresh()
+  })
+  listen(pointerInput, 'input', () => {
+    getEdit().pointerScale =
+      PHOTO_POINTER_SCALE.stops[Math.round(Number(pointerInput.value))]
+    refresh()
+  })
+  listen(invert, 'click', () => {
+    if (!active() || saving()) return
+    getEdit().invertPointer = !(getEdit().invertPointer ?? false)
     refresh()
   })
   listen(rename, 'click', () => {
@@ -315,9 +490,10 @@ export function mountPhotoVariantTagEditor({
   listen(code, 'input', () => {
     code.value = code.value.toUpperCase()
     code.removeAttribute('aria-invalid')
+    setPlacing(placing)
   })
   listen(code, 'keydown', (event) => {
-    if (event.key !== 'Enter') return
+    if (event.key !== 'Enter' || event.isComposing) return
     event.preventDefault()
     if (selected) rename.click()
     else add.click()
@@ -340,12 +516,30 @@ export function mountPhotoVariantTagEditor({
         setPlacing(false)
         handle.focus({ preventScroll: true })
         const tag = tags().find((tag) => tag.id === selected)
+        let origin = { ...tag }
+        if (handle.dataset.tagHandle === 'label') {
+          // A renamed or resized badge may be clamped closer to the canvas
+          // edge than its stored center. Drag from the center actually shown.
+          const size = getImage()?.naturalWidth || 640
+          const { badge } = photoVariantTagLayout(
+            tag,
+            size,
+            context,
+            getEdit().tagScale ?? 1,
+            getEdit().pointerScale ?? 1
+          )
+          origin = {
+            ...origin,
+            labelX: (badge.x + badge.width / 2) / size,
+            labelY: (badge.y + badge.height / 2) / size,
+          }
+        }
         drag = {
           pointerId: event.pointerId,
           handle,
           kind: handle.dataset.tagHandle,
           start: point(event),
-          tag: { ...tag },
+          tag: origin,
         }
         handle.setPointerCapture(event.pointerId)
         return
@@ -360,14 +554,17 @@ export function mountPhotoVariantTagEditor({
       }
       const p = point(event)
       if (p.x < 0 || p.x > 1 || p.y < 0 || p.y > 1) return
-      const tag = {
-        id: crypto.randomUUID(),
-        code: code.value.toUpperCase(),
-        x: p.x,
-        y: p.y,
-        labelX: clamp(p.x + 0.14),
-        labelY: clamp(p.y - 0.12),
-      }
+      const tag = nearestPhotoTagCorner(
+        {
+          id: crypto.randomUUID(),
+          code: code.value.toUpperCase(),
+          x: p.x,
+          y: p.y,
+        },
+        getImage()?.naturalWidth || 640,
+        context,
+        getEdit().tagScale ?? 1
+      )
       getEdit().tags = [...tags(), tag]
       setPlacing(false)
       choose(tag.id)
@@ -424,7 +621,7 @@ export function mountPhotoVariantTagEditor({
     reset() {
       selected = null
       setPlacing(false)
-      code.value = 'A'
+      code.value = ''
       code.removeAttribute('aria-invalid')
       refresh()
     },

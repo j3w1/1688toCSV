@@ -47,6 +47,7 @@ import { applyCodeDesign } from './code-design.js'
 import { orderTagBadge, mountOrderAnnotations } from './order-tags-ui.js'
 import { mergeOrderTags } from './order-tags.js'
 import { createRowSelection } from './row-selection.js'
+import { createVirtualTable } from './virtual-table.js'
 import { copyExcelImage } from './excel-image-copy.js'
 import { copySourceImages } from './source-image-copy.js'
 import { mountProductCopyActions, mountCopyActions } from './copy-actions.js'
@@ -267,7 +268,6 @@ export async function startLibrary(
     enableLightDismiss(dialog)
   let records = [],
     jobs = [],
-    page = 0,
     refreshWork,
     hasLoadedLibrary = false,
     refreshPending = false,
@@ -275,6 +275,7 @@ export async function startLibrary(
     showDismissed = false,
     orderPage = 0
   let packing
+  let productKeys = []
   let storeFilter = null
   let orderTagDefinitions = [],
     productTagDefinitions = [],
@@ -342,6 +343,7 @@ export async function startLibrary(
       return typeof data === 'string' ? data : data.dataUrl
     },
     {
+      getProductContext: (item) => packing?.photoContext(item),
       onEdit: async (item, edit) => {
         const store = repository || (await openDatabase())
         const sourceItem = records
@@ -498,8 +500,9 @@ export async function startLibrary(
   }
   const productSelection = createRowSelection({
     selected: selectedRows,
-    getKeys: () => filteredRows().map(keyFor),
+    getKeys: () => productKeys,
     onChange: updateSelection,
+    ensureVisible: (key) => productTable.ensureVisible(key),
     onActivate: (key) => {
       const row = filteredRows().find((item) => keyFor(item) === key)
       if (!row) return
@@ -543,7 +546,7 @@ export async function startLibrary(
         .map(({ snapshot }) => snapshot.orderId),
     onChange: () => {
       productSelection.reset()
-      page = 0
+      productTable.reset()
       renderRows()
       updateOrderActions()
       packing?.updateActions()
@@ -572,7 +575,17 @@ export async function startLibrary(
     },
     { rootMargin: '150px' }
   )
-  const pageSize = 100
+  let tableContext
+  const productTable = createVirtualTable({
+    scroller: document.querySelector('.table-scroll'),
+    body: $('sheet-body'),
+    render: renderTableEntries,
+    paint: () => productSelection.paint(),
+    remove: (element) => {
+      for (const image of element.querySelectorAll('img'))
+        imageObserver.unobserve(image)
+    },
+  })
   for (const [id, name, iconOnly] of [
     ['packing-settings', 'settings', true],
     ['activity-open', 'activity', false],
@@ -1425,29 +1438,14 @@ export async function startLibrary(
   }
   function renderRows() {
     const rows = filteredRows()
-    const maxPage = Math.max(0, Math.ceil(rows.length / pageSize) - 1)
-    page = Math.min(page, maxPage)
+    productKeys = rows.map(keyFor)
     imageObserver.disconnect()
-    const body = $('sheet-body')
-    body.replaceChildren()
     productSelection.detach()
     const orderCounts = new Map()
     for (const row of rows)
       orderCounts.set(row.orderId, (orderCounts.get(row.orderId) || 0) + 1)
     const orderPositions = new Map(
       [...orderCounts.keys()].map((id, index) => [id, index])
-    )
-    let previousOrder
-    let sectionId
-    const pageRows = rows.slice(page * pageSize, (page + 1) * pageSize)
-    const effectiveMaterials = new Map(
-      (packing?.preparedRows(pageRows) || pageRows).map((row) => [
-        keyFor(row),
-        {
-          value: row.material ?? suggestMaterial(row),
-          source: row.materialSource,
-        },
-      ])
     )
     const linkedOrders = new Set(
       records.flatMap((record) =>
@@ -1472,7 +1470,53 @@ export async function startLibrary(
           paymentCostAdjustments(record, records),
         ])
     )
-    for (const [index, row] of pageRows.entries()) {
+    tableContext = { orderCounts, orderPositions, adjustedCosts }
+    const entries = []
+    let previousOrder
+    for (const [index, row] of rows.entries()) {
+      if (previousOrder !== row.orderId)
+        entries.push({
+          key: `heading:${row.orderId}`,
+          heading: true,
+          row,
+          index,
+        })
+      entries.push({ key: keyFor(row), row, index })
+      previousOrder = row.orderId
+    }
+    productTable.setItems(entries)
+    $('empty-state').hidden = !!records.length
+    document.querySelector('.table-scroll').hidden = !records.length
+    bindText(
+      $('sheet-title'),
+      selectedOrders.size
+        ? uiMessage('{0} selected order{1}', {
+            0: selectedOrders.size,
+            1: selectedOrders.size === 1 ? '' : 's',
+          })
+        : uiMessage('All products')
+    )
+    productSelection.paint()
+    updateSelection()
+    renderTotals(rows)
+    updateOrderActions()
+  }
+  function renderTableEntries(entries) {
+    const { orderCounts, orderPositions, adjustedCosts } = tableContext
+    const products = entries
+      .filter((entry) => !entry.heading)
+      .map((entry) => entry.row)
+    const effectiveMaterials = new Map(
+      (packing?.preparedRows(products) || products).map((row) => [
+        keyFor(row),
+        {
+          value: row.material ?? suggestMaterial(row),
+          source: row.materialSource,
+        },
+      ])
+    )
+    const elements = []
+    for (const { row, index, heading: isHeading } of entries) {
       const changed = row.record.changedEntryIds.includes(row.entryId)
       const tr = node('tr', undefined, changed ? 'changed-row' : '')
       const tone =
@@ -1480,11 +1524,11 @@ export async function startLibrary(
           ? 'order-tone-olive'
           : 'order-tone-clay'
       tr.classList.add(tone)
-      if (previousOrder !== row.orderId) {
+      if (isHeading) {
         const heading = node('tr', undefined, `order-section-heading ${tone}`)
         const cell = node('th')
         cell.colSpan = 9
-        sectionId = `order-section-${row.orderId}`
+        const sectionId = `order-section-${row.orderId}`
         cell.id = sectionId
         const band = node('div', undefined, 'order-section-band')
         const shop = node('span', undefined, 'order-section-store')
@@ -1496,8 +1540,6 @@ export async function startLibrary(
           })
         )
         const count = orderCounts.get(row.orderId)
-        const continued =
-          rows[page * pageSize + index - 1]?.orderId === row.orderId
         band.append(
           shop,
           orderReference(row.orderId, {
@@ -1512,7 +1554,7 @@ export async function startLibrary(
             uiMessage('{0} product row{1}{2}', {
               0: () => count.toLocaleString(getLocale()),
               1: count === 1 ? '' : 's',
-              2: continued ? uiMessage(' · continued') : '',
+              2: '',
             }),
             'order-section-count'
           )
@@ -1520,15 +1562,11 @@ export async function startLibrary(
         operationsStrip(band, row.record)
         cell.append(band)
         heading.append(cell)
-        body.append(heading)
+        elements.push(heading)
+        continue
       }
-      tr.setAttribute('aria-describedby', sectionId)
-      previousOrder = row.orderId
-      const selection = node(
-        'td',
-        String(page * pageSize + index + 1),
-        'row-number'
-      )
+      tr.setAttribute('aria-description', row.sellerName)
+      const selection = node('td', String(index + 1), 'row-number')
       bindAttribute(
         tr,
         'aria-label',
@@ -1694,26 +1732,9 @@ export async function startLibrary(
         weight,
         volume
       )
-      body.append(tr)
+      elements.push(tr)
     }
-    $('empty-state').hidden = !!records.length
-    document.querySelector('.table-scroll').hidden = !records.length
-    bindText(
-      $('sheet-title'),
-      selectedOrders.size
-        ? uiMessage('{0} selected order{1}', {
-            0: selectedOrders.size,
-            1: selectedOrders.size === 1 ? '' : 's',
-          })
-        : uiMessage('All products')
-    )
-    $('page-label').textContent = `${page + 1} / ${maxPage + 1}`
-    $('previous-page').disabled = page === 0
-    $('next-page').disabled = page === maxPage
-    productSelection.paint()
-    updateSelection()
-    renderTotals(rows)
-    updateOrderActions()
+    return elements
   }
   const activityTracker = createActivityTracker()
   window.addEventListener('storage', (event) => {
@@ -2201,7 +2222,8 @@ export async function startLibrary(
           for (const value of selectedMonths) expandedMonths.add(value)
           orderSelection.reset()
           productSelection.reset()
-          page = orderPage = 0
+          orderPage = 0
+          productTable.reset()
           updateMonthFilter()
           render()
         })
@@ -2284,7 +2306,8 @@ export async function startLibrary(
         for (const { snapshot } of addedMatchingOrders)
           expandedMonths.add(purchaseMonth(snapshot))
       }
-      if (filteredRows().some((row) => addedOrderIds.has(row.orderId))) page = 0
+      if (filteredRows().some((row) => addedOrderIds.has(row.orderId)))
+        productTable.reset()
     }
     render()
     hasLoadedLibrary = true
@@ -2498,7 +2521,8 @@ export async function startLibrary(
       $('order-search').value = order.sellerName
       $('date-from').value = ''
       $('date-to').value = ''
-      orderPage = page = 0
+      orderPage = 0
+      productTable.reset()
       renderMonthOptions()
       render()
     }
@@ -2854,16 +2878,8 @@ export async function startLibrary(
     $('date-from').value = ''
     $('date-to').value = ''
     orderPage = 0
-    page = 0
+    productTable.reset()
     render()
-  })
-  action('previous-page', () => {
-    page--
-    renderRows()
-  })
-  action('next-page', () => {
-    page++
-    renderRows()
   })
   async function refreshOrders(orderIds) {
     orderIds = orderIds.filter((id) =>
@@ -2903,7 +2919,8 @@ export async function startLibrary(
     monthAnchor = null
     orderSelection.reset()
     productSelection.reset()
-    page = orderPage = 0
+    orderPage = 0
+    productTable.reset()
     renderMonthOptions()
     render()
   })
@@ -3004,7 +3021,7 @@ export async function startLibrary(
   $('search').addEventListener('input', () => {
     clearTimeout(searchTimer)
     searchTimer = setTimeout(() => {
-      page = 0
+      productTable.reset()
       productSelection.reset()
       renderRows()
     }, 150)
@@ -3055,7 +3072,7 @@ export async function startLibrary(
     clearTimeout(orderSearchTimer)
     orderSelection.reset()
     productSelection.reset()
-    page = 0
+    productTable.reset()
     orderPage = 0
     orderSearchTimer = setTimeout(() => {
       if ($('order-search').value.trim())
@@ -3066,7 +3083,7 @@ export async function startLibrary(
   })
   for (const id of ['status-filter', 'changes-only'])
     $(id).addEventListener('change', () => {
-      page = 0
+      productTable.reset()
       productSelection.reset()
       renderRows()
     })
@@ -3074,7 +3091,7 @@ export async function startLibrary(
     $(id).addEventListener('change', () => {
       orderSelection.reset()
       productSelection.reset()
-      page = 0
+      productTable.reset()
       orderPage = 0
       if ($('date-from').value || $('date-to').value)
         for (const { snapshot } of matchingOrders())

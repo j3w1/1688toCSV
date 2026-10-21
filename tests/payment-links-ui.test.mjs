@@ -38,6 +38,13 @@ function fixture(t, { sameOrder = false } = {}) {
     },
   })
   t.after(() => Object.defineProperty(select, 'value', previousSelect))
+  const matches = window.HTMLElement.prototype.matches
+  window.HTMLElement.prototype.matches = function (selector) {
+    return selector === ':popover-open' ? false : matches.call(this, selector)
+  }
+  t.after(() => {
+    window.HTMLElement.prototype.matches = matches
+  })
   for (const [name, method] of Object.entries({
     showModal() {
       this.open = true
@@ -73,6 +80,7 @@ function fixture(t, { sameOrder = false } = {}) {
     snapshot: {
       accountId: 'local',
       orderId: 'goods',
+      sellerMemberLogin: 'synthetic-linked-store',
       observedAt: '2026-10-01T12:00:00.000Z',
       totals: { payable: sameOrder ? '12.00' : '10.00', shipping: '0.00' },
       items: [
@@ -86,6 +94,7 @@ function fixture(t, { sameOrder = false } = {}) {
       accountId: 'local',
       orderId: 'source',
       sellerName: 'Synthetic payment',
+      sellerMemberLogin: 'synthetic-linked-store',
       observedAt: '2026-10-01T12:00:00.000Z',
       totals: { payable: '12.34', shipping: '2.34' },
       items: [product('1', 'Recorded service', '10.00')],
@@ -115,10 +124,12 @@ test('linked-payment editor stays compact until opened and defaults to full sour
   assert.equal(dialog.tagName, 'DIALOG')
   assert.equal(dialog.getAttribute('closedby'), 'any')
   assert.equal(editor.dirty(), false)
-  dialog.querySelector('fieldset > button').click()
+  dialog.querySelector('.payment-links-add').click()
   const sourceSelect = dialog.querySelector('[name="payment-source-order"]')
+  assert.equal(sourceSelect.tagName, 'INPUT')
+  assert.equal(sourceSelect.getAttribute('role'), 'combobox')
   sourceSelect.value = 'source'
-  sourceSelect.dispatchEvent(new window.Event('change'))
+  sourceSelect.dispatchEvent(new window.Event('input'))
   const reason = dialog.querySelector('[name="payment-reason"]')
   reason.value = 'Recorded label service'
   reason.dispatchEvent(new window.Event('input'))
@@ -209,10 +220,10 @@ test('failed reviewed saves retain the draft and invalid money never reaches sto
     },
   })
   const dialog = editor.open()
-  dialog.querySelector('fieldset > button').click()
+  dialog.querySelector('.payment-links-add').click()
   const sourceSelect = dialog.querySelector('[name="payment-source-order"]')
   sourceSelect.value = 'source'
-  sourceSelect.dispatchEvent(new window.Event('change'))
+  sourceSelect.dispatchEvent(new window.Event('input'))
   const reason = dialog.querySelector('[name="payment-reason"]')
   reason.value = 'Recorded fee'
   const amount = dialog.querySelector('[name="payment-amount"]')
@@ -226,4 +237,52 @@ test('failed reviewed saves retain the draft and invalid money never reaches sto
   assert.equal(editor.dirty(), true)
   assert.equal(dialog.open, true)
   assert.equal(record.paymentLinks, undefined)
+})
+
+test('payment picker rejects another store despite an identical display name and keeps reviewed historical links', async (t) => {
+  const { host, record, source, window } = fixture(t)
+  record.snapshot.sellerName = source.snapshot.sellerName
+  source.snapshot.sellerMemberLogin = 'another-store'
+  let saves = 0
+  const editor = mountPaymentLinks(host, {
+    record,
+    records: [record, source],
+    onSave: async () => {
+      saves++
+    },
+  })
+  const dialog = editor.open()
+  dialog.querySelector('.payment-links-add').click()
+  const search = dialog.querySelector('[name="payment-source-order"]')
+  search.value = 'source'
+  search.dispatchEvent(new window.Event('input'))
+  dialog.querySelector('.payment-links-confirmation input').checked = true
+  await assert.rejects(
+    editor.flush(),
+    /Choose an existing payment source order/
+  )
+  assert.equal(saves, 0)
+  dialog.close()
+
+  record.paymentLinks = [
+    {
+      id: 'legacy',
+      sourceOrderId: 'source',
+      amount: '12.34',
+      reason: 'Previously reviewed payment',
+      reviewedAt: '2026-10-01T12:00:00.000Z',
+      sourceEvidence: paymentSourceEvidence(source),
+      targetEntryIds: ['1'],
+    },
+  ]
+  const previous = structuredClone(record.paymentLinks)
+  const existing = mountPaymentLinks(host, {
+    record,
+    records: [record, source],
+  })
+  const review = existing.open()
+  assert.equal(existing.dirty(), false)
+  assert.match(review.textContent, /existing link is kept for review/)
+  assert.deepEqual(record.paymentLinks, previous)
+  review.close()
 })

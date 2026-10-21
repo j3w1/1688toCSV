@@ -53,7 +53,7 @@ const measure = (value) =>
 // The browser acceptance suite checks the actual canvas raster and font output.
 async function withCanvas(
   work,
-  { bitmapHeight = 252, headerWidthScale = 1 } = {}
+  { bitmapHeight = 252, headerWidthScale = 1, measureFontSize = false } = {}
 ) {
   const previousDocument = globalThis.document
   const previousBitmap = globalThis.createImageBitmap
@@ -76,7 +76,10 @@ async function withCanvas(
           return {
             width:
               measure(text) *
-              (this.font?.startsWith('700 14px') ? headerWidthScale : 1),
+              (this.font?.startsWith('700 14px') ? headerWidthScale : 1) *
+              (measureFontSize
+                ? Number(this.font?.match(/([\d.]+)px/)?.[1] || 14) / 14
+                : 1),
           }
         },
         fillText(text, x, y) {
@@ -1138,7 +1141,7 @@ test('barcode image cells underline only product digits across schemes, language
         assert.ok(plan.rows[2].cells[1].lines.length > 1)
         await renderExcelImage(plan, { loadImage: async () => png })
         const underlines = state.fills.filter(
-          (fill) => fill.color === '#fff' && fill.height === 0.5
+          (fill) => fill.color === '#fff' && fill.height === 1
         )
         assert.equal(underlines.length, 3, `${language}/${scheme}`)
         const printed = state.text.filter((draw) =>
@@ -1150,7 +1153,11 @@ test('barcode image cells underline only product digits across schemes, language
           const fontSize = plan.rows[index].cells[1].codeFontSize
           assert.equal(underline.x, draw.x + measure('CE2610'))
           assert.equal(underline.width, measure('0101'))
-          assert.equal(underline.y, draw.y + fontSize * 0.18)
+          assert.equal(
+            underline.y,
+            Math.round((draw.y + fontSize * 0.18) * 2) / 2
+          )
+          assert.equal(Number.isInteger(underline.y * 2), true)
         }
       })
   await withCanvas(() => {
@@ -1245,6 +1252,163 @@ test('Large financial values remain complete and portrait photos fit the availab
       assert.equal(plan.rows[0].source.price, input.price)
     },
     { bitmapHeight: 756 }
+  ))
+
+test('Spreadsheet descriptions use larger planned and rendered text while 1688 typography stays unchanged', async () =>
+  withCanvas(async (state) => {
+    const input = {
+      ...row,
+      title: '简短商品',
+      description: '简短商品\n颜色：透明\n货号：TEST-01',
+    }
+    const original = structuredClone(input)
+    const [plan] = planExcelImage(
+      [
+        input,
+        { ...input, sourceType: '1688' },
+        { ...input, sourceType: 'spreadsheet' },
+      ],
+      { columns: ['description', 'quantity'] }
+    )
+    const descriptions = plan.rows.map((entry) => entry.cells[0])
+    assert.deepEqual(descriptions[0], descriptions[1])
+    assert.deepEqual(
+      descriptions.map(({ text }) => text),
+      Array(3).fill(input.description)
+    )
+    assert.ok(descriptions[0].blocks[0].font.startsWith('600 16px'))
+    assert.ok(descriptions[0].blocks[1].font.startsWith('14px'))
+    assert.ok(descriptions[2].blocks[0].font.startsWith('600 22px'))
+    assert.ok(descriptions[2].blocks[1].font.startsWith('19px'))
+    assert.ok(descriptions[2].blocks[2].font.startsWith('600 19px'))
+    assert.ok(
+      descriptions[2].blocks.every((block) =>
+        block.labelFont.startsWith('600 17px')
+      )
+    )
+    assert.equal(plan.rows[2].source.sourceType, 'spreadsheet')
+    assert.ok(Object.isFrozen(plan.rows[2].source))
+    assert.deepEqual(input, original)
+    await renderExcelImage(plan)
+    for (const [text, font] of [
+      ['简短商品', '600 22px'],
+      ['透明', '19px'],
+      ['货号：', '600 17px'],
+    ])
+      assert.ok(
+        state.text.some(
+          (draw) => draw.text === text && draw.font.startsWith(font)
+        )
+      )
+    assert.deepEqual(plan.rows[0].cells[1], plan.rows[2].cells[1])
+  }))
+
+test('Spreadsheet descriptions retain long text and measured line bounds without clipping or changing column widths', async () =>
+  withCanvas(
+    async (state) => {
+      const title = 'China wholesale product',
+        note =
+          'Every supplied word remains available in this imported product description. '
+            .repeat(45)
+            .trim()
+      const input = {
+        ...row,
+        sourceType: 'spreadsheet',
+        title,
+        description: `${title}\n${note}\n非常长的供应商属性名称需要单独换行：保留全部规格文字\n货号：SUPPLIER-2026`,
+      }
+      const [plan] = planExcelImage([input], {
+        columns: ['description', 'quantity'],
+      })
+      const description = plan.rows[0].cells[0],
+        width = plan.columns[0].width - 20
+      assert.equal(plan.columns[0].width, 330)
+      assert.equal(description.text, input.description)
+      assert.ok(description.height + 20 <= plan.rows[0].height)
+      for (const block of description.blocks) {
+        const fontSize = Number(block.font.match(/([\d.]+)px/)[1]),
+          labelSize = Number(block.labelFont.match(/([\d.]+)px/)[1])
+        for (const label of block.labelLines)
+          assert.ok((measure(label) * labelSize) / 14 <= width + 1e-8)
+        for (const [index, line] of block.lines.entries()) {
+          const labelWidth =
+            !index && !block.labelLines.length ? block.labelWidth : 0
+          assert.ok(
+            (measure(line) * fontSize) / 14 + labelWidth <= width + 1e-8
+          )
+        }
+      }
+      await renderExcelImage(plan)
+      const top =
+          plan.headerHeight +
+          1 +
+          (plan.rows[0].height - description.height) / 2,
+        bottom = top + description.height
+      for (const draw of state.text.filter(({ font }) =>
+        /^(?:600 )?(?:17|19|22)px/.test(font)
+      )) {
+        const size = Number(draw.font.match(/([\d.]+)px/)[1])
+        assert.ok(draw.y - size * 0.8 >= top - 1e-8)
+        assert.ok(draw.y + size * 0.2 <= bottom + 1e-8)
+        assert.ok(draw.x >= 11 - 1e-8)
+        assert.ok(draw.x + (measure(draw.text) * size) / 14 <= 321 + 1e-8)
+      }
+    },
+    { measureFontSize: true }
+  ))
+
+test('Spreadsheet descriptions keep the same image batches for short photo rows and all source text in every language', async () =>
+  withCanvas(
+    async (state) => {
+      const rows = Array.from({ length: 120 }, (_, index) => ({
+        ...row,
+        entryId: String(index),
+        title: '简短商品',
+        description: '简短商品\n颜色：透明',
+      }))
+      const options = {
+        columns: ['thumbnail', 'description'],
+        showOrderDetails: false,
+      }
+      const baseline = planExcelImage(rows, options),
+        imported = planExcelImage(
+          rows.map((row) => ({ ...row, sourceType: 'spreadsheet' })),
+          options
+        )
+      assert.deepEqual(
+        imported.map(({ start, end, width, height }) => ({
+          start,
+          end,
+          width,
+          height,
+        })),
+        baseline.map(({ start, end, width, height }) => ({
+          start,
+          end,
+          width,
+          height,
+        }))
+      )
+      assert.equal(
+        imported.reduce((sum, plan) => sum + plan.rowCount, 0),
+        120
+      )
+      for (const language of ['en', 'es', 'zh']) {
+        const [plan] = planExcelImageBase(
+          [{ ...rows[0], sourceType: 'spreadsheet' }],
+          { columns: ['description'], language }
+        )
+        assert.ok(plan.rows[0].cells[0].text.includes('简短商品'))
+        await renderExcelImage(plan)
+        assert.ok(
+          state.text.some(
+            (draw) =>
+              draw.text === '简短商品' && draw.font.startsWith('600 22px')
+          )
+        )
+      }
+    },
+    { measureFontSize: true }
   ))
 
 test('Rich descriptions separate original titles and attributes and include latest variant notes once', async () =>

@@ -2,8 +2,10 @@ import { element as el } from './ui.js'
 import { bindAttribute, bindText, message } from './i18n.js'
 import { decorateIcon } from './icons.js'
 import { centsToMoney, moneyToCents } from './money.js'
+import { attachSearchSuggestions } from './search-assistance.js'
 import {
   eligiblePaymentItems,
+  eligiblePaymentSource,
   paymentCostAdjustments,
   paymentLinkReviews,
   paymentLinksTotal,
@@ -34,6 +36,7 @@ export function mountPaymentLinks(host, { record, records, onSave }) {
     saving = false
   let checked,
     save,
+    add,
     status,
     error,
     preview,
@@ -66,11 +69,13 @@ export function mountPaymentLinks(host, { record, records, onSave }) {
         )
       : [...records, target]
   const sourceFor = (id) =>
-    records.find(
-      (value) =>
-        value.snapshot.accountId === record.snapshot.accountId &&
-        value.snapshot.orderId === id
-    )
+    id === record.snapshot.orderId
+      ? record
+      : records.find(
+          (value) =>
+            value.snapshot.accountId === record.snapshot.accountId &&
+            value.snapshot.orderId === id
+        )
   const showError = (value = '') => {
     if (!error) return
     error.hidden = !value
@@ -96,7 +101,7 @@ export function mountPaymentLinks(host, { record, records, onSave }) {
   }
   const read = () => {
     const draft = rows.map((row) => {
-      const source = sourceFor(row.source.value)
+      const source = row.selectedSource()
       if (!source) throw new Error('Choose an existing payment source order')
       let amount
       try {
@@ -108,6 +113,16 @@ export function mountPaymentLinks(host, { record, records, onSave }) {
       }
       row.amount.removeAttribute('aria-invalid')
       const sourceEntryId = row.fee.value || undefined
+      if (
+        !eligiblePaymentSource(record, source) &&
+        !(
+          row.originalSource.sourceOrderId === source.snapshot.orderId &&
+          row.originalSource.sourceEntryId === sourceEntryId
+        )
+      )
+        throw new Error(
+          'Choose a payment source from the same known store and account'
+        )
       if (
         source.snapshot.orderId === record.snapshot.orderId &&
         sourceEntryId === undefined
@@ -269,12 +284,19 @@ export function mountPaymentLinks(host, { record, records, onSave }) {
   const appendLink = (link = {}) => {
     const card = el('fieldset', undefined, 'payment-link-card')
     card.append(el('legend', message('Existing payment source'), 'sr-only'))
-    const source = el('select'),
+    const source = el('input'),
       fee = el('select'),
       reason = el('input'),
       amount = el('input'),
       scope = el('select')
     source.name = 'payment-source-order'
+    source.type = 'text'
+    source.required = true
+    source.autocomplete = 'off'
+    source.spellcheck = false
+    source.setAttribute('autocorrect', 'off')
+    source.setAttribute('autocapitalize', 'off')
+    bindAttribute(source, 'placeholder', message('Search this store’s orders'))
     fee.name = 'payment-source-row'
     reason.type = 'text'
     reason.name = 'payment-reason'
@@ -292,16 +314,26 @@ export function mountPaymentLinks(host, { record, records, onSave }) {
       select.append(option)
       return option
     }
-    selectOption(source, '', message('Choose source order'))
-    for (const value of records.filter(
-      (value) => value.snapshot.accountId === record.snapshot.accountId
-    ))
-      selectOption(
-        source,
-        value.snapshot.orderId,
-        `${value.snapshot.sellerName || value.snapshot.storeName || ''} · ${value.snapshot.orderId}`
-      )
-    source.value = link.sourceOrderId || ''
+    const sourceChoices = allRecords().filter((value) =>
+      eligiblePaymentSource(record, value)
+    )
+    const previousSource = sourceFor(link.sourceOrderId)
+    const historical = Boolean(
+      previousSource && !eligiblePaymentSource(record, previousSource)
+    )
+    if (historical) sourceChoices.push(previousSource)
+    const sourceLabel = (value) =>
+      `${value.snapshot.sellerName || value.snapshot.storeName || ''} · ${value.snapshot.orderId} · ¥${value.snapshot.totals.payable}`
+    const sourceLabels = new Map(
+      sourceChoices.map((value) => [sourceLabel(value), value.snapshot.orderId])
+    )
+    const selectedSource = () => {
+      const id = sourceLabels.get(source.value) || source.value
+      return sourceChoices.some((value) => value.snapshot.orderId === id)
+        ? sourceFor(id)
+        : undefined
+    }
+    source.value = previousSource ? sourceLabel(previousSource) : ''
     selectOption(scope, 'all', message('All eligible goods'))
     selectOption(scope, 'selected', message('Selected goods'))
     scope.value = link.targetEntryIds ? 'selected' : 'all'
@@ -330,6 +362,8 @@ export function mountPaymentLinks(host, { record, records, onSave }) {
     const row = {
       id: link.id || crypto.randomUUID(),
       source,
+      selectedSource,
+      originalSource: link,
       fee,
       reason,
       amount,
@@ -340,7 +374,7 @@ export function mountPaymentLinks(host, { record, records, onSave }) {
       reviewedAt: new Date().toISOString(),
     }
     const refreshSource = ({ reset = false, selected = fee.value } = {}) => {
-      const current = sourceFor(source.value)
+      const current = selectedSource()
       if (reset) selected = undefined
       fee.replaceChildren()
       if (!current) {
@@ -394,12 +428,12 @@ export function mountPaymentLinks(host, { record, records, onSave }) {
     const refreshTargets = () => {
       targetsHost.hidden = scope.value !== 'selected'
     }
-    source.addEventListener('change', () => {
+    source.addEventListener('input', () => {
       refreshSource({ reset: true })
       changed()
     })
     fee.addEventListener('change', () => {
-      const current = sourceFor(source.value)
+      const current = selectedSource()
       if (current)
         amount.value = paymentSourceEvidence(
           current,
@@ -430,21 +464,44 @@ export function mountPaymentLinks(host, { record, records, onSave }) {
     remove.type = 'button'
     remove.addEventListener('click', () => {
       rows.splice(rows.indexOf(row), 1)
+      row.destroySource?.()
       card.remove()
       changed()
     })
     actions.append(review, remove)
     const grid = el('div', undefined, 'payment-link-fields')
+    const sourceField = el(
+      'div',
+      undefined,
+      'payment-link-field payment-link-source-field'
+    )
+    const sourceHelp = el(
+      'small',
+      message(
+        historical
+          ? 'This existing link is kept for review. New payment sources must belong to this store.'
+          : 'Search existing orders from this store. Choose this order to use one of its fee rows.'
+      ),
+      'payment-links-help'
+    )
+    sourceHelp.id = `payment-source-help-${crypto.randomUUID()}`
+    source.setAttribute('aria-describedby', sourceHelp.id)
+    sourceField.append(label('Source order', source), sourceHelp)
     grid.append(
-      label('Source order', source),
+      sourceField,
       label('Payment or fee row', fee),
-      label('Reason', reason),
       label('Recorded amount to attribute · CNY', amount),
+      label('Reason', reason),
       label('Receiving goods', scope)
     )
     card.append(grid, evidence, targetsHost, actions)
     rows.push(row)
     list.append(card)
+    row.destroySource = attachSearchSuggestions(
+      source,
+      () => [...sourceLabels.keys()],
+      { showOnFocus: true }
+    )
     refreshSource({ selected: link.sourceEntryId })
     refreshTargets()
     return row
@@ -457,6 +514,7 @@ export function mountPaymentLinks(host, { record, records, onSave }) {
     validatePaymentGraph(allRecords({ ...record, paymentLinks: links }))
     saving = true
     fields.disabled = true
+    add.disabled = true
     save.disabled = true
     bindText(status, message('Saving…'))
     showError()
@@ -484,6 +542,7 @@ export function mountPaymentLinks(host, { record, records, onSave }) {
     } finally {
       saving = false
       fields.disabled = false
+      add.disabled = false
       renderPreview()
     }
   }
@@ -502,13 +561,24 @@ export function mountPaymentLinks(host, { record, records, onSave }) {
     bindAttribute(dialog, 'aria-label', message('Review linked payments'))
     const title = el('header', undefined, 'payment-links-dialog-heading')
     title.append(el('h2', message('Review linked payments')))
+    add = el('button', message('Link existing payment'), 'payment-links-add')
+    add.type = 'button'
+    decorateIcon(add, 'plus')
+    add.addEventListener('click', () => {
+      if (saving) return
+      const row = appendLink()
+      changed()
+      row.source.focus()
+    })
     const close = el('button')
     close.type = 'button'
     decorateIcon(close, 'close', { iconOnly: true, label: message('Close') })
     close.addEventListener('click', () => {
       if (!saving) dialog.close()
     })
-    title.append(close)
+    const titleActions = el('div', undefined, 'payment-links-title-actions')
+    titleActions.append(add, close)
+    title.append(titleActions)
     const form = el('form')
     form.noValidate = true
     fields = el('fieldset')
@@ -523,14 +593,7 @@ export function mountPaymentLinks(host, { record, records, onSave }) {
       )
     )
     list = el('div', undefined, 'payment-links-list')
-    const add = el('button', message('Link existing payment'))
-    add.type = 'button'
-    add.addEventListener('click', () => {
-      const row = appendLink()
-      changed()
-      row.source.focus()
-    })
-    fields.append(list, add)
+    fields.append(list)
     preview = el('div', undefined, 'payment-links-preview')
     preview.setAttribute('aria-live', 'polite')
     fields.append(preview)

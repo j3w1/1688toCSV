@@ -67,7 +67,7 @@ function metric(page, key) {
 }
 
 test(
-  'selected product amounts update across pages, filtering, and selection clearing without prorating order totals',
+  'selected product amounts update through scrolling, filtering, and selection clearing without prorating order totals',
   { tag: '@smoke' },
   async ({ extension }) => {
     const page = await workspace(extension)
@@ -84,8 +84,10 @@ test(
     await expect(metric(page, 'quantity')).toHaveText('319')
     await expect(metric(page, 'gross')).toHaveText('¥ 146.05')
     await expect(metric(page, 'after-discounts')).toHaveText('¥ 142.90')
-    await page.locator('#next-page').click()
-    await expect(page.locator('#page-label')).toHaveText('2 / 2')
+    await page.locator('.table-scroll').evaluate((scroller) => {
+      scroller.scrollTop = scroller.scrollHeight
+    })
+    await expect(rows.last().locator('.row-number')).toHaveText('107')
     await expect(metric(page, 'rows')).toHaveText('107')
     await expect(metric(page, 'after-discounts')).toHaveText('¥ 142.90')
     await page.locator('#search').fill('Other synthetic')

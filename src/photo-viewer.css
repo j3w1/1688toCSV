@@ -23,6 +23,11 @@
   border: 1px solid var(--border);
   border-radius: 8px;
   font-size: 11px;
+  box-sizing: border-box;
+  max-block-size: min(280px, 40dvh);
+  min-block-size: 0;
+  overflow: auto;
+  overscroll-behavior: contain;
 }
 .product-photo-editor[hidden] {
   display: none;
@@ -59,17 +64,51 @@
   font-size: 11px;
 }
 .product-photo-editor .photo-variant-tag-controls {
-  display: flex;
+  display: grid;
   flex: 1 0 100%;
+  grid-template-columns: max-content max-content minmax(112px, 1fr) auto;
+  grid-template-areas:
+    'palette custom tags actions'
+    'scales scales scales scales';
   align-items: center;
-  gap: 6px;
+  gap: 6px 14px;
   min-width: 0;
   padding-top: 7px;
   border-top: 1px solid var(--border);
 }
-.photo-variant-tag-controls > label {
-  flex: 0 0 auto;
+/* A few tags share the toolbar's unused middle space. Longer tag collections
+   get a wider wrapping row instead of turning that space into a tall column. */
+.product-photo-editor
+  .photo-variant-tag-controls:where(
+    :has(.photo-variant-tag-chip:nth-child(n + 9))
+  ) {
+  grid-template-areas:
+    'palette custom . actions'
+    'tags tags tags tags'
+    'scales scales scales scales';
+}
+.photo-tag-custom > label {
   font-size: 10px;
+}
+.photo-tag-custom {
+  grid-area: custom;
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 4px 5px;
+  min-inline-size: 0;
+}
+.photo-variant-tag-controls > .product-photo-editor-actions {
+  grid-area: actions;
+  margin-inline-start: 0;
+  justify-self: end;
+}
+.photo-tag-scales {
+  grid-area: scales;
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 6px 14px;
+  min-inline-size: 0;
 }
 .product-photo-editor .photo-variant-tag-controls input[type='text'] {
   width: 58px;
@@ -87,10 +126,24 @@
   border-radius: 4px 0 0 4px;
 }
 .photo-tag-entry,
-.photo-tag-tools {
+.photo-tag-tools,
+.photo-tag-quick {
   display: inline-flex;
   align-items: center;
   flex: 0 0 auto;
+}
+.photo-tag-quick {
+  gap: 3px;
+}
+.photo-tag-palette {
+  grid-area: palette;
+  display: grid;
+  gap: 4px;
+}
+.photo-tag-quick-label {
+  width: 62px;
+  font-size: 10px;
+  color: var(--muted);
 }
 .photo-tag-entry {
   border: 1px solid var(--border);
@@ -119,11 +172,11 @@
   margin: 0;
 }
 .photo-tag-size {
-  display: flex;
+  display: grid;
+  grid-template-columns: max-content minmax(100px, 260px) 34px;
   align-items: center;
-  flex: 0 1 175px;
   gap: 5px;
-  margin-inline-start: auto;
+  min-inline-size: 0;
 }
 .photo-tag-size label {
   flex: none;
@@ -131,25 +184,79 @@
   white-space: nowrap;
 }
 .product-photo-editor .photo-tag-size input[type='range'] {
-  min-width: 45px;
-  width: 65px;
+  min-width: 100px;
+  width: 100%;
+  max-inline-size: 260px;
 }
 .photo-tag-size span {
   font-size: 10px;
   min-width: 30px;
   font-variant-numeric: tabular-nums;
 }
+.photo-pointer-size {
+  grid-template-columns: max-content minmax(100px, 260px) 34px 26px;
+}
+.product-photo-editor .photo-pointer-invert {
+  display: inline-grid;
+  place-items: center;
+  inline-size: 26px;
+  block-size: 26px;
+  min-block-size: 26px;
+  padding: 0;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+}
+.photo-pointer-invert[aria-pressed='true'] {
+  border-color: var(--accent);
+  box-shadow: inset 0 0 0 1px var(--accent);
+}
+.photo-pointer-swatch {
+  display: block;
+  position: relative;
+  inline-size: 14px;
+  block-size: 14px;
+  border-radius: 50%;
+  background: #000;
+  box-shadow: 0 0 0 1px #888;
+}
+.photo-pointer-swatch::after {
+  content: '';
+  position: absolute;
+  inset: 4px;
+  border-radius: 50%;
+  background: #fff;
+}
+.photo-pointer-invert[aria-pressed='true'] .photo-pointer-swatch {
+  background: #fff;
+}
+.photo-pointer-invert[aria-pressed='true'] .photo-pointer-swatch::after {
+  background: #000;
+}
 .photo-variant-tag-list {
+  grid-area: tags;
   display: flex;
-  flex: 1;
   flex-wrap: wrap;
   gap: 4px;
   align-self: center;
-  min-width: 0;
+  inline-size: 100%;
+  box-sizing: border-box;
+  min-inline-size: 0;
   max-height: 64px;
-  overflow: auto;
+  overflow-y: auto;
+  overflow-x: hidden;
+  overscroll-behavior: contain;
 }
-.photo-variant-tag-controls .photo-variant-tag-chip {
+.photo-variant-tag-list:empty {
+  display: none;
+}
+.photo-variant-tag-list > button {
+  flex: 0 0 auto;
+}
+.photo-variant-tag-controls
+  :is(.photo-variant-tag-chip, .photo-tag-quick-button) {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
   min-width: 28px;
   min-height: 24px;
   padding: 3px 6px;
@@ -161,8 +268,26 @@
     700 12px/1 Arial,
     sans-serif;
 }
-.photo-variant-tag-chip[aria-pressed='true'] {
-  outline: 2px solid var(--text);
+.photo-variant-tag-controls .photo-tag-quick-button {
+  min-width: 24px;
+  padding-inline: 3px;
+}
+/* Keep the code badge black through hover; inset feedback stays inside the
+   scrolling tag list instead of producing clipped white selection edges. */
+.photo-variant-tag-controls
+  :is(.photo-variant-tag-chip, .photo-tag-quick-button):is(
+    :hover,
+    :focus-visible,
+    [aria-pressed='true']
+  ) {
+  color: #fff;
+  background: #000;
+  border-color: var(--accent);
+  box-shadow: inset 0 0 0 1px var(--accent);
+}
+.photo-variant-tag-controls
+  :is(.photo-variant-tag-chip, .photo-tag-quick-button):focus-visible {
+  outline: 2px solid var(--focus);
   outline-offset: 1px;
 }
 .photo-variant-tag-overlay {
@@ -208,12 +333,22 @@
 .photo-viewport.is-placing-tag {
   cursor: crosshair;
 }
+@media (max-width: 800px) {
+  .product-photo-editor .photo-variant-tag-controls {
+    grid-template-columns: max-content minmax(0, 1fr) auto;
+    grid-template-areas:
+      'palette custom actions'
+      'tags tags tags'
+      'scales scales scales';
+  }
+}
 @media (max-width: 600px) {
   .product-photo-editor .photo-variant-tag-controls {
-    flex-wrap: wrap;
+    grid-template-columns: minmax(0, 1fr);
+    grid-template-areas: 'palette' 'custom' 'tags' 'scales' 'actions';
   }
-  .photo-variant-tag-list {
-    flex-basis: 100%;
+  .photo-tag-scales {
+    grid-template-columns: minmax(0, 1fr);
   }
 }
 .photo-viewer-frame > .dialog-close {
@@ -333,4 +468,40 @@
 .photo-viewer-frame:fullscreen .dialog-close {
   top: 16px;
   right: 16px;
+}
+.photo-viewer-product-heading {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 6px 10px;
+}
+.photo-viewer-product-heading h2 {
+  margin: 0;
+  font-size: 16px;
+}
+.photo-viewer-product-code {
+  display: inline-flex;
+  align-items: center;
+}
+.photo-viewer-code.ce-code {
+  --ce-code-size: 22px;
+}
+.photo-viewer-product-context {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 3px 10px;
+  margin-block-start: 4px;
+  color: var(--muted);
+  font-size: 11px;
+  line-height: 1.35;
+}
+.photo-viewer-product-context > span {
+  max-inline-size: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.photo-viewer-product-code[hidden],
+.photo-viewer-product-context[hidden] {
+  display: none;
 }

@@ -49,6 +49,7 @@ export function createPreparationMedia({
   settings,
   logoUrl,
   getPhotoItems = () => [],
+  getPhotoContext,
   onPhotoEdit,
 }) {
   const renderer = createLabelRenderer({
@@ -62,7 +63,10 @@ export function createPreparationMedia({
     activePhotos = 0,
     disposed = false,
     timer
-  const zoom = createPhotoViewer(loadImage, { onEdit: onPhotoEdit })
+  const zoom = createPhotoViewer(loadImage, {
+    onEdit: onPhotoEdit,
+    getProductContext: getPhotoContext,
+  })
   const photoQueue = []
   async function thumbnail(url) {
     if (photos.has(url)) return photos.get(url)

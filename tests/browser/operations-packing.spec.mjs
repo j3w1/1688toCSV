@@ -139,10 +139,30 @@ test('reviewed payment links preserve source totals, skip payment rows and expor
   expect(
     await review.evaluate((dialog) => getComputedStyle(dialog).backgroundColor)
   ).not.toBe('rgba(0, 0, 0, 0)')
+  const paymentHeading = review.locator('.payment-links-dialog-heading')
+  const headingAlignment = await paymentHeading.evaluate((heading) => {
+    const title = heading.querySelector('h2').getBoundingClientRect()
+    const button = heading
+      .querySelector('.payment-links-add')
+      .getBoundingClientRect()
+    return Math.abs(title.y + title.height / 2 - button.y - button.height / 2)
+  })
+  expect(headingAlignment).toBeLessThanOrEqual(1)
   await review
     .getByRole('button', { name: 'Link existing payment', exact: true })
     .click()
-  await review.locator('[name="payment-source-order"]').selectOption('7102')
+  await expect(
+    review.locator('select[name="payment-source-order"]')
+  ).toHaveCount(0)
+  await expect(review.locator('[name="payment-source-order"]')).toHaveAttribute(
+    'role',
+    'combobox'
+  )
+  await expect(
+    review.locator('.search-suggestions [role="option"]')
+  ).toHaveCount(2)
+  await review.locator('[name="payment-source-order"]').fill('7102')
+  await review.getByRole('option', { name: /7102/ }).click()
   await expect(review.locator('[name="payment-amount"]')).toHaveValue('456.00')
   await review
     .locator('[name="payment-reason"]')

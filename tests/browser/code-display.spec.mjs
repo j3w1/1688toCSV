@@ -167,7 +167,7 @@ test('workspace uses white hairlines on product digits across readouts and nativ
   await page.close()
 })
 
-test('Excel barcode-column PNGs carry a lower white product-only hairline in every language and scheme', async ({
+test('Excel barcode-column PNGs carry a crisp opaque product-only underline in every language and scheme', async ({
   extension,
 }) => {
   const root = fileURLToPath(new URL('../../', import.meta.url))
@@ -190,6 +190,7 @@ test('Excel barcode-column PNGs carry a lower white product-only hairline in eve
     for (const language of ['en', 'es', 'zh'])
       for (const scheme of ['neutral', 'warm', 'sage', 'ink', 'custom']) {
         const rows = ['A', 'BL', 'XYZ'.repeat(15)].map((ending, index) => ({
+          sourceType: index % 2 ? 'spreadsheet' : '1688',
           orderId: 'synthetic-order',
           groupId: 'synthetic-group',
           title: 'Synthetic storage box',
@@ -210,7 +211,7 @@ test('Excel barcode-column PNGs carry a lower white product-only hairline in eve
         const prototype = CanvasRenderingContext2D.prototype
         const original = prototype.fillRect
         prototype.fillRect = function (x, y, width, height) {
-          if (height === 0.5)
+          if (height === 1 && this.fillStyle === '#ffffff')
             lines.push({ x, y, width, height, color: this.fillStyle })
           return original.call(this, x, y, width, height)
         }
@@ -237,6 +238,16 @@ test('Excel barcode-column PNGs carry a lower white product-only hairline in eve
           }
           return {
             bright: brightest.value,
+            pixels: [0, 1].map((row) => [
+              ...context.getImageData(x, Math.round(line.y * 2) + row, 1, 1)
+                .data,
+            ]),
+            above: [
+              ...context.getImageData(x, Math.round(line.y * 2) - 1, 1, 1).data,
+            ],
+            below: [
+              ...context.getImageData(x, Math.round(line.y * 2) + 2, 1, 1).data,
+            ],
             before: [
               ...context.getImageData(
                 Math.floor(line.x * 2) - 2,
@@ -272,10 +283,19 @@ test('Excel barcode-column PNGs carry a lower white product-only hairline in eve
     )
     for (const line of example.lines) {
       expect(line.color).toBe('#ffffff')
-      expect(line.height).toBe(0.5)
+      expect(line.height).toBe(1)
+      expect(Number.isInteger(line.y * 2)).toBe(true)
     }
     for (const sample of example.samples) {
-      expect(sample.bright).toBeGreaterThan(120)
+      expect(sample.bright).toBe(255)
+      for (const pixel of sample.pixels)
+        expect(pixel).toEqual([255, 255, 255, 255])
+      expect(sample.above.slice(0, 3).every((channel) => channel < 30)).toBe(
+        true
+      )
+      expect(sample.below.slice(0, 3).every((channel) => channel < 30)).toBe(
+        true
+      )
       expect(sample.before.slice(0, 3).every((channel) => channel < 30)).toBe(
         true
       )
@@ -325,6 +345,9 @@ test('composed packing codes share an ink baseline with editable suffixes and ke
     CodeUI.applyCodeDesign(document.documentElement)
     const body = document.querySelector('tbody')
     for (const [variant, size] of [
+      ['', ''],
+      ['', 'L'],
+      ['A', ''],
       ['A', 'L'],
       ['B', 'M'],
       ['AX', 'S'],
@@ -335,6 +358,7 @@ test('composed packing codes share an ink baseline with editable suffixes and ke
         '<td><fieldset class="variant-code-options"><div class="variant-code-design"><div class="variant-code-band ce-code"><div class="code-base-part"><code class="variant-code-base"></code></div></div></div></fieldset></td>'
       CodeUI.setCodeText(row.querySelector('code'), 'CE26103102')
       const band = row.querySelector('.variant-code-band')
+      const design = row.querySelector('.variant-code-design')
       for (const [name, value] of [
         ['Variant code', variant],
         ['Size code', size],
@@ -346,15 +370,16 @@ test('composed packing codes share an ink baseline with editable suffixes and ke
         hidden.textContent = name
         const input = document.createElement('input')
         input.value = value
+        input.placeholder = '—'
         input.setAttribute('aria-label', name)
         label.append(hidden, input)
-        band.append(label)
+        ;(value ? band : design).append(label)
       }
       body.append(row)
     }
   })
   const bands = page.locator('.variant-code-band')
-  await expect(bands).toHaveCount(4)
+  await expect(bands).toHaveCount(7)
   for (const band of await bands.all()) {
     await expect(band).toHaveCSS('font-size', '16px')
     await expect(band).toHaveCSS('background-color', 'rgb(0, 0, 0)')
@@ -415,12 +440,17 @@ test('composed packing codes share an ink baseline with editable suffixes and ke
     },
     { screenshot: screenshot.toString('base64'), bounds }
   )
-  for (const row of ink)
+  for (const row of ink) {
+    // A suffixless single product must keep the same ink position as codes
+    // containing native editable suffixes, not jump toward the badge edge.
+    expect(Math.abs(row[0].top - ink[0][0].top)).toBeLessThanOrEqual(1)
+    expect(Math.abs(row[0].bottom - ink[0][0].bottom)).toBeLessThanOrEqual(1)
     for (const suffix of row.slice(1)) {
       expect(Number.isFinite(suffix.top)).toBe(true)
       expect(Math.abs(suffix.top - row[0].top)).toBeLessThanOrEqual(1)
       expect(Math.abs(suffix.bottom - row[0].bottom)).toBeLessThanOrEqual(1)
     }
+  }
   for (const input of await page.locator('.variant-code-band input').all()) {
     await input.focus()
     await input.evaluate((node) => {

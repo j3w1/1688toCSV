@@ -167,6 +167,26 @@ test('column preferences preserve legacy choices, exact order and an intentional
         assert.ok(UI_MESSAGES[key]?.[language], `${key}: ${language}`)
 })
 
+test('preparation rows preserve the authoritative spreadsheet source type for factory and market image formatting', () => {
+  for (const kind of ['factory', 'market']) {
+    const record = {
+      snapshot: { sourceType: 'spreadsheet', store: { kind }, totals: {} },
+    }
+    const copied = preparationCopyFields({
+      ...row,
+      sourceType: '1688',
+      ...preparationOrderFields(row, record),
+    })
+    assert.equal(copied.sourceType, 'spreadsheet')
+  }
+  assert.equal(
+    preparationOrderFields(row, {
+      snapshot: { sourceType: '1688', totals: {} },
+    }).sourceType,
+    '1688'
+  )
+})
+
 test('expanded columns copy only the matching saved source metadata and use exact row amounts', () => {
   const input = {
     ...row,

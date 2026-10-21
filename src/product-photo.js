@@ -6,6 +6,20 @@ export const DEFAULT_PHOTO_EDIT = Object.freeze({
   background: '#ffffff',
 })
 
+const quarterSteps = (from, to) =>
+  Array.from({ length: (to - from) * 4 + 1 }, (_, index) => from + index / 4)
+
+export const PHOTO_TAG_SCALE = Object.freeze({
+  min: 0.6,
+  max: 6,
+  stops: Object.freeze([0.6, ...quarterSteps(0.75, 6)]),
+})
+export const PHOTO_POINTER_SCALE = Object.freeze({
+  min: 0.5,
+  max: 4,
+  stops: Object.freeze(quarterSteps(0.5, 4)),
+})
+
 /** Callouts use square-canvas coordinates, independently of the source photo. */
 export function validatePhotoVariantTags(tags) {
   if (!Array.isArray(tags) || tags.length > 50)
@@ -38,38 +52,102 @@ export function validatePhotoVariantTags(tags) {
 }
 
 export function validatePhotoTagScale(value) {
-  if (!Number.isFinite(value) || value < 0.6 || value > 2.5)
-    throw new Error('Photo tag size must be between 0.6 and 2.5')
+  if (
+    !Number.isFinite(value) ||
+    value < PHOTO_TAG_SCALE.min ||
+    value > PHOTO_TAG_SCALE.max
+  )
+    throw new Error('Photo tag size must be between 0.6 and 6')
   return value
 }
 
+export function validatePhotoPointerScale(value) {
+  if (
+    !Number.isFinite(value) ||
+    value < PHOTO_POINTER_SCALE.min ||
+    value > PHOTO_POINTER_SCALE.max
+  )
+    throw new Error('Photo pointer size must be between 0.5 and 4')
+  return value
+}
+
+export function validatePhotoPointerInversion(value) {
+  if (typeof value !== 'boolean')
+    throw new Error('Photo pointer color inversion must be true or false')
+  return value
+}
+
+function photoTagInk(code, font, fontSize, context) {
+  let metrics
+  if (context?.measureText) {
+    const previous = {
+      font: context.font,
+      textAlign: context.textAlign,
+      textBaseline: context.textBaseline,
+    }
+    try {
+      context.font = font
+      context.textAlign = 'left'
+      context.textBaseline = 'alphabetic'
+      metrics = context.measureText(code)
+    } finally {
+      Object.assign(context, previous)
+    }
+  }
+  const measuredWidth = metrics?.width ?? code.length * fontSize * 0.66
+  const horizontal =
+    Number.isFinite(metrics?.actualBoundingBoxLeft) &&
+    Number.isFinite(metrics?.actualBoundingBoxRight) &&
+    metrics.actualBoundingBoxLeft + metrics.actualBoundingBoxRight > 0
+  const vertical =
+    Number.isFinite(metrics?.actualBoundingBoxAscent) &&
+    Number.isFinite(metrics?.actualBoundingBoxDescent) &&
+    metrics.actualBoundingBoxAscent + metrics.actualBoundingBoxDescent > 0
+  return {
+    left: horizontal ? metrics.actualBoundingBoxLeft : 0,
+    right: horizontal ? metrics.actualBoundingBoxRight : measuredWidth,
+    ascent: vertical ? metrics.actualBoundingBoxAscent : fontSize * 0.72,
+    descent: vertical ? metrics.actualBoundingBoxDescent : fontSize * 0.02,
+  }
+}
+
 /** Shared pixel geometry for canvas export and the interactive viewer overlay. */
-export function photoVariantTagLayout(tag, size, context, tagScale = 1) {
+export function photoVariantTagLayout(
+  tag,
+  size,
+  context,
+  tagScale = 1,
+  pointerScale = 1
+) {
   if (!Number.isFinite(size) || size <= 0)
     throw new Error('Photo dimensions are invalid')
   validatePhotoTagScale(tagScale)
+  validatePhotoPointerScale(pointerScale)
   let fontSize = size * 0.052 * tagScale
   let font = `700 ${fontSize}px Arial, sans-serif`
-  let textWidth = tag.code.length * fontSize * 0.66
-  if (context?.measureText) {
-    const previousFont = context.font
-    context.font = font
-    textWidth = context.measureText(tag.code).width
-    context.font = previousFont
-  }
+  let ink = photoTagInk(tag.code, font, fontSize, context)
+  const padding = size * 0.018 * tagScale
+  const minimumHeight = Math.max(
+    size * 0.08 * tagScale,
+    ink.ascent + ink.descent + padding * 2
+  )
   // At the largest size, fit long codes as one shape, preserving the relative
   // text/padding/dot/line geometry instead of clipping letters out of a badge.
   const requestedWidth = Math.max(
-    size * 0.08 * tagScale,
-    textWidth + size * 0.036 * tagScale
+    minimumHeight,
+    ink.left + ink.right + padding * 2
   )
+  const requestedHeight = tag.code.length === 1 ? requestedWidth : minimumHeight
   const fit = Math.min(1, size / (requestedWidth + size * 0.02 * tagScale))
   const scale = tagScale * fit
   fontSize *= fit
   font = `700 ${fontSize}px Arial, sans-serif`
   const inset = size * 0.01 * scale
-  const height = size * 0.08 * scale
+  const height = requestedHeight * fit
   const width = requestedWidth * fit
+  // Re-measure at the final font size: real glyph bounds need not scale
+  // perfectly because the browser can round ink metrics at each size.
+  ink = photoTagInk(tag.code, font, fontSize, context)
   const x = Math.max(
     inset,
     Math.min(size - inset - width, tag.labelX * size - width / 2)
@@ -92,31 +170,78 @@ export function photoVariantTagLayout(tag, size, context, tagScale = 1) {
     id: tag.id,
     code: tag.code,
     anchor,
-    badge: { x, y, width, height, radius: size * 0.012 * scale },
+    badge: { x, y, width, height, radius: Math.min(width, height) * 0.24 },
     leader: {
       x1: anchor.x,
       y1: anchor.y,
       x2: centerX + dx * factor,
       y2: centerY + dy * factor,
     },
-    dot: { radius: size * 0.014 * scale, innerRadius: size * 0.005 * scale },
+    dot: {
+      radius: size * 0.02 * scale * pointerScale,
+      innerRadius: size * 0.008 * scale * pointerScale,
+    },
     text: { x: centerX, y: centerY },
+    ink: {
+      x: centerX + (ink.left - ink.right) / 2,
+      y: centerY + (ink.ascent - ink.descent) / 2,
+    },
     font,
     fontSize,
     lineWidth: Math.max(1, size * 0.003) * scale,
   }
 }
 
+/** Start a callout in its nearest corner, with the whole badge inset. */
+export function nearestPhotoTagCorner(tag, size, context, tagScale = 1) {
+  let nearest,
+    distance = Infinity
+  const epsilon = size * size * Number.EPSILON * 16
+  for (const labelX of [0, 1])
+    for (const labelY of [0, 1]) {
+      const layout = photoVariantTagLayout(
+        { ...tag, labelX, labelY },
+        size,
+        context,
+        tagScale
+      )
+      const squared =
+        (layout.text.x - layout.anchor.x) ** 2 +
+        (layout.text.y - layout.anchor.y) ** 2
+      // Equal distances keep the first corner (top-left first), including
+      // subpixel rounding differences for a centered point or a wide badge.
+      if (squared < distance - epsilon) {
+        distance = squared
+        nearest = {
+          ...tag,
+          labelX: layout.text.x / size,
+          labelY: layout.text.y / size,
+        }
+      }
+    }
+  return nearest
+}
+
 /** Standard black badges, white text and a black leader with a white-core dot. */
-export function drawPhotoVariantTags(context, tags, size, tagScale = 1) {
+export function drawPhotoVariantTags(
+  context,
+  tags,
+  size,
+  tagScale = 1,
+  pointerScale = 1,
+  invertPointer = false
+) {
   validatePhotoTagScale(tagScale)
+  validatePhotoPointerScale(pointerScale)
+  validatePhotoPointerInversion(invertPointer)
   const layouts = validatePhotoVariantTags(tags).map((tag) =>
-    photoVariantTagLayout(tag, size, context, tagScale)
+    photoVariantTagLayout(tag, size, context, tagScale, pointerScale)
   )
   context.save()
   for (const layout of layouts) {
-    const { anchor, badge, leader, dot, text } = layout
-    context.strokeStyle = '#000000'
+    const { anchor, badge, leader, dot, ink } = layout
+    const pointerColor = invertPointer ? '#ffffff' : '#000000'
+    context.strokeStyle = pointerColor
     context.fillStyle = '#000000'
     context.lineWidth = layout.lineWidth
     context.lineCap = 'round'
@@ -127,17 +252,19 @@ export function drawPhotoVariantTags(context, tags, size, tagScale = 1) {
     context.beginPath()
     context.roundRect(badge.x, badge.y, badge.width, badge.height, badge.radius)
     context.fill()
+    context.fillStyle = pointerColor
     context.beginPath()
     context.arc(anchor.x, anchor.y, dot.radius, 0, Math.PI * 2)
     context.fill()
-    context.fillStyle = '#ffffff'
+    context.fillStyle = invertPointer ? '#000000' : '#ffffff'
     context.beginPath()
     context.arc(anchor.x, anchor.y, dot.innerRadius, 0, Math.PI * 2)
     context.fill()
+    context.fillStyle = '#ffffff'
     context.font = layout.font
-    context.textAlign = 'center'
-    context.textBaseline = 'middle'
-    context.fillText(layout.code, text.x, text.y)
+    context.textAlign = 'left'
+    context.textBaseline = 'alphabetic'
+    context.fillText(layout.code, ink.x, ink.y)
   }
   context.restore()
   return layouts
@@ -212,7 +339,14 @@ export async function squareProductPhoto(source, edit = {}, size = 640) {
   )
   context.drawImage(image, rect.x, rect.y, rect.width, rect.height)
   if (edit.tags?.length)
-    drawPhotoVariantTags(context, edit.tags, size, edit.tagScale ?? 1)
+    drawPhotoVariantTags(
+      context,
+      edit.tags,
+      size,
+      edit.tagScale ?? 1,
+      edit.pointerScale ?? 1,
+      edit.invertPointer ?? false
+    )
   return canvas.toDataURL('image/png')
 }
 

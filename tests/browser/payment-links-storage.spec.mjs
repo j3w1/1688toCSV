@@ -19,7 +19,7 @@ function snapshot(orderId, { fee = false, shipping = '0.00' } = {}) {
     orderId,
     sourceUrl: `https://air.1688.com/app/ctf-page/trade-order-detail/index.html?orderId=${orderId}`,
     sellerName: `Synthetic source ${orderId}`,
-    sellerMemberLogin: `synthetic-${orderId}`,
+    sellerMemberLogin: 'synthetic-payment-store',
     status: 'Completed',
     observedAt: '2026-10-01T12:00:00.000Z',
     items,
@@ -46,6 +46,71 @@ async function openLibrary(extension, sources) {
   }, sources)
   return page
 }
+
+test('new payment links reject other or unknown stores atomically and preserve existing reviewed references', async ({
+  extension,
+}) => {
+  const target = snapshot('12001'),
+    sameStore = snapshot('12002'),
+    other = snapshot('12003'),
+    unknown = snapshot('12004')
+  other.sellerName = target.sellerName
+  other.sellerMemberLogin = 'another-payment-store'
+  delete unknown.sellerMemberLogin
+  const page = await openLibrary(extension, [target, sameStore, other, unknown])
+  const result = await page.evaluate(async () => {
+    const before = await library.exportBackup()
+    const failures = []
+    for (const sourceOrderId of ['12003', '12004']) {
+      try {
+        await library.linkPayment('12001', {
+          sourceOrderId,
+          reason: 'Rejected cross-store payment',
+        })
+        failures.push('unexpected success')
+      } catch (error) {
+        failures.push(error.message)
+      }
+    }
+    const afterRejected = await library.exportBackup()
+    const linked = await library.linkPayment('12001', {
+      id: 'existing',
+      sourceOrderId: '12002',
+      reason: 'Recorded service',
+    })
+    const originalLink = structuredClone(linked.paymentLinks[0])
+    const source = (await library.exportBackup()).orders.find(
+      (record) => record.snapshot.orderId === '12002'
+    ).snapshot
+    source.sellerMemberLogin = 'identity-changed-after-review'
+    source.observedAt = '2026-10-02T12:00:00.000Z'
+    await library.saveSnapshot(source)
+    const retained = await library.setPaymentLinks('12001', linked.paymentLinks)
+    await library.unlinkPayment('12001', 'existing')
+    const unlinked = await library.exportBackup()
+    return {
+      failures,
+      before: before.orders,
+      afterRejected: afterRejected.orders,
+      originalLink,
+      retained: retained.paymentLinks[0],
+      unlinked: unlinked.orders,
+    }
+  })
+  expect(result.failures).toHaveLength(2)
+  for (const failure of result.failures)
+    expect(failure).toMatch(/same known store and account/)
+  expect(result.afterRejected).toEqual(result.before)
+  expect(result.retained).toEqual(result.originalLink)
+  expect(
+    result.unlinked.find((record) => record.snapshot.orderId === '12001')
+      .paymentLinks
+  ).toEqual([])
+  expect(
+    result.unlinked.find((record) => record.snapshot.orderId === '12002')
+      .packingExcludedEntryIds
+  ).toEqual([])
+})
 
 test('linking defaults to the complete existing payable, atomically excludes the source and persists exact attribution', async ({
   extension,

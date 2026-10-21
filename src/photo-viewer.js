@@ -8,7 +8,7 @@ import {
   getLanguage,
   onLanguageChange,
 } from './i18n.js'
-import { element as el } from './ui.js'
+import { element as el, copyTextButton } from './ui.js'
 import { icon, decorateIcon } from './icons.js'
 import { preparationHelp } from './preparation-help.js'
 import {
@@ -19,7 +19,10 @@ import {
 } from './product-photo.js'
 import { mountPhotoVariantTagEditor } from './photo-variant-tag-editor.js'
 
-export function createPhotoViewer(loadImage, { onEdit } = {}) {
+export function createPhotoViewer(
+  loadImage,
+  { onEdit, getProductContext = () => ({}) } = {}
+) {
   let current = null
 
   async function open(item, availableItems = [], photoIndex = 0) {
@@ -49,6 +52,9 @@ export function createPhotoViewer(loadImage, { onEdit } = {}) {
     const frame = el('div', undefined, 'photo-viewer-frame'),
       title = el('h2', uiMessage('Product photo')),
       heading = el('div', undefined, 'photo-viewer-heading'),
+      identity = el('div', undefined, 'photo-viewer-product-heading'),
+      code = el('span', undefined, 'photo-viewer-product-code'),
+      context = el('div', undefined, 'photo-viewer-product-context'),
       caption = el('p', undefined, 'photo-viewer-caption'),
       close = el('button', '×', 'dialog-close'),
       viewport = el('div', undefined, 'photo-viewport'),
@@ -558,7 +564,8 @@ export function createPhotoViewer(loadImage, { onEdit } = {}) {
       editButton,
       navigation
     )
-    heading.append(title, caption)
+    identity.append(title, code)
+    heading.append(identity, context, caption)
     viewport.append(image)
     frame.append(close, heading, actions, editor, viewport, status)
     modal.append(frame)
@@ -617,7 +624,33 @@ export function createPhotoViewer(loadImage, { onEdit } = {}) {
       )
       const sourceName =
         selected.title || selected.description?.split('\n')[0] || ''
+      const details = getProductContext(selected.photoSource) || {}
+      code.replaceChildren()
+      code.hidden = !details.code
+      if (details.code)
+        code.append(
+          copyTextButton(details.code, {
+            label: uiMessage('Copy code'),
+            className: 'photo-viewer-code ce-code',
+          })
+        )
+      context.replaceChildren()
+      for (const value of [
+        details.spanishName,
+        details.sellerName || selected.sellerName,
+      ])
+        if (value) context.append(el('span', value))
+      const quantity = details.quantity ?? selected.quantity
+      if (String(quantity ?? '').trim())
+        context.append(
+          el(
+            'span',
+            uiMessage('{0}: {1}', { 0: uiMessage('Quantity'), 1: quantity })
+          )
+        )
+      context.hidden = !context.childNodes.length
       caption.textContent = sourceName
+      caption.title = selected.description || sourceName
       caption.hidden = !sourceName
       for (const button of [minus, plus, fit, actual]) button.disabled = true
       bindText(status, uiMessage('Loading original image…'))

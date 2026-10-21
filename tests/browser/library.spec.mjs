@@ -1170,42 +1170,45 @@ test('large libraries bound order and product DOM while progress updates avoid r
     100
   )
   await expect(page.locator('.order-card')).toHaveCount(50)
-  await expect(page.locator('#page-label')).toHaveText('1 / 23')
+  await expect(
+    page.locator('#next-page, #previous-page, #page-label')
+  ).toHaveCount(0)
   await expect(page.locator('#orders-page')).toHaveText('1 / 15')
   const initialProducts = await page
     .locator('#sheet-body tr[data-selection-key]')
     .allTextContents()
   const initialOrders = await page.locator('.order-card').allTextContents()
-  await page
+  const anchorKey = await page
     .locator('#sheet-body tr[data-selection-key]')
     .nth(98)
-    .locator('.product-title')
-    .click()
-  await page
-    .getByRole('button', { name: 'Next product page', exact: true })
-    .click()
-  await expect(page.locator('#page-label')).toHaveText('2 / 23')
-  await expect(page.locator('#sheet-body tr[data-selection-key]')).toHaveCount(
-    100
+    .getAttribute('data-selection-key')
+  const anchorRow = page.locator(
+    `#sheet-body tr[data-selection-key="${anchorKey}"]`
   )
+  await anchorRow.locator('.product-title').click()
   expect(
     await page.locator('#sheet-body tr[data-selection-key]').allTextContents()
   ).not.toEqual(initialProducts)
-  await page
-    .locator('#sheet-body tr[data-selection-key]')
-    .nth(1)
-    .locator('.product-title')
-    .click({ modifiers: ['Shift'] })
+  for (let index = 0; index < 3; index++)
+    await page.keyboard.press('Shift+ArrowDown')
   await expect(page.locator('#selection-summary')).toContainText('4 selected')
-  await expect(page.locator('#sheet-body tr[aria-selected=true]')).toHaveCount(
-    2
-  )
-  await page
-    .getByRole('button', { name: 'Previous product page', exact: true })
-    .click()
-  await expect(page.locator('#sheet-body tr[aria-selected=true]')).toHaveCount(
-    2
-  )
+  await page.locator('.table-scroll').evaluate((element) => {
+    element.scrollTop = element.scrollHeight
+  })
+  await expect(
+    page
+      .locator('#sheet-body tr[data-selection-key]')
+      .last()
+      .locator('.row-number')
+  ).toHaveText('2250')
+  await expect(page.locator('#selection-summary')).toContainText('4 selected')
+  expect(
+    await page.locator('#sheet-body tr[data-selection-key]').count()
+  ).toBeLessThanOrEqual(101)
+  await page.locator('.table-scroll').evaluate((element) => {
+    element.scrollTop = 0
+  })
+  await expect(anchorRow).toHaveAttribute('aria-selected', 'true')
   await page
     .getByRole('button', { name: 'Clear selection', exact: true })
     .click()
@@ -1257,7 +1260,7 @@ test('large libraries bound order and product DOM while progress updates avoid r
   await expect(page.locator('#sheet-body')).toContainText(
     'Load-test product 0749/0'
   )
-  await expect(page.locator('#page-label')).toHaveText('1 / 1')
+  await expect(page.locator('.virtual-table-spacer')).toHaveCount(0)
   await page
     .locator('#sheet-body tr[data-selection-key]')
     .locator('.product-title')

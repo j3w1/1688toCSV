@@ -66,14 +66,18 @@ async function workspace(
   return { page, record, records: orders }
 }
 
-test('photo navigation follows filtered table order across pages, skips missing photos and leaves selection intact', async ({
+test('photo navigation follows the full filtered table through continuous scrolling, skips missing photos and leaves selection intact', async ({
   extension,
 }) => {
   const { page, record } = await workspace(extension, 106)
   await page.locator('#search').fill('Gallery included')
   await expect(page.locator('#selection-summary')).toContainText('105 rows')
-  await expect(page.locator('#page-label')).toHaveText('1 / 2')
-  const row = page.locator('#sheet-body tr[data-selection-key]').last()
+  const rows = page.locator('#sheet-body tr[data-selection-key]')
+  await expect(rows).toHaveCount(100)
+  // Focus scrolls this row into view and may recycle the surrounding window.
+  // Keep the identity captured before focus rather than following last().
+  const rowKey = await rows.last().getAttribute('data-selection-key')
+  const row = page.locator(`#sheet-body tr[data-selection-key="${rowKey}"]`)
   await row.focus()
   await row.press('Space')
   await row.getByRole('button', { name: /^Zoom product photo/ }).click()
@@ -115,7 +119,7 @@ test('photo navigation follows filtered table order across pages, skips missing 
   await page.keyboard.press('Escape')
   await expect(viewer).toHaveCount(0)
   await expect(row).toHaveAttribute('aria-selected', 'true')
-  await expect(page.locator('#page-label')).toHaveText('1 / 2')
+  await expect(row.locator('.row-number')).toHaveText('100')
   await page.locator('#search').fill('Gallery included 105')
   await expect(page.locator('#sheet-body tr[data-selection-key]')).toHaveCount(
     1

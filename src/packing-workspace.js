@@ -1284,11 +1284,52 @@ export async function startPackingWorkspace({
     }
   }
   const photoOwners = new WeakMap()
+  function photoContext(item) {
+    const owner = photoOwners.get(item)
+    const record = getRecords().find(({ snapshot }) =>
+      owner
+        ? snapshot.orderId === owner.orderId &&
+          snapshot.accountId === owner.accountId
+        : item.orderId
+          ? snapshot.orderId === item.orderId
+          : snapshot.items.includes(item)
+    )
+    const orderId = record?.snapshot.orderId || item.orderId
+    let match = membership.get(`${orderId}/${item.entryId}`)
+    if (!$('packing-view').hidden) {
+      const draft = drafts.find((entry) => entry.orderId === orderId)
+      for (const group of draft?.groups || []) {
+        const variant = group.variants.find((entry) =>
+          entry.entryIds.includes(item.entryId)
+        )
+        if (variant) {
+          match = { group, variant }
+          break
+        }
+      }
+    }
+    let code = ''
+    if (match) {
+      try {
+        code = barcodeValue(match.group, {
+          ...match.variant,
+          needsSizeMapping: false,
+        })
+      } catch {}
+    }
+    return {
+      code,
+      sellerName: record?.snapshot.sellerName || item.sellerName || '',
+      spanishName: match?.variant.spanishName || match?.group.spanishName || '',
+      quantity: item.quantity,
+    }
+  }
   const media = createPreparationMedia({
     container: null,
     loadImage,
     settings,
     logoUrl,
+    getPhotoContext: photoContext,
     onPhotoEdit: async (item, edit) => {
       const owner = photoOwners.get(item)
       const record = getRecords().find(({ snapshot }) =>
@@ -7118,9 +7159,15 @@ export async function startPackingWorkspace({
           channel?.postMessage('preferences')
         },
       },
-      tagPanel = panels.get('settings-panel-tags')
+      tagPanel = panels.get('settings-panel-tags'),
+      tagHeading = el(
+        'div',
+        undefined,
+        'settings-section-heading settings-tags-heading'
+      )
+    tagHeading.append(el('h3', uiMessage('Tags')))
     tagPanel.append(
-      el('h3', uiMessage('Tags')),
+      tagHeading,
       el(
         'p',
         uiMessage(
@@ -7160,8 +7207,8 @@ export async function startPackingWorkspace({
         })
       }
     )
-    decorateIcon(reviewTags, 'more')
-    tagPanel.append(reviewTags)
+    decorateIcon(reviewTags, 'tag')
+    tagHeading.append(reviewTags)
     const tagSettings = [
       mountOrderTagSettings(
         tagPanel,
@@ -7455,6 +7502,7 @@ export async function startPackingWorkspace({
   return {
     reload,
     refreshPhoto: (item, thumbnail) => media.updatePhoto(item, thumbnail),
+    photoContext,
     flush: flushSaves,
     preparedRows,
     copyLabels: (kind, rows) =>
@@ -7510,7 +7558,15 @@ export async function startPackingWorkspace({
         bar = el('div', undefined, 'row-preparation')
       const excluded = isPackingExcluded(row)
       if (matched) {
-        const copy = copyTextButton(matched.group.baseCode, {
+        // Reading an assigned code is independent of unresolved size review;
+        // generating/printing its label still applies barcodeValue's full checks.
+        const code = matched.group.baseCode
+          ? barcodeValue(matched.group, {
+              ...matched.variant,
+              needsSizeMapping: false,
+            })
+          : ''
+        const copy = copyTextButton(code, {
           label: uiMessage('Copy code'),
           className: 'row-code-copy ce-code',
         })

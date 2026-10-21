@@ -2080,6 +2080,9 @@ html:has(body.packing-active) {
   line-height: 1.4;
   margin: 0 0 8px;
 }
+#settings-dialog .settings-panel .settings-tags-heading > h3 {
+  margin: 0;
+}
 #settings-dialog .settings-panel > .packing-help,
 .appearance-section > .packing-help,
 #settings-dialog .settings-data > p {

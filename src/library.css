@@ -469,7 +469,7 @@ h2 {
 }
 .order-card {
   position: relative;
-  padding: 7px 10px;
+  padding: 4px 10px 5px;
   border-top: 1px solid var(--divider);
   cursor: pointer;
 }
@@ -486,7 +486,7 @@ h2 {
 .order-card::after {
   content: '\2713';
   position: absolute;
-  inset-block-start: 7px;
+  inset-block-start: 4px;
   inset-inline-end: 10px;
   color: var(--text);
   visibility: hidden;
@@ -496,7 +496,7 @@ h2 {
 }
 .order-summary {
   display: grid;
-  gap: 3px;
+  gap: 2px;
   font-size: 12.5px;
   line-height: 1.35;
   min-width: 0;
@@ -555,9 +555,11 @@ h2 {
   max-inline-size: none;
 }
 .order-card .order-card-charges {
+  display: inline-flex;
+  align-items: center;
   inline-size: auto;
-  min-block-size: 24px;
-  padding: 2px 5px;
+  min-block-size: 18px;
+  padding: 1px 5px;
   border: 0;
   border-radius: 4px;
   color: var(--danger-text);
@@ -717,6 +719,19 @@ label:has(> input[type='checkbox']:disabled) {
   overflow: auto;
   container-type: inline-size;
   border-top: 1px solid var(--border);
+}
+.table-scroll:has(.virtual-table-spacer) {
+  overflow-anchor: none;
+}
+#sheet-body .virtual-table-spacer,
+#sheet-body .virtual-table-spacer:hover {
+  background: transparent;
+}
+#sheet-body .virtual-table-spacer > td {
+  padding: 0;
+  border: 0;
+  line-height: 0;
+  font-size: 0;
 }
 table {
   border-collapse: separate;

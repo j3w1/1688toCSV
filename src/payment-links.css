@@ -47,17 +47,35 @@
 }
 .payment-links-dialog-heading {
   justify-content: space-between;
-  margin-block-end: 10px;
+  margin-block-end: 8px;
+  flex-wrap: wrap;
 }
 .payment-links-dialog-heading h2 {
   margin: 0;
   font-size: 15px;
 }
-.payment-links-dialog-heading button {
+.payment-links-title-actions {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+.payment-links-dialog-heading .icon-button {
   inline-size: 28px;
   block-size: 28px;
   min-inline-size: 0;
   padding: 5px;
+}
+.payment-links-add {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  min-block-size: 28px;
+  padding: 4px 8px;
+  white-space: nowrap;
+}
+.payment-links-add .ui-icon {
+  inline-size: 13px;
+  block-size: 13px;
 }
 .payment-links-dialog form > fieldset {
   border: 0;
@@ -87,6 +105,20 @@
   display: grid;
   grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
   gap: 7px 9px;
+}
+.payment-link-source-field {
+  grid-column: 1 / -1;
+}
+.payment-link-source-field .payment-links-help {
+  margin: 0;
+  font-size: 10px;
+}
+.payment-links-dialog .search-suggestions {
+  font-size: 11px;
+}
+.payment-links-dialog .search-suggestions [role='option'] {
+  min-block-size: 0;
+  padding: 6px 8px;
 }
 .payment-link-field {
   display: grid;

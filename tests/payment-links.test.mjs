@@ -2,6 +2,7 @@ import test from 'node:test'
 import assert from 'node:assert/strict'
 import {
   eligiblePaymentItems,
+  eligiblePaymentSource,
   mergePaymentLinks,
   paymentCostAdjustments,
   paymentLinkReviews,
@@ -52,6 +53,29 @@ function link(source, rest = {}) {
     ...rest,
   }
 }
+
+test('new payment sources require the same known store and account while same-order fees need no store identity', () => {
+  const goods = order('goods'),
+    source = order('source')
+  assert.equal(eligiblePaymentSource(goods, source), false)
+  assert.equal(eligiblePaymentSource(goods, goods), true)
+  goods.snapshot.sellerName = source.snapshot.sellerName = 'Same display name'
+  assert.equal(eligiblePaymentSource(goods, source), false)
+  goods.snapshot.sellerMemberLogin = source.snapshot.sellerMemberLogin =
+    'known-store'
+  assert.equal(eligiblePaymentSource(goods, source), true)
+  source.snapshot.accountId = 'another-account'
+  assert.equal(eligiblePaymentSource(goods, source), false)
+  source.snapshot.accountId = 'local'
+  source.snapshot.sellerMemberLogin = 'another-store'
+  assert.equal(eligiblePaymentSource(goods, source), false)
+  goods.snapshot.sourceType = source.snapshot.sourceType = 'spreadsheet'
+  goods.snapshot.store = source.snapshot.store = { key: 'market:7354' }
+  assert.equal(eligiblePaymentSource(goods, source), true)
+  source.snapshot.sourceType = '1688'
+  source.snapshot.sellerMemberLogin = 'market:7354'
+  assert.equal(eligiblePaymentSource(goods, source), false)
+})
 
 test('whole payment cost includes source shipping exactly once while payable evidence stays unchanged', () => {
   const source = order('pay', [row('1', '10.00')], '12.34')

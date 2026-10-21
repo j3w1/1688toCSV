@@ -3,6 +3,7 @@
 .packing-review-item code.ce-code,
 .packing-review-codes code.ce-code,
 .row-preparation .row-code-copy.ce-code,
+.product-photo-dialog .photo-viewer-code.ce-code,
 .preparation-workspace .preparation-group input.group-code-editor.ce-code {
   --ce-code-reading-weight: 0.5;
   display: inline-block;
@@ -121,9 +122,8 @@ input.ce-code.ce-code-input-readable,
   align-items: baseline;
   gap: 0;
   block-size: calc(0.72em + 2 * var(--ce-code-padding-block));
-  /* Native suffix fields keep an untrimmed 1em line box. Align its actual
-     baseline with the trimmed readout, then center that line box inside the
-     same cap-height badge envelope instead of centering unlike boxes. */
+  /* Keep the readout and native suffix fields on one baseline, then center
+     their matching 1em line boxes inside the cap-height badge envelope. */
   padding-block: calc((0.72em + 2 * var(--ce-code-padding-block) - 1em) / 2);
 }
 .variant-code-design .variant-code-base,
@@ -143,7 +143,11 @@ input.ce-code.ce-code-input-readable,
   background: transparent;
 }
 .variant-code-design .variant-code-base {
-  text-box: trim-both cap alphabetic;
+  /* Keep the same native line box even when both suffixes are empty. A
+     trimmed readout alone otherwise raises the text within the fixed badge;
+     adding a suffix then changes that flex line's height and baseline. */
+  text-box: normal;
+  block-size: 1em;
 }
 .preparation-workspace .variants .variant-code-band input {
   min-inline-size: 0;

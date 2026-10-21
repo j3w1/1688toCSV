@@ -1,5 +1,6 @@
 import { centsToMoney, moneyToCents } from './money.js'
 import { featureUnitCost } from './product-features.js'
+import { repeatProductStoreIdentity } from './repeat-products.js'
 import {
   allocateCostCents,
   costAdjustedUnitPrice,
@@ -12,6 +13,16 @@ const keyFor = (record) =>
 const refKey = (accountId, orderId) => JSON.stringify([accountId, orderId])
 const sourceKey = (link) =>
   JSON.stringify([link.sourceOrderId, link.sourceEntryId || null])
+
+/** New links require a known shared store; an order can always use its own fee rows. */
+export function eligiblePaymentSource(target, source) {
+  if (target.snapshot.accountId !== source.snapshot.accountId) return false
+  if (target.snapshot.orderId === source.snapshot.orderId) return true
+  const identity = repeatProductStoreIdentity(target.snapshot)
+  return Boolean(
+    identity && identity === repeatProductStoreIdentity(source.snapshot)
+  )
+}
 
 function identifier(value) {
   if (typeof value !== 'string' || !value.trim() || value.length > 200)

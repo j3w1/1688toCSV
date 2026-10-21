@@ -7,6 +7,7 @@ export function createRowSelection({
   getKeys,
   onChange,
   onActivate,
+  ensureVisible,
   additive = false,
 }) {
   const rows = new Map()
@@ -119,9 +120,9 @@ export function createRowSelection({
       else if (event.key === 'Enter' && onActivate) onActivate(key)
       else if (event.key === ' ' || event.key === 'Enter') select(key, event)
       else if (['ArrowUp', 'ArrowDown', 'Home', 'End'].includes(event.key)) {
-        const visible = getKeys().filter(
-          (id) => rows.get(id)?.element.isConnected
-        )
+        const visible = ensureVisible
+          ? getKeys()
+          : getKeys().filter((id) => rows.get(id)?.element.isConnected)
         const index = visible.indexOf(key)
         const next =
           event.key === 'Home'
@@ -136,11 +137,16 @@ export function createRowSelection({
                   )
                 )
         const id = visible[next]
-        if (!id) return
+        if (!id || (ensureVisible && id === key && !event.shiftKey)) return
+        ensureVisible?.(id)
         focused = id
         if (!additive || event.shiftKey) select(id, event)
         else paint()
-        rows.get(id)?.element.focus()
+        rows.get(id)?.element.focus({ preventScroll: Boolean(ensureVisible) })
+        if (ensureVisible)
+          rows
+            .get(id)
+            ?.element.scrollIntoView({ block: 'nearest', inline: 'nearest' })
       } else return
       event.preventDefault()
       event.stopPropagation()

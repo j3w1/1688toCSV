@@ -42,6 +42,24 @@ export const PAYMENT_LINK_MESSAGES = {
     zh: '已记录的付款来源',
   },
   'Choose source order': { es: 'Elige el pedido original', zh: '选择原始订单' },
+  'Search this store’s orders': {
+    es: 'Buscar pedidos de esta tienda',
+    zh: '搜索本店订单',
+  },
+  'Search existing orders from this store. Choose this order to use one of its fee rows.':
+    {
+      es: 'Busca pedidos registrados de esta tienda. Elige este pedido para usar una de sus filas de costo.',
+      zh: '搜索本店已记录的订单。选择当前订单即可使用其中的费用行。',
+    },
+  'This existing link is kept for review. New payment sources must belong to this store.':
+    {
+      es: 'Este vínculo registrado se conserva para revisar. Los nuevos pagos originales deben pertenecer a esta tienda.',
+      zh: '保留此已有关联以供核对。新增付款来源必须属于本店。',
+    },
+  'Choose a payment source from the same known store and account': {
+    es: 'Elige un pago original de la misma tienda identificada y cuenta',
+    zh: '请选择同一已识别店铺和账户的付款来源',
+  },
   'Whole existing payment, including shipping': {
     es: 'Todo el pago registrado, incluido el envío',
     zh: '整笔已记录付款，含运费',

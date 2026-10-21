@@ -194,11 +194,12 @@ test('photo variant callouts render and survive gallery edits, backup and restor
     const annotated = await squareProductPhoto(input.rows[0].photos[0], {
       tags,
       tagScale: 1.8,
+      pointerScale: 2.5,
     })
     const first = await repository.setProductPhoto(orderId, '1', {
       originalPhoto: originals[0],
       thumbnail: annotated,
-      edit: { fit: 'contain', tags, tagScale: 1.8 },
+      edit: { fit: 'contain', tags, tagScale: 1.8, pointerScale: 2.5 },
     })
     const second = await repository.setProductPhoto(orderId, '1', {
       photoIndex: 1,
@@ -206,7 +207,9 @@ test('photo variant callouts render and survive gallery edits, backup and restor
       edit: {
         fit: 'cover',
         tags: [{ ...tags[0], id: 'b', code: 'B' }],
-        tagScale: 2.5,
+        tagScale: 6,
+        pointerScale: 4,
+        invertPointer: true,
       },
     })
     const beforeInvalid = await repository.getOrder(orderId)
@@ -222,12 +225,32 @@ test('photo variant callouts render and survive gallery edits, backup and restor
     let scaleRejected = false
     try {
       await repository.setProductPhoto(orderId, '1', {
-        edit: { tags, tagScale: 2.6 },
+        edit: { tags, tagScale: 6.01 },
       })
     } catch (error) {
       scaleRejected = error.message.includes('Photo tag size')
     }
     const afterInvalidScale = await repository.getOrder(orderId)
+    let pointerRejected = false
+    try {
+      await repository.setProductPhoto(orderId, '1', {
+        edit: { tags, pointerScale: 4.01 },
+      })
+    } catch (error) {
+      pointerRejected = error.message.includes('Photo pointer size')
+    }
+    const afterInvalidPointer = await repository.getOrder(orderId)
+    let inversionRejected = false
+    try {
+      await repository.setProductPhoto(orderId, '1', {
+        edit: { invertPointer: 'true' },
+      })
+    } catch (error) {
+      inversionRejected = error.message.includes(
+        'Photo pointer color inversion'
+      )
+    }
+    const afterInvalidInversion = await repository.getOrder(orderId)
     const exported = await repository.exportBackup()
     const restored = await openOrderDatabase({
       name: `${databaseName}-tags-restored`,
@@ -248,7 +271,7 @@ test('photo variant callouts render and survive gallery edits, backup and restor
     await image.decode()
     canvas.width = canvas.height = 640
     context.drawImage(image, 0, 0)
-    const layout = photoVariantTagLayout(tags[0], 640, context, 1.8)
+    const layout = photoVariantTagLayout(tags[0], 640, context, 1.8, 2.5)
     const core = [...context.getImageData(128, 448, 1, 1).data]
     const rimX = Math.round(
       layout.anchor.x + (layout.dot.radius + layout.dot.innerRadius) / 2
@@ -270,6 +293,10 @@ test('photo variant callouts render and survive gallery edits, backup and restor
       afterInvalid,
       scaleRejected,
       afterInvalidScale,
+      pointerRejected,
+      afterInvalidPointer,
+      inversionRejected,
+      afterInvalidInversion,
       cleared,
       core,
       rim,
@@ -288,7 +315,12 @@ test('photo variant callouts render and survive gallery edits, backup and restor
     expectedTag,
   ])
   expect(result.first.snapshot.items[0].photoEdits['0'].tagScale).toBe(1.8)
-  expect(result.second.snapshot.items[0].photoEdits['1'].tagScale).toBe(2.5)
+  expect(result.second.snapshot.items[0].photoEdits['1'].tagScale).toBe(6)
+  expect(result.first.snapshot.items[0].photoEdits['0'].pointerScale).toBe(2.5)
+  expect(result.second.snapshot.items[0].photoEdits['1'].pointerScale).toBe(4)
+  expect(result.second.snapshot.items[0].photoEdits['1'].invertPointer).toBe(
+    true
+  )
   expect(result.second.snapshot.items[0].thumbnail).toBe(
     result.first.snapshot.items[0].thumbnail
   )
@@ -305,9 +337,16 @@ test('photo variant callouts render and survive gallery edits, backup and restor
   expect(result.afterInvalid).toEqual(result.beforeInvalid)
   expect(result.scaleRejected).toBe(true)
   expect(result.afterInvalidScale).toEqual(result.beforeInvalid)
+  expect(result.pointerRejected).toBe(true)
+  expect(result.afterInvalidPointer).toEqual(result.beforeInvalid)
+  expect(result.inversionRejected).toBe(true)
+  expect(result.afterInvalidInversion).toEqual(result.beforeInvalid)
   expect(result.cleared.snapshot.items[0].photoEdits['0'].tags).toEqual([])
   expect(result.cleared.snapshot.items[0].photoEdits['0']).not.toHaveProperty(
     'tagScale'
+  )
+  expect(result.cleared.snapshot.items[0].photoEdits['0']).not.toHaveProperty(
+    'pointerScale'
   )
   expect(result.cleared.snapshot.items[0].photoEdits['1'].tags[0].code).toBe(
     'B'

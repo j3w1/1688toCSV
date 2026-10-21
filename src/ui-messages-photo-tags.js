@@ -1,13 +1,33 @@
 export const PHOTO_TAG_MESSAGES = {
   'Tag size': { zh: '标记大小', es: 'Tamaño de etiquetas' },
+  'Pointer size': { zh: '定位点大小', es: 'Tamaño del punto' },
+  'Invert pointer': { zh: '反转定位点颜色', es: 'Invertir punto' },
+  'Use white lines and white circles with black centers on dark products. Labels stay black with white text. Save photo to keep this setting.':
+    {
+      zh: '在深色商品上使用白色连线和黑芯白色圆点。标签保持黑底白字。保存照片后生效。',
+      es: 'Usa líneas y círculos blancos con centros negros sobre productos oscuros. Las etiquetas conservan el fondo negro y texto blanco. Guarda la foto para conservarlo.',
+    },
+  'Photo pointer color inversion must be true or false': {
+    zh: '照片定位点颜色反转必须为 true 或 false',
+    es: 'La inversión de color del punto debe ser verdadera o falsa',
+  },
+  'Resize every pointing circle in this photo without changing the labels or lines. Save photo to keep this size.':
+    {
+      zh: '同时调整此照片中所有定位圆点的大小，不改变标签或连接线。保存照片后生效。',
+      es: 'Cambia todos los círculos de esta foto sin modificar las etiquetas ni las líneas. Guarda la foto para conservarlo.',
+    },
+  'Photo pointer size must be between 0.5 and 4': {
+    zh: '照片定位点大小必须在 0.5 到 4 之间',
+    es: 'El tamaño del punto debe estar entre 0,5 y 4',
+  },
   'Resize every tag, point and connecting line in this photo together. Save photo to keep this size.':
     {
       zh: '同时调整此照片中所有标签、定位点和连接线的大小。保存照片后生效。',
       es: 'Cambia a la vez el tamaño de todas las etiquetas, puntos y líneas de esta foto. Guarda la foto para conservarlo.',
     },
-  'Photo tag size must be between 0.6 and 2.5': {
-    zh: '照片标记大小必须在 0.6 到 2.5 之间',
-    es: 'El tamaño de las etiquetas debe estar entre 0,6 y 2,5',
+  'Photo tag size must be between 0.6 and 6': {
+    zh: '照片标记大小必须在 0.6 到 6 之间',
+    es: 'El tamaño de las etiquetas debe estar entre 0,6 y 6',
   },
   'Rename tag': { zh: '重命名', es: 'Renombrar' },
   'Select a tag, enter its new code, then choose Rename tag.': {
@@ -41,6 +61,14 @@ export const PHOTO_TAG_MESSAGES = {
   'Edit photo': { zh: '编辑照片', es: 'Editar foto' },
   'Variant tag': { zh: '款式标记', es: 'Etiqueta de variante' },
   'Add tag': { zh: '添加标记', es: 'Añadir etiqueta' },
+  'Quick model tags': {
+    zh: '快捷款式标记',
+    es: 'Etiquetas rápidas de modelos',
+  },
+  'Quick size tags': { zh: '快捷尺码标记', es: 'Etiquetas rápidas de tallas' },
+  'Color / model': { zh: '颜色 / 款式', es: 'Color / modelo' },
+  'Use tag size {0}': { zh: '使用尺码标记 {0}', es: 'Usar talla {0}' },
+  'Add tag {0}': { zh: '添加标记 {0}', es: 'Añadir etiqueta {0}' },
   'Remove tag': { zh: '删除标记', es: 'Quitar etiqueta' },
   'Cancel placement': { zh: '取消放置', es: 'Cancelar ubicación' },
   'Photo variant tags': {

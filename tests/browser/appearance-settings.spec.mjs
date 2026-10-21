@@ -281,6 +281,41 @@ test('settings keeps tabs and save visible while reset-all previews recommended 
   )
 })
 
+test('Tags review action stays compact beside its heading on desktop and narrow screens', async ({
+  extension,
+}) => {
+  const page = await openWorkspace(extension)
+  const dialog = await settings(page, 'Tags')
+  const panel = dialog.locator('#settings-panel-tags')
+  const header = panel.locator('.settings-tags-heading')
+  const heading = header.getByRole('heading', { name: 'Tags', exact: true })
+  const review = header.getByRole('button', {
+    name: 'Review operational tags',
+    exact: true,
+  })
+  for (const width of [1280, 768, 390]) {
+    await page.setViewportSize({ width, height: 850 })
+    const [titleBox, actionBox, headerBox] = await Promise.all([
+      heading.boundingBox(),
+      review.boundingBox(),
+      header.boundingBox(),
+    ])
+    expect(actionBox.height).toBeLessThanOrEqual(30)
+    expect(actionBox.x).toBeGreaterThan(titleBox.x + titleBox.width)
+    expect(actionBox.x + actionBox.width).toBeLessThanOrEqual(
+      headerBox.x + headerBox.width + 1
+    )
+    expect(
+      Math.abs(
+        titleBox.y + titleBox.height / 2 - actionBox.y - actionBox.height / 2
+      )
+    ).toBeLessThanOrEqual(1)
+    expect(
+      await panel.evaluate((node) => node.scrollWidth <= node.clientWidth + 1)
+    ).toBe(true)
+  }
+})
+
 test('Tags keeps both catalogs separate from Appearance and preserves drafts through tab, language and failed-save changes', async ({
   extension,
 }) => {

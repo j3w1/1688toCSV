@@ -143,6 +143,151 @@ async function waitForAutosave(dialog) {
   )
 }
 
+function sourceRowCodes(preparation, items) {
+  return items.map(({ entryId }) => {
+    const group = preparation.groups.find((group) =>
+      group.variants.some((variant) => variant.entryIds.includes(entryId))
+    )
+    const variant = group.variants.find((variant) =>
+      variant.entryIds.includes(entryId)
+    )
+    return `${group.baseCode}${variant.variantSuffix}${variant.sizeSuffix}`
+  })
+}
+
+test('product rows and every photo entry point show the full assigned variant code without changing packing', async ({
+  extension,
+}) => {
+  test.setTimeout(60000)
+  const { page, record } = await openWorkspace(extension)
+  const viewer = page.getByRole('dialog', {
+    name: 'Product photo',
+    exact: true,
+  })
+  await page.locator('#sheet-body .product-photo-button').first().click()
+  await expect(viewer.locator('.photo-viewer-code')).toHaveCount(0)
+  await expect(viewer.locator('.photo-viewer-product-context')).toContainText(
+    record.snapshot.sellerName
+  )
+  await viewer
+    .getByRole('button', { name: 'Close product photo', exact: true })
+    .click()
+  const view = await prepare(page)
+  const groups = view.locator('.preparation-group')
+  const base = await groups
+    .first()
+    .getByLabel('Product code', { exact: true })
+    .inputValue()
+  const other = await groups
+    .nth(1)
+    .getByLabel('Product code', { exact: true })
+    .inputValue()
+  const variants = groups.first().locator('.variants tbody tr')
+  await variants
+    .first()
+    .getByRole('textbox', { name: /^Variant code / })
+    .fill('A')
+  await variants
+    .first()
+    .getByRole('textbox', { name: /^Size code / })
+    .fill('')
+  await variants
+    .nth(1)
+    .getByRole('textbox', { name: /^Variant code / })
+    .fill('')
+  await variants
+    .nth(1)
+    .getByRole('textbox', { name: /^Size code / })
+    .fill('L')
+  await waitForAutosave(view)
+  await page.locator('#view-orders').click()
+  await expect(page.locator('.row-code-copy')).toHaveText([
+    `${base}A`,
+    `${base}L`,
+    other,
+  ])
+  await extension.context.grantPermissions([
+    'clipboard-read',
+    'clipboard-write',
+  ])
+  await page.locator('.row-code-copy').first().click()
+  await expect
+    .poll(() => page.evaluate(() => navigator.clipboard.readText()))
+    .toBe(`${base}A`)
+  const beforePhotos = (await packingBackup(extension)).preparations
+  const expectPhotoCode = async (expected) => {
+    const code = viewer.locator('.photo-viewer-code')
+    await expect(code).toHaveText(expected)
+    await expect(code).toHaveCSS('background-color', 'rgb(0, 0, 0)')
+    await expect(code).toHaveCSS('color', 'rgb(255, 255, 255)')
+    await expect(code).toHaveCSS('font-weight', '700')
+    await expect(code).toHaveCSS('font-size', '22px')
+    await expect(code.locator('[data-code-part="product"]')).toHaveText(
+      expected.slice(6, 10)
+    )
+    await expect(code.locator('[data-code-part="prefix-period"]')).toHaveText(
+      'CE2610'
+    )
+    await expect(viewer.locator('.photo-viewer-product-context')).toContainText(
+      record.snapshot.sellerName
+    )
+  }
+  await page.locator('#sheet-body .product-photo-button').first().click()
+  await expectPhotoCode(`${base}A`)
+  await viewer.screenshot({ path: 'work/full-product-photo-context.png' })
+  await viewer.getByRole('button', { name: 'Edit photo', exact: true }).click()
+  await expectPhotoCode(`${base}A`)
+  await viewer.screenshot({ path: 'work/full-product-photo-edit-context.png' })
+  await viewer.getByRole('button', { name: 'Cancel', exact: true }).click()
+  await viewer.getByRole('button', { name: 'Next photo', exact: true }).click()
+  await expectPhotoCode(`${base}L`)
+  await viewer
+    .getByRole('button', { name: 'Close product photo', exact: true })
+    .click()
+  await page
+    .locator('#sheet-body tr[data-selection-key]')
+    .first()
+    .dispatchEvent('dblclick')
+  const details = page.getByRole('dialog', {
+    name: 'Original product details',
+    exact: true,
+  })
+  await details
+    .getByRole('button', { name: 'Open product photo', exact: true })
+    .click()
+  await expectPhotoCode(`${base}A`)
+  await viewer
+    .getByRole('button', { name: 'Close product photo', exact: true })
+    .click()
+  await details
+    .getByRole('button', { name: 'Close product details', exact: true })
+    .click()
+  expect((await packingBackup(extension)).preparations).toEqual(beforePhotos)
+  await page.locator('#view-packing').click()
+  await variants
+    .first()
+    .getByRole('textbox', { name: /^Size code / })
+    .fill('L')
+  await waitForAutosave(view)
+  await groups.first().locator('.preparation-photo').first().click()
+  await expectPhotoCode(`${base}AL`)
+  await viewer.getByRole('button', { name: 'Next photo', exact: true }).click()
+  await expectPhotoCode(`${base}L`)
+  await viewer
+    .getByRole('button', { name: 'Close product photo', exact: true })
+    .click()
+  await expect(
+    groups.first().getByLabel('Product code', { exact: true })
+  ).toHaveValue(base)
+  await page.locator('#view-orders').click()
+  await page.reload()
+  await expect(page.locator('.row-code-copy')).toHaveText([
+    `${base}AL`,
+    `${base}L`,
+    other,
+  ])
+})
+
 test('variant endings stay editable and order names summarize distinct saved products across languages', async ({
   extension,
 }) => {
@@ -941,11 +1086,11 @@ test('structured products prepare, preserve edits and copy exact headerless sour
     variant.getByRole('textbox', { name: /^Size code / })
   ).toHaveValue(/xs/i)
   await dialog.page().locator('#view-orders').click()
-  await expect(page.locator('.row-code-copy')).toHaveText([
-    baseCode,
-    baseCode,
-    otherCode,
-  ])
+  const expectedCodes = sourceRowCodes(
+    (await packingBackup(extension)).preparations[0],
+    record.snapshot.items
+  )
+  await expect(page.locator('.row-code-copy')).toHaveText(expectedCodes)
 
   await extension.context.grantPermissions([
     'clipboard-read',
@@ -997,11 +1142,7 @@ test('structured products prepare, preserve edits and copy exact headerless sour
   await columns.getByRole('button', { name: 'Close', exact: true }).click()
 
   await page.reload()
-  await expect(page.locator('.row-code-copy')).toHaveText([
-    baseCode,
-    baseCode,
-    otherCode,
-  ])
+  await expect(page.locator('.row-code-copy')).toHaveText(expectedCodes)
   await page
     .getByRole('button', { name: 'Prepare packing list', exact: true })
     .click()
@@ -2736,11 +2877,11 @@ test('label editor saves repeated text edits and copies barcode and carton image
     .getByRole('button', { name: 'Close label editor', exact: true })
     .click()
   await page.reload()
-  await expect(page.locator('.row-code-copy').nth(0)).toHaveText(
-    updatedBaseCode
-  )
-  await expect(page.locator('.row-code-copy').nth(1)).toHaveText(
-    updatedBaseCode
+  await expect(page.locator('.row-code-copy')).toHaveText(
+    sourceRowCodes(
+      (await packingBackup(extension)).preparations[0],
+      record.snapshot.items
+    )
   )
   await firstRow
     .getByRole('button', { name: 'Carton mark', exact: true })
@@ -3096,11 +3237,9 @@ test('combining, separating, splitting and merging preserve source rows and curr
   await expect(page.locator('#sheet-body tr[data-selection-key]')).toHaveCount(
     3
   )
-  await expect(page.locator('.row-code-copy')).toHaveText([
-    originalCode,
-    originalCode,
-    original.groups[1].baseCode,
-  ])
+  await expect(page.locator('.row-code-copy')).toHaveText(
+    sourceRowCodes(final, record.snapshot.items)
+  )
   expect(extension.unexpectedRequests).toEqual([])
 })
 

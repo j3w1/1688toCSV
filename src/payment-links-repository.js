@@ -1,5 +1,6 @@
 import {
   eligiblePaymentItems,
+  eligiblePaymentSource,
   paymentSourceClock,
   paymentSourceEvidence,
   validatePaymentGraph,
@@ -145,6 +146,19 @@ export function createPaymentLinksRepository({
             'The linked payment source order was not found in this account'
           )
         const prior = previous.find((link) => link.id === draft.id)
+        // Keep reviewed historical references intact, including restored links.
+        // Changing their source (or adding a link) must use this store's orders.
+        if (
+          !eligiblePaymentSource(target, source) &&
+          !(
+            prior &&
+            prior.sourceOrderId === draft.sourceOrderId &&
+            prior.sourceEntryId === draft.sourceEntryId
+          )
+        )
+          throw new Error(
+            'Choose a payment source from the same known store and account'
+          )
         const evidence = paymentSourceEvidence(source, draft.sourceEntryId)
         const amount =
           draft.amount === undefined ? evidence.amount : draft.amount

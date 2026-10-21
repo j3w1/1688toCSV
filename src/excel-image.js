@@ -39,6 +39,22 @@ const TITLE_FONT = `600 16px ${FONT_FAMILY}`
 const DETAIL_FONT = `14px ${FONT_FAMILY}`
 const ARTICLE_FONT = `600 14px ${FONT_FAMILY}`
 const DETAIL_LABEL_FONT = `600 13px ${FONT_FAMILY}`
+const DESCRIPTION_TYPE = Object.freeze({
+  title: TITLE_FONT,
+  article: ARTICLE_FONT,
+  detail: DETAIL_FONT,
+  label: DETAIL_LABEL_FONT,
+  titleHeight: 23,
+  lineHeight: LINE_HEIGHT,
+})
+const SPREADSHEET_DESCRIPTION_TYPE = Object.freeze({
+  title: `600 22px ${FONT_FAMILY}`,
+  article: `600 19px ${FONT_FAMILY}`,
+  detail: `19px ${FONT_FAMILY}`,
+  label: `600 17px ${FONT_FAMILY}`,
+  titleHeight: 30,
+  lineHeight: 26,
+})
 const TAG_FONT = `13px ${FONT_FAMILY}`
 const LABEL_FONT = `600 12px ${FONT_FAMILY}`
 
@@ -249,6 +265,7 @@ function snapshot(row, index, columns) {
   const values = {}
   for (const key of [
     'orderId',
+    'sourceType',
     'entryId',
     'sellerName',
     'sellerMemberLogin',
@@ -383,6 +400,10 @@ function orderDateLabel(value, language) {
 }
 
 function descriptionCell(context, source, width, language, details, badges) {
+  const typography =
+    source.sourceType === 'spreadsheet'
+      ? SPREADSHEET_DESCRIPTION_TYPE
+      : DESCRIPTION_TYPE
   const articleLabel =
     /^(?:货号|款号|商品编号|产品编号|型号|模型|model|article(?: number)?|item(?: no\.?)?|sku)$/i
   const isDisplayed = (section) =>
@@ -488,15 +509,17 @@ function descriptionCell(context, source, width, language, details, badges) {
     .map((section, index) => {
       const article = section.article || articleLabel.test(section.label || '')
       const font = section.title
-        ? TITLE_FONT
+        ? typography.title
         : article
-          ? ARTICLE_FONT
-          : DETAIL_FONT
-      const lineHeight = section.title ? 23 : LINE_HEIGHT
+          ? typography.article
+          : typography.detail
+      const lineHeight = section.title
+        ? typography.titleHeight
+        : typography.lineHeight
       const label = section.label
         ? `${section.label}${language === 'zh' ? '：' : ': '}`
         : ''
-      context.font = DETAIL_LABEL_FONT
+      context.font = typography.label
       let labelWidth = context.measureText(label).width
       // Very long imported attribute labels get their own fully wrapped block.
       const ownLabel = labelWidth > width / 2
@@ -515,6 +538,7 @@ function descriptionCell(context, source, width, language, details, badges) {
         labelLines: Object.freeze(labelLines),
         lines: Object.freeze(lines),
         font,
+        labelFont: typography.label,
         lineHeight,
         color: section.title ? '#25221d' : '#514a40',
         gapBefore,
@@ -1135,9 +1159,13 @@ export async function renderExcelImage(
           context.fillStyle = CE_CODE_DESIGN.foreground
           context.fillRect(
             placement.left + context.measureText(value.slice(0, start)).width,
-            placement.baseline + cell.codeFontSize * 0.18,
+            // A full CSS pixel, aligned to the output grid, remains opaque
+            // white instead of spreading a faint hairline over adjacent pixels.
+            Math.round(
+              (placement.baseline + cell.codeFontSize * 0.18) * SCALE
+            ) / SCALE,
             context.measureText(value.slice(start, end)).width,
-            0.5
+            1
           )
         }
       }
@@ -1176,7 +1204,7 @@ export async function renderExcelImage(
       top += block.gapBefore
       for (const label of block.labelLines) {
         line(
-          [{ text: label, font: DETAIL_LABEL_FONT, color: '#746757' }],
+          [{ text: label, font: block.labelFont, color: '#746757' }],
           center,
           top,
           block.lineHeight
@@ -1188,7 +1216,7 @@ export async function renderExcelImage(
         if (!index && block.label && !block.labelLines.length)
           runs.unshift({
             text: block.label,
-            font: DETAIL_LABEL_FONT,
+            font: block.labelFont,
             color: '#746757',
           })
         line(runs, center, top, block.lineHeight)

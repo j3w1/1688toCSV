@@ -181,6 +181,7 @@ export function preparationOrderFields(
     rawFeatures[feature.key] === true ? t(feature.name) : feature.name
   return {
     ...cost,
+    sourceType: order.sourceType ?? '',
     linkedPaymentReasons: cost?.linkedPaymentReasons?.join(' · ') || '',
     productFeatures: features.map(featureName).join(' · '),
     productFeatureCosts: features

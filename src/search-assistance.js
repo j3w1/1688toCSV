@@ -95,7 +95,11 @@ export function searchSuggestions(query, candidates, limit = 8) {
 }
 
 /** Local-only editable combobox. Focus remains in the native search input. */
-export function attachSearchSuggestions(input, getCandidates) {
+export function attachSearchSuggestions(
+  input,
+  getCandidates,
+  { showOnFocus = false } = {}
+) {
   const inlineHost = input.closest('.orders-pane .search')
   const list = document.createElement('div')
   list.id = `search-suggestions-${crypto.randomUUID()}`
@@ -225,9 +229,9 @@ export function attachSearchSuggestions(input, getCandidates) {
   input.addEventListener('input', () => {
     clearTimeout(timer)
     if (input.ownerDocument.activeElement === input)
-      timer = setTimeout(show, 100)
+      timer = setTimeout(() => show(showOnFocus), 100)
   })
-  input.addEventListener('focus', () => show())
+  input.addEventListener('focus', () => show(showOnFocus))
   input.addEventListener('blur', () => {
     if (!inlineHost || !pointerExit) close()
   })
@@ -237,7 +241,7 @@ export function attachSearchSuggestions(input, getCandidates) {
   })
   input.addEventListener('compositionend', () => {
     composing = false
-    show()
+    show(showOnFocus)
   })
   input.addEventListener('keydown', (event) => {
     if (event.isComposing) return

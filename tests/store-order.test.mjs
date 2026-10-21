@@ -1,6 +1,10 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
-import { createStoreOrder, validateCartonDetails } from '../src/store-order.js'
+import {
+  createStoreOrder,
+  validateCartonDetails,
+  validatePhotoEdits,
+} from '../src/store-order.js'
 import { validateBackup } from '../src/database.js'
 import { createPackingBackup } from '../src/packing-backup.js'
 import { allocatePreparation, createPreparation } from '../src/packing-model.js'
@@ -155,7 +159,15 @@ test('marked source properties, supplied CBM and composition settings survive im
     { label: '尺寸', value: '10×20 cm', raw: 'SIZE: 10×20 cm' },
   ]
   input.rows[0].photoEdits = {
-    0: { fit: 'contain', scale: 1, x: 0, y: 0, background: '#ffffff' },
+    0: {
+      fit: 'contain',
+      scale: 1,
+      x: 0,
+      y: 0,
+      background: '#ffffff',
+      pointerScale: 2.5,
+      invertPointer: true,
+    },
   }
   const built = await createStoreOrder(input, { now, orderId: '98765' })
   const restored = validateBackup(backup(built)).orders[0].snapshot
@@ -194,7 +206,11 @@ test('full backup validates originals larger than the CDN thumbnail cache limit'
 })
 
 test('packing backup carries gallery originals and carton annotation clocks for selected products', async () => {
-  const built = await createStoreOrder(fixture(), { now, orderId: '98765' })
+  const source = fixture()
+  source.rows[0].photoEdits = {
+    0: { pointerScale: 4, tagScale: 2, invertPointer: false },
+  }
+  const built = await createStoreOrder(source, { now, orderId: '98765' })
   const input = backup(built)
   const allocated = allocatePreparation(
     createPreparation(built.snapshot, '2026-10'),
@@ -218,6 +234,26 @@ test('packing backup carries gallery originals and carton annotation clocks for 
   assert.deepEqual(validateBackup(scoped).orders[0].cartonDetails, {
     1: { kg: '2.5' },
   })
+  assert.deepEqual(
+    validateBackup(scoped).orders[0].snapshot.items[0].photoEdits,
+    source.rows[0].photoEdits
+  )
+  const invalid = structuredClone(scoped)
+  invalid.orders[0].snapshot.items[0].photoEdits['0'].pointerScale = 4.01
+  assert.throws(() => validateBackup(invalid), /Photo pointer size/)
+})
+
+test('photo pointer inversion remains optional and accepts only exact booleans', () => {
+  assert.deepEqual(validatePhotoEdits({ 0: {} }, 1), { 0: {} })
+  for (const invertPointer of [false, true])
+    assert.deepEqual(validatePhotoEdits({ 0: { invertPointer } }, 1), {
+      0: { invertPointer },
+    })
+  for (const invertPointer of [0, 1, 'false', null, {}, []])
+    assert.throws(
+      () => validatePhotoEdits({ 0: { invertPointer } }, 1),
+      /Photo pointer color inversion/
+    )
 })
 
 test('backup rejects tampered source allocation, identity and cartons', async () => {

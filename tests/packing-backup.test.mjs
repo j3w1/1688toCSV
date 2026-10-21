@@ -161,6 +161,48 @@ const members = (preparation) =>
     group.variants.flatMap((variant) => variant.entryIds)
   )
 
+test('full and scoped 1688 backups retain optional independent pointer sizes without rewriting legacy photos', () => {
+  const { backup } = fixture()
+  const edit = {
+    tagScale: 1.5,
+    pointerScale: 3.25,
+    invertPointer: true,
+    tags: [
+      { id: 'tag-a', code: 'A', x: 0.25, y: 0.3, labelX: 0.8, labelY: 0.8 },
+    ],
+  }
+  backup.orders[0].snapshot.items[1].photoEdits = { 0: edit }
+  for (const data of [
+    validateBackup(backup),
+    validateBackup(createPackingBackup(backup, selection())),
+  ]) {
+    assert.deepEqual(data.orders[0].snapshot.items[1].photoEdits, { 0: edit })
+    assert.equal(data.orders[0].snapshot.items[0].photoEdits, undefined)
+  }
+  const invalid = structuredClone(backup)
+  invalid.orders[0].snapshot.items[1].photoEdits['0'].pointerScale = NaN
+  assert.throws(() => validateBackup(invalid), /Photo pointer size/)
+  for (const invertPointer of [false, true]) {
+    backup.orders[0].snapshot.items[1].photoEdits['0'].invertPointer =
+      invertPointer
+    for (const data of [
+      validateBackup(backup),
+      validateBackup(createPackingBackup(backup, selection())),
+    ])
+      assert.equal(
+        data.orders[0].snapshot.items[1].photoEdits['0'].invertPointer,
+        invertPointer
+      )
+  }
+  const wrongInversion = structuredClone(backup)
+  wrongInversion.orders[0].snapshot.items[1].photoEdits['0'].invertPointer =
+    'false'
+  assert.throws(
+    () => validateBackup(wrongInversion),
+    /Photo pointer color inversion/
+  )
+})
+
 test('scoped backup retains every local original referenced by full source dependencies', () => {
   const { backup } = fixture()
   const localUrls = ['a', 'b', 'c'].map(
