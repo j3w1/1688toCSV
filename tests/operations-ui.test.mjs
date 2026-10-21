@@ -81,7 +81,19 @@ function fixture(t) {
   }
   const change = (input, value, type = 'input') => {
     if (input.type === 'checkbox') input.checked = value
-    else input.value = value
+    else if (
+      input.type === 'radio' ||
+      input.classList.contains('operations-choice')
+    ) {
+      const group = input.closest('.operations-choice') || input,
+        target = [...group.querySelectorAll('input')].find(
+          (choice) => choice.value === value
+        )
+      for (const choice of group.querySelectorAll('input'))
+        choice.checked = choice === target
+      target.dispatchEvent(new window.Event('change', { bubbles: true }))
+      return
+    } else input.value = value
     input.dispatchEvent(new window.Event(type, { bubbles: true }))
   }
   const submit = (dialog) =>
@@ -147,12 +159,12 @@ test('feature editor supports custom per-piece costs, payment treatment, removal
     dialog.querySelector('.operations-feature-total').textContent,
     /1.25/
   )
-  change(custom.querySelector('select'), 'included', 'change')
+  change(custom.querySelector('.operations-choice'), 'included', 'change')
   assert.match(
     dialog.querySelector('.operations-feature-total').textContent,
     /0.00/
   )
-  change(custom.querySelector('select'), 'extra', 'change')
+  change(custom.querySelector('.operations-choice'), 'extra', 'change')
   dialog.querySelector('.operations-feature-remove').click()
   setLanguage('es', { persist: false })
   assert.match(
@@ -269,7 +281,7 @@ test('product explicit no-delay override is reviewable without losing the origin
     (panel) => !panel.hidden
   )
   assert.match(active.textContent, /En unas semanas/)
-  change(active.querySelector('[name="delay-state"]'), 'none', 'change')
+  change(active.querySelector('[data-field="delay-state"]'), 'none', 'change')
   submit(dialog)
   const saved = await done
   assert.equal(saved.productWorkflow['1'].delay.status, 'none')
@@ -334,6 +346,141 @@ test('language changes retain unsaved fields and translate operation labels in p
   )
   dialog.querySelector('.operations-actions button').click()
   assert.equal(await done, null)
+})
+
+test('source amount, note and date shortcuts only stage explicit choices and preserve source evidence', async (t) => {
+  const { document, record, change, submit } = fixture(t),
+    calls = []
+  record.snapshot.totals = { payable: '1234.50', shipping: '0.00' }
+  const source = structuredClone(record.snapshot),
+    done = openOperationsDialog({
+      record,
+      repository: {
+        setOperationsWorkflow: async (...args) => {
+          calls.push(args)
+          return { ...record, orderWorkflow: args[1].order }
+        },
+      },
+    })
+  await tick()
+  const dialog = document.querySelector('dialog'),
+    paid = dialog.querySelector('[name="refund-actualPaid"]'),
+    freight = dialog.querySelector('[name="refund-actualFreight"]'),
+    note = dialog.querySelector('[name="refund-notes"]'),
+    dispatched = dialog.querySelector('[name="labels-dispatched-on"]')
+  assert.equal(paid.value, '')
+  assert.equal(freight.value, '')
+  assert.equal(calls.length, 0)
+  assert.match(
+    paid.parentElement.querySelector('button').textContent,
+    /¥1,234.50/
+  )
+  paid.parentElement.querySelector('button').click()
+  freight.parentElement.querySelector('button').click()
+  note.parentElement.querySelector('button').click()
+  assert.equal(paid.value, '1234.50')
+  assert.equal(freight.value, '0.00')
+  assert.equal(note.value, 'Keep this note')
+  change(dialog.querySelector('[name="refund-promisedAmount"]'), '2,5')
+  dialog
+    .querySelector('[name="refund-promisedAmount"]')
+    .dispatchEvent(new document.defaultView.Event('blur'))
+  assert.equal(
+    dialog.querySelector('[name="refund-promisedAmount"]').value,
+    '2.50'
+  )
+  const today = new Date(),
+    day = `${today.getFullYear()}-${String(today.getMonth() + 1).padStart(2, '0')}-${String(today.getDate()).padStart(2, '0')}`
+  dispatched.parentElement.querySelector('button').click()
+  assert.equal(dispatched.value, day)
+  assert.equal(calls.length, 0)
+  submit(dialog)
+  const saved = await done
+  assert.deepEqual(saved.orderWorkflow.refund, {
+    actualPaid: '1234.50',
+    actualFreight: '0.00',
+    promisedAmount: '2.50',
+    notes: 'Keep this note',
+  })
+  assert.equal(saved.orderWorkflow.labelsDispatchedOn, day)
+  assert.deepEqual(record.snapshot, source)
+  assert.equal(record.orderWorkflow, undefined)
+})
+
+test('radio choices keep product and order scopes independent and hide empty inactive details', async (t) => {
+  const { document, record, change, submit } = fixture(t),
+    done = openOperationsDialog({
+      record,
+      entryId: '1',
+      repository: {
+        setOperationsWorkflow: async (_, changes) => ({
+          ...record,
+          orderWorkflow: changes.order,
+          productWorkflow: { 1: changes.product.value },
+        }),
+      },
+    })
+  await tick()
+  const dialog = document.querySelector('dialog'),
+    productPanel = dialog.querySelector('.operations-panel'),
+    orderPanel = dialog.querySelectorAll('.operations-panel')[1],
+    productDelay = productPanel.querySelector('[data-field="delay-state"]'),
+    orderDelay = orderPanel.querySelector('[data-field="delay-state"]')
+  assert.equal(dialog.querySelectorAll('select').length, 0)
+  assert.notEqual(
+    productDelay.querySelector('input').name,
+    orderDelay.querySelector('input').name
+  )
+  assert.equal(productPanel.querySelector('.operations-details').hidden, true)
+  change(productDelay, 'delayed')
+  assert.equal(productPanel.querySelector('.operations-details').hidden, false)
+  change(
+    productPanel.querySelector('[name="delay-promise"]'),
+    'Original wording'
+  )
+  change(orderDelay, 'none')
+  assert.equal(productDelay.value, 'delayed')
+  change(productDelay, '')
+  assert.equal(productPanel.querySelector('[name="delay-promise"]').value, '')
+  change(productDelay, 'none')
+  submit(dialog)
+  const saved = await done
+  assert.deepEqual(saved.orderWorkflow.delay, { status: 'none' })
+  assert.deepEqual(saved.productWorkflow['1'].delay, { status: 'none' })
+})
+
+test('missing source amounts have no fill shortcut and known feature names never copy an old cost', async (t) => {
+  const { document, record, change, submit } = fixture(t)
+  record.productWorkflow = {
+    2: {
+      features: {
+        known: { name: 'Engraving', unitCost: '9.50', included: true },
+      },
+    },
+  }
+  const done = openOperationsDialog({ record, entryId: '1', repository: {} })
+  await tick()
+  const dialog = document.querySelector('dialog'),
+    freight = dialog.querySelector('[name="refund-actualFreight"]'),
+    known = dialog.querySelector('.operations-feature-suggestions button')
+  assert.equal(freight.parentElement.querySelector('button'), null)
+  assert.match(known.textContent, /Engraving/)
+  known.click()
+  const feature = dialog.querySelector('.operations-feature-row')
+  assert.equal(
+    feature.querySelector('[data-feature-field="name"]').value,
+    'Engraving'
+  )
+  assert.equal(feature.querySelector('[data-feature-field="cost"]').value, '')
+  assert.equal(known.disabled, true)
+  change(feature.querySelector('[data-feature-field="cost"]'), '2.25')
+  assert.match(
+    dialog.querySelector('.operations-feature-total').textContent,
+    /2.25/
+  )
+  dialog.querySelector('.operations-actions button').click()
+  assert.equal(await done, null)
+  assert.equal(record.productWorkflow['1'], undefined)
 })
 
 test('migration requires visual selection and confirmation and retains drafts after errors', async (t) => {

@@ -1326,7 +1326,7 @@ export function openPrintDialog({
       // Cancel or close while preparing means no download and no recent job.
       if (closed) return
       const filename = uniqueFileName(
-        printFileName(kind, state.plan.items.length)
+        printFileName(kind, state.plan.items.length, new Date(), state.language)
       )
       savePdf(bytes, filename)
       saved = true
@@ -1411,7 +1411,9 @@ export function openPrintDialog({
     )
     if (closed) return
     drawOps(pdf.page(), captions.pages[0], (key) => captions.images.get(key))
-    const filename = uniqueFileName(printFileName('calibration', 0))
+    const filename = uniqueFileName(
+      printFileName('calibration', 0, new Date(), language)
+    )
     savePdf(pdf.build(), filename)
     announceExport([filename])
     bindText(

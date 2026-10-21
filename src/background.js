@@ -81,7 +81,7 @@ const browser = {
   async changePage(source, page) {
     return content(source.tabId, { type: 'LIST_PAGE', page }, source.frameId)
   },
-  async openDetailTab(url, id, options = {}) {
+  async openDetailTab(url, id) {
     // The marker is written atomically with tab creation. Reuse it if the
     // worker stopped between creating the tab and saving its numeric ID.
     const existing = (await chrome.tabs.query({})).find((tab) => owns(tab, id))
@@ -90,7 +90,7 @@ const browser = {
         await chrome.tabs.update(existing.id, { url: `${url}${marker(id)}` })
       return existing.id
     }
-    return createReaderTab(`${url}${marker(id)}`, options)
+    return createReaderTab(`${url}${marker(id)}`)
   },
   async navigateDetailTab(tabId, url, id) {
     const tab = await this.getDetailTab(tabId, id)
@@ -192,35 +192,39 @@ async function pump() {
 }
 
 /**
- * The import reader opens in the background so imports never take over the
- * visible tab: a background tab, else a separate unfocused window. Browsers
- * that allow neither (an earlier embedded browser rejected inactive tabs)
- * pause the import; a visible reader is used only after the owner allows it.
+ * Prefer a background reader, then an unfocused window. Restricted browsers
+ * can require a visible tab; use it automatically to complete the same import.
  */
-async function createReaderTab(url, { allowVisible = false } = {}) {
+async function createReaderTab(url) {
   let tab
   let visible = false
   try {
     // Open blank, then navigate: background tabs then load like any other
     // navigation (and test harnesses attach before the order page loads).
     tab = await chrome.tabs.create({ url: 'about:blank', active: false })
-    tab = await chrome.tabs.update(tab.id, { url })
-  } catch (error) {
-    if (!/active/i.test(error?.message || '')) throw error
+  } catch {
     try {
       const window = await chrome.windows.create({ url, focused: false })
       tab = window?.tabs?.[0]
     } catch {}
     if (!tab) {
-      if (!allowVisible)
-        throw Object.assign(
-          new Error(
-            'This browser does not allow background import tabs. Allow a visible import tab to continue.'
-          ),
-          { attention: 'visible-reader' }
-        )
       tab = await chrome.tabs.create({ url, active: true })
       visible = true
+    }
+  }
+  // A navigation failure is not evidence that background tabs are unsupported.
+  // Keep its error instead of creating extra readers after a tab already exists.
+  if (blankUrl(tab.url) && blankUrl(tab.pendingUrl)) {
+    try {
+      tab = await chrome.tabs.update(tab.id, { url })
+    } catch (error) {
+      // Remove only our still-blank placeholder; a user-navigated tab stays open.
+      try {
+        const current = await chrome.tabs.get(tab.id)
+        if (blankUrl(current.url) && blankUrl(current.pendingUrl))
+          await chrome.tabs.remove(tab.id)
+      } catch {}
+      throw error
     }
   }
   // A background reader must not be discarded to save memory mid-import.
@@ -440,8 +444,6 @@ async function dispatch(message, sender, repository, controller) {
       }
     case 'IMPORT_ATTENTION_OPEN':
       return openAttentionTab(await repository.getJob(message.jobId))
-    case 'IMPORT_ALLOW_VISIBLE':
-      return controller.allowVisibleReader(message.jobId)
     case 'JOBS_QUERY':
       return { jobs: (await repository.listJobs()).map(importJobView) }
     case 'LIBRARY_HISTORY':
@@ -521,7 +523,6 @@ chrome.runtime.onMessage.addListener((message, sender, respond) => {
           'REFRESH_ORDERS',
           'CONTENT_READY',
           'IMPORT_PAUSE',
-          'IMPORT_ALLOW_VISIBLE',
         ].includes(message.type)
       )
         void pump()

@@ -1,4 +1,11 @@
 export const ORDER_CHARGE_MESSAGES = {
+  'External costs are shared by product value. Use Linked payments for payments already recorded in an order.':
+    {
+      es: 'Los costos externos se distribuyen por valor de producto. Usa Pagos vinculados para pagos ya registrados en un pedido.',
+      zh: '外部费用按商品金额分摊。订单中已记录的付款请使用“关联付款”。',
+    },
+  Unloading: { es: 'Descarga', zh: '卸货' },
+  'Local delivery': { es: 'Entrega local', zh: '本地配送' },
   'Confirm the marked whole-order total before importing': {
     es: 'Confirma el total del pedido marcado antes de importar',
     zh: '导入前请确认已标记的整单总金额',

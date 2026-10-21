@@ -108,12 +108,13 @@ test('reviewed payment links preserve source totals, skip payment rows and expor
   const instructionSize = await orderWorkflow
     .locator('[name="labelsSent"]')
     .boundingBox()
-  expect(instructionSize.width).toBe(14)
-  expect(instructionSize.height).toBe(14)
+  expect(instructionSize.width).toBe(13)
+  expect(instructionSize.height).toBe(13)
   await orderWorkflow
-    .getByLabel('Delay state', { exact: true })
-    .filter({ visible: true })
-    .selectOption('delayed')
+    .getByRole('group', { name: 'Delay state', exact: true })
+    .getByRole('radio', { name: 'Delayed', exact: true })
+    .locator('..')
+    .click()
   await orderWorkflow
     .getByLabel('Delay reason', { exact: true })
     .filter({ visible: true })
@@ -151,18 +152,14 @@ test('reviewed payment links preserve source totals, skip payment rows and expor
   await review
     .getByRole('button', { name: 'Link existing payment', exact: true })
     .click()
+  await expect(review.locator('select, [role="combobox"]')).toHaveCount(0)
   await expect(
-    review.locator('select[name="payment-source-order"]')
-  ).toHaveCount(0)
-  await expect(review.locator('[name="payment-source-order"]')).toHaveAttribute(
-    'role',
-    'combobox'
-  )
-  await expect(
-    review.locator('.search-suggestions [role="option"]')
+    review.locator('.payment-link-source-choices .payment-link-choice')
   ).toHaveCount(2)
-  await review.locator('[name="payment-source-order"]').fill('7102')
-  await review.getByRole('option', { name: /7102/ }).click()
+  await review.locator('[name="payment-source-search"]').fill('7102')
+  await review
+    .locator('.payment-link-choice[data-order-id="7102"] input')
+    .check()
   await expect(review.locator('[name="payment-amount"]')).toHaveValue('456.00')
   await review
     .locator('[name="payment-reason"]')
@@ -255,14 +252,18 @@ test('reviewed payment links preserve source totals, skip payment rows and expor
     workflow.getByLabel('Feature name', { exact: true }).first()
   ).toHaveValue('Lighting')
   await expect(
-    workflow.getByLabel('Cost treatment', { exact: true }).first()
-  ).toHaveValue('included')
+    workflow
+      .getByRole('group', { name: 'Cost treatment', exact: true })
+      .first()
+      .getByRole('radio', { name: 'Already recorded', exact: true })
+  ).toBeChecked()
   await workflow.getByRole('button', { name: 'Cancel', exact: true }).click()
   const downloads = []
   page.on('download', (download) => downloads.push(download))
   await page
     .getByRole('button', { name: 'Export packing list', exact: true })
     .click()
+  await page.locator('[data-action="download-packing-list"]').click()
   await expect.poll(() => downloads.length).toBe(2)
   let files
   await expect

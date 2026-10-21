@@ -327,6 +327,7 @@ test('an open settings draft translates across tabs without losing unsaved field
   const { page } = await openWorkspace(extension)
   await page.locator('#packing-settings').click()
   const settings = page.locator('#settings-dialog')
+  await settings.getByRole('tab', { name: 'Labels', exact: true }).click()
   await settings.getByLabel('Website', { exact: true }).fill('unsaved.example')
   const other = await extension.context.newPage()
   await other.goto(`${extension.extensionBaseUrl}/library.html`)

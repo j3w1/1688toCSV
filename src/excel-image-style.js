@@ -1,4 +1,4 @@
-import { readableColor } from './appearance.js'
+import { appearanceTokens, readableColor } from './appearance.js'
 
 export const EXCEL_IMAGE_SCHEMES = Object.freeze([
   { id: 'neutral', label: 'Neutral', accent: '#49453f' },
@@ -20,11 +20,73 @@ export const EXCEL_IMAGE_DETAILS = Object.freeze({
   productTags: false,
 })
 
+const workspacePaletteKeys = [
+  'header',
+  'headerText',
+  'store',
+  'order',
+  'stripe',
+  'separator',
+  'grid',
+  'body',
+  'text',
+  'muted',
+]
+
+function workspacePalette(value) {
+  if (
+    !workspacePaletteKeys.every(
+      (key) =>
+        typeof value?.[key] === 'string' && /^#[0-9a-f]{6}$/i.test(value[key])
+    )
+  )
+    return null
+  return Object.freeze(
+    Object.fromEntries(
+      workspacePaletteKeys.map((key) => [key, value[key].toLowerCase()])
+    )
+  )
+}
+
+/** Capture the rendered workspace, including an explicit light/dark override. */
+export function workspaceExportStyle(
+  root = globalThis.document?.documentElement
+) {
+  const defaults = appearanceTokens({}, 'light')
+  const computed = root
+    ? (root.ownerDocument?.defaultView || globalThis).getComputedStyle?.(root)
+    : null
+  const color = (name) => {
+    const value = computed?.getPropertyValue(`--${name}`).trim()
+    return /^#[0-9a-f]{6}$/i.test(value || '')
+      ? value.toLowerCase()
+      : defaults[name]
+  }
+  const accent = color('accent')
+  return Object.freeze({
+    scheme: 'custom',
+    accent,
+    workspace: Object.freeze({
+      header: accent,
+      headerText: color('on-accent'),
+      store: color('selected'),
+      order: color('field'),
+      stripe: color('page'),
+      separator: color('border'),
+      grid: color('divider'),
+      body: color('surface'),
+      text: color('text'),
+      muted: color('muted'),
+    }),
+  })
+}
+
 /** Appearance affects only the generated picture, never source or label data. */
 export function normalizeExcelImageDisplay(value) {
   const scheme =
     EXCEL_IMAGE_SCHEMES.find((entry) => entry.id === value?.style?.scheme) ||
     EXCEL_IMAGE_SCHEMES[0]
+  const workspace = workspacePalette(value?.style?.workspace)
   return {
     showOrderDetails: value?.showOrderDetails !== false,
     style: {
@@ -34,6 +96,7 @@ export function normalizeExcelImageDisplay(value) {
         /^#[0-9a-f]{6}$/i.test(value.style.accent)
           ? value.style.accent.toLowerCase()
           : scheme.accent,
+      ...(workspace ? { workspace } : {}),
     },
     details: Object.fromEntries(
       Object.entries(EXCEL_IMAGE_DETAILS).map(([key, fallback]) => [
@@ -63,6 +126,8 @@ function tint(hex, amount) {
 }
 
 export function excelImagePalette(style) {
+  const workspace = workspacePalette(style?.workspace)
+  if (workspace) return workspace
   const normalized = normalizeExcelImageDisplay({ style }).style
   const scheme = EXCEL_IMAGE_SCHEMES.find(
     (entry) => entry.id === normalized.scheme
@@ -76,5 +141,8 @@ export function excelImagePalette(style) {
     stripe: tint(accent, 0.985),
     separator: tint(accent, 0.55),
     grid: tint(accent, 0.8),
+    body: '#ffffff',
+    text: '#24211c',
+    muted: '#746757',
   })
 }

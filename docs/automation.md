@@ -20,7 +20,7 @@ Use synthetic or the owner's own data only as the owner directs; this guide desc
 | `open-workspace`      | Open Workspace                         | Opens the workspace in a new tab.                                            |
 | `open-workspace-here` | Open Workspace here                    | Opens the workspace in this tab when no import is running.                   |
 
-Imports read each order in a background tab (or, if the browser refuses that, a separate unfocused window), so the visible tab never changes. Keep the list page open until the import finishes.
+Imports try a background tab, then a separate unfocused window, then a visible reader automatically if the browser requires it. No visible-tab permission prompt is shown. The same marked reader is reused and closed after import; unrelated tabs are preserved. Keep the list page open until the import finishes. Sign-in and verification still require a person.
 
 ### Workspace: Orders
 
@@ -41,18 +41,21 @@ Imports read each order in a background tab (or, if the browser refuses that, a 
 | `open-print-menu`      | More print formats                    | Opens the Print menu.                                                                                                                                                       |
 | `open-activity`        | Activity                              | Opens import progress and history.                                                                                                                                          |
 
-Products has no page controls. Scroll `.table-scroll` or use row keyboard navigation to reach all filtered products. Only around 100 product rows are mounted, so capture a row’s `data-selection-key` before scrolling and locate it by that stable key rather than its current DOM index.
+Orders and Products have no page controls. Scroll `#order-list` or `.table-scroll`, or use keyboard navigation, to reach every filtered entry. Around 100 cards or rows are mounted in each window. Locate orders by `data-order-id` and products by `data-selection-key` rather than their current DOM index. Month headings remain part of the continuous Orders list. Hover/focus helpers show item photos, codes, quantities, amounts and saved notes; they do not select an item.
 
 ### Workspace: Packing list
 
-| `data-action`         | Accessible name     | Does                                                                                             |
-| --------------------- | ------------------- | ------------------------------------------------------------------------------------------------ |
-| `select-all-rows`     | Select all          | Selects every product in the open packing list.                                                  |
-| `clear-selection`     | Clear selection     | Clears the selection.                                                                            |
-| `open-copy-menu`      | More copy formats   | Opens the Copy menu.                                                                             |
-| `export-packing-list` | Export packing list | Directly in the bottom packing toolbar: saves the whole open packing list (no selection needed). |
-| `open-print-menu`     | More print formats  | Opens the Print menu.                                                                            |
-| `open-grouping-menu`  | Grouping tools      | Opens the grouping menu.                                                                         |
+| `data-action`           | Accessible name     | Does                                                                               |
+| ----------------------- | ------------------- | ---------------------------------------------------------------------------------- |
+| `select-all-rows`       | Select all          | Selects every product in the open packing list.                                    |
+| `clear-selection`       | Clear selection     | Clears the selection.                                                              |
+| `open-copy-menu`        | More copy formats   | Opens the Copy menu.                                                               |
+| `export-packing-list`   | Export packing list | Opens persistent column, scope and layout choices from the bottom packing toolbar. |
+| `download-packing-list` | Download Excel      | In the export popup: saves the configured editable XLSX and matching JSON summary. |
+| `open-print-menu`       | More print formats  | Opens the Print menu.                                                              |
+| `open-grouping-menu`    | Grouping tools      | Opens the grouping menu.                                                           |
+
+The packing export popup saves its column choices/order and layout controls immediately. Its language is local to the popup and its exports; workspace colors determine Excel-image and workbook styling. Choose all products or the selected products, photo size, maximum description width, order headings, totals, frozen headers and filters. Restoring default columns preserves scope and layout choices. Preview contains at most five rows; download contains the entire chosen scope.
 
 ### Product photo viewer
 
@@ -100,23 +103,21 @@ Each requested-quantity field also has an `increment-print-quantity` button name
 
 ### Import notices
 
-| `data-action`          | Accessible name   | Does                                                                                                                |
-| ---------------------- | ----------------- | ------------------------------------------------------------------------------------------------------------------- |
-| `open-attention-tab`   | Open the 1688 tab | Brings the tab that needs a sign-in or verification forward. A person finishes that step.                           |
-| `resume-import`        | Resume import     | Resumes the paused import.                                                                                          |
-| `allow-visible-reader` | Use a visible tab | Only in browsers that refuse background tabs and windows: lets this import read in a visible tab. A person decides. |
+| `data-action`        | Accessible name   | Does                                                                                      |
+| -------------------- | ----------------- | ----------------------------------------------------------------------------------------- |
+| `open-attention-tab` | Open the 1688 tab | Brings the tab that needs a sign-in or verification forward. A person finishes that step. |
+| `resume-import`      | Resume import     | Resumes the paused import.                                                                |
 
 ## Status line
 
 `#workspace-status` in the workspace header shows one state at a time, most urgent first. Read its `data-status` attribute; the text is for people.
 
-| `data-status`       | Means                                                                                                                 |
-| ------------------- | --------------------------------------------------------------------------------------------------------------------- |
-| `importing`         | An import is running. The text includes its progress.                                                                 |
-| `needs-sign-in`     | An import paused because 1688 asked for a sign-in or verification. Use `open-attention-tab` and ask a person.         |
-| `needs-visible-tab` | This browser refused a background tab and window for the import reader. A person decides with `allow-visible-reader`. |
-| `export-finished`   | The latest export finished. `data-files` is a JSON array of the file names.                                           |
-| `idle`              | Nothing is running and nothing was exported since the workspace opened or the last import started.                    |
+| `data-status`     | Means                                                                                                         |
+| ----------------- | ------------------------------------------------------------------------------------------------------------- |
+| `importing`       | An import is running. The text includes its progress.                                                         |
+| `needs-sign-in`   | An import paused because 1688 asked for a sign-in or verification. Use `open-attention-tab` and ask a person. |
+| `export-finished` | The latest export finished. `data-files` is a JSON array of the file names.                                   |
+| `idle`            | Nothing is running and nothing was exported since the workspace opened or the last import started.            |
 
 The sign-in need is shown once; the extension never switches tabs by itself.
 

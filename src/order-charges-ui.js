@@ -3,6 +3,7 @@ import { bindText, message } from './i18n.js'
 import { decorateIcon } from './icons.js'
 import { preparationHelp } from './preparation-help.js'
 import { centsToMoney, moneyToCents } from './money.js'
+import { formatCny } from './money-format.js'
 import {
   additionalChargesTotal,
   orderCostAdjustments,
@@ -20,7 +21,7 @@ export function mountOrderCharges(host, { record, onSave }) {
   const help = el(
     'p',
     message(
-      'Add order-wide costs such as unloading or label printing. Source prices stay unchanged; the extra cost is shared by product value.'
+      'External costs are shared by product value. Use Linked payments for payments already recorded in an order.'
     ),
     'order-charges-help'
   )
@@ -69,7 +70,31 @@ export function mountOrderCharges(host, { record, onSave }) {
   )
   const preview = el('div', undefined, 'order-charges-preview')
   preview.setAttribute('aria-live', 'polite')
-  fields.append(summary, help, table, empty, status, error, preview)
+  const quickReasons = el('div', undefined, 'order-charges-quick-reasons')
+  for (const text of ['Unloading', 'Label printing', 'Local delivery']) {
+    const quick = el('button', message(text))
+    quick.type = 'button'
+    quick.addEventListener('click', () => {
+      const row = appendCharge({
+        id: crypto.randomUUID(),
+        reason: String(message(text)),
+        amount: '',
+      })
+      renderPreview()
+      row.amount.focus()
+    })
+    quickReasons.append(quick)
+  }
+  fields.append(
+    summary,
+    help,
+    quickReasons,
+    table,
+    empty,
+    status,
+    error,
+    preview
+  )
   form.append(fields)
   details.append(form)
   host.append(details)
@@ -120,9 +145,18 @@ export function mountOrderCharges(host, { record, onSave }) {
       `order-charge-comparison ${className}`.trim()
     )
     value.append(
-      el('span', `¥${before}`, 'order-charge-source'),
+      bindText(el('span', undefined, 'order-charge-source'), () =>
+        formatCny(before)
+      ),
       el('span', '→', 'order-charge-arrow'),
-      el('strong', `¥${after}`, after !== before ? 'order-charge-increase' : '')
+      bindText(
+        el(
+          'strong',
+          undefined,
+          after !== before ? 'order-charge-increase' : ''
+        ),
+        () => formatCny(after)
+      )
     )
     return value
   }
@@ -131,17 +165,19 @@ export function mountOrderCharges(host, { record, onSave }) {
       preview.replaceChildren(el('p', message(text), 'order-charges-help'))
     empty.hidden = rows.length > 0
     table.hidden = rows.length === 0
+    preview.hidden = rows.length === 0 && saved.length === 0
     save.disabled = saving || !dirty()
     let charges, adjusted
     try {
       charges = read()
       adjusted = orderCostAdjustments({ ...record, additionalCharges: charges })
     } catch {
+      bindText(summaryTotal, '')
       show('Complete the charge amounts to preview their effect.')
       return
     }
     const total = additionalChargesTotal({ additionalCharges: charges })
-    bindText(summaryTotal, total === '0.00' ? '' : `+¥${total}`)
+    bindText(summaryTotal, total === '0.00' ? '' : () => formatCny(`+${total}`))
     const originalTotal = record.snapshot.totals.payable
     const finalTotal = centsToMoney(
       moneyToCents(originalTotal) + moneyToCents(total)
@@ -187,7 +223,9 @@ export function mountOrderCharges(host, { record, onSave }) {
       info.append(unit, amount)
       product.append(
         info,
-        el('strong', `+¥${cost.additionalCharge}`, 'order-charge-increase')
+        bindText(el('strong', undefined, 'order-charge-increase'), () =>
+          formatCny(`+${cost.additionalCharge}`)
+        )
       )
       list.append(product)
     }
@@ -217,6 +255,13 @@ export function mountOrderCharges(host, { record, onSave }) {
     amount.required = true
     amount.value = charge.amount
     amount.name = `amount-${charge.id}`
+    amount.addEventListener('blur', () => {
+      try {
+        amount.value = centsToMoney(moneyToCents(amount.value.trim()))
+      } catch {
+        // Preserve invalid drafts for the existing validation message.
+      }
+    })
     for (const [input, label, cell] of [
       [reason, 'Reason', reasonCell],
       [amount, 'Amount · CNY', amountCell],
@@ -263,6 +308,7 @@ export function mountOrderCharges(host, { record, onSave }) {
     rows.push(row)
     body.append(tr)
     if (focus) reason.focus()
+    return row
   }
   for (const charge of saved) appendCharge(charge)
   add.addEventListener('click', () => {

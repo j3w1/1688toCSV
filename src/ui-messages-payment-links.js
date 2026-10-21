@@ -1,4 +1,49 @@
 export const PAYMENT_LINK_MESSAGES = {
+  'This order has no known store identity. Other orders cannot be linked by store name alone; only its own fee rows are available.':
+    {
+      es: 'Este pedido no tiene una identidad de tienda conocida. El nombre por sí solo no permite vincular otros pedidos; solo están disponibles sus propias filas de costo.',
+      zh: '本订单没有已知店铺标识，不能仅凭店名关联其他订单；只能使用当前订单的费用行。',
+    },
+  'No other recorded order shares this store and account. You can still use an individual fee row from this order.':
+    {
+      es: 'No hay otro pedido registrado de esta tienda y cuenta. Puedes usar una fila de costo de este pedido.',
+      zh: '同一店铺及账户没有其他已记录订单。仍可使用当前订单中的单独费用行。',
+    },
+  'This order · individual fee rows': {
+    es: 'Este pedido · filas de costo individuales',
+    zh: '当前订单 · 单独费用行',
+  },
+  'Only orders from this store and account are shown. Use a whole payment or choose an individual fee row.':
+    {
+      es: 'Solo se muestran pedidos de esta tienda y cuenta. Usa un pago completo o elige una fila de costo.',
+      zh: '仅显示本店及本账户的订单。可使用整笔付款或选择单独费用行。',
+    },
+  'No orders match this search. Clear it to see this store’s recorded orders.':
+    {
+      es: 'Ningún pedido coincide. Borra la búsqueda para ver los pedidos registrados de esta tienda.',
+      zh: '没有匹配的订单。清空搜索可查看本店已记录的订单。',
+    },
+  'No recorded source orders belong to this store and account.': {
+    es: 'No hay pedidos originales registrados de esta tienda y cuenta.',
+    zh: '本店及本账户暂无已记录的来源订单。',
+  },
+  'Choose a source order above to see its recorded payment and fee rows.': {
+    es: 'Elige un pedido arriba para ver su pago registrado y sus filas de costo.',
+    zh: '请先选择上方来源订单，查看已记录的付款及费用行。',
+  },
+  'This order has no fee row with other eligible goods to receive its cost. Import another payment order from this store, or add an external cost in Additional charges.':
+    {
+      es: 'Este pedido no tiene una fila de costo con otros productos aptos para recibirla. Importa otro pedido de pago de esta tienda o registra un costo externo en Costos adicionales.',
+      zh: '本订单没有可向其他适用商品分摊的费用行。请导入本店另一笔付款订单，或在“附加费用”中添加外部费用。',
+    },
+  'This source has no positive recorded payment or fee amount to link.': {
+    es: 'Este pedido no tiene un pago ni costo registrado mayor que cero para vincular.',
+    zh: '此来源没有可关联的正数付款或费用金额。',
+  },
+  'Recorded source {0} · payable {1} · shipping {2}': {
+    es: 'Importe original {0} · total {1} · envío {2}',
+    zh: '原始金额 {0} · 应付 {1} · 运费 {2}',
+  },
   'Payment skip ownership is invalid': {
     es: 'El registro de omisiones de este pago no es válido',
     zh: '付款关联的跳过装箱记录无效',

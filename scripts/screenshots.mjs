@@ -104,7 +104,7 @@ try {
   if (!(await columnSummary.evaluate((node) => node.parentElement.open)))
     await columnSummary.click()
   await imageColumns.screenshot({ path: 'screenshots/excel-image-columns.png' })
-  await imageColumns.getByText('Style & details', { exact: true }).click()
+  await imageColumns.getByText('Image details', { exact: true }).click()
   for (const name of ['Order tags', 'Purchase date', 'Order status']) {
     await imageColumns.getByRole('checkbox', { name, exact: true }).check()
     await expect(imageColumns.locator('.image-copy-submit')).toBeEnabled()
@@ -175,6 +175,7 @@ try {
   await page.getByRole('button', { name: 'Orders', exact: true }).click()
   await page.screenshot({ path: 'work/prepared-products-dark.png' })
   await page.getByRole('button', { name: 'Settings', exact: true }).click()
+  await page.getByRole('tab', { name: 'Labels', exact: true }).click()
   await page.locator('#settings-dialog h2').click()
   await page.mouse.move(0, 0)
   await page

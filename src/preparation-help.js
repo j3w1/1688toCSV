@@ -30,9 +30,17 @@ function interactionMode(doc) {
 }
 
 /** Add help to an existing field or action, without another button or tab stop. */
-export function preparationHelp(target, text) {
+export function preparationHelp(
+  target,
+  text,
+  { renderContent, panelClass = '' } = {}
+) {
   if (hints.has(target)) {
-    bindText(hints.get(target).content, text)
+    const hint = hints.get(target)
+    hint.text = text
+    hint.renderContent = renderContent
+    hint.panel.className = `preparation-help-popover ${panelClass}`.trim()
+    if (!renderContent) bindText(hint.content, text)
     return target
   }
   const doc = target.ownerDocument,
@@ -40,11 +48,12 @@ export function preparationHelp(target, text) {
     panel = doc.createElement('div'),
     nativePopover = 'popover' in panel
   panel.id = `help-${crypto.randomUUID()}`
-  panel.className = 'preparation-help-popover'
-  const content = doc.createElement('span')
-  bindText(content, text)
+  panel.className = `preparation-help-popover ${panelClass}`.trim()
+  const content = doc.createElement('div')
+  if (!renderContent) bindText(content, text)
   panel.append(content)
-  hints.set(target, { panel, content })
+  const hint = { panel, content, text, renderContent }
+  hints.set(target, hint)
   target.removeAttribute('title')
   panel.setAttribute('role', 'tooltip')
   if (nativePopover) panel.setAttribute('popover', 'manual')
@@ -60,6 +69,7 @@ export function preparationHelp(target, text) {
     listeners,
     observer,
     controls = []
+  if (hint.renderContent) content.replaceChildren()
 
   function ownsDialog(node) {
     return (node?.closest?.('dialog') ?? null) === target.closest('dialog')
@@ -127,6 +137,20 @@ export function preparationHelp(target, text) {
     if (activeHint === close) return
     activeHint?.()
     activeHint = close
+    listeners = new AbortController()
+    if (hint.renderContent) {
+      content.replaceChildren()
+      try {
+        hint.renderContent(content, {
+          signal: listeners.signal,
+          requestPosition: () => {
+            if (activeHint === close && !listeners.signal.aborted) position()
+          },
+        })
+      } catch {
+        bindText(content, hint.text)
+      }
+    } else bindText(content, hint.text)
     // Keep the tooltip in its modal dialog's top layer and accessibility tree.
     const host = target.closest('dialog') || doc.body
     const keys = shortcutKeys.get(target)
@@ -161,7 +185,6 @@ export function preparationHelp(target, text) {
       )
     }
     position()
-    listeners = new AbortController()
     const options = { capture: true, signal: listeners.signal }
     doc.addEventListener(
       'keydown',

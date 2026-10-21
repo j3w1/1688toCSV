@@ -1,4 +1,36 @@
 export const OPERATIONS_MESSAGES = {
+  Today: { es: 'Hoy', zh: '今天' },
+  Yesterday: { es: 'Ayer', zh: '昨天' },
+  Clear: { es: 'Borrar', zh: '清空' },
+  'Purchased: {date}': { es: 'Compra: {date}', zh: '购买日期：{date}' },
+  'Source: {price} × {quantity}': {
+    es: 'Original: {price} × {quantity}',
+    zh: '原始：{price} × {quantity}',
+  },
+  'Source payable: {amount}': {
+    es: 'Total original: {amount}',
+    zh: '原始应付：{amount}',
+  },
+  'Source freight: {amount}': {
+    es: 'Envío original: {amount}',
+    zh: '原始运费：{amount}',
+  },
+  'Copy the source amount only if it matches the actual amount. Save workflow to keep the change.':
+    {
+      es: 'Usa el importe original solo si coincide con el real. Guarda el seguimiento para conservar el cambio.',
+      zh: '仅在与实际金额一致时使用原始金额，保存跟进后生效。',
+    },
+  'Use note: {note}': { es: 'Usar nota: {note}', zh: '使用已有说明：{note}' },
+  'Use this existing note in the field. Save workflow to keep the change.': {
+    es: 'Usa esta nota existente en el campo. Guarda el seguimiento para conservar el cambio.',
+    zh: '将这条已有说明填入此字段，保存跟进后生效。',
+  },
+  'Add {feature}': { es: 'Añadir {feature}', zh: '添加 {feature}' },
+  'Use this existing feature name. Enter its cost and choose how it is recorded.':
+    {
+      es: 'Usa este nombre de característica existente. Ingresa su costo y cómo se contabiliza.',
+      zh: '使用此已有功能名称，填写费用并选择计费方式。',
+    },
   'Feature name': { es: 'Característica', zh: '功能名称' },
   'Cost / piece (¥)': { es: 'Costo / pieza (¥)', zh: '费用 / 件 (¥)' },
   'Cost treatment': { es: 'Contabilización', zh: '费用处理' },

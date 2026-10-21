@@ -273,7 +273,8 @@ test('the status line reports the most urgent state', () => {
     state: 'paused',
     attention: { kind: 'visible-reader', tabId: null },
   }
-  assert.equal(workspaceStatus({ jobs: [visible] }).status, 'needs-visible-tab')
+  // Older paused jobs can be resumed from Activity without an obsolete warning.
+  assert.equal(workspaceStatus({ jobs: [visible] }).status, 'idle')
 })
 
 test('a repeated export gets a predictable suffix instead of a silent browser rename', async () => {
@@ -325,6 +326,52 @@ test('export names carry the local date and time, so each export has its own fil
   assert.notEqual(
     printFileName('labels', 3, new Date(2026, 9, 19, 15, 30, 13)),
     printFileName('labels', 3, at)
+  )
+})
+
+test('print filenames use the chosen language for PDFs, matching summaries and calibration', async () => {
+  const { printFileName } = await import('../src/export-summary.js')
+  const at = new Date(2026, 9, 21, 18, 5, 51)
+  for (const [language, labels, marks, calibration, single, plural] of [
+    [
+      'en',
+      'labels',
+      'carton-marks',
+      'print-calibration',
+      'product',
+      'products',
+    ],
+    [
+      'es',
+      'etiquetas',
+      'marcas-de-caja',
+      'calibracion-de-impresion',
+      'producto',
+      'productos',
+    ],
+    ['zh', '标签', '唛头', '打印校准', '产品', '产品'],
+  ]) {
+    for (const [kind, name] of [
+      ['labels', labels],
+      ['marks', marks],
+    ])
+      for (const [count, unit] of [
+        [1, single],
+        [52, plural],
+      ]) {
+        const stem = `CE-${name}-2026-10-21-180551-${count}-${unit}`
+        const file = printFileName(kind, count, at, language)
+        assert.equal(file, `${stem}.pdf`)
+        assert.equal(summaryFileName(file), `${stem}.json`)
+      }
+    assert.equal(
+      printFileName('calibration', 0, at, language),
+      `CE-${calibration}-2026-10-21-180551.pdf`
+    )
+  }
+  assert.equal(
+    printFileName('labels', 1, at, 'unsupported'),
+    printFileName('labels', 1, at, 'en')
   )
 })
 

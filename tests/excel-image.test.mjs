@@ -8,6 +8,8 @@ import {
 } from '../src/excel-image.js'
 import { createExcelImageBadges } from '../src/excel-image-badges.js'
 import { orderTagColors } from '../src/order-tags.js'
+import { workspaceExportStyle } from '../src/excel-image-style.js'
+import { appearanceTokens } from '../src/appearance.js'
 
 const excelImageColumns = allExcelImageColumns
   .filter((column) => !column.supplier)
@@ -165,6 +167,46 @@ async function withCanvas(
 
 const cell = (entry, key) =>
   entry.cells[excelImageColumns.findIndex((column) => column.key === key)]
+
+for (const mode of ['light', 'dark'])
+  test(`Excel image tables use the captured workspace body and text colors in ${mode} mode`, async () =>
+    withCanvas(async (state) => {
+      const tokens = appearanceTokens({ [`${mode}Theme`]: 'terracotta' }, mode)
+      const style = workspaceExportStyle({
+        ownerDocument: {
+          defaultView: {
+            getComputedStyle: () => ({
+              getPropertyValue: (name) => tokens[name.slice(2)] || '',
+            }),
+          },
+        },
+      })
+      const input = {
+        ...row,
+        sellerName: 'Workspace theme supplier',
+        title: 'Workspace theme product',
+        description: 'Workspace theme product\n颜色：红色',
+      }
+      const [plan] = planExcelImage([input, { ...input, orderId: 'order-2' }], {
+        columns: ['description', 'quantity', 'barcode'],
+        style,
+      })
+      await renderExcelImage(plan)
+      assert.ok(state.fills.some(({ color }) => color === tokens.surface))
+      assert.ok(state.fills.some(({ color }) => color === tokens.page))
+      assert.ok(state.fills.some(({ color }) => color === tokens.selected))
+      assert.ok(state.fills.some(({ color }) => color === tokens.field))
+      assert.ok(state.fills.some(({ color }) => color === tokens.accent))
+      assert.ok(state.text.some(({ color }) => color === tokens.text))
+      assert.ok(state.text.some(({ color }) => color === tokens.muted))
+      for (const draw of state.text.filter(
+        ({ text }) => text === 'Workspace theme product'
+      ))
+        assert.equal(draw.color, tokens.text)
+      const codes = state.text.filter(({ text }) => text === row.barcode)
+      assert.ok(codes.length)
+      assert.ok(codes.every(({ color }) => color === '#fff'))
+    }))
 
 for (const mode of ['light', 'dark'])
   test(`Excel image badges preserve assigned colors, rounded shapes and wrapped text in ${mode} mode`, async () =>

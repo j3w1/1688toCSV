@@ -75,10 +75,10 @@ export async function workbookCodeImage(
 export function createPackingWorkbookImages(loadImage) {
   const photos = new Map()
   return async (row, limits) => {
-    const code = await workbookCodeImage(
-      row.barcode || row.baseCode,
-      limits.code
-    )
+    const code = limits.code
+      ? await workbookCodeImage(row.barcode || row.baseCode, limits.code)
+      : undefined
+    if (!limits.photo) return { code }
     const edit = row.photoEdits?.[0]
     const source = edit
       ? row.photos?.[0] || row.thumbnail

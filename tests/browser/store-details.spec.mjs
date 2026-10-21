@@ -328,7 +328,8 @@ test('store profile aligns compact saves, shares WeChat, preserves other drafts 
   )
   const bar = await details.locator('.store-orders-bar').boundingBox(),
     charges = await details.locator('.order-charges-heading').boundingBox()
-  expect(charges.y - (bar.y + bar.height)).toBeGreaterThanOrEqual(12)
+  expect(charges.y - (bar.y + bar.height)).toBeGreaterThanOrEqual(6)
+  expect(charges.y - (bar.y + bar.height)).toBeLessThanOrEqual(20)
   await page.screenshot({ path: 'work/store-details.png' })
   await contact.fill('Uncommitted draft')
   for (const [language, status, label, save] of [
@@ -371,5 +372,83 @@ test('store profile aligns compact saves, shares WeChat, preserves other drafts 
     'Synthetic Factory'
   )
   await expect(details.getByLabel('WeChat ID', { exact: true })).toHaveValue('')
+  await page.close()
+})
+
+test('linked payments show this store’s source photos, dates and amounts in compact searchable choices', async ({
+  extension,
+}) => {
+  const { page, sheets } = await seedStores(extension)
+  await page
+    .locator(
+      `.order-card[data-order-id="${sheets[0].snapshot.orderId}"] .order-details-trigger`
+    )
+    .click()
+  const details = page.locator('#order-details')
+  await details
+    .getByRole('button', { name: 'Linked payments', exact: true })
+    .click()
+  const review = page.getByRole('dialog', {
+    name: 'Review linked payments',
+    exact: true,
+  })
+  await expect(review.locator('select, [role="combobox"]')).toHaveCount(0)
+  await expect(
+    review.locator('.payment-link-source-choices .payment-link-choice')
+  ).toHaveCount(2)
+  await expect(review.locator('.payment-link-source-choices img')).toHaveCount(
+    2
+  )
+  const source = review.locator(
+    `.payment-link-choice[data-order-id="${sheets[1].snapshot.orderId}"]`
+  )
+  await expect(source).toContainText('20 Oct 2026')
+  await expect(source).toContainText('¥60.00')
+  await source.locator('input').check()
+  await expect(review.locator('[name="payment-amount"]')).toHaveValue('60.00')
+  await expect(
+    review.locator('.payment-link-fee-choices .payment-link-choice')
+  ).toHaveCount(2)
+  await review.locator('.payment-link-quick-reasons button').first().click()
+  await expect(review.locator('[name="payment-reason"]')).toHaveValue(
+    'Label printing'
+  )
+  const search = review.locator('[name="payment-source-search"]')
+  await search.fill('no such source')
+  await expect(review.locator('.payment-link-source-empty')).toContainText(
+    'No orders match this search'
+  )
+  await search.clear()
+  await review
+    .locator(
+      `.payment-link-choice[data-order-id="${sheets[0].snapshot.orderId}"] input`
+    )
+    .check()
+  await expect(review.locator('.payment-link-fee-empty')).toContainText(
+    'no fee row with other eligible goods'
+  )
+  for (const width of [1280, 375]) {
+    await page.setViewportSize({ width, height: 960 })
+    const geometry = await review.evaluate((dialog) => ({
+      width: dialog.clientWidth,
+      contentWidth: dialog.scrollWidth,
+      sourceHeight: dialog
+        .querySelector('.payment-link-source-choices')
+        .getBoundingClientRect().height,
+      amountHeight: dialog
+        .querySelector('[name="payment-amount"]')
+        .getBoundingClientRect().height,
+      labelMargin: getComputedStyle(dialog.querySelector('.payment-link-field'))
+        .marginTop,
+    }))
+    expect(geometry.contentWidth).toBeLessThanOrEqual(geometry.width)
+    expect(geometry.sourceHeight).toBeLessThanOrEqual(136)
+    expect(geometry.amountHeight).toBeLessThanOrEqual(28)
+    expect(geometry.labelMargin).toBe('0px')
+  }
+  await review.screenshot({
+    path: test.info().outputPath('payment-choice-cards.png'),
+  })
+  await review.getByRole('button', { name: 'Cancel', exact: true }).click()
   await page.close()
 })

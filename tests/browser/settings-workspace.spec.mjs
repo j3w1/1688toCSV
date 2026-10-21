@@ -60,8 +60,11 @@ async function openSettings(extension) {
   await page.getByRole('button', { name: 'Settings', exact: true }).click()
   const dialog = page.getByRole('dialog', { name: 'Settings', exact: true })
   await expect(
-    dialog.getByRole('tab', { name: 'Labels', exact: true })
+    dialog.getByRole('tab', { name: 'Appearance', exact: true })
   ).toHaveAttribute('aria-selected', 'true')
+  await expect(dialog.getByRole('tab').first()).toHaveAccessibleName(
+    'Appearance'
+  )
   return { page, dialog }
 }
 
@@ -141,6 +144,7 @@ test('Settings sections support the keyboard, preserve edits across searches and
 }) => {
   const { page, dialog } = await openSettings(extension)
   await page.setViewportSize({ width: 390, height: 844 })
+  await dialog.getByRole('tab', { name: 'Labels', exact: true }).click()
   await dialog.getByLabel('Website', { exact: true }).fill('labels.example')
   await dialog.getByRole('tab', { name: 'Labels', exact: true }).focus()
   await page.keyboard.press('ArrowRight')
@@ -236,6 +240,7 @@ test('invalid label dimensions stay editable and do not replace saved settings',
   extension,
 }) => {
   const { page, dialog } = await openSettings(extension)
+  await dialog.getByRole('tab', { name: 'Labels', exact: true }).click()
   const width = dialog.getByLabel('Barcode width (mm)', { exact: true })
   await width.fill('1')
   await dialog
@@ -249,6 +254,7 @@ test('invalid label dimensions stay editable and do not replace saved settings',
     .getByRole('button', { name: 'Close settings', exact: true })
     .click()
   await page.getByRole('button', { name: 'Settings', exact: true }).click()
+  await dialog.getByRole('tab', { name: 'Labels', exact: true }).click()
   await expect(width).toHaveValue('40')
   const scale = dialog.getByRole('slider', {
     name: 'Barcode text scale (0.75–1.25)',

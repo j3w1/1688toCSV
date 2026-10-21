@@ -54,7 +54,7 @@ async function workspaceLanguage(page) {
 }
 
 for (const kind of ['labels', 'marks']) {
-  test(`${kind} language toggle preserves drafts, redraws captions and exports Spanish and Chinese PDFs`, async ({
+  test(`${kind} language toggle preserves drafts and exports PDFs with filenames and captions in all three languages`, async ({
     extension,
   }) => {
     const code = kind === 'marks' ? 'CE26103102' : 'CE26103102A'
@@ -107,7 +107,11 @@ for (const kind of ['labels', 'marks']) {
     })
     const workspace = await workspaceLanguage(page)
     await expectCompactLanguageChoices(languages)
+    // Initial English artwork was drawn before the canvas observer was attached.
+    // Switch once so the loop also observes a complete English regeneration.
+    await languages.locator('[data-language="es"]').click()
     for (const [language, expected] of [
+      ['en', kind === 'marks' ? 'Carton 1 of 3' : 'CE labels'],
       ['es', kind === 'marks' ? 'Caja 1 de 3' : 'Etiquetas CE'],
       ['zh', kind === 'marks' ? '第 1/3 箱' : 'CE 标签'],
     ]) {
@@ -136,10 +140,12 @@ for (const kind of ['labels', 'marks']) {
         )
         .toBe(true)
       const fields =
-        language === 'es'
-          ? ['Cantidad:', 'Peso:', 'Volumen:']
-          : ['数量：', '重量：', '体积：']
-      if (kind === 'marks')
+        language === 'en'
+          ? ['Quantity:', 'Weight:', 'Volume:']
+          : language === 'es'
+            ? ['Cantidad:', 'Peso:', 'Volumen:']
+            : ['数量：', '重量：', '体积：']
+      if (kind === 'marks' && language !== 'en')
         await expect
           .poll(() =>
             page.evaluate(
@@ -166,19 +172,55 @@ for (const kind of ['labels', 'marks']) {
       const summary = downloads.find((item) =>
         item.suggestedFilename().endsWith('.json')
       )
+      const name = {
+        en: {
+          labels: 'labels',
+          marks: 'carton-marks',
+          unit: 'product',
+          calibration: 'print-calibration',
+        },
+        es: {
+          labels: 'etiquetas',
+          marks: 'marcas-de-caja',
+          unit: 'producto',
+          calibration: 'calibracion-de-impresion',
+        },
+        zh: {
+          labels: '标签',
+          marks: '唛头',
+          unit: '产品',
+          calibration: '打印校准',
+        },
+      }[language]
+      expect(pdf.suggestedFilename()).toMatch(
+        new RegExp(
+          `^CE-${name[kind]}-\\d{4}-\\d{2}-\\d{2}-\\d{6}-1-${name.unit}\\.pdf$`
+        )
+      )
+      expect(summary.suggestedFilename()).toBe(
+        pdf.suggestedFilename().replace(/\.pdf$/, '.json')
+      )
       const bytes = await downloadedBytes(extension, pdf)
       const artifacts = new URL('../../work/pdf-languages/', import.meta.url)
       await mkdir(artifacts, { recursive: true })
       await writeFile(new URL(`${kind}-${language}.pdf`, artifacts), bytes)
       const text = bytes.toString('latin1')
       expect(text).toContain('%PDF-1.4')
-      // Artwork plus Unicode caption rasters: glyphs no longer disappear in Helvetica.
-      expect([...text.matchAll(/\/Subtype \/Image/g)].length).toBeGreaterThan(1)
+      // Non-Latin captions need Unicode rasters; English captions use PDF text.
+      const imageCount = [...text.matchAll(/\/Subtype \/Image/g)].length
+      if (language === 'en') {
+        expect(imageCount).toBeGreaterThanOrEqual(1)
+        expect(text).toContain(kind === 'marks' ? 'Carton 1 of 3' : 'CE labels')
+      } else expect(imageCount).toBeGreaterThan(1)
       if (language === 'zh') expect(text).toContain('/Title <feff')
       const json = JSON.parse(
         (await downloadedBytes(extension, summary)).toString('utf8')
       )
       expect(json.language).toBe(language)
+      expect(json.files).toEqual([
+        pdf.suggestedFilename(),
+        summary.suggestedFilename(),
+      ])
       expect(json.products[0].code).toBe(code)
       expect(json.products[0].name).toBe('NOMBRE GUARDADO')
       if (kind === 'marks')
@@ -199,6 +241,17 @@ for (const kind of ['labels', 'marks']) {
             JSON.parse(localStorage.getItem('1688-print-recent'))[0].language
         )
       ).toBe(language)
+      if (kind === 'labels') {
+        const calibrating = page.waitForEvent('download')
+        await dialog.locator('[data-action="print-calibration"]').click()
+        const calibration = await calibrating
+        expect(calibration.suggestedFilename()).toMatch(
+          new RegExp(
+            `^CE-${name.calibration}-\\d{4}-\\d{2}-\\d{2}-\\d{6}\\.pdf$`
+          )
+        )
+        await downloadedBytes(extension, calibration)
+      }
     }
     const preview = dialog.locator('.print-preview')
     const chinese = await preview.evaluate((canvas) => canvas.toDataURL())

@@ -1,9 +1,10 @@
 import { element as el } from './ui.js'
-import { bindAttribute, bindText, message, t } from './i18n.js'
+import { bindAttribute, bindText, getLocale, message, t } from './i18n.js'
 import { preparationHelp } from './preparation-help.js'
 import { icon } from './icons.js'
 import { storeIdentity } from './database.js'
-import { centsToMoney } from './money.js'
+import { centsToMoney, moneyToCents } from './money.js'
+import { formatCny } from './money-format.js'
 import { productFeatures, featureUnitCost } from './product-features.js'
 import {
   operationsIndicators,
@@ -114,32 +115,187 @@ function field(
   name,
   { value = '', type = 'text', options, onChange, help, maxLength = 2000 } = {}
 ) {
+  if (options) {
+    const wrapper = el(
+        'fieldset',
+        undefined,
+        'operations-field operations-choice'
+      ),
+      choices = el('div', undefined, 'operations-choices'),
+      groupName = `${name}-${crypto.randomUUID()}`
+    wrapper.dataset.field = name
+    wrapper.append(el('legend', message(label)), choices)
+    for (const [id, text] of options) {
+      const option = el('label', undefined, 'operations-option'),
+        input = el('input')
+      input.type = 'radio'
+      input.name = groupName
+      input.id = `operation-${crypto.randomUUID()}`
+      input.value = id
+      input.checked = value === id
+      option.htmlFor = input.id
+      const content = el('span'),
+        marker = icon('check')
+      marker.classList.add('operations-choice-marker')
+      content.append(marker, el('span', message(text)))
+      option.append(input, content)
+      choices.append(option)
+      input.addEventListener('change', () => {
+        if (input.checked) onChange?.(input.value)
+      })
+    }
+    // Read the native controls directly; the draft remains the only saved state.
+    Object.defineProperty(wrapper, 'value', {
+      get: () =>
+        [...choices.querySelectorAll('input')].find((input) => input.checked)
+          ?.value || '',
+    })
+    if (help) preparationHelp(wrapper, message(help))
+    host.append(wrapper)
+    return wrapper
+  }
   const wrapper = el('div', undefined, 'operations-field'),
     title = el('label', message(label)),
-    input = el(options ? 'select' : type === 'textarea' ? 'textarea' : 'input')
+    input = el(type === 'textarea' ? 'textarea' : 'input')
   wrapper.append(title, input)
-  if (!options && type !== 'textarea') input.type = type
+  if (type !== 'textarea') input.type = type
   input.name = name
   input.id = `operation-${crypto.randomUUID()}`
   title.htmlFor = input.id
-  if (options) {
-    for (const [id, text] of options) {
-      const option = el('option', message(text))
-      option.value = id
-      input.append(option)
-    }
-    input.value = value
-  } else {
-    input.value = value
-    input.maxLength = maxLength
-    if (type === 'textarea') input.rows = 2
-  }
-  input.addEventListener(options ? 'change' : 'input', () =>
-    onChange?.(input.value)
-  )
+  input.value = value
+  input.maxLength = maxLength
+  if (type === 'textarea') input.rows = 2
+  input.addEventListener('input', () => onChange?.(input.value))
   if (help) preparationHelp(input, message(help))
   host.append(wrapper)
   return input
+}
+
+function shortcut(host, label, run, { help } = {}) {
+  const button = el(
+    'button',
+    typeof label === 'string' ? message(label) : label,
+    'operations-shortcut'
+  )
+  button.type = 'button'
+  if (help) preparationHelp(button, message(help))
+  button.addEventListener('click', run)
+  host.append(button)
+  return button
+}
+
+function fillInput(input, value) {
+  input.value = value
+  input.dispatchEvent(
+    new input.ownerDocument.defaultView.Event('input', { bubbles: true })
+  )
+}
+
+function dateShortcuts(input) {
+  const actions = el('div', undefined, 'operations-shortcuts')
+  input.parentElement.append(actions)
+  for (const [label, offset] of [
+    ['Today', 0],
+    ['Yesterday', -1],
+  ])
+    shortcut(actions, label, () => {
+      if (input.disabled) return
+      const date = new Date()
+      date.setDate(date.getDate() + offset)
+      fillInput(
+        input,
+        `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}-${String(date.getDate()).padStart(2, '0')}`
+      )
+    })
+  shortcut(actions, 'Clear', () => {
+    if (!input.disabled) fillInput(input, '')
+  })
+  return actions
+}
+
+function noteSuggestions(input, values = []) {
+  const suggestions = [
+    ...new Set(
+      values.filter((value) => typeof value === 'string' && value.trim())
+    ),
+  ].slice(0, 5)
+  if (!suggestions.length) return
+  const actions = el(
+    'div',
+    undefined,
+    'operations-shortcuts operations-note-suggestions'
+  )
+  input.parentElement.append(actions)
+  for (const value of suggestions)
+    shortcut(
+      actions,
+      message('Use note: {note}', { note: value }),
+      () => {
+        if (!input.disabled) fillInput(input, value)
+      },
+      {
+        help: 'Use this existing note in the field. Save workflow to keep the change.',
+      }
+    )
+}
+
+function moneyValue(value) {
+  try {
+    return formatCny(value)
+  } catch {
+    return value || '—'
+  }
+}
+
+function dateValue(value) {
+  if (!value) return ''
+  const date = new Date(value.length === 10 ? `${value}T00:00:00` : value)
+  return Number.isFinite(date.getTime())
+    ? new Intl.DateTimeFormat(getLocale(), {
+        year: 'numeric',
+        month: 'short',
+        day: 'numeric',
+      }).format(date)
+    : value
+}
+
+function moneyField(host, label, name, value, onChange) {
+  const input = field(host, label, name, {
+    value,
+    onChange: (value) => onChange(value.trim().replace(',', '.')),
+  })
+  input.inputMode = 'decimal'
+  input.addEventListener('blur', () => {
+    if (!input.value.trim()) return
+    try {
+      fillInput(
+        input,
+        centsToMoney(moneyToCents(input.value.trim().replace(',', '.')))
+      )
+    } catch {
+      /* Validate on save. */
+    }
+  })
+  return input
+}
+
+function sourceAmount(input, label, value) {
+  if (typeof value !== 'string') return
+  try {
+    if (moneyToCents(value) < 0n) return
+  } catch {
+    return
+  }
+  const actions = el('div', undefined, 'operations-shortcuts')
+  input.parentElement.append(actions)
+  shortcut(
+    actions,
+    message(label, { amount: () => moneyValue(value) }),
+    () => fillInput(input, centsToMoney(moneyToCents(value))),
+    {
+      help: 'Copy the source amount only if it matches the actual amount. Save workflow to keep the change.',
+    }
+  )
 }
 
 function check(host, label, name, value, onChange) {
@@ -166,8 +322,13 @@ function editText(object, key, value) {
   else delete object[key]
 }
 
-function renderDelay(host, draft, { product = false, fallback } = {}) {
+function renderDelay(
+  host,
+  draft,
+  { product = false, fallback, notes = [] } = {}
+) {
   const section = group(host, 'Production delay'),
+    details = el('div', undefined, 'operations-details'),
     choices = [
       [product ? '' : '', product ? 'Use order default' : 'Not recorded'],
       ['none', 'No delay'],
@@ -185,20 +346,24 @@ function renderDelay(host, draft, { product = false, fallback } = {}) {
             start.value = ''
             end.value = ''
           }
-        } else delete draft.delay
+        } else {
+          delete draft.delay
+          for (const input of [reason, promise, start, end]) input.value = ''
+        }
         update()
       },
     }),
-    reason = field(section, 'Delay reason', 'delay-reason', {
+    reason = field(details, 'Delay reason', 'delay-reason', {
       value: draft.delay?.reason,
       onChange: (value) => editText(draft.delay, 'reason', value),
     }),
-    promise = field(section, 'Original seller promise', 'delay-promise', {
+    promise = field(details, 'Original seller promise', 'delay-promise', {
       value: draft.delay?.originalPromise,
       onChange: (value) => editText(draft.delay, 'originalPromise', value),
     }),
     dates = el('div', undefined, 'operations-pair')
-  section.append(dates)
+  details.append(dates)
+  section.append(details)
   const start = field(dates, 'Confirmed date / range start', 'delay-start', {
       type: 'date',
       value: draft.delay?.confirmedStart,
@@ -209,7 +374,10 @@ function renderDelay(host, draft, { product = false, fallback } = {}) {
       value: draft.delay?.confirmedEnd,
       onChange: (value) => editText(draft.delay, 'confirmedEnd', value),
     })
-  section.append(
+  dateShortcuts(start)
+  dateShortcuts(end)
+  noteSuggestions(promise, [...notes, fallback?.originalPromise])
+  details.append(
     el(
       'p',
       message(
@@ -223,19 +391,21 @@ function renderDelay(host, draft, { product = false, fallback } = {}) {
       el(
         'p',
         message('Order default: {detail}', {
-          detail: [
-            fallback.reason,
-            fallback.originalPromise,
-            fallback.confirmedStart,
-            fallback.confirmedEnd,
-          ]
-            .filter(Boolean)
-            .join(' · '),
+          detail: () =>
+            [
+              fallback.reason,
+              fallback.originalPromise,
+              dateValue(fallback.confirmedStart),
+              dateValue(fallback.confirmedEnd),
+            ]
+              .filter(Boolean)
+              .join(' · '),
         }),
         'operations-help'
       )
     )
   function update() {
+    details.hidden = state.value !== 'delayed'
     for (const input of [reason, promise, start, end])
       input.disabled = state.value !== 'delayed'
   }
@@ -244,6 +414,7 @@ function renderDelay(host, draft, { product = false, fallback } = {}) {
 
 function renderReceipt(host, draft, { product = false, fallback } = {}) {
   const section = group(host, 'Warehouse receipt'),
+    details = el('div', undefined, 'operations-pair operations-details'),
     state = field(section, 'Warehouse receipt', 'warehouse-state', {
       value: draft.warehouse?.status || '',
       options: [
@@ -261,22 +432,28 @@ function renderReceipt(host, draft, { product = false, fallback } = {}) {
             date.value = ''
             if (quantity) quantity.value = ''
           }
-        } else delete draft.warehouse
+        } else {
+          delete draft.warehouse
+          date.value = ''
+          if (quantity) quantity.value = ''
+        }
         update()
       },
     }),
-    date = field(section, 'Received date', 'received-date', {
+    date = field(details, 'Received date', 'received-date', {
       type: 'date',
       value: draft.warehouse?.receivedOn,
       onChange: (value) => editText(draft.warehouse, 'receivedOn', value),
     }),
     quantity = product
-      ? field(section, 'Received quantity (optional)', 'received-quantity', {
+      ? field(details, 'Received quantity (optional)', 'received-quantity', {
           value: draft.warehouse?.receivedQuantity,
           onChange: (value) =>
             editText(draft.warehouse, 'receivedQuantity', value),
         })
       : null
+  section.append(details)
+  dateShortcuts(date)
   if (quantity) {
     quantity.inputMode = 'numeric'
     quantity.pattern = '\\d*'
@@ -302,19 +479,25 @@ function renderReceipt(host, draft, { product = false, fallback } = {}) {
                 : fallback.status === 'partial'
                   ? 'Partially received'
                   : 'Waiting'
-            ) + (fallback.receivedOn ? ` · ${fallback.receivedOn}` : ''),
+            ) +
+            (fallback.receivedOn ? ` · ${dateValue(fallback.receivedOn)}` : ''),
         }),
         'operations-help'
       )
     )
   function update() {
     date.disabled = !state.value || state.value === 'waiting'
+    details.hidden = date.disabled
     if (quantity) quantity.disabled = date.disabled
   }
   update()
 }
 
-function renderMissingLabels(host, draft, { product = false } = {}) {
+function renderMissingLabels(
+  host,
+  draft,
+  { product = false, notes = [] } = {}
+) {
   const section = group(host, 'Product-label issue'),
     state = field(section, 'Arrived without product labels', 'missing-labels', {
       value: own(draft.missingLabels, 'active')
@@ -331,8 +514,12 @@ function renderMissingLabels(host, draft, { product = false } = {}) {
             ...draft.missingLabels,
             active: value === 'true',
           }
-        else delete draft.missingLabels
+        else {
+          delete draft.missingLabels
+          note.value = ''
+        }
         note.disabled = !value
+        note.parentElement.hidden = !value
       },
     }),
     note = field(
@@ -345,7 +532,10 @@ function renderMissingLabels(host, draft, { product = false } = {}) {
         onChange: (value) => editText(draft.missingLabels, 'note', value),
       }
     )
+  section.classList.add('operations-wide')
   note.disabled = !state.value
+  note.parentElement.hidden = note.disabled
+  noteSuggestions(note, notes)
 }
 
 function renderOriginalTags(host, draft) {
@@ -356,7 +546,7 @@ function renderOriginalTags(host, draft) {
   )
 }
 
-function renderStore(host, draft, count) {
+function renderStore(host, draft, count, { notes = [] } = {}) {
   host.append(
     el(
       'p',
@@ -367,8 +557,11 @@ function renderStore(host, draft, count) {
       'operations-help'
     )
   )
-  const labels = group(host, 'Label services')
-  field(labels, 'Product-label printing', 'store-printing', {
+  const labels = group(host, 'Label services'),
+    services = el('div', undefined, 'operations-pair')
+  labels.classList.add('operations-wide')
+  labels.append(services)
+  field(services, 'Product-label printing', 'store-printing', {
     value: draft.labelPrinting || '',
     options: [
       ['', 'Not recorded'],
@@ -378,7 +571,7 @@ function renderStore(host, draft, count) {
     ],
     onChange: (value) => editText(draft, 'labelPrinting', value),
   })
-  field(labels, 'Product-label application', 'store-application', {
+  field(services, 'Product-label application', 'store-application', {
     value: draft.labelApplication || '',
     options: [
       ['', 'Not recorded'],
@@ -406,33 +599,45 @@ function renderStore(host, draft, count) {
       draft.shippingRefundPromise = value
     }
   )
-  field(labels, 'Store instructions', 'store-notes', {
+  const note = field(labels, 'Store instructions', 'store-notes', {
     type: 'textarea',
     value: draft.notes,
     onChange: (value) => editText(draft, 'notes', value),
   })
+  noteSuggestions(note, notes)
   renderOriginalTags(host, draft)
 }
 
-function renderOrder(host, draft) {
-  const instructions = group(host, 'Instructions sent')
+function renderOrder(host, draft, record) {
+  const instructions = group(host, 'Instructions sent'),
+    checks = el('div', undefined, 'operations-instruction-checks'),
+    notes = [record.notes, ...(draft.legacyTags || [])]
+  instructions.classList.add('operations-wide')
+  instructions.append(checks)
   for (const [key, label] of [
     ['labelsSent', 'Label instructions sent'],
     ['cartonMarksSent', 'Carton-mark instructions sent'],
     ['requirementsSent', 'Written requirements sent'],
   ])
-    check(instructions, label, key, draft.instructions?.[key], (value) => {
+    check(checks, label, key, draft.instructions?.[key], (value) => {
       draft.instructions = { ...draft.instructions, [key]: value }
     })
-  field(instructions, 'Physical labels dispatched on', 'labels-dispatched-on', {
-    type: 'date',
-    value: draft.labelsDispatchedOn,
-    onChange: (value) => editText(draft, 'labelsDispatchedOn', value),
-  })
-  renderDelay(host, draft)
+  const dispatched = field(
+    instructions,
+    'Physical labels dispatched on',
+    'labels-dispatched-on',
+    {
+      type: 'date',
+      value: draft.labelsDispatchedOn,
+      onChange: (value) => editText(draft, 'labelsDispatchedOn', value),
+    }
+  )
+  dateShortcuts(dispatched)
+  renderDelay(host, draft, { notes })
   renderReceipt(host, draft)
-  renderMissingLabels(host, draft)
+  renderMissingLabels(host, draft, { notes })
   const refund = group(host, 'Shipping refund')
+  refund.classList.add('operations-wide')
   refund.append(
     el(
       'p',
@@ -442,7 +647,7 @@ function renderOrder(host, draft) {
       'operations-help'
     )
   )
-  const pairs = el('div', undefined, 'operations-pair')
+  const pairs = el('div', undefined, 'operations-refund-amounts')
   refund.append(pairs)
   for (const [key, label] of [
     ['actualPaid', 'Actual payment · CNY'],
@@ -450,16 +655,30 @@ function renderOrder(host, draft) {
     ['promisedAmount', 'Promised refund · CNY'],
     ['receivedAmount', 'Refund received · CNY'],
   ]) {
-    const input = field(pairs, label, `refund-${key}`, {
-      value: draft.refund?.[key],
-      onChange: (value) => {
+    const input = moneyField(
+      pairs,
+      label,
+      `refund-${key}`,
+      draft.refund?.[key],
+      (value) => {
         draft.refund ||= {}
         editText(draft.refund, key, value)
-      },
-    })
-    input.inputMode = 'decimal'
+      }
+    )
+    if (key === 'actualPaid')
+      sourceAmount(
+        input,
+        'Source payable: {amount}',
+        record.snapshot.totals?.payable
+      )
+    if (key === 'actualFreight')
+      sourceAmount(
+        input,
+        'Source freight: {amount}',
+        record.snapshot.totals?.shipping
+      )
   }
-  field(refund, 'Refund notes', 'refund-notes', {
+  const note = field(refund, 'Refund notes', 'refund-notes', {
     type: 'textarea',
     value: draft.refund?.notes,
     onChange: (value) => {
@@ -467,15 +686,17 @@ function renderOrder(host, draft) {
       editText(draft.refund, 'notes', value)
     },
   })
+  noteSuggestions(note, notes)
   renderOriginalTags(host, draft)
 }
 
-function renderFeatures(host, draft) {
+function renderFeatures(host, draft, knownNames = []) {
   const section = group(host, 'Product features'),
     list = el('div', undefined, 'operations-features'),
     header = el('div', undefined, 'operations-feature-head'),
     add = el('button', undefined, 'operations-feature-add'),
     total = el('p', undefined, 'operations-feature-total')
+  section.classList.add('operations-wide')
   for (const label of ['Feature name', 'Cost / piece (¥)', 'Cost treatment'])
     header.append(el('span', message(label)))
   add.type = 'button'
@@ -494,6 +715,15 @@ function renderFeatures(host, draft) {
     )
   )
   function updateTotal() {
+    const names = productFeatures(draft.features).map((feature) =>
+      feature.name.normalize('NFKC').trim().toLowerCase()
+    )
+    for (const button of section.querySelectorAll(
+      '.operations-feature-suggestions button'
+    ))
+      button.disabled = names.includes(
+        button.dataset.featureName.normalize('NFKC').trim().toLowerCase()
+      )
     try {
       bindText(
         total,
@@ -526,11 +756,13 @@ function renderFeatures(host, draft) {
     })
     name.required = true
     name.dataset.featureField = 'name'
-    const cost = field(row, 'Cost / piece (¥)', `feature-cost-${key}`, {
-      value: feature.unitCost,
-      onChange: (value) => write('unitCost', value.trim().replace(',', '.')),
-    })
-    cost.inputMode = 'decimal'
+    const cost = moneyField(
+      row,
+      'Cost / piece (¥)',
+      `feature-cost-${key}`,
+      feature.unitCost,
+      (value) => write('unitCost', value)
+    )
     cost.required = true
     cost.dataset.featureField = 'cost'
     const treatment = field(row, 'Cost treatment', `feature-treatment-${key}`, {
@@ -560,22 +792,38 @@ function renderFeatures(host, draft) {
     if (focus) name.focus()
   }
   for (const feature of productFeatures(draft.features)) appendFeature(feature)
-  add.addEventListener('click', () => {
+  function addFeature(name = '', cost = '0.00') {
     const feature = {
       key: crypto.randomUUID(),
-      name: '',
-      unitCost: '0.00',
+      name,
+      unitCost: cost,
       included: false,
     }
     const { key, ...value } = feature
     draft.features = { ...draft.features, [key]: value }
     appendFeature(feature, true)
     updateTotal()
-  })
+  }
+  add.addEventListener('click', () => addFeature())
+  const suggestions = el(
+    'div',
+    undefined,
+    'operations-shortcuts operations-feature-suggestions'
+  )
+  for (const name of [...new Set(knownNames)].filter(Boolean).slice(0, 6))
+    shortcut(
+      suggestions,
+      message('Add {feature}', { feature: name }),
+      () => addFeature(name, ''),
+      {
+        help: 'Use this existing feature name. Enter its cost and choose how it is recorded.',
+      }
+    ).dataset.featureName = name
+  add.after(suggestions)
   updateTotal()
 }
 
-function renderProduct(host, draft, record) {
+function renderProduct(host, draft, record, records) {
   host.append(
     el(
       'p',
@@ -585,16 +833,30 @@ function renderProduct(host, draft, record) {
       'operations-help'
     )
   )
-  renderFeatures(host, draft)
+  const notes = [record.notes, ...(draft.legacyTags || [])],
+    knownNames = records
+      .filter(
+        (entry) =>
+          storeIdentity(entry.snapshot) &&
+          storeIdentity(entry.snapshot) === storeIdentity(record.snapshot) &&
+          entry.snapshot.accountId === record.snapshot.accountId
+      )
+      .flatMap((entry) =>
+        Object.values(entry.productWorkflow || {}).flatMap((workflow) =>
+          productFeatures(workflow.features).map((feature) => feature.name)
+        )
+      )
+  renderFeatures(host, draft, knownNames)
   renderDelay(host, draft, {
     product: true,
     fallback: record.orderWorkflow?.delay,
+    notes,
   })
   renderReceipt(host, draft, {
     product: true,
     fallback: record.orderWorkflow?.warehouse,
   })
-  renderMissingLabels(host, draft, { product: true })
+  renderMissingLabels(host, draft, { product: true, notes })
   renderOriginalTags(host, draft)
 }
 
@@ -660,6 +922,32 @@ export async function openOperationsDialog({
     ),
     tabs
   )
+  const context = el('div', undefined, 'operations-context'),
+    item = record.snapshot.items.find((item) => item.entryId === entryId)
+  if (item)
+    context.append(el('span', item.description, 'operations-product-context'))
+  if (record.snapshot.purchasedAt) {
+    const date = el('time')
+    date.dateTime = record.snapshot.purchasedAt
+    bindText(
+      date,
+      message('Purchased: {date}', {
+        date: () => dateValue(record.snapshot.purchasedAt),
+      })
+    )
+    context.append(date)
+  }
+  if (item)
+    context.append(
+      el(
+        'span',
+        message('Source: {price} × {quantity}', {
+          price: () => moneyValue(item.price),
+          quantity: item.quantity,
+        })
+      )
+    )
+  if (context.childNodes.length) tabs.before(context)
   dialog.append(heading, form)
   form.append(body, error, actions)
   const panels = new Map(),
@@ -682,8 +970,9 @@ export async function openOperationsDialog({
     body.append(panel)
     panels.set(id, panel)
     tabButtons.set(id, tab)
-    if (id === 'product') renderProduct(panel, draft.product, record)
-    if (id === 'order') renderOrder(panel, draft.order)
+    if (id === 'product')
+      renderProduct(panel, draft.product, record, [record, ...records])
+    if (id === 'order') renderOrder(panel, draft.order, record)
     if (id === 'store') {
       const identity = storeIdentity(record.snapshot),
         count = identity
@@ -693,7 +982,20 @@ export async function openOperationsDialog({
                 storeIdentity(entry.snapshot) === identity
             ).length || 1
           : 1
-      renderStore(panel, draft.store, count)
+      renderStore(panel, draft.store, count, {
+        notes: [
+          record.notes,
+          ...(draft.store.legacyTags || []),
+          ...records
+            .filter(
+              (entry) =>
+                identity &&
+                storeIdentity(entry.snapshot) === identity &&
+                entry.snapshot.accountId === record.snapshot.accountId
+            )
+            .map((entry) => entry.storeWorkflow?.notes),
+        ],
+      })
     }
   }
   for (const action of extensionActions) {

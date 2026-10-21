@@ -30,7 +30,7 @@ test('order search combines seller, member login and order IDs with purchase fil
       localStorage.setItem('1688-library-purchase-months', '[]')
   })
   await page.goto(`${extension.extensionBaseUrl}/library.html`)
-  await expect(page.locator('#orders-page')).toHaveText(/^1 \/ /)
+  await expect(page.locator('.month-toggle')).not.toHaveCount(0)
   for (const toggle of await page
     .locator('.month-toggle[aria-expanded=false]')
     .all())

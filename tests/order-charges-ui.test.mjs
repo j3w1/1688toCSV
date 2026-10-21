@@ -136,3 +136,18 @@ test('additional-charge UI sentences include Spanish and Chinese translations', 
     assert.ok(translations.zh?.trim(), `${source}: Chinese`)
   }
 })
+
+test('charge quick completions create editable exact-cent drafts without saving', (t) => {
+  const { host, record, window } = fixture(t)
+  let saves = 0
+  mountOrderCharges(host, { record, onSave: async () => saves++ })
+  assert.equal(host.querySelector('.order-charges-preview').hidden, true)
+  host.querySelector('.order-charges-quick-reasons button').click()
+  assert.equal(host.querySelector('input[type="text"]').value, 'Unloading')
+  const amount = host.querySelector('input[type="number"]')
+  amount.value = '12'
+  amount.dispatchEvent(new window.Event('blur'))
+  assert.equal(amount.value, '12.00')
+  assert.equal(saves, 0)
+  assert.equal(record.additionalCharges, undefined)
+})

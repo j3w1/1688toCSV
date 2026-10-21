@@ -226,7 +226,17 @@ test('preparation keeps facts compact and read-only beside a visible label edito
   expect(widths[0]).toBeLessThanOrEqual(58)
   expect(widths[1]).toBeLessThanOrEqual(96)
   expect(widths[2]).toBeGreaterThan(rowBounds.width * 0.35)
-  expect(widths[3]).toBeLessThanOrEqual(286)
+  await expect(row.locator('.variant-numeric-header > span')).toHaveText([
+    'Quantity',
+    'Pcs/box',
+    'Planned',
+    'Received',
+    'Loaded',
+    'kg/box',
+    'm³/box',
+  ])
+  // The seven source/count/measurement fields require the existing 388px track.
+  expect(widths[3]).toBeLessThanOrEqual(388)
   expect(widths[4]).toBeLessThanOrEqual(176)
 
   for (const width of [1440, 768, 390]) {
@@ -264,10 +274,25 @@ test('preparation keeps facts compact and read-only beside a visible label edito
   await page.setViewportSize({ width: 1440, height: 1000 })
   await expect(
     view.locator('.preparation-label-preview img:visible')
-  ).toHaveCount(5)
+  ).toHaveCount(5, { timeout: 15_000 })
   await page.screenshot({ path: 'work/compact-preparation-wide.png' })
   await page.setViewportSize({ width: 390, height: 1000 })
-  await view.locator('.preparation-group').first().screenshot({
+  await page.evaluate(
+    () =>
+      new Promise((resolve) =>
+        requestAnimationFrame(() => requestAnimationFrame(resolve))
+      )
+  )
+  // Labels outside the narrow scroll viewport deliberately release their images.
+  // Capture one complete visible row instead of waiting for offscreen artwork.
+  await row.scrollIntoViewIfNeeded()
+  await expect(row.locator('.preparation-label-preview')).toHaveAttribute(
+    'data-preview-state',
+    'ready',
+    { timeout: 15_000 }
+  )
+  await expect(row.locator('.preparation-label-preview img')).toBeVisible()
+  await row.screenshot({
     path: 'work/compact-preparation-narrow.png',
   })
   await page.setViewportSize({ width: 1440, height: 1000 })

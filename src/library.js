@@ -29,6 +29,7 @@ import {
   progressPresentation,
 } from './import-progress.js'
 import { createPhotoViewer } from './photo-viewer.js'
+import { formatCny } from './money-format.js'
 import { createSizeClassifier } from './size-vocabulary.js'
 import { openStoreImportDialog } from './store-import-dialog.js'
 import { productCartonDetails } from './carton-details.js'
@@ -49,6 +50,7 @@ import { orderTagBadge, mountOrderAnnotations } from './order-tags-ui.js'
 import { mergeOrderTags } from './order-tags.js'
 import { createRowSelection } from './row-selection.js'
 import { createVirtualTable } from './virtual-table.js'
+import { createVirtualList } from './virtual-list.js'
 import { copyExcelImage } from './excel-image-copy.js'
 import { copySourceImages } from './source-image-copy.js'
 import { mountProductCopyActions, mountCopyActions } from './copy-actions.js'
@@ -58,6 +60,7 @@ import { photoCopyTile } from './photo-copy.js'
 import { summarizeOrders, summarizeProductRows } from './order-summary.js'
 import { decorateIcon, icon } from './icons.js'
 import { preparationHelp } from './preparation-help.js'
+import { orderContextHelp, productContextHelp } from './item-context-help.js'
 import { installWorkspaceActionHelp } from './workspace-action-help.js'
 import { installWorkspaceShortcuts } from './workspace-shortcuts.js'
 import { createActivityTracker, ACTIVITY_READ_KEY } from './activity-state.js'
@@ -274,9 +277,11 @@ export async function startLibrary(
     refreshPending = false,
     copyBusy = false,
     showDismissed = false,
-    orderPage = 0
+    resetOrders = true
   let packing
-  let productKeys = []
+  let productKeys = [],
+    orderKeys = [],
+    orderList
   let storeFilter = null
   let orderTagDefinitions = [],
     productTagDefinitions = [],
@@ -543,10 +548,11 @@ export async function startLibrary(
   )
   const orderSelection = createRowSelection({
     selected: selectedOrders,
-    getKeys: () =>
-      matchingOrders()
-        .filter(({ snapshot }) => expandedMonths.has(purchaseMonth(snapshot)))
-        .map(({ snapshot }) => snapshot.orderId),
+    getKeys: () => orderKeys,
+    ensureVisible: (key) => {
+      if (key === orderKeys[0]) $('order-list').scrollTop = 0
+      return orderList?.ensureVisible(key)
+    },
     onChange: () => {
       productSelection.reset()
       productTable.reset()
@@ -609,17 +615,15 @@ export async function startLibrary(
   ])
     decorateIcon($(id), name, { iconOnly })
   decorateIcon(document.querySelector('.open-orders'), 'external')
-  preparationHelp(
-    $('orders-heading'),
-    uiMessage(
-      'Click to select or deselect. Shift-click for a range; Ctrl-click adds orders. Click the store name or press Enter for order details, tags and notes. Click a month heading to expand or collapse it.'
-    )
-  )
+  async function loadContextImage(url) {
+    if (preparedImages.has(url)) return preparedImages.get(url)
+    const image = await send('IMAGE_GET', { url })
+    return typeof image === 'string' ? image : image.dataUrl
+  }
   preparationHelp(
     $('select-rows'),
-    uiMessage(
-      'Click a product row to select or deselect it. Shift-click selects a range; Ctrl-click adds rows. Buttons and photos work independently.'
-    )
+    () =>
+      `${t('Filtered rows')}: ${filteredRows().length.toLocaleString(getLocale())}`
   )
   for (const [id, hint] of [
     ['activity-open', 'Import progress, paused jobs and reports.'],
@@ -1165,21 +1169,19 @@ export async function startLibrary(
   }
   function renderOrders() {
     const list = $('order-list')
+    const anchor = resetOrders ? undefined : orderList?.anchor()
+    const active = document.activeElement?.closest(
+      '#order-list [data-virtual-key]'
+    )?.dataset.virtualKey
+    orderList?.destroy()
     list.replaceChildren()
     orderSelection.detach()
     const matching = matchingOrders()
-    const expanded = matching.filter(({ snapshot }) =>
-      expandedMonths.has(purchaseMonth(snapshot))
-    )
-    orderPage = Math.min(
-      orderPage,
-      Math.max(0, Math.ceil(expanded.length / 50) - 1)
-    )
-    $('orders-page').textContent =
-      `${orderPage + 1} / ${Math.max(1, Math.ceil(expanded.length / 50))}`
-    $('orders-prev').disabled = orderPage === 0
-    $('orders-next').disabled = (orderPage + 1) * 50 >= expanded.length
-    if (!matching.length)
+    orderKeys = matching
+      .filter(({ snapshot }) => expandedMonths.has(purchaseMonth(snapshot)))
+      .map(({ snapshot }) => snapshot.orderId)
+    const positions = new Map(orderKeys.map((key, index) => [key, index + 1]))
+    if (!matching.length) {
       list.append(
         node(
           'p',
@@ -1187,232 +1189,278 @@ export async function startLibrary(
           'order-search-empty'
         )
       )
-    const visible = new Set(
-      expanded
-        .slice(orderPage * 50, (orderPage + 1) * 50)
-        .map(({ snapshot }) => snapshot.orderId)
-    )
+      orderList = undefined
+      resetOrders = false
+      updateOrderActions()
+      return
+    }
+    const counts = new Map()
+    for (const { snapshot } of matching) {
+      const month = purchaseMonth(snapshot)
+      counts.set(month, (counts.get(month) || 0) + 1)
+    }
+    const entries = []
     let lastMonth
     for (const record of matching) {
-      const order = record.snapshot
-      const month = purchaseMonth(order)
-      if (month !== lastMonth) {
-        const section = node('h3', undefined, 'order-month')
-        const toggle = node('button', undefined, 'month-toggle')
-        toggle.append(
-          node('span', monthLabel(month)),
-          node(
-            'small',
-            String(
-              matching.filter(
-                ({ snapshot }) => purchaseMonth(snapshot) === month
-              ).length
-            )
-          )
-        )
-        decorateIcon(toggle, 'chevron')
-        toggle.setAttribute('aria-expanded', String(expandedMonths.has(month)))
-        bindAttribute(
-          toggle,
-          'aria-label',
-          uiMessage('{0} orders', { 0: () => monthLabel(month) })
-        )
-        preparationHelp(
-          toggle,
-          uiMessage(
-            'Expand or collapse this month. Use the purchase-month filter to change the product list.'
-          )
-        )
-        toggle.addEventListener('click', () => {
-          if (expandedMonths.has(month)) expandedMonths.delete(month)
-          else expandedMonths.add(month)
-          const first = matching
-            .filter(({ snapshot }) =>
-              expandedMonths.has(purchaseMonth(snapshot))
-            )
-            .findIndex(({ snapshot }) => purchaseMonth(snapshot) === month)
-          orderPage = Math.max(0, Math.floor(first / 50))
-          renderOrders()
-        })
-        section.append(toggle)
-        list.append(section)
-      }
+      const month = purchaseMonth(record.snapshot)
+      if (month !== lastMonth)
+        entries.push({ key: `month:${month}`, heading: true, month })
       lastMonth = month
-      if (!visible.has(order.orderId)) continue
-      const card = node('div', undefined, 'order-card')
-      card.setAttribute('role', 'option')
-      card.dataset.action = 'choose-order'
-      card.dataset.orderId = order.orderId
-      bindAttribute(
-        card,
-        'aria-label',
-        uiMessage('Order {0}', { 0: order.orderId })
-      )
-      card.setAttribute('aria-describedby', `order-summary-${order.orderId}`)
-      preparationHelp(
-        card,
-        uiMessage(
-          'Click to select or deselect. Shift-click selects a range. Click the store name or press Enter for order details, tags and notes.'
-        )
-      )
-      const summary = node('div', undefined, 'order-summary')
-      summary.id = `order-summary-${order.orderId}`
-      const main = node('div', undefined, 'order-card-main')
-      const identity = node('div', undefined, 'order-card-identity')
-      const details = node(
-        'button',
-        order.sellerName,
-        'order-seller order-details-trigger'
-      )
-      details.type = 'button'
-      bindAttribute(
-        details,
-        'aria-label',
-        uiMessage('{0}: {1}', {
-          0: order.sellerName,
-          1: uiMessage('Details for order {0}', { 0: order.orderId }),
-        })
-      )
-      details.setAttribute('aria-haspopup', 'dialog')
-      details.setAttribute('aria-controls', 'order-details')
-      preparationHelp(
-        details,
-        uiMessage(
-          'View order details, tags and notes without changing your selection.'
-        )
-      )
-      details.addEventListener('click', (event) => {
-        event.stopPropagation()
-        void openDetails(record).catch((error) => feedback(error.message, true))
-      })
-      identity.append(details)
-      const actions = node('span', undefined, 'order-card-actions')
-      const contact = wechatCopyButton(record.storeWechat)
-      if (contact) actions.append(contact)
-      operationsStrip(actions, record)
-      const receiving = records.filter((target) =>
-        target.paymentLinks?.some(
-          (link) => link.sourceOrderId === order.orderId
-        )
-      )
-      if (receiving.length) {
-        const linked = decorateIcon(node('button'), 'link', {
-          iconOnly: true,
-          label: uiMessage('Linked payment'),
-        })
-        linked.classList.add('operations-payment-source', 'operations-state')
-        linked.querySelector('svg')?.classList.add('operations-icon')
-        preparationHelp(
-          linked,
-          uiMessage(
-            'This payment is allocated to another purchase. Source totals are counted once.'
+      if (expandedMonths.has(month))
+        entries.push({ key: record.snapshot.orderId, record })
+    }
+    let mounting = true
+    orderList = createVirtualList({
+      scroller: list,
+      sections: [{ element: list, entries }],
+      limit: 100,
+      paint: () => {
+        if (!mounting) orderSelection.paint()
+      },
+      render: ({ heading, month, record }) => {
+        if (heading) {
+          const section = node('h3', undefined, 'order-month')
+          const toggle = node('button', undefined, 'month-toggle')
+          toggle.append(
+            node('span', monthLabel(month)),
+            node('small', String(counts.get(month)))
           )
+          decorateIcon(toggle, 'chevron')
+          toggle.setAttribute(
+            'aria-expanded',
+            String(expandedMonths.has(month))
+          )
+          bindAttribute(
+            toggle,
+            'aria-label',
+            uiMessage('{0} orders', { 0: () => monthLabel(month) })
+          )
+          preparationHelp(
+            toggle,
+            uiMessage(
+              'Expand or collapse this month. Use the purchase-month filter to change the product list.'
+            )
+          )
+          toggle.addEventListener('click', () => {
+            if (expandedMonths.has(month)) expandedMonths.delete(month)
+            else expandedMonths.add(month)
+            renderOrders()
+            orderList
+              .ensureVisible(`month:${month}`)
+              ?.querySelector('button')
+              .focus({ preventScroll: true })
+          })
+          section.append(toggle)
+          return section
+        }
+        const order = record.snapshot
+        const card = node('div', undefined, 'order-card')
+        card.setAttribute('role', 'option')
+        card.setAttribute('aria-posinset', String(positions.get(order.orderId)))
+        card.setAttribute('aria-setsize', String(orderKeys.length))
+        card.dataset.action = 'choose-order'
+        card.dataset.orderId = order.orderId
+        bindAttribute(
+          card,
+          'aria-label',
+          uiMessage('Order {0}', { 0: order.orderId })
         )
-        linked.onclick = (event) => {
+        card.setAttribute('aria-describedby', `order-summary-${order.orderId}`)
+        const orderContext = {
+          getRecord: () => record,
+          getProducts: () => {
+            const items = order.items.slice(0, 3).map((item) => ({
+              ...item,
+              orderId: order.orderId,
+              sellerName: order.sellerName,
+              record,
+            }))
+            return packing?.preparedRows(items) || items
+          },
+          loadImage: loadContextImage,
+        }
+        orderContextHelp(card, orderContext)
+        const summary = node('div', undefined, 'order-summary')
+        summary.id = `order-summary-${order.orderId}`
+        const main = node('div', undefined, 'order-card-main')
+        const identity = node('div', undefined, 'order-card-identity')
+        const details = node(
+          'button',
+          order.sellerName,
+          'order-seller order-details-trigger'
+        )
+        details.type = 'button'
+        bindAttribute(
+          details,
+          'aria-label',
+          uiMessage('{0}: {1}', {
+            0: order.sellerName,
+            1: uiMessage('Details for order {0}', { 0: order.orderId }),
+          })
+        )
+        details.setAttribute('aria-haspopup', 'dialog')
+        details.setAttribute('aria-controls', 'order-details')
+        orderContextHelp(details, orderContext)
+        details.addEventListener('click', (event) => {
           event.stopPropagation()
-          void openDetails(receiving[0]).catch((error) =>
+          void openDetails(record).catch((error) =>
             feedback(error.message, true)
           )
-        }
-        const paymentStrip = node('span', undefined, 'operations-strip')
-        paymentStrip.append(linked)
-        actions.append(paymentStrip)
-      }
-      identity.append(actions)
-      main.append(identity)
-      const reference = node('div', undefined, 'order-card-reference')
-      const products = node('span', undefined, 'order-card-products')
-      const productNames = packing?.orderNames(order.orderId) || []
-      if (getLanguage() !== 'zh' && productNames.length) {
-        const names = node('span', undefined, 'order-name-summary spanish-name')
-        names.append(node('span', productNames[0], 'order-name-label'))
-        names.tabIndex = 0
-        if (productNames.length > 1)
-          names.append(
-            node('small', `+${productNames.length - 1}`, 'order-name-count')
+        })
+        identity.append(details)
+        const actions = node('span', undefined, 'order-card-actions')
+        const contact = wechatCopyButton(record.storeWechat)
+        if (contact) actions.append(contact)
+        operationsStrip(actions, record)
+        const receiving = records.filter((target) =>
+          target.paymentLinks?.some(
+            (link) => link.sourceOrderId === order.orderId
           )
-        preparationHelp(
-          names,
-          uiMessage('Product names: {0}', { 0: productNames.join(' · ') })
         )
-        products.append(names)
-      }
-      products.append(
-        node(
-          'span',
-          uiMessage(order.items.length === 1 ? '{0} product' : '{0} products', {
-            0: () => order.items.length.toLocaleString(getLocale()),
-          }),
-          'order-products'
-        )
-      )
-      reference.append(products)
-      const charges = centsToMoney(
-        moneyToCents(additionalChargesTotal(record)) +
-          moneyToCents(paymentLinksTotal(record))
-      )
-      if (charges !== '0.00') {
-        const costs = node('button', `+¥${charges}`, 'order-card-charges')
-        costs.type = 'button'
-        bindAttribute(
-          costs,
-          'aria-label',
-          uiMessage('Additional charges: ¥{0}', { 0: charges })
-        )
-        preparationHelp(
-          costs,
-          uiMessage('Additional order charges: {0}. Click to edit.', {
-            0: [
-              ...(record.additionalCharges || []),
-              ...(record.paymentLinks || []),
-            ]
-              .map((charge) => `${charge.reason} (¥${charge.amount})`)
-              .join(' · '),
+        if (receiving.length) {
+          const linked = decorateIcon(node('button'), 'link', {
+            iconOnly: true,
+            label: uiMessage('Linked payment'),
           })
-        )
-        costs.onclick = (event) => {
-          event.stopPropagation()
-          void openDetails(record)
-            .then(() =>
-              $('details-content')
-                .querySelector('.order-charges')
-                ?.scrollIntoView({ block: 'nearest' })
+          linked.classList.add('operations-payment-source', 'operations-state')
+          linked.querySelector('svg')?.classList.add('operations-icon')
+          preparationHelp(
+            linked,
+            uiMessage(
+              'This payment is allocated to another purchase. Source totals are counted once.'
             )
-            .catch((error) => feedback(error.message, true))
+          )
+          linked.onclick = (event) => {
+            event.stopPropagation()
+            void openDetails(receiving[0]).catch((error) =>
+              feedback(error.message, true)
+            )
+          }
+          const paymentStrip = node('span', undefined, 'operations-strip')
+          paymentStrip.append(linked)
+          actions.append(paymentStrip)
         }
-        reference.append(costs)
-      }
-      const meta = node('div', undefined, 'order-card-meta')
-      if (
-        order.store?.number &&
-        !String(order.sellerName).split(/\D+/).includes(order.store.number)
-      )
+        identity.append(actions)
+        main.append(identity)
+        const reference = node('div', undefined, 'order-card-reference')
+        const products = node('span', undefined, 'order-card-products')
+        const productNames = packing?.orderNames(order.orderId) || []
+        if (getLanguage() !== 'zh' && productNames.length) {
+          const names = node(
+            'span',
+            undefined,
+            'order-name-summary spanish-name'
+          )
+          names.append(node('span', productNames[0], 'order-name-label'))
+          names.tabIndex = 0
+          if (productNames.length > 1)
+            names.append(
+              node('small', `+${productNames.length - 1}`, 'order-name-count')
+            )
+          preparationHelp(
+            names,
+            uiMessage('Product names: {0}', { 0: productNames.join(' · ') })
+          )
+          products.append(names)
+        }
+        products.append(
+          node(
+            'span',
+            uiMessage(
+              order.items.length === 1 ? '{0} product' : '{0} products',
+              {
+                0: () => order.items.length.toLocaleString(getLocale()),
+              }
+            ),
+            'order-products'
+          )
+        )
+        reference.append(products)
+        const charges = centsToMoney(
+          moneyToCents(additionalChargesTotal(record)) +
+            moneyToCents(paymentLinksTotal(record))
+        )
+        if (charges !== '0.00') {
+          const costs = node('button', `+¥${charges}`, 'order-card-charges')
+          costs.type = 'button'
+          bindAttribute(
+            costs,
+            'aria-label',
+            uiMessage('Additional charges: ¥{0}', { 0: charges })
+          )
+          preparationHelp(
+            costs,
+            uiMessage('Additional order charges: {0}. Click to edit.', {
+              0: [
+                ...(record.additionalCharges || []),
+                ...(record.paymentLinks || []),
+              ]
+                .map((charge) => `${charge.reason} (¥${charge.amount})`)
+                .join(' · '),
+            })
+          )
+          costs.onclick = (event) => {
+            event.stopPropagation()
+            void openDetails(record)
+              .then(() =>
+                $('details-content')
+                  .querySelector('.order-charges')
+                  ?.scrollIntoView({ block: 'nearest' })
+              )
+              .catch((error) => feedback(error.message, true))
+          }
+          reference.append(costs)
+        }
+        const meta = node('div', undefined, 'order-card-meta')
+        if (
+          order.store?.number &&
+          !String(order.sellerName).split(/\D+/).includes(order.store.number)
+        )
+          meta.append(
+            copyTextButton(order.store.number, {
+              label: 'Copy store number',
+              className: 'store-number',
+            })
+          )
         meta.append(
-          copyTextButton(order.store.number, {
-            label: 'Copy store number',
-            className: 'store-number',
-          })
+          statusBadge(order.status),
+          dateBadge(order),
+          revisionBadge(record.revision > 1)
         )
-      meta.append(
-        statusBadge(order.status),
-        dateBadge(order),
-        revisionBadge(record.revision > 1)
-      )
-      if (record.tags.length) {
-        const tags = node('div', undefined, 'order-card-tags')
-        tags.append(
-          ...record.tags.map((name) => orderTagBadge(name, orderTagDefinitions))
-        )
-        meta.append(tags)
-      }
-      main.append(reference)
-      summary.append(main, meta)
-      card.append(summary)
-      orderSelection.bind(card, order.orderId)
-      list.append(card)
+        if (record.tags.length) {
+          const tags = node('div', undefined, 'order-card-tags')
+          tags.append(
+            ...record.tags.map((name) =>
+              orderTagBadge(name, orderTagDefinitions)
+            )
+          )
+          meta.append(tags)
+        }
+        main.append(reference)
+        summary.append(main, meta)
+        card.append(summary)
+        orderSelection.bind(card, order.orderId)
+        return card
+      },
+    })
+    if (resetOrders) list.scrollTop = 0
+    orderList.update(anchor)
+    if (active && !resetOrders) {
+      const target = orderList.ensureVisible(active)
+      if (target)
+        (target.matches('.order-card')
+          ? target
+          : target.querySelector('button')
+        )?.focus({ preventScroll: true })
     }
+    mounting = false
+    resetOrders = false
     orderSelection.paint()
     updateOrderActions()
+  }
+  function resetOrderScroll() {
+    resetOrders = true
+    $('order-list').scrollTop = 0
   }
   function updateOrderActions() {
     const matching = scopedOrders().filter(
@@ -1578,6 +1626,12 @@ export async function startLibrary(
         uiMessage('Product {0}', { 0: row.entryId })
       )
       productSelection.bind(tr, keyFor(row))
+      const productContext = {
+        getProduct: () => packing?.preparedRows([row])[0] || row,
+        getRecord: () => row.record,
+        loadImage: loadContextImage,
+      }
+      productContextHelp(tr, productContext)
       const thumb = node('td', undefined, 'thumb-cell')
       const image = node('img')
       image.width = 74
@@ -1596,12 +1650,7 @@ export async function startLibrary(
         'aria-label',
         uiMessage('Zoom product photo {0}', { 0: row.entryId })
       )
-      preparationHelp(
-        zoom,
-        uiMessage(
-          'Open the large photo. Scroll to zoom, then drag to inspect it.'
-        )
-      )
+      productContextHelp(zoom, productContext)
       zoom.disabled = !row.thumbnail
       zoom.append(image)
       if (row.photos?.length > 1)
@@ -1626,6 +1675,10 @@ export async function startLibrary(
       )
       const description = node('td', undefined, 'description-cell')
       description.append(createProductDescription(row))
+      productContextHelp(
+        description.querySelector('.product-title'),
+        productContext
+      )
       // Show the same effective material used by packing and exports. A manual
       // empty value is intentional; source materials remain in original details.
       const material = effectiveMaterials.get(keyFor(row))
@@ -1772,13 +1825,11 @@ export async function startLibrary(
           })
         : state.status === 'needs-sign-in'
           ? uiMessage('Status: needs sign-in or verification')
-          : state.status === 'needs-visible-tab'
-            ? uiMessage('Status: needs permission for a visible import tab')
-            : state.status === 'export-finished'
-              ? uiMessage('Status: export finished · {0}', {
-                  0: state.files.join(', '),
-                })
-              : uiMessage('Status: idle')
+          : state.status === 'export-finished'
+            ? uiMessage('Status: export finished · {0}', {
+                0: state.files.join(', '),
+              })
+            : uiMessage('Status: idle')
     bindText($('workspace-status-text'), text)
     line.title = String(text)
   }
@@ -1789,21 +1840,6 @@ export async function startLibrary(
       })
     } catch (error) {
       showErrorNotice(error)
-    }
-  })
-  $('import-attention-allow').addEventListener('click', async (event) => {
-    const button = event.currentTarget
-    button.disabled = true
-    try {
-      await send('IMPORT_ALLOW_VISIBLE', {
-        jobId: $('import-attention').dataset.jobId,
-      })
-      ;({ jobs } = await send('JOBS_QUERY'))
-      renderJobs()
-    } catch (error) {
-      showErrorNotice(error)
-    } finally {
-      button.disabled = false
     }
   })
   $('import-attention-resume').addEventListener('click', async (event) => {
@@ -1866,28 +1902,21 @@ export async function startLibrary(
     bindAttribute(activityButton, 'aria-description', activityHelp)
     preparationHelp(activityButton, activityHelp)
     $('active-job').hidden = !active
-    // One notice for a sign-in or verification step; the importer never
-    // switches tabs by itself, so this button is the only way forward.
+    // Only sign-in or verification needs a user prompt. Reader fallback is automatic.
     const attention = sorted.find(
-      (job) => job.state === 'paused' && job.attention && !job.dismissedAt
+      (job) =>
+        job.state === 'paused' &&
+        job.attention?.kind === 'sign-in' &&
+        !job.dismissedAt
     )
     $('import-attention').hidden = !attention
     $('import-attention').dataset.jobId = attention?.id || ''
-    // A browser without background tabs asks for a visible reader instead.
-    const visibleRequest = attention?.attention?.kind === 'visible-reader'
     bindText(
       $('import-attention-text'),
-      visibleRequest
-        ? uiMessage(
-            'This browser does not allow background import tabs. Use a visible import tab for this import? It will switch to that tab while it reads.'
-          )
-        : uiMessage(
-            '1688 needs a sign-in or verification in the import tab. Open that tab, finish the step, then resume.'
-          )
+      uiMessage(
+        '1688 needs a sign-in or verification in the import tab. Open that tab, finish the step, then resume.'
+      )
     )
-    $('import-attention-allow').hidden = !visibleRequest
-    $('import-attention-open').hidden = visibleRequest
-    $('import-attention-resume').hidden = visibleRequest
     renderStatus()
     if (active) {
       const display = progressPresentation(active)
@@ -1940,15 +1969,6 @@ export async function startLibrary(
         const targets = jobs.filter(
           (job) => !job.dismissedAt && job.state !== 'running'
         )
-        if (
-          !(await confirmScope({
-            action: 'Dismiss',
-            count: targets.length,
-            unit: 'activities',
-            detail: 'Saved orders and labels will stay in the library.',
-          }))
-        )
-          return
         dismissAll.disabled = true
         try {
           for (const job of targets)
@@ -2227,7 +2247,7 @@ export async function startLibrary(
           for (const value of selectedMonths) expandedMonths.add(value)
           orderSelection.reset()
           productSelection.reset()
-          orderPage = 0
+          resetOrderScroll()
           productTable.reset()
           updateMonthFilter()
           render()
@@ -2307,7 +2327,7 @@ export async function startLibrary(
         addedOrderIds.has(record.snapshot.orderId)
       )
       if (addedMatchingOrders.length) {
-        orderPage = 0
+        resetOrderScroll()
         for (const { snapshot } of addedMatchingOrders)
           expandedMonths.add(purchaseMonth(snapshot))
       }
@@ -2526,14 +2546,16 @@ export async function startLibrary(
       $('order-search').value = order.sellerName
       $('date-from').value = ''
       $('date-to').value = ''
-      orderPage = 0
+      resetOrderScroll()
       productTable.reset()
       renderMonthOptions()
       render()
     }
     const storeOrdersBar = node('div', undefined, 'store-orders-bar')
     storeOrdersBar.append(allStoreOrders)
-    content.append(storeOrdersBar)
+    const detailsTools = node('div', undefined, 'order-details-tools')
+    detailsTools.append(storeOrdersBar)
+    content.append(detailsTools)
     const operationTools = node('div', undefined, 'store-operations-tools')
     const editWorkflow = decorateIcon(
       node('button', uiMessage('Operations')),
@@ -2547,8 +2569,8 @@ export async function startLibrary(
         if (saved && operationTools.isConnected) detailsOperations.update(saved)
       })().catch((error) => feedback(error.message, true))
     }
-    content.append(operationTools)
-    paymentEditor = mountPaymentLinks(content, {
+    detailsTools.append(operationTools)
+    paymentEditor = mountPaymentLinks(detailsTools, {
       record,
       records,
       onSave: async (links, options) => {
@@ -2627,7 +2649,10 @@ export async function startLibrary(
         : []),
       ['Order total', order.totals.payable],
     ])
-      totals.append(node('dt', uiMessage(label)), node('dd', `¥ ${value}`))
+      totals.append(
+        node('dt', uiMessage(label)),
+        bindText(node('dd'), () => formatCny(value))
+      )
     content.append(
       node(
         'h3',
@@ -2882,7 +2907,7 @@ export async function startLibrary(
     $('order-search').value = ''
     $('date-from').value = ''
     $('date-to').value = ''
-    orderPage = 0
+    resetOrderScroll()
     productTable.reset()
     render()
   })
@@ -2924,7 +2949,7 @@ export async function startLibrary(
     monthAnchor = null
     orderSelection.reset()
     productSelection.reset()
-    orderPage = 0
+    resetOrderScroll()
     productTable.reset()
     renderMonthOptions()
     render()
@@ -2939,14 +2964,6 @@ export async function startLibrary(
     if (active) await send('IMPORT_PAUSE', { jobId: active.id })
     ;({ jobs } = await send('JOBS_QUERY'))
     renderJobs()
-  })
-  action('orders-prev', () => {
-    orderPage--
-    renderOrders()
-  })
-  action('orders-next', () => {
-    orderPage++
-    renderOrders()
   })
   action('remove-orders', async () => {
     if (
@@ -3080,7 +3097,7 @@ export async function startLibrary(
     orderSelection.reset()
     productSelection.reset()
     productTable.reset()
-    orderPage = 0
+    resetOrderScroll()
     orderSearchTimer = setTimeout(() => {
       if ($('order-search').value.trim())
         for (const { snapshot } of matchingOrders())
@@ -3099,7 +3116,7 @@ export async function startLibrary(
       orderSelection.reset()
       productSelection.reset()
       productTable.reset()
-      orderPage = 0
+      resetOrderScroll()
       if ($('date-from').value || $('date-to').value)
         for (const { snapshot } of matchingOrders())
           expandedMonths.add(purchaseMonth(snapshot))

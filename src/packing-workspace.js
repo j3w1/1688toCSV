@@ -153,7 +153,7 @@ import {
 } from './preparation-clipboard.js'
 import { createPackingWorkbook } from './packing-workbook.js'
 import { createPackingWorkbookImages } from './packing-workbook-images.js'
-import { readExcelImagePreference } from './excel-image-options.js'
+import { openPackingExportDialog } from './packing-export-dialog.js'
 import {
   cartonBatchForItem,
   cartonConfirmationForItem,
@@ -5010,8 +5010,27 @@ export async function startPackingWorkspace({
         target.disabled = true
         try {
           await flushSaves()
-          feedback(uiMessage('Preparing packing workbook…'))
-          await exportPackingList(preparedRows(rows))
+          const allRows = preparedRows(rows)
+          const selected = new Set(
+            scopedDrafts().flatMap((draft) =>
+              preparationCopyRows(draft, { selectedOnly: true }).map(
+                (row) => `${row.orderId}/${row.entryId}`
+              )
+            )
+          )
+          await openPackingExportDialog({
+            hasSelection: selected.size > 0,
+            getRows: (scope) =>
+              packingWorkbookFields(
+                scope === 'selected'
+                  ? allRows.filter((row) =>
+                      selected.has(`${row.orderId}/${row.entryId}`)
+                    )
+                  : allRows
+              ),
+            onExport: exportPackingList,
+            loadImage,
+          })
         } finally {
           exportingPacking = false
           const live = $('packing-view').querySelector(
@@ -5028,7 +5047,7 @@ export async function startPackingWorkspace({
     preparationHelp(
       exportList,
       uiMessage(
-        'Export every product in this packing list with photos, costs and planned, received and loaded boxes. Selection does not limit the export.'
+        'Choose products, columns and layout for an editable Excel packing list. Your export options are remembered.'
       )
     )
     const copyActions = el('div', undefined, 'packing-copy-actions')
@@ -7025,8 +7044,8 @@ export async function startPackingWorkspace({
         }))
     )
   }
-  /** Full editable packing workbook, independent of chosen clipboard columns. */
-  async function exportPackingList(rows) {
+  /** Freeze native export values; carton completeness follows the chosen product scope. */
+  function packingWorkbookFields(rows) {
     const sizeClassifier = createSizeClassifier(preferences.sizeVocabulary)
     const records = new Map(
       getRecords().map((record) => [record.snapshot.orderId, record])
@@ -7034,7 +7053,7 @@ export async function startPackingWorkspace({
     const selected = new Set(
       rows.map((row) => `${row.orderId}/${row.entryId}/${row.packingMonth}`)
     )
-    const fields = rows.map((row) => {
+    return rows.map((row) => {
       const record = records.get(row.orderId)
       const batch = cartonBatchForItem(record, row.entryId)
       const complete = batch.entryIds.every((id) =>
@@ -7065,12 +7084,13 @@ export async function startPackingWorkspace({
             : '',
       }
     })
+  }
+  async function exportPackingList(fields, options) {
     const file = uniqueFileName(
       packingListFileName(fields.map((row) => row.sellerName))
     )
     const workbook = await createPackingWorkbook(fields, {
-      language: getLanguage(),
-      style: readExcelImagePreference().style,
+      ...options,
       prepareImages: createPackingWorkbookImages(loadImage),
     })
     saveFile(
@@ -7217,13 +7237,13 @@ export async function startPackingWorkspace({
       for (const [key, panel] of panels) panel.hidden = key !== id
     }
     for (const [key, title, symbol] of [
+      ['appearance', 'Appearance', 'sun'],
       ['labels', 'Labels', 'barcode'],
       ['names', 'Product names', 'text'],
       ['sizes', 'Size codes', 'packing'],
       ['colors', 'Product colors', 'image'],
       ['materials', 'Materials', 'packing'],
       ['tags', 'Tags', 'tag'],
-      ['appearance', 'Appearance', 'sun'],
       ['data', 'Data', 'download'],
     ]) {
       const id = `settings-panel-${key}`,
@@ -7856,7 +7876,7 @@ export async function startPackingWorkspace({
       )
     )
     host.append(footer)
-    selectTab('settings-panel-labels')
+    selectTab('settings-panel-appearance')
     dialog(settingsDialog)
   }
   function updateLaunchActions() {

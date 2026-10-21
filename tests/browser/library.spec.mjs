@@ -34,7 +34,9 @@ async function openLibrary(extension) {
       localStorage.setItem('1688-library-purchase-months', '[]')
   })
   await page.goto(`${extension.extensionBaseUrl}/library.html`)
-  await expect(page.locator('#orders-page')).toHaveText(/^1 \/ /)
+  await expect(
+    page.locator('#order-list .month-toggle, #order-list .order-search-empty')
+  ).not.toHaveCount(0)
   for (const toggle of await page
     .locator('.month-toggle[aria-expanded=false]')
     .all())
@@ -59,6 +61,53 @@ async function openCopyFormats(page) {
       .click()
   await expect(panel).toBeVisible()
 }
+
+test('order and product context helpers show saved facts without changing selection', async ({
+  extension,
+}) => {
+  const records = await seed(extension, (records) => {
+    for (const record of records)
+      record.notes = 'Synthetic packing note: keep cartons upright'
+  })
+  const page = await openLibrary(extension)
+  const card = page.locator('.order-card').first()
+  const orderId = await card.getAttribute('data-order-id')
+  const record = records.find((record) => record.snapshot.orderId === orderId)
+  await card.locator('.order-seller').hover()
+  const tooltip = page.getByRole('tooltip')
+  await expect(tooltip.locator('.item-context-heading')).toContainText(
+    record.snapshot.sellerName
+  )
+  await expect(tooltip.locator('.item-context-facts')).toContainText(
+    'Order total'
+  )
+  await expect(tooltip).toContainText(
+    'Synthetic packing note: keep cartons upright'
+  )
+  await tooltip.screenshot({ path: 'work/order-context-help.png' })
+  await expect(tooltip).not.toContainText('Click to select')
+  await expect(card).toHaveAttribute('aria-selected', 'false')
+  await page.mouse.move(1, 1)
+  await expect(tooltip).toHaveCount(0)
+  const row = page.locator('#sheet-body tr[data-selection-key]').first()
+  await row.locator('.product-title').hover()
+  await expect(tooltip.locator('.item-context-product')).toHaveCount(1)
+  await expect(tooltip.locator('.item-context-facts')).toContainText('Quantity')
+  await expect(tooltip.locator('.item-context-facts')).toContainText(
+    'Unit price'
+  )
+  await tooltip.screenshot({ path: 'work/product-context-help.png' })
+  await expect(tooltip).not.toContainText(
+    'Double-click for original product details'
+  )
+  await expect(row).toHaveAttribute('aria-selected', 'false')
+  await page.mouse.move(1, 1)
+  await expect(tooltip).toHaveCount(0)
+  await row.locator('.row-number').click()
+  await expect(row).toHaveAttribute('aria-selected', 'true')
+  await expect(card).toHaveAttribute('aria-selected', 'false')
+  await page.close()
+})
 
 test('photo copy appears only on hover or keyboard focus without changing selection or row size', async ({
   extension,
@@ -693,10 +742,13 @@ test('product rows support ranges and toggles while image and copy actions prese
   await rows.nth(3).press('Control+ArrowDown')
   await expect(rows.nth(4)).toBeFocused()
   await expect(selected).toHaveCount(1)
-  // Move away from the last clicked action so its hover hint does not own Escape.
+  // Pointer exit preserves the new rich helper owned by keyboard row focus.
   await page.mouse.move(0, 0)
-  await expect(page.locator('.preparation-help-popover:visible')).toHaveCount(0)
+  await expect(
+    page.getByRole('tooltip').locator('.item-context-product')
+  ).toHaveCount(1)
   await rows.nth(4).press('Escape')
+  await expect(page.getByRole('tooltip')).toHaveCount(0)
   await expect(selected).toHaveCount(0)
   await rows.nth(4).press('Control+a')
   await expect(selected).toHaveCount(8)
@@ -1085,7 +1137,9 @@ test('old import messages can be dismissed persistently without losing orders or
     .click()
   await expect(page.locator('.job')).toHaveCount(1)
   await page.getByRole('button', { name: 'Dismiss all', exact: true }).click()
-  await confirmOperation(page, 'Dismiss 1 activities')
+  await expect(
+    page.getByRole('dialog', { name: 'Confirm operation', exact: true })
+  ).toHaveCount(0)
   await expect(page.locator('.job')).toHaveCount(0)
   await page.reload()
   await page.getByRole('button', { name: /^Activity/ }).click()
@@ -1192,11 +1246,13 @@ test('large libraries bound order and product DOM while progress updates avoid r
   await expect(page.locator('#sheet-body tr[data-selection-key]')).toHaveCount(
     100
   )
-  await expect(page.locator('.order-card')).toHaveCount(50)
+  await expect(page.locator('.order-card')).toHaveCount(100)
   await expect(
     page.locator('#next-page, #previous-page, #page-label')
   ).toHaveCount(0)
-  await expect(page.locator('#orders-page')).toHaveText('1 / 15')
+  await expect(
+    page.locator('#orders-page, #orders-prev, #orders-next')
+  ).toHaveCount(0)
   const initialProducts = await page
     .locator('#sheet-body tr[data-selection-key]')
     .allTextContents()
@@ -1236,25 +1292,46 @@ test('large libraries bound order and product DOM while progress updates avoid r
     .getByRole('button', { name: 'Clear selection', exact: true })
     .click()
 
-  await page.locator('.order-card-meta').nth(49).click()
-  await page
-    .getByRole('button', { name: 'Next order page', exact: true })
-    .click()
-  await expect(page.locator('#orders-page')).toHaveText('2 / 15')
-  await expect(page.locator('.order-card')).toHaveCount(50)
-  expect(await page.locator('.order-card').allTextContents()).not.toEqual(
-    initialOrders
-  )
-  await page
+  const orderAnchorKey = await page
     .locator('.order-card')
-    .nth(1)
-    .locator('.order-card-meta')
-    .click({ modifiers: ['Shift'] })
+    .nth(98)
+    .getAttribute('data-selection-key')
+  await page
+    .locator(
+      `.order-card[data-selection-key="${orderAnchorKey}"] .order-card-meta`
+    )
+    .click()
+  await page.keyboard.press('Shift+ArrowDown')
+  await page.keyboard.press('Shift+ArrowDown')
   await expect(page.locator('#refresh-orders')).toHaveText('Refresh 3 orders')
-  await expect(page.locator('.order-card[aria-selected=true]')).toHaveCount(2)
+  await expect(page.locator('.order-card[aria-selected=true]')).toHaveCount(3)
   await expect(page.locator('#sheet-body tr[data-selection-key]')).toHaveCount(
     9
   )
+  await page.locator('#order-list').evaluate((element) => {
+    element.scrollTop = element.scrollHeight
+  })
+  await expect
+    .poll(() => page.locator('.order-card').allTextContents())
+    .not.toEqual(initialOrders)
+  expect(await page.locator('.order-card').count()).toBeLessThanOrEqual(101)
+  await expect(page.locator('#refresh-orders')).toHaveText('Refresh 3 orders')
+  await expect(page.locator('.order-card:focus')).toHaveCount(1)
+  await page.keyboard.press('Control+End')
+  await expect(page.locator('.order-card:focus')).toHaveAttribute(
+    'aria-posinset',
+    '750'
+  )
+  await page.keyboard.press('Control+Home')
+  await expect(page.locator('.order-card:focus')).toHaveAttribute(
+    'aria-posinset',
+    '1'
+  )
+  await expect
+    .poll(() =>
+      page.locator('#order-list').evaluate((element) => element.scrollTop)
+    )
+    .toBe(0)
   await page
     .getByRole('combobox', { name: 'Search orders', exact: true })
     .fill('SUPPLIER 0749')
@@ -1262,7 +1339,6 @@ test('large libraries bound order and product DOM while progress updates avoid r
   await expect(page.locator('.order-card')).toContainText(
     'Synthetic load supplier 0749'
   )
-  await expect(page.locator('#orders-page')).toHaveText('1 / 1')
   await expect(page.locator('#sheet-body tr[data-selection-key]')).toHaveCount(
     3
   )
@@ -1272,8 +1348,7 @@ test('large libraries bound order and product DOM while progress updates avoid r
   await page
     .getByRole('combobox', { name: 'Search orders', exact: true })
     .clear()
-  await expect(page.locator('.order-card')).toHaveCount(50)
-  await expect(page.locator('#orders-page')).toHaveText('1 / 15')
+  await expect(page.locator('.order-card')).toHaveCount(100)
   await page
     .getByRole('combobox', { name: 'Search products and orders', exact: true })
     .fill('Load-test product 0749/0')
@@ -1381,7 +1456,7 @@ test('large libraries bound order and product DOM while progress updates avoid r
   await expect(page.locator('#sheet-body tr[data-selection-key]')).toHaveCount(
     100
   )
-  await expect(page.locator('.order-card')).toHaveCount(50)
+  await expect(page.locator('.order-card')).toHaveCount(100)
   expect(extension.unexpectedRequests).toEqual([])
 })
 

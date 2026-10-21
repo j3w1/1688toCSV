@@ -10,6 +10,7 @@ import {
   readExcelImagePreference,
 } from './excel-image-options.js'
 import { openImageCopyDialog } from './image-copy-dialog.js'
+import { workspaceExportStyle } from './excel-image-style.js'
 
 export async function copyExcelImage(
   rows,
@@ -86,7 +87,7 @@ export async function copyExcelImage(
       return planExcelImage(frozen, {
         columns: columns || selectedExcelImageColumns(preference),
         showOrderDetails: preference.showOrderDetails,
-        style: preference.style,
+        style: workspaceExportStyle(),
         details: preference.details,
         badges,
         language: outputLanguage,

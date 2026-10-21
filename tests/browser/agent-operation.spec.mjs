@@ -144,6 +144,7 @@ test('an agent prepares, exports and prints through stable data-action controls'
     .fill('0.125')
   // Export flushes edits even while their quiet autosave timer is pending.
   await action(page, 'export-packing-list').click()
+  await page.locator('[data-action="download-packing-list"]').click()
   let files = await downloads(extension, 2)
   const xlsx = files.find((file) => file.filename.endsWith('.xlsx'))
   const summaryFile = files.find((file) => file.filename.endsWith('.json'))

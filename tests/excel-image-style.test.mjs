@@ -4,8 +4,13 @@ import {
   EXCEL_IMAGE_SCHEMES,
   normalizeExcelImageDisplay,
   excelImagePalette,
+  workspaceExportStyle,
 } from '../src/excel-image-style.js'
-import { contrastRatio } from '../src/appearance.js'
+import {
+  appearanceTokens,
+  contrastRatio,
+  THEME_PALETTES,
+} from '../src/appearance.js'
 
 test('new image details are opt-in and old heading preferences keep their meaning', () => {
   const defaults = normalizeExcelImageDisplay()
@@ -70,4 +75,60 @@ test('every preset and custom accent produces readable header text', () => {
     excelImagePalette({ scheme: 'custom', accent: '#000000' }).headerText,
     '#ffffff'
   )
+})
+
+test('workspace exports snapshot the computed palette in every selected light and dark theme', () => {
+  let tokens
+  const root = {
+    ownerDocument: {
+      defaultView: {
+        getComputedStyle: () => ({
+          getPropertyValue: (name) => ` ${tokens[name.slice(2)] || ''} `,
+        }),
+      },
+    },
+  }
+  for (const mode of ['light', 'dark'])
+    for (const theme of THEME_PALETTES) {
+      tokens = appearanceTokens({ [`${mode}Theme`]: theme.id }, mode)
+      const style = workspaceExportStyle(root)
+      const palette = excelImagePalette(style)
+      assert.equal(palette.header, tokens.accent)
+      assert.equal(palette.headerText, tokens['on-accent'])
+      assert.equal(palette.body, tokens.surface)
+      assert.equal(palette.store, tokens.selected)
+      assert.equal(palette.order, tokens.field)
+      assert.equal(palette.stripe, tokens.page)
+      assert.equal(palette.separator, tokens.border)
+      assert.equal(palette.grid, tokens.divider)
+      assert.equal(palette.text, tokens.text)
+      assert.equal(palette.muted, tokens.muted)
+      for (const background of ['body', 'store', 'order', 'stripe'])
+        for (const foreground of ['text', 'muted'])
+          assert.ok(
+            contrastRatio(palette[foreground], palette[background]) >= 4.5,
+            `${theme.id} ${mode}: ${foreground} on ${background}`
+          )
+      assert.ok(contrastRatio(palette.headerText, palette.header) >= 4.5)
+      const normalized = normalizeExcelImageDisplay({ style }).style
+      assert.deepEqual(excelImagePalette(normalized), palette)
+      assert.equal(Object.isFrozen(style), true)
+      assert.equal(Object.isFrozen(style.workspace), true)
+      assert.equal(Object.isFrozen(normalized.workspace), true)
+      const snapshot = structuredClone(style)
+      tokens = appearanceTokens({}, mode === 'light' ? 'dark' : 'light')
+      assert.deepEqual(style, snapshot)
+      assert.notDeepEqual(workspaceExportStyle(root), snapshot)
+    }
+})
+
+test('workspace export fallback uses valid existing palette tokens when no styles are available', () => {
+  const fallback = workspaceExportStyle()
+  assert.deepEqual(
+    workspaceExportStyle({ ownerDocument: { defaultView: {} } }),
+    fallback
+  )
+  for (const value of Object.values(fallback.workspace))
+    assert.match(value, /^#[0-9a-f]{6}$/)
+  assert.equal(fallback.accent, appearanceTokens({}, 'light').accent)
 })

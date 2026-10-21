@@ -8,6 +8,15 @@ const messages = {
   volume: { en: 'Volume:', es: 'Volumen:', zh: '体积：' },
   labels: { en: 'CE labels', es: 'Etiquetas CE', zh: 'CE 标签' },
   marks: { en: 'CE carton marks', es: 'Marcas de caja CE', zh: 'CE 箱唛' },
+  fileLabels: { en: 'labels', es: 'etiquetas', zh: '标签' },
+  fileMarks: { en: 'carton-marks', es: 'marcas-de-caja', zh: '唛头' },
+  fileCalibration: {
+    en: 'print-calibration',
+    es: 'calibracion-de-impresion',
+    zh: '打印校准',
+  },
+  fileProduct: { en: 'product', es: 'producto', zh: '产品' },
+  fileProducts: { en: 'products', es: 'productos', zh: '产品' },
   page: {
     en: 'page {n} of {total}',
     es: 'página {n} de {total}',

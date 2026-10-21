@@ -540,7 +540,7 @@ function descriptionCell(context, source, width, language, details, badges) {
         font,
         labelFont: typography.label,
         lineHeight,
-        color: section.title ? '#25221d' : '#514a40',
+        colorRole: section.title ? 'text' : 'muted',
         gapBefore,
         height: blockHeight,
       })
@@ -1107,7 +1107,7 @@ export async function renderExcelImage(
     const start = left
     for (const run of measured) {
       context.font = run.font
-      context.fillStyle = run.color || '#24211c'
+      context.fillStyle = run.color || palette.text
       context.fillText(run.text, left, baseline)
       left += run.width
     }
@@ -1204,7 +1204,7 @@ export async function renderExcelImage(
       top += block.gapBefore
       for (const label of block.labelLines) {
         line(
-          [{ text: label, font: block.labelFont, color: '#746757' }],
+          [{ text: label, font: block.labelFont, color: palette.muted }],
           center,
           top,
           block.lineHeight
@@ -1212,12 +1212,14 @@ export async function renderExcelImage(
         top += block.lineHeight
       }
       for (const [index, value] of block.lines.entries()) {
-        const runs = [{ text: value, font: block.font, color: block.color }]
+        const runs = [
+          { text: value, font: block.font, color: palette[block.colorRole] },
+        ]
         if (!index && block.label && !block.labelLines.length)
           runs.unshift({
             text: block.label,
             font: block.labelFont,
-            color: '#746757',
+            color: palette.muted,
           })
         line(runs, center, top, block.lineHeight)
         top += block.lineHeight
@@ -1240,7 +1242,7 @@ export async function renderExcelImage(
     const width = bitmap.width * ratio
     const height = bitmap.height * ratio
     const y = top + (span.height - height) / 2
-    context.fillStyle = '#fff'
+    context.fillStyle = palette.body
     context.fillRect(
       markLeft + 1,
       top + 1,
@@ -1261,7 +1263,7 @@ export async function renderExcelImage(
     context.scale(SCALE, SCALE)
     context.imageSmoothingEnabled = true
     context.imageSmoothingQuality = 'high'
-    context.fillStyle = '#fff'
+    context.fillStyle = palette.body
     context.fillRect(0, 0, plan.cssWidth, plan.cssHeight)
     context.fillStyle = palette.header
     context.fillRect(1, 1, plan.cssWidth - 2, plan.headerHeight)
@@ -1371,7 +1373,7 @@ export async function renderExcelImage(
       context.stroke()
       for (const [index, value] of band.lines.entries())
         line(
-          [{ text: value, font: HEADER_FONT, color: '#383128' }],
+          [{ text: value, font: HEADER_FONT, color: palette.text }],
           plan.cssWidth / 2,
           band.top + 8 + index * LINE_HEIGHT,
           LINE_HEIGHT

@@ -1,5 +1,6 @@
 // File names and machine-readable summaries for workspace exports, so an
 // automation agent can find each file and check what it contains.
+import { printText } from './print-language.js'
 
 export const SUMMARY_FORMAT = '1688-export-summary'
 
@@ -18,12 +19,24 @@ export function exportStamp(now = new Date()) {
   return `${exportDate(now)}-${pad(now.getHours())}${pad(now.getMinutes())}${pad(now.getSeconds())}`
 }
 
-/** CE-labels-2026-10-19-153012-3-products.pdf and the carton-mark and calibration forms. */
-export function printFileName(kind, productCount, now = new Date()) {
+/** Print popup language controls PDF names and their matching JSON companions. */
+export function printFileName(
+  kind,
+  productCount,
+  now = new Date(),
+  language = 'en'
+) {
   if (kind === 'calibration')
-    return `CE-print-calibration-${exportStamp(now)}.pdf`
-  const prefix = kind === 'marks' ? 'CE-carton-marks' : 'CE-labels'
-  return `${prefix}-${exportStamp(now)}-${productCount}-${productCount === 1 ? 'product' : 'products'}.pdf`
+    return `CE-${printText('fileCalibration', language)}-${exportStamp(now)}.pdf`
+  const prefix = printText(
+    kind === 'marks' ? 'fileMarks' : 'fileLabels',
+    language
+  )
+  const unit = printText(
+    productCount === 1 ? 'fileProduct' : 'fileProducts',
+    language
+  )
+  return `CE-${prefix}-${exportStamp(now)}-${productCount}-${unit}.pdf`
 }
 
 /** A file-name-safe part: letters and digits in any script, joined by hyphens. */

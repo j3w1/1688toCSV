@@ -2,10 +2,7 @@ import { excelImageColumns } from './excel-image.js'
 import { element } from './ui.js'
 import { preparationHelp } from './preparation-help.js'
 import { bindText, bindAttribute, message, getLanguage } from './i18n.js'
-import {
-  EXCEL_IMAGE_SCHEMES,
-  normalizeExcelImageDisplay,
-} from './excel-image-style.js'
+import { normalizeExcelImageDisplay } from './excel-image-style.js'
 
 export const EXCEL_IMAGE_PREFERENCE = '1688-excel-image-columns'
 const keys = excelImageColumns.map(({ key }) => key)
@@ -101,41 +98,15 @@ export function createExcelImageOptions(onChange, { rows = [] } = {}) {
   let dragged = null
   let saved = true
   const styleDetails = element('details', undefined, 'excel-style-details')
-  styleDetails.append(element('summary', message('Style & details')))
+  styleDetails.append(element('summary', message('Image details')))
   const stylePanel = element('div', undefined, 'excel-style-panel')
-  const paletteLabel = element('label', undefined, 'excel-palette-field')
-  const palette = element('select')
-  bindAttribute(palette, 'aria-label', message('Image color scheme'))
-  for (const scheme of EXCEL_IMAGE_SCHEMES) {
-    const option = element('option', message(scheme.label))
-    option.value = scheme.id
-    palette.append(option)
-  }
-  paletteLabel.append(element('span', message('Color scheme')), palette)
-  const accentLabel = element('label', undefined, 'excel-accent-field')
-  const accent = element('input')
-  accent.type = 'color'
-  bindAttribute(accent, 'aria-label', message('Custom image accent'))
-  accentLabel.append(element('span', message('Accent')), accent)
-  preparationHelp(
-    accentLabel,
-    message('Choose a header color. Text contrast is adjusted automatically.')
+  stylePanel.append(
+    element(
+      'p',
+      message('Export colors follow the current workspace theme.'),
+      'excel-options-help'
+    )
   )
-  const colors = element('div', undefined, 'excel-image-colors')
-  colors.append(paletteLabel, accentLabel)
-  stylePanel.append(colors)
-  palette.onchange = () => {
-    preference.style.scheme = palette.value
-    if (palette.value !== 'custom')
-      preference.style.accent = EXCEL_IMAGE_SCHEMES.find(
-        (entry) => entry.id === palette.value
-      ).accent
-    persist()
-  }
-  accent.oninput = () => {
-    preference.style = { scheme: 'custom', accent: accent.value }
-    persist()
-  }
   const available = {
     seller: rows.some((row) => row.sellerName || row.sellerMemberLogin),
     orderNumber: rows.some((row) => row.orderId),
@@ -204,7 +175,7 @@ export function createExcelImageOptions(onChange, { rows = [] } = {}) {
     }
     stylePanel.append(section)
   }
-  const resetStyle = element('button', message('Reset style & details'))
+  const resetStyle = element('button', message('Reset image details'))
   resetStyle.type = 'button'
   resetStyle.onclick = () => {
     preference = { ...preference, ...normalizeExcelImageDisplay() }
@@ -233,8 +204,6 @@ export function createExcelImageOptions(onChange, { rows = [] } = {}) {
   }
   function render() {
     showOrderDetails.checked = preference.showOrderDetails
-    palette.value = preference.style.scheme
-    accent.value = preference.style.accent
     for (const { input, key, order, label, help } of toggles) {
       input.checked = preference.details[key]
       input.disabled =

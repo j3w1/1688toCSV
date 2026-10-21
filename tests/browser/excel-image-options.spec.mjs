@@ -211,15 +211,15 @@ for (const mode of ['light', 'dark'])
     await page.locator('#copy-excel-image').click()
     await assertPreviewAndCopy()
     // Changing the workspace mode while this session is open must not recolor
-    // the captured badges when a style change regenerates its image.
+    // the captured badges when a detail change regenerates its image.
     await page.locator('meta[name="color-scheme"]').evaluate((meta, mode) => {
       meta.content = mode === 'light' ? 'dark' : 'light'
       window.badgeText = []
     }, mode)
     await dialog.locator('.excel-style-details > summary').click()
     await dialog
-      .getByRole('combobox', { name: 'Image color scheme' })
-      .selectOption('sage')
+      .getByRole('checkbox', { name: 'Order number', exact: true })
+      .uncheck()
     await assertPreviewAndCopy()
     await dialog.getByRole('button', { name: 'Done', exact: true }).click()
     await page.locator('meta[name="color-scheme"]').evaluate((meta, mode) => {
@@ -274,6 +274,11 @@ test('image style and detail controls persist, update the same preview, and keep
   const page = await extension.context.newPage()
   await page.addInitScript(() => {
     localStorage.setItem('1688-library-purchase-months', '[]')
+    if (!localStorage.getItem('1688-excel-image-columns'))
+      localStorage.setItem(
+        '1688-excel-image-columns',
+        JSON.stringify({ style: { scheme: 'custom', accent: '#ffff00' } })
+      )
     window.imageDetailText = []
     window.imageDetailColors = []
     const fillText = CanvasRenderingContext2D.prototype.fillText
@@ -300,9 +305,15 @@ test('image style and detail controls persist, update the same preview, and keep
     expect((await label.boundingBox()).height).toBeLessThanOrEqual(30)
     await expect(label).toHaveCSS('margin-top', '0px')
   }
-  await dialog
-    .getByRole('combobox', { name: 'Image color scheme' })
-    .selectOption('sage')
+  await expect(
+    dialog.getByRole('combobox', { name: 'Image color scheme' })
+  ).toHaveCount(0)
+  await expect(
+    dialog.getByLabel('Custom image accent', { exact: true })
+  ).toHaveCount(0)
+  await expect(dialog).toContainText(
+    'Export colors follow the current workspace theme.'
+  )
   await dialog
     .getByRole('checkbox', { name: 'Product tags', exact: true })
     .check()
@@ -350,19 +361,27 @@ test('image style and detail controls persist, update the same preview, and keep
   await expect(
     dialog.getByRole('checkbox', { name: 'Product tags', exact: true })
   ).toBeEnabled()
-  await dialog
-    .getByLabel('Custom image accent', { exact: true })
-    .evaluate((input) => {
-      input.value = '#ffff00'
-      input.dispatchEvent(new Event('input', { bubbles: true }))
+  for (const mode of ['light', 'dark']) {
+    await page.locator('meta[name="color-scheme"]').evaluate((meta, mode) => {
+      meta.content = mode
+      window.imageDetailColors = []
+    }, mode)
+    await dialog
+      .getByRole('checkbox', { name: 'Original product name', exact: true })
+      .setChecked(mode === 'dark')
+    await ready()
+    const renderedColors = await page.evaluate(() => {
+      const style = getComputedStyle(document.documentElement)
+      return {
+        fills: window.imageDetailColors,
+        header: style.getPropertyValue('--accent').trim(),
+        body: style.getPropertyValue('--surface').trim(),
+      }
     })
-  await ready()
-  await expect(
-    dialog.getByRole('combobox', { name: 'Image color scheme' })
-  ).toHaveValue('custom')
-  expect(await page.evaluate(() => window.imageDetailColors)).toContain(
-    '#ffff00'
-  )
+    expect(renderedColors.fills).toContain(renderedColors.header)
+    expect(renderedColors.fills).toContain(renderedColors.body)
+    expect(renderedColors.fills).not.toContain('#ffff00')
+  }
   await dialog.locator('.image-copy-heading [data-icon="close"]').click()
   await page.reload()
   await page.locator('#copy-excel-image').click()
@@ -370,7 +389,7 @@ test('image style and detail controls persist, update the same preview, and keep
   await dialog.locator('.excel-style-details > summary').click()
   await expect(
     dialog.getByLabel('Custom image accent', { exact: true })
-  ).toHaveValue('#ffff00')
+  ).toHaveCount(0)
   await expect(
     dialog.getByRole('checkbox', { name: 'Product tags', exact: true })
   ).toBeChecked()
@@ -391,18 +410,15 @@ test('image style and detail controls persist, update the same preview, and keep
     .click()
   await expect(
     dialog.getByLabel('Custom image accent', { exact: true })
-  ).toHaveValue('#ffff00')
+  ).toHaveCount(0)
   await expect(
     dialog.getByRole('checkbox', { name: 'Product tags', exact: true })
   ).toBeEnabled()
   await dialog.locator('[data-column="price"] .excel-column-toggle').click()
   await dialog
-    .getByRole('button', { name: 'Reset style & details', exact: true })
+    .getByRole('button', { name: 'Reset image details', exact: true })
     .click()
   await ready()
-  await expect(
-    dialog.getByRole('combobox', { name: 'Image color scheme' })
-  ).toHaveValue('neutral')
   await expect(
     dialog.getByRole('checkbox', { name: 'Product tags', exact: true })
   ).not.toBeChecked()

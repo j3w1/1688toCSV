@@ -1774,10 +1774,42 @@ body.packing-active #packing-view {
   display: flow-root;
   padding-inline: var(--space-4);
 }
+#packing-view .packing-order-header {
+  margin-block: 8px 0;
+  padding: 6px 10px;
+  gap: 5px 10px;
+  border: 1px solid var(--border);
+  border-inline-start: 3px solid var(--accent);
+  border-radius: 6px;
+  background: var(--field);
+}
+#packing-view .packing-order-header h2 {
+  font-size: 15px;
+  font-weight: 700;
+}
+#packing-view .packing-order-header > .packing-help {
+  color: var(--text);
+  font-size: 11px;
+}
+#packing-view .packing-order-header .packing-restore-actions button {
+  min-block-size: 26px;
+  padding: 4px 6px;
+  font-size: 11px;
+}
+#packing-view .order-tools {
+  margin-block: 4px 0;
+  padding: 4px 8px;
+  gap: 5px 8px;
+}
+#packing-view .order-tools button {
+  min-block-size: 28px;
+  padding: 4px 8px;
+  font-size: 11px;
+}
 #packing-view .preparation-group {
   display: flow-root;
   margin: 0;
-  padding: var(--space-2) var(--space-4) var(--space-3);
+  padding: 4px var(--space-4) 8px;
 }
 .packing-active .preparation-output.packing-selection-toolbar {
   position: static;

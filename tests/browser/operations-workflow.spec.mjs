@@ -385,7 +385,7 @@ async function openWorkspace(extension, { tags = false } = {}) {
 
 test('order and product status controls stay compact, save exceptions and preserve selection', async ({
   extension,
-}) => {
+}, testInfo) => {
   const { page, record } = await openWorkspace(extension),
     card = page.locator('.order-card').first(),
     beforeSelection = await card.evaluate((node) =>
@@ -397,13 +397,20 @@ test('order and product status controls stay compact, save exceptions and preser
     exact: true,
   })
   await expect(dialog).toBeVisible()
+  await page.screenshot({ path: testInfo.outputPath('workflow-order.png') })
+  await dialog.getByRole('button', { name: 'Store', exact: true }).click()
+  await expect(dialog.locator('select')).toHaveCount(0)
+  await page.screenshot({ path: testInfo.outputPath('workflow-store.png') })
+  await dialog.getByRole('button', { name: 'Order', exact: true }).click()
   expect(
     await card.evaluate((node) => node.classList.contains('is-selected'))
   ).toBe(beforeSelection)
   await dialog
-    .getByLabel('Delay state', { exact: true })
+    .getByRole('group', { name: 'Delay state', exact: true })
     .filter({ visible: true })
-    .selectOption('delayed')
+    .getByRole('radio', { name: 'Delayed', exact: true })
+    .locator('..')
+    .click()
   await dialog
     .getByLabel('Original seller promise', { exact: true })
     .filter({ visible: true })
@@ -424,9 +431,11 @@ test('order and product status controls stay compact, save exceptions and preser
   await expect(dialog).toBeVisible()
   await expect(row).toHaveAttribute('aria-selected', 'true')
   await dialog
-    .getByLabel('Delay state', { exact: true })
+    .getByRole('group', { name: 'Delay state', exact: true })
     .filter({ visible: true })
-    .selectOption('none')
+    .getByRole('radio', { name: 'No delay', exact: true })
+    .locator('..')
+    .click()
   await dialog.getByRole('button', { name: 'Add feature', exact: true }).click()
   await dialog.getByLabel('Feature name', { exact: true }).fill('Sound sensor')
   await dialog.getByLabel('Cost / piece (¥)', { exact: true }).fill('1.25')
@@ -487,8 +496,12 @@ test('three custom feature costs persist without changing source evidence and fi
     await feature.getByLabel('Feature name', { exact: true }).fill(name)
     await feature.getByLabel('Cost / piece (¥)', { exact: true }).fill(cost)
     await feature
-      .getByLabel('Cost treatment', { exact: true })
-      .selectOption(treatment)
+      .getByRole('radio', {
+        name: treatment === 'included' ? 'Already recorded' : 'Additional cost',
+        exact: true,
+      })
+      .locator('..')
+      .click()
   }
   await expect(dialog.locator('.operations-feature-row')).toHaveCount(3)
   await expect(dialog.locator('.operations-feature-total')).toContainText(
@@ -498,7 +511,11 @@ test('three custom feature costs persist without changing source evidence and fi
     .locator('.operations-feature-row')
     .first()
     .evaluate((row) =>
-      [...row.querySelectorAll('input, select, button')].map((node) => {
+      [
+        ...row.querySelectorAll(
+          'input:not([type="radio"]), .operations-option span, button'
+        ),
+      ].map((node) => {
         const bounds = node.getBoundingClientRect()
         return { height: bounds.height, center: bounds.y + bounds.height / 2 }
       })

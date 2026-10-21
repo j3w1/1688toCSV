@@ -63,13 +63,8 @@ test('copy format helpers explain their output, translate and disappear after ho
   )
   await page.mouse.move(2, 2)
   await expect(page.getByRole('tooltip')).toHaveCount(0)
-  await page
-    .locator('#orders-next')
-    .evaluate((button) => (button.disabled = false))
-  await page.locator('#orders-next').hover()
-  await expect(page.getByRole('tooltip')).toHaveText(
-    /página siguiente de pedidos filtrados/
-  )
+  await page.locator('#select-rows').hover()
+  await expect(page.getByRole('tooltip')).toHaveText(/Filas filtradas: 3/)
   await page.mouse.move(2, 2)
   await expect(page.getByRole('tooltip')).toHaveCount(0)
   await page.close()

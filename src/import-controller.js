@@ -89,10 +89,9 @@ export function createImportController({
     job.state = 'paused'
     job.error = reason
     // A sign-in or verification step is shown once in the workspace with a
-    // button to open the tab; the importer never switches tabs by itself.
+    // button to open the tab when the seller requires user interaction.
     job.attention =
-      attention &&
-      (Number.isInteger(job.workerTabId) || attention === 'visible-reader')
+      attention && Number.isInteger(job.workerTabId)
         ? {
             kind: attention,
             tabId: Number.isInteger(job.workerTabId) ? job.workerTabId : null,
@@ -328,9 +327,7 @@ export function createImportController({
       job.currentRows = null
       job.detailError = ''
       await write(job)
-      const reader = await browser.openDetailTab(order.sourceUrl, job.id, {
-        allowVisible: job.allowVisibleReader === true,
-      })
+      const reader = await browser.openDetailTab(order.sourceUrl, job.id)
       job.workerTabId = typeof reader === 'object' ? reader.id : reader
       job.visibleReader = typeof reader === 'object' && reader.visible === true
       await write(job)
@@ -497,15 +494,6 @@ export function createImportController({
     }
   }
 
-  /** The owner allowed a visible reader for this import; continue it. */
-  async function allowVisibleReader(jobId) {
-    const job = await repository.getJob(jobId)
-    if (!job) throw new Error('That import no longer exists.')
-    job.allowVisibleReader = true
-    await write(job)
-    return resume(jobId)
-  }
-
   return {
     start,
     refresh,
@@ -515,6 +503,5 @@ export function createImportController({
     tick,
     startup,
     removedTab,
-    allowVisibleReader,
   }
 }

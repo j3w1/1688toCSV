@@ -225,11 +225,12 @@ const numericTotal = (values) =>
   values.some((value) => value !== '' && !excelNumber(value)) ? '' : sum(values)
 const totalFormula = (range) =>
   `IF(OR(COUNT(${range})=0,COUNTIF(${range},"?*")>0),"",SUM(${range}))`
-const formulaCell = (formula, value = '', style = 5) => ({
+const formulaCell = (formula, value = '', style = 5, dependencies = []) => ({
   formula,
   value,
   type: 'number',
   style,
+  dependencies,
 })
 const moneyColumns = new Set([
   'sourceUnitPrice',
@@ -250,18 +251,194 @@ const measurementColumns = new Set([
   'receivedVolume',
   'loadedVolume',
 ])
+const weightColumns = new Set([
+  'cartonWeight',
+  'receivedWeight',
+  'loadedWeight',
+  'totalLoadedWeight',
+])
+const volumeColumns = new Set([
+  'cartonVolume',
+  'receivedVolume',
+  'loadedVolume',
+  'totalLoadedVolume',
+])
 const numericStyle = (key, total = false) =>
   moneyColumns.has(key)
     ? total
       ? 12
       : 10
-    : measurementColumns.has(key)
+    : weightColumns.has(key)
       ? total
         ? 13
         : 11
-      : total
-        ? 7
-        : 5
+      : volumeColumns.has(key)
+        ? total
+          ? 15
+          : 14
+        : measurementColumns.has(key)
+          ? total
+            ? 17
+            : 16
+          : total
+            ? 7
+            : 5
+
+const omittedColumns = new Set(['payments', 'deposits', 'balance'])
+const availableColumns = PACKING_WORKBOOK_COLUMNS.filter(
+  (column) => !omittedColumns.has(column.key)
+)
+// OOXML width uses the Normal font's maximum digit width (Calibri 11 = 7px).
+const columnPixels = (width) => Math.floor(((256 * width + 18) / 256) * 7)
+const bounded = (value, fallback, minimum, maximum) =>
+  Number.isFinite(Number(value)) && value !== '' && value !== null
+    ? Math.max(minimum, Math.min(maximum, Number(value)))
+    : fallback
+const textWidth = (value) =>
+  Array.from(String(value ?? '')).reduce(
+    (width, character) => width + (/[^\u0000-\u00ff]/.test(character) ? 2 : 1),
+    0
+  )
+
+function descriptionColumnWidth(rows, key, maximum) {
+  let longest = 0
+  for (const row of rows)
+    for (const line of String(
+      key === 'description'
+        ? first(row.description, row.title)
+        : (row[key] ?? '')
+    ).split(/\r?\n/))
+      longest = Math.max(longest, textWidth(line))
+  return Math.max(24, Math.min(maximum, longest + 2))
+}
+
+function wrappedLines(value, width) {
+  // Count CJK glyphs as two Latin characters and preserve authored line breaks.
+  const capacity = Math.max(1, width - 2)
+  return String(value ?? '')
+    .split(/\r?\n/)
+    .reduce((total, line) => {
+      let lines = 1,
+        used = 0,
+        space = 0
+      for (const token of line.match(
+        /\s+|[\u2e80-\uffff]|[^\s\u2e80-\uffff]+/gu
+      ) || []) {
+        if (/^\s+$/.test(token)) {
+          space = used ? textWidth(token) : 0
+          continue
+        }
+        const size = textWidth(token)
+        if (used && used + space + size > capacity) {
+          lines++
+          used = 0
+        }
+        if (size > capacity) {
+          lines += Math.ceil(size / capacity) - 1
+          used = size % capacity || capacity
+        } else used += (used ? space : 0) + size
+        space = 0
+      }
+      return total + lines
+    }, 0)
+}
+
+function projectColumns(plan, selected) {
+  const selectedKeys = new Set(selected.map((column) => column.key))
+  const positions = new Map(
+    plan.columns.map((column, index) => [column.key, index])
+  )
+  const letters = new Map(
+    selected.map((column, index) => [
+      columnName(positions.get(column.key)),
+      columnName(index),
+    ])
+  )
+  const projectCell = (cell) => {
+    if (!cell.formula) return cell
+    const { dependencies, ...result } = cell
+    if (dependencies.some((key) => !selectedKeys.has(key))) {
+      delete result.formula
+      return result
+    }
+    result.formula = result.formula.replace(
+      /(\$?)([A-Z]{1,3})(\$?\d+)/g,
+      (_match, absolute, letter, row) =>
+        `${absolute}${letters.get(letter)}${row}`
+    )
+    return result
+  }
+  const minHeight = selectedKeys.has('photo')
+    ? (plan.photoPixels + 12) * 0.75
+    : selectedKeys.has('barcode')
+      ? 52
+      : 32
+  const lastColumn = columnName(selected.length - 1)
+  return {
+    ...plan,
+    columns: selected,
+    lastColumn,
+    rows: plan.rows.map((row) => {
+      if (row.kind === 'header')
+        return {
+          ...row,
+          cells: selected.map((column) => row.cells[positions.get(column.key)]),
+        }
+      if (row.kind !== 'product' && row.kind !== 'total') {
+        const width = selected.reduce(
+          (total, column) => total + column.width,
+          0
+        )
+        const lineHeight = row.kind === 'title' ? 27 : 13
+        return {
+          ...row,
+          height: Math.max(
+            row.height,
+            Math.min(
+              150,
+              wrappedLines(row.cells[0]?.value, width) * lineHeight + 8
+            )
+          ),
+        }
+      }
+      const cells = selected.map((column) =>
+        projectCell(row.cells[positions.get(column.key)])
+      )
+      if (row.kind === 'total') {
+        if (!cells[0]?.value && !cells[0]?.formula)
+          cells[0] = textCell(plan.totalLabel, 7)
+        return { ...row, cells }
+      }
+      const lines = Math.max(
+        1,
+        ...selected.map((column, index) =>
+          ['photo', 'barcode'].includes(column.key)
+            ? 1
+            : wrappedLines(cells[index].value, column.width)
+        )
+      )
+      return {
+        ...row,
+        height: Math.max(minHeight, Math.min(240, lines * 15 + 16)),
+        cells,
+      }
+    }),
+    merges:
+      selected.length === 1
+        ? []
+        : plan.merges.map((range) =>
+            range.replace(/:[A-Z]+(\d+)$/, `:${lastColumn}$1`)
+          ),
+    imageColumns: {
+      photo: selectedKeys.has('photo')
+        ? selected.findIndex((column) => column.key === 'photo')
+        : undefined,
+      code: selectedKeys.has('barcode')
+        ? selected.findIndex((column) => column.key === 'barcode')
+        : undefined,
+    },
+  }
+}
 
 function oneValue(rows, key) {
   const values = [
@@ -359,14 +536,48 @@ function cartonBatches(rows) {
 /** Pure worksheet plan: source transactions never deduplicate by product code. */
 export function planPackingWorkbook(
   rows,
-  { language = 'es', createdAt = new Date().toISOString(), style } = {}
+  {
+    language = 'es',
+    createdAt = new Date().toISOString(),
+    style,
+    columns: requestedColumns,
+    descriptionWidth = 48,
+    photoSize = 'standard',
+    includeOrderDetails = true,
+    includeTotals = true,
+    freezeHeaders = true,
+    filters = true,
+  } = {}
 ) {
   if (!Array.isArray(rows) || !rows.length)
     throw new Error('Choose packing products to export.')
   if (!words[language]) language = 'en'
   const labels = words[language]
-  const columns = PACKING_WORKBOOK_COLUMNS.filter(
-    (column) => !['payments', 'deposits', 'balance'].includes(column.key)
+  const selectedKeys =
+    requestedColumns ?? availableColumns.map((column) => column.key)
+  if (
+    !Array.isArray(selectedKeys) ||
+    !selectedKeys.length ||
+    selectedKeys.some(
+      (key) => !availableColumns.some((column) => column.key === key)
+    )
+  )
+    throw new Error('Choose at least one supported packing workbook column.')
+  const maximumDescriptionWidth = bounded(descriptionWidth, 48, 24, 60)
+  const photoPixels =
+    { compact: 64, standard: 120, large: 160 }[photoSize] ??
+    bounded(photoSize, 120, 48, 180)
+  const columns = availableColumns.map((column) => ({
+    ...column,
+    width:
+      column.key === 'photo'
+        ? Math.ceil(((photoPixels + 12) / 7) * 100) / 100
+        : column.key === 'description'
+          ? descriptionColumnWidth(rows, column.key, maximumDescriptionWidth)
+          : column.width,
+  }))
+  const selected = [...new Set(selectedKeys)].map((key) =>
+    columns.find((column) => column.key === key)
   )
   const indexes = new Map(columns.map((column, index) => [column.key, index]))
   const letter = (key) => columnName(indexes.get(key))
@@ -428,12 +639,13 @@ export function planPackingWorkbook(
       ...new Set(sources.map((row) => row.packingMonth || '')),
     ]
     const mixedMonths = orderMonths.length > 1
-    fullRow(
-      'order',
-      `${store}    ·    ${labels[2]} ${++orderNumber}    ·    ${orderMonths.join(' / ')}`,
-      25,
-      6
-    )
+    if (includeOrderDetails)
+      fullRow(
+        'order',
+        `${store}    ·    ${labels[2]} ${++orderNumber}    ·    ${orderMonths.join(' / ')}`,
+        25,
+        6
+      )
     let firstRow, currentMonth
     for (const row of sources) {
       const identity = JSON.stringify([
@@ -519,7 +731,8 @@ export function planPackingWorkbook(
             excelNumber(counts[count]) && excelNumber(details[measurement])
               ? multiply(counts[count], details[measurement])
               : '',
-            numericStyle(key)
+            numericStyle(key),
+            [count, measurement]
           )
         )
       }
@@ -542,7 +755,8 @@ export function planPackingWorkbook(
         values.some((value) => value !== '' && !excelNumber(value))
           ? ''
           : value,
-        numericStyle(key, true)
+        numericStyle(key, true),
+        [key]
       )
     }
     firstRow.cells[indexes.get('orderQuantity')] = orderSum(
@@ -570,54 +784,69 @@ export function planPackingWorkbook(
     )
   }
   const lastProductRow = sheetRows.length
-  const total = addRow(
-    'total',
-    32,
-    columns.map(() => textCell('', 7))
+  const total = includeTotals
+    ? addRow(
+        'total',
+        32,
+        columns.map(() => textCell('', 7))
+      )
+    : undefined
+  if (total) total.cells[0] = textCell(labels[3], 7)
+  if (total)
+    for (const [target, key] of [
+      ...[
+        'receivedBoxes',
+        'plannedBoxes',
+        'quantity',
+        'orderShipping',
+        'discount',
+        'effectiveAmount',
+        'receivedWeight',
+        'receivedVolume',
+      ].map((key) => [key, key]),
+      ['totalLoadedWeight', 'loadedWeight'],
+      ['totalLoadedVolume', 'loadedVolume'],
+      ['totalLoadedBoxes', 'loadedBoxes'],
+    ]) {
+      const index = indexes.get(key),
+        range = `${letter(key)}6:${letter(key)}${lastProductRow}`
+      total.cells[indexes.get(target)] = formulaCell(
+        totalFormula(range),
+        numericTotal(
+          sheetRows
+            .slice(5, -1)
+            .map((row) => row.cells[index]?.value ?? '')
+            .filter((value) => /^-?\d+(?:\.\d+)?$/.test(String(value)))
+        ),
+        numericStyle(key, true),
+        [key]
+      )
+    }
+  return projectColumns(
+    {
+      language,
+      columns,
+      rows: sheetRows,
+      merges,
+      products,
+      months,
+      createdAt: String(createdAt),
+      palette: excelImagePalette(style),
+      lastColumn,
+      totalRow: total?.number,
+      lastRow: sheetRows.length,
+      lastProductRow,
+      photoPixels,
+      freezeHeaders,
+      filters,
+      totalLabel: labels[3],
+      imageColumns: {
+        photo: indexes.get('photo'),
+        code: indexes.get('barcode'),
+      },
+    },
+    selected
   )
-  total.cells[0] = textCell(labels[3], 7)
-  for (const [target, key] of [
-    ...[
-      'receivedBoxes',
-      'plannedBoxes',
-      'quantity',
-      'orderShipping',
-      'discount',
-      'effectiveAmount',
-      'receivedWeight',
-      'receivedVolume',
-    ].map((key) => [key, key]),
-    ['totalLoadedWeight', 'loadedWeight'],
-    ['totalLoadedVolume', 'loadedVolume'],
-    ['totalLoadedBoxes', 'loadedBoxes'],
-  ]) {
-    const index = indexes.get(key),
-      range = `${letter(key)}6:${letter(key)}${lastProductRow}`
-    total.cells[indexes.get(target)] = formulaCell(
-      totalFormula(range),
-      numericTotal(
-        sheetRows
-          .slice(5, -1)
-          .map((row) => row.cells[index]?.value ?? '')
-          .filter((value) => /^-?\d+(?:\.\d+)?$/.test(String(value)))
-      ),
-      numericStyle(key, true)
-    )
-  }
-  return {
-    language,
-    columns,
-    rows: sheetRows,
-    merges,
-    products,
-    months,
-    createdAt: String(createdAt),
-    palette: excelImagePalette(style),
-    lastColumn,
-    totalRow: total.number,
-    lastProductRow,
-    imageColumns: { photo: indexes.get('photo'), code: indexes.get('barcode') },
-  }
 }
 
 function serializeCell(cell, row, column) {
@@ -635,14 +864,24 @@ function serializeCell(cell, row, column) {
 }
 
 function sheetXml(plan, images) {
-  return `${XML_HEADER}<worksheet xmlns="${MAIN}" xmlns:r="${REL}"><sheetPr><pageSetUpPr fitToPage="1"/></sheetPr><dimension ref="A1:${plan.lastColumn}${plan.totalRow}"/><sheetViews><sheetView workbookViewId="0"><pane xSplit="3" ySplit="5" topLeftCell="D6" activePane="bottomRight" state="frozen"/></sheetView></sheetViews><sheetFormatPr defaultRowHeight="18"/><cols>${plan.columns.map((column, index) => `<col min="${index + 1}" max="${index + 1}" width="${column.width}" customWidth="1"/>`).join('')}</cols><sheetData>${plan.rows.map((row) => `<row r="${row.number}" ht="${row.height}" customHeight="1">${row.cells.map((cell, index) => serializeCell(cell, row.number, index)).join('')}</row>`).join('')}</sheetData><autoFilter ref="A5:${plan.lastColumn}${plan.lastProductRow}"/><mergeCells count="${plan.merges.length}">${plan.merges.map((ref) => `<mergeCell ref="${ref}"/>`).join('')}</mergeCells><printOptions horizontalCentered="1"/><pageMargins left="0.25" right="0.25" top="0.4" bottom="0.4" header="0.2" footer="0.2"/><pageSetup paperSize="8" orientation="landscape" fitToWidth="1" fitToHeight="0"/><headerFooter><oddFooter>&amp;L1688toCSV&amp;R&amp;P / &amp;N</oddFooter></headerFooter>${images.length ? '<drawing r:id="drawing1"/>' : ''}</worksheet>`
+  const frozenColumns = Math.min(3, Math.max(0, plan.columns.length - 1))
+  const pane = plan.freezeHeaders
+    ? `<pane ${frozenColumns ? `xSplit="${frozenColumns}" ` : ''}ySplit="5" topLeftCell="${columnName(frozenColumns)}6" activePane="${frozenColumns ? 'bottomRight' : 'bottomLeft'}" state="frozen"/>`
+    : ''
+  return `${XML_HEADER}<worksheet xmlns="${MAIN}" xmlns:r="${REL}"><sheetPr><pageSetUpPr fitToPage="1"/></sheetPr><dimension ref="A1:${plan.lastColumn}${plan.lastRow}"/><sheetViews><sheetView workbookViewId="0">${pane}</sheetView></sheetViews><sheetFormatPr defaultRowHeight="18"/><cols>${plan.columns.map((column, index) => `<col min="${index + 1}" max="${index + 1}" width="${column.width}" customWidth="1"/>`).join('')}</cols><sheetData>${plan.rows.map((row) => `<row r="${row.number}" ht="${row.height}" customHeight="1">${row.cells.map((cell, index) => serializeCell(cell, row.number, index)).join('')}</row>`).join('')}</sheetData>${plan.filters ? `<autoFilter ref="A5:${plan.lastColumn}${plan.lastProductRow}"/>` : ''}${plan.merges.length ? `<mergeCells count="${plan.merges.length}">${plan.merges.map((ref) => `<mergeCell ref="${ref}"/>`).join('')}</mergeCells>` : ''}<printOptions horizontalCentered="1"/><pageMargins left="0.25" right="0.25" top="0.4" bottom="0.4" header="0.2" footer="0.2"/><pageSetup paperSize="8" orientation="landscape" fitToWidth="1" fitToHeight="0"/><headerFooter><oddFooter>&amp;L1688toCSV&amp;R&amp;P / &amp;N</oddFooter></headerFooter>${images.length ? '<drawing r:id="drawing1"/>' : ''}</worksheet>`
 }
 
 function stylesXml(palette) {
-  const color = (key) => palette[key].slice(1).toUpperCase()
+  const color = (key) =>
+    (
+      palette[key] ||
+      { body: '#ffffff', text: '#222222', muted: '#666666' }[key]
+    )
+      .slice(1)
+      .toUpperCase()
   const xf = ({
     font = 0,
-    fill = 0,
+    fill = 6,
     border = 0,
     format = 0,
     centered = false,
@@ -650,11 +889,11 @@ function stylesXml(palette) {
   } = {}) =>
     `<xf numFmtId="${format}" fontId="${font}" fillId="${fill}" borderId="${border}" xfId="0" applyFont="1" applyFill="1" applyNumberFormat="1" applyAlignment="1"><alignment vertical="${vertical}" wrapText="1" ${centered ? 'horizontal="center"' : ''}/></xf>`
   const fonts = [
-    '<font><sz val="10"/><name val="Calibri"/></font>',
-    `<font><b/><sz val="20"/><name val="Calibri"/><color rgb="FF${color('header')}"/></font>`,
+    `<font><sz val="11"/><name val="Calibri"/><color rgb="FF${color('text')}"/></font>`,
+    `<font><b/><sz val="20"/><name val="Calibri"/><color rgb="FF${color('text')}"/></font>`,
     `<font><b/><sz val="10"/><name val="Calibri"/><color rgb="FF${color('headerText')}"/></font>`,
-    '<font><b/><sz val="11"/><name val="Calibri"/></font>',
-    '<font><sz val="9"/><name val="Calibri"/><color rgb="FF666666"/></font>',
+    `<font><b/><sz val="11"/><name val="Calibri"/><color rgb="FF${color('text')}"/></font>`,
+    `<font><sz val="9"/><name val="Calibri"/><color rgb="FF${color('muted')}"/></font>`,
     '<font><sz val="9"/><name val="Calibri"/><color rgb="FFFFFFFF"/></font>',
   ]
   const fills = [
@@ -665,6 +904,7 @@ function stylesXml(palette) {
         `<fill><patternFill patternType="solid"><fgColor rgb="FF${color(key)}"/><bgColor indexed="64"/></patternFill></fill>`
     ),
     '<fill><patternFill patternType="solid"><fgColor rgb="FFFFFFFF"/><bgColor indexed="64"/></patternFill></fill>',
+    `<fill><patternFill patternType="solid"><fgColor rgb="FF${color('body')}"/><bgColor indexed="64"/></patternFill></fill>`,
   ]
   // Style indexes are shared with numericStyle and the raster-code override.
   const styles = [
@@ -682,6 +922,10 @@ function stylesXml(palette) {
     xf({ border: 1, centered: true, format: 166 }),
     xf({ font: 3, fill: 4, border: 1, centered: true, format: 165 }),
     xf({ font: 3, fill: 4, border: 1, centered: true, format: 166 }),
+    xf({ border: 1, centered: true, format: 167 }),
+    xf({ font: 3, fill: 4, border: 1, centered: true, format: 167 }),
+    xf({ border: 1, centered: true, format: 168 }),
+    xf({ font: 3, fill: 4, border: 1, centered: true, format: 168 }),
   ]
   const borders = [
     '<border/>',
@@ -690,7 +934,18 @@ function stylesXml(palette) {
   return [
     XML_HEADER,
     `<styleSheet xmlns="${MAIN}">`,
-    '<numFmts count="3"><numFmt numFmtId="164" formatCode=";;;"/><numFmt numFmtId="165" formatCode="#,##0.00"/><numFmt numFmtId="166" formatCode="#,##0.#########"/></numFmts>',
+    `<numFmts count="5">${[
+      [164, ';;;'],
+      [165, '#,##0.00" CNY"'],
+      [166, '0.0##" kg"'],
+      [167, '0.0#####" m³"'],
+      [168, '0.0#" cm"'],
+    ]
+      .map(
+        ([id, format]) =>
+          `<numFmt numFmtId="${id}" formatCode="${xml(format)}"/>`
+      )
+      .join('')}</numFmts>`,
     `<fonts count="${fonts.length}">${fonts.join('')}</fonts>`,
     `<fills count="${fills.length}">${fills.join('')}</fills>`,
     `<borders count="${borders.length}">${borders.join('')}</borders>`,
@@ -729,16 +984,28 @@ function imageSize(bytes, mimeType) {
 }
 
 async function prepareWorkbookImages(plan, prepareImages) {
-  if (!prepareImages) return []
+  if (
+    !prepareImages ||
+    Object.values(plan.imageColumns).every((column) => column === undefined)
+  )
+    return []
   const images = [],
     cache = new Map()
   let totalBytes = 0
   for (const product of plan.products) {
     const assets = await prepareImages(product.source, {
-      photo: { maxWidth: 320, maxHeight: 240 },
-      code: { maxWidth: 512, maxHeight: 128 },
+      photo:
+        plan.imageColumns.photo === undefined
+          ? undefined
+          : { maxWidth: 320, maxHeight: 240 },
+      code:
+        plan.imageColumns.code === undefined
+          ? undefined
+          : { maxWidth: 512, maxHeight: 128 },
     })
     for (const kind of ['photo', 'code']) {
+      const column = plan.imageColumns[kind]
+      if (column === undefined) continue
       const asset = assets?.[kind]
       if (!asset) continue
       let bytes = asset.bytes ?? asset.blob
@@ -776,18 +1043,26 @@ async function prepareWorkbookImages(plan, prepareImages) {
         }
         cache.set(asset, media)
       }
-      const box = kind === 'photo' ? [160, 120] : [185, 47]
+      const cellWidth = columnPixels(plan.columns[column].width)
+      const cellHeight = plan.rows[product.row - 1].height / 0.75
+      const box =
+        kind === 'photo'
+          ? [
+              Math.min(plan.photoPixels, cellWidth - 12),
+              Math.min(plan.photoPixels, cellHeight - 12),
+            ]
+          : [cellWidth - 16, Math.min(47, cellHeight - 16)]
       const scale = Math.min(box[0] / size.width, box[1] / size.height)
       const width = size.width * scale,
         height = size.height * scale
       images.push({
         kind,
         row: product.row - 1,
-        column: plan.imageColumns[kind],
+        column,
         width,
         height,
-        x: 5 + (box[0] - width) / 2,
-        y: kind === 'code' ? 24 : 5 + (box[1] - height) / 2,
+        x: (cellWidth - width) / 2,
+        y: (cellHeight - height) / 2,
         media,
       })
     }
@@ -838,7 +1113,7 @@ export async function createPackingWorkbook(rows, options = {}) {
     ],
     [
       'xl/workbook.xml',
-      `${XML_HEADER}<workbook xmlns="${MAIN}" xmlns:r="${REL}"><bookViews><workbookView/></bookViews><sheets><sheet name="Packing list" sheetId="1" r:id="sheet1"/></sheets><definedNames><definedName name="_xlnm.Print_Titles" localSheetId="0">'Packing list'!$1:$5</definedName><definedName name="_xlnm.Print_Area" localSheetId="0">'Packing list'!$A$1:$${plan.lastColumn}$${plan.totalRow}</definedName></definedNames><calcPr calcId="191029" fullCalcOnLoad="1" forceFullCalc="1"/></workbook>`,
+      `${XML_HEADER}<workbook xmlns="${MAIN}" xmlns:r="${REL}"><bookViews><workbookView/></bookViews><sheets><sheet name="Packing list" sheetId="1" r:id="sheet1"/></sheets><definedNames><definedName name="_xlnm.Print_Titles" localSheetId="0">'Packing list'!$1:$5</definedName><definedName name="_xlnm.Print_Area" localSheetId="0">'Packing list'!$A$1:$${plan.lastColumn}$${plan.lastRow}</definedName></definedNames><calcPr calcId="191029" fullCalcOnLoad="1" forceFullCalc="1"/></workbook>`,
     ],
     [
       'xl/_rels/workbook.xml.rels',

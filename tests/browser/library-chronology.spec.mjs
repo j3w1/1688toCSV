@@ -52,7 +52,7 @@ test('a newly saved matching order returns both lists to their newest position a
     localStorage.setItem('1688-library-purchase-months', '[]')
   )
   await page.goto(`${extension.extensionBaseUrl}/library.html`)
-  await expect(page.locator('#orders-page')).toHaveText('1 / 2')
+  await expect(page.locator('.order-card')).toHaveCount(51)
   await page.locator('#order-search').fill('Paging supplier')
   // Escape dismisses suggestions only after they open; before that, the
   // native search input clears its value. Keep the filter active for this test.
@@ -66,12 +66,17 @@ test('a newly saved matching order returns both lists to their newest position a
   await page.locator('#date-from').fill('2026-10-17')
   const rows = page.locator('#sheet-body tr[data-selection-key]')
   await expect(rows).toHaveCount(100)
-  await expect(page.locator('#orders-page')).toHaveText('1 / 2')
-  await page.locator('#orders-next').click()
+  await page.locator('#order-list').evaluate((scroller) => {
+    scroller.scrollTop = scroller.scrollHeight
+  })
   await page.locator('.table-scroll').evaluate((scroller) => {
     scroller.scrollTop = scroller.scrollHeight
   })
-  await expect(page.locator('#orders-page')).toHaveText('2 / 2')
+  await expect
+    .poll(() =>
+      page.locator('#order-list').evaluate((scroller) => scroller.scrollTop)
+    )
+    .toBeGreaterThan(0)
   await expect(rows.last().locator('.row-number')).toHaveText('153')
   const selectedKey = await rows.last().getAttribute('data-selection-key')
   const selected = page.locator(
@@ -84,7 +89,12 @@ test('a newly saved matching order returns both lists to their newest position a
     await test.step('Commit the new order and notify the open library', () =>
       save([newest]))
   expect(result.ok, result.error).toBe(true)
-  await expect(page.locator('#orders-page')).toHaveText('1 / 2')
+  await expect(page.locator('.order-card')).toHaveCount(52)
+  await expect
+    .poll(() =>
+      page.locator('#order-list').evaluate((scroller) => scroller.scrollTop)
+    )
+    .toBe(0)
   await expect(page.locator('.order-card').first()).toHaveAttribute(
     'data-selection-key',
     newest.snapshot.orderId

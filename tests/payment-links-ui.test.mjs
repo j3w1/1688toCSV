@@ -125,18 +125,26 @@ test('linked-payment editor stays compact until opened and defaults to full sour
   assert.equal(dialog.getAttribute('closedby'), 'any')
   assert.equal(editor.dirty(), false)
   dialog.querySelector('.payment-links-add').click()
-  const sourceSelect = dialog.querySelector('[name="payment-source-order"]')
-  assert.equal(sourceSelect.tagName, 'INPUT')
-  assert.equal(sourceSelect.getAttribute('role'), 'combobox')
-  sourceSelect.value = 'source'
-  sourceSelect.dispatchEvent(new window.Event('input'))
+  const search = dialog.querySelector('[name="payment-source-search"]')
+  assert.equal(search.type, 'search')
+  assert.equal(dialog.querySelector('select, [role="combobox"]'), null)
+  assert.equal(
+    dialog.querySelectorAll('.payment-link-source-choices .payment-link-choice')
+      .length,
+    2
+  )
+  const sourceChoice = dialog.querySelector(
+    '.payment-link-choice[data-order-id="source"] input'
+  )
+  sourceChoice.checked = true
+  sourceChoice.dispatchEvent(new window.Event('change'))
   const reason = dialog.querySelector('[name="payment-reason"]')
   reason.value = 'Recorded label service'
   reason.dispatchEvent(new window.Event('input'))
   assert.equal(dialog.querySelector('[name="payment-amount"]').value, '12.34')
   assert.match(
     dialog.querySelector('.payment-link-evidence').textContent,
-    /source shipping ¥2.34/
+    /shipping ¥2.34/
   )
   assert.match(
     dialog.querySelector('.payment-links-preview').textContent,
@@ -221,9 +229,11 @@ test('failed reviewed saves retain the draft and invalid money never reaches sto
   })
   const dialog = editor.open()
   dialog.querySelector('.payment-links-add').click()
-  const sourceSelect = dialog.querySelector('[name="payment-source-order"]')
-  sourceSelect.value = 'source'
-  sourceSelect.dispatchEvent(new window.Event('input'))
+  const sourceChoice = dialog.querySelector(
+    '.payment-link-choice[data-order-id="source"] input'
+  )
+  sourceChoice.checked = true
+  sourceChoice.dispatchEvent(new window.Event('change'))
   const reason = dialog.querySelector('[name="payment-reason"]')
   reason.value = 'Recorded fee'
   const amount = dialog.querySelector('[name="payment-amount"]')
@@ -253,9 +263,23 @@ test('payment picker rejects another store despite an identical display name and
   })
   const dialog = editor.open()
   dialog.querySelector('.payment-links-add').click()
-  const search = dialog.querySelector('[name="payment-source-order"]')
+  assert.equal(
+    dialog.querySelector('.payment-link-choice[data-order-id="source"]'),
+    null
+  )
+  assert.match(
+    dialog.textContent,
+    /No other recorded order shares this store and account/
+  )
+  const search = dialog.querySelector('[name="payment-source-search"]')
   search.value = 'source'
   search.dispatchEvent(new window.Event('input'))
+  assert.equal(dialog.querySelector('.payment-link-source-empty').hidden, false)
+  assert.match(
+    dialog.querySelector('.payment-link-source-empty').textContent,
+    /No orders match/
+  )
+  dialog.querySelector('[name="payment-reason"]').value = 'Attempted source'
   dialog.querySelector('.payment-links-confirmation input').checked = true
   await assert.rejects(
     editor.flush(),
@@ -285,4 +309,63 @@ test('payment picker rejects another store despite an identical display name and
   assert.match(review.textContent, /existing link is kept for review/)
   assert.deepEqual(record.paymentLinks, previous)
   review.close()
+})
+
+test('a lone goods row explains why it cannot also be its own payment source', (t) => {
+  const { host, record, window } = fixture(t)
+  const editor = mountPaymentLinks(host, { record, records: [record] })
+  const dialog = editor.open()
+  assert.equal(editor.dirty(), false)
+  const source = dialog.querySelector(
+    '.payment-link-choice[data-order-id="goods"] input'
+  )
+  source.checked = true
+  source.dispatchEvent(new window.Event('change'))
+  assert.equal(
+    dialog.querySelectorAll('.payment-link-fee-choices input').length,
+    0
+  )
+  assert.match(
+    dialog.querySelector('.payment-link-fee-empty').textContent,
+    /no fee row with other eligible goods/
+  )
+  assert.match(
+    dialog.querySelector('.payment-link-fee-empty').textContent,
+    /Additional charges/
+  )
+})
+
+test('unknown store identity explains why same-name orders are not linkable', (t) => {
+  const { host, record, source } = fixture(t)
+  delete record.snapshot.sellerMemberLogin
+  record.snapshot.sellerName = source.snapshot.sellerName
+  const editor = mountPaymentLinks(host, { record, records: [record, source] })
+  const dialog = editor.open()
+  assert.match(dialog.textContent, /no known store identity/)
+  assert.match(dialog.textContent, /cannot be linked by store name alone/)
+  assert.equal(
+    dialog.querySelectorAll('.payment-link-source-choices input').length,
+    1
+  )
+})
+
+test('an existing whole-payment review stays unchanged when its source payable becomes zero', (t) => {
+  const { host, record, source } = fixture(t)
+  record.paymentLinks = [
+    {
+      id: 'existing-whole',
+      sourceOrderId: 'source',
+      amount: '12.34',
+      reason: 'Recorded fee',
+      reviewedAt: '2026-10-01T12:00:00.000Z',
+      sourceEvidence: paymentSourceEvidence(source),
+      targetEntryIds: ['1'],
+    },
+  ]
+  source.snapshot.totals.payable = '0.00'
+  const editor = mountPaymentLinks(host, { record, records: [record, source] })
+  const dialog = editor.open()
+  assert.equal(dialog.querySelector('[name="payment-source-row"]').value, '')
+  assert.equal(dialog.querySelector('[name="payment-amount"]').value, '12.34')
+  assert.equal(editor.dirty(), false)
 })

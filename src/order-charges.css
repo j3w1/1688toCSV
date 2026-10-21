@@ -1,6 +1,6 @@
 .order-charges {
   border-block-start: 1px solid var(--border);
-  padding-block: 14px;
+  padding-block: 8px;
   min-inline-size: 0;
 }
 .order-charges-heading {
@@ -8,7 +8,7 @@
   flex-wrap: wrap;
   align-items: center;
   gap: 5px 10px;
-  font-size: 12px;
+  font-size: 11px;
 }
 .order-charges-heading > strong {
   margin-inline-end: auto;
@@ -24,7 +24,7 @@
   font-size: 11px;
   line-height: 1.5;
   color: var(--muted);
-  margin-block: 7px;
+  margin-block: 5px;
 }
 .order-charges fieldset {
   border: 0;
@@ -40,8 +40,8 @@
   padding: 0;
 }
 .order-charges-toolbar button {
-  min-block-size: 28px;
-  padding: 3px 8px;
+  min-block-size: 25px;
+  padding: 2px 7px;
   font-size: 11px;
 }
 .order-charges-inputs {
@@ -71,6 +71,10 @@
   padding: 3px 6px;
   font-size: 12px;
 }
+.order-charges .order-charges-inputs input {
+  min-block-size: 28px;
+  margin: 0;
+}
 .order-charges-inputs input[aria-invalid='true'] {
   outline: 1px solid var(--danger-text, #bd2727);
 }
@@ -90,7 +94,7 @@
   flex-wrap: wrap;
   justify-content: space-between;
   gap: 5px 10px;
-  padding-block: 8px;
+  padding-block: 5px;
   font-size: 12px;
   border-block-end: 1px solid var(--border);
 }
@@ -154,4 +158,23 @@
   display: block;
   color: var(--danger-text, #bd2727);
   font-size: 11px;
+}
+.order-charges-quick-reasons {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  margin-block: 4px;
+}
+.order-charges-quick-reasons button {
+  min-block-size: 21px;
+  padding: 1px 6px;
+  border-radius: 4px;
+  font-size: 10px;
+  color: var(--muted);
+}
+.order-charges-status:empty {
+  display: none;
+}
+.order-charges-preview[hidden] {
+  display: none;
 }

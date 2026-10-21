@@ -1,6 +1,6 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
-import { CFB, read } from 'xlsx'
+import { CFB, read, SSF } from 'xlsx'
 import { DOMParser } from 'linkedom'
 import {
   createPackingWorkbook,
@@ -425,7 +425,7 @@ test('the workbook is styled and editable with literal identifiers, safe text an
     worksheet,
     /orientation="landscape" fitToWidth="1" fitToHeight="0"/
   )
-  assert.match(worksheet, /<row r="7" ht="98" customHeight="1">/)
+  assert.match(worksheet, /<row r="7" ht="99" customHeight="1">/)
   assert.match(
     partText(archive, 'xl/workbook.xml'),
     /fullCalcOnLoad="1" forceFullCalc="1"/
@@ -570,7 +570,7 @@ test('visible order bands omit internal IDs and raster codes hide duplicate nati
   )
 })
 
-test('money displays two decimals and measurements use flexible nine-decimal formats without rounding underlying values', async () => {
+test('money and measurements display typed units without rounding their underlying values', async () => {
   const rows = [
     source({
       sourceUnitPrice: '12.5',
@@ -599,35 +599,32 @@ test('money displays two decimals and measurements use flexible nine-decimal for
     'P9',
     'R9',
   ]) {
-    assert.equal(sheet[address].z, '#,##0.00', address)
+    assert.equal(sheet[address].z, '#,##0.00" CNY"', address)
     assert.equal(sheet[address].t, 'n', address)
   }
   assert.equal(sheet.N7.v, 12.5)
-  assert.equal(sheet.N7.w, '12.50')
-  assert.equal(sheet.P7.w, '0.10')
+  assert.equal(sheet.N7.w, '12.50 CNY')
+  assert.equal(sheet.P7.w, '0.10 CNY')
   assert.equal(sheet.Q7.v, 18.91234567)
-  assert.equal(sheet.Q7.w, '18.91')
+  assert.equal(sheet.Q7.w, '18.91 CNY')
   assert.equal(sheet.R7.v, 1234567.89)
-  assert.equal(sheet.R7.w, '1,234,567.89')
+  assert.equal(sheet.R7.w, '1,234,567.89 CNY')
   assert.equal(sheet.AB7.v, 1234580.39)
-  for (const address of [
-    'S7',
-    'T7',
-    'U7',
-    'Y7',
-    'Z7',
-    'AA7',
-    'T9',
-    'Z9',
-    'AC9',
-    'AD9',
-  ])
-    assert.equal(sheet[address].z, '#,##0.#########', address)
+  for (const address of ['S7', 'T7', 'U7', 'T9', 'AC9'])
+    assert.equal(sheet[address].z, '0.0##" kg"', address)
+  for (const address of ['Y7', 'Z7', 'AA7', 'Z9', 'AD9'])
+    assert.equal(sheet[address].z, '0.0#####" m³"', address)
   assert.equal(sheet.S7.v, 1.234567891)
+  assert.equal(sheet.S7.w, '1.235 kg')
   assert.equal(sheet.Y7.v, 0.012345678)
+  assert.equal(sheet.Y7.w, '0.012346 m³')
+  assert.equal(SSF.format(sheet.S7.z, 57), '57.0 kg')
+  assert.equal(SSF.format(sheet.S7.z, 0), '0.0 kg')
+  assert.equal(SSF.format(sheet.Y7.z, 0), '0.0 m³')
+  assert.equal(SSF.format(sheet.Y7.z, 1), '1.0 m³')
   const worksheet = partText(inspectZip(bytes), 'xl/worksheets/sheet1.xml')
   assert.match(worksheet, /<c r="Q7" s="10"><v>18.91234567<\/v><\/c>/)
-  assert.match(worksheet, /<c r="Y7" s="11"><v>0.012345678<\/v><\/c>/)
+  assert.match(worksheet, /<c r="Y7" s="14"><v>0.012345678<\/v><\/c>/)
 })
 
 test('Excel precision limits preserve large source values as text and leave dependent totals unresolved', async () => {
@@ -686,3 +683,261 @@ test('oversized or unsupported images and failed image preparation produce no pa
 })
 
 const encoder = new TextEncoder()
+
+test('chosen columns retain their order and remap formulas without exporting hidden dependencies', async () => {
+  const columns = [
+    'loadedWeight',
+    'cartonWeight',
+    'loadedBoxes',
+    'description',
+    'orderQuantity',
+  ]
+  const plan = planPackingWorkbook([source()], { ...options, columns })
+  assert.deepEqual(
+    plan.columns.map((column) => column.key),
+    columns
+  )
+  assert.equal(plan.rows.find((row) => row.kind === 'header').cells.length, 5)
+  assert.equal(cell(plan, plan.products[0], 'loadedWeight').value, '15.00')
+  assert.equal(
+    cell(plan, plan.products[0], 'loadedWeight').formula,
+    'IF(AND(ISNUMBER(C7),ISNUMBER(B7)),C7*B7,"")'
+  )
+  assert.equal(cell(plan, plan.products[0], 'orderQuantity').value, '100')
+  assert.equal(cell(plan, plan.products[0], 'orderQuantity').formula, undefined)
+  const bytes = await createPackingWorkbook([source()], { ...options, columns })
+  const archive = inspectZip(bytes)
+  const worksheet = partText(archive, 'xl/worksheets/sheet1.xml')
+  const document = new DOMParser().parseFromString(worksheet, 'text/xml')
+  assert.equal(document.querySelectorAll('cols col').length, 5)
+  assert.equal(document.querySelector('[hidden="1"]'), null)
+  for (const row of document.querySelectorAll('row'))
+    assert.ok(row.querySelectorAll('c').length <= 5)
+  assert.equal(worksheet.includes('undefined'), false)
+  assert.equal(worksheet.includes('#REF!'), false)
+  const sheet = read(bytes, { type: 'array' }).Sheets['Packing list']
+  assert.equal(sheet.A7.f, 'IF(AND(ISNUMBER(C7),ISNUMBER(B7)),C7*B7,"")')
+  assert.equal(sheet.E7.v, 100)
+  assert.equal(sheet.E7.f, undefined)
+  assert.throws(
+    () => planPackingWorkbook([source()], { columns: [] }),
+    /column/
+  )
+  assert.throws(
+    () => planPackingWorkbook([source()], { columns: ['payments'] }),
+    /column/
+  )
+})
+
+test('selected calculated fields keep zero, unknown and shared-carton ownership without their inputs', () => {
+  const rows = [
+    source({ sourceRow: 9, sourceRowEntryIds: ['1', '2'], loadedBoxes: '0' }),
+    source({
+      entryId: '2',
+      sourceRow: 9,
+      sourceRowEntryIds: ['1', '2'],
+      loadedBoxes: '0',
+    }),
+    source({ entryId: '3', loadedBoxes: '' }),
+  ]
+  const plan = planPackingWorkbook(rows, {
+    ...options,
+    columns: [
+      'loadedWeight',
+      'loadedVolume',
+      'totalLoadedBoxes',
+      'totalLoadedWeight',
+    ],
+  })
+  assert.deepEqual(
+    plan.products.map((product) => cell(plan, product, 'loadedWeight').value),
+    ['0.00', '', '']
+  )
+  assert.deepEqual(
+    plan.products.map((product) => cell(plan, product, 'loadedWeight').formula),
+    [undefined, undefined, undefined]
+  )
+  const total = plan.rows.at(-1)
+  assert.equal(total.cells[2].value, '0')
+  assert.equal(total.cells[2].formula, undefined)
+  assert.equal(total.cells[3].value, '0.00')
+  assert.match(total.cells[3].formula, /SUM\(A6:A9\)/)
+})
+
+test('order details, totals, freezing and filters can be omitted with valid print and sheet bounds', async () => {
+  const settings = {
+    ...options,
+    columns: ['quantity'],
+    includeOrderDetails: false,
+    includeTotals: false,
+    freezeHeaders: false,
+    filters: false,
+  }
+  const plan = planPackingWorkbook([source()], settings)
+  assert.equal(
+    plan.rows.some((row) => ['order', 'total'].includes(row.kind)),
+    false
+  )
+  assert.equal(plan.products[0].row, 6)
+  assert.equal(plan.totalRow, undefined)
+  assert.equal(plan.lastRow, 6)
+  const archive = inspectZip(await createPackingWorkbook([source()], settings))
+  const worksheet = partText(archive, 'xl/worksheets/sheet1.xml')
+  assert.match(worksheet, /dimension ref="A1:A6"/)
+  assert.doesNotMatch(worksheet, /<pane|<autoFilter|<mergeCells/)
+  assert.match(partText(archive, 'xl/workbook.xml'), /\$A\$1:\$A\$6/)
+  const mixed = planPackingWorkbook(
+    [source(), source({ entryId: '2', packingMonth: '2026-11' })],
+    settings
+  )
+  assert.equal(mixed.rows.filter((row) => row.kind === 'month').length, 2)
+})
+
+test('description widths and wrapped row heights adapt within the chosen bounds', () => {
+  const short = planPackingWorkbook([source({ description: '短说明' })], {
+    ...options,
+    columns: ['description'],
+    descriptionWidth: 40,
+  })
+  const long = planPackingWorkbook(
+    [source({ description: '完整产品说明与尺寸 '.repeat(40) })],
+    { ...options, columns: ['description'], descriptionWidth: 40 }
+  )
+  assert.equal(short.columns[0].width, 24)
+  assert.equal(long.columns[0].width, 40)
+  assert.ok(
+    long.rows[long.products[0].row - 1].height >
+      short.rows[short.products[0].row - 1].height
+  )
+  assert.ok(long.rows[long.products[0].row - 1].height <= 240)
+  assert.equal(
+    cell(long, long.products[0], 'description').value,
+    '完整产品说明与尺寸 '.repeat(40)
+  )
+  assert.equal(
+    planPackingWorkbook([source({ description: '长'.repeat(200) })], {
+      descriptionWidth: 999,
+    }).columns.find((column) => column.key === 'description').width,
+    60
+  )
+  const words = planPackingWorkbook(
+    [source({ description: Array(8).fill('abcdefghijklmnop').join(' ') })],
+    { ...options, columns: ['description'], descriptionWidth: 24 }
+  )
+  assert.ok(words.rows[words.products[0].row - 1].height >= 8 * 15)
+})
+
+test('workspace palette colors the native workbook body and text while code artwork retains white backing', async () => {
+  const workspace = {
+    header: '#d48a45',
+    headerText: '#101010',
+    store: '#41372e',
+    order: '#2e2925',
+    stripe: '#201c19',
+    separator: '#705b48',
+    grid: '#655342',
+    body: '#211c18',
+    text: '#f5e9dd',
+    muted: '#cbb6a3',
+  }
+  const archive = inspectZip(
+    await createPackingWorkbook([source()], {
+      ...options,
+      style: { workspace },
+    })
+  )
+  const document = new DOMParser().parseFromString(
+    partText(archive, 'xl/styles.xml'),
+    'text/xml'
+  )
+  assert.equal(
+    document
+      .querySelector('fonts')
+      .children[0].querySelector('sz')
+      .getAttribute('val'),
+    '11'
+  )
+  assert.equal(
+    document
+      .querySelector('fonts')
+      .children[0].querySelector('color')
+      .getAttribute('rgb'),
+    'FFF5E9DD'
+  )
+  assert.equal(
+    document
+      .querySelector('fills')
+      .children[6].querySelector('fgColor')
+      .getAttribute('rgb'),
+    'FF211C18'
+  )
+  assert.equal(
+    document.querySelector('cellXfs').children[4].getAttribute('fillId'),
+    '6'
+  )
+  assert.equal(
+    document
+      .querySelector('fills')
+      .children[5].querySelector('fgColor')
+      .getAttribute('rgb'),
+    'FFFFFFFF'
+  )
+})
+
+test('each drawing fits inside its selected column and row for every photo size', async () => {
+  const rectangle = (width, height) => {
+    const bytes = png()
+    const view = new DataView(bytes.buffer)
+    view.setUint32(16, width)
+    view.setUint32(20, height)
+    return { bytes, mimeType: 'image/png' }
+  }
+  for (const photoSize of ['compact', 'standard', 'large']) {
+    const settings = {
+      ...options,
+      columns: ['description', 'barcode', 'photo'],
+      photoSize,
+    }
+    const plan = planPackingWorkbook([source()], settings)
+    const archive = inspectZip(
+      await createPackingWorkbook([source()], {
+        ...settings,
+        prepareImages: async () => ({
+          photo: rectangle(240, 240),
+          code: rectangle(512, 90),
+        }),
+      })
+    )
+    const drawing = new DOMParser().parseFromString(
+      partText(archive, 'xl/drawings/drawing1.xml'),
+      'text/xml'
+    )
+    for (const anchor of drawing.querySelectorAll('xdr\\:oneCellAnchor')) {
+      const from = anchor.querySelector('xdr\\:from')
+      const column = Number(from.querySelector('xdr\\:col').textContent)
+      const row = Number(from.querySelector('xdr\\:row').textContent)
+      const x = Number(from.querySelector('xdr\\:colOff').textContent) / 9525
+      const y = Number(from.querySelector('xdr\\:rowOff').textContent) / 9525
+      const extent = anchor.querySelector('xdr\\:ext')
+      const width = Number(extent.getAttribute('cx')) / 9525
+      const height = Number(extent.getAttribute('cy')) / 9525
+      assert.ok(x >= 5 && y >= 5, photoSize)
+      assert.ok(
+        x + width <=
+          Math.floor(((256 * plan.columns[column].width + 18) / 256) * 7) - 5,
+        photoSize
+      )
+      assert.ok(y + height <= plan.rows[row].height / 0.75 - 5, photoSize)
+    }
+    assert.equal(drawing.querySelectorAll('xdr\\:oneCellAnchor').length, 2)
+  }
+  let prepared = false
+  await createPackingWorkbook([source()], {
+    ...options,
+    columns: ['quantity'],
+    prepareImages: async () => {
+      prepared = true
+    },
+  })
+  assert.equal(prepared, false)
+})

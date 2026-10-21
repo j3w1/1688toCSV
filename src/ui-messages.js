@@ -2,6 +2,7 @@ import { PACKING_MESSAGES } from './ui-messages-packing.js'
 import { HELP_MESSAGES } from './ui-messages-help.js'
 import { VALIDATION_MESSAGES } from './ui-messages-validation.js'
 import { EXCEL_MESSAGES } from './ui-messages-excel.js'
+import { PACKING_EXPORT_MESSAGES } from './ui-messages-packing-export.js'
 import { MATERIAL_MESSAGES } from './ui-messages-materials.js'
 import { COPY_ACTION_MESSAGES } from './ui-messages-copy-actions.js'
 import { ERROR_MESSAGES } from './ui-messages-errors.js'
@@ -177,6 +178,7 @@ export const UI_MESSAGES = {
   ...HELP_MESSAGES,
   ...VALIDATION_MESSAGES,
   ...EXCEL_MESSAGES,
+  ...PACKING_EXPORT_MESSAGES,
   ...MATERIAL_MESSAGES,
   ...COPY_ACTION_MESSAGES,
   ...ERROR_MESSAGES,
