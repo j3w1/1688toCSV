@@ -3,9 +3,187 @@ import {
   seedSmartOrder,
   openSmartLibrary,
   createSmartContainer,
+  openOrderReconciliation,
+  productGridRow,
+  realOrderContext,
+  createContainerThroughUI,
+  sealContainerThroughUI,
 } from './smart-workspace-helpers.mjs'
 import { readFile } from 'node:fs/promises'
 import * as XLSX from 'xlsx'
+
+test('operator enters Pcs/box once, reviews the prefilled remainder once and loads/seals the confirmed order', async ({
+  extension,
+}) => {
+  const ref = await seedSmartOrder(extension, { count: 1, quantity: '100' }),
+    before = await realOrderContext(extension, ref),
+    page = await openSmartLibrary(extension),
+    grid = await openOrderReconciliation(page, ref),
+    row = productGridRow(grid, { ...ref, entryId: 'entry-0' }),
+    capacity = row.locator('[data-grid-column="capacity"]')
+  await capacity.fill('45')
+  await capacity.blur()
+  await expect
+    .poll(async () =>
+      String(
+        (await realOrderContext(extension, ref)).record.unitsPerCarton[
+          'entry-0'
+        ]
+      )
+    )
+    .toBe('45')
+  await expect(row.locator('[data-column="proposedCount"]')).toContainText('2')
+  await expect(row.locator('[data-column="unassigned"]')).toContainText('10')
+  const separate = row.locator('[data-action="separate-order-remainder"]')
+  await expect(separate).toHaveText('Separate box for these 10')
+  expect((await realOrderContext(extension, ref)).batches).toHaveLength(0)
+  await separate.click()
+  await expect(row.locator('[data-column="unassigned"]')).toContainText('0')
+  await grid.locator('[data-action="undo-order-cartons"]').click()
+  await expect(row.locator('[data-column="unassigned"]')).toContainText('10')
+  await grid.locator('[data-action="redo-order-cartons"]').click()
+  await expect(row.locator('[data-column="unassigned"]')).toContainText('0')
+  await grid.locator('[data-action="confirm-order-cartons"]').click()
+  await expect
+    .poll(async () =>
+      (await realOrderContext(extension, ref)).batches.reduce(
+        (n, batch) => n + (batch.deletedAt ? 0 : batch.count),
+        0
+      )
+    )
+    .toBe(3)
+  const confirmed = await realOrderContext(extension, ref)
+  expect(
+    confirmed.batches
+      .flatMap((batch) => batch.contents)
+      .reduce((n, part) => n + BigInt(part.quantity), 0n)
+  ).toBe(100n)
+  const id = await createContainerThroughUI(
+    page,
+    [ref],
+    'Synthetic remainder November'
+  )
+  await expect(
+    page.locator('#packing-view [data-grid-column="capacity"]')
+  ).toHaveCount(0)
+  await sealContainerThroughUI(page)
+  const manifest = await extension.inspector.evaluate(
+    async (id) => (await window.testRepository).getContainerManifest({ id }),
+    id
+  )
+  expect(manifest.draft).toBe(false)
+  expect(manifest.cartons).toHaveLength(3)
+  expect(manifest.products.map((row) => row.quantity)).toEqual(['100'])
+  const after = await realOrderContext(extension, ref)
+  expect(after.record.snapshot).toEqual(before.record.snapshot)
+  expect(after.record.productPhotos).toEqual(before.record.productPhotos)
+  expect(after.preparation.groups.map((group) => group.baseCode)).toEqual(
+    before.preparation.groups.map((group) => group.baseCode)
+  )
+  expect(extension.unexpectedRequests).toEqual([])
+})
+
+test('operator pastes six uneven 1688 cartons, confirms one scoped review and loads/seals the exact report', async ({
+  extension,
+}) => {
+  const ref = await seedSmartOrder(extension, { count: 1, quantity: '63' }),
+    before = await realOrderContext(extension, ref),
+    group = before.preparation.groups[0],
+    variant = group.variants[0],
+    code = group.baseCode + variant.variantSuffix + variant.sizeSuffix,
+    page = await openSmartLibrary(extension),
+    grid = await openOrderReconciliation(page, ref),
+    quantities = ['13', '12', '11', '9', '9', '9'],
+    weights = ['16.75', '14.62', '10.40', '5.63', '5.18', '4.64'],
+    dimensions = [
+      '60×50×40',
+      '60×50×40',
+      '50×43×36',
+      '48×37×27',
+      '48×37×27',
+      '48×37×27',
+    ],
+    source = [
+      '箱号\t货号\t装箱数 每箱\t体积 每箱\t重量 (KG) 每箱',
+      ...quantities.map(
+        (quantity, i) =>
+          `${String(i + 1).padStart(3, '0')}\t${code}\t${quantity}\t${dimensions[i]}\t${weights[i]}`
+      ),
+    ].join('\n')
+  await grid.locator('[data-action="paste-import-carton-list"]').click()
+  const review = page.locator('dialog[data-action="packing-report-intake"]')
+  await review.locator('textarea').fill(source)
+  await review.locator('[data-action="review-carton-report"]').click()
+  const unit = review
+    .locator('section')
+    .filter({ hasText: 'Confirm measurement unit' })
+    .getByRole('combobox')
+  await expect(unit).toBeVisible()
+  await unit.selectOption('cm')
+  await review.locator('[data-action="update-carton-report-review"]').click()
+  await expect(
+    review.locator('[data-action="commit-carton-report"]')
+  ).toBeEnabled()
+  await expect(review.locator('.smart-grid-scroll tbody tr')).toHaveCount(6)
+  await expect(review.locator('input[data-entry-id]')).toHaveCount(0)
+  await review.locator('[data-action="commit-carton-report"]').click()
+  await expect(review).toBeHidden()
+  const recorded = await realOrderContext(extension, ref),
+    batches = recorded.batches.filter((batch) => !batch.deletedAt),
+    ids = batches.map((batch) => batch.id).sort()
+  expect(batches).toHaveLength(6)
+  expect(batches.map((batch) => batch.contents[0].quantity).sort()).toEqual(
+    [...quantities].sort()
+  )
+  expect(batches.map((batch) => batch.cartonNumber).sort()).toEqual([
+    '001',
+    '002',
+    '003',
+    '004',
+    '005',
+    '006',
+  ])
+  expect(
+    batches.map((batch) => `${batch.len}×${batch.wid}×${batch.ht}`).sort()
+  ).toEqual([...dimensions].sort())
+  const id = await createContainerThroughUI(
+    page,
+    [ref],
+    'Synthetic uneven November'
+  )
+  await sealContainerThroughUI(page)
+  const result = await extension.inspector.evaluate(
+    async ({ id, ref }) => {
+      const repository = await window.testRepository,
+        manifest = await repository.getContainerManifest({ id }),
+        report = (await repository.getOrderReconciliation(ref)).reports[0]
+      return {
+        manifest,
+        report,
+        raw: await repository.getPackingReportSource({
+          rawAssetRef: report.source.rawAssetRef,
+        }),
+      }
+    },
+    { id, ref }
+  )
+  expect(result.manifest.draft).toBe(false)
+  expect(result.manifest.products.map((row) => row.quantity)).toEqual(['63'])
+  expect(result.manifest.cartons).toHaveLength(6)
+  expect(JSON.stringify(result.manifest.totals)).toContain('57.22')
+  expect(JSON.stringify(result.manifest.totals)).toContain('0.461256')
+  expect(result.raw.text).toBe(source)
+  const after = await realOrderContext(extension, ref)
+  expect(
+    after.batches
+      .filter((batch) => !batch.deletedAt)
+      .map((batch) => batch.id)
+      .sort()
+  ).toEqual(ids)
+  expect(after.record.snapshot).toEqual(before.record.snapshot)
+  expect(after.record.productPhotos).toEqual(before.record.productPhotos)
+  expect(extension.unexpectedRequests).toEqual([])
+})
 
 test('single click inspects, explicit checkbox selects and obsolete Prepare/Organize routes are absent', async ({
   extension,

@@ -3,6 +3,7 @@ import { message as m, bindText, bindAttribute } from './i18n.js'
 import { createVirtualTable } from './virtual-table.js'
 import { cartonBatchMetrics } from './carton-batches.js'
 import { physicalUnits, batchNeedsLegacyReview } from './inventory-model.js'
+import { reviewPackingChanges } from './packing-review.js'
 
 const clone = (value) => structuredClone(value)
 export const sourceKey = ({ accountId = 'local', orderId, entryId }) =>
@@ -595,6 +596,18 @@ export async function openLegacyCartonReview({
             : {}),
           reason: reason.value.trim(),
           ...(contextContainerId ? { contextContainerId } : {}),
+          ...(review.amendmentContext ||
+          Object.values(review.expectedOrderRevisions || {}).find(
+            (revision) => revision.amendmentContext
+          )?.amendmentContext
+            ? {
+                expectedAmendment:
+                  review.amendmentContext ||
+                  Object.values(review.expectedOrderRevisions).find(
+                    (revision) => revision.amendmentContext
+                  ).amendmentContext,
+              }
+            : {}),
         },
         signature = JSON.stringify(args)
       if (intent?.signature !== signature)
@@ -1069,6 +1082,12 @@ export function createGridDraftController({
     cancelParse() {
       parser?.abort()
     },
+    restore(value) {
+      parser?.abort()
+      state = { ...clone(value), generation: state.generation + 1 }
+      savedGeneration = -1
+      emit()
+    },
     clearAcknowledged(generation) {
       if (state.generation !== generation) return false
       parser?.abort()
@@ -1128,6 +1147,15 @@ export async function createOrderCartonSession({
       : {}),
   })
   let context = await repository.getOrderReconciliation(repositoryRef())
+  const amendmentContext = clone(
+    context.amendmentContext || context.revisions?.amendmentContext
+  )
+  const mutationContext = () => ({
+    ...(getContextContainerId()
+      ? { contextContainerId: getContextContainerId() }
+      : {}),
+    ...(amendmentContext ? { expectedAmendment: amendmentContext } : {}),
+  })
   const restored = context.draft?.value || context.draft || {}
   let expectedDraftRevision = context.draft?.revision ?? 0
   let domainDraft =
@@ -1157,9 +1185,11 @@ export async function createOrderCartonSession({
     async persist(value) {
       const saved = await repository.saveOrderCartonDraft({
         ...orderRef,
+        ...mutationContext(),
         expectedRevision: expectedDraftRevision,
         draft: clone({
           version: 1,
+          ...(amendmentContext ? { amendmentContext } : {}),
           plannerDraft: domainDraft,
           rawCells: value.rawCells,
           generation: value.generation,
@@ -1432,6 +1462,7 @@ export async function createOrderCartonSession({
       )
     writeWork = repository.updateOrderCapacities({
       ...orderRef,
+      ...mutationContext(),
       values,
       expectedValues,
       expectedObservedAt: context.record.snapshot.observedAt,
@@ -1454,6 +1485,47 @@ export async function createOrderCartonSession({
   const session = {
     orderRef,
     record: () => clone(context.record),
+    recoveredDrafts: () =>
+      clone(context.recoveredDrafts || []).sort(
+        (a, b) =>
+          String(b.updatedAt || '').localeCompare(String(a.updatedAt || '')) ||
+          (b.revision || 0) - (a.revision || 0)
+      ),
+    async recoverReviewed(envelope) {
+      if (
+        !(context.recoveredDrafts || []).some(
+          (entry) => JSON.stringify(entry) === JSON.stringify(envelope)
+        )
+      )
+        throw new Error('The recovered draft is no longer available.')
+      const value = clone(envelope.value || envelope)
+      domainDraft =
+        value.plannerDraft || planner.createReconciliationDraft(context)
+      if (amendmentContext)
+        domainDraft.amendmentContext = clone(amendmentContext)
+      history =
+        value.history?.domain ||
+        planner.createReconciliationHistory(domainDraft)
+      commandKinds.splice(
+        0,
+        commandKinds.length,
+        ...(value.history?.commandKinds || [])
+      )
+      commandCursor = value.history?.commandCursor ?? commandKinds.length
+      raw.restore({
+        ...value,
+        rawCells: value.rawCells || {},
+        amendmentContext,
+        history: value.history?.raw?.history || [],
+        cursor: value.history?.raw?.cursor || 0,
+      })
+      arrangementDirty = true
+      await raw.flush()
+      context.recoveredDrafts = context.recoveredDrafts.filter(
+        (entry) => JSON.stringify(entry) !== JSON.stringify(envelope)
+      )
+      notify()
+    },
     unitEntitlements(batchId) {
       const batch =
         domainDraft.cartons.find((batch) => batch.id === batchId) ||
@@ -1678,6 +1750,7 @@ export async function createOrderCartonSession({
         const contextContainerId = getContextContainerId()
         if (contextContainerId)
           input.draft.contextContainerId = contextContainerId
+        if (amendmentContext) input.draft.amendmentContext = amendmentContext
         const signature = JSON.stringify([input.draft, context.revisions])
         if (confirmIntent?.signature !== signature)
           confirmIntent = { signature, intentId: crypto.randomUUID() }
@@ -1772,6 +1845,46 @@ export function mountOrderCartonGrid(
   }
   const undo = action('Undo', 'undo-order-cartons', () => session.undo()),
     redo = action('Redo', 'redo-order-cartons', () => session.redo())
+  const recovered = session.recoveredDrafts?.() || []
+  if (recovered.length) {
+    const choice = el('select')
+    bindAttribute(choice, 'aria-label', m('Recovered carton draft'))
+    recovered.forEach((entry, index) =>
+      choice.append(
+        new Option(
+          `${entry.updatedAt || ''} · ${entry.amendmentContext?.epoch || entry.value?.amendmentContext?.epoch || index + 1}`,
+          String(index)
+        )
+      )
+    )
+    choice.value = '0'
+    toolbar.append(choice)
+    const recover = action(
+      'Review recovered carton draft',
+      'review-recovered-carton-draft',
+      async () => {
+        const envelope = recovered[Number(choice.value)],
+          value = envelope.value || envelope
+        const accepted = await reviewPackingChanges({
+          title: m('Review recovered carton draft'),
+          explanation: m(
+            'This draft belongs to an earlier amendment. Review every retained value against the current order before using it. Physical identities and revision checks still apply.'
+          ),
+          changes: [
+            {
+              name: m('Recovered carton draft'),
+              before: JSON.stringify(session.projection()),
+              after: JSON.stringify(value),
+            },
+          ],
+          proceed: m('Use these reviewed edits'),
+        })
+        if (!accepted) return
+        await session.recoverReviewed(envelope)
+        choice.hidden = recover.hidden = true
+      }
+    )
+  }
   action('Select visible rows', 'select-grid-rows', () => {
     selected.clear()
     visibleKeys.forEach((key) => selected.add(key))
@@ -2620,6 +2733,9 @@ export async function createPackingReportIntakeController({
   }
   const client = createClient(),
     context = await repository.getPackingReportContext(contextRef)
+  const amendmentContext = clone(
+    context.amendmentContext || context.expectedRevisions?.amendmentContext
+  )
   let state = {
       context,
       source: null,
@@ -2632,10 +2748,17 @@ export async function createPackingReportIntakeController({
       generation: 0,
     },
     commitWork
-  const recoveryKey = `1688-orders-report-draft:${JSON.stringify([orderRef.accountId, orderRef.orderId])}`
+  const recoveryKey = `1688-orders-report-draft:${JSON.stringify([orderRef.accountId, orderRef.orderId])}${contextContainerId ? `:amendment:${contextContainerId}` : ''}`
   try {
     const recovered = JSON.parse(globalThis.localStorage?.getItem(recoveryKey))
-    if (recovered) {
+    if (
+      recovered &&
+      JSON.stringify(recovered.amendmentContext || null) !==
+        JSON.stringify(amendmentContext || null)
+    ) {
+      const { recoveredDrafts = [], ...draft } = recovered
+      state.recoveredDrafts = [draft, ...recoveredDrafts]
+    } else if (recovered) {
       state = {
         ...state,
         ...recovered,
@@ -2657,6 +2780,10 @@ export async function createPackingReportIntakeController({
           priorReport: state.priorReport,
           text: state.text,
           generation: state.generation,
+          ...(state.recoveredDrafts?.length
+            ? { recoveredDrafts: state.recoveredDrafts }
+            : {}),
+          ...(amendmentContext ? { amendmentContext } : {}),
         })
       )
     } catch {
@@ -2727,6 +2854,33 @@ export async function createPackingReportIntakeController({
   }
   return {
     state: () => clone(state),
+    recoverReviewed(recovered) {
+      if (
+        !state.recoveredDrafts?.some(
+          (entry) => JSON.stringify(entry) === JSON.stringify(recovered)
+        )
+      )
+        throw new Error('The recovered draft is no longer available.')
+      client.cancel()
+      const remaining = state.recoveredDrafts.filter(
+        (entry) => JSON.stringify(entry) !== JSON.stringify(recovered)
+      )
+      state = {
+        ...state,
+        ...clone(recovered),
+        context,
+        amendmentContext,
+        generation: state.generation + 1,
+        analysis: null,
+        review: null,
+        plan: null,
+        ids: undefined,
+        intent: undefined,
+        recoveredDrafts: remaining,
+      }
+      retain()
+      emit()
+    },
     inputText(text) {
       client.cancel()
       state.generation++
@@ -3023,6 +3177,40 @@ export async function openPackingReportIntake({
     onChange: render,
   })
   input.value = controller.state().text || ''
+  const recovered = controller.state().recoveredDrafts || []
+  if (recovered.length) {
+    const recover = el('button', m('Review recovered carton report'))
+    recover.dataset.action = 'review-recovered-carton-report'
+    actions.prepend(recover)
+    recover.onclick = () =>
+      void (async () => {
+        const accepted = await reviewPackingChanges({
+          title: m('Review recovered carton report'),
+          explanation: m(
+            'This report draft belongs to an earlier amendment. Review its original source and decisions before using it in the current review.'
+          ),
+          changes: [
+            {
+              name: m('Supplier carton report cells'),
+              before: '',
+              after: recovered[0].text || JSON.stringify(recovered[0].source),
+            },
+            {
+              name: m('Evidence'),
+              before: '',
+              after: JSON.stringify(recovered[0].decisions || {}),
+            },
+          ],
+          proceed: m('Use these reviewed edits'),
+        })
+        if (!accepted) return
+        controller.recoverReviewed(recovered[0])
+        input.value = controller.state().text || ''
+        await controller.updateReview()
+        await controller.plan()
+        recover.remove()
+      })().catch(failure)
+  }
   prior.append(
     new Option(String(m('New carton report')), ''),
     ...(controller.state().context.previousReports || []).map(
