@@ -445,7 +445,7 @@ test('numbered cartons retain exact cross-code minority contents and independent
   await grid.locator('[data-action="select-grid-rows"]').click()
   await grid.locator('[data-action="fill-grid-range"]').click()
   const alignment = page.locator('.grid-paste-preview')
-  await expect(alignment).toContainText('dimensions')
+  await expect(alignment).toContainText('Dimensions (cm)')
   await expect(alignment).not.toContainText('weight')
   await alignment
     .getByRole('button', { name: 'Use this alignment', exact: true })
