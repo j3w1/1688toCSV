@@ -260,3 +260,52 @@ export async function shareOrderBarcode(page, indices = [0, 1]) {
   await expect(review).toBeHidden()
   await expect(tools).toBeHidden()
 }
+
+/** Operator flow: no model writes are used to create or include the container. */
+export async function createContainerThroughUI(
+  page,
+  refs,
+  name = 'Synthetic October container'
+) {
+  await page.locator('#view-packing').click()
+  const workspace = page.locator('#packing-view')
+  await workspace.locator('[data-action="create-container"]').click()
+  const prompt = page.locator('dialog[open]').last()
+  await prompt
+    .getByRole('textbox', { name: 'Container name', exact: true })
+    .fill(name)
+  await prompt
+    .getByRole('button', { name: 'Create container', exact: true })
+    .click()
+  await expect(prompt).toBeHidden()
+  const selector = workspace.locator('[data-action="choose-container"]')
+  await expect(selector).not.toHaveValue('')
+  const id = await selector.inputValue()
+  await workspace.locator('[data-action="include-container-orders"]').click()
+  const include = page.locator('.container-inclusion-dialog')
+  for (const ref of refs)
+    await include
+      .locator(
+        `.container-inclusion-order[data-order-id=${JSON.stringify(ref.orderId)}][data-account-id=${JSON.stringify(ref.accountId || 'local')}]`
+      )
+      .getByRole('checkbox')
+      .check()
+  await include.locator('[data-action="confirm-container-orders"]').click()
+  await expect(include).toBeHidden()
+  return id
+}
+
+export async function sealContainerThroughUI(page, { markAll = true } = {}) {
+  const workspace = page.locator('#packing-view')
+  if (markAll)
+    await workspace.locator('[data-action="mark-all-loaded"]').click()
+  await workspace.locator('[data-action="review-container-seal"]').click()
+  const review = page.locator('.container-review-dialog')
+  await expect(review).toBeVisible()
+  await expect(review.locator('[data-action="seal-container"]')).toBeEnabled()
+  await review.locator('[data-action="seal-container"]').click()
+  await expect(review).toBeHidden()
+  await expect(
+    workspace.locator('[data-action="amend-container"]')
+  ).toBeEnabled()
+}

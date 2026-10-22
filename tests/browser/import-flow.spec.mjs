@@ -1,5 +1,9 @@
 import { test, expect } from './extension-fixture.mjs'
 import { revealCopyActions } from './copy-actions-helpers.mjs'
+import {
+  assignSelectedPurchaseCodes,
+  libraryBackup,
+} from './smart-workspace-helpers.mjs'
 import { buildOrderFixture } from '../fixtures/order-fixture.mjs'
 import { readFile } from 'node:fs/promises'
 
@@ -181,16 +185,8 @@ test('each imported order appears immediately in purchase order without resettin
     await expect(rows).toHaveCount(2, { timeout: 65000 })
     await expect(library.locator('.order-card')).toHaveCount(1)
     await library.locator('#select-rows').click()
-    await library.getByLabel('Packing month', { exact: true }).fill('2026-10')
-    await library.locator('#prepare-orders').click()
-    await library
-      .getByRole('button', { name: 'Assign codes and prepare', exact: true })
-      .click()
-    const packing = library.locator('#packing-view')
-    await expect(packing.locator('.preparation-save-status')).toHaveText(
-      'Saved automatically'
-    )
-    await packing.page().locator('#view-orders').click()
+    await assignSelectedPurchaseCodes(library)
+    await expect(library.locator('#orders-view')).toBeVisible()
     // Preserve a real filter and an existing selection while the second order
     // commits. No page reload or import completion is needed to render it.
     const status = await library
@@ -198,8 +194,7 @@ test('each imported order appears immediately in purchase order without resettin
       .nth(1)
       .getAttribute('value')
     await library.locator('#status-filter').selectOption(status)
-    await rows.first().focus()
-    await library.keyboard.press('Space')
+    await rows.first().getByRole('checkbox').check()
     const selected = await library
       .locator('#sheet-body tr[aria-selected=true]')
       .getAttribute('data-selection-key')
@@ -207,15 +202,20 @@ test('each imported order appears immediately in purchase order without resettin
     await expect(rows).toHaveCount(4, { timeout: 65000 })
     await expect(library.locator('#status-filter')).toHaveValue(status)
     await expect(
-      library.locator(`#sheet-body tr[data-selection-key="${selected}"]`)
+      library.locator(
+        `#sheet-body tr[data-selection-key=${JSON.stringify(selected)}]`
+      )
     ).toHaveAttribute('aria-selected', 'true')
     const orderKeys = await library
       .locator('.order-card')
       .evaluateAll((cards) => cards.map((card) => card.dataset.selectionKey))
-    expect(orderKeys).toEqual([ids[1], ids[0]])
+    expect(orderKeys).toEqual([
+      JSON.stringify(['local', ids[1]]),
+      JSON.stringify(['local', ids[0]]),
+    ])
     expect(
       await rows.evaluateAll((elements) =>
-        elements.map((row) => row.dataset.selectionKey.split('/')[0])
+        elements.map((row) => JSON.parse(row.dataset.selectionKey)[1])
       )
     ).toEqual([ids[1], ids[1], ids[0], ids[0]])
     expect(extension.unexpectedRequests).toEqual([])
@@ -242,10 +242,8 @@ test('1688 list and detail controls follow saved workspace palettes and mode wit
   })
   for (const panel of [listPanel, detailPanel])
     await expect(panel).toHaveCSS('background-color', 'rgb(36, 33, 29)')
-  // Packing status renders after storage startup has attached Settings actions.
-  await expect(library.locator('#packing-scope')).toHaveText(
-    'Select products first. Ctrl+A selects all filtered products.'
-  )
+  // Orders code controls render after storage startup has attached Settings actions.
+  await expect(library.locator('#review-purchase-codes')).toBeVisible()
   await library.getByRole('button', { name: 'Settings', exact: true }).click()
   const settings = library.getByRole('dialog', {
     name: 'Settings',
@@ -330,7 +328,7 @@ async function assertImported(extension, library) {
   expect(extension.unexpectedRequests).toEqual([])
 }
 
-test('missing sellers import products but require identification before label preparation', async ({
+test('missing seller imports retain products and require explicit authored identity before purchase-code assignment', async ({
   extension,
 }) => {
   const { list, library } = await setup(extension, { missingSeller: true })
@@ -341,16 +339,14 @@ test('missing sellers import products but require identification before label pr
     .getByRole('button', { name: 'Import 2 selected orders', exact: true })
     .click()
   await assertImported(extension, library)
-  const { data } = await extension.inspector.evaluate(() =>
-    chrome.runtime.sendMessage({ type: 'LIBRARY_QUERY' })
-  )
+  const before = await libraryBackup(extension)
   expect(
-    data.orders.every(
+    before.orders.every(
       ({ snapshot }) =>
         snapshot.sellerUnavailable && snapshot.items.length === 2
     )
   ).toBe(true)
-  await library.locator('.order-card-meta').first().dblclick()
+  await library.locator('.order-card-meta').first().click()
   await expect(library.locator('#order-details')).toContainText(
     'Products and totals are saved'
   )
@@ -358,67 +354,91 @@ test('missing sellers import products but require identification before label pr
     .getByRole('button', { name: 'Close order details', exact: true })
     .click()
   await library.getByRole('button', { name: 'Show all', exact: true }).click()
-  await library.locator('.order-card-meta').first().click()
+  await expandOrderMonths(library)
+  const card = library.locator('.order-card').first(),
+    orderId = await card.getAttribute('data-order-id')
+  await card.getByRole('checkbox').check()
   await library.locator('#select-rows').click()
-  await library.locator('#prepare-orders').click()
-  await library
-    .getByRole('button', { name: 'Assign codes and prepare', exact: true })
-    .click()
-  const dialog = library.locator('#packing-view')
-  const seller = dialog.getByLabel('Seller member login (required)', {
-    exact: true,
-  })
-  await expect(seller).toHaveValue('')
-  await dialog
-    .getByLabel('Spanish short name', { exact: true })
+  await library.locator('#review-purchase-codes').click()
+  const review = library.locator('[data-action="purchase-code-review"]')
+  await expect(
+    review.locator('[data-action="assign-purchase-codes"]')
+  ).toBeDisabled()
+  expect((await libraryBackup(extension)).preparations).toEqual([])
+  await review
+    .locator('[data-action="review-purchase-evidence"]')
     .first()
-    .fill('PRODUCTO')
-  await dialog.page().locator('#view-orders').click()
-  await expect(seller).toBeFocused()
-  await expect(dialog.locator('.error-notice-message')).toContainText(
-    'Enter the seller member login'
-  )
-  await expect(
-    dialog.getByLabel('Product code', { exact: true }).first()
-  ).toHaveValue('')
-  await dialog
-    .getByRole('button', { name: 'Discard pending edits', exact: true })
     .click()
-  await expect(
-    library.getByRole('dialog', { name: 'Confirm operation', exact: true })
-  ).not.toBeVisible()
-  await dialog.page().locator('#view-orders').click()
-  await expect(dialog).not.toBeVisible()
-  await library.locator('#prepare-orders').click()
-  await library
-    .getByRole('button', { name: 'Assign codes and prepare', exact: true })
-    .click()
+  const evidence = library.locator(
+      'dialog[data-action="review-purchase-evidence"]'
+    ),
+    seller = evidence.getByRole('textbox', {
+      name: 'Authored supplier identity',
+      exact: true,
+    })
+  await expect(seller).toHaveValue('')
+  await evidence.locator('[data-action="resolve-purchase-supplier"]').click()
+  await expect(evidence).toBeVisible()
+  expect((await libraryBackup(extension)).preparations).toEqual([])
   await seller.fill('identified-synthetic-shop')
-  await expect(dialog.locator('.preparation-save-status')).toHaveText(
-    'Saved automatically'
+  await evidence.locator('[data-action="resolve-purchase-supplier"]').click()
+  await expect(evidence).toBeHidden()
+  const resolved = await libraryBackup(extension),
+    record = resolved.orders.find(
+      (record) => record.snapshot.orderId === orderId
+    )
+  expect(record.supplierIdentityResolution).toMatchObject({
+    sellerId: 'identified-synthetic-shop',
+    provenance: 'manual-confirmed',
+  })
+  expect(resolved.orders.map((record) => record.snapshot)).toEqual(
+    before.orders.map((record) => record.snapshot)
   )
+  if (!record.snapshot.purchasedAt) {
+    await library
+      .locator('#sheet-body [data-action="review-purchase-evidence"]')
+      .first()
+      .click()
+    await evidence
+      .getByLabel('Resolved original purchase date', { exact: true })
+      .fill('2026-09-17')
+    await evidence.locator('[data-action="resolve-purchase-date"]').click()
+    await expect(evidence).toBeHidden()
+    expect(
+      (await libraryBackup(extension)).orders.find(
+        (value) => value.snapshot.orderId === orderId
+      ).purchaseDateResolution
+    ).toMatchObject({ date: '2026-09-17', provenance: 'manual-confirmed' })
+  }
+  await assignSelectedPurchaseCodes(library)
   await expect(
-    dialog.getByLabel('Product code', { exact: true }).first()
-  ).toHaveValue(/^CE\d{8}$/)
-  await expect(dialog.locator('.preparation-save-status')).not.toHaveClass(
-    /packing-error/
-  )
+    library.locator('#sheet-body .row-code-copy').first()
+  ).toHaveText(/^CE\d{8}/)
   await library.reload()
-  await library.locator('#prepare-orders').click()
-  await expect(seller).toHaveValue('identified-synthetic-shop')
-  await dialog.page().locator('#view-orders').click()
   await library.getByRole('button', { name: 'Show all', exact: true }).click()
   await expandOrderMonths(library)
-  await library.locator('.order-card-meta').nth(1).click()
+  const other = library
+    .locator(`.order-card:not([data-order-id=${JSON.stringify(orderId)}])`)
+    .first()
+  await other.getByRole('checkbox').check()
   await library.locator('#select-rows').click()
-  await library.locator('#prepare-orders').click()
-  await library
-    .getByRole('button', { name: 'Assign codes and prepare', exact: true })
-    .click()
-  await expect(seller).toHaveValue('')
+  await library.locator('#review-purchase-codes').click()
   await expect(
-    dialog.getByLabel('Product code', { exact: true }).first()
+    review.locator('[data-action="assign-purchase-codes"]')
+  ).toBeDisabled()
+  await review
+    .locator('[data-action="review-purchase-evidence"]')
+    .first()
+    .click()
+  await expect(
+    evidence.getByRole('textbox', {
+      name: 'Authored supplier identity',
+      exact: true,
+    })
   ).toHaveValue('')
+  expect(
+    (await libraryBackup(extension)).orders.map((record) => record.snapshot)
+  ).toEqual(before.orders.map((record) => record.snapshot))
 })
 
 test('unsigned price increases import only after totals reconcile and remain valid in backup', async ({
