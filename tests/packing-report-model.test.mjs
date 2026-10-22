@@ -70,6 +70,46 @@ const sixRows = [
 ]
 const headings = ['箱号', '货号', '装箱数 每箱', '体积 每箱', '重量 (KG) 每箱']
 
+test('uncached formulas and formula errors in optional roles cannot default to a box or disappear as blank notes', () => {
+  for (const col of [1, 2, 3, 4]) {
+    for (const formulaOnlyRow of [false, true]) {
+      const source = sourceOf('箱号\t货号\t箱数\t装箱数 每箱\n001\t旧码\t1\t10')
+      const cells = source.sheets[0].cells
+      if (formulaOnlyRow)
+        for (const cell of cells.filter((cell) => cell.row === 2))
+          cell.raw = null
+      Object.assign(
+        cells.find((cell) => cell.row === 2 && cell.col === col),
+        {
+          raw: null,
+          formula: 'SUM(A1:A2)',
+          type: 'n',
+        }
+      )
+      const { analysis, review } = reviewed(source)
+      assert.equal(
+        review.valid,
+        false,
+        `column ${col}, blank ${formulaOnlyRow}`
+      )
+      assert(analysis.issues.some((issue) => issue.code === 'formulaCache'))
+      assert.equal(analysis.candidates.length, 0)
+    }
+  }
+  const source = sourceOf('箱号\t箱数\t装箱数 每箱\n001\t1\t10\n合计\t1\t10')
+  Object.assign(
+    source.sheets[0].cells.find((cell) => cell.row === 3 && cell.col === 2),
+    {
+      raw: null,
+      error: '#VALUE!',
+      formula: 'SUM(B2)',
+    }
+  )
+  const { analysis, review } = reviewed(source)
+  assert.equal(review.valid, false)
+  assert(analysis.issues.some((issue) => issue.code === 'formulaCache'))
+})
+
 test('AC6 six exact uneven cartons retain group-unknown variants, exact cm totals and six boundary IDs in TSV and XLSX', async () => {
   const book = utils.book_new()
   utils.book_append_sheet(

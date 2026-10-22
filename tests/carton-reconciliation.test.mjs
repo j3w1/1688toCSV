@@ -12,6 +12,7 @@ import {
   redoReconciliationHistory,
 } from '../src/carton-reconciliation.js'
 import { addExact } from '../src/carton-arithmetic.js'
+import { applyCartonUnitException } from '../src/carton-batches.js'
 
 const input = (quantities, capacities = {}, rest = {}) => ({
   record: {
@@ -51,6 +52,60 @@ const conservation = (plan) =>
     ),
     plan.coverage.purchased
   )
+
+test('a stable physical exception retains untouched measured coverage without inventing an affected weight', () => {
+  const batch = box(
+    'uniform',
+    { A: '30' },
+    {
+      storeId: 'synthetic-store',
+      revision: 1,
+      count: 3,
+      packingBasis: 'uniform',
+      weight: '2.5',
+      weightBasis: 'carton',
+      len: '50',
+      wid: '40',
+      ht: '30',
+    }
+  )
+  const changed = applyCartonUnitException({
+    batch,
+    index: 1,
+    contents: [{ orderId: 'O', entryId: 'A', quantity: '9' }],
+  })
+  const plan = reconcileOrder(input({ A: '30' }, {}, { batches: [changed] }))
+  assert.equal(plan.knownWeight, '5')
+  assert.equal(plan.weightCoverage.knownCount, 2)
+  assert.equal(plan.weightCoverage.missingCount, 1)
+  assert.equal(plan.knownVolume, '0.18')
+  assert.equal(plan.volumeCoverage.knownCount, 3)
+  assert.equal(plan.unassignedPieces, '1')
+  assert.equal(plan.cartons[0].totalWeight, null)
+  assert.equal(
+    reconciliationMeasurementForCount(plan.cartons[0], 1).weight,
+    null
+  )
+  const measured = applyCartonUnitException({
+    batch: changed,
+    index: 1,
+    measurements: { weight: '2.4' },
+  })
+  const next = reconcileOrder(input({ A: '30' }, {}, { batches: [measured] }))
+  assert.equal(next.knownWeight, '7.4')
+  assert.equal(next.weightCoverage.knownCount, 3)
+  assert.equal(next.weightCoverage.missingCount, 0)
+  assert.equal(next.weightCoverage.complete, false) // One unassigned piece remains.
+  assert.equal(
+    reconciliationMeasurementForCount(next.cartons[0], 1).weight,
+    null
+  )
+  assert.equal(
+    reconciliationMeasurementForCount(next.cartons[0], 3).weight,
+    '7.4'
+  )
+  assert.deepEqual(changed.sourceFacts.contents, batch.contents)
+})
 
 test('AC9 table: uniform proposals and exact prefilled remainder, missing capacity stays visible', () => {
   for (const [q, c, count, remainder] of [

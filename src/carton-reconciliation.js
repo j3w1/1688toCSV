@@ -127,6 +127,67 @@ function measurement(batch, field, issues) {
 
 /** Full-set facts only. Combined totals never become invented per-unit facts. */
 function cartonMeasurements(batch, issues) {
+  if (batch.unitMeasurements && batch.count !== null) {
+    const { unitMeasurements, ...base } = batch
+    const indices = batch.entitlementIndices || null
+    const overrides = Object.entries(unitMeasurements).filter(([index]) =>
+      indices ? indices.includes(Number(index)) : Number(index) < batch.count
+    )
+    const unit = {
+      ...base,
+      count: 1,
+      weight: (base.weightBasis ?? 'carton') === 'carton' ? base.weight : null,
+      suppliedCbm:
+        (base.volumeBasis ?? 'carton') === 'carton' ? base.suppliedCbm : null,
+      weightBasis: 'carton',
+      volumeBasis: 'carton',
+    }
+    const unchangedCount = batch.count - overrides.length
+    const measurements = overrides.map(([, values]) => ({
+      count: 1,
+      ...cartonMeasurements({ ...unit, ...values }, issues),
+    }))
+    if (unchangedCount)
+      measurements.push({
+        count: unchangedCount,
+        ...cartonMeasurements(unit, issues),
+      })
+    const metric = (field) => {
+      const known = measurements.filter((row) => row[field] !== null)
+      const knownCount = known.reduce((total, row) => total + row.count, 0)
+      const knownSubtotal = known.length
+        ? addExact(
+            ...known.map((row) => multiplyExact(row[field], String(row.count)))
+          )
+        : batch.count === 0
+          ? '0'
+          : null
+      return {
+        knownCount,
+        missingCount: batch.count - knownCount,
+        knownSubtotal,
+        total: knownCount === batch.count ? knownSubtotal : null,
+        perCarton:
+          knownCount === batch.count &&
+          known.length &&
+          known.every((row) => row[field] === known[0][field])
+            ? known[0][field]
+            : null,
+      }
+    }
+    const weight = metric('totalWeight'),
+      volume = metric('totalVolume')
+    return {
+      totalWeight: weight.total,
+      totalVolume: volume.total,
+      dimensionVolume: null,
+      suppliedVolume: null,
+      suppliedTotalVolume: null,
+      weightPerCarton: weight.perCarton,
+      volumePerCarton: volume.perCarton,
+      unitMeasurementCoverage: { totalWeight: weight, totalVolume: volume },
+    }
+  }
   const weight = measurement(batch, 'weight', issues)
   const suppliedVolume = measurement(batch, 'suppliedCbm', issues)
   const dimensions = ['len', 'wid', 'ht'].map((field) =>
@@ -208,6 +269,34 @@ export function reconciliationMeasurementForCount(carton, selectedCount) {
 }
 
 function coverage(cartons, field) {
+  if (cartons.some((carton) => carton.unitMeasurementCoverage)) {
+    const rows = cartons.map(
+      (carton) =>
+        carton.unitMeasurementCoverage?.[field] || {
+          knownCount: carton[field] === null ? 0 : carton.count,
+          missingCount: carton[field] === null ? carton.count : 0,
+          knownSubtotal: carton[field],
+        }
+    )
+    const total = (key) =>
+      rows.some((row) => row[key] === null)
+        ? null
+        : rows.reduce((value, row) => value + row[key], 0)
+    const values = rows
+      .map((row) => row.knownSubtotal)
+      .filter((value) => value !== null)
+    return {
+      knownCount: total('knownCount'),
+      missingCount: total('missingCount'),
+      totalCount: countTotal(cartons),
+      unknownCountBatches: cartons
+        .filter((carton) => carton.count === null)
+        .map((carton) => carton.id),
+      complete: rows.every((row) => row.missingCount === 0),
+      knownSubtotal:
+        values.length || !cartons.length ? addExact(...values) : null,
+    }
+  }
   const measured = cartons.filter((carton) => carton[field] !== null)
   const absent = cartons.filter((carton) => carton[field] === null)
   return {
