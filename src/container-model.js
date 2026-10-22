@@ -272,6 +272,51 @@ function knownLoadedContents(member, loaded, reports) {
       units.some((unit) => !loaded.some((selected) => selected.id === unit.id))
     )
       continue
+    const scopes = activeBatches.filter((batch) => batchIds.includes(batch.id))
+    // Current actual contents outrank an older aggregate interpretation.
+    if (
+      units.every((unit) => unit.contents !== null) ||
+      scopes.every(
+        (batch) => !batch.contentsUnknown && !batch.unresolvedContents?.length
+      )
+    )
+      continue
+    const minimums = new Map()
+    for (const batch of scopes) {
+      const known = new Map()
+      for (const unit of units.filter((unit) => unit.batchId === batch.id))
+        for (const row of unit.contents || [])
+          known.set(
+            row.entryId,
+            (known.get(row.entryId) || 0n) + wholeUnits(row.quantity)
+          )
+      for (const row of batch.contents || [])
+        if (wholeUnits(row.quantity) > (known.get(row.entryId) || 0n))
+          known.set(row.entryId, wholeUnits(row.quantity))
+      for (const [entryId, quantity] of known)
+        minimums.set(entryId, (minimums.get(entryId) || 0n) + quantity)
+    }
+    const claimed = new Map()
+    for (const row of claim.contents || [])
+      claimed.set(
+        row.entryId,
+        (claimed.get(row.entryId) || 0n) + wholeUnits(row.quantity)
+      )
+    if (
+      units.some((unit) => coveredUnits.has(unit.id)) ||
+      [...minimums].some(
+        ([entryId, quantity]) => quantity > (claimed.get(entryId) || 0n)
+      )
+    ) {
+      issues.push({
+        code: 'COMPLETE_SET_COVERAGE_CONFLICT',
+        batchIds,
+        orderId: member.orderId,
+        message:
+          'The aggregate product claim conflicts with current actual contents or overlapping established coverage.',
+      })
+      continue
+    }
     for (const item of claim.contents || [])
       contents.push({
         orderId: member.orderId,
@@ -507,6 +552,45 @@ function buildProductRows(
     }
     const weights = measurementShares(measurement.weight, parts),
       volumes = measurementShares(measurement.volume, parts)
+    for (const row of rows) {
+      if (weights.has(row.entryId))
+        row.allocatedWeight = decimalTotal([
+          row.allocatedWeight || '0',
+          weights.get(row.entryId),
+        ])
+      if (volumes.has(row.entryId))
+        row.allocatedVolume = decimalTotal([
+          row.allocatedVolume || '0',
+          volumes.get(row.entryId),
+        ])
+    }
+  }
+  const measuredSets = new Map()
+  for (const part of contents) {
+    if (part.coverageBatchIds?.length < 2 || !part.coverageBatchIds) continue
+    const key = stableValue([...part.coverageBatchIds].sort())
+    if (!measuredSets.has(key))
+      measuredSets.set(key, { ids: part.coverageBatchIds, parts: [] })
+    measuredSets.get(key).parts.push(part)
+  }
+  for (const { ids, parts } of measuredSets.values()) {
+    const selected = cartons.filter((unit) => ids.includes(unit.batchId)),
+      measurement = cartonMeasurementTotals(
+        selected,
+        member.batches.filter((batch) => ids.includes(batch.id))
+      ),
+      quantities = new Map()
+    for (const part of parts)
+      quantities.set(
+        part.entryId,
+        (quantities.get(part.entryId) || 0n) + wholeUnits(part.quantity)
+      )
+    const allocation = [...quantities].map(([entryId, quantity]) => ({
+        entryId,
+        quantity: String(quantity),
+      })),
+      weights = measurementShares(measurement.weight, allocation),
+      volumes = measurementShares(measurement.volume, allocation)
     for (const row of rows) {
       if (weights.has(row.entryId))
         row.allocatedWeight = decimalTotal([
@@ -950,6 +1034,8 @@ export function assertManifestEvidence(manifest) {
         index: value.index,
         accountId: value.accountId,
         orderId: value.orderId,
+        reference: value.reference,
+        labelOrigin: value.labelOrigin,
         contents: value.contents,
         weight: value.weight,
         volume: value.volume,
