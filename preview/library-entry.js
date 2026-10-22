@@ -45,12 +45,32 @@ const entryRefs = allOrders.flatMap(({ accountId, snapshot }) =>
     entryId,
   }))
 )
-const review = await repository.reviewPurchaseCodes({ orderRefs, entryRefs })
-await repository.assignPurchaseCodes({
-  plan: review.plan || review,
-  expectedRevisions: review.expectedRevisions,
-  intentId: 'synthetic-preview-codes-v1',
-})
+const prepared = new Set(
+  (await repository.listPreparations({})).flatMap((preparation) =>
+    preparation.groups.flatMap((group) =>
+      group.variants.flatMap((variant) =>
+        variant.entryIds.map((entryId) =>
+          JSON.stringify([preparation.accountId, preparation.orderId, entryId])
+        )
+      )
+    )
+  )
+)
+const missing = entryRefs.filter(
+  (ref) =>
+    !prepared.has(JSON.stringify([ref.accountId, ref.orderId, ref.entryId]))
+)
+if (missing.length) {
+  const review = await repository.reviewPurchaseCodes({
+    orderRefs,
+    entryRefs: missing,
+  })
+  await repository.assignPurchaseCodes({
+    plan: review.plan || review,
+    expectedRevisions: review.expectedRevisions,
+    intentId: crypto.randomUUID(),
+  })
+}
 for (const ref of orderRefs.slice(0, 2)) {
   let context = await repository.getOrderReconciliation(ref)
   if (context.batches.some((batch) => !batch.deletedAt)) continue
