@@ -373,6 +373,10 @@ test('a batch editor retains its stale draft and rejects overwriting a newer phy
   const other = await extension.context.newPage()
   await other.clock.setFixedTime(new Date('2026-10-15T04:00:00Z'))
   await other.goto(`${extension.extensionBaseUrl}/library.html`)
+  await expect(other.locator('#sheet-body tr[data-selection-key]')).toHaveCount(
+    3
+  )
+  await expect(other.locator('#prepare-orders')).toBeEnabled()
   await other.locator('#view-packing').click()
   const otherPacking = other.locator('#packing-view'),
     otherDialog = await openBatch(other, otherPacking)

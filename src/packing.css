@@ -2681,7 +2681,7 @@ html:has(body.packing-active) {
   overflow-wrap: anywhere;
   text-align: end;
 }
-.carton-recorded-context .carton-batch-readout {
+.preparation-workspace .carton-recorded-context .carton-batch-readout {
   max-inline-size: 100%;
   min-block-size: 0;
   margin: 3px 0 0;
@@ -3022,11 +3022,11 @@ html:has(body.packing-active) {
 .packing-normal .variants .variant-carton-columns,
 .packing-normal .variants col.variant-carton-columns,
 .packing-normal .variants col:nth-child(3) {
-  width: 154px;
+  width: 174px;
 }
 .packing-normal .variant-numeric-header,
 .packing-normal .variant-numeric-row {
-  grid-template-columns: 50px 80px;
+  grid-template-columns: 50px 100px;
   gap: 6px;
 }
 .product-carton-batch-context {
@@ -3041,6 +3041,7 @@ html:has(body.packing-active) {
 @media (pointer: coarse) {
   .preparation-workspace .packing-group-cartons button,
   .preparation-workspace .carton-batch-readout,
+  .preparation-workspace .carton-recorded-context .carton-batch-readout,
   .product-carton-batch-context button {
     min-block-size: 44px;
   }

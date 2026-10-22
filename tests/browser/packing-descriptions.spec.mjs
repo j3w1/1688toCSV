@@ -138,12 +138,30 @@ for (const kind of ['market', 'factory']) {
         descriptionGap: title.top - code.bottom,
         metadataAlignment: Math.abs(attributes.top - price.top),
         height: row.getBoundingClientRect().height,
+        geometry: [
+          ...row.querySelectorAll(
+            'td, .variant-numeric-header, .variant-numeric-row, .carton-capacity-cell, .carton-capacity, .carton-capacity input, .carton-capacity-summary, .carton-recorded-context, .carton-batch-readout'
+          ),
+        ].map((node) => {
+          const rect = node.getBoundingClientRect()
+          const style = getComputedStyle(node)
+          return {
+            element: node.className || node.tagName,
+            text: node.textContent,
+            width: rect.width,
+            height: rect.height,
+            font: style.font,
+            lineHeight: style.lineHeight,
+            padding: style.padding,
+            margin: style.margin,
+          }
+        }),
       }
     })
     expect(layout.descriptionGap).toBeGreaterThanOrEqual(0)
     expect(layout.descriptionGap).toBeLessThanOrEqual(6)
     expect(layout.metadataAlignment).toBeLessThanOrEqual(6)
-    expect(layout.height).toBeLessThanOrEqual(100)
+    expect(layout.height, JSON.stringify(layout)).toBeLessThanOrEqual(100)
     const note = rows.first().locator('.variant-note textarea')
     await note.fill('Ivory finish\nHandle on left')
     await note.blur()
