@@ -6,12 +6,15 @@ import {
   groupPackingMonth,
   sameCodeOwner,
   validatePreparation,
+  packingCodeSellerId,
 } from './packing-model.js'
 import { featureSignature } from './product-features.js'
 import {
   assertRepeatCodeEligibility,
   purchaseMonthForCodes,
   purchaseSupplierForCodes,
+  hasReviewedSupplierCodeIdentity,
+  supplierCodeIdentityEquivalences,
 } from './purchase-codes.js'
 import { sourceRevision } from './inventory-model.js'
 
@@ -177,8 +180,7 @@ function assertCompatible(source, target, preparations, locks) {
   if (
     [source, target].some(
       (value) =>
-        value.preparation.sellerId !==
-        purchaseSupplierForCodes(value.record).sellerId
+        !hasReviewedSupplierCodeIdentity(value.record, value.preparation)
     )
   )
     throw Object.assign(
@@ -368,6 +370,8 @@ export function planSharedProductLink({
   preparations,
   records,
   locks = [],
+  allocations = [],
+  issuedCodes = [],
   newId = () => crypto.randomUUID(),
 }) {
   const from = locate(source, preparations, records)
@@ -409,7 +413,9 @@ export function planSharedProductLink({
   const byKey = new Map(drafts.map((draft) => [key(draft), draft]))
   const final = preparations.map((draft) => byKey.get(key(draft)) || draft)
   validateSharedProducts(final, { orders: records })
-  activePackingState(final)
+  activePackingState(final, allocations, issuedCodes, {
+    supplierIdentityEquivalences: supplierCodeIdentityEquivalences(records),
+  })
   const changes = [from, to].flatMap((entry) =>
     entry.group.variants.flatMap((variant) => {
       const draft = byKey.get(key(entry.preparation))
@@ -584,6 +590,7 @@ export function validateSharedProducts(
   const records =
     orders && new Map(orders.map((record) => [key(record.snapshot), record]))
   const identities = new Map()
+  const equivalences = supplierCodeIdentityEquivalences(orders ?? [])
   for (const preparation of preparations)
     for (const group of preparation.groups) {
       if (!group.sharedProductId) continue
@@ -602,7 +609,10 @@ export function validateSharedProducts(
         group.sharedProductId,
       ])
       const descriptor = JSON.stringify([
-        preparation.sellerId,
+        packingCodeSellerId(preparation, group, {
+          issuedCodes: issuedCodes ?? [],
+          supplierIdentityEquivalences: equivalences,
+        }),
         group.sharedStoreId,
         groupPackingMonth(preparation, group),
         group.baseCode,
@@ -686,7 +696,9 @@ export function validateSharedProducts(
       identities.set(identityKey, state)
     }
   if (issuedCodes) {
-    const expected = activePackingState(preparations).issuedCodes
+    const expected = activePackingState(preparations, [], issuedCodes, {
+      supplierIdentityEquivalences: equivalences,
+    }).issuedCodes
     for (const reservation of issuedCodes.filter(
       (entry) => entry.sharedProductId
     )) {
