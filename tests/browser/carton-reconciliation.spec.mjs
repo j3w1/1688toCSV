@@ -6,11 +6,14 @@ import {
 } from '../../src/packing-model.js'
 import { validateCartonBatch } from '../../src/carton-batches.js'
 import { repeatProductStoreIdentity } from '../../src/repeat-products.js'
-import { clickGroupingAction } from './copy-actions-helpers.mjs'
 import {
-  finishOrganizing,
-  packingRemovalAction,
-} from './packing-organize-helpers.mjs'
+  openOrderReconciliation,
+  assignSelectedPurchaseCodes,
+  editOrderProduct,
+  closeOrderProduct,
+  createContainerThroughUI,
+  sealContainerThroughUI,
+} from './smart-workspace-helpers.mjs'
 
 async function backup(extension) {
   const response = await extension.inspector.evaluate(() =>
@@ -123,16 +126,14 @@ async function seed(extension, { twoGroups = false } = {}) {
   await expect(page.locator('#sheet-body tr[data-selection-key]')).toHaveCount(
     3
   )
-  await page.locator('#view-packing').click()
-  const view = page.locator('#packing-view')
-  await expect(view).toBeVisible()
-  await expect(view.locator('.preparation-group')).toHaveCount(
-    twoGroups ? 2 : 1
-  )
-  const before = await backup(extension)
+  const ref = {
+      accountId: record.accountId || record.snapshot.accountId || 'local',
+      orderId: order.orderId,
+    },
+    view = await openOrderReconciliation(page, ref, 'cartons'),
+    before = await backup(extension)
   expect(before.cartonBatches).toHaveLength(1)
-  expect(before.cartonBatches[0].needsReview).not.toBe(true)
-  return { page, view, record, before }
+  return { page, view, record, before, ref }
 }
 
 function evidence(batch) {
@@ -140,248 +141,214 @@ function evidence(batch) {
   return result
 }
 
-async function singleReview(page, name) {
-  const review = page.getByRole('dialog', { name, exact: true })
-  await expect(review).toBeVisible()
-  await expect(page.locator('.packing-review:visible')).toHaveCount(1)
-  return review
-}
-
-function cartonCard(review) {
-  return review.locator('.packing-review-item').filter({
-    has: review.page().locator('strong', { hasText: /^Carton batch(?: 1)?$/ }),
-  })
-}
-
-async function applyReview(page, review, label = 'Apply changes') {
-  await review.getByRole('button', { name: label, exact: true }).click()
-  await expect(review).toHaveCount(0)
-  await expect(page.locator('.packing-review:visible')).toHaveCount(0)
-}
-
-async function undo(view) {
-  const action = view.getByRole('button', { name: 'Undo', exact: true })
-  await expect(action).toBeEnabled()
-  await action.click()
-  await expect(view.locator('.preparation-save-status')).toHaveText(
-    'Saved automatically'
+function expectSource(after, before) {
+  expect(after.orders.map((record) => record.snapshot)).toEqual(
+    before.orders.map((record) => record.snapshot)
+  )
+  expect(after.orders.map((record) => record.productPhotos)).toEqual(
+    before.orders.map((record) => record.productPhotos)
   )
 }
+async function reviewLegacy(page, view) {
+  await view.locator('[data-action="order-carton-history"]').click()
+  await view.locator('[data-history-key]').first().click()
+  await page.locator('[data-action="review-legacy-carton"]').click()
+  const review = page.locator('[data-action="legacy-carton-review"]')
+  await review.locator('select').first().selectOption('not-shipped')
+  await review
+    .locator('textarea')
+    .fill(
+      'Synthetic physical evidence reviewed; these goods have never shipped'
+    )
+  await review.getByRole('checkbox').first().check()
+  await review.locator('[data-action="resolve-legacy-carton"]').click()
+  await expect(review).toBeHidden()
+}
+async function group(page, operation, indices) {
+  await page.locator('[data-action="orders-products"]').click()
+  await page.locator('#clear-rows').click()
+  const rows = page.locator('#sheet-body tr[data-selection-key]')
+  for (const index of indices)
+    await rows.nth(index).getByRole('checkbox').check()
+  await page.locator('#group-order-products').click()
+  const tools = page.locator('.orders-grouping-dialog')
+  await tools.getByRole('button', { name: operation, exact: true }).click()
+  const review = page.getByRole('dialog', {
+    name: 'Review product grouping',
+    exact: true,
+  })
+  await expect(review).toBeVisible()
+  return { review, tools }
+}
 
-test('moving prepared products includes their authored cartons in the same review and preserves old-month confirmations', async ({
+test('reviewing legacy loading retains authored physical evidence and a November container does not change October codes', async ({
   extension,
 }) => {
-  const { page, view, before } = await seed(extension)
-  await page.locator('#view-orders').click()
-  const rows = page.locator('#sheet-body tr[data-selection-key]')
-  await rows.first().focus()
-  await page.keyboard.press('Control+a')
-  await page.getByLabel('Packing month', { exact: true }).fill('2026-11')
-  await page.locator('#prepare-orders').click()
-  let review = await singleReview(
-    page,
-    'Move selected products to this packing month?'
-  )
-  await expect(cartonCard(review)).toHaveCount(1)
-  await expect(cartonCard(review)).toContainText('2026-10')
-  await expect(cartonCard(review)).toContainText('Review cartons')
-  await expect(cartonCard(review)).toContainText(
-    'Original carton contents, measurements and month confirmations are kept for review'
-  )
-  await review.getByRole('button', { name: 'Cancel', exact: true }).click()
-  const cancelled = await backup(extension)
-  expect(cancelled.preparations).toEqual(before.preparations)
-  expect(cancelled.cartonBatches).toEqual(before.cartonBatches)
-  expect(cancelled.issuedCodes).toEqual(before.issuedCodes)
-
-  await page.locator('#prepare-orders').click()
-  review = await singleReview(
-    page,
-    'Move selected products to this packing month?'
-  )
-  await applyReview(page, review, 'Change codes and prepare')
-  await expect(view).toBeVisible()
-  await expect
-    .poll(async () => (await backup(extension)).preparations[0].month)
-    .toBe('2026-11')
-  const after = await backup(extension)
-  expect(after.preparations[0].groups[0].baseCode).toMatch(/^CE2611\d{4}$/)
-  expect(after.cartonBatches).toHaveLength(1)
-  expect(evidence(after.cartonBatches[0])).toEqual({
-    ...evidence(before.cartonBatches[0]),
-    needsReview: true,
+  const { page, view, before, ref } = await seed(extension)
+  await reviewLegacy(page, view)
+  const reviewed = await backup(extension),
+    batch = reviewed.cartonBatches[0]
+  expect(batch).toMatchObject({
+    id: before.cartonBatches[0].id,
+    loaded: 2,
+    count: 6,
+    weight: '57.2202',
+    weightBasis: 'batch',
+    len: '40.125',
+    wid: '30',
+    ht: '25',
   })
-  expect(
-    after.cartonBatches.filter((batch) => batch.month === '2026-11')
-  ).toEqual([])
-  expect(after.orders).toEqual(before.orders)
+  expect(batch.contents).toEqual(before.cartonBatches[0].contents)
+  expect(batch.legacyResolution).toMatchObject({ resolution: 'not-shipped' })
+  const id = await createContainerThroughUI(
+    page,
+    [ref],
+    'Synthetic November legacy review'
+  )
+  await sealContainerThroughUI(page)
+  const manifest = await extension.inspector.evaluate(
+    async (id) => (await window.testRepository).getContainerManifest({ id }),
+    id
+  )
+  expect(manifest.cartons).toHaveLength(6)
+  expect(manifest.products.map((row) => row.quantity).sort()).toEqual([
+    '3',
+    '30',
+    '30',
+  ])
+  expect(JSON.stringify(manifest.totals)).toContain('57.2202')
+  const after = await backup(extension)
+  expect(after.preparations).toEqual(before.preparations)
+  expect(after.cartonBatches[0].month).toBe('2026-10')
+  expect(after.cartonBatches[0].contents).toEqual(
+    before.cartonBatches[0].contents
+  )
+  expectSource(after, before)
 })
 
-test('merging away a carton-mark group preserves its original physical evidence for review, and one Undo restores both', async ({
+test('Orders merge reviews source ownership without losing a physical mark/count/measurements and compound Undo restores original groups', async ({
   extension,
 }) => {
   const { page, view, before } = await seed(extension, { twoGroups: true })
-  await view
-    .getByRole('button', { name: 'Clear selection', exact: true })
+  await reviewLegacy(page, view)
+  const { review } = await group(page, 'Merge products', [0, 1, 2])
+  expect((await backup(extension)).preparations).toEqual(before.preparations)
+  await review
+    .getByRole('button', { name: 'Apply changes', exact: true })
     .click()
-  for (const select of await view.locator('.group-select').all())
-    await select.click()
-  await clickGroupingAction(page, 'Merge products')
-  const review = await singleReview(page, 'Merge selected product groups?')
-  await expect(cartonCard(review)).toHaveCount(1)
-  await expect(cartonCard(review)).toContainText('CE26101002')
-  const markChange = cartonCard(review)
-    .locator('.packing-value-row')
-    .filter({ hasText: 'Carton mark' })
-  await expect(markChange.locator('.packing-value-before code')).toHaveText(
-    'CE26101002'
-  )
-  await expect(markChange.locator('.packing-value-after code')).toHaveText(
-    'CE26101002'
-  )
-  await expect(cartonCard(review)).toContainText('Review cartons')
-  expect((await backup(extension)).cartonBatches).toEqual(before.cartonBatches)
-  await applyReview(page, review)
-  await expect(view.locator('.preparation-group')).toHaveCount(1)
-  const after = await backup(extension)
-  expect(after.preparations[0].groups[0].variants).toHaveLength(3)
-  expect(after.cartonBatches).toHaveLength(1)
-  expect(evidence(after.cartonBatches[0])).toEqual({
-    ...evidence(before.cartonBatches[0]),
-    needsReview: true,
+  await expect(review).toBeHidden()
+  await expect
+    .poll(async () => (await backup(extension)).preparations[0].groups.length)
+    .toBe(1)
+  const after = await backup(extension),
+    batch = after.cartonBatches[0]
+  expect(batch).toMatchObject({
+    id: before.cartonBatches[0].id,
+    count: 6,
+    weight: '57.2202',
+    len: '40.125',
+    wid: '30',
+    ht: '25',
+    received: 6,
+    loaded: 2,
   })
-  expect(after.orders).toEqual(before.orders)
-
-  await undo(view)
-  await expect(view.locator('.preparation-group')).toHaveCount(2)
-  const restored = await backup(extension)
-  expect(restored.preparations[0].groups).toEqual(before.preparations[0].groups)
-  expect(restored.cartonBatches.map(evidence)).toEqual(
-    before.cartonBatches.map(evidence)
+  expect(batch.contents).toEqual(before.cartonBatches[0].contents)
+  expectSource(after, before)
+  await page.keyboard.press('Control+z')
+  await expect
+    .poll(async () => (await backup(extension)).preparations[0].groups.length)
+    .toBe(2)
+  expect((await backup(extension)).preparations[0].groups).toEqual(
+    before.preparations[0].groups
   )
-  await expect(
-    view.getByRole('button', { name: 'Undo', exact: true })
-  ).toBeDisabled()
-  await expect(
-    view.getByRole('button', { name: 'Redo', exact: true })
-  ).toBeEnabled()
+  expect((await backup(extension)).cartonBatches[0]).toMatchObject({
+    id: batch.id,
+    count: 6,
+    weight: '57.2202',
+    contents: before.cartonBatches[0].contents,
+  })
 })
 
-test('splitting shared contents across same-order groups reviews ownership while preserving one physical mark and batch', async ({
+test('splitting same-order source variants preserves one physical identity and mark while reviewing the new code owner', async ({
   extension,
 }) => {
-  const { page, view, before } = await seed(extension)
-  const middle = before.preparations[0].groups[0].variants[1]
-  await view
-    .getByRole('button', { name: 'Clear selection', exact: true })
+  const { page, view, before, ref } = await seed(extension)
+  await reviewLegacy(page, view)
+  const middle = before.preparations[0].groups[0].variants[1],
+    { review } = await group(page, 'Move to new product', [1])
+  await review
+    .getByRole('button', { name: 'Apply changes', exact: true })
     .click()
-  const row = view.locator(`tr[data-variant-id="${middle.id}"]`)
-  await row.focus()
-  await row.press('Space')
-  await clickGroupingAction(page, 'Move to new product')
-  const review = await singleReview(
-    page,
-    'Move variants to a new product group?'
-  )
-  await expect(cartonCard(review)).toHaveCount(1)
-  await expect(cartonCard(review)).toContainText('Linked to the new group')
-  await expect(cartonCard(review)).toContainText(
-    'Carton contents, measurements and confirmations stay together under the new group'
-  )
-  await applyReview(page, review)
-  await expect(view.locator('.preparation-group')).toHaveCount(2)
-  const after = await backup(extension)
-  const destination = after.preparations[0].groups.find((group) =>
-    group.variants.some((variant) =>
-      variant.entryIds.includes(middle.entryIds[0])
+  await expect(review).toBeHidden()
+  const after = await backup(extension),
+    destination = after.preparations[0].groups.find((group) =>
+      group.variants.some((variant) =>
+        variant.entryIds.includes(middle.entryIds[0])
+      )
     )
-  )
   expect(destination.id).not.toBe(before.preparations[0].groups[0].id)
   expect(destination.baseCode).not.toBe(
     before.preparations[0].groups[0].baseCode
   )
+  const batch = after.cartonBatches[0]
   expect(after.cartonBatches).toHaveLength(1)
-  expect(evidence(after.cartonBatches[0])).toEqual({
-    ...evidence(before.cartonBatches[0]),
-    groups: [
-      before.cartonBatches[0].groups[0],
-      { orderId: before.preparations[0].orderId, groupId: destination.id },
-    ],
+  expect(batch).toMatchObject({
+    id: before.cartonBatches[0].id,
+    mark: before.cartonBatches[0].mark,
+    contents: before.cartonBatches[0].contents,
+    count: 6,
+    weight: '57.2202',
   })
-  expect(after.orders).toEqual(before.orders)
-
-  await undo(view)
-  await expect(view.locator('.preparation-group')).toHaveCount(1)
-  const restored = await backup(extension)
-  expect(restored.preparations[0].groups).toEqual(before.preparations[0].groups)
-  expect(restored.cartonBatches.map(evidence)).toEqual(
-    before.cartonBatches.map(evidence)
+  expect(new Set(batch.groups.map((group) => group.orderId))).toEqual(
+    new Set([ref.orderId])
   )
-  await expect(
-    view.getByRole('button', { name: 'Undo', exact: true })
-  ).toBeDisabled()
+  expectSource(after, before)
+  await page.keyboard.press('Control+z')
+  await expect
+    .poll(async () => (await backup(extension)).preparations[0].groups.length)
+    .toBe(1)
+  expect((await backup(extension)).preparations[0].groups).toEqual(
+    before.preparations[0].groups
+  )
+  expect((await backup(extension)).cartonBatches[0]).toMatchObject({
+    id: batch.id,
+    contents: batch.contents,
+    count: 6,
+    weight: '57.2202',
+  })
 })
 
-test('Organize removal reviews shared contents and preparation reversions together; one Undo restores both', async ({
+test('Packing offers whole-order removal only and source suffix edits, physical contents and purchase records survive draft removal/reinclusion', async ({
   extension,
 }) => {
-  const { page, view, before } = await seed(extension)
-  const middle = before.preparations[0].groups[0].variants[1]
-  const row = view.locator(`tr[data-variant-id="${middle.id}"]`)
-  const variantCode = row.getByLabel(`Variant code ${middle.id}`, {
-    exact: true,
-  })
-  await variantCode.fill('A')
-  await variantCode.press('Tab')
-  await expect
-    .poll(
-      async () =>
-        (await backup(extension)).preparations[0].groups[0].variants[1]
-          .variantSuffix
+  const { page, view, before, ref } = await seed(extension)
+  await reviewLegacy(page, view)
+  await page.locator('[data-action="orders-products"]').click()
+  const editor = await editOrderProduct(page, 1, { 'Variant ending': 'A' })
+  await closeOrderProduct(editor)
+  const authored = await backup(extension),
+    middle = authored.preparations[0].groups[0].variants[1]
+  expect(middle.variantSuffix).toBe('A')
+  await createContainerThroughUI(
+    page,
+    [ref],
+    'Synthetic draft source preservation'
+  )
+  await expect(
+    page.locator(
+      '#packing-view [data-action="organize-packing"],#packing-view [data-action="remove-product"],#packing-view input[data-code-part]'
     )
-    .toBe('A')
-  const beforeRemoval = await backup(extension)
-  const remove = await packingRemovalAction(row, 'product')
-  await remove.click()
-  const review = await singleReview(page, 'Remove from packing?')
-  await expect(cartonCard(review)).toHaveCount(1)
-  await expect(review).toContainText('CE26101001AM')
-  await expect(review).toContainText('CE26101001M')
-  await expect(cartonCard(review)).toContainText(
-    'Carton measurements and confirmations stay. Review the remaining contents before shipping.'
-  )
-  expect((await backup(extension)).cartonBatches).toEqual(
-    beforeRemoval.cartonBatches
-  )
-  await applyReview(page, review, 'Remove from packing')
-  await finishOrganizing(page)
-  await expect(view.locator('.variants tbody tr')).toHaveCount(2)
+  ).toHaveCount(0)
+  await page.locator('[data-action="remove-container-order"]').click()
+  await expect(page.locator('.container-order')).toHaveCount(0)
   const after = await backup(extension)
-  expect(after.preparations[0].groups[0].variants[1].variantSuffix).toBe('')
-  expect(after.cartonBatches).toHaveLength(1)
-  expect(evidence(after.cartonBatches[0])).toEqual({
-    ...evidence(beforeRemoval.cartonBatches[0]),
-    contents: beforeRemoval.cartonBatches[0].contents.filter(
-      (item) => !middle.entryIds.includes(item.entryId)
-    ),
-    needsReview: true,
-  })
-  expect(after.orders).toEqual(before.orders)
-
-  await undo(view)
-  await expect(view.locator('.variants tbody tr')).toHaveCount(3)
-  const restored = await backup(extension)
-  expect(restored.preparations[0].groups).toEqual(
-    beforeRemoval.preparations[0].groups
+  expect(after.preparations).toEqual(authored.preparations)
+  expect(after.cartonBatches).toEqual(authored.cartonBatches)
+  expectSource(after, before)
+  const backlog = await extension.inspector.evaluate(async () =>
+    (await window.testRepository).getBacklog({})
   )
-  expect(restored.cartonBatches.map(evidence)).toEqual(
-    beforeRemoval.cartonBatches.map(evidence)
+  expect(backlog.orders.some((order) => order.orderId === ref.orderId)).toBe(
+    true
   )
-  await expect(variantCode).toHaveValue('A')
-  await expect(
-    view.getByRole('button', { name: 'Undo', exact: true })
-  ).toBeEnabled()
-  await expect(
-    view.getByRole('button', { name: 'Redo', exact: true })
-  ).toBeEnabled()
 })

@@ -1089,6 +1089,14 @@ export function createGridDraftController({
       savedGeneration = -1
       emit()
     },
+    acknowledgeCells(cells) {
+      const next = { ...state.rawCells }
+      for (const [key, value] of Object.entries(cells))
+        if (next[key] === value) delete next[key]
+      state.rawCells = next
+      state.generation++
+      emit()
+    },
     clearAcknowledged(generation) {
       if (state.generation !== generation) return false
       parser?.abort()
@@ -1298,7 +1306,7 @@ export async function createOrderCartonSession({
             ? context.batches.find((entry) => entry.id === batch.id) || batch
             : batch
         }) || context.batches,
-      capacities: context.record?.unitsPerCarton,
+      capacities: latestContext.record?.unitsPerCarton,
       draft: { ...domainDraft, capacities },
     }
   }
@@ -1552,7 +1560,25 @@ export async function createOrderCartonSession({
         revisions: result.revisions || context.revisions,
       }
       latestContext = context
-      lastInputGeneration = submittedGeneration
+      const acknowledged = {}
+      for (const [entryId, value] of Object.entries(values)) {
+        const key = JSON.stringify([
+          sourceKey({ ...orderRef, entryId }),
+          'capacity',
+        ])
+        acknowledged[key] = String(value ?? '')
+        if (
+          String(domainDraft.capacities[entryId] ?? '') === String(value ?? '')
+        )
+          delete domainDraft.capacities[entryId]
+      }
+      history.present = clone(domainDraft)
+      const changedWhileSaving = raw.state().generation !== submittedGeneration
+      raw.acknowledgeCells(acknowledged)
+      await raw.flush()
+      lastInputGeneration = changedWhileSaving
+        ? submittedGeneration
+        : raw.state().generation
     } finally {
       writeWork = null
     }
@@ -1561,6 +1587,76 @@ export async function createOrderCartonSession({
   }
   const session = {
     orderRef,
+    orderGroups: () => clone(context.preparation?.groups || []),
+    identityDraft(batchId) {
+      const value = raw.state().rawCells[JSON.stringify([batchId, 'identity'])]
+      return value ? JSON.parse(value) : null
+    },
+    retainIdentityDraft(batchId, value) {
+      raw.edit(
+        {
+          [JSON.stringify([batchId, 'identity'])]: JSON.stringify({
+            ...value,
+            reviewed: false,
+          }),
+        },
+        { history: false }
+      )
+      void raw.flush().catch(onError)
+    },
+    async stageCartonIdentity({ batchId, cartonNumber, markGroupId }) {
+      const batch =
+        domainDraft.cartons.find((batch) => batch.id === batchId) ||
+        context.batches.find((batch) => batch.id === batchId) ||
+        [
+          ...planner.reconcileOrder(contextInput()).cartons,
+          ...planner.reconcileOrder(contextInput()).proposals,
+        ].find((batch) => batch.id === batchId)
+      if (!batch) throw new Error('The target carton is unavailable.')
+      if (typeof cartonNumber !== 'string' || cartonNumber.length > 128)
+        throw new Error('Enter a short carton reference, up to 128 characters.')
+      const mark =
+        markGroupId &&
+        context.preparation?.groups.find((group) => group.id === markGroupId)
+      if (markGroupId && !mark)
+        throw new Error('The carton mark must belong to this order.')
+      const next = clone(domainDraft),
+        existing = context.batches.find((entry) => entry.id === batchId),
+        after = {
+          ...clone(batch),
+          cartonNumber,
+          ...(mark
+            ? { mark: { orderId: orderRef.orderId, groupId: mark.id } }
+            : {}),
+          ...(existing
+            ? {
+                baseRevision: existing.revision,
+                draftKind: 'override',
+                requiresDomainReview: true,
+              }
+            : { draftKind: 'manual' }),
+        },
+        index = next.cartons.findIndex((entry) => entry.id === batchId)
+      if (index < 0) next.cartons.push(after)
+      else next.cartons[index] = after
+      history = {
+        past: [...history.past, clone(history.present)],
+        present: next,
+        future: [],
+      }
+      domainDraft = next
+      raw.edit({
+        [JSON.stringify([batchId, 'identity'])]: JSON.stringify({
+          cartonNumber,
+          markGroupId,
+          reviewed: true,
+        }),
+      })
+      remember('arrangement')
+      arrangementDirty = true
+      await raw.flush()
+      notify()
+    },
     async refresh() {
       const generation = ++refreshGeneration,
         latest = await repository.getOrderReconciliation(repositoryRef())
@@ -1572,7 +1668,11 @@ export async function createOrderCartonSession({
         JSON.stringify(amendmentContext || null)
       )
         return
-      if (!Object.keys(raw.state().rawCells).length && !arrangementDirty)
+      if (
+        !Object.keys(raw.state().rawCells).length &&
+        !arrangementDirty &&
+        !commandCursor
+      )
         context = latest
       latestContext = latest
       notify('refresh')
@@ -1822,7 +1922,7 @@ export async function createOrderCartonSession({
       confirmWork = (async () => {
         for (const [encoded, value] of Object.entries(raw.state().rawCells)) {
           const [key, column] = JSON.parse(encoded)
-          if (column.startsWith('unit:')) {
+          if (column.startsWith('unit:') || column === 'identity') {
             if (!JSON.parse(value).reviewed)
               throw new Error(
                 'Review the pending carton exception before confirming. The complete draft is retained.'
@@ -2352,6 +2452,47 @@ export function mountOrderCartonGrid(
       fields.append(label)
     }
     modal.append(fields)
+    let flushIdentity = async () => {}
+    if (session.stageCartonIdentity) {
+      const recovery = session.identityDraft(row.key),
+        numberLabel = el('label', m('Carton reference')),
+        number = el('input'),
+        markLabel = el('label', m('Carton mark')),
+        mark = el('select')
+      number.type = 'text'
+      number.value = recovery?.cartonNumber ?? row.cartonNumber ?? ''
+      number.dataset.cartonIdentity = 'reference'
+      mark.dataset.cartonIdentity = 'mark'
+      mark.append(new Option(String(m('Keep current carton mark')), ''))
+      for (const group of session.orderGroups())
+        mark.append(new Option(group.baseCode, group.id))
+      mark.value = recovery?.markGroupId ?? row.mark?.groupId ?? ''
+      let dirty = recovery?.reviewed === false
+      const retain = () => {
+        dirty = true
+        session.retainIdentityDraft(row.key, {
+          cartonNumber: number.value,
+          markGroupId: mark.value,
+        })
+      }
+      number.oninput = (event) => {
+        if (!event.isComposing) retain()
+      }
+      number.oncompositionend = retain
+      mark.onchange = retain
+      numberLabel.append(number)
+      markLabel.append(mark)
+      fields.append(numberLabel, markLabel)
+      flushIdentity = async () => {
+        if (!dirty) return
+        await session.stageCartonIdentity({
+          batchId: row.key,
+          cartonNumber: number.value,
+          markGroupId: mark.value,
+        })
+        dirty = false
+      }
+    }
     let flushUnit = async () => {}
     if (
       row.count > 1 &&
@@ -2566,7 +2707,8 @@ export function mountOrderCartonGrid(
       }
     }
     const finish = () =>
-      void flushUnit()
+      void flushIdentity()
+        .then(flushUnit)
         .then(() => session.flush())
         .then(() => modal.close())
         .catch((error) => bindText(status, m(error.message)))

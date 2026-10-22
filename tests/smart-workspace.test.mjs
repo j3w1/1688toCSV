@@ -815,6 +815,71 @@ test('a failed draft repository write survives reload in tab-local recovery with
   session.dispose()
 })
 
+test('acknowledged capacity edits refresh live scalar values while a new edit retains the original concurrent-write guard', async (testContext) => {
+  const record = syntheticOrder('1001'),
+    context = {
+      record,
+      preparation: { groups: [] },
+      batches: [],
+      reports: [],
+      draft: null,
+      revisions: { capacity: 0 },
+    },
+    ref = { accountId: 'local', orderId: '1001' },
+    key = JSON.stringify(['local', '1001', '2001']),
+    writes = []
+  let draftRevision = 0
+  const session = await createOrderCartonSession({
+    repository: {
+      getOrderReconciliation: async () => structuredClone(context),
+      saveOrderCartonDraft: async (args) => {
+        context.draft = {
+          revision: ++draftRevision,
+          value: structuredClone(args.draft),
+        }
+        return { revision: draftRevision }
+      },
+      updateOrderCapacities: async (args) => {
+        writes.push(structuredClone(args))
+        for (const entryId of Object.keys(args.values))
+          if (
+            (context.record.unitsPerCarton?.[entryId] ?? null) !==
+            args.expectedValues[entryId]
+          )
+            throw new Error('The capacity changed in another tab')
+        context.record.unitsPerCarton = {
+          ...context.record.unitsPerCarton,
+          ...args.values,
+        }
+        context.revisions.capacity++
+        return {
+          record: structuredClone(context.record),
+          revisions: structuredClone(context.revisions),
+        }
+      },
+    },
+    orderRef: ref,
+    planner: actualPlanner,
+  })
+  testContext.after(() => session.dispose())
+  session.editCell(key, 'capacity', '10')
+  await session.flush()
+  assert.equal(
+    session.state().rawCells[JSON.stringify([key, 'capacity'])],
+    undefined
+  )
+  context.record.unitsPerCarton['2001'] = '20'
+  context.revisions.capacity++
+  await session.refresh()
+  assert.equal(session.rawCell(key, 'capacity'), '20')
+  assert.equal(session.projection().products[0].proposedCount, 5)
+  session.editCell(key, 'capacity', '45')
+  await assert.rejects(session.flush(), /changed in another tab/)
+  assert.equal(writes.at(-1).expectedValues['2001'], '10')
+  assert.equal(context.record.unitsPerCarton['2001'], '20')
+  assert.equal(session.rawCell(key, 'capacity'), '45')
+})
+
 test('intentional blank Spanish names and pending size mappings remain label blockers in Orders output', async (testContext) => {
   authoringEnvironment(testContext)
   const manifest = syntheticManifest(),
@@ -844,6 +909,49 @@ test('intentional blank Spanish names and pending size mappings remain label blo
     /Map this variant size/
   )
   authoring.dispose()
+})
+
+test('independent same-order marks and literal carton references stage without changing contents, measurements or source history', async (testContext) => {
+  const fixture = exceptionSessionFixture(),
+    before = structuredClone(fixture.batch)
+  fixture.context.preparation.groups = [
+    { id: 'g1', baseCode: 'CE26090101', variants: [] },
+    { id: 'g2', baseCode: 'CE26090102', variants: [] },
+  ]
+  const session = await fixture.create()
+  testContext.after(() => session.dispose())
+  await assert.rejects(
+    session.stageCartonIdentity({
+      batchId: fixture.batch.id,
+      cartonNumber: '001',
+      markGroupId: 'other-order',
+    }),
+    /must belong/
+  )
+  assert.equal(fixture.drafts.length, 0)
+  await session.stageCartonIdentity({
+    batchId: fixture.batch.id,
+    cartonNumber: '001',
+    markGroupId: 'g2',
+  })
+  assert.equal(fixture.confirmed.length, 0)
+  const staged = fixture.drafts.at(-1).draft.plannerDraft.cartons[0]
+  assert.deepEqual(staged.mark, { orderId: '1001', groupId: 'g2' })
+  assert.equal(staged.cartonNumber, '001')
+  for (const key of [
+    'id',
+    'count',
+    'contents',
+    'len',
+    'wid',
+    'ht',
+    'weight',
+    'weightBasis',
+  ])
+    assert.deepEqual(staged[key], before[key])
+  await session.confirm()
+  assert.equal(fixture.confirmed.length, 1)
+  assert.deepEqual(fixture.batch, before)
 })
 
 test('confirmed entitlement exception uses the real domain helper and one order confirm while preserving untouched physical identities', async (context) => {

@@ -1344,6 +1344,22 @@ export async function createProductAuthoring({
     authoringLanguages(modal)
     const row = preparedRows([ref])[0]
     modal.append(el('p', row.description || row.title))
+    const sourceFacts = el('div', undefined, 'product-authoring-source-facts')
+    for (const [value, label] of [
+      [variant.variant, 'Copy value'],
+      [variant.size, 'Copy size'],
+      [
+        recordFor(ref)?.snapshot.items.find(
+          (item) => item.entryId === ref.entryId
+        )?.quantity,
+        'Copy quantity',
+      ],
+    ])
+      if (value !== undefined && value !== '')
+        sourceFacts.append(
+          copyTextButton(String(value), { label: uiMessage(label) })
+        )
+    modal.append(sourceFacts)
     if (ref.thumbnail) modal.append(media.photo(ref))
     const fields = []
     let resolveControl

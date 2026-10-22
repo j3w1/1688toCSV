@@ -2,6 +2,21 @@
 export const SMART_CARTON_MESSAGES = Object.fromEntries(
   [
     [
+      'Keep current carton mark',
+      'Conservar marca de caja actual',
+      '保留当前箱唛',
+    ],
+    [
+      'Enter a short carton reference, up to 128 characters.',
+      'Introduce una referencia de caja de hasta 128 caracteres.',
+      '请输入不超过 128 个字符的纸箱标识。',
+    ],
+    [
+      'The carton mark must belong to this order.',
+      'La marca de caja debe pertenecer a este pedido.',
+      '箱唛必须属于此订单。',
+    ],
+    [
       'Recovered carton draft',
       'Borrador de cajas recuperado',
       '已恢复的装箱草稿',
