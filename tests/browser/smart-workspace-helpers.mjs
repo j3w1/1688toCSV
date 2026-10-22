@@ -4,16 +4,24 @@ import { createDemoRecords } from '../../preview/library-fixture.js'
 /** Synthetic source facts enter through the real repository, never IDB writes. */
 export async function seedSmartOrder(
   extension,
-  { count = 2, quantity = '100', physical = false, uneven = false } = {}
+  {
+    count = 2,
+    quantity = '100',
+    physical = false,
+    uneven = false,
+    orderId = '100000000000000001',
+    supplierId = 'synthetic-smart-cartons',
+    assignCodes = true,
+  } = {}
 ) {
   const records = await extension.inspector.evaluate(
     `(${createDemoRecords.toString()})(document)`
   )
   const snapshot = structuredClone(records[0].snapshot)
-  snapshot.orderId = '100000000000000001'
+  snapshot.orderId = orderId
   snapshot.accountId = 'local'
   snapshot.sellerName = 'Synthetic smart cartons'
-  snapshot.sellerMemberLogin = 'synthetic-smart-cartons'
+  snapshot.sellerMemberLogin = supplierId
   snapshot.purchasedAt = '2026-09-12T12:00:00+08:00'
   snapshot.observedAt = '2026-10-22T12:00:00.000Z'
   snapshot.sourceUrl = `https://air.1688.com/app/ctf-page/trade-order-detail/index.html?orderId=${snapshot.orderId}`
@@ -45,11 +53,18 @@ export async function seedSmartOrder(
     payable: yuan,
   }
   return extension.inspector.evaluate(
-    async ({ snapshot, physical, uneven }) => {
+    async ({ snapshot, physical, uneven, assignCodes }) => {
       const repository = await window.testRepository,
         planner = window.testPlanner,
         ref = { accountId: 'local', orderId: snapshot.orderId }
       await repository.saveSnapshot(snapshot)
+      if (!assignCodes) {
+        if (physical)
+          throw new Error(
+            'Assign purchase codes before this physical output fixture.'
+          )
+        return ref
+      }
       const review = await repository.reviewPurchaseCodes({
         orderRefs: [ref],
         entryRefs: snapshot.items.map(({ entryId }) => ({ ...ref, entryId })),
@@ -136,7 +151,7 @@ export async function seedSmartOrder(
       }
       return ref
     },
-    { snapshot, physical, uneven }
+    { snapshot, physical, uneven, assignCodes }
   )
 }
 

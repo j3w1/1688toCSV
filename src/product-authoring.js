@@ -787,13 +787,11 @@ export async function createProductAuthoring({
               : row.photo
           )
         )
+      const code = el('code', undefined, 'ce-code purchase-code')
+      setCodeText(code, row.after || row.code || row.baseCode || '—')
       card.append(
         el('p', row.name || row.description || row.entryId || row.orderId),
-        el(
-          'code',
-          row.after || row.code || row.baseCode || '—',
-          'ce-code purchase-code'
-        )
+        code
       )
       if (row.supplierIdentity) {
         const identity = row.supplierIdentity
@@ -1746,13 +1744,16 @@ export async function createProductAuthoring({
   function decorateRow(host, row, capacityHost = host, measurementHosts) {
     const projected = preparedRows([row])[0],
       bar = el('div', undefined, 'row-preparation')
-    if (projected.barcode)
-      bar.append(
-        copyTextButton(projected.barcode, {
+    if (projected.barcode) {
+      const copy = copyTextButton(projected.barcode, {
           label: uiMessage('Copy code'),
           className: 'row-code-copy ce-code',
-        })
-      )
+        }),
+        code = el('span')
+      setCodeText(code, projected.barcode)
+      copy.firstChild.replaceWith(code)
+      bar.append(copy)
+    }
     if (projected.spanishName)
       bar.append(el('span', projected.spanishName, 'spanish-name'))
     const edit = button('Edit product', () => openEditor(row))
