@@ -1638,3 +1638,299 @@ test('Pcs/box-only order proposes 45+45 and prefills 10 once, confirms once and 
     )
   ).toHaveCount(0)
 })
+
+for (const [action, id] of [
+  ['Copy Excel image', 'copy-excel-image'],
+  ['Copy group codes', 'copy-group-codes'],
+  ['Copy preparation columns', 'copy-preparation'],
+])
+  test(`${action} captures source selection before awaiting a real save and uses the latest acknowledged values`, async ({
+    extension,
+  }) => {
+    const { page, record } = await openWorkspace(extension)
+    await assignAll(page)
+    const before = await packingBackup(extension),
+      originalCode = before.preparations[0].groups[0].baseCode,
+      otherCode = before.preparations[0].groups[1].baseCode,
+      latestCode = 'CE26109901'
+    await page.locator('#clear-rows').click()
+    for (const index of [0, 1])
+      await rows(page).nth(index).getByRole('checkbox').check()
+    await extension.context.grantPermissions([
+      'clipboard-read',
+      'clipboard-write',
+    ])
+    await page.evaluate(async () => {
+      await navigator.clipboard.writeText('pending-orders-export')
+      window.frozenOrdersRuns = []
+      const text = CanvasRenderingContext2D.prototype.fillText
+      CanvasRenderingContext2D.prototype.fillText = function (value, ...args) {
+        if (this.canvas.width > 2000)
+          window.frozenOrdersRuns.push({
+            text: String(value),
+            y: args[1],
+            font: this.font,
+            color: this.fillStyle,
+          })
+        return text.call(this, value, ...args)
+      }
+    })
+    const view = await editOrderProduct(page, 0),
+      name = view.getByRole('textbox', { name: 'Spanish name', exact: true })
+    await holdPreparationWrites(page)
+    try {
+      await name.fill('FIRST SUBMISSION')
+      await expect
+        .poll(() => page.evaluate(() => window.preparationSaveStarted))
+        .toBe(true)
+      // Exercise the documented direct control while its async flush waits.
+      // Programmatic selection events model another agent changing the display;
+      // they never replace the repository, clipboard or output implementation.
+      await page.evaluate((id) => document.getElementById(id).click(), id)
+      await page.evaluate(() => {
+        document.getElementById('clear-rows').click()
+        document
+          .querySelectorAll(
+            '#sheet-body tr[data-selection-key] input[type=checkbox]'
+          )[2]
+          .click()
+      })
+      await name.fill('LATEST SOURCE NAME')
+      await view
+        .getByRole('textbox', { name: 'Product code', exact: true })
+        .fill(latestCode)
+      await view
+        .getByRole('textbox', { name: 'Chinese category', exact: true })
+        .fill('新玻璃制品')
+      expect(await page.evaluate(() => navigator.clipboard.readText())).toBe(
+        'pending-orders-export'
+      )
+    } finally {
+      await page.evaluate(() => {
+        window.holdPreparationSave = false
+      })
+    }
+    await expect
+      .poll(
+        async () =>
+          (await packingBackup(extension)).preparations[0].groups[0].baseCode
+      )
+      .toBe(latestCode)
+    if (id === 'copy-preparation') {
+      const picker = page.locator('.preparation-column-dialog')
+      await expect(picker.getByRole('heading', { level: 2 })).toHaveText(
+        'Copy 2 product rows'
+      )
+      await picker
+        .getByRole('button', { name: 'Copy chosen columns', exact: true })
+        .click()
+      await expect(
+        picker.getByRole('button', { name: 'Copied', exact: true })
+      ).toBeVisible()
+      const copied = (await page.evaluate(() => navigator.clipboard.readText()))
+        .split('\r\n')
+        .map((row) => row.split('\t'))
+      expect(copied).toHaveLength(2)
+      expect(copied.map((row) => row[0])).toEqual([latestCode, ''])
+      expect(copied.map((row) => row[1])).toEqual([
+        `${latestCode}S`,
+        `${latestCode}L`,
+      ])
+      expect(copied[0][3]).toBe('LATEST SOURCE NAME')
+      for (const [index, row] of copied.entries())
+        expect(row.slice(4)).toEqual(
+          ['price', 'quantity', 'discount'].map(
+            (key) => record.snapshot.items[index][key]
+          )
+        )
+    } else if (id === 'copy-group-codes') {
+      await expect
+        .poll(() => page.evaluate(() => navigator.clipboard.readText()))
+        .toBe(latestCode)
+    } else {
+      await copyCurrentImageBatch(page)
+      const runs = await page.evaluate(() => window.frozenOrdersRuns),
+        codes = runs.filter((run) => /^CE\d/.test(run.text)),
+        text = runs.map((run) => run.text)
+      expect(codes.map((run) => run.text)).toEqual([
+        `${latestCode}S`,
+        `${latestCode}L`,
+      ])
+      for (const run of codes) {
+        expect(run.font).toMatch(/^(?:700|bold) (?:1[2-7])px /)
+        expect(run.color).toMatch(/^#(?:fff|ffffff)$/i)
+      }
+      expect(codes[0].y).toBeLessThan(codes[1].y)
+      expect(text.join('')).toContain('新玻璃制品')
+      expect(text.join('')).not.toContain('TEST-BOX')
+      for (const item of record.snapshot.items.slice(0, 2)) {
+        expect(text).toContain(`${item.price} 元`)
+        expect(text).toContain(item.quantity)
+      }
+      expect(text).not.toContain(originalCode)
+      expect(text).not.toContain(otherCode)
+    }
+    const after = await packingBackup(extension)
+    expect(after.preparations[0].groups[0].variants[0].spanishName).toBe(
+      'LATEST SOURCE NAME'
+    )
+    expect(after.orders).toEqual(before.orders)
+    expect(
+      after.issuedCodes.some((owner) => owner.code.startsWith(originalCode))
+    ).toBe(false)
+    for (const owner of before.issuedCodes.filter(
+      (owner) => !owner.code.startsWith(originalCode)
+    ))
+      expect(after.issuedCodes).toContainEqual(owner)
+    expect(
+      after.issuedCodes.filter((owner) => owner.code.startsWith(latestCode))
+    ).toHaveLength(3)
+  })
+
+test('an invalid product draft cannot prevent a different purchase from saving its own valid edits', async ({
+  extension,
+}) => {
+  const first = await seedStructuredOrder(extension, '900000000000000001'),
+    second = await seedStructuredOrder(extension, '900000000000000002')
+  const page = await openSmartLibrary(extension)
+  await assignAll(page)
+  const before = await packingBackup(extension)
+  const invalid = await editOrderProduct(
+    page,
+    {
+      accountId: 'local',
+      orderId: first.snapshot.orderId,
+      entryId: first.snapshot.items[0].entryId,
+    },
+    { 'Product code': 'INVALID' }
+  )
+  await expect(
+    invalid.getByRole('textbox', { name: 'Product code', exact: true })
+  ).toHaveAttribute('aria-invalid', 'true')
+  const other = await extension.context.newPage()
+  await other.goto(`${extension.extensionBaseUrl}/library.html`)
+  await closeOrderProduct(
+    await editOrderProduct(
+      other,
+      {
+        accountId: 'local',
+        orderId: second.snapshot.orderId,
+        entryId: second.snapshot.items[0].entryId,
+      },
+      { 'Spanish name': 'OTHER ORDER SAVED' }
+    )
+  )
+  const after = await packingBackup(extension)
+  expect(
+    after.preparations.find((prep) => prep.orderId === first.snapshot.orderId)
+  ).toEqual(
+    before.preparations.find((prep) => prep.orderId === first.snapshot.orderId)
+  )
+  expect(
+    after.preparations.find((prep) => prep.orderId === second.snapshot.orderId)
+      .groups[0].variants[0].spanishName
+  ).toBe('OTHER ORDER SAVED')
+  await expect(
+    invalid.getByRole('textbox', { name: 'Product code', exact: true })
+  ).toHaveValue('INVALID')
+  expect(after.orders).toEqual(before.orders)
+})
+
+test('Orders retains distinct original photos, purchase counts, custom date/status colors and untranslated tags across languages', async ({
+  extension,
+}) => {
+  const single = await seedStructuredOrder(extension, '1234567890123456789', {
+    singleProduct: true,
+    tags: ['Fragile'],
+  })
+  const multiple = await seedStructuredOrder(extension, '2234567890123456789', {
+    manyPhotos: true,
+  })
+  const seeded = await packingBackup(extension)
+  seeded.packingPreferences = {
+    value: {
+      ...seeded.packingPreferences?.value,
+      orderTags: [
+        { name: 'Fragile', colors: { light: '#f4dbc1', dark: '#47351f' } },
+      ],
+      appearance: {
+        ...seeded.packingPreferences?.value?.appearance,
+        labelColors: {
+          dates: { light: '#e8c7a3', dark: '#e8c7a3' },
+          'awaiting-shipment': { light: '#e5d2ba', dark: '#e5d2ba' },
+        },
+      },
+    },
+    updatedAt: new Date().toISOString(),
+  }
+  const restored = await extension.inspector.evaluate(
+    (backup) => chrome.runtime.sendMessage({ type: 'BACKUP_RESTORE', backup }),
+    seeded
+  )
+  expect(restored.ok, restored.error).toBe(true)
+  const page = await openSmartLibrary(extension)
+  await expect(rows(page)).toHaveCount(11)
+  await assignAll(page)
+  const before = await packingBackup(extension),
+    card = page.locator(
+      `.order-card[data-order-id="${single.snapshot.orderId}"]`
+    )
+  await expect(card.locator('.order-products')).toHaveText('1 product')
+  await expect(
+    page.locator(
+      `.order-card[data-order-id="${multiple.snapshot.orderId}"] .order-products`
+    )
+  ).toHaveText('10 products')
+  for (const [selector, color] of [
+    ['.purchase-date', 'rgb(232, 199, 163)'],
+    ['.order-status', 'rgb(229, 210, 186)'],
+  ])
+    await expect(card.locator(selector)).toHaveCSS('background-color', color)
+  const tag = card.locator('.order-tag-badge')
+  await expect(tag).toHaveText('Fragile')
+  await expect(tag).toHaveCSS('--tag-light', '#f4dbc1')
+  await expect(tag).toHaveCSS('--tag-dark', '#47351f')
+  const pixels = []
+  for (const row of await rows(page).all()) {
+    const button = row.locator('.product-photo-button')
+    if (await button.isDisabled()) continue
+    await button.scrollIntoViewIfNeeded()
+    const image = button.locator('img')
+    await expect
+      .poll(() =>
+        image.evaluate((node) => node.complete && node.naturalWidth > 0)
+      )
+      .toBe(true)
+    pixels.push(
+      await image.evaluate((image) => {
+        const canvas = document.createElement('canvas')
+        canvas.width = image.naturalWidth
+        canvas.height = image.naturalHeight
+        canvas.getContext('2d').drawImage(image, 0, 0)
+        return canvas.toDataURL()
+      })
+    )
+  }
+  expect(new Set(pixels).size).toBe(
+    new Set(
+      [...single.snapshot.items, ...multiple.snapshot.items]
+        .map((item) => item.thumbnail)
+        .filter(Boolean)
+    ).size
+  )
+  expect(new Set(pixels).size).toBeGreaterThanOrEqual(8)
+  for (const [language, count] of [
+    ['es', '1 producto'],
+    ['zh', '1 件商品'],
+  ]) {
+    await page.locator(`#language-toggle [data-language="${language}"]`).click()
+    await expect(card.locator('.order-products')).toHaveText(count)
+    await expect(tag).toHaveText('Fragile')
+  }
+  await page.setViewportSize({ width: 390, height: 800 })
+  await expect(tag).toBeVisible()
+  const bounds = await card.boundingBox()
+  expect(bounds.x).toBeGreaterThanOrEqual(0)
+  expect(bounds.x + bounds.width).toBeLessThanOrEqual(390)
+  expect((await packingBackup(extension)).orders).toEqual(before.orders)
+})

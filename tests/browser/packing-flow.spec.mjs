@@ -752,3 +752,66 @@ test('mixed valid and unidentified-supplier code review blocks every write and p
   expect((await backup(extension)).issuedCodes).toEqual(before.issuedCodes)
   expect((await backup(extension)).orders).toEqual(before.orders)
 })
+
+for (const editedIndex of [0, 1])
+  test(`duplicate barcode recovery retains the base and changes only edited variant ${editedIndex + 1}`, async ({
+    extension,
+  }) => {
+    const { page } = await openLibrary(extension)
+    await selectAllProducts(page)
+    await assignSelectedPurchaseCodes(page)
+    const before = await backup(extension),
+      group = before.preparations[0].groups[0],
+      unchangedIndex = 1 - editedIndex,
+      collisionSize = group.variants[unchangedIndex].sizeSuffix
+    const editor = await editOrderProduct(page, editedIndex, {
+      'Size ending': collisionSize,
+    })
+    await expect(
+      editor.getByRole('textbox', { name: 'Size ending', exact: true })
+    ).toHaveAttribute('aria-invalid', 'true')
+    expect((await backup(extension)).preparations).toEqual(before.preparations)
+    expect((await backup(extension)).issuedCodes).toEqual(before.issuedCodes)
+    await editor
+      .getByRole('button', { name: 'Resolve code conflict', exact: true })
+      .click()
+    const resolver = page.locator('.code-conflict-dialog')
+    await expect(resolver).toContainText(`${group.baseCode}${collisionSize}`)
+    await resolver
+      .getByRole('button', {
+        name: 'Use next available variant code',
+        exact: true,
+      })
+      .click()
+    expect((await backup(extension)).preparations).toEqual(before.preparations)
+    await resolver
+      .getByRole('button', { name: 'Apply corrections', exact: true })
+      .click()
+    await expect(resolver).toBeHidden()
+    const after = await backup(extension),
+      resolved = after.preparations[0].groups[0],
+      edited = resolved.variants[editedIndex]
+    expect(resolved.baseCode).toBe(group.baseCode)
+    expect(resolved.variants[unchangedIndex]).toEqual(
+      group.variants[unchangedIndex]
+    )
+    expect(edited.id).toBe(group.variants[editedIndex].id)
+    expect(edited.sizeSuffix).toBe(collisionSize)
+    expect(edited.variantSuffix).toMatch(/^[A-Z]+$/)
+    expect(after.issuedCodes).toContainEqual(
+      expect.objectContaining({
+        kind: 'barcode',
+        code: group.baseCode + edited.variantSuffix + edited.sizeSuffix,
+        variantId: edited.id,
+      })
+    )
+    const old = group.variants[editedIndex]
+    expect(
+      after.issuedCodes.some(
+        (code) =>
+          code.kind === 'barcode' &&
+          code.code === group.baseCode + old.variantSuffix + old.sizeSuffix
+      )
+    ).toBe(false)
+    expect(after.orders).toEqual(before.orders)
+  })

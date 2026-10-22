@@ -686,3 +686,68 @@ test(
     expect(after.orders).toEqual(before.orders)
   }
 )
+
+test('a delayed real label render cannot restore a conflicting preview and reverting to the saved code completes recovery', async ({
+  extension,
+}) => {
+  const { page, view } = await openPacking(extension)
+  const before = await backup(extension),
+    group = before.preparations[0].groups[0],
+    owner = group.variants[1]
+  await closeOrderProduct(view)
+  await page
+    .locator('#sheet-body tr[data-selection-key]')
+    .first()
+    .getByRole('button', { name: 'Barcode', exact: true })
+    .click()
+  const label = page.getByRole('dialog', { name: 'Label editor', exact: true }),
+    image = label.getByAltText('Printable label preview'),
+    copy = label.getByRole('button', { name: 'Copy label', exact: true }),
+    variant = label.getByRole('textbox', { name: 'Variant code', exact: true })
+  await expect(copy).toBeEnabled({ timeout: 20000 })
+  await page.evaluate(() => {
+    const encode = HTMLCanvasElement.prototype.toBlob
+    let hold = true
+    HTMLCanvasElement.prototype.toBlob = function (callback, ...args) {
+      if (hold) {
+        hold = false
+        window.finishConflictingLabel = () =>
+          new Promise((resolve) =>
+            encode.call(
+              this,
+              (blob) => {
+                callback(blob)
+                resolve()
+              },
+              ...args
+            )
+          )
+      } else return encode.call(this, callback, ...args)
+    }
+  })
+  await variant.fill('ZZ')
+  await expect
+    .poll(() => page.evaluate(() => Boolean(window.finishConflictingLabel)))
+    .toBe(true)
+  await label
+    .getByRole('textbox', { name: 'Size code', exact: true })
+    .fill(owner.sizeSuffix)
+  await variant.fill(owner.variantSuffix)
+  await expect(variant).toHaveAttribute('aria-invalid', 'true')
+  await expect(image).toBeHidden()
+  await expect(image).not.toHaveAttribute('src')
+  await expect(copy).toBeDisabled()
+  await page.evaluate(() => window.finishConflictingLabel())
+  await expect(variant).toHaveAttribute('aria-invalid', 'true')
+  await expect(image).toBeHidden()
+  await expect(image).not.toHaveAttribute('src')
+  expect((await backup(extension)).preparations).toEqual(before.preparations)
+  await variant.press('Escape')
+  await expect(variant).toHaveValue(group.variants[0].variantSuffix)
+  await expect(copy).toBeEnabled({ timeout: 20000 })
+  await expect(image).toBeVisible()
+  const after = await backup(extension)
+  expect(after.preparations).toEqual(before.preparations)
+  expect(after.issuedCodes).toEqual(before.issuedCodes)
+  expect(after.orders).toEqual(before.orders)
+})
