@@ -1006,6 +1006,8 @@ export function createContainerWorkspace({
         label = el('label', undefined, 'container-inclusion-order'),
         check = el('input')
       check.type = 'checkbox'
+      label.dataset.orderId = ref.orderId
+      label.dataset.accountId = ref.accountId
       check.disabled = order.available === false || order.blocked === true
       check.onchange = () => {
         if (check.checked) chosen.add(refKey(ref))

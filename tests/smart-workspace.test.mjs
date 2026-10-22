@@ -1054,6 +1054,61 @@ test('report UI persists original source before parser transfer and commits only
   controller.dispose()
 })
 
+test('repository amendment routing retains report recovery and forwards the active amendment context on reads and commit', async (context) => {
+  const fixture = reportFixture(),
+    values = new Map(),
+    reads = [],
+    commits = [],
+    previous = Object.getOwnPropertyDescriptor(globalThis, 'localStorage')
+  Object.defineProperty(globalThis, 'localStorage', {
+    value: {
+      getItem: (key) => values.get(key),
+      setItem: (key, value) => values.set(key, value),
+      removeItem: (key) => values.delete(key),
+    },
+    configurable: true,
+  })
+  context.after(() =>
+    previous
+      ? Object.defineProperty(globalThis, 'localStorage', previous)
+      : delete globalThis.localStorage
+  )
+  const originalRead = fixture.repository.getPackingReportContext
+  fixture.repository.getPackingReportContext = async (args) => {
+    reads.push(args)
+    return originalRead(args)
+  }
+  fixture.repository.commitPackingReportUpdate = async (args) => {
+    commits.push(args)
+    return {
+      status: 'amendment-required',
+      affectedShipmentRevisions: [{ containerId: 'c1', revisionId: 'c1-r1' }],
+    }
+  }
+  const controller = await createPackingReportIntakeController({
+    ...fixture,
+    orderRef: ref,
+    contextContainerId: 'active-amendment',
+  })
+  context.after(() => controller.dispose())
+  await controller.read({ text: '箱号\t货号\t装箱数\r\n001\t0007\t13' })
+  await controller.plan()
+  const result = await controller.commit()
+  assert.equal(result.status, 'amendment-required')
+  assert.equal(controller.state().plan.status, 'amendment-required')
+  assert.equal(commits.length, 1)
+  assert.equal(commits[0].contextContainerId, 'active-amendment')
+  assert.ok(
+    reads.every((args) => args.contextContainerId === 'active-amendment')
+  )
+  const recovered = JSON.parse([...values.values()][0])
+  assert.equal(
+    recovered.source.rawAssetRef,
+    controller.state().source.rawAssetRef
+  )
+  assert.equal(recovered.text, '箱号\t货号\t装箱数\r\n001\t0007\t13')
+})
+
 test('report decisions retain exact scoped premises and unknown mappings cannot become a hidden commit', async () => {
   const fixture = reportFixture(),
     controller = await createPackingReportIntakeController({

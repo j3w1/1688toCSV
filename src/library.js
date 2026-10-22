@@ -354,6 +354,14 @@ export async function startLibrary(
   const selectedMonths = new Set(savedMonths)
   const expandedMonths = new Set([currentMonth, ...savedMonths])
   let monthAnchor = null
+  async function editProductPhoto(item, edit) {
+    const store = repository || (await openDatabase()), accountId = item.accountId || item.record?.accountId || 'local',
+      sourceItem = records.find(({ snapshot, accountId: owner }) => snapshot.orderId === item.orderId && (owner || snapshot.accountId || 'local') === accountId)?.snapshot.items.find((entry) => entry.entryId === item.entryId)
+    await packing?.flush()
+    await store.setProductPhoto(item.orderId, item.entryId, edit, { accountId })
+    if (edit.photoIndex === 0 && sourceItem) packing?.refreshPhoto(sourceItem, edit.thumbnail)
+    await refresh()
+  }
   const photos = createPhotoViewer(
     async (url) => {
       const data = await send('IMAGE_GET', { url })
@@ -363,19 +371,7 @@ export async function startLibrary(
       getProductContext: (item) => packing?.photoContext(item),
       getSizeClassifier: () =>
         packing?.sizeClassifier() ?? createSizeClassifier(),
-      onEdit: async (item, edit) => {
-        const store = repository || (await openDatabase())
-        const sourceItem = records
-          .find(({ snapshot }) => snapshot.orderId === item.orderId)
-          ?.snapshot.items.find((entry) => entry.entryId === item.entryId)
-        await packing?.flush()
-        await store.setProductPhoto(item.orderId, item.entryId, edit, {
-          accountId: item.record?.accountId || 'local',
-        })
-        if (edit.photoIndex === 0 && sourceItem)
-          packing?.refreshPhoto(sourceItem, edit.thumbnail)
-        await refresh()
-      },
+      onEdit: editProductPhoto,
     }
   )
   const selectedOrders = new Set(),
@@ -3482,6 +3478,7 @@ export async function startLibrary(
       },
       feedback,
       onProductDetails: showProductDetails,
+      onProductPhotoEdit: editProductPhoto,
       onReadOnlyProductDetails: showReadOnlyProductDetails,
       getSelectedOrders: () =>
         records

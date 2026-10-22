@@ -2,6 +2,27 @@
 export const SMART_CARTON_MESSAGES = Object.fromEntries(
   [
     [
+      'Review backup dependencies',
+      'Revisar dependencias de la copia',
+      '核对备份依赖',
+    ],
+    [
+      'The selected products share retained report, carton or shipment history. Create a complete library backup to keep those dependencies and original media together. Restore this file through Settings → Data.',
+      'Los productos seleccionados comparten historia de reportes, cajas o envíos. Crea una copia completa para conservar esas dependencias y originales juntos. Restáurala en Ajustes → Datos.',
+      '所选商品关联到保留的报告、纸箱或装运历史。请创建完整资料库备份以一并保留依赖及原始媒体，并通过设置 → 数据恢复此文件。',
+    ],
+    [
+      'Partial product selection',
+      'Selección parcial de productos',
+      '部分商品选择',
+    ],
+    [
+      'Complete library and historical dependencies',
+      'Biblioteca completa y dependencias históricas',
+      '完整资料库及历史依赖',
+    ],
+    ['Back up full library', 'Respaldar biblioteca completa', '备份完整资料库'],
+    [
       'Operator-confirmed supplier identity',
       'Identidad del proveedor confirmada por el operador',
       '操作员确认的供应商身份',

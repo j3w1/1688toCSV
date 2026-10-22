@@ -85,12 +85,12 @@ test('one group reviews every full source code without reserving it and one assi
   await page.locator('#select-rows').click()
   const before = await backup(extension),
     review = await reviewSelection(page),
-    codes = await review.locator('article code').allTextContents()
+    codes = await review.locator('article .purchase-code').allTextContents()
   expect(codes).toHaveLength(3)
   expect(new Set(codes).size).toBe(3)
   expect(codes.every((code) => /^CE2610\d{4}[A-Z0-9]*$/.test(code))).toBe(true)
   await expect(review.locator('article')).toHaveCount(3)
-  for (const code of await review.locator('article code').all())
+  for (const code of await review.locator('article .purchase-code').all())
     await expect(code).toBeInViewport()
   expectPackingUnchanged(await backup(extension), before)
   await review.screenshot({
@@ -122,7 +122,7 @@ test('single-product code review cancel reserves nothing and assignment never op
   await rows.first().getByRole('checkbox').check()
   const before = await backup(extension),
     review = await reviewSelection(page),
-    proposed = await review.locator('article code').textContent()
+    proposed = await review.locator('article .purchase-code').textContent()
   expect(proposed).toMatch(/^CE2610\d{4}[A-Z0-9]*$/)
   await expect(review.locator('article')).toHaveCount(1)
   await expect(review.locator('.preparation-photo')).toHaveCount(1)
@@ -130,7 +130,7 @@ test('single-product code review cancel reserves nothing and assignment never op
   await review.getByRole('button', { name: 'Cancel', exact: true }).click()
   expectPackingUnchanged(await backup(extension), before)
   await reviewSelection(page)
-  await expect(review.locator('article code')).toHaveText(proposed)
+  await expect(review.locator('article .purchase-code')).toHaveText(proposed)
   await review.locator('[data-action="assign-purchase-codes"]').click()
   await expect(review).toBeHidden()
   await expect(view).toBeVisible()
@@ -166,7 +166,7 @@ test('adding an unassigned source row preserves existing codes and prices throug
   await rows.nth(1).getByRole('checkbox').check()
   review = await reviewSelection(page)
   await expect(review.locator('article')).toHaveCount(1)
-  const nextCode = await review.locator('article code').textContent()
+  const nextCode = await review.locator('article .purchase-code').textContent()
   expectPackingUnchanged(await backup(extension), before)
   await review.getByRole('button', { name: 'Cancel', exact: true }).click()
   expectPackingUnchanged(await backup(extension), before)
