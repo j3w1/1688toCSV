@@ -654,6 +654,7 @@ function exceptionSessionFixture(options = {}) {
     drafts,
     confirmed,
     reads,
+    repository,
     create: () =>
       createOrderCartonSession({
         repository,
@@ -773,6 +774,76 @@ test('label validation identifies the exact source and field instead of losing t
       return true
     }
   )
+})
+
+test('a failed draft repository write survives reload in tab-local recovery without committing invalid cells', async (testContext) => {
+  const { values } = authoringEnvironment(testContext),
+    tab = new Map(),
+    previous = Object.getOwnPropertyDescriptor(globalThis, 'sessionStorage')
+  Object.defineProperty(globalThis, 'sessionStorage', {
+    configurable: true,
+    value: {
+      getItem: (key) => tab.get(key),
+      setItem: (key, value) => tab.set(key, value),
+    },
+  })
+  testContext.after(() =>
+    previous
+      ? Object.defineProperty(globalThis, 'sessionStorage', previous)
+      : delete globalThis.sessionStorage
+  )
+  const fixture = exceptionSessionFixture(),
+    key = JSON.stringify(['local', '1001', '2001'])
+  fixture.repository.saveOrderCartonDraft = async () => {
+    throw new Error('Synthetic durable write unavailable')
+  }
+  let session = await fixture.create()
+  session.editCell(key, 'capacity', 'invalid retained raw')
+  await assert.rejects(session.flush(), /write unavailable/)
+  assert.ok(
+    [...values.entries()].some(
+      ([key, value]) =>
+        key.includes('carton-recovery') &&
+        value.includes('invalid retained raw')
+    )
+  )
+  session.dispose()
+  session = await fixture.create()
+  assert.equal(session.rawCell(key, 'capacity'), 'invalid retained raw')
+  await assert.rejects(session.confirm(), /write unavailable/)
+  assert.equal(fixture.confirmed.length, 0)
+  session.dispose()
+})
+
+test('intentional blank Spanish names and pending size mappings remain label blockers in Orders output', async (testContext) => {
+  authoringEnvironment(testContext)
+  const manifest = syntheticManifest(),
+    preparation = structuredClone(manifest.orders[0].preparation),
+    record = manifest.orders[0].record,
+    variant = preparation.groups[0].variants[0],
+    ref = { accountId: 'local', orderId: '1001', entryId: '2001' }
+  preparation.groups[0].spanishName = 'GROUP FALLBACK'
+  variant.spanishName = ''
+  variant.needsSizeMapping = false
+  const authoring = await createProductAuthoring({
+    repository: {
+      listPreparations: async () => [structuredClone(preparation)],
+      getPackingPreferences: async () => validatePackingPreferences({}),
+    },
+    getRecords: () => [record],
+  })
+  const rows = authoring.preparedRows([ref])
+  assert.equal(rows[0].spanishName, '')
+  assert.equal(rows[0].needsSizeMapping, false)
+  assert.throws(() => outputLabelModels({ products: rows }), /Spanish name/)
+  variant.spanishName = 'EXPLICIT NAME'
+  variant.needsSizeMapping = true
+  await authoring.reload()
+  assert.throws(
+    () => outputLabelModels({ products: authoring.preparedRows([ref]) }),
+    /Map this variant size/
+  )
+  authoring.dispose()
 })
 
 test('confirmed entitlement exception uses the real domain helper and one order confirm while preserving untouched physical identities', async (context) => {

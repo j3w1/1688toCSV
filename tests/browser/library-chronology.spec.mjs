@@ -1,9 +1,11 @@
 import { test, expect } from './extension-fixture.mjs'
 import { createDemoRecords } from '../../preview/library-fixture.js'
 import {
-  openOrganizing,
-  finishOrganizing,
-} from './packing-organize-helpers.mjs'
+  assignSelectedPurchaseCodes,
+  createContainerThroughUI,
+  sealContainerThroughUI,
+  libraryBackup,
+} from './smart-workspace-helpers.mjs'
 
 test('a newly saved matching order returns both lists to their newest position and preserves filters and product selection', async ({
   extension,
@@ -84,10 +86,9 @@ test('a newly saved matching order returns both lists to their newest position a
   await expect(rows.last().locator('.row-number')).toHaveText('153')
   const selectedKey = await rows.last().getAttribute('data-selection-key')
   const selected = page.locator(
-    `#sheet-body tr[data-selection-key="${selectedKey}"]`
+    `#sheet-body tr[data-selection-key=${JSON.stringify(selectedKey)}]`
   )
-  await selected.focus()
-  await page.keyboard.press('Space')
+  await selected.getByRole('checkbox').check()
   const newest = makeOrder(100, '2026-10-17T15:00:00+08:00')
   const result =
     await test.step('Commit the new order and notify the open library', () =>
@@ -101,13 +102,17 @@ test('a newly saved matching order returns both lists to their newest position a
     .toBe(0)
   await expect(page.locator('.order-card').first()).toHaveAttribute(
     'data-selection-key',
-    newest.snapshot.orderId
+    JSON.stringify(['local', newest.snapshot.orderId])
   )
   await expect(
     page.locator('#sheet-body tr[data-selection-key]').first()
   ).toHaveAttribute(
     'data-selection-key',
-    `${newest.snapshot.orderId}/${newest.snapshot.items[0].entryId}`
+    JSON.stringify([
+      'local',
+      newest.snapshot.orderId,
+      newest.snapshot.items[0].entryId,
+    ])
   )
   await expect
     .poll(() =>
@@ -121,12 +126,14 @@ test('a newly saved matching order returns both lists to their newest position a
   await page.keyboard.press('Control+End')
   await expect(rows.last().locator('.row-number')).toHaveText('156')
   await expect(
-    page.locator(`#sheet-body tr[data-selection-key="${selectedKey}"]`)
+    page.locator(
+      `#sheet-body tr[data-selection-key=${JSON.stringify(selectedKey)}]`
+    )
   ).toHaveAttribute('aria-selected', 'true')
   expect(extension.unexpectedRequests).toEqual([])
 })
 
-test('main order and product views retain purchase chronology and source rows after manual packing arrangement', async ({
+test('main order and product views retain purchase chronology and source rows after code authoring and a later named container', async ({
   extension,
 }) => {
   const [template] = await extension.inspector.evaluate(
@@ -185,9 +192,13 @@ test('main order and product views retain purchase chronology and source rows af
     .all())
     await toggle.click()
   const expectedOrders = [orders[2], orders[1], orders[0], orders[3]]
-  const orderIds = expectedOrders.map(({ snapshot }) => snapshot.orderId)
+  const orderIds = expectedOrders.map(({ snapshot }) =>
+    JSON.stringify(['local', snapshot.orderId])
+  )
   const expectedRows = expectedOrders.flatMap(({ snapshot }) =>
-    snapshot.items.map((item) => `${snapshot.orderId}/${item.entryId}`)
+    snapshot.items.map((item) =>
+      JSON.stringify(['local', snapshot.orderId, item.entryId])
+    )
   )
   const rows = page.locator('#sheet-body tr[data-selection-key]')
   const keys = (locator) =>
@@ -197,62 +208,39 @@ test('main order and product views retain purchase chronology and source rows af
   expect(await keys(page.locator('.order-card'))).toEqual(orderIds)
   expect(await keys(rows)).toEqual(expectedRows)
 
-  // Preparing and moving the oldest dated order used to push it ahead of all
-  // unprepared orders in the main product table, but not the order selector.
+  const original = await libraryBackup(extension),
+    ref = { accountId: 'local', orderId: orders[0].snapshot.orderId }
   await page
-    .locator(`.order-card[data-selection-key="${orders[0].snapshot.orderId}"]`)
-    .focus()
-  await page.keyboard.press('Space')
-  await page.locator('#select-rows').click()
-  await page.locator('#packing-month').fill('2026-10')
-  await page.locator('#prepare-orders').click()
-  await page
-    .getByRole('button', { name: 'Assign codes and prepare', exact: true })
-    .click()
-  const view = page.locator('#packing-view')
-  await expect(view).toBeVisible()
-  await expect(view.locator('.preparation-save-status')).toHaveText(
-    'Saved automatically'
-  )
-  const groupIds = () =>
-    view
-      .locator('.preparation-group')
-      .evaluateAll((groups) => groups.map((group) => group.dataset.groupId))
-  const originalGroups = await groupIds()
-  expect(originalGroups.length).toBeGreaterThan(1)
-  await openOrganizing(page)
-  const organizingGroups = view.locator('.packing-organize-group')
-  await expect(organizingGroups).toHaveCount(originalGroups.length)
-  await view
     .locator(
-      `.packing-organize-group[data-group-id="${originalGroups[0]}"] input[type="checkbox"]`
+      `.order-card[data-order-key=${JSON.stringify(JSON.stringify(['local', ref.orderId]))}]`
     )
+    .getByRole('checkbox')
     .check()
-  await view.getByRole('button', { name: 'Move down', exact: true }).click()
-  const arranged = [
-    originalGroups[1],
-    originalGroups[0],
-    ...originalGroups.slice(2),
-  ]
-  await expect
-    .poll(() =>
-      organizingGroups.evaluateAll((groups) =>
-        groups.map((group) => group.dataset.groupId)
-      )
+  await page.locator('#select-rows').click()
+  await assignSelectedPurchaseCodes(page)
+  const assigned = await libraryBackup(extension)
+  expect(assigned.preparations).toHaveLength(1)
+  expect(
+    assigned.preparations[0].groups.every((group) =>
+      group.baseCode.startsWith('CE2610')
     )
-    .toEqual(arranged)
-  await finishOrganizing(page)
-  await expect.poll(groupIds).toEqual(arranged)
-  await view.page().locator('#view-orders').click()
+  ).toBe(true)
+  expect(assigned.orders.map((record) => record.snapshot)).toEqual(
+    original.orders.map((record) => record.snapshot)
+  )
+  await createContainerThroughUI(page, [ref], 'Synthetic chronology November')
+  await sealContainerThroughUI(page, { markAll: false })
+  await page.locator('#view-orders').click()
   await page.getByRole('button', { name: 'Show all', exact: true }).click()
   expect(await keys(page.locator('.order-card'))).toEqual(orderIds)
   expect(await keys(rows)).toEqual(expectedRows)
-
-  const saved = await extension.inspector.evaluate(() =>
-    chrome.runtime.sendMessage({ type: 'BACKUP_EXPORT' })
+  const saved = await libraryBackup(extension)
+  expect(saved.preparations[0].groups).toEqual(assigned.preparations[0].groups)
+  expect(saved.orders.map((record) => record.snapshot)).toEqual(
+    original.orders.map((record) => record.snapshot)
   )
-  expect(saved.data.preparations[0].groups.map((group) => group.id)).toEqual(
-    arranged
+  expect(saved.orders.map((record) => record.productPhotos)).toEqual(
+    original.orders.map((record) => record.productPhotos)
   )
   await page.reload()
   await expect(rows).toHaveCount(12)

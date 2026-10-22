@@ -611,6 +611,8 @@ export async function startPackingWorkspace({
       }
       if (workspace === 'orders' && ordersView === 'cartons' && !currentOrder)
         await showCartonHistory()
+      else if (workspace === 'orders' && ordersView === 'cartons')
+        await activeSession?.refresh()
     },
     updateActions() {
       if (

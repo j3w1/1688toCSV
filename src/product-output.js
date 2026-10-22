@@ -81,6 +81,8 @@ export function outputLabelModels(context, kind = 'barcode') {
         },
       })
     }
+    if (row.needsSizeMapping)
+      refuse('Map this variant size before generating labels', 'size')
     if (!code) refuse('Review product codes in Orders first.', 'code')
     if (kind === 'mark' && !category?.trim())
       refuse(
@@ -92,8 +94,6 @@ export function outputLabelModels(context, kind = 'barcode') {
         'Add a Spanish name in Orders before generating this barcode.',
         'name'
       )
-    if (row.needsSizeMapping)
-      refuse('Map this variant size before generating labels', 'size')
     const existing = models.get(code)
     const quantity =
       kind === 'mark' ? (row.cartonId ? '1' : null) : row.quantity

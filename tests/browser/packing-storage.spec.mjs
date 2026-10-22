@@ -57,6 +57,45 @@ async function openTestDatabase(extension) {
           })
       }
     }
+    // An explicit pre-SEAL archive exercises grandfathered mixed-month
+    // checkpoints. Ordinary v5 writes never perform a shipment-month move.
+    window.restoreLegacyMonthFixture = async (source) => {
+      const initial = packingModel.allocatePreparation(
+        { ...packingModel.createPreparation(source, '2026-10'), revision: 1 },
+        [],
+        [],
+        { snapshot: source }
+      ).preparation
+      initial.defaultPacking = packingModel.packingCheckpoint(initial)
+      const plan = packingModel.planSelectedPreparations(
+          [{ snapshot: source, preparation: initial, entryIds: ['2'] }],
+          '2026-12'
+        ),
+        allocation = packingModel.allocatePreparation(
+          { ...plan.preparations[0], revision: 2 },
+          [],
+          [],
+          { snapshot: source }
+        ),
+        moved = allocation.preparation
+      moved.previousPacking = packingModel.packingCheckpoint(initial, {
+        includeDefaults: true,
+      })
+      moved.defaultPacking = packingModel.packingCheckpoint(moved)
+      await library.restoreBackup({
+        format: '1688-order-library',
+        version: 4,
+        exportedAt: '2026-10-22T12:00:00.000Z',
+        orders: [{ snapshot: source, changedEntryIds: [] }],
+        history: [],
+        images: [],
+        cartonBatches: [],
+        preparations: [moved],
+        allocations: allocation.allocations,
+        issuedCodes: allocation.issuedCodes,
+      })
+      return library.getPreparation(source.orderId)
+    }
   })
   return page
 }
@@ -552,18 +591,7 @@ test('checkpoint restores survive backup round trips without reserving retired c
 }) => {
   const page = await openTestDatabase(extension)
   const result = await page.evaluate(async (source) => {
-    await saveSyntheticSource(source)
-    const first = await library.savePreparation(
-      packingModel.createPreparation(source, '2026-10')
-    )
-    const plan = packingModel.planSelectedPreparations(
-      [{ snapshot: source, preparation: first, entryIds: ['2'] }],
-      '2026-12'
-    )
-    const [moved] = await library.savePreparations(plan.preparations, {
-      capturePrevious: true,
-      resetDefaults: true,
-    })
+    const moved = await restoreLegacyMonthFixture(source)
     let edited = packingModel.reorderPreparationGroups(
       moved,
       moved.groups.map((entry) => entry.id).reverse()
@@ -586,6 +614,7 @@ test('checkpoint restores survive backup round trips without reserving retired c
     const otherSource = {
       ...source,
       orderId: '2002',
+      purchasedAt: '2026-12-01T10:00:00+08:00',
       sourceUrl: source.sourceUrl.replace(source.orderId, '2002'),
     }
     await saveSyntheticSource(otherSource, restoredLibrary)
@@ -658,26 +687,11 @@ test('packing-only backups keep complete included preparations and only their cu
   }))
   const result = await page.evaluate(
     async (sources) => {
-      for (const source of sources) await saveSyntheticSource(source)
-      const preparations = await library.savePreparations(
-        sources.map((source) =>
-          packingModel.createPreparation(source, '2026-10')
-        )
+      await restoreLegacyMonthFixture(sources[0])
+      await saveSyntheticSource(sources[1])
+      await library.savePreparation(
+        packingModel.createPreparation(sources[1], '2026-10')
       )
-      const plan = packingModel.planSelectedPreparations(
-        [
-          {
-            snapshot: sources[0],
-            preparation: preparations[0],
-            entryIds: ['2'],
-          },
-        ],
-        '2026-12'
-      )
-      await library.savePreparations(plan.preparations, {
-        capturePrevious: true,
-        resetDefaults: true,
-      })
       const dataUrl =
         'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO2WZ4kAAAAASUVORK5CYII='
       for (const source of sources)
