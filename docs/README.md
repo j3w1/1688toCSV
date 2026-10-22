@@ -6,9 +6,9 @@ Start with the illustrated [quick start](../README.md). These guides cover the d
 | ----------------------------------------------------------------- | ------------------------------------------------------- |
 | Import 1688 orders, add other purchases, filter and refresh       | [Importing and finding orders](importing.md)            |
 | Prepare a supplier workbook and resolve import checks             | [Store spreadsheets and markers](store-spreadsheets.md) |
-| Assign codes, organize products, undo or resolve conflicts        | [Packing lists and codes](packing.md)                   |
-| Plan capacities and record physical contents/measurements         | [Cartons](cartons.md)                                   |
-| Copy to Excel or download Products/Cartons workbooks              | [Copying and exports](exports.md)                       |
+| Edit products/codes, load containers, seal and amend              | [Packing lists and codes](packing.md)                   |
+| Reconcile order cartons with paste, fill and remainders           | [Cartons](cartons.md)                                   |
+| Copy to Excel or export a complete container revision             | [Copying and exports](exports.md)                       |
 | Print barcode labels, carton marks and calibration sheets         | [Printing](printing.md)                                 |
 | Edit photos, local recognition rules, tags and appearance         | [Settings and photos](settings-and-photos.md)           |
 | Record supplier services, features, payments and repeat purchases | [Store operations and costs](operations.md)             |

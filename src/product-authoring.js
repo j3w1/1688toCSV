@@ -1,0 +1,1985 @@
+import {
+  message as uiMessage,
+  bindText,
+  bindAttribute,
+  isMessage,
+  t,
+  getLocale,
+  getLanguage,
+} from './i18n.js'
+import {
+  element as el,
+  copied,
+  yieldUI,
+  enableLightDismiss,
+  copyTextButton,
+  pinDialogActions,
+} from './ui.js'
+import {
+  barcodeValue,
+  variantMaterial,
+  setVariantMaterial,
+  validatePreparationSuffixEdits,
+  setGroupSizeMode,
+} from './packing-model.js'
+import { acknowledgePreparation, samePreparation } from './preparation-save.js'
+import {
+  createPreparationHistory,
+  preparationHistorySnapshot,
+  restorePreparationHistory,
+} from './preparation-history.js'
+import { preparationOrderFields } from './preparation-clipboard.js'
+import { paymentCostAdjustments } from './payment-links.js'
+import { hasProductFeatureCosts } from './product-features.js'
+import {
+  suggestMaterial,
+  translateMaterial,
+  configureMaterialVocabulary,
+} from './material-vocabulary.js'
+import { configureColorVocabulary } from './color-vocabulary.js'
+import {
+  createSizeClassifier,
+  suggestPriceSizeMappings,
+} from './size-vocabulary.js'
+import { createPreparationMedia, preparationHelp } from './preparation-media.js'
+import { mountLabelEditor } from './label-editor.js'
+import { labelClipboard } from './preparation-clipboard.js'
+import { DEFAULT_LABEL_SETTINGS, renderLabel } from './labels.js'
+import {
+  setCodeText,
+  decorateCodeInput,
+  refreshCodeInput,
+} from './code-display.js'
+import { createExcelImageBadges } from './excel-image-badges.js'
+import { showErrorNotice, clearErrorNotices } from './error-notice.js'
+import { decorateIcon } from './icons.js'
+import { applyAppearance } from './appearance.js'
+import { openStoreSpreadsheetGuide } from './store-spreadsheet-guide.js'
+import { mountMaterialVocabulary } from './material-vocabulary-settings.js'
+import { mountColorVocabulary } from './color-vocabulary-settings.js'
+import { mountAppearanceSettings } from './appearance-settings.js'
+import { mountSizeVocabulary } from './size-vocabulary-settings.js'
+import { mountProductVocabulary } from './product-vocabulary-settings.js'
+import { assignedTagNames, reconcileTagCatalog } from './order-tags.js'
+import { mountOrderTagSettings, mountTagSettings } from './order-tags-ui.js'
+import { openOperationsMigrationDialog } from './operations-ui.js'
+import { mountRepeatProductControl } from './repeat-products-ui.js'
+import {
+  regroupSelection,
+  groupingAvailability,
+  groupingReviewChanges,
+} from './packing-grouping.js'
+import {
+  reviewPackingChanges,
+  packingValueComparison,
+} from './packing-review.js'
+const $ = (id) => document.getElementById(id)
+const orderKey = ({ accountId = 'local', orderId }) =>
+  JSON.stringify([accountId, orderId])
+const entryKey = (ref) =>
+  JSON.stringify([
+    ref.accountId || ref.record?.accountId || 'local',
+    ref.orderId,
+    ref.entryId,
+  ])
+function field(title, value, change, type = 'text') {
+  const label = el('label', isMessage(title) ? title : uiMessage(title)),
+    input = el('input')
+  input.type = type
+  input.id = `packing-${crypto.randomUUID()}`
+  label.htmlFor = input.id
+  input.value = value ?? ''
+  input.addEventListener('input', (event) => {
+    if (!event.isComposing) change(input.value)
+  })
+  input.addEventListener('compositionend', () => change(input.value))
+  label.append(input)
+  return label
+}
+function inlineField(
+  title,
+  value,
+  change,
+  placeholder = '',
+  multiline = false
+) {
+  const label = field(title, value, change)
+  label.className = 'preparation-inline-field'
+  let input = label.querySelector('input')
+  if (multiline) {
+    const textarea = el('textarea')
+    textarea.id = input.id
+    textarea.value = input.value
+    textarea.rows = 2
+    textarea.addEventListener('input', (event) => {
+      if (!event.isComposing) change(textarea.value)
+    })
+    textarea.addEventListener('compositionend', () => change(textarea.value))
+    input.replaceWith(textarea)
+    input = textarea
+  }
+  bindAttribute(input, 'placeholder', placeholder)
+  return label
+}
+function button(text, handler, className) {
+  const result = el(
+    'button',
+    isMessage(text) ? text : uiMessage(text),
+    className
+  )
+  const source = isMessage(text) ? text.source : text
+  const buttonIcons = {
+    Undo: 'undo',
+    Redo: 'redo',
+    'Apply to order': 'check',
+    'Merge products': 'packing',
+    'Copy Excel image': 'table',
+    'Copy barcode images': 'barcode',
+    'Copy carton marks': 'carton',
+    'Copy code': 'copy',
+    Barcode: 'barcode',
+    'Carton mark': 'carton',
+    Name: 'edit',
+    'Share one barcode': 'barcode',
+    'Give rows separate barcodes': 'barcode',
+    'Move to new product': 'packing',
+    'Save settings': 'check',
+    Remove: 'trash',
+  }
+  if (buttonIcons[source]) decorateIcon(result, buttonIcons[source])
+  result.addEventListener('click', async () => {
+    clearErrorNotice()
+    try {
+      await handler(result)
+    } catch (error) {
+      showError(error)
+    }
+  })
+  return result
+}
+function showError(message) {
+  showErrorNotice(message)
+}
+function dialog(target) {
+  if (!target.open) target.showModal()
+}
+const blobData = (blob) =>
+  new Promise((resolve, reject) => {
+    const r = new FileReader()
+    r.onload = () => resolve(r.result)
+    r.onerror = () => reject(r.error)
+    r.readAsDataURL(blob)
+  })
+
+/** Orders owns these controllers. Containers receive only frozen output data. */
+export async function createProductAuthoring({
+  repository,
+  getRecords,
+  changed = async () => {},
+  feedback = () => {},
+  loadImage,
+  onCartons,
+  getSelectedRows = () => [],
+}) {
+  let preferences = {},
+    preparations = new Map(),
+    membership = new Map(),
+    suggestions = new Map(),
+    generation = 0,
+    editor
+  const sessions = new Map(),
+    cartonFields = new Map()
+  const history = createPreparationHistory()
+  const channel = globalThis.BroadcastChannel
+    ? new BroadcastChannel('1688-preparation')
+    : null
+  const settings = () => ({
+    ...DEFAULT_LABEL_SETTINGS,
+    ...preferences.settings,
+    barcode: {
+      ...DEFAULT_LABEL_SETTINGS.barcode,
+      ...preferences.settings?.barcode,
+    },
+    mark: { ...DEFAULT_LABEL_SETTINGS.mark, ...preferences.settings?.mark },
+  })
+  const logoUrl = () =>
+    preferences.logoDataUrl ||
+    new URL('assets/casa-elida.png', location.href).href
+  const recordFor = (ref) =>
+    getRecords().find(
+      ({ snapshot, accountId }) =>
+        snapshot.orderId === ref.orderId &&
+        (accountId || snapshot.accountId || 'local') ===
+          (ref.accountId || ref.record?.accountId || 'local')
+    )
+  function rebuild() {
+    membership = new Map()
+    suggestions = new Map()
+    for (const prep of preparations.values())
+      for (const group of prep.groups)
+        for (const variant of group.variants)
+          for (const entryId of variant.entryIds)
+            membership.set(entryKey({ ...prep, entryId }), {
+              prep,
+              group,
+              variant,
+            })
+    for (const record of getRecords())
+      for (const group of record.namingSuggestions?.groups || [])
+        for (const entryId of group.entryIds)
+          suggestions.set(
+            entryKey({
+              accountId: record.accountId,
+              orderId: record.snapshot.orderId,
+              entryId,
+            }),
+            group
+          )
+  }
+  async function reload() {
+    const version = ++generation
+    const [list, prefs] = await Promise.all([
+      repository.listPreparations(),
+      repository.getPackingPreferences(),
+    ])
+    if (version !== generation) return
+    preparations = new Map(list.map((prep) => [orderKey(prep), prep]))
+    preferences = prefs
+    configureColorVocabulary(preferences.colorVocabulary)
+    configureMaterialVocabulary(preferences.materialVocabulary)
+    applyAppearance(preferences.appearance)
+    rebuild()
+    for (const session of sessions.values()) {
+      const latest = preparations.get(orderKey(session.draft))
+      if (!session.dirty && !session.mounted && latest)
+        session.draft = structuredClone(latest)
+    }
+  }
+  function preparedRows(rows) {
+    const records = getRecords()
+    const costOrders = new Set(
+      records.flatMap((record) => [
+        ...(record.additionalCharges?.length ||
+        record.paymentLinks?.length ||
+        hasProductFeatureCosts(record)
+          ? [record.snapshot.orderId]
+          : []),
+        ...(record.paymentLinks || []).map((link) => link.sourceOrderId),
+      ])
+    )
+    const costs = new Map()
+    return rows.map((source) => {
+      const record = recordFor(source) || source.record
+      if (
+        record &&
+        costOrders.has(source.orderId) &&
+        !costs.has(
+          orderKey({ accountId: record.accountId, orderId: source.orderId })
+        )
+      )
+        costs.set(
+          orderKey({ accountId: record.accountId, orderId: source.orderId }),
+          paymentCostAdjustments(record, records)
+        )
+      const row = {
+        ...source,
+        accountId: record?.accountId || source.accountId || 'local',
+        ...preparationOrderFields(source, record, {
+          records: costOrders.has(source.orderId) ? records : undefined,
+          costs: costs.get(
+            orderKey({ accountId: record?.accountId, orderId: source.orderId })
+          ),
+        }),
+      }
+      const match = membership.get(entryKey(row)),
+        suggestion = suggestions.get(entryKey(row))
+      if (!match)
+        return {
+          ...row,
+          baseCode: '',
+          barcode: '',
+          spanishName: suggestion?.spanishName || '',
+          chineseCategory: suggestion?.category || '',
+          material: suggestMaterial(row),
+          materialSource: 'suggested',
+          groupId: row.entryId,
+        }
+      let code = ''
+      try {
+        code = barcodeValue(match.group, match.variant)
+      } catch {}
+      return {
+        ...row,
+        baseCode: match.group.baseCode,
+        barcode: code,
+        spanishName: match.variant.spanishName || match.group.spanishName,
+        chineseCategory: match.group.category,
+        groupId: match.group.id,
+        variantId: match.variant.id,
+        variantDescription: match.variant.variant,
+        sourceSize: match.variant.size,
+        variantSuffix: match.variant.variantSuffix,
+        sizeSuffix: match.variant.sizeSuffix,
+        material: variantMaterial(match.variant, row.entryId).value,
+        materialSource: variantMaterial(match.variant, row.entryId).source,
+        ...(match.group.sharedProductId
+          ? {
+              sharedProductId: match.group.sharedProductId,
+              sharedVariantId: match.variant.sharedVariantId,
+            }
+          : {}),
+      }
+    })
+  }
+  function photoContext(item) {
+    const row = preparedRows([item])[0]
+    return {
+      code: row.barcode,
+      sellerName: row.sellerName,
+      spanishName: row.spanishName,
+      quantity: row.quantity,
+    }
+  }
+  const media = createPreparationMedia({
+    container: null,
+    loadImage,
+    settings,
+    logoUrl,
+    getPhotoContext: photoContext,
+    getSizeClassifier: () => createSizeClassifier(preferences.sizeVocabulary),
+    getPhotoItems: getSelectedRows,
+  })
+  function recoveryKey(ref) {
+    return `1688-orders-authoring-draft:${orderKey(ref)}`
+  }
+  function retain(session) {
+    // Recovery UI state is not inventory. Only the repository accepts facts.
+    try {
+      localStorage.setItem(
+        recoveryKey(session.draft),
+        JSON.stringify(session.draft)
+      )
+    } catch (error) {
+      session.error = new Error(
+        'The editing draft could not be saved for recovery.'
+      )
+      feedback(session.error.message, true)
+    }
+  }
+  function getSession(ref) {
+    const key = orderKey(ref)
+    let session = sessions.get(key)
+    if (!session) {
+      const saved = preparations.get(key)
+      if (!saved) throw new Error('Review product codes in Orders first.')
+      let draft = structuredClone(saved)
+      try {
+        const recovered = JSON.parse(localStorage.getItem(recoveryKey(ref)))
+        if (
+          recovered &&
+          orderKey(recovered) === key &&
+          Array.isArray(recovered.groups)
+        )
+          draft = recovered
+      } catch {}
+      session = {
+        draft,
+        dirty: !samePreparation(draft, saved),
+        generation: 0,
+        work: null,
+        error: null,
+        stale: draft.revision !== saved.revision,
+      }
+      sessions.set(key, session)
+    }
+    return session
+  }
+  async function flushSession(session) {
+    clearTimeout(session.timer)
+    if (session.work) {
+      await session.work
+      return flushSession(session)
+    }
+    if (!session.dirty) return
+    if (session.stale)
+      throw new Error(
+        'Review the recovered draft against the newer saved revision before saving.'
+      )
+    const submitted = structuredClone(session.draft),
+      before = preparations.get(orderKey(submitted))
+    if (before && before.revision !== submitted.revision) {
+      session.stale = true
+      throw new Error(
+        'Review the recovered draft against the newer saved revision before saving.'
+      )
+    }
+    const cleared = submitted.groups.find(
+      (group) =>
+        !group.baseCode &&
+        before?.groups.some((saved) => saved.id === group.id && saved.baseCode)
+    )
+    if (cleared)
+      throw new Error(
+        'Enter a complete product code. Clearing an assigned code cannot create a new one.'
+      )
+    validatePreparationSuffixEdits(submitted, before, {
+      snapshot: recordFor(submitted)?.snapshot,
+      sizeVocabulary: preferences.sizeVocabulary,
+    })
+    const version = session.generation
+    session.notify?.('Saving…')
+    session.work = repository.savePreparations([submitted], {
+      expectedRevisions: [submitted.revision],
+      expectedSnapshots: [
+        {
+          accountId: submitted.accountId,
+          orderId: submitted.orderId,
+          observedAt: recordFor(submitted)?.snapshot.observedAt,
+        },
+      ],
+    })
+    try {
+      const [result] = await session.work
+      acknowledgePreparation(session.draft, submitted, result)
+      preparations.set(orderKey(result), result)
+      rebuild()
+      session.dirty = session.generation !== version
+      session.error = null
+      session.notify?.(session.dirty ? 'Pending changes' : 'Saved')
+      if (!session.dirty) {
+        try {
+          localStorage.removeItem(recoveryKey(result))
+        } catch {}
+      } else retain(session)
+      channel?.postMessage('changed')
+      await changed()
+    } catch (error) {
+      session.error = error
+      session.notify?.(error.message)
+      retain(session)
+      throw error
+    } finally {
+      session.work = null
+    }
+    if (session.dirty) return flushSession(session)
+  }
+  async function flushSaves() {
+    for (const controller of cartonFields.values()) await controller.flush()
+    for (const session of sessions.values()) await flushSession(session)
+  }
+  function editSession(session, change, mergeKey = null) {
+    const before = preparationHistorySnapshot(session.draft)
+    change(session.draft)
+    if (before === preparationHistorySnapshot(session.draft)) return
+    history.record(
+      orderKey(session.draft),
+      before,
+      preparationHistorySnapshot(session.draft),
+      mergeKey
+    )
+    session.generation++
+    session.dirty = true
+    session.error = null
+    session.notify?.('Pending changes')
+    retain(session)
+    clearTimeout(session.timer)
+    session.timer = setTimeout(
+      () =>
+        void flushSession(session).catch((error) => {
+          session.error = error
+          session.notify?.(error.message)
+          feedback(error.message, true)
+        }),
+      800
+    )
+  }
+  async function reviewRecovered(session) {
+    const latest = (await repository.listPreparations()).find(
+      (draft) => orderKey(draft) === orderKey(session.draft)
+    )
+    if (!latest) throw new Error('This edit session is no longer available.')
+    const rows = (draft) =>
+      new Map(
+        draft.groups.flatMap((group) =>
+          group.variants.flatMap((variant) =>
+            variant.entryIds.map((entryId) => [
+              entryId,
+              [
+                group.baseCode,
+                variant.variantSuffix,
+                variant.sizeSuffix,
+                variant.spanishName || group.spanishName,
+                group.category,
+                variantMaterial(variant, entryId).value,
+              ].join('\n'),
+            ])
+          )
+        )
+      )
+    const savedRows = rows(latest),
+      recoveredRows = rows(session.draft),
+      changes = [...new Set([...savedRows.keys(), ...recoveredRows.keys()])]
+        .filter((id) => savedRows.get(id) !== recoveredRows.get(id))
+        .map((entryId) => ({
+          name:
+            recordFor(latest)?.snapshot.items.find(
+              (item) => item.entryId === entryId
+            )?.description || entryId,
+          orderId: latest.orderId,
+          before: savedRows.get(entryId) || '—',
+          after: recoveredRows.get(entryId) || '—',
+        }))
+    const choice = await reviewPackingChanges({
+      title: uiMessage('Review recovered product edits'),
+      explanation: uiMessage(
+        'A newer saved revision exists. Review every recovered value before using it; current ownership and physical-history checks still apply.'
+      ),
+      changes,
+      proceed: uiMessage('Use these reviewed edits'),
+      alternate: { label: uiMessage('Keep saved version'), value: 'saved' },
+      media,
+    })
+    if (!choice) return false
+    preparations.set(orderKey(latest), latest)
+    if (choice === 'saved') {
+      session.draft = structuredClone(latest)
+      session.dirty = false
+      localStorage.removeItem(recoveryKey(latest))
+    } else {
+      session.draft.revision = latest.revision
+      session.draft.updatedAt = latest.updatedAt
+      session.dirty = true
+      retain(session)
+    }
+    session.stale = false
+    session.error = null
+    return true
+  }
+  async function travel(direction) {
+    await flushSaves()
+    const result = history.peek(direction)
+    if (!result) return
+    const entries = result.changes || [result]
+    const before = entries.map((entry) => preparations.get(entry.orderId))
+    if (before.some((draft) => !draft))
+      throw new Error('This edit session is no longer available.')
+    const candidates = entries.map((entry, index) =>
+      restorePreparationHistory(entry.value, before[index])
+    )
+    const controls = [
+        ...document.querySelectorAll(
+          '.product-authoring-dialog input,.product-authoring-dialog textarea,.product-authoring-dialog button'
+        ),
+      ],
+      disabled = controls.map((control) => control.disabled)
+    const submitted = new Map(
+      before.map((draft) => [
+        orderKey(draft),
+        structuredClone(sessions.get(orderKey(draft))?.draft || draft),
+      ])
+    )
+    controls.forEach((control) => {
+      control.disabled = true
+    })
+    try {
+      const results = await repository.savePreparations(candidates, {
+        expectedRevisions: before.map((draft) => draft.revision),
+        suffixBaselines: candidates,
+        preserveNaming: true,
+      })
+      history[direction]()
+      for (const saved of results) {
+        preparations.set(orderKey(saved), saved)
+        const session = sessions.get(orderKey(saved))
+        if (session) {
+          acknowledgePreparation(
+            session.draft,
+            submitted.get(orderKey(saved)),
+            saved
+          )
+          session.dirty = !samePreparation(session.draft, saved)
+          session.error = null
+          if (session.dirty) retain(session)
+          else
+            try {
+              localStorage.removeItem(recoveryKey(saved))
+            } catch {}
+        }
+      }
+      rebuild()
+      await changed()
+      channel?.postMessage('changed')
+    } finally {
+      controls.forEach((control, index) => {
+        control.disabled = disabled[index]
+      })
+    }
+  }
+  async function reviewCodes(rows = getSelectedRows()) {
+    await flushSaves()
+    const refs = rows.map((row) => ({
+      accountId: row.accountId || row.record?.accountId || 'local',
+      orderId: row.orderId,
+      entryId: row.entryId,
+    }))
+    if (!refs.length) throw new Error('Select product rows to review codes.')
+    const orderRefs = [
+      ...new Map(
+        refs.map((ref) => [
+          orderKey(ref),
+          { accountId: ref.accountId, orderId: ref.orderId },
+        ])
+      ).values(),
+    ]
+    const review = await repository.reviewPurchaseCodes({
+      orderRefs,
+      entryRefs: refs,
+    })
+    const modal = el(
+        'dialog',
+        undefined,
+        'packing-review purchase-code-review'
+      ),
+      content = el('div'),
+      status = el('p'),
+      actions = el('div', undefined, 'dialog-actions')
+    modal.dataset.action = 'purchase-code-review'
+    modal.append(
+      el('h2', uiMessage('Review purchase-month codes')),
+      el(
+        'p',
+        uiMessage(
+          'New codes use the original purchase month. Review does not reserve codes.'
+        )
+      )
+    )
+    for (const row of review.changes || review.assignments || []) {
+      const card = el('article')
+      if (row.photo) card.append(media.photo(row.photo))
+      card.append(
+        el('p', row.name || row.description || row.entryId || row.orderId),
+        el('code', row.after || row.code || row.baseCode || '—', 'ce-code')
+      )
+      content.append(card)
+    }
+    for (const issue of review.issues || [])
+      content.append(el('p', uiMessage(issue.message || issue)))
+    const cancel = el('button', uiMessage('Cancel')),
+      commit = el('button', uiMessage('Assign purchase codes'), 'primary')
+    commit.dataset.action = 'assign-purchase-codes'
+    commit.disabled = (review.issues || []).some(
+      (issue) => issue.severity === 'error'
+    )
+    cancel.onclick = () => modal.close()
+    commit.onclick = () =>
+      void (async () => {
+        commit.disabled = cancel.disabled = true
+        try {
+          await repository.assignPurchaseCodes({
+            plan: review.plan || review,
+            expectedRevisions: review.expectedRevisions,
+            intentId: crypto.randomUUID(),
+          })
+          await reload()
+          await changed()
+          modal.close('assigned')
+        } catch (error) {
+          bindText(status, uiMessage(error.message))
+        } finally {
+          commit.disabled = cancel.disabled = false
+        }
+      })()
+    status.setAttribute('role', 'status')
+    actions.append(cancel, commit)
+    modal.append(content, status, actions)
+    modal.onclose = () => {
+      media.forget(modal)
+      modal.remove()
+    }
+    document.body.append(modal)
+    modal.showModal()
+  }
+  async function openEditor(ref) {
+    for (const session of sessions.values())
+      if (!session.stale) await flushSession(session)
+    const match = membership.get(entryKey(ref))
+    if (!match) return reviewCodes([ref])
+    const session = getSession(match.prep)
+    if (session.stale && !(await reviewRecovered(session))) return
+    session.mounted = true
+    const group = session.draft.groups.find((group) =>
+        group.variants.some((variant) => variant.entryIds.includes(ref.entryId))
+      ),
+      variant = group?.variants.find((variant) =>
+        variant.entryIds.includes(ref.entryId)
+      )
+    if (!group || !variant)
+      throw new Error('The target source row is unavailable.')
+    const modal = el('dialog', undefined, 'product-authoring-dialog'),
+      content = el('div', undefined, 'product-authoring-fields'),
+      status = el('p'),
+      close = el('button', uiMessage('Close')),
+      undo = el('button', uiMessage('Undo')),
+      redo = el('button', uiMessage('Redo'))
+    modal.dataset.action = 'edit-order-product'
+    modal.append(el('h2', uiMessage('Edit product in Orders')))
+    const row = preparedRows([ref])[0]
+    modal.append(el('p', row.description || row.title))
+    if (ref.thumbnail) modal.append(media.photo(ref))
+    const fields = []
+    session.notify = (message) => bindText(status, uiMessage(message))
+    session.notify(session.dirty ? 'Pending changes' : 'Saved')
+    const add = (label, value, change, multiline = false) => {
+      const control = inlineField(
+        label,
+        value,
+        (value) => {
+          editSession(
+            session,
+            () => change(value),
+            `${orderKey(session.draft)}/${group.id}/${label}`
+          )
+          bindText(status, uiMessage('Pending changes'))
+        },
+        '',
+        multiline
+      )
+      fields.push({
+        input: control.querySelector('input,textarea'),
+        read: () => value,
+      })
+      content.append(control)
+      control
+        .querySelector('input,textarea')
+        .addEventListener('blur', () => history.breakGroup())
+    }
+    add(
+      'Spanish name',
+      variant.spanishName || group.spanishName || '',
+      (value) => {
+        variant.spanishName = value.toUpperCase()
+      },
+      true
+    )
+    add('Chinese category', group.category || '', (value) => {
+      group.category = value
+    })
+    add('Material', variantMaterial(variant, ref.entryId).value, (value) =>
+      setVariantMaterial(variant, value, [ref.entryId])
+    )
+    add('Product code', group.baseCode, (value) => {
+      group.baseCode = value.toUpperCase()
+    })
+    add('Variant ending', variant.variantSuffix, (value) => {
+      variant.variantSuffix = value.toUpperCase()
+    })
+    add('Size ending', variant.sizeSuffix, (value) => {
+      variant.sizeSuffix = value.toUpperCase()
+      if (value) {
+        variant.needsSizeMapping = false
+        delete group.sizeMode
+      }
+    })
+    for (const input of content.querySelectorAll('input'))
+      if (/code|ending/i.test(input.closest('label').textContent))
+        decorateCodeInput(input)
+    const tools = el('div', undefined, 'product-authoring-tools')
+    for (const [title, mode] of [
+      ['Automatic sizes', 'automatic'],
+      ['No size difference', 'none'],
+    ])
+      tools.append(
+        button(title, async () => {
+          await flushSession(session)
+          const candidate = setGroupSizeMode(session.draft, group.id, mode, {
+            snapshot: recordFor(ref)?.snapshot,
+            sizeVocabulary: preferences.sizeVocabulary,
+          })
+          const next = candidate.groups.find((entry) => entry.id === group.id)
+          const changes = group.variants
+            .map((variant) => {
+              const changed = next.variants.find(
+                (entry) => entry.id === variant.id
+              )
+              return {
+                name:
+                  variant.variant || variant.spanishName || group.spanishName,
+                before:
+                  group.baseCode + variant.variantSuffix + variant.sizeSuffix,
+                after:
+                  next.baseCode + changed.variantSuffix + changed.sizeSuffix,
+              }
+            })
+            .filter((row) => row.before !== row.after)
+          if (
+            changes.length &&
+            !(await reviewPackingChanges({
+              title: uiMessage('Change size handling?'),
+              explanation: uiMessage(
+                mode === 'none'
+                  ? 'These variants have no size difference. Remove only their size endings and keep their variant letters, source descriptions and other products unchanged. This choice is remembered for this product.'
+                  : 'Use automatic size recognition for this product again. Blank size endings will be checked against its source descriptions; unclear sizes remain for review.'
+              ),
+              changes,
+              proceed: uiMessage('Apply size handling'),
+              media,
+            }))
+          )
+            return
+          editSession(session, () => {
+            session.draft = candidate
+          })
+          await flushSession(session)
+          modal.close()
+          await openEditor(ref)
+        })
+      )
+    const priceSuggestions = suggestPriceSizeMappings(
+      group,
+      recordFor(ref)?.snapshot,
+      preferences.sizeVocabulary
+    )
+    if (priceSuggestions.length)
+      tools.append(
+        button('Review size suggestions', async () => {
+          const changes = priceSuggestions.map(
+            ({ variantId, sizeSuffix, price }) => {
+              const variant = group.variants.find(
+                (entry) => entry.id === variantId
+              )
+              return {
+                name: variant.variant || variant.size,
+                before:
+                  group.baseCode + variant.variantSuffix + variant.sizeSuffix,
+                after: group.baseCode + variant.variantSuffix + sizeSuffix,
+                detail: uiMessage(
+                  'Unit price ¥{price} · Suggested size {size}',
+                  { price, size: sizeSuffix }
+                ),
+              }
+            }
+          )
+          if (
+            !(await reviewPackingChanges({
+              title: uiMessage('Review size suggestions'),
+              explanation: uiMessage(
+                'Price is only a clue. These matching variants have no reliable measurements. Confirm that the cheaper one is smaller (S) and the more expensive one is larger (L). Only the two size endings shown below will change.'
+              ),
+              changes,
+              proceed: uiMessage('Apply these size codes'),
+              media,
+            }))
+          )
+            return
+          editSession(session, () => {
+            for (const suggestion of priceSuggestions) {
+              const variant = group.variants.find(
+                (entry) => entry.id === suggestion.variantId
+              )
+              variant.sizeSuffix = suggestion.sizeSuffix
+              variant.needsSizeMapping = false
+            }
+          })
+          await flushSession(session)
+          modal.close()
+          await openEditor(ref)
+        })
+      )
+    for (const [title, kind] of [
+      ['Barcode', 'barcode'],
+      ['Carton mark', 'mark'],
+    ])
+      tools.append(
+        button(title, async () => {
+          await flushSession(session)
+          modal.close()
+          await openLabel(ref, kind)
+        })
+      )
+    if (onCartons)
+      tools.append(
+        button('Edit cartons', async () => {
+          await flushSession(session)
+          modal.close()
+          await onCartons(ref)
+        })
+      )
+    if (repository.getRepeatProductCandidates)
+      mountRepeatProductControl(tools, {
+        source: {
+          accountId: session.draft.accountId,
+          orderId: session.draft.orderId,
+          groupId: group.id,
+        },
+        linked: Boolean(group.sharedProductId),
+        repository,
+        media,
+        beforeOpen: flushSaves,
+        onSaved: async () => {
+          await reload()
+          await changed({ reload: true })
+          modal.close()
+        },
+        onError: (error) => bindText(status, uiMessage(error.message)),
+      })
+    const resolve = button('Resolve code conflict', async () => {
+      const result = await resolveCodeConflict(session.draft, session.error)
+      if (result) {
+        modal.close()
+        await openEditor(ref)
+      }
+    })
+    resolve.hidden = true
+    tools.append(resolve)
+    const recovered = button('Review recovered product edits', async () => {
+      if (await reviewRecovered(session)) {
+        modal.close()
+        await openEditor(ref)
+      }
+    })
+    recovered.hidden = true
+    tools.append(recovered)
+    const finish = async () => {
+      try {
+        await flushSession(session)
+        modal.close()
+      } catch (error) {
+        bindText(status, uiMessage(error.message))
+        resolve.hidden = !error.conflict && !/CE\d{8}/.test(error.message)
+        recovered.hidden = !session.stale
+        content.querySelector('input')?.focus()
+      }
+    }
+    close.onclick = () => void finish()
+    modal.oncancel = (event) => {
+      event.preventDefault()
+      void finish()
+    }
+    undo.onclick = () =>
+      void travel('undo')
+        .then(() => {
+          modal.close()
+          return openEditor(ref)
+        })
+        .catch((error) => bindText(status, uiMessage(error.message)))
+    redo.onclick = () =>
+      void travel('redo')
+        .then(() => {
+          modal.close()
+          return openEditor(ref)
+        })
+        .catch((error) => bindText(status, uiMessage(error.message)))
+    status.setAttribute('role', 'status')
+    modal.append(content, tools, status, undo, redo, close)
+    modal.onclose = () => {
+      session.mounted = false
+      session.notify = undefined
+      media.forget(modal)
+      modal.remove()
+    }
+    document.body.append(modal)
+    modal.showModal()
+  }
+  async function openLabel(ref, kind = 'barcode') {
+    await flushSaves()
+    const match = membership.get(entryKey(ref))
+    if (!match) throw new Error('Review product codes in Orders first.')
+    let prep = structuredClone(match.prep)
+    const host = $('label-content')
+    host.replaceChildren(
+      el('h2', uiMessage(kind === 'mark' ? 'Carton mark' : 'Barcode label'))
+    )
+    const mount = el('div')
+    host.append(mount)
+    function model() {
+      const group = prep.groups.find((entry) => entry.id === match.group.id),
+        variant = group.variants.find((entry) => entry.id === match.variant.id)
+      return {
+        kind,
+        code:
+          kind === 'mark'
+            ? group.baseCode
+            : barcodeValue(group, { ...variant, needsSizeMapping: false }),
+        baseCode: group.baseCode,
+        spanishName: variant.spanishName || group.spanishName,
+        category: group.category,
+        variantSuffix: variant.variantSuffix,
+        sizeSuffix: variant.sizeSuffix,
+        needsSizeMapping: variant.needsSizeMapping,
+      }
+    }
+    function candidate(next) {
+      const draft = structuredClone(prep),
+        group = draft.groups.find((entry) => entry.id === match.group.id),
+        variant = group.variants.find((entry) => entry.id === match.variant.id)
+      if (kind === 'mark') {
+        group.baseCode = next.code
+        group.category = next.category
+      } else {
+        if (
+          next.baseCode !== group.baseCode ||
+          next.code !== group.baseCode + next.variantSuffix + next.sizeSuffix
+        )
+          throw new Error(
+            'Edit the product code on its carton mark to change the shared base. The barcode must retain that base.'
+          )
+        variant.variantSuffix = next.variantSuffix
+        variant.sizeSuffix = next.sizeSuffix
+        variant.needsSizeMapping = next.needsSizeMapping
+        variant.spanishName = next.spanishName.toUpperCase()
+      }
+      return draft
+    }
+    editor?.destroy()
+    editor = mountLabelEditor(mount, {
+      model: model(),
+      settings: settings(),
+      logoUrl: logoUrl(),
+      onValidate: (next) => repository.previewPreparations([candidate(next)]),
+      onResolve: async (error, next) => {
+        const result = await resolveCodeConflict(candidate(next), error)
+        if (!result) return null
+        prep = result
+        return model()
+      },
+      onCommit: async (next) => {
+        const [result] = await repository.savePreparations([candidate(next)], {
+          expectedRevisions: [prep.revision],
+        })
+        prep = result
+        preparations.set(orderKey(result), result)
+        rebuild()
+        await changed()
+        return model()
+      },
+      onCopy: async (result) => labelClipboard([result]),
+    })
+    const dialog = $('label-dialog')
+    dialog.addEventListener(
+      'close',
+      () => {
+        editor?.destroy()
+        editor = null
+      },
+      { once: true }
+    )
+    dialog.showModal()
+  }
+  function createCartonMarkRenderer() {
+    const frozenSettings = structuredClone(settings()),
+      logo = logoUrl()
+    return async (source, { signal } = {}) =>
+      (
+        await renderLabel({
+          kind: 'mark',
+          code: source.baseCode,
+          category: source.chineseCategory,
+          settings: frozenSettings,
+          logoUrl: logo,
+          signal,
+        })
+      ).blob
+  }
+  function decorateRow(host, row, capacityHost = host, measurementHosts) {
+    const projected = preparedRows([row])[0],
+      bar = el('div', undefined, 'row-preparation')
+    if (projected.barcode)
+      bar.append(
+        copyTextButton(projected.barcode, {
+          label: uiMessage('Copy code'),
+          className: 'row-code-copy ce-code',
+        })
+      )
+    if (projected.spanishName)
+      bar.append(el('span', projected.spanishName, 'spanish-name'))
+    const edit = button('Edit product', () => openEditor(row))
+    edit.dataset.action = 'edit-order-product'
+    bar.append(edit)
+    host.append(bar)
+    capacityHost.append(button('Reconcile cartons', () => onCartons?.(row)))
+    if (measurementHosts)
+      for (const cell of Object.values(measurementHosts))
+        cell.append(el('span', '—'))
+  }
+  async function groupProducts(rows) {
+    await flushSaves()
+    const chosen = new Set(rows.map(entryKey)),
+      selected = new Map()
+    for (const row of rows) {
+      const match = membership.get(entryKey(row))
+      if (!match) throw new Error('Review product codes in Orders first.')
+      const key = JSON.stringify([orderKey(match.prep), match.group.id])
+      let entry = selected.get(key)
+      if (!entry) {
+        entry = {
+          draft: match.prep,
+          group: match.group,
+          variants: [],
+          complete: false,
+        }
+        selected.set(key, entry)
+      }
+      if (!entry.variants.some((variant) => variant.id === match.variant.id))
+        entry.variants.push(match.variant)
+    }
+    const entries = [...selected.values()]
+    for (const entry of entries)
+      entry.complete = entry.group.variants
+        .flatMap((variant) => variant.entryIds)
+        .every((entryId) => chosen.has(entryKey({ ...entry.draft, entryId })))
+    const available = groupingAvailability(entries),
+      modal = el('dialog', undefined, 'orders-grouping-dialog'),
+      status = el('p')
+    modal.append(el('h2', uiMessage('Grouping tools')))
+    for (const [operation, title] of [
+      ['share', 'Share one barcode'],
+      ['separate', 'Give rows separate barcodes'],
+      ['split', 'Move to new product'],
+      ['merge', 'Merge products'],
+    ]) {
+      const control = button(title, async () => {
+        const candidates = await regroupSelection(entries, operation, {
+          getReservedBarcodes: (...args) =>
+            repository.getReservedBarcodes(...args),
+          sizeVocabulary: preferences.sizeVocabulary,
+        })
+        // Existing guarded preview/save rejects sealed/physical incompatibility;
+        // grouping never changes container membership or destroys cartons.
+        const preview = await repository.previewPreparations(candidates)
+        const prepared = Array.isArray(preview)
+          ? preview
+          : preview.preparations || candidates
+        if (
+          !(await reviewPackingChanges({
+            title: uiMessage('Review product grouping'),
+            explanation: uiMessage(
+              'Review every affected source row. Purchase quantities, prices and physical carton evidence stay separate.'
+            ),
+            changes: groupingReviewChanges(entries, prepared, getRecords()),
+            proceed: uiMessage('Apply changes'),
+            media,
+          }))
+        )
+          return
+        const before = prepared.map((candidate) =>
+          preparations.get(orderKey(candidate))
+        )
+        const results = await repository.savePreparations(prepared, {
+          expectedRevisions: before.map((draft) => draft.revision),
+        })
+        history.recordBatch(
+          results.map((result, index) => ({
+            orderId: orderKey(result),
+            before: preparationHistorySnapshot(before[index]),
+            after: preparationHistorySnapshot(result),
+          }))
+        )
+        for (const result of results) {
+          preparations.set(orderKey(result), result)
+          sessions.delete(orderKey(result))
+        }
+        rebuild()
+        await changed()
+        modal.close()
+      })
+      control.disabled = Boolean(available[operation]?.reason)
+      if (available[operation]?.reason)
+        preparationHelp(control, uiMessage(available[operation].reason))
+      modal.append(control)
+    }
+    const close = button('Close', () => modal.close())
+    modal.append(status, close)
+    modal.onclose = () => modal.remove()
+    document.body.append(modal)
+    modal.showModal()
+  }
+  async function resolveCodeConflict(candidate, error) {
+    const code =
+      error?.conflict?.code || error?.message?.match(/CE\d{8}[A-Z0-9]*/)?.[0]
+    if (!code) throw error
+    const ownership = await repository.queryCodeOwnership(code, {
+      accountId: candidate.accountId,
+    })
+    const proposals = new Map([
+      [orderKey(candidate), structuredClone(candidate)],
+    ])
+    for (const owner of ownership.owners || []) {
+      const key = orderKey(owner),
+        saved = preparations.get(key)
+      if (saved && !proposals.has(key))
+        proposals.set(key, structuredClone(saved))
+    }
+    const modal = el(
+        'dialog',
+        undefined,
+        'packing-review code-conflict-dialog'
+      ),
+      content = el('div', undefined, 'conflict-evidence'),
+      status = el('p'),
+      actions = el('div', undefined, 'dialog-actions'),
+      cancel = el('button', uiMessage('Cancel')),
+      apply = el('button', uiMessage('Apply corrections'), 'primary')
+    modal.append(
+      el('h2', uiMessage('Resolve code conflict')),
+      el('p', code, 'ce-code'),
+      el(
+        'p',
+        uiMessage(
+          'Review the final codes together. All affected orders save atomically after revision and ownership checks.'
+        )
+      )
+    )
+    for (const proposal of proposals.values()) {
+      const section = el('section')
+      section.append(
+        el('h3', recordFor(proposal)?.snapshot.sellerName || proposal.orderId),
+        el('small', proposal.orderId)
+      )
+      for (const group of proposal.groups) {
+        section.append(
+          inlineField('Product code', group.baseCode, (value) => {
+            group.baseCode = value.toUpperCase()
+          })
+        )
+        for (const variant of group.variants) {
+          const row = el('div')
+          row.append(
+            el(
+              'span',
+              variant.spanishName || group.spanishName || variant.variant
+            )
+          )
+          row.append(
+            inlineField('Variant ending', variant.variantSuffix, (value) => {
+              variant.variantSuffix = value.toUpperCase()
+            }),
+            inlineField('Size ending', variant.sizeSuffix, (value) => {
+              variant.sizeSuffix = value.toUpperCase()
+            })
+          )
+          section.append(row)
+        }
+      }
+      content.append(section)
+    }
+    status.setAttribute('role', 'status')
+    cancel.onclick = () => modal.close()
+    let result = null
+    apply.onclick = () =>
+      void (async () => {
+        const controls = [...modal.querySelectorAll('input,button')]
+        controls.forEach((control) => {
+          control.disabled = true
+        })
+        try {
+          const values = [...proposals.values()]
+          await repository.previewPreparations(values)
+          const before = values.map((value) =>
+            preparations.get(orderKey(value))
+          )
+          const results = await repository.savePreparations(values, {
+            expectedRevisions: values.map((value) => value.revision),
+          })
+          history.recordBatch(
+            results.map((value, index) => ({
+              orderId: orderKey(value),
+              before: preparationHistorySnapshot(before[index]),
+              after: preparationHistorySnapshot(value),
+            }))
+          )
+          for (const value of results) {
+            preparations.set(orderKey(value), value)
+            const session = sessions.get(orderKey(value))
+            if (session) {
+              acknowledgePreparation(
+                session.draft,
+                proposals.get(orderKey(value)),
+                value
+              )
+              session.dirty = false
+              session.error = null
+              try {
+                localStorage.removeItem(recoveryKey(value))
+              } catch {}
+            }
+          }
+          rebuild()
+          await changed()
+          result = results.find(
+            (value) => orderKey(value) === orderKey(candidate)
+          )
+          modal.close('saved')
+        } catch (failure) {
+          bindText(status, uiMessage(failure.message))
+        } finally {
+          controls.forEach((control) => {
+            control.disabled = false
+          })
+        }
+      })()
+    modal.oncancel = (event) => {
+      if (apply.disabled) event.preventDefault()
+    }
+    actions.append(cancel, apply)
+    modal.append(content, status, actions)
+    document.body.append(modal)
+    modal.showModal()
+    return new Promise((resolve) =>
+      modal.addEventListener(
+        'close',
+        () => {
+          modal.remove()
+          resolve(result)
+        },
+        { once: true }
+      )
+    )
+  }
+  await reload()
+  async function openSettings() {
+    const value = structuredClone(preferences)
+    const tagCatalogBaseline = structuredClone({
+      orderTags: preferences.orderTags || [],
+      productTags: preferences.productTags || [],
+    })
+    value.settings = settings()
+    const settingsDialog = $('settings-dialog'),
+      host = $('settings-content'),
+      data = $('settings-data'),
+      edits = el('fieldset', undefined, 'settings-edits'),
+      tabs = el('div', undefined, 'settings-tabs'),
+      panels = new Map(),
+      tabButtons = []
+    let saving = false
+    edits.append(tabs)
+    host.replaceChildren(el('h2', uiMessage('Settings')), edits)
+    tabs.setAttribute('role', 'tablist')
+    // The tab list is a column on wide screens and a wrapping row on narrow ones.
+    const narrowSettings = matchMedia('(max-width: 760px)')
+    const orientTabs = () =>
+      tabs.setAttribute(
+        'aria-orientation',
+        narrowSettings.matches ? 'horizontal' : 'vertical'
+      )
+    orientTabs()
+    narrowSettings.addEventListener('change', orientTabs)
+    settingsDialog.addEventListener(
+      'close',
+      () => narrowSettings.removeEventListener('change', orientTabs),
+      { once: true }
+    )
+    bindAttribute(tabs, 'aria-label', uiMessage('Settings sections'))
+    function selectTab(id) {
+      for (const tab of tabButtons) {
+        const selected = tab.getAttribute('aria-controls') === id
+        tab.setAttribute('aria-selected', String(selected))
+        tab.tabIndex = selected ? 0 : -1
+      }
+      for (const [key, panel] of panels) panel.hidden = key !== id
+    }
+    for (const [key, title, symbol] of [
+      ['appearance', 'Appearance', 'sun'],
+      ['labels', 'Labels', 'barcode'],
+      ['names', 'Product names', 'text'],
+      ['sizes', 'Size codes', 'packing'],
+      ['colors', 'Product colors', 'image'],
+      ['materials', 'Materials', 'packing'],
+      ['tags', 'Tags', 'tag'],
+      ['data', 'Data', 'download'],
+    ]) {
+      const id = `settings-panel-${key}`,
+        tab = decorateIcon(
+          button(title, () => selectTab(id)),
+          symbol
+        ),
+        panel = el('section', undefined, 'settings-panel')
+      tab.id = `settings-tab-${key}`
+      tab.setAttribute('role', 'tab')
+      tab.setAttribute('aria-controls', id)
+      panel.id = id
+      panel.setAttribute('role', 'tabpanel')
+      panel.setAttribute('aria-labelledby', tab.id)
+      panel.tabIndex = 0
+      tabButtons.push(tab)
+      panels.set(id, panel)
+      tabs.append(tab)
+      edits.append(panel)
+    }
+    tabs.addEventListener('keydown', (event) => {
+      const current = tabButtons.indexOf(event.target)
+      if (current < 0) return
+      const index =
+        event.key === 'Home'
+          ? 0
+          : event.key === 'End'
+            ? tabButtons.length - 1
+            : event.key === 'ArrowRight' || event.key === 'ArrowDown'
+              ? (current + 1) % tabButtons.length
+              : event.key === 'ArrowLeft' || event.key === 'ArrowUp'
+                ? (current + tabButtons.length - 1) % tabButtons.length
+                : -1
+      if (index < 0) return
+      event.preventDefault()
+      selectTab(tabButtons[index].getAttribute('aria-controls'))
+      tabButtons[index].focus()
+    })
+    const labels = panels.get('settings-panel-labels'),
+      names = panels.get('settings-panel-names'),
+      grid = el('div', undefined, 'settings-grid')
+    function card(title, symbol, className = '') {
+      const section = el('section', undefined, `settings-card ${className}`),
+        heading = el('h3', isMessage(title) ? title : uiMessage(title))
+      decorateIcon(heading, symbol)
+      section.append(heading)
+      grid.append(section)
+      return section
+    }
+    function settingField(
+      title,
+      current,
+      change,
+      { min, max, step, help } = {}
+    ) {
+      const result = field(
+          title,
+          current,
+          change,
+          min === undefined ? 'text' : 'number'
+        ),
+        input = result.querySelector('input')
+      if (min !== undefined) {
+        input.min = String(min)
+        input.max = String(max)
+        input.step = String(step ?? 1)
+      }
+      if (help) preparationHelp(result, help)
+      return result
+    }
+    const shared = card(
+      uiMessage('Shared label text'),
+      'text',
+      'settings-shared'
+    )
+    for (const [key, label] of [
+      ['website', 'Website'],
+      ['destination', 'Destination'],
+    ])
+      shared.append(
+        settingField(
+          label,
+          value.settings[key],
+          (v) => (value.settings[key] = v),
+          {
+            help:
+              key === 'website'
+                ? uiMessage('Printed on every barcode label.')
+                : uiMessage('Destination printed on every barcode label.'),
+          }
+        )
+      )
+    shared.append(
+      settingField(
+        uiMessage('Output DPI'),
+        value.settings.dpi,
+        (v) => (value.settings.dpi = Number(v)),
+        {
+          min: 150,
+          max: 600,
+          help: uiMessage(
+            'Image detail for copying and printing. 300 DPI is the default; physical dimensions stay the same.'
+          ),
+        }
+      )
+    )
+    for (const kind of ['barcode', 'mark']) {
+      const title = kind === 'mark' ? 'Carton mark' : 'Barcode',
+        section = card(title, kind === 'mark' ? 'carton' : 'barcode'),
+        dimensions = el('div', undefined, 'settings-dimensions')
+      for (const [key, label, minimum] of [
+        ['widthMm', 'width', 20],
+        ['heightMm', 'height', 10],
+      ]) {
+        const size = settingField(
+          uiMessage('{0} (mm)', {
+            0: label === 'width' ? uiMessage('Width') : uiMessage('Height'),
+          }),
+          value.settings[kind][key] ?? 1,
+          (v) => (value.settings[kind][key] = Number(v)),
+          {
+            min: minimum,
+            max: 300,
+            step: 0.1,
+            help: uiMessage(
+              '{0} {1} in millimetres. Saved images carry this physical size.',
+              { 0: uiMessage(title), 1: uiMessage(label) }
+            ),
+          }
+        )
+        bindAttribute(
+          size.querySelector('input'),
+          'aria-label',
+          uiMessage('{0} {1} (mm)', {
+            0: uiMessage(title),
+            1: uiMessage(label),
+          })
+        )
+        dimensions.append(size)
+      }
+      const scale = settingField(
+          uiMessage('Text size'),
+          value.settings[kind].textScale ?? 1,
+          (v) => {
+            value.settings[kind].textScale = Number(v)
+            scaleValue.value = `${Math.round(Number(v) * 100)}%`
+          },
+          {
+            min: 0.75,
+            max: 1.25,
+            step: 0.05,
+            help: uiMessage(
+              'Resize label text from 75% to 125%. The layout and barcode bars keep their proportions.'
+            ),
+          }
+        ),
+        scaleValue = el(
+          'output',
+          `${Math.round((value.settings[kind].textScale ?? 1) * 100)}%`
+        ),
+        scaleInput = scale.querySelector('input')
+      scale.className = 'settings-scale'
+      scaleInput.type = 'range'
+      bindAttribute(
+        scaleInput,
+        'aria-label',
+        uiMessage('{0} text scale (0.75–1.25)', { 0: uiMessage(title) })
+      )
+      scaleValue.htmlFor = scaleInput.id
+      scale.append(scaleValue)
+      section.append(dimensions, scale)
+    }
+    const logoCard = card(uiMessage('Label logo'), 'image', 'settings-logo'),
+      logo = el('input'),
+      logoPreview = el('img'),
+      logoControls = el('div'),
+      logoStatus = el(
+        'span',
+        uiMessage('PNG, JPG or WebP · up to 2 MB'),
+        'packing-help'
+      )
+    logo.type = 'file'
+    logo.className = 'settings-logo-file'
+    logo.accept = 'image/png,image/jpeg,image/webp'
+    bindAttribute(logo, 'aria-label', uiMessage('Replace label logo'))
+    logoPreview.src = value.logoDataUrl || logoUrl()
+    bindAttribute(logoPreview, 'alt', uiMessage('Current label logo'))
+    logoPreview.className = 'settings-logo-preview'
+    logo.onchange = async () => {
+      try {
+        const file = logo.files[0]
+        if (file) {
+          if (file.size > 2 * 1024 * 1024)
+            throw new Error('Choose a logo smaller than 2 MB.')
+          const url = await blobData(file),
+            image = new Image()
+          image.src = url
+          await image.decode()
+          value.logoDataUrl = url
+          logoPreview.src = url
+          logoStatus.textContent = file.name
+        }
+      } catch (error) {
+        showError(error.message)
+      }
+    }
+    logoControls.append(
+      decorateIcon(
+        button(uiMessage('Replace logo'), () => logo.click()),
+        'upload'
+      ),
+      logoStatus,
+      logo
+    )
+    logoCard.append(logoPreview, logoControls)
+    labels.append(
+      el('h3', uiMessage('Label printing')),
+      el(
+        'p',
+        uiMessage(
+          'Set shared label content, print dimensions and the logo used in your barcode and carton marks.'
+        ),
+        'packing-help'
+      ),
+      grid
+    )
+    names.append(
+      el('h3', uiMessage('Automatic product names')),
+      el(
+        'p',
+        uiMessage(
+          'Fill names from product titles. Your edits stay unchanged; unknown products stay unnamed.'
+        ),
+        'packing-help'
+      )
+    )
+    const nameRules = mountProductVocabulary(names, value)
+    const sizeRules = mountSizeVocabulary(
+      panels.get('settings-panel-sizes'),
+      value
+    )
+    const colorRules = mountColorVocabulary(
+      panels.get('settings-panel-colors'),
+      value
+    )
+    const materialRules = mountMaterialVocabulary(
+      panels.get('settings-panel-materials'),
+      value
+    )
+    settingsDialog.addEventListener(
+      'close',
+      () => {
+        for (const rules of [nameRules, sizeRules, colorRules, materialRules])
+          rules.destroy()
+      },
+      { once: true }
+    )
+    const tagOptions = {
+        getTagUsage: (name, scope) => repository.getTagUsage(name, { scope }),
+        renameTag: async (name, nextName, scope) => {
+          const catalog = `${scope}Tags`
+          if (
+            !tagCatalogBaseline[catalog].some((entry) => entry.name === name)
+          ) {
+            const latest = await repository.getPackingPreferences()
+            if (latest[catalog]?.some((entry) => entry.name === nextName))
+              throw new Error(
+                t('This tag already exists. Choose a different name.')
+              )
+            return false
+          }
+          const result = await repository.renameTag(name, nextName, { scope })
+          const renamed = result.preferences[catalog].find(
+            (entry) => entry.name === nextName
+          )
+          tagCatalogBaseline[catalog] = tagCatalogBaseline[catalog].map(
+            (entry) => (entry.name === name ? renamed : entry)
+          )
+          await changed({ reload: true })
+          channel?.postMessage('preferences')
+          return true
+        },
+        removeTag: async (name, scope) => {
+          await repository.removeTag(name, { scope })
+          const catalog = `${scope}Tags`
+          tagCatalogBaseline[catalog] = tagCatalogBaseline[catalog].filter(
+            (entry) => entry.name !== name
+          )
+          await changed({ reload: true })
+          channel?.postMessage('preferences')
+        },
+      },
+      tagPanel = panels.get('settings-panel-tags'),
+      tagHeading = el(
+        'div',
+        undefined,
+        'settings-section-heading settings-tags-heading'
+      )
+    tagHeading.append(el('h3', uiMessage('Tags')))
+    tagPanel.append(
+      tagHeading,
+      el(
+        'p',
+        uiMessage(
+          'Create, rename and color order and product tags. Renaming and deleting saved tags updates them everywhere; other edits apply when you save settings.'
+        ),
+        'packing-help'
+      )
+    )
+    const reviewTags = button(
+      uiMessage('Review operational tags'),
+      async () => {
+        await flushSaves()
+        await openOperationsMigrationDialog({
+          records: await repository.listOrders(),
+          repository,
+          onSaved: async () => {
+            await changed({ reload: true })
+            channel?.postMessage('preferences')
+            const latest = await repository.getPackingPreferences()
+            for (const scope of ['order', 'product']) {
+              const catalog = `${scope}Tags`
+              value[catalog] = reconcileTagCatalog(
+                value[catalog],
+                assignedTagNames(getRecords(), scope),
+                {
+                  previous: latest[catalog],
+                  baseline: tagCatalogBaseline[catalog],
+                  scope,
+                }
+              )
+              tagCatalogBaseline[catalog] = structuredClone(
+                latest[catalog] || []
+              )
+            }
+            tagSettings.forEach((tags) => tags.refresh())
+          },
+        })
+      }
+    )
+    decorateIcon(reviewTags, 'tag')
+    tagHeading.append(reviewTags)
+    const tagSettings = [
+      mountOrderTagSettings(
+        tagPanel,
+        value,
+        getRecords().flatMap((record) => record.tags || []),
+        tagOptions
+      ),
+      mountTagSettings(tagPanel, value, {
+        ...tagOptions,
+        scope: 'product',
+        existingNames: getRecords().flatMap((record) =>
+          Object.values(record.productTags || {}).flat()
+        ),
+      }),
+    ]
+    const appearance = mountAppearanceSettings(
+      panels.get('settings-panel-appearance'),
+      value,
+      { onColorsReset: () => tagSettings.forEach((tags) => tags.refresh()) }
+    )
+    const guardDismissal = (event) => {
+      if (saving || tagSettings.some((tags) => tags.pending))
+        event.preventDefault()
+    }
+    settingsDialog.oncancel = guardDismissal
+    settingsDialog.onsubmit = guardDismissal
+    if (!data.querySelector('.store-import-guide-launch')) {
+      const guide = button('Store spreadsheet guide', openStoreSpreadsheetGuide)
+      guide.classList.add('store-import-guide-launch')
+      preparationHelp(
+        guide,
+        uiMessage(
+          'Check import markers, filenames and review rules. This format guide does not import files or change your library.'
+        )
+      )
+      data.querySelector('.settings-data-actions').append(guide)
+    }
+    panels.get('settings-panel-data').append(data)
+    const footer = el('div', undefined, 'settings-footer'),
+      saveHelp = el(
+        'span',
+        uiMessage(
+          'Save label settings, product names, sizes, colors, materials, tags and appearance.'
+        ),
+        'packing-help'
+      )
+    saveHelp.setAttribute('role', 'status')
+    footer.append(
+      saveHelp,
+      button(
+        uiMessage('Save settings'),
+        async (save) => {
+          if (saving) return
+          saving = true
+          save.disabled = true
+          edits.disabled = true
+          const close = settingsDialog.querySelector('.dialog-close')
+          close.disabled = true
+          bindText(saveHelp, uiMessage('Saving settings…'))
+          clearErrorNotices(settingsDialog)
+          try {
+            await flushSaves()
+            try {
+              for (const tags of tagSettings) await tags.flush()
+            } catch (error) {
+              selectTab('settings-panel-tags')
+              throw error
+            }
+            try {
+              value.sizeVocabulary = sizeRules.validate()
+            } catch (error) {
+              selectTab('settings-panel-sizes')
+              sizeRules.revealError()?.focus()
+              throw error
+            }
+            try {
+              value.colorVocabulary = colorRules.validate()
+            } catch (error) {
+              selectTab('settings-panel-colors')
+              colorRules.revealError()?.focus()
+              throw error
+            }
+            value.appearance = appearance.validate()
+            try {
+              value.materialVocabulary = materialRules.validate()
+            } catch (error) {
+              selectTab('settings-panel-materials')
+              materialRules.revealError()?.focus()
+              throw error
+            }
+            value.settings.vocabularyInitialized = true
+            // Validate geometry with a representative render before accepting settings.
+            await renderLabel({
+              kind: 'barcode',
+              code: 'CE26060101AS',
+              spanishName: 'JARRA DE VIDRIO',
+              settings: value.settings,
+              logoUrl: value.logoDataUrl || logoUrl(),
+            })
+            await renderLabel({
+              kind: 'mark',
+              code: 'CE26060101',
+              category: '玻璃',
+              settings: value.settings,
+            })
+            preferences = await repository.savePackingPreferences(value, {
+              tagCatalogBaseline,
+            })
+            await changed({ reload: true })
+            channel?.postMessage('preferences')
+            settingsDialog.close()
+            feedback(uiMessage('Settings saved.'))
+          } finally {
+            saving = false
+            edits.disabled = false
+            close.disabled = false
+            save.disabled = false
+            bindText(
+              saveHelp,
+              uiMessage(
+                'Save label settings, product names, sizes, colors, materials, tags and appearance.'
+              )
+            )
+            host.querySelector('[aria-invalid="true"]')?.focus()
+          }
+        },
+        'primary'
+      )
+    )
+    host.append(footer)
+    selectTab('settings-panel-appearance')
+    dialog(settingsDialog)
+  }
+
+  channel?.addEventListener(
+    'message',
+    () =>
+      void changed({ reload: true }).catch((error) =>
+        feedback(error.message, true)
+      )
+  )
+  $('packing-settings').onclick = () =>
+    void openSettings().catch((error) => feedback(error.message, true))
+  return {
+    reload,
+    preparedRows,
+    project: preparedRows,
+    openEditor,
+    reviewCodes,
+    groupProducts,
+    flush: flushSaves,
+    photoContext,
+    decorateRow,
+    openLabel,
+    settings,
+    logoUrl,
+    getPreferences: () => preferences,
+    createCartonMarkRenderer,
+    getImageBadges: () => createExcelImageBadges(preferences),
+    sizeClassifier: () => createSizeClassifier(preferences.sizeVocabulary),
+    refreshPhoto: (item, thumbnail) => media.updatePhoto(item, thumbnail),
+    updateActions() {},
+    orderRows: (rows) => [...rows],
+    canCopyLabels: (rows) =>
+      rows.length > 0 &&
+      rows.every((row) => Boolean(preparedRows([row])[0].barcode)),
+    rowsForRefs(refs) {
+      const rows = [],
+        seen = new Set()
+      for (const ref of refs) {
+        const record = recordFor(ref),
+          prep = preparations.get(orderKey(ref)),
+          group = prep?.groups.find((group) => group.id === ref.groupId)
+        const ids = new Set(
+          ref.entryIds ||
+            group?.variants
+              .filter(
+                (variant) => !ref.variantId || variant.id === ref.variantId
+              )
+              .flatMap((variant) => variant.entryIds) ||
+            []
+        )
+        for (const item of record?.snapshot.items || [])
+          if (ids.has(item.entryId)) {
+            const row = {
+                ...item,
+                accountId: record.accountId || 'local',
+                orderId: record.snapshot.orderId,
+                sellerName: record.snapshot.sellerName,
+                record,
+              },
+              key = entryKey(row)
+            if (!seen.has(key)) {
+              seen.add(key)
+              rows.push(row)
+            }
+          }
+      }
+      return rows
+    },
+    searchText(orderId, entryId, accountId = 'local') {
+      const record = recordFor({ orderId, accountId }),
+        item = record?.snapshot.items.find((item) => item.entryId === entryId)
+      if (!item) return ''
+      const row = preparedRows([{ ...item, orderId, accountId, record }])[0]
+      return [
+        row.barcode,
+        row.spanishName,
+        row.chineseCategory,
+        row.material,
+        translateMaterial(row.material, getLanguage()),
+      ]
+        .filter(Boolean)
+        .join(' ')
+    },
+    orderNames(orderId, accountId = 'local') {
+      const record = recordFor({ orderId, accountId })
+      return [
+        ...new Set(
+          preparedRows(
+            (record?.snapshot.items || []).map((row) => ({
+              ...row,
+              orderId,
+              accountId,
+              record,
+            }))
+          )
+            .map((row) => row.spanishName)
+            .filter(Boolean)
+        ),
+      ]
+    },
+    cartonDetailsOptions(row) {
+      return {
+        summary: () =>
+          uiMessage('Inspect and reconcile physical cartons in Orders.'),
+        openBatches: () => onCartons?.(row),
+      }
+    },
+    status: () => ({
+      dirty: [...sessions.values()].some((entry) => entry.dirty),
+      errors: [...sessions.values()]
+        .map((entry) => entry.error)
+        .filter(Boolean),
+    }),
+    undo: () => travel('undo'),
+    redo: () => travel('redo'),
+    dispose() {
+      generation++
+      for (const session of sessions.values()) clearTimeout(session.timer)
+      editor?.destroy()
+      media.destroy()
+      channel?.close()
+    },
+  }
+}

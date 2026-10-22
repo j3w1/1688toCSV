@@ -18,6 +18,7 @@
     <link rel="stylesheet" href="copy-actions.css" />
     <link rel="stylesheet" href="code-design.css" />
     <link rel="stylesheet" href="shell.css" />
+    <link rel="stylesheet" href="smart-cartons.css" />
     <script type="module" src="library.js"></script>
   </head>
   <body>
@@ -302,109 +303,152 @@
           class="sheet-pane"
           aria-label="Order spreadsheet"
         >
-          <div class="sheet-toolbar">
-            <div class="sheet-title-actions">
-              <h2 data-i18n="All products" id="sheet-title">All products</h2>
-              <p data-i18n="0 rows" id="selection-summary">0 rows</p>
+          <nav
+            id="orders-subviews"
+            class="workspace-subviews"
+            aria-label="Orders views"
+            data-i18n-aria-label="Orders views"
+          >
+            <button
+              data-action="orders-products"
+              data-orders-view="products"
+              data-i18n="Products"
+              aria-current="page"
+            >
+              Products
+            </button>
+            <button
+              data-action="orders-cartons"
+              data-orders-view="cartons"
+              data-i18n="Cartons"
+            >
+              Cartons
+            </button>
+            <button
+              data-action="orders-backlog"
+              data-orders-view="backlog"
+              data-i18n="Backlog"
+            >
+              Backlog
+            </button>
+          </nav>
+          <div id="orders-products-view">
+            <div class="sheet-toolbar">
+              <div class="sheet-title-actions">
+                <h2 data-i18n="All products" id="sheet-title">All products</h2>
+                <p data-i18n="0 rows" id="selection-summary">0 rows</p>
+              </div>
+              <div class="filterbar">
+                <label class="search"
+                  ><span data-i18n="Search products and orders" class="sr-only"
+                    >Search products and orders</span
+                  ><input
+                    data-i18n-placeholder="Search products, sellers or codes…"
+                    id="search"
+                    type="search"
+                    placeholder="Search products, sellers or codes…" /></label
+                ><label
+                  ><span data-i18n="Order status" class="sr-only"
+                    >Order status</span
+                  ><select id="status-filter">
+                    <option data-i18n="All statuses" value="">
+                      All statuses
+                    </option>
+                  </select></label
+                ><label class="check"
+                  ><input id="changes-only" type="checkbox" /><span
+                    data-i18n="Changed only"
+                    >Changed only</span
+                  ></label
+                >
+              </div>
             </div>
-            <div class="filterbar">
-              <label class="search"
-                ><span data-i18n="Search products and orders" class="sr-only"
-                  >Search products and orders</span
-                ><input
-                  data-i18n-placeholder="Search products, sellers or codes…"
-                  id="search"
-                  type="search"
-                  placeholder="Search products, sellers or codes…" /></label
-              ><label
-                ><span data-i18n="Order status" class="sr-only"
-                  >Order status</span
-                ><select id="status-filter">
-                  <option data-i18n="All statuses" value="">
-                    All statuses
-                  </option>
-                </select></label
-              ><label class="check"
-                ><input id="changes-only" type="checkbox" /><span
-                  data-i18n="Changed only"
-                  >Changed only</span
-                ></label
+            <section
+              data-i18n-aria-label="Matching order totals"
+              id="order-totals"
+              class="order-totals"
+              aria-label="Matching order totals"
+              aria-live="polite"
+            ></section>
+            <div id="empty-state" class="empty-state">
+              <span aria-hidden="true">▦</span>
+              <h2 data-i18n="Your orders belong here.">
+                Your orders belong here.
+              </h2>
+              <p>
+                <span
+                  data-i18n="Open your 1688 order list, select a few orders and choose"
+                  >Open your 1688 order list, select a few orders and
+                  choose</span
+                ><strong data-i18n="Import selected">Import selected</strong>.
+              </p>
+            </div>
+            <div
+              data-i18n-aria-label="Scrollable product rows"
+              class="table-scroll"
+              tabindex="0"
+              aria-label="Scrollable product rows"
+            >
+              <table
+                data-i18n-aria-label="Products"
+                role="grid"
+                aria-label="Products"
+                aria-multiselectable="true"
               >
+                <thead>
+                  <tr>
+                    <th class="row-number" scope="col">#</th>
+                    <th scope="col" data-i18n="Photo">Photo</th>
+                    <th scope="col" data-i18n="Description & labels">
+                      Description &amp; labels
+                    </th>
+                    <th scope="col" data-i18n="Price" class="numeric">Price</th>
+                    <th scope="col" data-i18n="Discount" class="numeric">
+                      Discount
+                    </th>
+                    <th scope="col" data-i18n="Quantity" class="numeric">
+                      Quantity
+                    </th>
+                    <th
+                      scope="col"
+                      data-i18n="Pcs/box"
+                      class="numeric pack-size-heading"
+                    >
+                      Pcs/box
+                    </th>
+                    <th
+                      scope="col"
+                      data-i18n="kg/box"
+                      class="numeric measurement-heading"
+                    >
+                      kg/box
+                    </th>
+                    <th
+                      scope="col"
+                      data-i18n="m³/box"
+                      class="numeric measurement-heading"
+                    >
+                      m³/box
+                    </th>
+                  </tr>
+                </thead>
+                <tbody id="sheet-body"></tbody>
+              </table>
             </div>
           </div>
           <section
-            data-i18n-aria-label="Matching order totals"
-            id="order-totals"
-            class="order-totals"
-            aria-label="Matching order totals"
-            aria-live="polite"
+            id="orders-cartons-view"
+            class="orders-reconciliation"
+            hidden
           ></section>
-          <div id="empty-state" class="empty-state">
-            <span aria-hidden="true">▦</span>
-            <h2 data-i18n="Your orders belong here.">
-              Your orders belong here.
-            </h2>
-            <p>
-              <span
-                data-i18n="Open your 1688 order list, select a few orders and choose"
-                >Open your 1688 order list, select a few orders and choose</span
-              ><strong data-i18n="Import selected">Import selected</strong>.
-            </p>
-          </div>
-          <div
-            data-i18n-aria-label="Scrollable product rows"
-            class="table-scroll"
-            tabindex="0"
-            aria-label="Scrollable product rows"
-          >
-            <table
-              data-i18n-aria-label="Products"
-              role="grid"
-              aria-label="Products"
-              aria-multiselectable="true"
-            >
-              <thead>
-                <tr>
-                  <th class="row-number" scope="col">#</th>
-                  <th scope="col" data-i18n="Photo">Photo</th>
-                  <th scope="col" data-i18n="Description & labels">
-                    Description &amp; labels
-                  </th>
-                  <th scope="col" data-i18n="Price" class="numeric">Price</th>
-                  <th scope="col" data-i18n="Discount" class="numeric">
-                    Discount
-                  </th>
-                  <th scope="col" data-i18n="Quantity" class="numeric">
-                    Quantity
-                  </th>
-                  <th
-                    scope="col"
-                    data-i18n="Pcs/box"
-                    class="numeric pack-size-heading"
-                  >
-                    Pcs/box
-                  </th>
-                  <th
-                    scope="col"
-                    data-i18n="kg/box"
-                    class="numeric measurement-heading"
-                  >
-                    kg/box
-                  </th>
-                  <th
-                    scope="col"
-                    data-i18n="m³/box"
-                    class="numeric measurement-heading"
-                  >
-                    m³/box
-                  </th>
-                </tr>
-              </thead>
-              <tbody id="sheet-body"></tbody>
-            </table>
-          </div>
+          <section
+            id="orders-backlog-view"
+            class="orders-backlog"
+            hidden
+          ></section>
         </section>
         <div
+          id="orders-actions"
           data-i18n-aria-label="Selection and next step"
           class="action-bar"
           role="region"
@@ -488,22 +532,27 @@
                 id="orders-print-actions"
               ></div>
             </div>
-            <div class="packing-launch">
-              <label
-                ><span data-i18n="Packing month">Packing month</span
-                ><input
-                  type="month"
-                  id="packing-month"
-                  data-action="packing-month"
-                  required /></label
-              ><button
-                data-i18n="Prepare packing list"
-                id="prepare-orders"
-                data-action="prepare-packing-list"
-                class="primary"
-                disabled
+            <div class="orders-product-actions">
+              <button
+                data-action="review-purchase-codes"
+                id="review-purchase-codes"
+                data-i18n="Review purchase-month codes"
               >
-                Prepare packing list
+                Review purchase-month codes
+              </button>
+              <button
+                data-action="group-order-products"
+                id="group-order-products"
+                data-i18n="Grouping tools"
+              >
+                Grouping tools
+              </button>
+              <button
+                data-action="include-container-orders"
+                id="include-orders"
+                data-i18n="Include whole orders"
+              >
+                Include whole orders
               </button>
               <button
                 id="restore-packing"
@@ -520,19 +569,26 @@
                 aria-label="Packing backup file"
                 data-i18n-aria-label="Packing backup file"
               />
-              <p id="packing-scope" role="status"></p>
+              <button
+                id="return-to-container"
+                data-action="return-to-container"
+                data-i18n="Return to container"
+                hidden
+              >
+                Return to container
+              </button>
             </div>
           </div>
         </div>
       </div>
       <section
-        data-i18n-aria-label="Prepare packing list"
+        data-i18n-aria-label="Container workspace"
         id="packing-view"
-        class="preparation-workspace"
-        aria-label="Prepare packing list"
+        class="container-workspace"
+        aria-label="Container workspace"
         hidden
       >
-        <fieldset id="preparation-content"></fieldset>
+        <div id="container-content"></div>
       </section>
       <p id="feedback" role="status" aria-live="polite"></p>
     </main>

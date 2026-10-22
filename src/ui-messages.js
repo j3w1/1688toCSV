@@ -1,4 +1,5 @@
 import { PACKING_MESSAGES } from './ui-messages-packing.js'
+import { SMART_CARTON_MESSAGES } from './ui-messages-smart-cartons.js'
 import { HELP_MESSAGES } from './ui-messages-help.js'
 import { VALIDATION_MESSAGES } from './ui-messages-validation.js'
 import { EXCEL_MESSAGES } from './ui-messages-excel.js'
@@ -30,6 +31,7 @@ import { OTHER_ORDER_MESSAGES } from './ui-messages-other-orders.js'
 
 // Explicit interface messages only; original seller, product and label values are never translated.
 export const UI_MESSAGES = {
+  ...SMART_CARTON_MESSAGES,
   ...OTHER_ORDER_MESSAGES,
   ...ORGANIZE_MESSAGES,
   ...OPERATIONS_MESSAGES,

@@ -26,7 +26,7 @@ Orders and Products show purchases newest first, including time within a day, wi
 
 - Click a row to toggle selection; **Shift-click** selects a range and **Ctrl-click** adds/removes individual rows. Buttons, links and photos have their own actions.
 - **Ctrl+A / Ctrl+D** selects/clears the last Orders or Products list you clicked or focused. Text fields retain normal text selection.
-- Click a store name, or focus its card and press **Enter**, for order details, notes and tags. Double-click is another shortcut.
+- Click a store name, or focus its card and press **Enter**, for order details, notes and tags. Click is another shortcut.
 - Filter purchase months individually or **Shift-click** a range. Four recent months appear beside **All months**; **+N months** reveals older ones. Selected older months stay visible. Collapsing a month changes navigation only.
 
 The first purchase-month filter is the current month; later choices persist across reloads. Packing month is separate and starts at the current month each time the workspace opens. Filtering purchases never renumbers packing products.
@@ -46,3 +46,7 @@ Retries preserve successful saves. A completed import with errors retries failed
 <a href="../screenshots/import-progress.png"><img src="../screenshots/import-progress.png" alt="Synthetic import progress with saved products and the latest result" width="320" /></a>
 
 Unsupported layouts, unknown adjustments, installments and unreconciled totals fail explicitly. Keep one buyer account per library; account switching is not detected automatically. The detail-page **Download CSV** remains available, with the [calculation limits](data-model.md#money-and-reconciliation) described separately.
+
+New purchases enter All Orders and global Backlog independently of date filters or earlier seals. Missing carton evidence remains unknown and never inflates known-carton totals. Existing supplier purchase imports keep their marker/financial/photo validation; complete supported carton facts are confirmed with that one import review.
+
+Supplier carton reports belong inside the existing 1688 order: **Orders → Cartons → Paste or import carton list**. They augment physical evidence and never create another purchase or alter the separate China marker importer. See [report review](cartons.md#1688-packing-reports).
