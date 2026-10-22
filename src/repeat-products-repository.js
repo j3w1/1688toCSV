@@ -4,7 +4,10 @@ import {
   repeatProductCandidates,
 } from './repeat-products.js'
 import { planCartonBatchChanges } from './carton-batch-changes.js'
-import { assertRepeatCodeEligibility } from './purchase-codes.js'
+import {
+  assertRepeatCodeEligibility,
+  purchaseSupplierForCodes,
+} from './purchase-codes.js'
 import { sourceRevision } from './inventory-model.js'
 
 /** Planning is read-only; expected revisions and source observations guard the atomic save. */
@@ -82,7 +85,9 @@ export function createRepeatProductsRepository({
       if (
         !record ||
         !expected.sourceRevision ||
-        sourceRevision(record, preparation) !== expected.sourceRevision
+        sourceRevision(record, preparation) !== expected.sourceRevision ||
+        JSON.stringify(purchaseSupplierForCodes(record)) !==
+          JSON.stringify(expected.supplierIdentity)
       )
         throw new Error(
           'The source order or preparation changed. Review the linked products again.'
