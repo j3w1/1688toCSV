@@ -7,6 +7,7 @@ export async function seedSmartOrder(
   {
     count = 2,
     quantity = '100',
+    capacity = '45',
     physical = false,
     uneven = false,
     orderId = '100000000000000001',
@@ -53,7 +54,7 @@ export async function seedSmartOrder(
     payable: yuan,
   }
   return extension.inspector.evaluate(
-    async ({ snapshot, physical, uneven, assignCodes }) => {
+    async ({ snapshot, physical, uneven, assignCodes, capacity }) => {
       const repository = await window.testRepository,
         planner = window.testPlanner,
         ref = { accountId: 'local', orderId: snapshot.orderId }
@@ -86,7 +87,7 @@ export async function seedSmartOrder(
       context = await repository.getOrderReconciliation(ref)
       if (physical) {
         const values = Object.fromEntries(
-          snapshot.items.map((item) => [item.entryId, '45'])
+          snapshot.items.map((item) => [item.entryId, String(capacity)])
         )
         await repository.updateOrderCapacities({
           ...ref,
@@ -151,7 +152,7 @@ export async function seedSmartOrder(
       }
       return ref
     },
-    { snapshot, physical, uneven, assignCodes }
+    { snapshot, physical, uneven, assignCodes, capacity }
   )
 }
 

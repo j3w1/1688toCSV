@@ -1896,6 +1896,20 @@ export async function createProductAuthoring({
         entry.variants.push(match.variant)
     }
     const entries = [...selected.values()]
+    const baselines = new Map(
+        entries.map((entry) => [
+          orderKey(entry.draft),
+          structuredClone(entry.draft),
+        ])
+      ),
+      groupingContext = {
+        ...amendmentOptions(entries[0]?.draft),
+        expectedSnapshots: [...baselines.values()].map((draft) => ({
+          accountId: draft.accountId,
+          orderId: draft.orderId,
+          observedAt: recordFor(draft)?.snapshot.observedAt,
+        })),
+      }
     for (const entry of entries)
       entry.complete = entry.group.variants
         .flatMap((variant) => variant.entryIds)
@@ -1920,7 +1934,7 @@ export async function createProductAuthoring({
         // grouping never changes container membership or destroys cartons.
         const preview = await repository.previewPreparations(
           candidates,
-          amendmentOptions(candidates[0])
+          groupingContext
         )
         const prepared = Array.isArray(preview)
           ? preview
@@ -1938,10 +1952,10 @@ export async function createProductAuthoring({
         )
           return
         const before = prepared.map((candidate) =>
-          preparations.get(orderKey(candidate))
+          baselines.get(orderKey(candidate))
         )
         const results = await repository.savePreparations(prepared, {
-          ...amendmentOptions(prepared[0]),
+          ...groupingContext,
           expectedRevisions: before.map((draft) => draft.revision),
         })
         history().recordBatch(
@@ -1971,6 +1985,7 @@ export async function createProductAuthoring({
     modal.showModal()
   }
   async function resolveCodeConflict(candidate, error, target = {}) {
+    const conflictContext = amendmentOptions(candidate)
     const code =
       error?.conflict?.code || error?.message?.match(/CE\d{8}[A-Z0-9]*/)?.[0]
     if (!code) throw error
@@ -1986,6 +2001,13 @@ export async function createProductAuthoring({
       if (saved && !proposals.has(key))
         proposals.set(key, structuredClone(saved))
     }
+    conflictContext.expectedSnapshots = [...proposals.values()].map(
+      (draft) => ({
+        accountId: draft.accountId,
+        orderId: draft.orderId,
+        observedAt: recordFor(draft)?.snapshot.observedAt,
+      })
+    )
     const modal = el(
         'dialog',
         undefined,
@@ -2169,7 +2191,7 @@ export async function createProductAuthoring({
               [regeneratePreparationCode(draft, group.id)],
               {
                 preserveNaming: true,
-                ...amendmentOptions(draft),
+                ...conflictContext,
                 suffixBaselines: [preparations.get(orderKey(draft))],
               }
             )
@@ -2225,15 +2247,12 @@ export async function createProductAuthoring({
         })
         try {
           const values = [...proposals.values()]
-          await repository.previewPreparations(
-            values,
-            amendmentOptions(values[0])
-          )
+          await repository.previewPreparations(values, conflictContext)
           const before = values.map((value) =>
             preparations.get(orderKey(value))
           )
           const results = await repository.savePreparations(values, {
-            ...amendmentOptions(values[0]),
+            ...conflictContext,
             expectedRevisions: values.map((value) => value.revision),
           })
           history().recordBatch(

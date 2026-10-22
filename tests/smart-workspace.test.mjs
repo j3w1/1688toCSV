@@ -547,6 +547,79 @@ test('canceled amendment saves retain their captured epoch and recovered values 
   modal.close()
 })
 
+test('a grouping review keeps its original source/revision/amendment guards when a newer read arrives before confirmation', async (testContext) => {
+  const { document } = authoringEnvironment(testContext),
+    manifest = syntheticManifest(),
+    record = structuredClone(manifest.orders[0].record),
+    preparation = {
+      ...structuredClone(manifest.orders[0].preparation),
+      revision: 1,
+      amendmentContext: { containerId: 'c1', epoch: 'first' },
+    },
+    next = structuredClone(preparation.groups[0]),
+    writes = []
+  record.snapshot.items.push({
+    ...structuredClone(record.snapshot.items[0]),
+    entryId: '2002',
+  })
+  next.id = 'second-group'
+  next.baseCode = 'CE26090102'
+  next.variants[0].id = 'second-variant'
+  next.variants[0].entryIds = ['2002']
+  preparation.groups.push(next)
+  const originalSource = record.snapshot.observedAt
+  const authoring = await createProductAuthoring({
+    repository: {
+      listPreparations: async () => [structuredClone(preparation)],
+      getPackingPreferences: async () => validatePackingPreferences({}),
+      getReservedBarcodes: async () => [],
+      previewPreparations: async (values) => structuredClone(values),
+      savePreparations: async (values, options) => {
+        writes.push(structuredClone({ values, options }))
+        throw new Error('Synthetic stale grouping rejected')
+      },
+    },
+    getRecords: () => [record],
+    getContextContainerId: () => 'c1',
+  })
+  await authoring.groupProducts(
+    record.snapshot.items.map((item) => ({
+      ...item,
+      accountId: 'local',
+      orderId: '1001',
+    }))
+  )
+  ;[...document.querySelectorAll('.orders-grouping-dialog button')]
+    .find((button) => button.textContent === 'Merge products')
+    .click()
+  await new Promise((resolve) => setTimeout(resolve, 0))
+  const review = document.querySelector('.packing-change-dialog')
+  assert.ok(review)
+  preparation.revision = 2
+  preparation.amendmentContext = { containerId: 'c1', epoch: 'reopened' }
+  record.snapshot.observedAt = '2026-10-23T12:00:00.000Z'
+  await authoring.reload()
+  ;[...review.querySelectorAll('button')]
+    .find((button) => button.textContent === 'Apply changes')
+    .click()
+  await new Promise((resolve) => setTimeout(resolve, 0))
+  assert.equal(writes.length, 1)
+  assert.deepEqual(writes[0].options.expectedRevisions, [1])
+  assert.deepEqual(writes[0].options.expectedAmendment, {
+    containerId: 'c1',
+    epoch: 'first',
+  })
+  assert.equal(
+    writes[0].options.expectedSnapshots[0].observedAt,
+    originalSource
+  )
+  assert.match(
+    document.querySelector('.error-notice').textContent,
+    /stale grouping rejected/
+  )
+  authoring.dispose()
+})
+
 test('failed authoring save keeps the mounted raw code, error relation and recovery; a corrected retry clears its error', async (context) => {
   const { document, window, values } = authoringEnvironment(context),
     manifest = syntheticManifest(),

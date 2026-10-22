@@ -490,3 +490,342 @@ test('six exact uneven physical cartons preserve known totals and stable IDs thr
   expect(text).toContain('0.461256')
   expect(result.manifest.products[0].quantity).toBe('63')
 })
+
+test('Backlog conserves 27/6/10 cartons across whole-order reservation, 26/3 loading, untouched stock and later purchases', async ({
+  extension,
+}) => {
+  const refs = []
+  for (const [index, quantity] of ['270', '60', '100'].entries())
+    refs.push(
+      await seedSmartOrder(extension, {
+        count: 1,
+        quantity,
+        capacity: '10',
+        physical: true,
+        orderId: String(110000000000000001n + BigInt(index)),
+      })
+    )
+  const readBacklog = () =>
+      extension.inspector.evaluate(async () =>
+        (await window.testRepository).getBacklog({})
+      ),
+    before = await readBacklog(),
+    page = await openSmartLibrary(extension)
+  expect(before.totals.cartons).toBe(43)
+  expect(
+    before.orders.map((order) => order.cartons).sort((a, b) => a - b)
+  ).toEqual([6, 10, 27])
+  const id = await createContainerThroughUI(
+      page,
+      refs.slice(0, 2),
+      'Synthetic carryover November'
+    ),
+    reserved = await readBacklog()
+  expect(reserved.orders.filter((order) => order.reservation)).toHaveLength(2)
+  await page.locator('[data-action="mark-all-loaded"]').click()
+  for (const button of await page
+    .locator('[data-action="expand-container-order"]')
+    .all())
+    await button.click()
+  for (const [count, left] of [
+    [27, 1],
+    [6, 3],
+  ]) {
+    const input = page.getByRole('spinbutton', {
+      name: `Left behind out of ${count}`,
+      exact: true,
+    })
+    await expect(input).toBeVisible()
+    await input.fill(String(left))
+    await input.blur()
+  }
+  await sealContainerThroughUI(page, { markAll: false })
+  const manifest = await extension.inspector.evaluate(
+      async (id) => (await window.testRepository).getContainerManifest({ id }),
+      id
+    ),
+    after = await readBacklog()
+  expect(manifest.cartons).toHaveLength(29)
+  expect(manifest.leftBehind.cartons).toHaveLength(4)
+  expect(after.totals.cartons).toBe(14)
+  expect(
+    after.orders.find((order) => order.orderId === refs[2].orderId)
+  ).toMatchObject({ cartons: 10, shipmentStatus: 'not-shipped' })
+  expect(after.orders.filter((order) => order.carryover)).toHaveLength(2)
+  expect(after.orders.every((order) => !order.reservation)).toBe(true)
+  const leftBefore = structuredClone(manifest.leftBehind)
+  await seedSmartOrder(extension, {
+    count: 1,
+    quantity: '60',
+    capacity: '10',
+    physical: true,
+    orderId: '110000000000000004',
+  })
+  await seedSmartOrder(extension, {
+    count: 1,
+    quantity: '5',
+    orderId: '110000000000000005',
+  })
+  const later = await readBacklog()
+  expect(later.totals.cartons).toBe(20)
+  expect(later.totals.unknownCartonOrders).toBe(1)
+  await page.locator('#view-orders').click()
+  await page.locator('[data-action="orders-backlog"]').click()
+  await expect(page.locator('#orders-backlog-view')).toContainText('20')
+  const frozen = await extension.inspector.evaluate(
+    async (id) => (await window.testRepository).getContainerManifest({ id }),
+    id
+  )
+  expect(frozen.leftBehind).toEqual(leftBefore)
+  expect(new Set(frozen.leftBehind.products.map((row) => row.orderId))).toEqual(
+    new Set(refs.slice(0, 2).map((ref) => ref.orderId))
+  )
+})
+
+test('partial aggregate loading cannot seal; its complete actual set can seal with unknown measurements and leaves unassigned goods visible', async ({
+  extension,
+}) => {
+  const ref = await seedSmartOrder(extension, { count: 2 }),
+    before = await realOrderContext(extension, ref)
+  await extension.inspector.evaluate(async (ref) => {
+    const repository = await window.testRepository,
+      context = await repository.getOrderReconciliation(ref),
+      draft = window.testPlanner.createReconciliationDraft(context)
+    draft.cartons = [
+      {
+        id: 'synthetic-complete-set',
+        ...ref,
+        count: 2,
+        packingBasis: 'aggregate',
+        contents: context.record.snapshot.items.map((item, index) => ({
+          orderId: ref.orderId,
+          entryId: item.entryId,
+          quantity: index ? '100' : '80',
+        })),
+        unresolvedContents: [],
+        len: '',
+        wid: '',
+        ht: '',
+        weight: '',
+        suppliedCbm: '',
+        weightBasis: 'batch',
+        volumeBasis: 'batch',
+        draftKind: 'manual',
+        provenance: {
+          kind: 'manual-confirmed',
+          source: 'Synthetic actual complete-set product totals',
+        },
+      },
+    ]
+    await repository.confirmOrderCartons({
+      ...ref,
+      draft,
+      expectedRevisions: context.revisions,
+      intentId: crypto.randomUUID(),
+    })
+  }, ref)
+  const page = await openSmartLibrary(extension),
+    id = await createContainerThroughUI(
+      page,
+      [ref],
+      'Synthetic aggregate boundary'
+    )
+  await page.locator('[data-action="expand-container-order"]').click()
+  await expect(
+    page.getByRole('spinbutton', { name: /^Left behind out of / })
+  ).toHaveCount(0)
+  await page
+    .locator('[data-action="set-carton-loading"][data-state="loaded"]')
+    .first()
+    .click()
+  await page.locator('[data-action="review-container-seal"]').click()
+  let review = page.locator('.container-review-dialog')
+  await expect(review.locator('[data-action="seal-container"]')).toBeDisabled()
+  await expect(review).toContainText('exact loaded product quantities')
+  await review.getByRole('button', { name: 'Cancel', exact: true }).click()
+  await sealContainerThroughUI(page)
+  const manifest = await extension.inspector.evaluate(
+    async (id) => (await window.testRepository).getContainerManifest({ id }),
+    id
+  )
+  expect(manifest.products.map((row) => row.quantity).sort()).toEqual([
+    '100',
+    '80',
+  ])
+  expect(manifest.cartons).toHaveLength(2)
+  expect(
+    manifest.cartons.every(
+      (carton) => carton.contents === null || !carton.contents?.length
+    )
+  ).toBe(true)
+  expect(manifest.warnings.length).toBeGreaterThan(0)
+  const backlog = await extension.inspector.evaluate(async () =>
+    (await window.testRepository).getBacklog({})
+  )
+  expect(
+    backlog.orders.find((order) => order.orderId === ref.orderId)
+      .remainingQuantity
+  ).toBe('20')
+  const after = await realOrderContext(extension, ref)
+  expect(after.record.snapshot).toEqual(before.record.snapshot)
+  expect(after.record.productPhotos).toEqual(before.record.productPhotos)
+})
+
+test('a delayed old amendment preparation save rejects after cancel/reopen and cannot overwrite either effective or current staged authorship', async ({
+  extension,
+}) => {
+  const ref = await seedSmartOrder(extension, { count: 1, physical: true }),
+    page = await openSmartLibrary(extension),
+    id = await createContainerThroughUI(
+      page,
+      [ref],
+      'Synthetic amendment epochs'
+    )
+  await sealContainerThroughUI(page)
+  const effective = await extension.inspector.evaluate(
+    async (id) => (await window.testRepository).getContainerManifest({ id }),
+    id
+  )
+  const begin = async (reason) => {
+    await page.locator('[data-action="amend-container"]').click()
+    const dialog = page.locator('dialog[open]').last()
+    await dialog
+      .getByRole('textbox', { name: 'Reason for amendment', exact: true })
+      .fill(reason)
+    await dialog
+      .getByRole('button', { name: 'Begin amendment', exact: true })
+      .click()
+    await expect(dialog).toBeHidden()
+  }
+  await begin('Synthetic first amendment')
+  const oldToken = await extension.inspector.evaluate(
+    async ({ ref, id }) => {
+      const repository = await window.testRepository,
+        context = await repository.getOrderReconciliation({
+          ...ref,
+          contextContainerId: id,
+        }),
+        draft = structuredClone(context.preparation),
+        token = context.amendmentContext
+      draft.groups[0].variants[0].spanishName = 'CANCELED EPOCH MUST NOT LEAK'
+      window.oldAmendmentSaveReady = Promise.withResolvers()
+      window.oldAmendmentSave = window.oldAmendmentSaveReady.promise
+        .then(() =>
+          repository.savePreparations([draft], {
+            contextContainerId: id,
+            expectedAmendment: token,
+            expectedRevisions: [draft.revision],
+          })
+        )
+        .then(
+          () => ({ ok: true }),
+          (error) => ({ ok: false, code: error.code })
+        )
+      return token
+    },
+    { ref, id }
+  )
+  await page.locator('[data-action="cancel-container-amendment"]').click()
+  await expect(page.locator('[data-action="amend-container"]')).toBeVisible()
+  await begin('Synthetic reopened amendment')
+  const result = await extension.inspector.evaluate(
+    async ({ ref, id, revisionId }) => {
+      const repository = await window.testRepository,
+        context = await repository.getOrderReconciliation({
+          ...ref,
+          contextContainerId: id,
+        })
+      window.oldAmendmentSaveReady.resolve()
+      return {
+        token: context.amendmentContext,
+        late: await window.oldAmendmentSave,
+        staged: (
+          await repository.getOrderReconciliation({
+            ...ref,
+            contextContainerId: id,
+          })
+        ).preparation,
+        effective: await repository.getContainerManifest({ id, revisionId }),
+      }
+    },
+    { ref, id, revisionId: effective.revisionId }
+  )
+  expect(result.token.containerId).toBe(id)
+  expect(result.token.epoch).not.toBe(oldToken.epoch)
+  expect(result.late).toEqual({ ok: false, code: 'AMENDMENT_CONTEXT_CONFLICT' })
+  expect(JSON.stringify(result.staged)).not.toContain(
+    'CANCELED EPOCH MUST NOT LEAK'
+  )
+  expect(result.effective).toEqual(effective)
+  await page.locator('[data-action="cancel-container-amendment"]').click()
+})
+
+test('numeric equality with purchase totals cannot seal a complete variant-unresolved physical set', async ({
+  extension,
+}) => {
+  const ref = await seedSmartOrder(extension, { count: 2 }),
+    before = await realOrderContext(extension, ref)
+  await extension.inspector.evaluate(async (ref) => {
+    const repository = await window.testRepository,
+      context = await repository.getOrderReconciliation(ref),
+      draft = window.testPlanner.createReconciliationDraft(context)
+    draft.cartons = [
+      {
+        id: 'synthetic-unresolved-set',
+        ...ref,
+        count: 2,
+        packingBasis: 'aggregate',
+        contents: [],
+        unresolvedContents: [
+          {
+            entryIds: context.record.snapshot.items.map((item) => item.entryId),
+            quantity: '200',
+            supplierCode: 'SYNTHETIC-GROUP',
+          },
+        ],
+        len: '',
+        wid: '',
+        ht: '',
+        weight: '',
+        suppliedCbm: '',
+        weightBasis: 'batch',
+        volumeBasis: 'batch',
+        draftKind: 'manual',
+        provenance: {
+          kind: 'manual-confirmed',
+          source: 'Synthetic combined group claim with no variant allocation',
+        },
+      },
+    ]
+    await repository.confirmOrderCartons({
+      ...ref,
+      draft,
+      expectedRevisions: context.revisions,
+      intentId: crypto.randomUUID(),
+    })
+  }, ref)
+  const page = await openSmartLibrary(extension),
+    id = await createContainerThroughUI(page, [ref], 'Synthetic unknown set')
+  await page.locator('[data-action="mark-all-loaded"]').click()
+  await page.locator('[data-action="review-container-seal"]').click()
+  const review = page.locator('.container-review-dialog')
+  await expect(review.locator('[data-action="seal-container"]')).toBeDisabled()
+  await expect(review).toContainText('exact loaded product quantities')
+  const result = await extension.inspector.evaluate(
+    async ({ ref, id }) => {
+      const repository = await window.testRepository
+      return {
+        view: await repository.getContainerView({ id }),
+        context: await repository.getOrderReconciliation(ref),
+      }
+    },
+    { ref, id }
+  )
+  expect(result.view.cartons).toHaveLength(2)
+  expect(
+    result.view.issues.some((issue) => issue.code === 'LOADED_CONTENTS_UNKNOWN')
+  ).toBe(true)
+  expect(result.context.batches[0].contents).toEqual([])
+  expect(result.context.batches[0].unresolvedContents[0].quantity).toBe('200')
+  expect(result.context.record.snapshot).toEqual(before.record.snapshot)
+})
