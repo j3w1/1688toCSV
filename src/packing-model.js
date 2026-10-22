@@ -1863,6 +1863,11 @@ export function allocatePreparation(
       entry,
     ])
   )
+  const historicalKeys = new Set(
+    historicalReservations.map((entry) =>
+      JSON.stringify([entry.accountId, entry.kind, entry.code])
+    )
+  )
   const reserve = (code, group, variant) => {
     const entryIds =
       variant?.entryIds ?? group.variants.flatMap((entry) => entry.entryIds)
@@ -1921,8 +1926,12 @@ export function allocatePreparation(
       reservation.code,
     ])
     const existing = issuedByCode.get(key)
-    issuedByCode.set(key, mergeCodeOwners(existing, reservation))
-    state.issuedCodes.push(reservation)
+    issuedByCode.set(
+      key,
+      historicalKeys.has(key)
+        ? mergeHistoricalCodeOwners(existing, reservation)
+        : mergeCodeOwners(existing, reservation)
+    )
   }
   const claimGroup = (allocation, number) => {
     let group = allocation.groups.find((entry) => entry.number === number)
@@ -1973,7 +1982,9 @@ export function allocatePreparation(
       if (!variant.needsSizeMapping)
         reserve(barcodeValue(group, variant), group, variant)
   }
-  const validated = mergePackingState(state.allocations, state.issuedCodes)
+  const validated = mergePackingState(state.allocations, [
+    ...issuedByCode.values(),
+  ])
   return { preparation: validatePreparation(preparation), ...validated }
 }
 
@@ -2170,5 +2181,53 @@ function withHistoricalReservations(
       Number(reservation.code.slice(8, 10)) + 1
     )
   }
-  return mergePackingState(state.allocations, [...issuedCodes, ...reservations])
+  const owners = new Map()
+  for (const reservation of [...reservations, ...issuedCodes]) {
+    const normalized = validateIssuedCode(reservation)
+    const key = JSON.stringify([
+      normalized.accountId,
+      normalized.kind,
+      normalized.code,
+    ])
+    owners.set(key, mergeHistoricalCodeOwners(owners.get(key), normalized))
+  }
+  return mergePackingState(state.allocations, [...owners.values()])
+}
+
+// Historical aliases are evidence, not current membership. A reviewed unconsumed
+// link may promote an existing owner to a shared identity, but never steal it.
+function mergeHistoricalCodeOwners(existing, incoming) {
+  if (!existing || sameCodeOwner(existing, incoming))
+    return mergeCodeOwners(existing, incoming)
+  if (
+    !['accountId', 'kind', 'code', 'sellerId', 'month'].every(
+      (field) => existing[field] === incoming[field]
+    ) ||
+    !codeReservationMembers(existing).some((left) =>
+      codeReservationMembers(incoming).some((right) => sameOwner(left, right))
+    )
+  )
+    throw new CodeConflictError(existing, incoming)
+  const canonical = incoming.sharedProductId
+    ? incoming
+    : existing.sharedProductId
+      ? existing
+      : incoming
+  if (!canonical.sharedProductId) return mergeCodeOwners(existing, incoming)
+  const members = new Map()
+  for (const owner of [
+    ...codeReservationMembers(existing),
+    ...codeReservationMembers(incoming),
+  ]) {
+    const key = JSON.stringify([owner.orderId, owner.groupId, owner.variantId])
+    const old = members.get(key)
+    if (!old?.ownerSnapshot)
+      members.set(key, {
+        orderId: owner.orderId,
+        groupId: owner.groupId,
+        ...(owner.variantId ? { variantId: owner.variantId } : {}),
+        ...(owner.ownerSnapshot ? { ownerSnapshot: owner.ownerSnapshot } : {}),
+      })
+  }
+  return { ...canonical, members: [...members.values()] }
 }
