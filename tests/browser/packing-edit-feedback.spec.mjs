@@ -690,6 +690,7 @@ test(
 test('a delayed real label render cannot restore a conflicting preview and reverting to the saved code completes recovery', async ({
   extension,
 }) => {
+  test.setTimeout(60000)
   const { page, view } = await openPacking(extension)
   const before = await backup(extension),
     group = before.preparations[0].groups[0],

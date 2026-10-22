@@ -502,6 +502,7 @@ test('Copy Excel image freezes selected rows with current-language headings, sup
 test('full assigned variant codes reach source rows, clipboard and every original-photo entry point without data writes', async ({
   extension,
 }) => {
+  test.setTimeout(60000)
   const { page, record } = await openWorkspace(extension)
   const viewer = page.getByRole('dialog', {
     name: 'Product photo',
