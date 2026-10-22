@@ -28,7 +28,7 @@ export async function seedSmartOrder(
   snapshot.sourceUrl = `https://air.1688.com/app/ctf-page/trade-order-detail/index.html?orderId=${snapshot.orderId}`
   snapshot.items = Array.from({ length: count }, (_, index) => ({
     ...structuredClone(snapshot.items[0]),
-    entryId: `entry-${index}`,
+    entryId: String(2001 + index),
     title: `合成商品 ${index + 1}`,
     description: `Synthetic source ${index + 1}\n原始文本 ${index + 1}`,
     productNumber: `SYN-${index + 1}`,
@@ -229,11 +229,18 @@ export async function closeOrderProduct(editor) {
 
 export async function openOrderReconciliation(page, ref, kind = 'products') {
   const identity = JSON.stringify([ref.accountId || 'local', ref.orderId])
-  await page
-    .locator(
-      `.order-card[data-order-key=${JSON.stringify(identity)}] [data-action="open-order-cartons"]`
-    )
-    .click()
+  const card = page.locator(
+      `.order-card[data-order-key=${JSON.stringify(identity)}]`
+    ),
+    collapsed = page.locator(
+      '#order-list .month-toggle[aria-expanded="false"]'
+    ),
+    count = await collapsed.count()
+  // Sidebar purchase groups can start collapsed even while their Products are
+  // visible. Expanding leaves filters and explicit source selection intact.
+  for (let index = 0; index < count && !(await card.count()); index++)
+    await collapsed.first().click()
+  await card.locator('[data-action="open-order-cartons"]').click()
   const grid = page.locator('#orders-cartons-view')
   await expect(
     grid.locator('[data-action="confirm-order-cartons"]')
