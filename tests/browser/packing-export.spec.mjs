@@ -9,6 +9,10 @@ test('packing export previews persistent columns, order, scope and layout before
   const [record] = await extension.inspector.evaluate(
     `(${createDemoRecords.toString()})(document)`
   )
+  record.additionalCharges = [
+    { id: 'synthetic-handling', reason: 'Internal handling', amount: '12.00' },
+  ]
+  record.additionalChargesUpdatedAt = new Date().toISOString()
   const restored = await extension.inspector.evaluate(
     (record) =>
       chrome.runtime.sendMessage({
@@ -59,6 +63,13 @@ test('packing export previews persistent columns, order, scope and layout before
   await view.locator('[data-action="export-packing-list"]').click()
   const dialog = page.locator('.packing-export-dialog')
   await expect(dialog).toBeVisible()
+  await expect(
+    dialog.getByRole('checkbox', {
+      name: 'Include detailed automation JSON',
+      exact: true,
+    })
+  ).not.toBeChecked()
+  await expect(dialog).toContainText('regardless of Excel columns')
   await expect(
     dialog.locator('.packing-export-preview .packing-export-headings th')
   ).toHaveCount(13)
@@ -216,6 +227,12 @@ test('packing export previews persistent columns, order, scope and layout before
       .toUpperCase(),
     body: 'FFFFFF',
   }))
+  await dialog
+    .getByRole('checkbox', {
+      name: 'Include detailed automation JSON',
+      exact: true,
+    })
+    .check()
   await download.click()
   await expect(dialog).toHaveCount(0)
   let files
@@ -275,9 +292,19 @@ test('packing export previews persistent columns, order, scope and layout before
   expect(xml('/xl/worksheets/sheet1.xml')).not.toContain('#REF!')
   const summary = JSON.parse(await readFile(summaryFile.filename, 'utf8'))
   expect(summary.products).toHaveLength(1)
+  expect(summary.products[0]).toHaveProperty('sourceUnitPrice')
+  expect(summary.orders[0].additionalChargeReasons).toContain(
+    'Internal handling'
+  )
   await page.reload()
   await page.locator('#view-packing').click()
   await page.locator('[data-action="export-packing-list"]').click()
+  await expect(
+    dialog.getByRole('checkbox', {
+      name: 'Include detailed automation JSON',
+      exact: true,
+    })
+  ).toBeChecked()
   await expect(
     dialog.locator('.packing-export-preview .packing-export-headings th')
   ).toHaveCount(5)
@@ -313,8 +340,39 @@ test('packing export previews persistent columns, order, scope and layout before
   await expect(
     dialog.getByLabel('Column filters', { exact: true })
   ).not.toBeChecked()
+  // A narrow Excel export does not silently write the detailed companion file.
   await dialog
-    .getByRole('button', { name: 'Close export', exact: true })
+    .getByRole('checkbox', {
+      name: 'Include detailed automation JSON',
+      exact: true,
+    })
+    .uncheck()
+  await dialog
+    .getByRole('button', { name: 'Clear columns', exact: true })
     .click()
+  await dialog.locator('input[value="spanishName"]').check()
+  await dialog.locator('input[value="quantity"]').check()
+  await download.click()
+  await expect(dialog).toHaveCount(0)
+  await expect
+    .poll(async () => {
+      files = await extension.inspector.evaluate(() =>
+        chrome.downloads.search({})
+      )
+      return files.filter((file) => file.state === 'complete').length
+    })
+    .toBe(3)
+  expect(files.filter((file) => file.filename.endsWith('.json'))).toHaveLength(
+    1
+  )
+  const narrowFile = files
+    .filter((file) => file.filename.endsWith('.xlsx'))
+    .sort((a, b) => b.id - a.id)[0]
+  const narrowBook = XLSX.read(await readFile(narrowFile.filename), {
+    type: 'buffer',
+  })
+  expect(
+    XLSX.utils.sheet_to_json(narrowBook.Sheets.Products, { header: 1 })[4]
+  ).toEqual(['Product', 'Qty'])
   await page.close()
 })

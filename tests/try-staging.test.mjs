@@ -23,7 +23,7 @@ async function build(directory, version, extra = {}) {
   await mkdir(directory, { recursive: true })
   await writeFile(
     path.join(directory, 'manifest.json'),
-    JSON.stringify({ name: '1688toCSV', version, ...extra })
+    JSON.stringify({ name: '1688toPL', version, ...extra })
   )
 }
 const version = async (directory) =>
@@ -125,20 +125,35 @@ test('identity checks refuse another extension or a changed key, also for rollba
   )
   assert.throws(
     () => checkIdentity(installedOf(other), installed),
-    /not the 1688toCSV/
+    /not the 1688toPL/
   )
   assert.throws(
     () => checkIdentity(installedOf(keyed), installed),
     /could change the extension id/
   )
   assert.doesNotThrow(() =>
-    checkIdentity({ name: '1688toCSV', key: null }, installed)
+    checkIdentity({ name: '1688toPL', key: null }, installed)
   )
   function installedOf(directory) {
     return directory === other
       ? { name: 'Other', key: null }
-      : { name: '1688toCSV', key: 'ABC' }
+      : { name: '1688toPL', key: 'ABC' }
   }
   // readIdentity reports the key that a stale rollback copy would carry.
   assert.equal((await readIdentity(keyed)).key, 'ABC')
+})
+
+test('the brand rename and rollback retain the installed extension key', () => {
+  const before = { name: '1688toCSV', key: 'ABC' },
+    after = { name: '1688toPL', key: 'ABC' }
+  assert.doesNotThrow(() => checkIdentity(after, before))
+  assert.doesNotThrow(() => checkIdentity(before, after))
+  assert.throws(
+    () => checkIdentity({ ...after, key: null }, before),
+    /could change the extension id/
+  )
+  assert.throws(
+    () => checkIdentity(after, { ...before, name: 'Other' }),
+    /not the 1688toPL/
+  )
 })

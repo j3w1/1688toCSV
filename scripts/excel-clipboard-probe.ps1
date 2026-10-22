@@ -188,7 +188,7 @@ try {
   if ($pngPaste) {
     # Read the actual embedded image, not a screenshot of an Excel rendering.
     # The only file written is this new synthetic workbook in the temp folder.
-    $disposablePath = Join-Path ([IO.Path]::GetTempPath()) ('1688tocsv-excel-probe-' + [guid]::NewGuid().ToString('N') + '.xlsx')
+    $disposablePath = Join-Path ([IO.Path]::GetTempPath()) ('1688topl-excel-probe-' + [guid]::NewGuid().ToString('N') + '.xlsx')
     $book.SaveAs($disposablePath, 51)
     # Excel still owns the saved workbook; permit its existing write handle
     # while inspecting the archive through a read-only stream.

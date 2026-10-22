@@ -869,7 +869,7 @@ test('bounded raster assets have complete drawing, sheet and content-type relati
   assert.equal(
     archive.FullPaths.filter((name) => /xl\/media\/image\d+\.png$/.test(name))
       .length,
-    3
+    1
   )
   const drawing = partText(archive, 'xl/drawings/drawing1.xml')
   assert.equal((drawing.match(/<xdr:oneCellAnchor>/g) || []).length, 4)
@@ -878,7 +878,7 @@ test('bounded raster assets have complete drawing, sheet and content-type relati
   assert.match(drawing, /<a:picLocks noChangeAspect="1"\/>/)
   assert.match(drawing, /cx="1143000" cy="1143000"/)
   const rels = partText(archive, 'xl/drawings/_rels/drawing1.xml.rels')
-  assert.equal((rels.match(/Type="[^"]+\/image"/g) || []).length, 3)
+  assert.equal((rels.match(/Type="[^"]+\/image"/g) || []).length, 1)
   assert.match(rels, /Target="\.\.\/media\/image1.png"/)
   assert.match(
     partText(archive, 'xl/worksheets/_rels/sheet1.xml.rels'),
@@ -895,6 +895,85 @@ test('bounded raster assets have complete drawing, sheet and content-type relati
   assert.equal(
     field(read(bytes, { type: 'array' }).Sheets['Packing list'], 'barcode').v,
     'CE26103102ALS'
+  )
+})
+
+test('artwork reuse leaves separate purchase quantities and prices in their original rows', async () => {
+  const rows = [
+    source(),
+    source({
+      orderId: '1002',
+      quantity: '7',
+      price: '12.00',
+      effectiveUnitPrice: '12.00',
+      effectiveAmount: '84.00',
+    }),
+  ]
+  const bytes = await createPackingWorkbook(rows, {
+    ...options,
+    prepareImages: async () => ({
+      code: { bytes: png(), mimeType: 'image/png' },
+    }),
+  })
+  const archive = inspectZip(bytes)
+  const drawing = partText(archive, 'xl/drawings/drawing1.xml')
+  assert.equal((drawing.match(/<xdr:oneCellAnchor>/g) || []).length, 2)
+  assert.equal((drawing.match(/r:embed="image1"/g) || []).length, 2)
+  assert.match(drawing, /<xdr:row>6<\/xdr:row>/)
+  assert.match(drawing, /<xdr:row>8<\/xdr:row>/)
+  assert.equal(
+    archive.FullPaths.filter((name) => /xl\/media\/image\d+\.png$/.test(name))
+      .length,
+    1
+  )
+  const sheet = read(bytes, { type: 'array' }).Sheets['Packing list']
+  assert.equal(field(sheet, 'barcode', 7).v, rows[0].barcode)
+  assert.equal(field(sheet, 'barcode', 9).v, rows[1].barcode)
+  assert.equal(field(sheet, 'quantity', 7).v, 100)
+  assert.equal(field(sheet, 'quantity', 9).v, 7)
+  assert.equal(field(sheet, 'sourceUnitPrice', 7).v, 10)
+  assert.equal(field(sheet, 'sourceUnitPrice', 9).v, 12)
+  assert.equal(field(sheet, 'effectiveAmount', 7).v, 1025)
+  assert.equal(field(sheet, 'effectiveAmount', 9).v, 84)
+})
+
+test('the workbook image budget counts unique embedded bytes and still rejects excess unique artwork', async () => {
+  const payload = new Uint8Array(384 * 1024)
+  payload.set(png())
+  const rows = Array.from({ length: 65 }, (_, index) =>
+    source({ entryId: String(index) })
+  )
+  const settings = { ...defaults, columns: ['photo', 'quantity'] }
+  const bytes = await createPackingWorkbook(rows, {
+    ...settings,
+    prepareImages: async () => ({
+      photo: { bytes: payload.slice(), mimeType: 'image/png' },
+    }),
+  })
+  const archive = inspectZip(bytes)
+  assert.equal(
+    archive.FullPaths.filter((name) => /xl\/media\/image\d+\.png$/.test(name))
+      .length,
+    1
+  )
+  assert.equal(
+    (
+      partText(archive, 'xl/drawings/drawing1.xml').match(
+        /<xdr:oneCellAnchor>/g
+      ) || []
+    ).length,
+    65
+  )
+  await assert.rejects(
+    createPackingWorkbook(rows, {
+      ...settings,
+      prepareImages: async (row) => {
+        const unique = payload.slice()
+        unique[unique.length - 1] = Number(row.entryId)
+        return { photo: { bytes: unique, mimeType: 'image/png' } }
+      },
+    }),
+    /export size limit/
   )
 })
 
@@ -1068,6 +1147,14 @@ test('oversized or unsupported images and failed image preparation produce no pa
       prepareImages: async () => ({
         photo: { bytes: large, mimeType: 'image/png' },
       }),
+    }),
+    /resized/
+  )
+  const tall = rectangle(100, 200)
+  await assert.rejects(
+    createPackingWorkbook([source()], {
+      ...options,
+      prepareImages: async () => ({ photo: tall, code: tall }),
     }),
     /resized/
   )

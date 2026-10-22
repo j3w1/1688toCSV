@@ -1,7 +1,7 @@
 // Fast local try-out loop: build, stage the complete dist into the installed
 // unpacked extension, reload it through CE Dev Browser and confirm that the
 // library survived. Machine-specific settings live outside the repository in
-// ~/.config/1688tocsv/try.json (see AGENTS.md); nothing here reads order data
+// ~/.config/1688topl/try.json (see AGENTS.md); nothing here reads order data
 // beyond per-store record counts and import job states.
 import { spawn, spawnSync } from 'node:child_process'
 import { cp, mkdir, readFile, rm, stat, writeFile } from 'node:fs/promises'
@@ -36,17 +36,26 @@ const fail = (text, code = 1) => {
   process.exit(code)
 }
 
-const configPath = path.join(
-  process.env.XDG_CONFIG_HOME || path.join(homedir(), '.config'),
-  '1688tocsv',
-  'try.json'
+const configRoot =
+  process.env.XDG_CONFIG_HOME || path.join(homedir(), '.config')
+const configPaths = ['1688topl', '1688tocsv'].map((name) =>
+  path.join(configRoot, name, 'try.json')
 )
-let config
-try {
-  config = JSON.parse(await readFile(configPath, 'utf8'))
-} catch {
-  fail(`missing ${configPath}; see AGENTS.md "Fast local loop" for its fields.`)
+let config, configPath
+for (const candidatePath of configPaths) {
+  try {
+    config = JSON.parse(await readFile(candidatePath, 'utf8'))
+    configPath = candidatePath
+    break
+  } catch (error) {
+    if (error.code !== 'ENOENT')
+      fail(`could not read ${candidatePath}: ${error.message}`)
+  }
 }
+if (!config)
+  fail(
+    `missing ${configPaths.join(' or ')}; see AGENTS.md "Fast local loop" for its fields.`
+  )
 const { installDir, extensionId, browserMcp, stagingDir } = config
 if (
   !path.isAbsolute(installDir || '') ||
@@ -101,7 +110,7 @@ function browser() {
       await request('initialize', {
         protocolVersion: '2025-06-18',
         capabilities: {},
-        clientInfo: { name: '1688tocsv-try', version: '1' },
+        clientInfo: { name: '1688topl-try', version: '1' },
       })
       child.stdin.write(
         JSON.stringify({
@@ -229,8 +238,8 @@ try {
 } catch {
   fail(`${installDir} has no readable manifest.json.`)
 }
-if (installed.name !== '1688toCSV')
-  fail(`${installDir} does not hold the 1688toCSV extension.`)
+if (!['1688toPL', '1688toCSV'].includes(installed.name))
+  fail(`${installDir} does not hold the 1688toPL extension.`)
 const { previous } = stagingPaths(stagingDir)
 const verifyCandidate = async (directory) => {
   try {
@@ -300,7 +309,7 @@ try {
       'browser_lease',
       {
         action: 'acquire',
-        purpose: '1688toCSV try: reload extension',
+        purpose: '1688toPL try: reload extension',
         ttl_s: 120,
       },
       { tolerate: 'lease_held' }

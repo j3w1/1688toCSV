@@ -1828,6 +1828,53 @@ test('backup roundtrip preserves versions, notes and deduplicated images without
   expect(result.jobs).toEqual([])
 })
 
+test('full and order backups retain only reachable originals and history photos, including an empty library', async ({
+  extension,
+}) => {
+  const page = await openTestDatabase(extension)
+  const result = await page.evaluate(
+    async ({ first, image }) => {
+      const currentUrl = 'https://cbu01.alicdn.com/current-original.jpg?_=2'
+      const galleryUrl = 'https://cbu01.alicdn.com/current-gallery.png'
+      const orphanUrl = 'https://cbu01.alicdn.com/deleted-order.png'
+      first.items[0].thumbnail = first.items[1].thumbnail = image.url.replace(
+        '.png',
+        '.png_250x250.jpg'
+      )
+      await library.saveSnapshot(first)
+      const current = structuredClone(first)
+      current.observedAt = '2026-01-02T12:00:00.000Z'
+      for (const item of current.items) {
+        item.thumbnail = currentUrl.replace('.jpg?', '.jpg_250x250.jpg?')
+        item.photos = [galleryUrl]
+      }
+      await library.saveSnapshot(current)
+      for (const url of [image.url, currentUrl, galleryUrl, orphanUrl])
+        await library.putImage({ ...image, url })
+      const full = await library.exportBackup()
+      const scoped = await library.exportBackup({ orderIds: [first.orderId] })
+      await library.removeOrders([first.orderId])
+      return {
+        full,
+        scoped,
+        empty: await library.exportBackup(),
+        cached: await library.getImage(orphanUrl),
+        expected: [image.url, currentUrl, galleryUrl].sort(),
+      }
+    },
+    { first: snapshot(), image }
+  )
+  expect(result.full.history).toHaveLength(1)
+  for (const backup of [result.full, result.scoped])
+    expect(backup.images.map((entry) => entry.url).sort()).toEqual(
+      result.expected
+    )
+  expect(result.empty.orders).toEqual([])
+  expect(result.empty.history).toEqual([])
+  expect(result.empty.images).toEqual([])
+  expect(result.cached).toBeDefined()
+})
+
 test('restore merges newer data and historical snapshots while keeping local notes', async ({
   extension,
 }) => {

@@ -140,6 +140,18 @@ try {
     .waitFor({ state: 'hidden' })
   await page.evaluate(() => window.scrollTo(0, 0))
   await page.screenshot({ path: 'screenshots/preparation.png' })
+  await page.locator('[data-action="export-packing-list"]').click()
+  const packingExport = page.locator('.packing-export-dialog')
+  await expect(
+    packingExport.locator('.packing-export-preview img').first()
+  ).toBeVisible()
+  await packingExport
+    .locator('.packing-export-preview img')
+    .evaluateAll((images) => Promise.all(images.map((image) => image.decode())))
+  await packingExport.screenshot({ path: 'screenshots/packing-export.png' })
+  await packingExport
+    .getByRole('button', { name: 'Close export', exact: true })
+    .click()
   await page.getByRole('button', { name: 'Organize', exact: true }).click()
   await expect(page.locator('.packing-organize-group').first()).toBeVisible()
   await expect(page.locator('#packing-view .variants')).toHaveCount(0)
@@ -220,7 +232,7 @@ try {
   await page.goto(`${preview.url}/?state=import`)
   await page.locator('.import-latest').waitFor()
   await page
-    .locator('aside[aria-label="1688toCSV"]')
+    .locator('aside[aria-label="1688toPL"]')
     .screenshot({ path: 'screenshots/import-progress.png' })
 
   // Additional UX evidence uses only this disposable synthetic preview, after

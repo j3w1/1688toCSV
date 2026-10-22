@@ -237,7 +237,7 @@ test('1688 list and detail controls follow saved workspace palettes and mode wit
     exact: true,
   })
   const detailPanel = detail.getByRole('complementary', {
-    name: '1688toCSV',
+    name: '1688toPL',
     exact: true,
   })
   for (const panel of [listPanel, detailPanel])
@@ -922,7 +922,7 @@ test('reader and Activity show durable collection progress while hydration waits
   const reader = await readerCreated
   await reader.waitForURL(`${detailUrl(ids[1])}#*`)
   await reader.setViewportSize({ width: 260, height: 500 })
-  const panel = reader.locator('aside[aria-label="1688toCSV"]')
+  const panel = reader.locator('aside[aria-label="1688toPL"]')
   await library.getByRole('button', { name: /^Activity/ }).click()
   const activity = library.locator('#jobs .import-progress')
   const readerProgress = panel.locator('.import-progress')
@@ -1022,7 +1022,7 @@ test('reader and Activity show durable collection progress while hydration waits
   // The same order opened manually must not inherit another tab's import UI.
   const manual = await extension.context.newPage()
   await manual.goto(detailUrl(ids[1]))
-  const manualPanel = manual.locator('aside[aria-label="1688toCSV"]')
+  const manualPanel = manual.locator('aside[aria-label="1688toPL"]')
   await expect(manualPanel).toBeVisible()
   await expect(manualPanel.locator('.import-progress')).not.toBeVisible()
   await expect(

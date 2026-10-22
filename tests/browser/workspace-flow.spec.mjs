@@ -370,7 +370,7 @@ test('packing is the primary action while full refresh and backups stay in compa
   extension,
 }) => {
   const { page } = await open(extension)
-  await expect(page.locator('.brand')).toContainText('1688 Packing workspace')
+  await expect(page.locator('.brand')).toContainText('1688toPL')
   await expect(page.locator('.brand img')).toHaveJSProperty('naturalWidth', 48)
   await expect(
     page.getByRole('button', { name: 'Prepare packing list', exact: true })

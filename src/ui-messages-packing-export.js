@@ -1,4 +1,13 @@
 export const PACKING_EXPORT_MESSAGES = {
+  'Include detailed automation JSON': {
+    es: 'Incluir JSON detallado para automatización',
+    zh: '包含详细自动化 JSON',
+  },
+  'Optional JSON includes full costs, charge reasons and source identifiers for the chosen products and related cartons, regardless of Excel columns.':
+    {
+      es: 'El JSON opcional incluye todos los costos, motivos de cargos e identificadores de origen de los productos elegidos y sus cajas, independientemente de las columnas de Excel.',
+      zh: '可选 JSON 包含所选产品及相关纸箱的完整成本、收费原因和来源标识，与 Excel 列的选择无关。',
+    },
   Worksheet: { es: 'Hoja', zh: '工作表' },
   Cartons: { es: 'Cajas', zh: '纸箱' },
   'Choose at least one supported carton column.': {

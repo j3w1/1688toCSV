@@ -13,7 +13,7 @@
     "node": ">=24 <25"
   },
   "description": "Local 1688 and store spreadsheet orders, packing lists and Excel copying.",
-  "name": "1688tocsv",
+  "name": "1688topl",
   "scripts": {
     "build": "node scripts/build.mjs",
     "build:dev": "node scripts/build.mjs --development",

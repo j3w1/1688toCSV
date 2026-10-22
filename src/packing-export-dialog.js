@@ -197,16 +197,30 @@ export async function openPackingExportDialog({
     persist()
   }
   controls.append(widths)
-  const flags = el('div', undefined, 'packing-export-flags')
+  const flags = el('div', undefined, 'packing-export-flags'),
+    automationHelp = el(
+      'p',
+      m(
+        'Optional JSON includes full costs, charge reasons and source identifiers for the chosen products and related cartons, regardless of Excel columns.'
+      ),
+      'packing-export-note'
+    )
+  automationHelp.id = `${heading.id}-automation-help`
   for (const [key, title] of [
     ['includeOrderDetails', 'Store and order headings'],
     ['includeTotals', 'Totals row'],
     ['freezeHeaders', 'Freeze headers'],
     ['filters', 'Column filters'],
+    ['includeAutomationJson', 'Include detailed automation JSON'],
   ]) {
     const label = el('label', m(title)),
       check = el('input')
     check.type = 'checkbox'
+    check.id = `${heading.id}-${key}`
+    check.name = key
+    label.htmlFor = check.id
+    if (key === 'includeAutomationJson')
+      check.setAttribute('aria-describedby', automationHelp.id)
     check.dataset.option = key
     check.onchange = () => {
       options[key] = check.checked
@@ -217,6 +231,7 @@ export async function openPackingExportDialog({
   }
   controls.append(
     flags,
+    automationHelp,
     el(
       'p',
       m('Excel exports use the current theme in light mode.'),

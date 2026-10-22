@@ -871,6 +871,14 @@ test('editing a repeated import photo in preparation updates its exact order and
   const importCopy = async (name, date) => {
     await file.setInputFiles(workbookFile({ name }))
     await expect(dialog.locator('.store-import-product')).toHaveCount(1)
+    if (name.includes('(2)'))
+      await expect(
+        dialog.locator('[data-action="duplicate-import-warning"]')
+      ).toContainText('match 1 imported order')
+    else
+      await expect(
+        dialog.locator('[data-action="duplicate-import-warning"]')
+      ).toBeHidden()
     await dialog.getByLabel('Purchase date', { exact: true }).fill(date)
     await dialog
       .getByRole('checkbox', {

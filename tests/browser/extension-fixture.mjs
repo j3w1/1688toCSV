@@ -166,7 +166,7 @@ export const test = base.extend({
   extension: async ({ importFlow }, use) => {
     const temporaryParent = await realpath(tmpdir())
     const temporaryRoot = await mkdtemp(
-      path.join(temporaryParent, '1688tocsv-browser-')
+      path.join(temporaryParent, '1688topl-browser-')
     )
     const extensionPath = path.join(temporaryRoot, 'extension')
     const downloadPath = path.join(temporaryRoot, 'downloads')
@@ -256,7 +256,7 @@ export const test = base.extend({
       const resolved = await realpath(temporaryRoot)
       if (
         path.dirname(resolved) !== temporaryParent ||
-        !path.basename(resolved).startsWith('1688tocsv-browser-')
+        !path.basename(resolved).startsWith('1688topl-browser-')
       ) {
         throw new Error(
           'Refusing to clean an unexpected browser test directory'

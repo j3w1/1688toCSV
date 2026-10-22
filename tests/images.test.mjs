@@ -1,6 +1,11 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
-import { loadThumbnail, originalImageUrl } from '../src/images.js'
+import {
+  collectImageReferences,
+  imageCacheKey,
+  loadThumbnail,
+  originalImageUrl,
+} from '../src/images.js'
 
 const original = 'https://cbu01.alicdn.com/img/ibank/example.jpg?_=2020'
 const sized = 'https://cbu01.alicdn.com/img/ibank/example.jpg_64x64.jpg?_=2020'
@@ -83,4 +88,38 @@ test('different thumbnail sizes share an original cache without network requests
 
 test('embedded raster images remain usable without a URL or cache lookup', async () => {
   assert.equal(await loadThumbnail(png, {}), png)
+})
+
+test('retained image references use original identities across every photo owner', () => {
+  const local = `local-image:${'a'.repeat(64)}`
+  const gallery = 'https://cbu01.alicdn.com/gallery.png'
+  const sourcePhoto = 'https://cbu01.alicdn.com/source-row.png'
+  const historical = 'https://cbu01.alicdn.com/history.png'
+  const sharedOwner = 'https://cbu01.alicdn.com/shared-owner.png'
+  const references = collectImageReferences({
+    orders: [
+      {
+        snapshot: {
+          items: [{ thumbnail: sized, photos: [gallery, local, sized] }],
+          spreadsheet: { rows: [{ photos: [sourcePhoto, local] }] },
+        },
+      },
+    ],
+    history: [{ snapshot: { items: [{ thumbnail: historical }] } }],
+    issuedCodes: [
+      {
+        ownerSnapshot: { photos: [original] },
+        members: [{ ownerSnapshot: { photos: [sharedOwner] } }],
+      },
+    ],
+  })
+  assert.deepEqual(
+    [...references],
+    [original, gallery, local, sourcePhoto, historical, sharedOwner]
+  )
+  assert.equal(imageCacheKey(local), local)
+  assert.equal(imageCacheKey(png), png)
+  const legacy = 'https://img.alicdn.com/legacy.jpg_64x64.jpg'
+  assert.equal(imageCacheKey(legacy), legacy)
+  assert.deepEqual([...collectImageReferences()], [])
 })

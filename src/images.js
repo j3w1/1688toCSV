@@ -43,6 +43,40 @@ export function originalImageUrl(url) {
   return parsed.href
 }
 
+/** Use the loader's original URL identity without rejecting legacy image hosts. */
+export function imageCacheKey(url) {
+  if (typeof url !== 'string' || !url.startsWith('https://')) return url
+  try {
+    return originalImageUrl(url)
+  } catch {
+    return url
+  }
+}
+
+/** All retained photo owners share one reference walk, including source evidence. */
+export function collectImageReferences({
+  orders = [],
+  history = [],
+  issuedCodes = [],
+} = {}) {
+  const urls = new Set()
+  const add = (url) => {
+    if (typeof url === 'string' && url) urls.add(imageCacheKey(url))
+  }
+  for (const { snapshot } of [...orders, ...history]) {
+    for (const item of snapshot.items) {
+      add(item.thumbnail)
+      for (const url of item.photos || []) add(url)
+    }
+    for (const row of snapshot.spreadsheet?.rows || [])
+      for (const url of row.photos || []) add(url)
+  }
+  for (const code of issuedCodes)
+    for (const owner of [code, ...(code.members || [])])
+      for (const url of owner.ownerSnapshot?.photos || []) add(url)
+  return urls
+}
+
 export async function loadThumbnail(url, repository) {
   if (allowedImage.test(url) && url.length <= 32 * 1024 * 1024) return url
   if (localImageReference.test(url)) {

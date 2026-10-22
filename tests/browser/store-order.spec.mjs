@@ -400,8 +400,19 @@ test('deleting orders removes unshared local originals while keeping shared and 
     })
     await repository.removeOrders([first.snapshot.orderId])
     const afterFirst = await repository.exportBackup()
+    const cachedAfterFirst = {
+      unique: await repository.getImage(uniquePhoto),
+      shared: await repository.getImage(sharedPhoto),
+      replacement: await repository.getImage(replacement.url),
+      unrelated: await repository.getImage(unrelated.url),
+    }
     await repository.removeOrders([second.snapshot.orderId])
     const afterSecond = await repository.exportBackup()
+    const cachedAfterSecond = {
+      shared: await repository.getImage(sharedPhoto),
+      replacement: await repository.getImage(replacement.url),
+      unrelated: await repository.getImage(unrelated.url),
+    }
     return {
       history,
       sharedPhoto,
@@ -410,6 +421,8 @@ test('deleting orders removes unshared local originals while keeping shared and 
       unrelated: unrelated.url,
       afterFirst,
       afterSecond,
+      cachedAfterFirst,
+      cachedAfterSecond,
     }
   }, input)
   expect(result.history).toHaveLength(1)
@@ -421,10 +434,15 @@ test('deleting orders removes unshared local originals while keeping shared and 
   expect(afterFirst).not.toContain(result.uniquePhoto)
   expect(afterFirst).toContain(result.sharedPhoto)
   expect(afterFirst).toContain(result.replacement)
-  expect(afterFirst).toContain(result.unrelated)
+  expect(afterFirst).not.toContain(result.unrelated)
+  expect(result.cachedAfterFirst.unique).toBeUndefined()
+  expect(result.cachedAfterFirst.shared).toBeDefined()
+  expect(result.cachedAfterFirst.replacement).toBeDefined()
+  expect(result.cachedAfterFirst.unrelated).toBeDefined()
   expect(result.afterSecond.orders).toHaveLength(0)
   expect(result.afterSecond.history).toHaveLength(0)
-  expect(result.afterSecond.images.map((asset) => asset.url)).toEqual([
-    result.unrelated,
-  ])
+  expect(result.afterSecond.images).toEqual([])
+  expect(result.cachedAfterSecond.shared).toBeUndefined()
+  expect(result.cachedAfterSecond.replacement).toBeUndefined()
+  expect(result.cachedAfterSecond.unrelated).toBeDefined()
 })

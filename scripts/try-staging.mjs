@@ -23,11 +23,14 @@ export async function readIdentity(directory) {
 
 /** Refuse a build that could change the extension or its id. */
 export function checkIdentity(candidate, installed) {
-  if (candidate.name !== '1688toCSV')
-    throw new Error('the candidate is not the 1688toCSV extension.')
-  if (candidate.name !== installed.name || candidate.key !== installed.key)
+  const names = ['1688toPL', '1688toCSV']
+  if (!names.includes(candidate.name) || !names.includes(installed.name))
+    throw new Error('the candidate is not the 1688toPL extension.')
+  // Branding does not determine the extension ID. Keep its key and registered
+  // install path; allow the known name transition and its rollback copy.
+  if (candidate.key !== installed.key)
     throw new Error(
-      'the candidate manifest name or key differs from the installed build; that could change the extension id.'
+      'the candidate manifest key differs from the installed build; that could change the extension id.'
     )
 }
 

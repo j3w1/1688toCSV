@@ -80,6 +80,34 @@ test('RGB images are flattened onto white and captions stay ASCII-safe', async (
   )
 })
 
+test('100 image pages reference only their used artwork and retain repeated placements', async () => {
+  const pdf = createPdf()
+  const image = await rgbImage({
+    width: 1,
+    height: 1,
+    data: new Uint8ClampedArray([0, 0, 0, 255]),
+  })
+  for (let index = 0; index < 100; index++) {
+    const name = pdf.addImage(image)
+    const page = pdf
+      .page()
+      .image(name, { xMm: 5, yMm: 5, widthMm: 10, heightMm: 10 })
+    if (index === 0)
+      page.image(name, { xMm: 20, yMm: 5, widthMm: 10, heightMm: 10 })
+  }
+  pdf.page().text('No image', 5, 5)
+  const text = latin1(pdf.build())
+  const resources = [...text.matchAll(/\/XObject << ([^\n]*?) >>/g)]
+  assert.equal(resources.length, 101)
+  assert.equal((text.match(/\/Subtype \/Image/g) || []).length, 100)
+  assert.equal((text.match(/\/Im\d+ \d+ 0 R/g) || []).length, 100)
+  assert.equal((text.match(/\/Im\d+ Do Q/g) || []).length, 101)
+  for (let index = 0; index < 100; index++)
+    assert.match(resources[index][1], new RegExp(`^/Im${index + 1} \\d+ 0 R$`))
+  assert.equal(resources[100][1], '')
+  assert.match(text, /\/Producer \(1688toPL\)/)
+})
+
 test('dash lengths are millimetres converted to points, like coordinates', () => {
   const pdf = createPdf()
   pdf.page().line(10, 10, 20, 10, { dash: [0.6, 1.6] })

@@ -105,6 +105,65 @@ test('omitted picture columns do not generate artwork or read source photos', as
   assert.equal(await workbookCodeImage(''), undefined)
 })
 
+test('code artwork is reused across purchases and concurrent requests without mixing values or bounds', async (t) => {
+  const original = Object.getOwnPropertyDescriptor(globalThis, 'document')
+  t.after(() => {
+    if (original) Object.defineProperty(globalThis, 'document', original)
+    else delete globalThis.document
+  })
+  const { document, drawings } = canvasDocument()
+  Object.defineProperty(globalThis, 'document', {
+    configurable: true,
+    value: document,
+  })
+  const prepare = createPackingWorkbookImages()
+  const limits = { code: { maxWidth: 512, maxHeight: 128 } }
+  const row = { barcode: 'CE26103102ALS', orderId: 'purchase-1' }
+  const [first, repeated] = await Promise.all([
+    prepare(row, limits),
+    prepare({ ...row, orderId: 'purchase-2', quantity: '7' }, limits),
+  ])
+  assert.equal(first.code, repeated.code)
+  assert.equal(drawings.filter((draw) => draw.kind === 'text').length, 1)
+  assert.equal((await prepare(row, limits)).code, first.code)
+  const different = await prepare({ ...row, barcode: 'CE26103102ALM' }, limits)
+  assert.notEqual(different.code, first.code)
+  const smaller = await prepare(row, {
+    code: { maxWidth: 128, maxHeight: 32 },
+  })
+  assert.notEqual(smaller.code, first.code)
+  assert.ok(smaller.code.width <= 128 && smaller.code.height <= 32)
+  assert.equal(drawings.filter((draw) => draw.kind === 'text').length, 3)
+  assert.equal((await prepare({}, limits)).code, undefined)
+})
+
+test('failed code artwork can be generated again on the next request', async (t) => {
+  const original = Object.getOwnPropertyDescriptor(globalThis, 'document')
+  t.after(() => {
+    if (original) Object.defineProperty(globalThis, 'document', original)
+    else delete globalThis.document
+  })
+  const { document } = canvasDocument()
+  const createCanvas = document.createElement
+  let fail = true
+  document.createElement = (tag) => {
+    const canvas = createCanvas(tag)
+    canvas.toBlob = (callback) =>
+      callback(fail ? null : new Blob(['synthetic raster']))
+    return canvas
+  }
+  Object.defineProperty(globalThis, 'document', {
+    configurable: true,
+    value: document,
+  })
+  const prepare = createPackingWorkbookImages()
+  const row = { barcode: 'CE26103102ALS' }
+  const limits = { code: { maxWidth: 512, maxHeight: 128 } }
+  await assert.rejects(prepare(row, limits), /could not be created/)
+  fail = false
+  assert.ok((await prepare(row, limits)).code.bytes instanceof Blob)
+})
+
 test('workbook photo assets are always square and retain the product aspect ratio', async () => {
   const oldDocument = Object.getOwnPropertyDescriptor(globalThis, 'document')
   const oldImage = Object.getOwnPropertyDescriptor(globalThis, 'Image')

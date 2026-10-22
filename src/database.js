@@ -1199,20 +1199,25 @@ export async function openDatabase({ name = '1688-order-library' } = {}) {
     return state
   }
 
-  async function packingPreferencesFor(tx) {
-    const store = tx.objectStore('packingPreferences')
-    const previous = await requested(store.get('packing'))
-    const value = upgradeWorkspaceColors(
+  function initializedPackingPreferences(value) {
+    return upgradeWorkspaceColors(
       initializeVocabulary(
-        previous?.value
-          ? previous.value.sizeVocabulary === undefined
-            ? validatePackingPreferences(previous.value)
-            : previous.value
+        value
+          ? value.sizeVocabulary === undefined
+            ? validatePackingPreferences(value)
+            : value
           : validatePackingPreferences()
       )
     )
+  }
+
+  async function packingPreferencesFor(tx) {
+    const store = tx.objectStore('packingPreferences')
+    const previous = await requested(store.get('packing'))
+    const value = initializedPackingPreferences(previous?.value)
     if (!previous || value !== previous.value)
       store.put({
+        ...previous,
         id: 'packing',
         value,
         // Seeding is not an authored preference edit and must not outrank a
@@ -1398,6 +1403,7 @@ export async function openDatabase({ name = '1688-order-library' } = {}) {
       const store = tx.objectStore('packingPreferences')
       const previous = await requested(store.get('packing'))
       store.put({
+        ...previous,
         id: 'packing',
         value: next,
         updatedAt: touch
@@ -1479,7 +1485,9 @@ export async function openDatabase({ name = '1688-order-library' } = {}) {
       if (expected.productFeatures !== undefined)
         object(expected.productFeatures, 'Expected product features')
     }
-    const drafts = inputs.map(validatePreparation)
+    const drafts = inputs.map((input) =>
+      validatePreparation(clearPreparationRestoreScopes(input))
+    )
     if (
       !Array.isArray(expectedRevisions) ||
       expectedRevisions.length !== drafts.length ||
@@ -2471,28 +2479,20 @@ export async function openDatabase({ name = '1688-order-library' } = {}) {
                 entry.snapshot.observedAt,
               ])
           }
-          const localPhotos = (records) =>
-            new Set(
-              records
-                .flatMap(({ snapshot }) => [
-                  ...snapshot.items.flatMap((item) => [
-                    item.thumbnail,
-                    ...(item.photos || []),
-                  ]),
-                  ...(snapshot.spreadsheet?.rows || []).flatMap(
-                    (row) => row.photos || []
-                  ),
-                ])
-                .filter((photo) => localImageReference.test(photo))
+          const activeCodes = await replaceActiveCodes(tx)
+          const candidates = new Set(
+            [...collectImageReferences({ orders: deletedRecords })].filter(
+              (photo) => localImageReference.test(photo)
             )
-          const candidates = localPhotos(deletedRecords)
+          )
           if (candidates.size) {
             // Only collect assets owned by the removed orders. Other cached
             // photos stay intact, and another order/history can share an original.
-            const retained = localPhotos([
-              ...(await requested(tx.objectStore('orders').getAll())),
-              ...(await requested(tx.objectStore('history').getAll())),
-            ])
+            const retained = collectImageReferences({
+              orders: await requested(tx.objectStore('orders').getAll()),
+              history: await requested(tx.objectStore('history').getAll()),
+              issuedCodes: activeCodes.issuedCodes,
+            })
             for (const photo of candidates)
               if (!retained.has(photo)) tx.objectStore('images').delete(photo)
           }
@@ -2500,7 +2500,6 @@ export async function openDatabase({ name = '1688-order-library' } = {}) {
             previousRecords,
             touch: true,
           })
-          await replaceActiveCodes(tx)
         }
       )
     },
@@ -2529,7 +2528,6 @@ export async function openDatabase({ name = '1688-order-library' } = {}) {
           const physical = await cartonBatchesRepository.seed(tx)
           let orders = await requested(tx.objectStore('orders').getAll())
           let history = await requested(tx.objectStore('history').getAll())
-          let images = await requested(tx.objectStore('images').getAll())
           let preparations = await requested(
             tx.objectStore('preparations').getAll()
           )
@@ -2565,18 +2563,6 @@ export async function openDatabase({ name = '1688-order-library' } = {}) {
             preparations = preparations.filter((entry) =>
               includedKeys.has(JSON.stringify([entry.accountId, entry.orderId]))
             )
-            const photoUrls = new Set([
-              ...[...orders, ...history].flatMap((entry) =>
-                entry.snapshot.items.flatMap((item) => [
-                  item.thumbnail,
-                  ...(item.photos || []),
-                ])
-              ),
-              ...issuedCodes
-                .filter(included)
-                .flatMap((entry) => entry.ownerSnapshot?.photos || []),
-            ])
-            images = images.filter((entry) => photoUrls.has(entry.url))
           }
           const backup = {
             format: BACKUP_FORMAT,
@@ -2584,7 +2570,7 @@ export async function openDatabase({ name = '1688-order-library' } = {}) {
             exportedAt: new Date().toISOString(),
             orders,
             history,
-            images,
+            images: [],
             preparations,
             cartonBatches: physical.batches.filter(
               (batch) =>
@@ -2597,6 +2583,14 @@ export async function openDatabase({ name = '1688-order-library' } = {}) {
               ? { value: preferences.value, updatedAt: preferences.updatedAt }
               : null,
           }
+          const photoUrls = collectImageReferences(backup)
+          const imageStore = tx.objectStore('images')
+          const imageKeys = await requested(imageStore.getAllKeys())
+          backup.images = await Promise.all(
+            imageKeys
+              .filter((url) => photoUrls.has(imageCacheKey(url)))
+              .map((url) => requested(imageStore.get(url)))
+          )
           // Scope physical cartons only after the packing planner has seen
           // every intersecting batch, so omitted linked purchases are reported.
           return packingScope
@@ -2636,6 +2630,12 @@ export async function openDatabase({ name = '1688-order-library' } = {}) {
             [...allocations, ...backup.allocations],
             []
           )
+          const emptyBeforeRestore =
+            backup.packingScope &&
+            backup.packingPreferences &&
+            (await requested(orders.count())) === 0 &&
+            (await requested(history.count())) === 0 &&
+            (await requested(tx.objectStore('preparations').count())) === 0
           for (const incoming of backup.preparations) {
             const store = tx.objectStore('preparations')
             const previous = await requested(
@@ -2660,29 +2660,26 @@ export async function openDatabase({ name = '1688-order-library' } = {}) {
                 revision: Math.max(incoming.revision, previous.revision) + 1,
               })
             else if (incoming.updatedAt === previous.updatedAt) {
-              if (
-                JSON.stringify(preparationAuthoring(incoming)) !==
-                JSON.stringify(preparationAuthoring(previous))
-              ) {
-                if (isPackingPreparationSubset(previous, incoming))
-                  store.put({
-                    ...incoming,
-                    revision:
-                      Math.max(previous.revision, incoming.revision) + 1,
-                  })
-                else if (!isPackingPreparationSubset(incoming, previous))
-                  throw new Error(
-                    'Backup conflict: preparation edits have the same timestamp'
-                  )
-              }
+              const merged = mergePackingPreparation(
+                previous,
+                incoming,
+                preparationRestoreEntryIds(incoming)
+              )
+              if (merged !== previous) store.put(merged)
             }
           }
           if (backup.packingPreferences) {
             const store = tx.objectStore('packingPreferences')
             const previous = await requested(store.get('packing'))
             if (
-              !previous ||
-              previous.updatedAt === '1970-01-01T00:00:00.000Z' ||
+              (!previous && (!backup.packingScope || emptyBeforeRestore)) ||
+              (previous?.updatedAt === '1970-01-01T00:00:00.000Z' &&
+                (!backup.packingScope ||
+                  (emptyBeforeRestore &&
+                    !previous.initializedFromBackup &&
+                    JSON.stringify(
+                      initializedPackingPreferences(previous.value)
+                    ) === JSON.stringify(initializedPackingPreferences())))) ||
               (!backup.packingScope &&
                 previous.updatedAt < backup.packingPreferences.updatedAt)
             )
@@ -2693,6 +2690,7 @@ export async function openDatabase({ name = '1688-order-library' } = {}) {
                 updatedAt: backup.packingScope
                   ? '1970-01-01T00:00:00.000Z'
                   : backup.packingPreferences.updatedAt,
+                initializedFromBackup: true,
               })
           }
           let imported = 0
@@ -3189,7 +3187,11 @@ import {
   mergeAdditionalCharges,
   orderCostAdjustments,
 } from './order-charges.js'
-import { localImageReference } from './images.js'
+import {
+  localImageReference,
+  imageCacheKey,
+  collectImageReferences,
+} from './images.js'
 import {
   createStoreOrder,
   validateStoreIdentity,
@@ -3200,8 +3202,9 @@ import {
 } from './store-order.js'
 import {
   createPackingBackup,
-  isPackingPreparationSubset,
   mergePackingPreparation,
+  preparationRestoreEntryIds,
+  clearPreparationRestoreScopes,
   selectPackingOrder,
   selectPackingPreparation,
   validatePackingScope,
@@ -3210,7 +3213,6 @@ import {
   createNameSuggester,
   initializeVocabulary,
   orderNamingSuggestions,
-  preparationAuthoring,
   recordNamingEdits,
   refreshPreparationNames,
 } from './product-vocabulary.js'

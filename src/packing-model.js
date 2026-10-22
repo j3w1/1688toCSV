@@ -443,6 +443,9 @@ export function packingCheckpoint(
     sellerId: preparation.sellerId,
     updatedAt: preparation.updatedAt,
     groups: structuredClone(preparation.groups),
+    ...(preparation.restoreScopes !== undefined
+      ? { restoreScopes: structuredClone(preparation.restoreScopes) }
+      : {}),
   }
   if (includeDefaults && preparation.defaultPacking)
     checkpoint.defaults = packingCheckpoint(preparation.defaultPacking)
@@ -1131,6 +1134,41 @@ export function validatePreparation(input) {
   }
   if (input.packingPosition !== undefined)
     result.packingPosition = input.packingPosition
+  if (input.restoreScopes !== undefined) {
+    if (
+      !Array.isArray(input.restoreScopes) ||
+      input.restoreScopes.length > members.size ** 2
+    )
+      throw new Error(
+        'Packing restore scope evidence must be bounded to retained products'
+      )
+    const seen = new Set(),
+      covered = new Set()
+    result.restoreScopes = input.restoreScopes.map((scope) => {
+      if (
+        !Array.isArray(scope) ||
+        !scope.length ||
+        scope.length > members.size ||
+        new Set(scope).size !== scope.length ||
+        scope.some((id) => !members.has(id))
+      )
+        throw new Error(
+          'Packing restore scope evidence contains invalid products'
+        )
+      const key = JSON.stringify([...scope].sort())
+      if (seen.has(key))
+        throw new Error(
+          'Packing restore scope evidence contains duplicate scopes'
+        )
+      seen.add(key)
+      for (const id of scope) covered.add(id)
+      return [...scope]
+    })
+    if (covered.size !== members.size)
+      throw new Error(
+        'Packing restore scope evidence must cover every retained product'
+      )
+  }
   Object.assign(
     result,
     input.packingManualReordered === undefined
@@ -1159,6 +1197,9 @@ export function validatePreparation(input) {
       month: checkpoint.month,
       updatedAt: checkpoint.updatedAt,
       groups: checkpoint.groups,
+      ...(checkpoint.restoreScopes !== undefined
+        ? { restoreScopes: checkpoint.restoreScopes }
+        : {}),
     })
     result[field] = packingCheckpoint(validated)
     if (checkpoint.defaults !== undefined) {
@@ -1177,6 +1218,9 @@ export function validatePreparation(input) {
         month: defaults.month,
         updatedAt: defaults.updatedAt,
         groups: defaults.groups,
+        ...(defaults.restoreScopes !== undefined
+          ? { restoreScopes: defaults.restoreScopes }
+          : {}),
       })
       result[field].defaults = packingCheckpoint(validatedDefaults)
     }

@@ -8046,17 +8046,21 @@ export async function startPackingWorkspace({
       }),
       file
     )
-    const summary = packingSummary({
-      rows: fields,
-      file,
-      cartonBatches: options.cartonBatches,
-    })
-    saveFile(
-      new Blob([JSON.stringify(summary, null, 2)], {
-        type: 'application/json',
-      }),
-      summaryFileName(file)
-    )
+    const summary =
+      options.includeAutomationJson === true
+        ? packingSummary({
+            rows: fields,
+            file,
+            cartonBatches: options.cartonBatches,
+          })
+        : { files: [file] }
+    if (options.includeAutomationJson === true)
+      saveFile(
+        new Blob([JSON.stringify(summary, null, 2)], {
+          type: 'application/json',
+        }),
+        summaryFileName(file)
+      )
     announceExport(summary.files)
     feedback(
       uiMessage('Packing list saved to your downloads: {0}', { 0: file })

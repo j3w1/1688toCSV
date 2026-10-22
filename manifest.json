@@ -1,6 +1,6 @@
 {
   "manifest_version": 3,
-  "name": "1688toCSV",
+  "name": "1688toPL",
   "version": "2.9.0",
   "description": "Keep local 1688 and store spreadsheet orders, prepare packing lists, and copy product data and pictures to Excel.",
   "permissions": ["alarms", "clipboardWrite", "unlimitedStorage", "tabs"],

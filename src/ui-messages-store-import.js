@@ -1,4 +1,9 @@
 export const STORE_IMPORT_MESSAGES = {
+  'This appears to match {0} imported order(s). Importing again creates a separate purchase; review the date before continuing.':
+    {
+      es: 'Esto parece coincidir con {0} pedido(s) importado(s). Volver a importar crea una compra separada; revisa la fecha antes de continuar.',
+      zh: '此文件似乎与 {0} 个已导入订单相同。再次导入会创建独立采购；请先核对日期。',
+    },
   'Workbook guide': { zh: '工作簿指南', es: 'Guía del libro' },
   Setup: { zh: '准备', es: 'Preparar' },
   Markers: { zh: '标记', es: 'Marcadores' },

@@ -467,10 +467,6 @@ export const UI_MESSAGES = {
     es: '{0} {1}',
   },
   Cancelled: { zh: '已取消', es: 'Cancelado' },
-  '1688 Packing workspace': {
-    zh: '1688 装箱工作台',
-    es: '1688 · Espacio de empaque',
-  },
   'Orders · packing · Excel': {
     zh: '订单 · 装箱 · Excel',
     es: 'Pedidos · empaque · Excel',
