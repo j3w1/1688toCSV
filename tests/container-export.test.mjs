@@ -1007,3 +1007,138 @@ test('an asynchronous image render cannot replace captured revision values with 
   assert.equal(workbook.Sheets['Packing list'].H7.v, 10)
   assert.equal(workbook.Sheets['Packing list'].M7.v, 21)
 })
+
+test('detailed revision summary retains frozen cost reasons, source evidence and allocation budgets without recomputing amounts', () => {
+  const manifest = fixture(),
+    row = manifest.products[0],
+    record = row.record
+  record.additionalCharges = [
+    {
+      id: 'synthetic-handling',
+      amount: '10.00',
+      reason: 'Original handling reason',
+      privateContact: 'PRIVATE-CONTACT',
+    },
+  ]
+  record.productWorkflow = {
+    A: {
+      features: {
+        light: {
+          name: 'Synthetic lighting',
+          unitCost: '0.01',
+          included: false,
+        },
+        rotation: true,
+      },
+    },
+  }
+  record.paymentLinks = [
+    {
+      id: 'synthetic-balance',
+      sourceOrderId: 'SYNTHETIC-SOURCE',
+      sourceEntryId: 'FEE',
+      amount: '3.00',
+      reason: 'Original linked balance reason',
+      targetEntryIds: ['A'],
+      reviewedAt: '2026-10-20T10:00:00.000Z',
+      sourceEvidence: {
+        amount: '3.00',
+        payable: '3.00',
+        shipping: '0.00',
+        observedAt: '2026-10-20T09:00:00.000Z',
+        rawAsset: 'RAW-PRIVATE-ASSET',
+      },
+      wechat: 'PRIVATE-CONTACT',
+    },
+  ]
+  row.valuation = {
+    sourceQuantity: '999',
+    quantity: '10',
+    from: '2',
+    sourceNet: '1000.00',
+    intervals: [{ from: '2', quantity: '10' }],
+    budgets: {
+      additionalCharge: {
+        source: '10.00',
+        alreadyAllocated: '1.00',
+        remaining: '9.00',
+        remainingQuantity: '997',
+        privateContact: 'PRIVATE-CONTACT',
+      },
+      privateContact: 'PRIVATE-CONTACT',
+    },
+    privateRecord: 'RAW-PRIVATE-ASSET',
+  }
+  manifest.orders[0].record = record
+  manifest.leftBehind.unprepared.push({
+    accountId: 'local',
+    orderId: 'O1',
+    entryId: 'A',
+    quantity: '1',
+  })
+  const summary = createContainerSummary(manifest, {
+    file: 'minimal-quantity-only.xlsx',
+  })
+  const result = summary.products[0],
+    evidence = result.costEvidence
+  assert.equal(result.sourceAmount, '20.00')
+  assert.equal(result.effectiveAmount, '21.00')
+  assert.equal(evidence.scope, 'frozen-source-evidence')
+  assert.equal(evidence.allocated.additionalCharge, '0.40')
+  assert.deepEqual(evidence.additionalCharges, [
+    {
+      scope: 'source-order',
+      id: 'synthetic-handling',
+      amount: '10.00',
+      reason: 'Original handling reason',
+    },
+  ])
+  assert.deepEqual(evidence.productFeatures, [
+    {
+      scope: 'source-unit',
+      key: 'light',
+      name: 'Synthetic lighting',
+      unitCost: '0.01',
+      included: false,
+    },
+    {
+      scope: 'source-unit',
+      key: 'rotation',
+      name: 'Rotation',
+      unitCost: '0.00',
+      included: true,
+    },
+  ])
+  assert.equal(
+    evidence.linkedPayments[0].reason,
+    'Original linked balance reason'
+  )
+  assert.equal(evidence.linkedPayments[0].sourceOrderId, 'SYNTHETIC-SOURCE')
+  assert.deepEqual(evidence.allocation.budgets.additionalCharge, {
+    source: '10.00',
+    alreadyAllocated: '1.00',
+    remaining: '9.00',
+    remainingQuantity: '997',
+  })
+  assert.deepEqual(evidence.allocation.intervals, [
+    { from: '2', quantity: '10' },
+  ])
+  assert.equal(
+    summary.leftBehind.unprepared.find((product) => product.entryId === 'A')
+      .costEvidence.additionalCharges[0].reason,
+    'Original handling reason'
+  )
+  assert.doesNotMatch(
+    JSON.stringify(summary),
+    /PRIVATE-CONTACT|RAW-PRIVATE-ASSET|data:image/
+  )
+  record.additionalCharges[0].reason = 'Later live reason'
+  record.paymentLinks[0].reason = 'Later live balance'
+  row.valuation.budgets.additionalCharge.remaining = '0.00'
+  assert.equal(evidence.additionalCharges[0].reason, 'Original handling reason')
+  assert.equal(
+    evidence.linkedPayments[0].reason,
+    'Original linked balance reason'
+  )
+  assert.equal(evidence.allocation.budgets.additionalCharge.remaining, '9.00')
+})

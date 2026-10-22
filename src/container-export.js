@@ -15,6 +15,7 @@ import {
 import { excelImagePalette } from './excel-image-style.js'
 import { columnName } from './xlsx-writer.js'
 import { exactDecimal, exactWhole, addExact } from './carton-arithmetic.js'
+import { productFeatures } from './product-features.js'
 
 const clone = (value) => structuredClone(value)
 const absent = (value) => value === undefined || value === null || value === ''
@@ -271,6 +272,7 @@ const productFields = [
   'allocatedDiscount',
   'discount',
   'sourceAmount',
+  'sourceGrossAmount',
   'effectiveAmount',
   'additionalCharge',
   'featureCharge',
@@ -356,12 +358,119 @@ function publicProduct(source) {
   return {
     ...pick(source, productFields),
     ...publicSupplierIdentity(source),
+    ...publicCostEvidence(source),
     ...(source.group?.id && !source.groupId
       ? { groupId: source.group.id }
       : {}),
     ...(source.variant?.id && !source.variantId
       ? { variantId: source.variant.id }
       : {}),
+  }
+}
+function publicCostEvidence(source) {
+  const record = source.record
+  const charges =
+    record?.additionalCharges ?? source.valuation?.additionalReasons ?? []
+  const features = productFeatures(
+    record?.productWorkflow?.[source.entryId]?.features
+  )
+  const payments = (record?.paymentLinks ?? []).filter(
+    (link) =>
+      !link.targetEntryIds || link.targetEntryIds.includes(source.entryId)
+  )
+  if (
+    !charges.length &&
+    !features.length &&
+    !payments.length &&
+    !source.valuation
+  )
+    return {}
+  const allocation = source.valuation
+  const budgetFields = [
+    'sourceGrossAmount',
+    'sourceAmount',
+    'sourceDiscount',
+    'allocatedDiscount',
+    'additionalCharge',
+    'featureCharge',
+    'linkedPaymentCharge',
+    'freightAllocated',
+  ]
+  return {
+    costEvidence: {
+      scope: 'frozen-source-evidence',
+      allocated: pick(source, budgetFields),
+      additionalCharges: charges.map((charge) => ({
+        scope: 'source-order',
+        ...pick(charge, ['id', 'amount', 'reason']),
+      })),
+      productFeatures: features.map((feature) => ({
+        scope: 'source-unit',
+        ...pick(feature, ['key', 'name', 'unitCost', 'included']),
+      })),
+      linkedPayments: payments.map((link) => ({
+        scope: 'source-payment',
+        ...pick(link, [
+          'id',
+          'sourceOrderId',
+          'sourceEntryId',
+          'amount',
+          'reason',
+          'targetEntryIds',
+          'reviewedAt',
+        ]),
+        ...(link.sourceEvidence
+          ? {
+              sourceEvidence: pick(link.sourceEvidence, [
+                'amount',
+                'payable',
+                'shipping',
+                'observedAt',
+              ]),
+            }
+          : {}),
+      })),
+      ...(allocation
+        ? {
+            allocation: {
+              basis:
+                source.freightAllocationBasis ??
+                source.costAllocationBasis ??
+                null,
+              ...pick(allocation, [
+                'sourceQuantity',
+                'quantity',
+                'from',
+                'sourceNet',
+              ]),
+              ...(Array.isArray(allocation.intervals)
+                ? {
+                    intervals: allocation.intervals.map((part) =>
+                      pick(part, ['from', 'quantity'])
+                    ),
+                  }
+                : {}),
+              ...(allocation.budgets
+                ? {
+                    budgets: Object.fromEntries(
+                      budgetFields
+                        .filter((field) => allocation.budgets[field])
+                        .map((field) => [
+                          field,
+                          pick(allocation.budgets[field], [
+                            'source',
+                            'alreadyAllocated',
+                            'remaining',
+                            'remainingQuantity',
+                          ]),
+                        ])
+                    ),
+                  }
+                : {}),
+            },
+          }
+        : {}),
+    },
   }
 }
 function publicSupplierIdentity(source) {
@@ -1044,6 +1153,19 @@ export function createContainerSummary(
   if (typeof file !== 'string' || !file.trim())
     throw new Error('Supply the actual exported workbook filename')
   const left = manifest.leftBehind
+  const records = new Map(
+    (manifest.orders ?? []).map((order) => [
+      JSON.stringify([order.accountId || 'local', order.orderId]),
+      order.record,
+    ])
+  )
+  const publicRow = (row) =>
+    publicProduct({
+      ...row,
+      record:
+        row.record ??
+        records.get(JSON.stringify([row.accountId || 'local', row.orderId])),
+    })
   return {
     format: SUMMARY_FORMAT,
     version: 3,
@@ -1075,14 +1197,14 @@ export function createContainerSummary(
       ]),
       ...publicSupplierIdentity(order),
     })),
-    products: manifest.products.map(publicProduct),
+    products: manifest.products.map(publicRow),
     cartons: manifest.cartons.map(publicCarton),
     cartonBatches: (manifest.batches ?? []).map(publicCarton),
     totals: clone(manifest.totals),
     leftBehind: {
-      products: (left.products ?? []).map(publicProduct),
+      products: (left.products ?? []).map(publicRow),
       cartons: (left.cartons ?? []).map(publicCarton),
-      unprepared: (left.unprepared ?? []).map(publicProduct),
+      unprepared: (left.unprepared ?? []).map(publicRow),
       totals: clone(left.totals ?? {}),
     },
     warnings: (manifest.warnings ?? []).map((warning) =>
