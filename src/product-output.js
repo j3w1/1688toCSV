@@ -406,7 +406,7 @@ export function createProductOutput({
       // Validate artwork with the actual renderer before the print dialog takes
       // over errors; the failing source retains its Orders recovery route.
       await renderOutputLabel(printContext, item, {
-        settings: { ...settings(context), dpi: 150 },
+        settings: settings(context),
         logoUrl: logo(context),
       })
     }
