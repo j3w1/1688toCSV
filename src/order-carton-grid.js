@@ -2470,6 +2470,12 @@ export async function createPackingReportIntakeController({
       })
       return commitWork
         .then((result) => {
+          if (result?.status === 'amendment-required') {
+            state.plan = { ...plan, ...clone(result) }
+            retain()
+            emit()
+            return result
+          }
           if (state.generation === generation)
             globalThis.localStorage?.removeItem(recoveryKey)
           else retain()
@@ -2665,7 +2671,8 @@ export async function openPackingReportIntake({
         save.disabled =
           true
       try {
-        await controller.commit()
+        const result = await controller.commit()
+        if (result?.status === 'amendment-required') return
         await onSaved()
         modal.close('saved')
       } catch (error) {

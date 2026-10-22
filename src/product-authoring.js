@@ -57,6 +57,7 @@ import { showErrorNotice, clearErrorNotices } from './error-notice.js'
 import { decorateIcon } from './icons.js'
 import { applyAppearance } from './appearance.js'
 import { openStoreSpreadsheetGuide } from './store-spreadsheet-guide.js'
+import { createVirtualList } from './virtual-list.js'
 import { mountMaterialVocabulary } from './material-vocabulary-settings.js'
 import { mountColorVocabulary } from './color-vocabulary-settings.js'
 import { mountAppearanceSettings } from './appearance-settings.js'
@@ -208,6 +209,7 @@ export async function createProductAuthoring({
   feedback = () => {},
   loadImage,
   onCartons,
+  onPhotoEdit,
   getSelectedRows = () => [],
 }) {
   let preferences = {},
@@ -377,6 +379,7 @@ export async function createProductAuthoring({
     getPhotoContext: photoContext,
     getSizeClassifier: () => createSizeClassifier(preferences.sizeVocabulary),
     getPhotoItems: getSelectedRows,
+    onPhotoEdit,
   })
   function recoveryKey(ref) {
     return `1688-orders-authoring-draft:${orderKey(ref)}`
@@ -669,7 +672,8 @@ export async function createProductAuthoring({
         undefined,
         'packing-review purchase-code-review'
       ),
-      content = el('div'),
+      content = el('div', undefined, 'purchase-code-review-content'),
+      items = el('div', undefined, 'purchase-code-review-items'),
       status = el('p'),
       actions = el('div', undefined, 'dialog-actions')
     modal.dataset.action = 'purchase-code-review'
@@ -682,7 +686,7 @@ export async function createProductAuthoring({
         )
       )
     )
-    for (const row of review.changes || review.assignments || []) {
+    function reviewCard(row) {
       const card = el('article')
       card.dataset.orderId = row.orderId || ''
       card.dataset.entryId = row.entryId || ''
@@ -701,7 +705,11 @@ export async function createProductAuthoring({
         )
       card.append(
         el('p', row.name || row.description || row.entryId || row.orderId),
-        el('code', row.after || row.code || row.baseCode || '—', 'ce-code')
+        el(
+          'code',
+          row.after || row.code || row.baseCode || '—',
+          'ce-code purchase-code'
+        )
       )
       if (row.supplierIdentity) {
         const identity = row.supplierIdentity
@@ -726,8 +734,14 @@ export async function createProductAuthoring({
             )
           )
       }
-      content.append(card)
+      return card
     }
+    content.append(items)
+    items.dataset.rowCount = String(
+      (review.changes || review.assignments || []).length
+    )
+    items.setAttribute('role', 'list')
+    bindAttribute(items, 'aria-label', uiMessage('Review purchase-month codes'))
     for (const issue of review.issues || []) {
       content.append(el('p', uiMessage(issue.message || issue)))
       const ref = orderRefs.find(
@@ -747,7 +761,10 @@ export async function createProductAuthoring({
       }
     }
     const cancel = el('button', uiMessage('Cancel')),
-      commit = el('button', uiMessage('Assign purchase codes'), 'primary')
+      commit = el('button', uiMessage('Assign purchase codes'), 'primary'),
+      intentId = crypto.randomUUID()
+    let assigning = false,
+      reviewList
     commit.dataset.action = 'assign-purchase-codes'
     commit.disabled = (review.issues || []).some(
       (issue) => issue.severity === 'error'
@@ -755,12 +772,13 @@ export async function createProductAuthoring({
     cancel.onclick = () => modal.close()
     commit.onclick = () =>
       void (async () => {
+        assigning = true
         commit.disabled = cancel.disabled = true
         try {
           await repository.assignPurchaseCodes({
             plan: review.plan || review,
             expectedRevisions: review.expectedRevisions,
-            intentId: crypto.randomUUID(),
+            intentId,
           })
           await reload()
           await changed()
@@ -768,6 +786,7 @@ export async function createProductAuthoring({
         } catch (error) {
           bindText(status, uiMessage(error.message))
         } finally {
+          assigning = false
           commit.disabled = cancel.disabled = false
         }
       })()
@@ -775,11 +794,41 @@ export async function createProductAuthoring({
     actions.append(cancel, commit)
     modal.append(content, status, actions)
     modal.onclose = () => {
+      reviewList?.destroy()
       media.forget(modal)
       modal.remove()
     }
     document.body.append(modal)
     modal.showModal()
+    modal.oncancel = (event) => {
+      if (assigning) event.preventDefault()
+    }
+    reviewList = createVirtualList({
+      scroller: items,
+      sections: [
+        {
+          element: items,
+          entries: (review.changes || review.assignments || []).map((row) => ({
+            key: JSON.stringify([
+              row.accountId || 'local',
+              row.orderId,
+              row.entryId,
+              row.groupId,
+              row.variantId,
+            ]),
+            row,
+          })),
+        },
+      ],
+      render: ({ row }) => {
+        const card = reviewCard(row)
+        card.setAttribute('role', 'listitem')
+        return card
+      },
+      remove: (node) => media.forget(node),
+      limit: 100,
+    })
+    reviewList.update()
   }
   async function openInventoryRecovery(ref) {
     await flushSaves()

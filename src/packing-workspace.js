@@ -33,6 +33,7 @@ export async function startPackingWorkspace({
   feedback,
   loadImage,
   onProductDetails = () => {},
+  onProductPhotoEdit,
   onReadOnlyProductDetails = () => {},
   planner,
   workbookAdapter,
@@ -81,6 +82,7 @@ export async function startPackingWorkspace({
     loadImage,
     getSelectedRows,
     onCartons: openOrder,
+    onPhotoEdit: onProductPhotoEdit,
   })
   const output = createProductOutput({
     repository,
@@ -444,10 +446,35 @@ export async function startPackingWorkspace({
             months.add(groupPackingMonth(preparation, group))
       }
       const scope = {
-          orders: [...selection.values()],
-          months: [...months].sort(),
-        },
+        orders: [...selection.values()],
+        months: [...months].sort(),
+      }
+      let backup,
+        fullLibrary = false
+      try {
         backup = await repository.exportBackup({ packingScope: scope })
+      } catch (error) {
+        if (error.code !== 'PACKING_BACKUP_DEPENDENCY_REVIEW') throw error
+        const required =
+          error.requiredOrderRefs || error.detail?.requiredOrderRefs || []
+        if (
+          !(await reviewPackingChanges({
+            title: m('Review backup dependencies'),
+            explanation: m(
+              'The selected products share retained report, carton or shipment history. Create a complete library backup to keep those dependencies and original media together. Restore this file through Settings → Data.'
+            ),
+            changes: required.map((ref) => ({
+              name: ref.orderId,
+              before: m('Partial product selection'),
+              after: m('Complete library and historical dependencies'),
+            })),
+            proceed: m('Back up full library'),
+          }))
+        )
+          return
+        backup = await repository.exportBackup({})
+        fullLibrary = true
+      }
       if (
         backup.omittedCartonBatchIds?.length &&
         !(await reviewPackingChanges({
@@ -466,7 +493,9 @@ export async function startPackingWorkspace({
         return
       await downloadBackup(
         backup,
-        `1688-packing-${scope.months.length === 1 ? scope.months[0] : 'mixed-months'}`
+        fullLibrary
+          ? '1688-order-library'
+          : `1688-packing-${scope.months.length === 1 ? scope.months[0] : 'mixed-months'}`
       )
       feedback(m('Packing backup saved'))
     })().catch(failure)
