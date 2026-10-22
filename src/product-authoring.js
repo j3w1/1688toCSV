@@ -396,7 +396,8 @@ export async function createProductAuthoring({
         ...row,
         baseCode: match.group.baseCode,
         barcode: code,
-        spanishName: match.variant.spanishName || match.group.spanishName,
+        spanishName: match.variant.spanishName ?? match.group.spanishName,
+        needsSizeMapping: Boolean(match.variant.needsSizeMapping),
         chineseCategory: match.group.category,
         groupId: match.group.id,
         variantId: match.variant.id,
@@ -448,7 +449,7 @@ export async function createProductAuthoring({
       if (!entry) return []
       // Source label requests can retain fractional/zero historical quantities;
       // that does not establish whole-unit inventory or authorize a shipment.
-      if (!entry.reason)
+      if (!entry.dispositionKind && !entry.paymentOnly && !entry.reason)
         return [{ ...row, quantity: entry.eligible ?? row.quantity }]
       return entry.eligible != null && BigInt(entry.eligible) > 0n
         ? [{ ...row, quantity: entry.eligible }]
@@ -647,7 +648,7 @@ export async function createProductAuthoring({
                 group.baseCode,
                 variant.variantSuffix,
                 variant.sizeSuffix,
-                variant.spanishName || group.spanishName,
+                variant.spanishName ?? group.spanishName,
                 group.category,
                 variantMaterial(variant, entryId).value,
               ].join('\n'),
@@ -1426,7 +1427,7 @@ export async function createProductAuthoring({
     }
     add(
       'Spanish name',
-      variant.spanishName || group.spanishName || '',
+      variant.spanishName ?? group.spanishName ?? '',
       (value) => {
         variant.spanishName = value.toUpperCase()
       },
@@ -1704,7 +1705,7 @@ export async function createProductAuthoring({
             ? group.baseCode
             : barcodeValue(group, { ...variant, needsSizeMapping: false }),
         baseCode: group.baseCode,
-        spanishName: variant.spanishName || group.spanishName,
+        spanishName: variant.spanishName ?? group.spanishName,
         category: group.category,
         variantSuffix: variant.variantSuffix,
         sizeSuffix: variant.sizeSuffix,

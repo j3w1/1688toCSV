@@ -4,6 +4,7 @@ import { createVirtualTable } from './virtual-table.js'
 import { cartonBatchMetrics } from './carton-batches.js'
 import { physicalUnits, batchNeedsLegacyReview } from './inventory-model.js'
 import { reviewPackingChanges } from './packing-review.js'
+import { setCodeText } from './code-display.js'
 
 const clone = (value) => structuredClone(value)
 export const sourceKey = ({ accountId = 'local', orderId, entryId }) =>
@@ -1147,6 +1148,8 @@ export async function createOrderCartonSession({
       : {}),
   })
   let context = await repository.getOrderReconciliation(repositoryRef())
+  let latestContext = context,
+    refreshGeneration = 0
   const amendmentContext = clone(
     context.amendmentContext || context.revisions?.amendmentContext
   )
@@ -1156,8 +1159,36 @@ export async function createOrderCartonSession({
       : {}),
     ...(amendmentContext ? { expectedAmendment: amendmentContext } : {}),
   })
-  const restored = context.draft?.value || context.draft || {}
+  let restored = context.draft?.value || context.draft || {}
   let expectedDraftRevision = context.draft?.revision ?? 0
+  let localRecoveryKey
+  try {
+    let tab = globalThis.sessionStorage?.getItem('1688-orders-draft-tab')
+    if (!tab) {
+      tab = crypto.randomUUID()
+      globalThis.sessionStorage?.setItem('1688-orders-draft-tab', tab)
+    }
+    localRecoveryKey = `1688-orders-carton-recovery:${JSON.stringify([
+      orderRef.accountId || 'local',
+      orderRef.orderId,
+      getContextContainerId() || null,
+      tab,
+    ])}`
+    const local = JSON.parse(
+      globalThis.localStorage?.getItem(localRecoveryKey) || 'null'
+    )
+    if (local?.value) {
+      if (
+        local.revision === expectedDraftRevision &&
+        JSON.stringify(local.sourceRevisions) ===
+          JSON.stringify(context.revisions) &&
+        JSON.stringify(local.amendmentContext || null) ===
+          JSON.stringify(amendmentContext || null)
+      )
+        restored = local.value
+      else context.recoveredDrafts = [...(context.recoveredDrafts || []), local]
+    }
+  } catch {}
   let domainDraft =
     restored.plannerDraft || planner.createReconciliationDraft(context)
   let history =
@@ -1175,6 +1206,37 @@ export async function createOrderCartonSession({
     lastInputGeneration = 0
   const commandKinds = [...(restored.history?.commandKinds || [])]
   let commandCursor = restored.history?.commandCursor ?? commandKinds.length
+  function retainLocal(value) {
+    if (!localRecoveryKey) return
+    try {
+      if (!raw.dirty()) {
+        globalThis.localStorage?.removeItem(localRecoveryKey)
+        return
+      }
+      globalThis.localStorage?.setItem(
+        localRecoveryKey,
+        JSON.stringify({
+          revision: expectedDraftRevision,
+          amendmentContext,
+          sourceRevisions: context.revisions,
+          updatedAt: new Date().toISOString(),
+          value: {
+            ...value,
+            plannerDraft: domainDraft,
+            history: {
+              domain: history,
+              raw: { history: value.history, cursor: value.cursor },
+              commandKinds,
+              commandCursor,
+            },
+            amendmentContext,
+          },
+        })
+      )
+    } catch {
+      onError(new Error('The editing draft could not be saved for recovery.'))
+    }
+  }
   const raw = createGridDraftController({
     draft: {
       ...restored,
@@ -1208,7 +1270,10 @@ export async function createOrderCartonSession({
       expectedDraftRevision =
         saved.revision ?? saved.draft?.revision ?? expectedDraftRevision
     },
-    onChange: () => notify('input'),
+    onChange: (value) => {
+      retainLocal(value)
+      notify('input')
+    },
   })
   function contextInput() {
     const capacities = { ...domainDraft.capacities }
@@ -1222,6 +1287,17 @@ export async function createOrderCartonSession({
     }
     return {
       ...context,
+      batches:
+        latestContext.batches?.map((batch) => {
+          const touched =
+            domainDraft.cartons.some((entry) => entry.id === batch.id) ||
+            Object.keys(raw.state().rawCells).some(
+              (key) => JSON.parse(key)[0] === batch.id
+            )
+          return touched
+            ? context.batches.find((entry) => entry.id === batch.id) || batch
+            : batch
+        }) || context.batches,
       capacities: context.record?.unitsPerCarton,
       draft: { ...domainDraft, capacities },
     }
@@ -1475,6 +1551,7 @@ export async function createOrderCartonSession({
         record: result.record || (result.snapshot ? result : context.record),
         revisions: result.revisions || context.revisions,
       }
+      latestContext = context
       lastInputGeneration = submittedGeneration
     } finally {
       writeWork = null
@@ -1484,6 +1561,22 @@ export async function createOrderCartonSession({
   }
   const session = {
     orderRef,
+    async refresh() {
+      const generation = ++refreshGeneration,
+        latest = await repository.getOrderReconciliation(repositoryRef())
+      if (generation !== refreshGeneration) return
+      const token =
+        latest.amendmentContext || latest.revisions?.amendmentContext
+      if (
+        JSON.stringify(token || null) !==
+        JSON.stringify(amendmentContext || null)
+      )
+        return
+      if (!Object.keys(raw.state().rawCells).length && !arrangementDirty)
+        context = latest
+      latestContext = latest
+      notify('refresh')
+    },
     record: () => clone(context.record),
     recoveredDrafts: () =>
       clone(context.recoveredDrafts || []).sort(
@@ -1761,6 +1854,7 @@ export async function createOrderCartonSession({
           intentId: confirmIntent.intentId,
         })
         context = await repository.getOrderReconciliation(repositoryRef())
+        latestContext = context
         expectedDraftRevision = context.draft?.revision ?? 0
         if (raw.clearAcknowledged(generation)) {
           domainDraft = planner.createReconciliationDraft(context)
@@ -1829,6 +1923,7 @@ export function mountOrderCartonGrid(
   scroller.append(table)
   const selected = new Set()
   let rows = [],
+    mountedKeys = [],
     visibleKeys = [],
     filter = '',
     viewVersion = 0,
@@ -2048,11 +2143,14 @@ export function mountOrderCartonGrid(
           labels[row[column.key]]
             ? m(labels[row[column.key]])
             : row[column.key]
-        td.append(
-          copyTextButton(String(value ?? '—'), {
-            label: m('Copy value'),
-          })
-        )
+        const readout = copyTextButton(String(value ?? '—'), {
+          label: m('Copy value'),
+        })
+        if (column.key === 'code' && /^CE\d{8}/.test(String(value))) {
+          readout.classList.add('ce-code')
+          setCodeText(readout, value)
+        }
+        td.append(readout)
         if (column.key === 'code' && row.states?.length) {
           const states = el('span', undefined, 'packing-state-chips')
           for (const state of row.states)
@@ -2536,7 +2634,24 @@ export function mountOrderCartonGrid(
     const state = session.state()
     undo.disabled = !state.canUndo
     redo.disabled = !state.canRedo
-    grid.setItems(visible.map((row) => ({ key: row.key, row })))
+    const editing =
+      document.activeElement?.matches?.('input[data-grid-column]') &&
+      scroller.contains(document.activeElement)
+    if (
+      !editing ||
+      JSON.stringify(mountedKeys) !== JSON.stringify(visibleKeys)
+    ) {
+      grid.setItems(visible.map((row) => ({ key: row.key, row })))
+      mountedKeys = [...visibleKeys]
+    } else {
+      for (const element of body.querySelectorAll('[data-grid-key]'))
+        for (const input of element.querySelectorAll('input[data-grid-column]'))
+          if (input !== document.activeElement)
+            input.value = session.rawCell(
+              element.dataset.gridKey,
+              input.dataset.gridColumn
+            )
+    }
   }
   function renderSummary(projection = session.projection()) {
     summary.replaceChildren()
