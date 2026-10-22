@@ -83,6 +83,15 @@ export async function startPackingWorkspace({
     getSelectedRows,
     onCartons: openOrder,
     onPhotoEdit: onProductPhotoEdit,
+    onAmend: (dependency) =>
+      void showPacking({
+        containerId: dependency.containerId,
+        view: 'loading',
+      }).catch(failure),
+    getContextContainerId: () =>
+      containers.controller.view()?.container.amendment
+        ? returnTo?.containerId
+        : undefined,
   })
   const output = createProductOutput({
     repository,
@@ -122,6 +131,7 @@ export async function startPackingWorkspace({
     },
     inspectProduct: onReadOnlyProductDetails,
     editInOrders,
+    loadImage,
     onError: failure,
     onRoute(route) {
       if (workspace === 'packing') rememberRoute(route)
@@ -226,6 +236,14 @@ export async function startPackingWorkspace({
     cartonHistory?.destroy()
     const next = await mountCartonHistory(host, {
       repository,
+      contextContainerId: containers.controller.view()?.container.amendment
+        ? returnTo?.containerId
+        : undefined,
+      onAmend: (dependency) =>
+        void showPacking({
+          containerId: dependency.containerId,
+          view: 'loading',
+        }).catch(failure),
       orderRefs: refs,
       onOrder: (ref) => void openOrder(ref).catch(failure),
       isCurrent: () =>

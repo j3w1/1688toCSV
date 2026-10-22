@@ -2,6 +2,7 @@ import { test, expect } from './extension-fixture.mjs'
 import { createDemoRecords } from '../../preview/library-fixture.js'
 import { revealCopyActions } from './copy-actions-helpers.mjs'
 import { DEFAULT_LABEL_SETTINGS } from '../../src/labels.js'
+import { assignSelectedPurchaseCodes } from './smart-workspace-helpers.mjs'
 
 async function observeImageWrites(page) {
   await page.evaluate(() => {
@@ -119,12 +120,11 @@ test('individual barcode and carton images keep their exact bytes and Excel labe
 }) => {
   const { page } = await workspace(extension, 2)
   await page.locator('#select-rows').click()
-  await page.locator('#prepare-orders').click()
-  await page
-    .getByRole('button', { name: 'Assign codes and prepare', exact: true })
-    .click()
-  const packing = page.locator('#packing-view')
-  await expect(packing.locator('.preparation-group')).toHaveCount(2)
+  await assignSelectedPurchaseCodes(page)
+  const packing = page.locator('#orders-view')
+  await expect(
+    packing.locator('#sheet-body tr[data-selection-key]')
+  ).toHaveCount(2)
   await observeImageWrites(page)
   for (const [kind, action] of [
     ['barcode', 'Copy barcode images'],
@@ -638,17 +638,16 @@ test('Excel preview preserves its image and zoom when style options toggle', asy
   await expect(dialog).toHaveCount(0)
 })
 
-test('carton mark batches show all generated marks and copy in the same packing dialog', async ({
+test('carton mark batches show every selected Orders mark and copy in one dialog', async ({
   extension,
 }) => {
   const { page } = await workspace(extension, 6)
   await page.locator('#select-rows').click()
-  await page.locator('#prepare-orders').click()
-  await page
-    .getByRole('button', { name: 'Assign codes and prepare', exact: true })
-    .click()
-  const packing = page.locator('#packing-view')
-  await expect(packing.locator('.preparation-group')).toHaveCount(6)
+  await assignSelectedPurchaseCodes(page)
+  const packing = page.locator('#orders-view')
+  await expect(
+    packing.locator('#sheet-body tr[data-selection-key]')
+  ).toHaveCount(6)
   await revealCopyActions(page)
   await packing
     .getByRole('button', { name: 'Copy carton marks', exact: true })

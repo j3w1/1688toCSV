@@ -309,3 +309,73 @@ export async function sealContainerThroughUI(page, { markAll = true } = {}) {
     workspace.locator('[data-action="amend-container"]')
   ).toBeEnabled()
 }
+
+/** Synthetic output fixture uses only the production planner/repository. */
+export async function loadedSourceContainer(extension, refs) {
+  return extension.inspector.evaluate(async (refs) => {
+    const repository = await window.testRepository
+    for (const ref of refs) {
+      let context = await repository.getOrderReconciliation(ref)
+      const values = Object.fromEntries(
+        context.record.snapshot.items.map((item) => [
+          item.entryId,
+          item.quantity,
+        ])
+      )
+      await repository.updateOrderCapacities({
+        ...ref,
+        values,
+        expectedValues: Object.fromEntries(
+          Object.keys(values).map((id) => [
+            id,
+            context.record.unitsPerCarton?.[id] ?? null,
+          ])
+        ),
+        expectedObservedAt: context.record.snapshot.observedAt,
+      })
+      context = await repository.getOrderReconciliation(ref)
+      await repository.confirmOrderCartons({
+        ...ref,
+        draft: window.testPlanner.createReconciliationDraft(context),
+        expectedRevisions: context.revisions,
+        intentId: crypto.randomUUID(),
+      })
+    }
+    const created = await repository.createContainer({
+        name: 'Synthetic complete output',
+        intentId: crypto.randomUUID(),
+      }),
+      container = created.container || created
+    await repository.includeContainerOrders({
+      id: container.id,
+      orderRefs: refs,
+      expectedRevision: container.revision,
+      intentId: crypto.randomUUID(),
+    })
+    const view = await repository.getContainerView({ id: container.id })
+    await repository.markContainerLoaded({
+      id: container.id,
+      orderRefs: refs,
+      expectedRevision: view.container.revision,
+      intentId: crypto.randomUUID(),
+    })
+    return container.id
+  }, refs)
+}
+
+export async function openContainerOutput(page, id) {
+  const url = new URL(page.url())
+  url.hash = new URLSearchParams({
+    workspace: 'packing',
+    containerId: id,
+    view: 'packing-list',
+  }).toString()
+  await page.goto(url.href)
+  const view = page.locator('#packing-view')
+  await expect(view.locator('[data-action="choose-container"]')).toHaveValue(id)
+  await expect(view.locator('[data-view="packing-list"]')).toHaveAttribute(
+    'aria-current',
+    'page'
+  )
+  return view
+}

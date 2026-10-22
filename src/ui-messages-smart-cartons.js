@@ -2,6 +2,128 @@
 export const SMART_CARTON_MESSAGES = Object.fromEntries(
   [
     [
+      'Review legacy supplier identity',
+      'Revisar identidad histórica del proveedor',
+      '核对旧供应商身份',
+    ],
+    [
+      'Identity review reason',
+      'Motivo de revisión de identidad',
+      '身份核对理由',
+    ],
+    [
+      'Confirm reviewed supplier equivalence',
+      'Confirmar equivalencia del proveedor revisada',
+      '确认已核对的供应商等价身份',
+    ],
+    [
+      'Review the historical code owner and actual supplier. Issued codes, prefixes, source purchases and financial evidence remain unchanged.',
+      'Revisa el titular histórico del código y el proveedor real. Se conservan los códigos, prefijos, compras y evidencia financiera.',
+      '请核对历史编码归属与实际供应商，已发编码、前缀、来源采购及财务证据保持原样。',
+    ],
+    [
+      'Document a reason for the reviewed supplier equivalence.',
+      'Documenta el motivo de la equivalencia del proveedor revisada.',
+      '请记录供应商等价身份核对的理由。',
+    ],
+    [
+      'Review legacy carton evidence',
+      'Revisar evidencia histórica de cajas',
+      '核对旧纸箱证据',
+    ],
+    [
+      'Keep the original carton identity, count and measured evidence. Correct ownership only from actual evidence, or retire the original after physical repacking. No replacement cartons are created automatically.',
+      'Conserva identidad, cantidad y medidas originales. Corrige el pedido solo con evidencia real, o retira el original tras reempacar físicamente. No se crean cajas de reemplazo automáticamente.',
+      '保留原纸箱身份、箱数及测量证据。仅凭实际证据纠正归属，或在实际重新装箱后退役原记录，不会自动创建替代纸箱。',
+    ],
+    [
+      'Choose a reviewed resolution',
+      'Elige una resolución revisada',
+      '选择已核对的处理方式',
+    ],
+    [
+      'Not shipped — reviewed legacy counts',
+      'No enviado — cantidades históricas revisadas',
+      '未发货 — 已核对旧数量',
+    ],
+    [
+      'Correct one source order from physical evidence',
+      'Corregir un pedido según evidencia física',
+      '根据实体证据纠正到一笔来源订单',
+    ],
+    [
+      'Retire after physical repacking',
+      'Retirar después de reempacar físicamente',
+      '实际重新装箱后退役',
+    ],
+    ['Legacy resolution', 'Resolución histórica', '旧证据处理方式'],
+    [
+      'Choose the actual source order',
+      'Elige el pedido de origen real',
+      '选择实际来源订单',
+    ],
+    ['Actual source order', 'Pedido de origen real', '实际来源订单'],
+    [
+      'I confirm these goods have actually been physically repacked into separate single-order cartons.',
+      'Confirmo que la mercancía ya se reempacó físicamente en cajas separadas de un solo pedido.',
+      '我确认这些货物已实际重新装入各自仅属于一笔订单的纸箱。',
+    ],
+    [
+      'Confirmed whole-set product quantities. Blank cells assign no goods; source purchase quantities remain unchanged.',
+      'Cantidades confirmadas del conjunto completo. Las celdas vacías no asignan mercancía; la compra de origen se conserva.',
+      '填写已确认的整组商品数量，空白单元格不分配货物，来源采购数量保持原样。',
+    ],
+    [
+      'Choose the actual source order and its supported positive whole product quantities.',
+      'Elige el pedido real y sus cantidades de producto enteras positivas documentadas.',
+      '请选择实际来源订单并填写有证据支持的正整数商品数量。',
+    ],
+    [
+      'Confirm that the physical repacking has already happened.',
+      'Confirma que el reempaque físico ya se realizó.',
+      '请确认已经完成实际重新装箱。',
+    ],
+    [
+      'Confirm legacy evidence review',
+      'Confirmar revisión de evidencia histórica',
+      '确认旧证据核对',
+    ],
+    [
+      'Legacy evidence review saved',
+      'Revisión de evidencia histórica guardada',
+      '旧证据核对已保存',
+    ],
+    [
+      'Record any newly repacked cartons through the normal order reconciliation. The original evidence remains in history.',
+      'Registra las cajas reempacadas en la conciliación normal del pedido. La evidencia original queda en el historial.',
+      '请通过正常订单核对记录重新装箱后的纸箱，原始证据保留在历史中。',
+    ],
+    [
+      'Legacy loading counts are retained evidence, not a verified shipment. Availability remains held until an explicit review.',
+      'Las cantidades cargadas antiguas se conservan como evidencia, no como envío verificado. La disponibilidad queda retenida hasta una revisión explícita.',
+      '旧装柜数量仅作为证据保留，并非已验证装运。明确核对前库存保持待审。',
+    ],
+    [
+      'Legacy review reason',
+      'Motivo de la revisión histórica',
+      '旧证据核对理由',
+    ],
+    [
+      'I reviewed the original evidence and confirm these legacy counts are not a verified shipment.',
+      'Revisé la evidencia original y confirmo que estas cantidades históricas no son un envío verificado.',
+      '我已核对原始证据，确认这些旧数量并非已验证装运。',
+    ],
+    [
+      'Record reviewed not-shipped state',
+      'Registrar estado revisado no enviado',
+      '记录已核对的未发货状态',
+    ],
+    [
+      'Confirm the reviewed legacy evidence and document a reason.',
+      'Confirma la evidencia histórica revisada y documenta el motivo.',
+      '请确认已核对的旧证据并记录理由。',
+    ],
+    [
       'Review backup dependencies',
       'Revisar dependencias de la copia',
       '核对备份依赖',

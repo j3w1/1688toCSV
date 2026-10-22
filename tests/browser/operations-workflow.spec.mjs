@@ -470,52 +470,30 @@ test('workflow ellipses keep a reserved trailing column across variable names, c
     await expect(first).toHaveAttribute('aria-haspopup', 'dialog')
   }
   await page.setViewportSize({ width: 1280, height: 960 })
-  await page.locator('#packing-month').fill('2026-10')
-  await page
-    .getByRole('button', { name: 'Prepare packing list', exact: true })
-    .click()
-  const packing = page.locator('#packing-view')
-  await expect(packing).toBeVisible()
+  await page.locator('#sheet-body .operations-overflow').first().click()
+  const operations = page.getByRole('dialog', {
+    name: 'Operations workflow',
+    exact: true,
+  })
+  await expect(operations).toBeVisible()
   for (const width of [1280, 375]) {
     await page.setViewportSize({ width, height: 960 })
-    const headings = await packing
-      .locator('.variant-heading')
-      .evaluateAll((nodes) =>
-        nodes.map((heading) => {
-          const bounds = heading.getBoundingClientRect()
-          const workflow = heading
-            .querySelector('.variant-workflow')
-            .getBoundingClientRect()
-          const action = heading
-            .querySelector('.operations-overflow')
-            .getBoundingClientRect()
-          const editors = [...heading.querySelectorAll('input')].map((input) =>
-            input.getBoundingClientRect()
-          )
-          return {
-            endGap: bounds.right - workflow.right,
-            height: action.height,
-            overlaps: editors.some(
-              (input) =>
-                input.left < action.right &&
-                input.right > action.left &&
-                input.top < action.bottom &&
-                input.bottom > action.top
-            ),
-            overflows: heading.scrollWidth > heading.clientWidth,
-          }
-        })
-      )
-    expect(headings.length).toBeGreaterThan(1)
-    for (const heading of headings) {
-      expect(heading.endGap).toBeLessThanOrEqual(1)
-      expect(heading.height).toBe(24)
-      expect(heading.overlaps).toBe(false)
-      expect(heading.overflows).toBe(false)
-    }
+    const bounds = await operations.boundingBox()
+    expect(bounds.x).toBeGreaterThanOrEqual(0)
+    expect(bounds.x + bounds.width).toBeLessThanOrEqual(width)
+    expect(
+      await operations.evaluate((node) => node.scrollWidth <= node.clientWidth)
+    ).toBe(true)
   }
-  await packing.screenshot({
-    path: test.info().outputPath('workflow-trailing-actions.png'),
+  await operations.getByRole('button', { name: 'Cancel', exact: true }).click()
+  await page.locator('#view-packing').click()
+  await expect(
+    page.locator(
+      '#packing-view .operations-overflow,#packing-view [data-operation]'
+    )
+  ).toHaveCount(0)
+  await page.screenshot({
+    path: test.info().outputPath('readonly-packing-no-supplier-editor.png'),
   })
   await page.close()
 })
@@ -900,15 +878,11 @@ test('touch-only workflow controls retain larger targets without changing compac
   await session.detach()
 })
 
-test('packing order-header ellipses stay square and trailing with baseline and touch pointers', async ({
+test('Orders supplier ellipses stay square and trailing with baseline and touch pointers', async ({
   extension,
 }) => {
   const { page } = await openWorkspace(extension, { prepared: true })
-  await page.locator('#packing-month').fill('2026-10')
-  await page
-    .getByRole('button', { name: 'Prepare packing list', exact: true })
-    .click()
-  const packing = page.locator('#packing-view'),
+  const packing = page.locator('#orders-view'),
     session = await extension.context.newCDPSession(page)
   await expect(packing).toBeVisible()
   for (const touchOnly of [false, true]) {
@@ -924,11 +898,13 @@ test('packing order-header ellipses stay square and trailing with baseline and t
     for (const width of [1280, 820, 375]) {
       await page.setViewportSize({ width, height: 960 })
       const controls = await packing
-        .locator('.packing-order-header .operations-overflow')
+        .locator('.order-section-band .operations-overflow')
         .evaluateAll((buttons) =>
           buttons.map((button) => {
             const box = button.getBoundingClientRect(),
-              title = button.closest('h2').getBoundingClientRect(),
+              title = button
+                .closest('.order-section-band')
+                .getBoundingClientRect(),
               style = getComputedStyle(button)
             return {
               width: box.width,
@@ -948,13 +924,13 @@ test('packing order-header ellipses stay square and trailing with baseline and t
     }
   }
   await packing
-    .locator('.packing-order-header')
+    .locator('.order-section-band')
     .first()
     .screenshot({ path: 'work/packing-order-overflow-coarse.png' })
   await session.detach()
 })
 
-test('native hybrid input keeps Operations compact and packing order-header ellipses square', async () => {
+test('native hybrid input keeps Operations compact and Orders supplier ellipses square', async () => {
   const script = await build({
     stdin: {
       contents: `export { openOperationsDialog, mountOperationsStrip } from './operations-ui.js';`,
@@ -991,7 +967,7 @@ test('native hybrid input keeps Operations compact and packing order-header elli
     await page.route('https://operations-fixture.test/', (route) =>
       route.fulfill({
         contentType: 'text/html',
-        body: '<!doctype html><html lang="en"><head><meta name="color-scheme" content="dark"></head><body><section id="packing-view" class="preparation-workspace"><header class="packing-order-header"><h2>Synthetic hybrid store</h2></header></section></body></html>',
+        body: '<!doctype html><html lang="en"><head><meta name="color-scheme" content="dark"></head><body><section id="orders-view"><header class="order-section-band"><h2>Synthetic hybrid store</h2></header></section></body></html>',
       })
     )
     await page.goto('https://operations-fixture.test/')
@@ -1012,7 +988,7 @@ test('native hybrid input keeps Operations compact and packing order-header elli
         onEdit() {},
       })
     }, snapshot())
-    const header = page.locator('.packing-order-header .operations-overflow'),
+    const header = page.locator('.order-section-band .operations-overflow'),
       bounds = await header.boundingBox()
     expect(bounds.width).toBe(26)
     expect(bounds.height).toBe(26)

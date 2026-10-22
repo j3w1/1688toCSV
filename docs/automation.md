@@ -172,6 +172,15 @@ Export preferences retain advanced columns/layout. Default sheets are Packing li
 
 Report originals are saved before worker transfer. Changed source text/file cancels older parsing; recovery retains source references and unresolved decisions. Formula caches, zeros in identifiers, per-carton/combined bases and unknown contents remain evidence. Unknown aliases can remain unresolved; optional complete-set coverage requires actual confirmed product totals, never purchase-total equality. Historically used corrections route to container amendment. There is no source-quantity rewrite or marker-parser fallback.
 
+`resolve-legacy-carton` requires a reason and explicit attestation before releasing an uncertain loading hold. A reviewed owner correction selects one actual purchase and supported whole-set contents. Retirement requires confirmation that physical repacking already happened, retains the original tombstoned evidence and opens normal order reconciliation; it never generates replacement cartons. Original identities, counts, measurements, contents and history remain evidence. Historical shipment dependencies require amendment.
+
+| `data-action`                      | Reviewed legacy recovery                                                                                                                    |
+| ---------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------- |
+| `review-legacy-carton`             | Load authoritative old carton facts and every affected purchase revision for review.                                                        |
+| `legacy-carton-review`             | Marker on explicit owner correction/repack retirement review; it never creates replacement cartons.                                         |
+| `review-legacy-supplier-identity`  | Compare issued owner/codes with canonical supplier identity.                                                                                |
+| `confirm-legacy-supplier-identity` | Explicit equivalence attestation with a required operator reason and current revision guards; consumed identities require active amendment. |
+
 ## Shared output and retained evidence controls
 
 | `data-action`              | Behavior                                                                                                                                       |
@@ -179,6 +188,7 @@ Report originals are saved before worker transfer. Changed source text/file canc
 | `copy-values`              | Copy the captured source/revision rows as values.                                                                                              |
 | `backup-packing`           | Back up the captured Orders source/preparation scope, original media and supported evidence; explicitly review omitted partial carton records. |
 | `copy-excel-image`         | Prepare an Excel-image preview; explicit Copy writes the clipboard.                                                                            |
+| `resolve-legacy-carton`    | Confirm a documented single-order legacy not-shipped review with the retained batch revision.                                                  |
 | `purchase-code-review`     | Marker on the purchase-code review dialog, not a mutation.                                                                                     |
 | `inspect-container-order`  | Filter/inspect included order context without changing membership.                                                                             |
 | `review-saved`             | Explicitly discard a stale recovered authoring draft and retain the newer saved version.                                                       |

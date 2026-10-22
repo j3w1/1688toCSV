@@ -2,7 +2,7 @@ import { element as el, copyTextButton } from './ui.js'
 import { message as m, bindText, bindAttribute } from './i18n.js'
 import { createVirtualTable } from './virtual-table.js'
 import { cartonBatchMetrics } from './carton-batches.js'
-import { physicalUnits } from './inventory-model.js'
+import { physicalUnits, batchNeedsLegacyReview } from './inventory-model.js'
 
 const clone = (value) => structuredClone(value)
 export const sourceKey = ({ accountId = 'local', orderId, entryId }) =>
@@ -117,7 +117,9 @@ export function cartonHistoryRows(state, orderRefs = []) {
           : metrics?.totalVolume || null,
       state: batch.deletedAt
         ? 'Retired evidence'
-        : batch.needsReview || batch.legacyReview || refs.length !== 1
+        : batch.needsReview ||
+            batchNeedsLegacyReview(batch) ||
+            refs.length !== 1
           ? 'Needs review'
           : 'Confirmed facts',
     })
@@ -147,6 +149,8 @@ export async function mountCartonHistory(
     onOrder = () => {},
     onInspect = () => {},
     isCurrent = () => true,
+    contextContainerId,
+    onAmend = () => {},
   }
 ) {
   let destroyed = false
@@ -228,6 +232,33 @@ export async function mountCartonHistory(
           const disclosure = el('details')
           disclosure.append(el('summary', m('Source evidence')), facts)
           modal.append(disclosure)
+          if (batchNeedsLegacyReview(row.batch)) {
+            modal.append(
+              el(
+                'p',
+                m(
+                  'Legacy loading counts are retained evidence, not a verified shipment. Availability remains held until an explicit review.'
+                )
+              )
+            )
+            const review = el('button', m('Review legacy carton evidence'))
+            review.dataset.action = 'review-legacy-carton'
+            review.onclick = () =>
+              void openLegacyCartonReview({
+                repository,
+                batch: row.batch,
+                contextContainerId,
+                onSaved: async () => {
+                  await refresh()
+                  modal.close('saved')
+                },
+                onReconcile: onOrder,
+                onAmend,
+              }).catch((error) => {
+                modal.append(el('p', m(error.message)))
+              })
+            modal.append(review)
+          }
           for (const ref of row.refs) {
             const edit = el(
               'button',
@@ -270,6 +301,12 @@ export async function mountCartonHistory(
     virtual.setItems(visible.map((row) => ({ key: row.key, row })))
   }
   search.oninput = render
+  async function refresh() {
+    const state = await repository.getOperationalState({})
+    if (destroyed || !isCurrent()) return
+    rows.splice(0, rows.length, ...cartonHistoryRows(state, orderRefs))
+    render()
+  }
   render()
   return {
     destroy() {
@@ -278,6 +315,306 @@ export async function mountCartonHistory(
     },
     rows: () => clone(rows),
   }
+}
+
+/** Explicitly reviewed legacy recovery. The repository validates every affected budget. */
+export async function openLegacyCartonReview({
+  repository,
+  batch,
+  contextContainerId,
+  onSaved = async () => {},
+  onReconcile = () => {},
+  onAmend = () => {},
+}) {
+  const review = await repository.reviewLegacyCarton({
+      batchId: batch.id,
+      expectedRevision: batch.revision,
+    }),
+    source = review.batch,
+    contexts = review.orderContexts || [],
+    modal = el(
+      'dialog',
+      undefined,
+      'product-authoring-dialog legacy-carton-review'
+    ),
+    resolution = el('select'),
+    owner = el('select'),
+    contentsHost = el('div'),
+    reason = el('textarea'),
+    notShipped = el('input'),
+    repacked = el('input'),
+    status = el('p'),
+    save = el('button', m('Confirm legacy evidence review')),
+    close = el('button', m('Cancel')),
+    recoveryKey = `1688-orders-legacy-arrangement:${JSON.stringify([source.accountId || 'local', source.id])}`
+  modal.dataset.action = 'legacy-carton-review'
+  modal.append(
+    el('h2', m('Review legacy carton evidence')),
+    el(
+      'p',
+      m(
+        'Keep the original carton identity, count and measured evidence. Correct ownership only from actual evidence, or retire the original after physical repacking. No replacement cartons are created automatically.'
+      )
+    )
+  )
+  const original = el('pre')
+  original.textContent = JSON.stringify(source, null, 2)
+  const details = el('details')
+  details.append(el('summary', m('Source evidence')), original)
+  modal.append(details)
+  const field = (title, control) => {
+    const label = el('label', m(title))
+    label.append(control)
+    modal.append(label)
+    return label
+  }
+  resolution.append(new Option(String(m('Choose a reviewed resolution')), ''))
+  if (contexts.length === 1)
+    resolution.append(
+      new Option(
+        String(m('Not shipped — reviewed legacy counts')),
+        'not-shipped'
+      )
+    )
+  resolution.append(
+    new Option(
+      String(m('Correct one source order from physical evidence')),
+      'owner-corrected'
+    ),
+    new Option(
+      String(m('Retire after physical repacking')),
+      'retired-after-repack'
+    )
+  )
+  field('Legacy resolution', resolution)
+  owner.append(new Option(String(m('Choose the actual source order')), ''))
+  for (const context of contexts)
+    owner.append(
+      new Option(
+        `${context.record?.snapshot.sellerName || ''} · ${context.orderId}`,
+        JSON.stringify([context.accountId || 'local', context.orderId])
+      )
+    )
+  const ownerLabel = field('Actual source order', owner)
+  modal.append(contentsHost)
+  field('Legacy review reason', reason)
+  notShipped.type = repacked.type = 'checkbox'
+  field(
+    'I reviewed the original evidence and confirm these legacy counts are not a verified shipment.',
+    notShipped
+  )
+  const repackLabel = field(
+    'I confirm these goods have actually been physically repacked into separate single-order cartons.',
+    repacked
+  )
+  let values = {},
+    inputs = [],
+    saving = false,
+    intent
+  try {
+    const recovered = JSON.parse(
+      globalThis.localStorage?.getItem(recoveryKey) || 'null'
+    )
+    if (recovered) {
+      resolution.value = recovered.resolution
+      owner.value = recovered.owner
+      reason.value = recovered.reason || ''
+      values = recovered.values || {}
+    }
+  } catch {
+    /* Recovery is UI-only; malformed drafts never become evidence. */
+  }
+  const retain = () =>
+    globalThis.localStorage?.setItem(
+      recoveryKey,
+      JSON.stringify({
+        resolution: resolution.value,
+        owner: owner.value,
+        reason: reason.value,
+        values,
+      })
+    )
+  function renderContents() {
+    const selected = contexts.find(
+      (context) =>
+        JSON.stringify([context.accountId || 'local', context.orderId]) ===
+        owner.value
+    )
+    ownerLabel.hidden = contentsHost.hidden =
+      resolution.value !== 'owner-corrected'
+    repackLabel.hidden = resolution.value !== 'retired-after-repack'
+    contentsHost.replaceChildren(
+      el(
+        'p',
+        m(
+          'Confirmed whole-set product quantities. Blank cells assign no goods; source purchase quantities remain unchanged.'
+        )
+      )
+    )
+    inputs = []
+    for (const item of selected?.record?.snapshot.items || []) {
+      const label = el(
+          'label',
+          `${item.entryId} · ${item.description || item.title} · ${item.quantity}`
+        ),
+        input = el('input'),
+        key = JSON.stringify([owner.value, item.entryId])
+      input.type = 'text'
+      input.inputMode = 'numeric'
+      input.value =
+        values[key] ??
+        source.contents?.find(
+          (part) =>
+            part.orderId === selected.orderId && part.entryId === item.entryId
+        )?.quantity ??
+        ''
+      input.dataset.legacyEntryId = item.entryId
+      input.oninput = () => {
+        values[key] = input.value
+        retain()
+      }
+      label.append(input)
+      contentsHost.append(label)
+      inputs.push({ entryId: item.entryId, input })
+    }
+    retain()
+  }
+  resolution.onchange = renderContents
+  owner.onchange = renderContents
+  reason.oninput = retain
+  renderContents()
+  const amendmentRequired =
+    review.affectedShipmentRevisions?.length && !contextContainerId
+  for (const dependency of amendmentRequired
+    ? review.affectedShipmentRevisions
+    : []) {
+    const amend = el('button', m('Open container amendment'))
+    amend.onclick = () => {
+      modal.close()
+      onAmend(dependency)
+    }
+    modal.append(amend)
+  }
+  save.disabled = Boolean(amendmentRequired)
+  save.dataset.action = 'resolve-legacy-carton'
+  save.onclick = () =>
+    void (async () => {
+      if (saving) return
+      if (!resolution.value || !notShipped.checked || !reason.value.trim())
+        throw new Error(
+          'Confirm the reviewed legacy evidence and document a reason.'
+        )
+      const selected = contexts.find(
+          (context) =>
+            JSON.stringify([context.accountId || 'local', context.orderId]) ===
+            owner.value
+        ),
+        ownerRef = selected
+          ? {
+              accountId: selected.accountId || 'local',
+              orderId: selected.orderId,
+            }
+          : undefined,
+        contents = inputs
+          .filter(({ input }) => input.value.trim())
+          .map(({ entryId, input }) => ({
+            orderId: ownerRef?.orderId,
+            entryId,
+            quantity: input.value.trim(),
+          }))
+      if (
+        resolution.value === 'owner-corrected' &&
+        (!ownerRef ||
+          !contents.length ||
+          contents.some((part) => !/^[1-9]\d*$/.test(part.quantity)))
+      )
+        throw new Error(
+          'Choose the actual source order and its supported positive whole product quantities.'
+        )
+      if (resolution.value === 'retired-after-repack' && !repacked.checked)
+        throw new Error(
+          'Confirm that the physical repacking has already happened.'
+        )
+      const args = {
+          batchId: source.id,
+          expectedRevision: source.revision,
+          expectedOrderRevisions: review.expectedOrderRevisions,
+          resolution: resolution.value,
+          attestNotShipped: true,
+          ...(resolution.value === 'retired-after-repack'
+            ? { attestRepacked: true }
+            : {}),
+          ...(resolution.value === 'owner-corrected'
+            ? { ownerRef, contents }
+            : {}),
+          reason: reason.value.trim(),
+          ...(contextContainerId ? { contextContainerId } : {}),
+        },
+        signature = JSON.stringify(args)
+      if (intent?.signature !== signature)
+        intent = { signature, intentId: crypto.randomUUID() }
+      saving = true
+      for (const control of modal.querySelectorAll(
+        'button,input,select,textarea'
+      ))
+        control.disabled = true
+      await repository.resolveLegacyCarton({
+        ...args,
+        intentId: intent.intentId,
+      })
+      globalThis.localStorage?.removeItem(recoveryKey)
+      await onSaved()
+      if (ownerRef && resolution.value === 'owner-corrected') {
+        modal.close('saved')
+        onReconcile(ownerRef)
+      } else {
+        modal.replaceChildren(
+          el('h2', m('Legacy evidence review saved')),
+          el(
+            'p',
+            m(
+              'Record any newly repacked cartons through the normal order reconciliation. The original evidence remains in history.'
+            )
+          )
+        )
+        for (const context of contexts) {
+          const open = el(
+            'button',
+            `${m('Reconcile cartons')} · ${context.orderId}`
+          )
+          open.onclick = () => {
+            modal.close('saved')
+            onReconcile({
+              accountId: context.accountId || 'local',
+              orderId: context.orderId,
+            })
+          }
+          modal.append(open)
+        }
+        const done = el('button', m('Close'))
+        done.onclick = () => modal.close('saved')
+        modal.append(done)
+      }
+    })()
+      .catch((error) => bindText(status, m(error.message)))
+      .finally(() => {
+        saving = false
+        for (const control of modal.querySelectorAll(
+          'button,input,select,textarea'
+        ))
+          control.disabled = false
+        save.disabled = Boolean(amendmentRequired)
+      })
+  close.onclick = () => modal.close()
+  status.setAttribute('role', 'status')
+  modal.append(status, close, save)
+  modal.oncancel = (event) => {
+    if (saving) event.preventDefault()
+  }
+  modal.onclose = () => modal.remove()
+  document.body.append(modal)
+  modal.showModal()
+  return modal
 }
 
 /** The captured logical keys, never mounted row positions, own a paste. */

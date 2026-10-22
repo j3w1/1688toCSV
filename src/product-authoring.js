@@ -58,6 +58,7 @@ import { decorateIcon } from './icons.js'
 import { applyAppearance } from './appearance.js'
 import { openStoreSpreadsheetGuide } from './store-spreadsheet-guide.js'
 import { createVirtualList } from './virtual-list.js'
+import { eligibleOrderItems } from './inventory-model.js'
 import { mountMaterialVocabulary } from './material-vocabulary-settings.js'
 import { mountColorVocabulary } from './color-vocabulary-settings.js'
 import { mountAppearanceSettings } from './appearance-settings.js'
@@ -210,6 +211,8 @@ export async function createProductAuthoring({
   loadImage,
   onCartons,
   onPhotoEdit,
+  getContextContainerId = () => undefined,
+  onAmend = () => {},
   getSelectedRows = () => [],
 }) {
   let preferences = {},
@@ -370,6 +373,37 @@ export async function createProductAuthoring({
       spanishName: row.spanishName,
       quantity: row.quantity,
     }
+  }
+  function labelRows(rows) {
+    const records = getRecords(),
+      eligibility = new Map()
+    return rows.flatMap((row) => {
+      const record = recordFor(row)
+      if (!record) return []
+      const key = orderKey({
+        accountId: record.accountId || record.snapshot.accountId || 'local',
+        orderId: record.snapshot.orderId,
+      })
+      if (!eligibility.has(key))
+        eligibility.set(
+          key,
+          new Map(
+            eligibleOrderItems(record, records).map((entry) => [
+              entry.entryId,
+              entry,
+            ])
+          )
+        )
+      const entry = eligibility.get(key).get(row.entryId)
+      if (!entry) return []
+      // Source label requests can retain fractional/zero historical quantities;
+      // that does not establish whole-unit inventory or authorize a shipment.
+      if (!entry.reason)
+        return [{ ...row, quantity: entry.eligible ?? row.quantity }]
+      return entry.eligible != null && BigInt(entry.eligible) > 0n
+        ? [{ ...row, quantity: entry.eligible }]
+        : []
+    })
   }
   const media = createPreparationMedia({
     container: null,
@@ -835,6 +869,9 @@ export async function createProductAuthoring({
     const context = await repository.getOrderReconciliation({
         accountId: ref.accountId || 'local',
         orderId: ref.orderId,
+        ...(getContextContainerId()
+          ? { contextContainerId: getContextContainerId() }
+          : {}),
       }),
       record = context.record,
       item =
@@ -1031,6 +1068,9 @@ export async function createProductAuthoring({
         () =>
           repository.resolvePurchaseSupplier({
             ...identity,
+            ...(getContextContainerId()
+              ? { contextContainerId: getContextContainerId() }
+              : {}),
             sellerId: supplier.value.trim(),
             expectedObservedAt: record.snapshot.observedAt,
           }),
@@ -1041,6 +1081,9 @@ export async function createProductAuthoring({
         () =>
           repository.resolvePurchaseDate({
             ...identity,
+            ...(getContextContainerId()
+              ? { contextContainerId: getContextContainerId() }
+              : {}),
             date: date.value,
             expectedObservedAt: record.snapshot.observedAt,
           }),
@@ -1080,6 +1123,107 @@ export async function createProductAuthoring({
     modal.onclose = () => modal.remove()
     status.setAttribute('role', 'status')
     modal.append(status, save, close)
+    if (context.preparation?.groups.some((group) => group.baseCode)) {
+      const legacy = button('Review legacy supplier identity', async () => {
+        const review = await repository.reviewLegacySupplierIdentity({
+            ...identity,
+            ...(getContextContainerId()
+              ? { contextContainerId: getContextContainerId() }
+              : {}),
+          }),
+          dialog = el('dialog', undefined, 'legacy-supplier-identity-review'),
+          reason = el('textarea'),
+          label = el('label', uiMessage('Identity review reason')),
+          status = el('p'),
+          confirm = el(
+            'button',
+            uiMessage('Confirm reviewed supplier equivalence')
+          ),
+          cancel = el('button', uiMessage('Cancel')),
+          intentId = crypto.randomUUID(),
+          draftKey = `1688-orders-legacy-identity-draft:${orderKey(identity)}`
+        dialog.dataset.action = 'review-legacy-supplier-identity'
+        dialog.append(
+          el('h2', uiMessage('Review legacy supplier identity')),
+          el(
+            'p',
+            uiMessage(
+              'Review the historical code owner and actual supplier. Issued codes, prefixes, source purchases and financial evidence remain unchanged.'
+            )
+          )
+        )
+        for (const change of review.changes || []) {
+          dialog.append(el('p', `${change.before} → ${change.after}`))
+          for (const owner of change.codeOwners || [])
+            dialog.append(el('code', owner.baseCode))
+        }
+        for (const issue of review.issues || [])
+          dialog.append(el('p', uiMessage(issue.message || issue.code)))
+        label.append(reason)
+        reason.value = globalThis.localStorage?.getItem(draftKey) || ''
+        reason.oninput = () =>
+          globalThis.localStorage?.setItem(draftKey, reason.value)
+        dialog.append(label, status, cancel, confirm)
+        const blocked =
+          !review.changes?.length ||
+          (review.requiresAmendment && !getContextContainerId()) ||
+          (review.issues || []).some((issue) => issue.severity === 'error')
+        for (const dependency of review.requiresAmendment &&
+        !getContextContainerId()
+          ? review.affectedShipmentRevisions || []
+          : []) {
+          const amend = el('button', uiMessage('Open container amendment'))
+          amend.onclick = () => {
+            dialog.close()
+            modal.close()
+            onAmend(dependency)
+          }
+          dialog.append(amend)
+        }
+        confirm.disabled = blocked
+        confirm.dataset.action = 'confirm-legacy-supplier-identity'
+        let saving = false
+        cancel.onclick = () => dialog.close()
+        confirm.onclick = () =>
+          void (async () => {
+            if (saving) return
+            if (!reason.value.trim())
+              throw new Error(
+                'Document a reason for the reviewed supplier equivalence.'
+              )
+            saving = true
+            confirm.disabled = cancel.disabled = reason.disabled = true
+            await repository.confirmLegacySupplierIdentity({
+              plan: review.plan || review,
+              expectedRevisions: review.expectedRevisions,
+              reason: reason.value.trim(),
+              intentId,
+              ...(getContextContainerId()
+                ? { contextContainerId: getContextContainerId() }
+                : {}),
+            })
+            await reload()
+            await changed({ reload: true })
+            globalThis.localStorage?.removeItem(draftKey)
+            dialog.close('saved')
+            modal.close('saved')
+          })()
+            .catch((error) => bindText(status, uiMessage(error.message)))
+            .finally(() => {
+              saving = false
+              cancel.disabled = reason.disabled = false
+              confirm.disabled = blocked
+            })
+        dialog.oncancel = (event) => {
+          if (saving) event.preventDefault()
+        }
+        dialog.onclose = () => dialog.remove()
+        document.body.append(dialog)
+        dialog.showModal()
+      })
+      legacy.dataset.action = 'review-legacy-supplier-identity'
+      modal.insertBefore(legacy, status)
+    }
     document.body.append(modal)
     modal.showModal()
   }
@@ -2310,8 +2454,9 @@ export async function createProductAuthoring({
     updateActions() {},
     orderRows: (rows) => [...rows],
     canCopyLabels: (rows) =>
-      rows.length > 0 &&
-      rows.every((row) => Boolean(preparedRows([row])[0].barcode)),
+      labelRows(rows).length > 0 &&
+      labelRows(rows).every((row) => Boolean(preparedRows([row])[0].barcode)),
+    labelRows,
     rowsForRefs(refs) {
       const rows = [],
         seen = new Set()
