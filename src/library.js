@@ -458,6 +458,20 @@ export async function startLibrary(
     )
   }
   function showProductDetails(row, { sourceItems = [row] } = {}) {
+    if (sourceItems.length === 1 && packing) {
+      const projected = packing.preparedRows([row])[0]
+      if (projected.variantId) {
+        const originals = packing.rowsForRefs([
+          {
+            accountId: projected.accountId,
+            orderId: projected.orderId,
+            groupId: projected.groupId,
+            variantId: projected.variantId,
+          },
+        ])
+        if (originals.length > 1) sourceItems = originals
+      }
+    }
     const record =
       records.find(
         ({ snapshot, accountId }) =>
@@ -668,7 +682,7 @@ export async function startLibrary(
     scroller: document.querySelector('.table-scroll'),
     body: $('sheet-body'),
     render: renderTableEntries,
-    paint: () => productSelection.paint(),
+    paint: () => paintProductSelection(),
     remove: (element) => {
       for (const image of element.querySelectorAll('img'))
         imageObserver.unobserve(image)
@@ -1179,10 +1193,7 @@ export async function startLibrary(
     )
     host.replaceChildren(amounts, context)
   }
-  function updateSelection() {
-    packing?.updateActions()
-    const rows = filteredRows(),
-      selected = rows.filter((row) => selectedRows.has(keyFor(row)))
+  function paintProductSelection() {
     for (const tr of $('sheet-body').querySelectorAll(
       'tr[data-selection-key]'
     )) {
@@ -1192,6 +1203,12 @@ export async function startLibrary(
       const checkbox = tr.querySelector('.row-number input[type="checkbox"]')
       if (checkbox) checkbox.checked = chosen
     }
+  }
+  function updateSelection() {
+    packing?.updateActions()
+    const rows = filteredRows(),
+      selected = rows.filter((row) => selectedRows.has(keyFor(row)))
+    paintProductSelection()
     renderSelectionTotals(rows, selected)
     bindText(
       $('selection-summary'),

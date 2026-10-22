@@ -71,38 +71,47 @@ Reader fallback is automatic: background tab → unfocused window → visible ta
 
 Click/Enter inspects an item; native checkboxes select. Source text and IDs remain data, never translated interface strings. Logical keys include account/order/source identity; mounted DOM position does not identify inventory.
 
-| `data-action`              | Behavior                                                                                               |
-| -------------------------- | ------------------------------------------------------------------------------------------------------ |
-| `view-orders`              | Open Orders / named-container Packing.                                                                 |
-| `view-packing`             | Open Orders / named-container Packing.                                                                 |
-| `orders-products`          | Choose the Orders subview.                                                                             |
-| `orders-cartons`           | Choose the Orders subview.                                                                             |
-| `orders-backlog`           | Choose the Orders subview.                                                                             |
-| `choose-order`             | Inspect the order identified by `data-order-id`; use its checkbox to select.                           |
-| `open-order-cartons`       | Open that order's reconciliation session.                                                              |
-| `select-all-rows`          | Select/clear the full filtered product scope.                                                          |
-| `clear-selection`          | Select/clear the full filtered product scope.                                                          |
-| `edit-order-product`       | Open contextual product authoring in Orders.                                                           |
-| `review-purchase-codes`    | Preview / commit purchase-month identities. Review reserves nothing.                                   |
-| `assign-purchase-codes`    | Preview / commit purchase-month identities. Review reserves nothing.                                   |
-| `group-order-products`     | Reviewed grouping in Orders.                                                                           |
-| `reconciliation-products`  | Product calculations / physical evidence table.                                                        |
-| `reconciliation-cartons`   | Product calculations / physical evidence table.                                                        |
-| `preview-carton-paste`     | Capture and review keyed alignment / stage the complete paste. Invalid cells remain recovery data.     |
-| `apply-carton-paste`       | Capture and review keyed alignment / stage the complete paste. Invalid cells remain recovery data.     |
-| `cancel-carton-paste`      | Cancel local parsing.                                                                                  |
-| `select-grid-rows`         | Select visible logical rows / preview one explicit fill operation.                                     |
-| `fill-grid-range`          | Select visible logical rows / preview one explicit fill operation.                                     |
-| `separate-order-remainder` | Use the planner's prefilled remainder; no quantity re-entry.                                           |
-| `place-order-remainder`    | Use the planner's prefilled remainder; no quantity re-entry.                                           |
-| `undo-order-cartons`       | One compound paste/fill/assignment per step.                                                           |
-| `redo-order-cartons`       | One compound paste/fill/assignment per step.                                                           |
-| `confirm-order-cartons`    | One order-level physical confirmation with current source/carton revisions.                            |
-| `restore-packing`          | Review a historical scoped archive; return to Orders without reopening the retired preparation screen. |
-| `open-copy-menu`           | Existing selected-source copy/print tools.                                                             |
-| `open-print-menu`          | Existing selected-source copy/print tools.                                                             |
-| `open-activity`            | Existing progress/history/report/retry drawer.                                                         |
-| `duplicate-import-warning` | Nonblocking supplier workbook content-match notice.                                                    |
+| `data-action`                | Behavior                                                                                               |
+| ---------------------------- | ------------------------------------------------------------------------------------------------------ |
+| `view-orders`                | Open Orders / named-container Packing.                                                                 |
+| `view-packing`               | Open Orders / named-container Packing.                                                                 |
+| `orders-products`            | Choose the Orders subview.                                                                             |
+| `orders-cartons`             | Choose the Orders subview.                                                                             |
+| `orders-backlog`             | Choose the Orders subview.                                                                             |
+| `choose-order`               | Inspect the order identified by `data-order-id`; use its checkbox to select.                           |
+| `open-order-cartons`         | Open that order's reconciliation session.                                                              |
+| `carton-history`             | Inspect the complete virtual physical-evidence table in All Orders or a narrowed order scope.          |
+| `order-carton-history`       | Show the same retained evidence table for the current reconciliation order.                            |
+| `inspect-carton-history`     | Inspect original/current/retired carton evidence without selecting inventory.                          |
+| `review-purchase-evidence`   | Review original date/supplier facts and explicit inventory dispositions, retaining unfinished input.   |
+| `resolve-purchase-date`      | Save an authored original-date resolution with the observed source revision guard.                     |
+| `resolve-purchase-supplier`  | Save an operator-confirmed supplier identity; source evidence and issued codes remain guarded.         |
+| `save-inventory-disposition` | Save documented non-goods/fee/payment-only/canceled evidence or an explicit guarded clear.             |
+| `edit-order-barcode`         | Open the existing label editor from an Orders source row.                                              |
+| `edit-order-carton-mark`     | Open the existing carton-mark editor from an Orders source row.                                        |
+| `select-all-rows`            | Select/clear the full filtered product scope.                                                          |
+| `clear-selection`            | Select/clear the full filtered product scope.                                                          |
+| `edit-order-product`         | Open contextual product authoring in Orders.                                                           |
+| `review-purchase-codes`      | Preview / commit purchase-month identities. Review reserves nothing.                                   |
+| `assign-purchase-codes`      | Preview / commit purchase-month identities. Review reserves nothing.                                   |
+| `group-order-products`       | Reviewed grouping in Orders.                                                                           |
+| `reconciliation-products`    | Product calculations / physical evidence table.                                                        |
+| `reconciliation-cartons`     | Product calculations / physical evidence table.                                                        |
+| `preview-carton-paste`       | Capture and review keyed alignment / stage the complete paste. Invalid cells remain recovery data.     |
+| `apply-carton-paste`         | Capture and review keyed alignment / stage the complete paste. Invalid cells remain recovery data.     |
+| `cancel-carton-paste`        | Cancel local parsing.                                                                                  |
+| `select-grid-rows`           | Select visible logical rows / preview one explicit fill operation.                                     |
+| `fill-grid-range`            | Select visible logical rows / preview one explicit fill operation.                                     |
+| `separate-order-remainder`   | Use the planner's prefilled remainder; no quantity re-entry.                                           |
+| `place-order-remainder`      | Use the planner's prefilled remainder; no quantity re-entry.                                           |
+| `undo-order-cartons`         | One compound paste/fill/assignment per step.                                                           |
+| `redo-order-cartons`         | One compound paste/fill/assignment per step.                                                           |
+| `confirm-order-cartons`      | One order-level physical confirmation with current source/carton revisions.                            |
+| `restore-packing`            | Review a historical scoped archive; return to Orders without reopening the retired preparation screen. |
+| `open-copy-menu`             | Existing selected-source copy/print tools.                                                             |
+| `open-print-menu`            | Existing selected-source copy/print tools.                                                             |
+| `open-activity`              | Existing progress/history/report/retry drawer.                                                         |
+| `duplicate-import-warning`   | Nonblocking supplier workbook content-match notice.                                                    |
 
 Scroll `#order-list`, `.table-scroll` and `.smart-grid-scroll` to logical rows. About 100 ordinary rows remain mounted, with focused/dirty cells retained. Selection/totals cover the logical scope. A one-column paste captures selected **visible** keys in displayed order; rectangles prefer code matching inside one purchase. Unknown/duplicate codes, derived columns or stale generation/filter/sort/scope reject the whole operation while keeping raw cells. Never retarget a stale preview to a new DOM row.
 
@@ -147,34 +156,36 @@ Export preferences retain advanced columns/layout. Default sheets are Packing li
 
 ## Order report intake and exceptional cartons
 
-| `data-action`                 | Behavior                                                                                             |
-| ----------------------------- | ---------------------------------------------------------------------------------------------------- |
-| `inspect-order-carton`        | Read the selected stable carton and stage exceptional measurements/contents in the same order draft. |
-| `move-order-carton-contents`  | Move prefilled pieces atomically between supported same-order destinations.                          |
-| `accept-carton-suggestion`    | Explicitly confirm one suggested actual arrangement.                                                 |
-| `reject-carton-suggestion`    | Restore the same unassigned pool by rejecting that suggestion.                                       |
-| `paste-import-carton-list`    | Open separate packing-report intake inside an existing 1688 purchase.                                |
-| `packing-report-intake`       | Marker on the source/review dialog.                                                                  |
-| `review-carton-report`        | Persist original TSV/workbook source locally, then parse/analyze with cancellation.                  |
-| `report-review-decision`      | Scoped meaning decision identified by `data-decision-id`; source cell/heading remains visible.       |
-| `update-carton-report-review` | Reanalyze scoped decisions and review added/changed/removed/unchanged evidence.                      |
-| `commit-carton-report`        | Commit a ready reviewed payload atomically; identical reports remain unchanged.                      |
+| `data-action`                 | Behavior                                                                                                                                                                                                     |
+| ----------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `inspect-order-carton`        | Read the selected stable carton and stage exceptional measurements/contents in the same order draft.                                                                                                         |
+| `choose-carton-entitlement`   | Choose a retained physical unit for an exceptional correction; known facts are prefilled and unknown aggregate contents stay unknown. Closing stages the correction; the one order confirmation persists it. |
+| `move-order-carton-contents`  | Move prefilled pieces atomically between supported same-order destinations.                                                                                                                                  |
+| `accept-carton-suggestion`    | Explicitly confirm one suggested actual arrangement.                                                                                                                                                         |
+| `reject-carton-suggestion`    | Restore the same unassigned pool by rejecting that suggestion.                                                                                                                                               |
+| `paste-import-carton-list`    | Open separate packing-report intake inside an existing 1688 purchase.                                                                                                                                        |
+| `packing-report-intake`       | Marker on the source/review dialog.                                                                                                                                                                          |
+| `review-carton-report`        | Persist original TSV/workbook source locally, then parse/analyze with cancellation.                                                                                                                          |
+| `report-review-decision`      | Scoped meaning decision identified by `data-decision-id`; source cell/heading remains visible.                                                                                                               |
+| `update-carton-report-review` | Reanalyze scoped decisions and review added/changed/removed/unchanged evidence.                                                                                                                              |
+| `commit-carton-report`        | Commit a ready reviewed payload atomically; identical reports remain unchanged.                                                                                                                              |
 
 Report originals are saved before worker transfer. Changed source text/file cancels older parsing; recovery retains source references and unresolved decisions. Formula caches, zeros in identifiers, per-carton/combined bases and unknown contents remain evidence. Unknown aliases can remain unresolved; optional complete-set coverage requires actual confirmed product totals, never purchase-total equality. Historically used corrections route to container amendment. There is no source-quantity rewrite or marker-parser fallback.
 
 ## Shared output and retained evidence controls
 
-| `data-action`              | Behavior                                                                                       |
-| -------------------------- | ---------------------------------------------------------------------------------------------- |
-| `copy-values`              | Copy the captured source/revision rows as values.                                              |
-| `copy-excel-image`         | Prepare an Excel-image preview; explicit Copy writes the clipboard.                            |
-| `purchase-code-review`     | Marker on the purchase-code review dialog, not a mutation.                                     |
-| `inspect-container-order`  | Filter/inspect included order context without changing membership.                             |
-| `review-saved`             | Explicitly discard a stale recovered authoring draft and retain the newer saved version.       |
-| `confirm-container-action` | Confirm draft cancellation/release after its review.                                           |
-| `review-cancel`            | Cancel a generic grouping/restore/source review without writes.                                |
-| `review-proceed`           | Confirm that generic review; it never starts the retired Preparation workflow.                 |
-| `organize-done`            | Retained inactive legacy component name; no active Orders/Packing route or shortcut mounts it. |
+| `data-action`              | Behavior                                                                                                                                       |
+| -------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------- |
+| `copy-values`              | Copy the captured source/revision rows as values.                                                                                              |
+| `backup-packing`           | Back up the captured Orders source/preparation scope, original media and supported evidence; explicitly review omitted partial carton records. |
+| `copy-excel-image`         | Prepare an Excel-image preview; explicit Copy writes the clipboard.                                                                            |
+| `purchase-code-review`     | Marker on the purchase-code review dialog, not a mutation.                                                                                     |
+| `inspect-container-order`  | Filter/inspect included order context without changing membership.                                                                             |
+| `review-saved`             | Explicitly discard a stale recovered authoring draft and retain the newer saved version.                                                       |
+| `confirm-container-action` | Confirm draft cancellation/release after its review.                                                                                           |
+| `review-cancel`            | Cancel a generic grouping/restore/source review without writes.                                                                                |
+| `review-proceed`           | Confirm that generic review; it never starts the retired Preparation workflow.                                                                 |
+| `organize-done`            | Retained inactive legacy component name; no active Orders/Packing route or shortcut mounts it.                                                 |
 
 ## Settings, photos and workflow
 

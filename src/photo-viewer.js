@@ -48,6 +48,8 @@ export function createPhotoViewer(
       index = gallery.findIndex(
         (entry) =>
           entry.orderId === item.orderId &&
+          (entry.accountId || entry.record?.accountId || 'local') ===
+            (item.accountId || item.record?.accountId || 'local') &&
           entry.entryId === item.entryId &&
           entry.photoIndex === photoIndex
       )

@@ -1,5 +1,9 @@
 import { test, expect } from './extension-fixture.mjs'
 import { createDemoRecords } from '../../preview/library-fixture.js'
+import {
+  assignSelectedPurchaseCodes,
+  editOrderProduct,
+} from './smart-workspace-helpers.mjs'
 
 async function workspace(
   extension,
@@ -79,7 +83,7 @@ test('photo navigation follows the full filtered table through continuous scroll
   const rowKey = await rows.last().getAttribute('data-selection-key')
   const row = page.locator(`#sheet-body tr[data-selection-key="${rowKey}"]`)
   await row.focus()
-  await row.press('Space')
+  await row.getByRole('checkbox').check()
   await row.getByRole('button', { name: /^Zoom product photo/ }).click()
   const viewer = page.getByRole('dialog', {
     name: 'Product photo',
@@ -252,28 +256,17 @@ test('a delayed previous photo cannot replace the newly selected photo', async (
   await expect(viewer.locator('.photo-zoom-value')).toHaveText('100%')
 })
 
-test('packing gallery includes only its launched products and navigation uses the selected UI language', async ({
+test('Orders authoring gallery includes only its explicit product selection and navigation uses the selected UI language', async ({
   extension,
 }) => {
   const { page, record } = await workspace(extension)
   const rows = page.locator('#sheet-body tr[data-selection-key]')
-  await rows.first().focus()
-  await rows.first().press('Space')
-  await rows.nth(2).focus()
-  await rows.nth(2).press('Control+Space')
-  await page.locator('#prepare-orders').click()
-  const review = page.getByRole('dialog', {
-    name: 'Assign product codes?',
-    exact: true,
-  })
-  await expect(review).toBeVisible()
-  await review
-    .getByRole('button', { name: 'Assign codes and prepare', exact: true })
-    .click()
-  const packing = page.locator('#packing-view')
-  await expect(packing.locator('.preparation-group')).toHaveCount(2)
+  await rows.first().getByRole('checkbox').check()
+  await rows.nth(2).getByRole('checkbox').check()
+  await assignSelectedPurchaseCodes(page)
   await page.locator('#language-toggle [data-language=es]').click()
-  await packing.locator('.variant-photos .preparation-photo').first().click()
+  const packing = await editOrderProduct(page, 0)
+  await packing.locator('.preparation-photo').first().click()
   const viewer = page.locator('.product-photo-dialog')
   await expect(viewer.locator('.photo-gallery-count')).toHaveText('1 / 2')
   await page.keyboard.press('ArrowRight')
@@ -298,7 +291,7 @@ test('packing gallery includes only its launched products and navigation uses th
   await expect(packing).toBeVisible()
 })
 
-test('packing photo identity stays with the clicked order when entry IDs repeat across orders', async ({
+test('Orders authoring photo identity stays with the clicked order when entry IDs repeat across orders', async ({
   extension,
 }) => {
   const { page, records } = await workspace(extension, 2, (record) => {
@@ -318,8 +311,8 @@ test('packing photo identity stays with the clicked order when entry IDs repeat 
   })
   const rows = page.locator('#sheet-body tr[data-selection-key]')
   const tableKey = await rows.nth(2).getAttribute('data-selection-key'),
-    tableOrder = records.find((record) =>
-      tableKey.startsWith(`${record.snapshot.orderId}/`)
+    tableOrder = records.find(
+      (record) => JSON.parse(tableKey)[1] === record.snapshot.orderId
     )
   await rows
     .nth(2)
@@ -333,16 +326,12 @@ test('packing photo identity stays with the clicked order when entry IDs repeat 
   await expect(viewer).toHaveCount(0)
   await rows.first().focus()
   await rows.first().press('Control+a')
-  await page.locator('#prepare-orders').click()
-  await page
-    .getByRole('dialog', { name: 'Assign product codes?', exact: true })
-    .getByRole('button', { name: 'Assign codes and prepare', exact: true })
-    .click()
-  const sections = page.locator('.packing-order-section')
-  await expect(sections).toHaveCount(2)
-  const orderIds = await sections.evaluateAll((elements) =>
-    elements.map((element) => element.dataset.packingOrder)
-  )
+  await assignSelectedPurchaseCodes(page)
+  const orderIds = await rows.evaluateAll((elements) => [
+    ...new Set(
+      elements.map((element) => JSON.parse(element.dataset.selectionKey)[1])
+    ),
+  ])
   const firstOrder = records.find(
       (record) => record.snapshot.orderId === orderIds[0]
     ),
@@ -350,13 +339,10 @@ test('packing photo identity stays with the clicked order when entry IDs repeat 
       (record) => record.snapshot.orderId === orderIds[1]
     ),
     selectedBefore = await page
-      .locator('#packing-view [aria-selected=true]')
-      .count()
-  await sections
-    .nth(1)
-    .locator('.variant-photos .preparation-photo')
-    .first()
-    .click()
+      .locator('#sheet-body tr[aria-selected=true]')
+      .count(),
+    editor = await editOrderProduct(page, 2)
+  await editor.locator('.preparation-photo').first().click()
   await expect(viewer.locator('.photo-gallery-count')).toHaveText('3 / 4')
   await expect(image).toHaveAttribute(
     'alt',
@@ -382,7 +368,7 @@ test('packing photo identity stays with the clicked order when entry IDs repeat 
   )
   await page.keyboard.press('Escape')
   await expect(viewer).toHaveCount(0)
-  expect(await page.locator('#packing-view [aria-selected=true]').count()).toBe(
+  expect(await page.locator('#sheet-body tr[aria-selected=true]').count()).toBe(
     selectedBefore
   )
 })

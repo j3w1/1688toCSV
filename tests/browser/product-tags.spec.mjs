@@ -1,6 +1,9 @@
 import { test, expect } from './extension-fixture.mjs'
 import { createDemoRecords } from '../../preview/library-fixture.js'
-import { clickGroupingAction } from './copy-actions-helpers.mjs'
+import {
+  assignSelectedPurchaseCodes,
+  shareOrderBarcode,
+} from './smart-workspace-helpers.mjs'
 
 async function openWorkspace(extension, { sharedProduct = false } = {}) {
   const [record] = await extension.inspector.evaluate(
@@ -104,31 +107,13 @@ async function openSharedProductDetails(extension) {
     sharedProduct: true,
   })
   const products = page.locator('#sheet-body tr[data-selection-key]')
+  await products.nth(0).getByRole('checkbox').check()
+  await products.nth(1).getByRole('checkbox').check()
+  await assignSelectedPurchaseCodes(page)
+  await shareOrderBarcode(page)
+  const view = page.locator('#orders-view')
   await products.nth(0).focus()
-  await page.keyboard.press('Space')
-  await products.nth(1).focus()
-  await page.keyboard.press('Control+Space')
-  await page.locator('#prepare-orders').click()
-  await page
-    .getByRole('button', { name: 'Assign codes and prepare', exact: true })
-    .click()
-  const view = page.locator('#packing-view')
-  await expect(view.locator('tr[data-variant-id]')).toHaveCount(2)
-  await view
-    .getByRole('button', { name: 'Clear selection', exact: true })
-    .click()
-  const variants = view.locator('tr[data-variant-id]')
-  await variants.nth(0).focus()
-  await page.keyboard.press('Space')
-  await variants.nth(1).focus()
-  await page.keyboard.press('Control+Space')
-  await clickGroupingAction(page, 'Share one barcode')
-  await page
-    .getByRole('dialog', { name: 'Share one barcode?', exact: true })
-    .getByRole('button', { name: 'Apply changes', exact: true })
-    .click()
-  await expect(variants).toHaveCount(1)
-  await variants.locator('.variant-order-facts').dblclick()
+  await products.nth(0).press('Enter')
   return { page, record, products, view, details: productDetails(page) }
 }
 
@@ -172,8 +157,8 @@ test('product tags autosave, filter products and stay out of packing', async ({
       .locator('.product-row-tags')
   ).toContainText('Fragile display')
   await other.close()
-  // Opening details by double-click selects the row; tag edits preserve it.
-  await expect(first).toHaveAttribute('aria-selected', 'true')
+  // Inspecting source details preserves the explicit checkbox selection.
+  await expect(first).toHaveAttribute('aria-selected', 'false')
   await page.reload()
   await expect(first.locator('.product-row-tags')).toContainText(
     'Fragile display'
@@ -182,11 +167,9 @@ test('product tags autosave, filter products and stay out of packing', async ({
   await expect(page.locator('#sheet-body tr[data-selection-key]')).toHaveCount(
     1
   )
-  await first.locator('.row-number').click()
-  await page.locator('#prepare-orders').click()
-  await page
-    .getByRole('button', { name: 'Assign codes and prepare', exact: true })
-    .click()
+  await first.getByRole('checkbox').check()
+  await assignSelectedPurchaseCodes(page)
+  await page.locator('#view-packing').click()
   await expect(page.locator('#packing-view')).toBeVisible()
   await expect(page.locator('#packing-view .product-row-tags')).toHaveCount(0)
   await expect(page.locator('#packing-view')).not.toContainText(
@@ -353,8 +336,12 @@ test('shared packing barcode edits tags per original product and saves typed tag
     .getByRole('button', { name: 'Close product details', exact: true })
     .click()
   await expect(details).toHaveCount(0)
-  await expect(view).not.toContainText('First original')
-  await expect(view).not.toContainText('Second original')
+  await expect(view.locator('.row-preparation')).not.toContainText(
+    'First original'
+  )
+  await expect(view.locator('.row-preparation')).not.toContainText(
+    'Second original'
+  )
   const backup = await extension.inspector.evaluate(() =>
     chrome.runtime.sendMessage({ type: 'BACKUP_EXPORT' })
   )

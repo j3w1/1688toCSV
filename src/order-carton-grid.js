@@ -47,20 +47,17 @@ export function cartonHistoryRows(state, orderRefs = []) {
   const covered = new Set()
   const rows = []
   const evidence = [
-    ...(state.batches || []),
+    ...(state.batches || []).flatMap((batch) => [
+      batch,
+      ...(batch.cartonHistory || []),
+    ]),
     ...(state.cartonHistory || []).map(
       (entry) => entry.batch || entry.after || entry
     ),
   ]
   const seenEvidence = new Set()
   for (const batch of evidence) {
-    const evidenceKey = JSON.stringify([
-      batch.accountId || 'local',
-      batch.id,
-      batch.revision,
-      batch.updatedAt,
-      batch.deletedAt,
-    ])
+    const evidenceKey = JSON.stringify(batch)
     if (seenEvidence.has(evidenceKey)) continue
     seenEvidence.add(evidenceKey)
     const orderIds = [
@@ -94,6 +91,7 @@ export function cartonHistoryRows(state, orderRefs = []) {
         batch.revision,
         batch.updatedAt,
         batch.deletedAt,
+        evidenceKey,
       ]),
       batch: clone(batch),
       refs,
@@ -203,6 +201,10 @@ export async function mountCartonHistory(
         ])
           tr.append(el('td', value))
         const evidence = el('td', m(row.state))
+        if (row.batch?.revision !== undefined)
+          evidence.append(
+            el('small', m('Retained revision {0}', { 0: row.batch.revision }))
+          )
         if (row.internal) evidence.append(el('small', m('Internal reference')))
         if (row.batch?.unresolvedContents?.length)
           evidence.append(el('small', m('Unresolved contents')))

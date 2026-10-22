@@ -1,5 +1,10 @@
 import { test, expect } from './extension-fixture.mjs'
 import { createDemoRecords } from '../../preview/library-fixture.js'
+import {
+  assignSelectedPurchaseCodes,
+  editOrderProduct,
+  closeOrderProduct,
+} from './smart-workspace-helpers.mjs'
 
 async function workspace(
   extension,
@@ -297,33 +302,17 @@ test('translated product details never rewrite saved label names or original ord
 }) => {
   const { page } = await workspace(extension)
   const row = page.locator('#sheet-body tr[data-selection-key]').first()
-  await row.focus()
-  await row.press('Space')
-  await page.locator('#prepare-orders').click()
-  const packing = page.locator('#packing-view')
-  const review = page.getByRole('dialog', {
-    name: 'Assign product codes?',
-    exact: true,
+  await row.getByRole('checkbox').check()
+  await assignSelectedPurchaseCodes(page)
+  const editor = await editOrderProduct(page, 0, {
+    'Spanish name': 'NOMBRE MANUAL',
+    'Chinese category': '手工类别',
   })
-  await expect
-    .poll(async () => (await packing.isVisible()) || (await review.isVisible()))
-    .toBe(true)
-  if (await review.isVisible())
-    await review
-      .getByRole('button', { name: 'Assign codes and prepare', exact: true })
-      .click()
-  await packing
-    .getByLabel('Spanish short name', { exact: true })
-    .first()
-    .fill('NOMBRE MANUAL')
-  await packing
-    .getByLabel('Chinese category', { exact: true })
-    .first()
-    .fill('手工类别')
-  await packing.page().locator('#view-orders').click()
-  await expect(packing).toBeHidden()
+  await closeOrderProduct(editor)
   const before = await backup(extension)
-  expect(before.preparations[0].groups[0].spanishName).toBe('NOMBRE MANUAL')
+  expect(before.preparations[0].groups[0].variants[0].spanishName).toBe(
+    'NOMBRE MANUAL'
+  )
   expect(before.preparations[0].groups[0].category).toBe('手工类别')
   await page.locator('#language-toggle [data-language=es]').click()
   await page.locator('#language-toggle [data-language=zh]').click()

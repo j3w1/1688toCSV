@@ -1,7 +1,13 @@
 import { test, expect } from './extension-fixture.mjs'
 import { createStoreOrder } from '../../src/store-order.js'
 import { createDemoRecords } from '../../preview/library-fixture.js'
-import { clickGroupingAction } from './copy-actions-helpers.mjs'
+import {
+  assignSelectedPurchaseCodes,
+  editOrderProduct,
+  closeOrderProduct,
+  libraryBackup,
+  shareOrderBarcode,
+} from './smart-workspace-helpers.mjs'
 
 async function spreadsheetPacking(extension, kind) {
   const [record] = await extension.inspector.evaluate(
@@ -71,52 +77,49 @@ async function spreadsheetPacking(extension, kind) {
   await expect(products).toHaveCount(3)
   await products.first().focus()
   await page.keyboard.press('Control+a')
-  await page.locator('#prepare-orders').click()
-  const packing = page.locator('#packing-view')
-  const review = page.getByRole('dialog', { name: 'Assign product codes?' })
-  await expect
-    .poll(async () => (await packing.isVisible()) || (await review.isVisible()))
-    .toBe(true)
-  if (await review.isVisible())
-    await review
-      .getByRole('button', { name: 'Assign codes and prepare' })
+  await assignSelectedPurchaseCodes(page)
+  for (let index = 0; index < 3; index++) {
+    const editor = await editOrderProduct(page, index, {
+      'Spanish name': 'PLATES',
+      'Chinese category': '陶瓷',
+    })
+    await closeOrderProduct(editor)
+    await products
+      .nth(index)
+      .getByRole('button', { name: 'Barcode', exact: true })
       .click()
-  await expect(packing).toBeVisible()
-  await packing.getByLabel('Spanish short name', { exact: true }).fill('PLATES')
-  await packing.getByLabel('Chinese category', { exact: true }).fill('陶瓷')
-  await packing.getByLabel('Chinese category', { exact: true }).blur()
-  await expect(packing.getByAltText('Carton mark preview')).toBeVisible({
-    timeout: 20_000,
-  })
-  await expect(packing.getByAltText('Barcode preview')).toHaveCount(3, {
-    timeout: 20_000,
-  })
-  for (const button of await packing
-    .getByRole('button', { name: 'Edit barcode', exact: true })
-    .all()) {
-    // Only previews within the packing scroller are rendered.
-    await button.scrollIntoViewIfNeeded()
-    const preview = button.getByAltText('Barcode preview')
-    await expect(preview).toBeVisible({ timeout: 20_000 })
+    const label = page.getByRole('dialog', {
+        name: 'Label editor',
+        exact: true,
+      }),
+      preview = label.getByAltText('Printable label preview')
+    await expect(preview).toBeVisible({ timeout: 20000 })
     await expect
       .poll(() => preview.evaluate((image) => image.naturalWidth))
       .toBeGreaterThan(0)
+    await label
+      .getByRole('button', { name: 'Close label editor', exact: true })
+      .click()
   }
-  return { page, packing, descriptions, snapshot: built.snapshot }
+  return {
+    page,
+    packing: page.locator('#orders-view'),
+    descriptions,
+    snapshot: built.snapshot,
+  }
 }
 
 for (const kind of ['market', 'factory']) {
-  test(`${kind} packing products retain every row description through translation and shared barcodes`, async ({
+  test(`${kind} Orders retains every source description through translation and shared barcodes`, async ({
     extension,
-  }) => {
+  }, testInfo) => {
     const { page, packing, descriptions, snapshot } = await spreadsheetPacking(
-      extension,
-      kind
-    )
-    await expect(packing.locator('.preparation-group')).toHaveCount(1)
-    await expect(packing.locator('.original-product-name')).toHaveCount(0)
-    const rows = packing.locator('tr[data-variant-id]')
+        extension,
+        kind
+      ),
+      rows = page.locator('#sheet-body tr[data-selection-key]')
     await expect(rows).toHaveCount(3)
+    await expect(packing.locator('.original-product-name')).toHaveCount(0)
     for (const [index, description] of descriptions.entries()) {
       await expect(rows.nth(index).locator('.product-title')).toHaveText(
         description
@@ -125,54 +128,22 @@ for (const kind of ['market', 'factory']) {
         descriptions[(index + 1) % descriptions.length]
       )
     }
-    const layout = await rows.first().evaluate((row) => {
-      const code = row
-        .querySelector('.variant-code-band')
-        .getBoundingClientRect()
-      const title = row.querySelector('.product-title').getBoundingClientRect()
-      const attributes = row
-        .querySelector('.product-attributes')
-        .getBoundingClientRect()
-      const price = row.querySelector('.variant-price').getBoundingClientRect()
-      return {
-        descriptionGap: title.top - code.bottom,
-        metadataAlignment: Math.abs(attributes.top - price.top),
-        height: row.getBoundingClientRect().height,
-        geometry: [
-          ...row.querySelectorAll(
-            'td, .variant-numeric-header, .variant-numeric-row, .carton-capacity-cell, .carton-capacity, .carton-capacity input, .carton-capacity-summary, .carton-recorded-context, .carton-batch-readout'
-          ),
-        ].map((node) => {
-          const rect = node.getBoundingClientRect()
-          const style = getComputedStyle(node)
-          return {
-            element: node.className || node.tagName,
-            text: node.textContent,
-            width: rect.width,
-            height: rect.height,
-            font: style.font,
-            lineHeight: style.lineHeight,
-            padding: style.padding,
-            margin: style.margin,
-          }
-        }),
-      }
+    const editor = await editOrderProduct(page, 0, {
+      'Product variant': 'Ivory finish\nHandle on left',
     })
-    expect(layout.descriptionGap).toBeGreaterThanOrEqual(0)
-    expect(layout.descriptionGap).toBeLessThanOrEqual(6)
-    expect(layout.metadataAlignment).toBeLessThanOrEqual(6)
-    expect(layout.height, JSON.stringify(layout)).toBeLessThanOrEqual(100)
-    const note = rows.first().locator('.variant-note textarea')
-    await note.fill('Ivory finish\nHandle on left')
-    await note.blur()
+    await closeOrderProduct(editor)
     for (const language of ['es', 'zh', 'en']) {
       await page.locator(`#language-toggle [data-language=${language}]`).click()
-      await expect(packing.locator('.product-title')).toHaveText(descriptions)
-      await expect(note).toHaveValue('Ivory finish\nHandle on left')
+      await expect(rows.locator('.product-title')).toHaveText(descriptions)
     }
+    const reopened = await editOrderProduct(page, 0)
+    await expect(
+      reopened.getByRole('textbox', { name: 'Product variant', exact: true })
+    ).toHaveValue('Ivory finish\nHandle on left')
+    await closeOrderProduct(reopened)
     for (const width of [1280, 760, 390]) {
       await page.setViewportSize({ width, height: 900 })
-      for (const title of await packing.locator('.product-title').all()) {
+      for (const title of await rows.locator('.product-title').all()) {
         const geometry = await title.evaluate((node) => ({
           scroll: node.scrollWidth,
           client: node.clientWidth,
@@ -181,10 +152,17 @@ for (const kind of ['market', 'factory']) {
         expect(geometry.scroll).toBeLessThanOrEqual(geometry.client + 1)
         expect(geometry.clamp).toBe('none')
       }
+      expect(
+        await page.evaluate(
+          () =>
+            document.documentElement.scrollWidth -
+            document.documentElement.clientWidth
+        )
+      ).toBeLessThanOrEqual(1)
     }
     await page.setViewportSize({ width: 1280, height: 900 })
     await packing.screenshot({
-      path: test.info().outputPath(`${kind}-packing-descriptions.png`),
+      path: testInfo.outputPath(`${kind}-orders-descriptions.png`),
     })
     await rows.nth(1).focus()
     await rows.nth(1).press('Enter')
@@ -195,27 +173,14 @@ for (const kind of ['market', 'factory']) {
       details.locator('.product-original-description pre')
     ).toHaveText(descriptions[1])
     await details.getByRole('button', { name: 'Close product details' }).click()
-    await expect(details).toHaveCount(0)
-    await packing
-      .getByRole('button', { name: 'Clear selection', exact: true })
-      .click()
-    await rows.nth(0).focus()
-    await page.keyboard.press('Space')
-    await rows.nth(1).focus()
-    await page.keyboard.press('Control+Space')
-    await clickGroupingAction(page, 'Share one barcode')
-    const merge = page.getByRole('dialog', { name: 'Share one barcode?' })
-    await merge
-      .getByRole('button', { name: 'Apply changes', exact: true })
-      .click()
-    await expect(rows).toHaveCount(2)
-    await expect(rows.first().locator('.product-title')).toHaveText(
-      descriptions.slice(0, 2)
+    await shareOrderBarcode(page)
+    // Code sharing never collapses the separate source or financial rows.
+    await expect(rows).toHaveCount(3)
+    await expect(rows.locator('.product-title')).toHaveText(descriptions)
+    const backup = await libraryBackup(extension)
+    expect(backup.preparations[0].groups[0].variants[0].entryIds).toEqual(
+      snapshot.items.slice(0, 2).map((item) => item.entryId)
     )
-    const backup = await extension.inspector.evaluate(() =>
-      chrome.runtime.sendMessage({ type: 'BACKUP_EXPORT' })
-    )
-    expect(backup.ok, backup.error).toBe(true)
-    expect(backup.data.orders[0].snapshot).toEqual(snapshot)
+    expect(backup.orders[0].snapshot).toEqual(snapshot)
   })
 }

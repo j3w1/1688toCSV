@@ -2,6 +2,50 @@
 export const SMART_CARTON_MESSAGES = Object.fromEntries(
   [
     [
+      'Operator-confirmed supplier identity',
+      'Identidad del proveedor confirmada por el operador',
+      '操作员确认的供应商身份',
+    ],
+    [
+      'Original source supplier identity',
+      'Identidad del proveedor de la fuente original',
+      '原始来源的供应商身份',
+    ],
+    [
+      'Supplier identities disagree. Review the source and authored evidence before assigning or linking codes.',
+      'Las identidades del proveedor no coinciden. Revisa la evidencia de origen y la documentada antes de asignar o vincular códigos.',
+      '供应商身份不一致，分配或关联编码前请核对原始及手动记录的证据。',
+    ],
+    [
+      'Review scoped backup',
+      'Revisar copia de alcance limitado',
+      '核对限定范围备份',
+    ],
+    [
+      'Some carton evidence includes unselected source products. This scoped backup omits those physical records; a full library backup retains them.',
+      'Parte de la evidencia de cajas incluye productos no seleccionados. Esta copia omite esos registros físicos; una copia completa de la biblioteca los conserva.',
+      '部分纸箱证据涉及未选择的来源商品。此限定范围备份会省略这些实体记录，完整资料库备份会保留它们。',
+    ],
+    ['Physical carton evidence', 'Evidencia física de cajas', '实体纸箱证据'],
+    [
+      'Omitted from this scoped backup',
+      'Omitido de esta copia de alcance limitado',
+      '此限定范围备份中省略',
+    ],
+    ['Back up selection', 'Respaldar selección', '备份所选内容'],
+    ['Language', 'Idioma', '语言'],
+    ['Retained revision {0}', 'Revisión conservada {0}', '保留的版本 {0}'],
+    [
+      'No eligible unconsumed original product has matching variants from this store. Assign the original purchase codes and check its sizes and features first.',
+      'No hay un producto original elegible sin consumir con variantes compatibles de este proveedor. Asigna sus códigos de compra y revisa tallas y características primero.',
+      '此供应商没有符合条件且尚未消耗的原商品具有匹配规格。请先分配原采购编码并核对尺寸和特征。',
+    ],
+    [
+      'Link this complete product to an unconsumed matching purchase from the same identified store and account, including another purchase month. Review first; source orders and costs stay separate.',
+      'Vincula este producto completo con una compra compatible sin consumir del mismo proveedor identificado y cuenta, incluso de otro mes de compra. Revisa primero; pedidos y costos de origen quedan separados.',
+      '将此完整商品关联到同一已识别供应商及账户下尚未消耗的匹配采购，可跨采购月份。请先核对，来源订单及成本仍保持独立。',
+    ],
+    [
       'Resolve supplier identity',
       'Resolver identidad del proveedor',
       '核定供应商身份',
