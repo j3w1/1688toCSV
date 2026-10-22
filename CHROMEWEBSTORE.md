@@ -1,6 +1,6 @@
 # Chrome Web Store Listing — 1688toPL
 
-Last updated: 2026-10-22. **Local candidate, version 2.9.0; unpublished.** This file is the store metadata source of truth, not authorization to submit or release. Current verification is tracked below; historical test counts do not establish acceptance of this candidate.
+Last updated: 2026-10-22. **Local SEAL candidate, version 2.10.0; unpublished.** This file is the store metadata source of truth, not authorization to submit or release. Current verification is tracked below; historical test counts do not establish acceptance of this candidate.
 
 ## Store Listing
 
@@ -11,17 +11,19 @@ Last updated: 2026-10-22. **Local candidate, version 2.9.0; unpublished.** This 
 **Detailed description — draft:**
 
 ```text
-Turn 1688 purchases and supplier spreadsheets into packing lists, barcode labels and carton marks.
+Turn 1688 purchases and supplier spreadsheets into accurate container packing lists, barcode labels and carton marks.
 
 Import selected 1688 orders or a marked supplier workbook. Add purchases from other sources manually or from JSON. Keep original product descriptions, quantities, prices and photos together in a local order library.
 
-Prepare products with CE codes, Spanish names and Chinese categories using editable local rules. Review size and material suggestions, arrange packing groups and record actual carton contents, dimensions, weight and receipt/loading counts. Repeat purchases can share reviewed product codes while retaining separate purchase values.
+Prepare products in Orders with CE codes, Spanish names and Chinese categories using editable local rules. New codes use the original purchase calendar month. Review size/material suggestions, paste a 1688 supplier packing report or enter Pcs/box once, then review carton/remainder proposals. Preserve actual uneven cartons and honest unknown contents or measurements. Eligible repeat purchases can share reviewed codes while retaining separate purchase values; shipped code lineages cannot accept new members.
 
-Copy values, photos, selected columns or table pictures into Excel. Download an editable packing workbook with Products and Cartons sheets. Optional detailed automation JSON contains costs, charge reasons and source identifiers independently of workbook column choices. Print barcode labels and carton marks as offline PDFs.
+Packing selects whole orders into a named container. Confirm loaded/left-behind cartons, inspect the derived read-only packing list and seal a versioned manifest. Global Backlog updates automatically; historical Se quedó remains reproducible. Reviewed amendments preserve prior revisions and protect cartons committed elsewhere.
 
-Open your 1688 order list, select purchases and choose Import selected. In the workspace, select products, set Packing month and choose Prepare packing list. Review codes, copy/export your packing list, then save a backup. Supplier workbook import includes a template and cell-level review; a matching-content warning helps identify accidental repeat imports without blocking deliberate new purchases.
+Copy values, photos, chosen columns or table pictures into Excel. Download the complete container revision as an editable workbook with Packing list, Cartons and Se quedó sheets. Optional detailed automation JSON contains full costs, charge reasons and source identifiers independently of workbook column choices. Print barcode labels and carton marks as offline PDFs.
 
-Orders, source history, photos, notes and settings stay in your browser. Back up the whole library or an open packing scope to a lossless local file. Importing uses your existing 1688 session; uncached product pictures may load from Alibaba CDN. No analytics, online translation or developer-operated order upload is used.
+Open your 1688 order list, select purchases and choose Import selected. Manage products/cartons in Orders, include whole purchases in Packing, review loading and export the selected revision. Supplier purchase workbook import retains its template and cell-level review; a matching-content warning helps identify accidental repeat imports without blocking deliberate new purchases.
+
+Orders, source/report history, original photos, container revisions, notes and settings stay in your browser. Back up the whole library or a reviewed preparation scope to a lossless local file. Importing uses your existing 1688 session; uncached product pictures may load from Alibaba CDN. No analytics, online translation or developer-operated order upload is used.
 
 Use one buyer account per library. Unsupported page layouts or inconsistent totals fail without replacing the last good saved order. Review suggestions and physical carton counts before relying on labels. Keep a full backup before clearing your browser profile or uninstalling.
 ```
@@ -77,9 +79,9 @@ The action opens a full workspace tab. No downloads, scripting, activeTab, cooki
 | Mode/language/filter/copy choices and Activity read state                                                       | Browser preferences, outside library backups; panel minimization is tab-session state.                                          |
 | Supported source pages / remote photos                                                                          | Normal requests reach 1688 using the signed-in browser; public photo requests reach Alibaba CDN. No credential extraction.      |
 
-Full backups include only cached photos reachable from retained orders/history/ownership; scoped backups retain canonical originals needed for the scope. Identical images are losslessly deduplicated in compressed files. Deleting orders removes source/history/preparation and unused local originals after reference checks; shared photos and carton deletion history may remain. Restores validate atomically and preserve newer edits. Jobs are not restored. Uninstalling/clearing a profile can delete local data.
+Full backups include only cached photos reachable from retained orders/history/ownership/container revisions; scoped backups retain canonical originals needed for the scope. Identical images are losslessly deduplicated in compressed files. Deleting orders removes source/history/preparation and unused local originals after reference checks; shared photos and carton deletion history may remain. Restores validate atomically and preserve newer edits. Jobs are not restored. Uninstalling/clearing a profile can delete local data.
 
-Detailed packing automation JSON is default-off. When enabled it includes full costs, charge reasons and IDs for chosen products/related cartons regardless of XLSX columns. Label/mark PDFs retain their existing companion summaries. User-copied clipboard contents and downloaded files are controlled subsequently by the operating system/user.
+Detailed packing automation JSON is default-off. When enabled it includes full costs, charge reasons and IDs for the complete selected container revision, including frozen Se quedó, regardless of XLSX columns. Label/mark PDFs retain their existing companion summaries. User-copied clipboard contents and downloaded files are controlled subsequently by the operating system/user.
 
 ### Data Use Certification
 
@@ -109,7 +111,8 @@ Visibility/regions are unselected. Repository rename, local implementation or Gi
 
 | Version | Date       | Changes                                                                                                                                                                                                             | Status                                                                                                      |
 | ------- | ---------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------- |
-| 2.9.0   | 2026-10-22 | 1688toPL branding; opt-in detailed JSON; reachable/canonical backup photos; compatible scoped restore/settings initialization; shared XLSX/PDF media; repeat-workbook warning; organized illustrated documentation. | Local candidate: 1,047 unit tests and all 538 Chromium tests passed. No store submission.                   |
+| 2.10.0 | 2026-10-22 | Orders smart carton reconciliation, purchase-calendar codes, container loading/seal/amendments, immutable three-sheet output and compatible shipment/report backups. | Local implementation; unpublished. No store submission. |
+| 2.9.0   | 2026-10-22 | 1688toPL branding; opt-in detailed JSON; reachable/canonical backup photos; compatible scoped restore/settings initialization; shared XLSX/PDF media; repeat-workbook warning; organized illustrated documentation. | Historical local handoff: 1,047 unit tests and all 538 Chromium tests passed. No store submission.                   |
 | 2.9.0   | 2026-10-22 | Integrated manual/JSON/store orders, physical cartons, inline capacity planning, Organize, photo tools, operational costs and two-sheet packing exports.                                                            | Historical repository integration; [PR #20](https://github.com/j3w1/1688toPL/pull/20). No store submission. |
 
 Earlier release and verification chronology remains in Git history. It is not current-candidate acceptance.

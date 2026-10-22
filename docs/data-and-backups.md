@@ -6,16 +6,16 @@
 
 | Action                            | Includes                                                                                                                                                                           | Use for                                         |
 | --------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------- |
-| Settings → Data → Back up         | Complete retained orders/history, annotations, preparation/checkpoints, current assignments, physical cartons, local originals/referenced cached photos and global settings/rules. | Moving computers, protecting the whole library. |
-| Packing → Copy… → Back up packing | Whole open preparation across display filters, its current source/financial dependencies, scoped edits/checkpoints/ownership and relevant label/photo data.                        | Moving or continuing one packing scope.         |
+| Settings → Data → Back up         | Complete retained source/history, annotations, preparation/checkpoints, current assignments, physical cartons, containers/revisions, report originals, drafts, code locks, referenced original photos and global settings/rules. | Moving computers, protecting the whole library. |
+| Orders → Back up packing         | Captured source/preparation selection, complete source/financial dependencies, scoped edits/checkpoints/ownership and relevant label/photo data.                                     | Moving or continuing selected prepared products. |
 
-Packing backup ignores export selection but excludes removed scope entries and unrelated preparation. It keeps complete current source orders needed for money/source evidence, every local original referenced by those retained orders and relevant remote-photo cache entries. It omits unnecessary scrape history, unrelated orders/assets/allocations and global naming/size/color/material catalogs. Label settings/logo and assigned tag definitions support the scoped labels.
+Packing backup captures the Orders source/preparation scope before export. Review codes for unprepared products first. It keeps complete current source orders needed for money/source evidence, every local original referenced by those retained orders and relevant remote-photo cache entries. Removed scope entries and unrelated preparations are excluded. It omits unnecessary scrape history, unrelated orders/assets/allocations and global naming/size/color/material catalogs. Label settings/logo and assigned tag definitions support the scoped labels. A partial physical record is explicitly disclosed as omitted; use a full library backup to protect the complete operational history.
 
-Both actions download lossless **`.json.gz`** archives. Restore accepts them directly and legacy plain **`.json`**; no manual unzip is needed. Library format v4 includes physical cartons; v1–3 remain supported. Keep the original file until you verify the restored library. Import reports and export summaries use different formats and cannot replace a backup.
+Both actions download lossless **`.json.gz`** archives. Restore accepts them directly and legacy plain **`.json`**; no manual unzip is needed. Library format v5 includes shipment/revision and report evidence; v1–4 remain supported. Keep the original file until you verify the restored library. Import reports and export summaries use different formats and cannot replace a backup.
 
 ## Restore a library or packing scope
 
-Use **Settings → Data** for full-library restore. In Orders, the upload icon beside Prepare is **Restore packing**. It is unavailable while an active preparation is open. Review the file's scope, then restore; packing restore opens saved groups without assigning new codes.
+Use **Settings → Data** for full-library restore, or **Restore packing** in Orders for a scoped packing archive. Review the file's scope before restoring. Scoped restore returns to Orders without assigning new codes or silently changing container membership.
 
 Restore decodes and validates the whole file before writing. Invalid references, duplicate manual supplier/reference pairs, conflicting current code ownership or contradictory same-time values reject atomically. A failed restore does not partially import the file. Libraries do not coordinate numbering; use one buyer account per library.
 
@@ -23,13 +23,17 @@ Scoped restore preserves unrelated products, newer local edits, explicit clears 
 
 Compatible same-time monthly backups can complete missing disjoint preparation data. Restoring October then November from one preparation revision is allowed when their overlapping fields/checkpoints agree. Contradictions in shared data still reject; a revision change invalidates stale open drafts. Restore the full affected group/variant when a shared edit would otherwise change unselected products.
 
-Saved preparation names/materials survive scoped restore, reload and reopening. Passive source refresh and unrelated settings retain them; editing naming rules explicitly updates automatic suggestions. Full restore retains its explicit naming recomputation while preserving authored fields. Older files cannot revive inactive reservations or replace newer edits.
+Saved preparation names/materials survive scoped restore, reload and reopening. Passive source refresh and unrelated settings retain them; editing naming rules explicitly updates automatic suggestions. Full restore retains its explicit naming recomputation while preserving authored fields. Ordinary inactive preparation checkpoints do not reserve codes, but historical shipment codes remain reserved. Older files cannot replace newer edits, revive cleared dispositions/supplier resolutions, or remove permanent first-consumption lineage locks.
 
 ## Physical cartons and dependencies
 
 Scoped backups include a batch only when all its contents, month and actual carton-mark group are covered. A mark owner contributing zero pieces still needs that context. `omittedCartonBatchIds` reports intersecting batches excluded for incomplete contents or mark ownership. Full backups preserve independent mark context. Partial batches are rejected on restore.
 
 Batch revisions, provenance and deletion tombstones merge independently of preparation time. Newer deletions prevent an older backup or refresh from recreating a removed carton. Historical default conversion preserves original supplier evidence and does not turn new planning-only capacity/measurement values into physical allocations.
+
+Container reservations, effective revisions and immutable historical manifests restore together with their source/report dependencies and original photos. Restore cannot make a shipped physical entitlement available again or silently replace a newer shipment decision. Conflicting effective state rejects with a reviewable error before any write. Earlier manifests and Se quedó remain reproducible after later shipments and amendments.
+
+Old loaded-count annotations do not become verified sealed containers during upgrade. Uncertain legacy loading and cross-order cartons remain visible for review, with their original measurements preserved and their affected stock held from confident availability. A reviewed correction retains the original evidence. New operational cartons always belong to one source purchase.
 
 Payment links retain complete supporting source orders without adding their preparation to the opened scope. Shared repeat-code backups keep only selected ownership aliases; surviving local purchases keep their ownership. Capacity edits and clears retain source-entry scope instead of replacing newer edits elsewhere.
 
@@ -43,7 +47,7 @@ Compression changes file transport, not live database representation. Unique ori
 
 Orders, source history, notes/tags, workflow/cost links, photos, preparations, code ownership and settings stay in your browser. Import/refresh navigates 1688 using the existing signed-in session; product photos may be fetched from Alibaba CDN. No analytics, online translation, developer uploads, payment processing or supplier messaging are used.
 
-Deleting an order also removes its history/preparation and releases unused assignments. Active carton contents/group/independent-mark references must be resolved first; linked financial records require unlinking unless removed as a complete linked set. Photos owned elsewhere remain. Carton deletion tombstones remain to protect restore.
+Deleting an unused order removes its history/preparation and releases unused assignments. Active carton contents/group/independent-mark references must be resolved first; linked financial records require unlinking unless removed as a complete linked set. Active or historical container references block source deletion. Photos required by historical manifests remain retained even after current product photo edits. Carton deletion tombstones remain to protect restore.
 
 Browser preferences are separate from backups: active mode/language, purchase-month filters, Headers, copy/image/workbook options and Activity read state. Theme palettes, badge/tag colors and local vocabularies belong to backed-up library settings. Import jobs are not restored. Uninstalling, changing extension ID or clearing a profile can remove local data; keep full backups before those operations.
 

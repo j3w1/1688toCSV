@@ -4,9 +4,9 @@
 
 ## Choose scope and format
 
-Orders and Packing share **Copy…**, with **Excel image** directly beside it. Orders copies selected source rows, or all filtered rows when none are selected. Packing copies only selected groups/products within displayed orders and is disabled without selection. **Ctrl+A** includes offscreen products in that displayed packing scope. Back up packing has a separate whole-preparation scope.
+Orders provides source/product copying and **Excel image**. Orders copies selected source rows, or all filtered rows when none are selected. Packing copies or prints an explicit selection from a container revision; a partial selection is labelled as partial. **Ctrl+A** includes offscreen rows in the current logical display scope. The container workbook always covers the complete loaded revision, independently of that selection and display filters. Restorable backups are separate from both outputs.
 
-The preview freezes the products selected when you opened it. Packing flushes valid pending edits first; later selection/filter changes do not replace its scope. Every copy control confirms success only after writing the clipboard. Failed image loads or validation leave the clipboard unchanged.
+The preview freezes its source rows or container revision when opened; later selection/filter changes do not replace it. Packing products, label text and photos are read-only revision evidence. Use **Edit in Orders** for current product authoring. Every copy control confirms success only after writing the clipboard. Failed image loads or validation leave the clipboard unchanged.
 
 | Action                                    | Output                                                                          |
 | ----------------------------------------- | ------------------------------------------------------------------------------- |
@@ -46,23 +46,28 @@ The image uses the selected workspace theme's light palette, with saved light ta
 
 ## Packing workbook
 
-**Export packing list** opens a preview from the bottom packing toolbar. Choose **All packing products** or **Selected products**, columns/order, photo size, description width, store/order headings, totals, frozen headers and filters. Download includes every product in the chosen logical scope; All includes hidden display orders and offscreen groups. Preview shows the first five products. Choices persist across reloads; restoring default columns keeps scope and other layout choices.
+**Export packing list** opens a preview for the selected container revision. It exports all loaded products and physical cartons even when the screen is filtered or only a few rows are selected. Choose columns/order, photo size, description width, store/order headings, totals, frozen headers and filters. The preview is a sample; the download retains complete logical membership. Layout preferences remain optional and persist across reloads.
 
-The editable XLSX has two localized sheets with independent column choices:
+The editable XLSX has three localized sheets:
 
-- **Products:** 14 available fields, 13 defaults: Photo → Product code → Carton mark → Product → Details → Model → Size → Quantity → Pcs/box → Carton references → Price + fees → Discount → Subtotal. Source unit price is optional. Separate purchases sharing barcodes keep separate quantities, prices and cost rows. Order headings show store identity, selected purchase quantity, freight and goods amount once. Payment/deposit/balance columns are omitted.
-- **Cartons:** one row per exact numbered carton or aggregate batch, with Batch, actual mark, full contents, carton/received/loaded counts, L/W/H, weight basis, weight, per-carton volume and total/loaded kg/m³. Product references link to these rows and differing actual marks; contents link back to source purchases. Each physical record counts once.
+- **Packing list:** loaded source-line quantities, photos, codes, names, prices, discounts and carton references. Source unit price remains available. Separate purchases sharing barcodes retain separate financial rows. Partial freight/charge allocations are disclosed and reconcile across shipments rather than repeating full-order charges.
+- **Cartons:** one row per loaded physical identity, with its reported or internal reference, actual mark, supported contents and measurements. Product references link to these rows. Each physical carton counts once even when several products participate. Genuine combined batch facts appear as combined evidence; unknown individual contents, kg or CBM stay unknown.
+- **Se quedó:** the frozen remainder of this revision's included purchases, distinguishing known left-behind cartons from unprepared/unassigned goods. It excludes untouched orders and later purchases. Subsequent shipments change global Backlog without rewriting this historical sheet.
 
 <a href="../screenshots/packing-export.png"><img src="../screenshots/packing-export.png" alt="Synthetic packing export preview with scope, worksheet columns and explicit optional detailed JSON" width="800" /></a>
 
-Only fully covered batches contribute physical totals in Selected products exports. Intersecting partial batches retain full contents under **Shared context — excluded from totals**. Cartons are not attributed wholesale to an arbitrary purchase. [Capacity rules](cartons.md#review-and-output) preserve numeric evidence or Shared/Varies/Batch, without inferring uniform contents from divisibility. Unknown values stay blank, explicit zero stays numeric, and batch-total weight does not imply partial loaded weight.
+Every sheet identifies the container and revision. Unsealed output is prominently **DRAFT**; amendments have a new revision identity, and earlier revisions remain available. Names, label settings and referenced original photos come from the frozen revision. Operator-confirmed supplier identity is explicitly labelled as authored evidence.
+
+Product participation does not duplicate physical totals or attribute an entire mixed carton to one purchase. [Capacity rules](cartons.md#review-and-output) preserve supported numeric evidence without inferring uniform contents from divisibility. Unknown values stay blank, explicit zero stays numeric, and a combined batch weight does not imply a partial loaded weight. Product kg/CBM attribution is labelled allocated and conserves the physical totals. Measurement warnings disclose incomplete coverage.
 
 Money and measurement units use native numeric formats. Formula inputs retain unrounded values; omitted/reordered dependencies use valid formulas or exact cached results. Full descriptions remain editable with bounded wrapping; 1688 Details uses left-aligned 10pt text and spreadsheet descriptions remain centered. Square photo rows, standard code artwork and carton marks use the selected theme's light palette. Small embedded photos do not replace originals in the library. Identical artwork is reused across worksheets while repeated cells remain visible.
 
 ### Detailed automation JSON
 
-**Include detailed automation JSON** is unchecked initially and remembered with export preferences. Without it, Download Excel saves only the workbook. Enable it only when you want the companion machine-readable file.
+**Include detailed automation JSON** starts unchecked whenever you open an export. Without it, Download Excel saves only the workbook. Enable it for the export when you want the companion machine-readable file.
 
-Its scope is **the chosen products and related cartons**, and its fields include **full costs, additional/feature/linked-payment charge amounts and reasons, source identifiers and physical coverage**. Excel column selection does not redact this JSON. For example, a Product + Quantity workbook can still have detailed costs in the optional JSON. Review the [summary contract](automation.md#export-files) before sharing either file.
+Its scope is **the complete selected container revision**, including its frozen Se quedó, and its fields include **full costs, additional/feature/linked-payment charge amounts and reasons, source identifiers and physical coverage**. It identifies the actual workbook filename, container and revision. Excel column selection does not redact this JSON. For example, a Product + Quantity workbook can still have detailed costs in the optional JSON. It is a summary, not a restorable backup. Review the [summary contract](automation.md#export-files) before sharing either file.
 
-The browser download folder receives time-stamped files. Packing filenames use `packing-list-YYYY-MM-DD-HHMMSS-<seller>.xlsx` or a seller-count suffix; optional JSON shares the stem. Same-second repeats receive `-2` and so on. Writing into an existing open workbook is not implemented.
+The detailed `costEvidence` distinguishes original source-order charges, source-unit feature costs and reviewed payment evidence from this revision's allocated amounts. It retains reasons, supporting identifiers and the disclosed allocation basis/budgets from the frozen revision; it does not recalculate historical amounts from current product edits.
+
+The browser download folder receives time-stamped files containing the container and revision identity; draft filenames begin with `DRAFT-`. Optional JSON shares the workbook stem. Same-second repeats receive `-2` and so on. Writing into an existing open workbook is not implemented.
