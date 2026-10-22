@@ -355,11 +355,19 @@ export async function startLibrary(
   const expandedMonths = new Set([currentMonth, ...savedMonths])
   let monthAnchor = null
   async function editProductPhoto(item, edit) {
-    const store = repository || (await openDatabase()), accountId = item.accountId || item.record?.accountId || 'local',
-      sourceItem = records.find(({ snapshot, accountId: owner }) => snapshot.orderId === item.orderId && (owner || snapshot.accountId || 'local') === accountId)?.snapshot.items.find((entry) => entry.entryId === item.entryId)
+    const store = repository || (await openDatabase()),
+      accountId = item.accountId || item.record?.accountId || 'local',
+      sourceItem = records
+        .find(
+          ({ snapshot, accountId: owner }) =>
+            snapshot.orderId === item.orderId &&
+            (owner || snapshot.accountId || 'local') === accountId
+        )
+        ?.snapshot.items.find((entry) => entry.entryId === item.entryId)
     await packing?.flush()
     await store.setProductPhoto(item.orderId, item.entryId, edit, { accountId })
-    if (edit.photoIndex === 0 && sourceItem) packing?.refreshPhoto(sourceItem, edit.thumbnail)
+    if (edit.photoIndex === 0 && sourceItem)
+      packing?.refreshPhoto(sourceItem, edit.thumbnail)
     await refresh()
   }
   const photos = createPhotoViewer(
