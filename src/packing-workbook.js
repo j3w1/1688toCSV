@@ -2092,6 +2092,11 @@ function drawingXml(images) {
 /** Editable cells plus bounded, composed raster assets. No original photos are fetched here. */
 export async function createPackingWorkbook(rows, options = {}) {
   const plan = planPackingWorkbook(rows, options)
+  return createPreparedPackingWorkbook(plan, options)
+}
+
+/** Serialize an already planned immutable export using the proven styles/media writer. */
+export async function createPreparedPackingWorkbook(plan, options = {}) {
   const sheets = plan.sheets || [{ ...plan, name: 'Packing list' }],
     prepared = [],
     registry = workbookImageRegistry(),
