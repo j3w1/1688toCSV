@@ -912,3 +912,39 @@ test('unreviewed legacy display-owner/canonical supplier mismatch holds linking 
   )
   assert.deepEqual({ ...s, locks }, original)
 })
+
+test('malformed permanent lock identity/member ownership fails closed instead of freeing a lineage', () => {
+  const s = state(),
+    locks = consumptionLocksForManifest(manifest(s), s)
+  for (const mutate of [
+    (lock) => {
+      delete lock.accountId
+    },
+    (lock) => {
+      lock.id = 'wrong'
+    },
+    (lock) => {
+      lock.lineages[0].members[0].accountId = 'other'
+    },
+    (lock) => {
+      lock.lineages[0].members = []
+    },
+    (lock) => {
+      lock.lineages[0].reservations = []
+    },
+  ]) {
+    const copied = structuredClone(locks),
+      consumed = copied.find((lock) => lock.kind === 'code-consumption')
+    mutate(consumed)
+    assert.throws(() => historicalCodeReservations(copied), /Historical code/)
+    assert.throws(
+      () =>
+        assertRepeatCodeEligibility({
+          references: [ref(s, 0)],
+          preparations: s.preparations,
+          locks: copied,
+        }),
+      /Historical code/
+    )
+  }
+})
