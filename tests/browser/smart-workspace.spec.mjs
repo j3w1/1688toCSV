@@ -19,16 +19,14 @@ test('operator enters Pcs/box once, reviews the prefilled remainder once and loa
     before = await realOrderContext(extension, ref),
     page = await openSmartLibrary(extension),
     grid = await openOrderReconciliation(page, ref),
-    row = productGridRow(grid, { ...ref, entryId: 'entry-0' }),
+    row = productGridRow(grid, { ...ref, entryId: '2001' }),
     capacity = row.locator('[data-grid-column="capacity"]')
   await capacity.fill('45')
   await capacity.blur()
   await expect
     .poll(async () =>
       String(
-        (await realOrderContext(extension, ref)).record.unitsPerCarton[
-          'entry-0'
-        ]
+        (await realOrderContext(extension, ref)).record.unitsPerCarton['2001']
       )
     )
     .toBe('45')
@@ -414,7 +412,7 @@ test('filtered selected display still exports the full three-sheet loaded revisi
     .click()
   await page
     .getByRole('searchbox', { name: 'Filter container display', exact: true })
-    .fill('entry-0')
+    .fill('2001')
   await page
     .locator('#packing-view tr[data-container-row] input[type="checkbox"]')
     .first()

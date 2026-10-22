@@ -3318,7 +3318,13 @@ export async function startLibrary(
         getSizeClassifier: () =>
           packing?.sizeClassifier() ?? createSizeClassifier(),
         repository: repository || (await openDatabase()),
-        onImported: async () => {
+        onImported: async (record) => {
+          // A reviewed purchase must be visible even when its original month
+          // differs from the current default filter. Preserve existing scope.
+          const month = purchaseMonth(record.snapshot)
+          selectedMonths.add(month)
+          expandedMonths.add(month)
+          monthAnchor = null
           await refresh()
           globalThis.chrome?.runtime
             ?.sendMessage?.({ type: 'LIBRARY_CHANGED' })
