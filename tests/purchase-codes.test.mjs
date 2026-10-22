@@ -6,6 +6,7 @@ import {
   planLegacySupplierIdentityReview,
   applyLegacySupplierIdentityReview,
   supplierCodeIdentityEquivalences,
+  hasReviewedSupplierCodeIdentity,
   planPurchaseCodeReview,
   assertPurchaseCodeMonths,
   assertConsumedCodeChanges,
@@ -1178,6 +1179,7 @@ test('typed packing archives retain reviewed legacy owner equivalence and source
       amount = `${BigInt(snapshot.items[0].quantity) * BigInt(snapshot.items[0].price.split('.')[0])}.00`
     Object.assign(snapshot, {
       schemaVersion: 1,
+      observedAt: new Date(snapshot.observedAt).toISOString(),
       sourceUrl: `https://air.1688.com/app/ctf-page/trade-order-detail/index.html?orderId=${snapshot.orderId}`,
       status: 'Completed',
       totals: {
@@ -1214,7 +1216,7 @@ test('typed packing archives retain reviewed legacy owner equivalence and source
     state: s,
     plan: review.plan,
     confirmed: true,
-    updatedAt: '2026-11-02T00:00:00Z',
+    updatedAt: '2026-11-02T00:00:00.000Z',
     reason: 'Recorded original supplier/code owner equivalence',
   })
   s.records[0].supplierCodeIdentityReviewUpdatedAt =
@@ -1250,6 +1252,13 @@ test('typed packing archives retain reviewed legacy owner equivalence and source
     ],
   })
   const restored = validateBackup(JSON.parse(JSON.stringify(archive)))
+  assert.equal(
+    hasReviewedSupplierCodeIdentity(
+      restored.orders.find((record) => record.snapshot.orderId === '101'),
+      restored.preparations.find((preparation) => preparation.orderId === '101')
+    ),
+    true
+  )
   assert.deepEqual(
     restored.orders.find((record) => record.snapshot.orderId === '101')
       .supplierCodeIdentityReview,
