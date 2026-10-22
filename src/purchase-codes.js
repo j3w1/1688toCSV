@@ -164,10 +164,65 @@ const memberKey = (member) =>
   JSON.stringify([member.accountId || 'local', member.orderId, member.groupId])
 const locksOf = (state) => state.locks ?? state.shipmentLocks ?? []
 
+function validateCodeLock(lock) {
+  const text = (value) => typeof value === 'string' && value.trim().length > 0
+  const invalid = () => {
+    throw codeError(
+      'INVALID_CODE_LOCK',
+      'Historical code evidence is incomplete or has inconsistent ownership.'
+    )
+  }
+  if (
+    !text(lock.accountId) ||
+    !text(lock.orderId) ||
+    lock.id !== JSON.stringify([lock.kind, lock.accountId, lock.orderId]) ||
+    !text(lock.firstContainerId) ||
+    !text(lock.firstRevisionId) ||
+    !calendarDate(lock.consumedAt) ||
+    !Array.isArray(lock.lineages)
+  )
+    invalid()
+  for (const lineage of lock.lineages) {
+    if (
+      !Array.isArray(lineage.members) ||
+      !lineage.members.length ||
+      !Array.isArray(lineage.reservations) ||
+      !lineage.reservations.some(
+        (reservation) =>
+          reservation.kind === 'base' && reservation.code === lineage.baseCode
+      )
+    )
+      invalid()
+    const owners = new Set()
+    for (const member of lineage.members) {
+      if (
+        member.accountId !== lock.accountId ||
+        !text(member.orderId) ||
+        !text(member.groupId) ||
+        owners.has(memberKey(member))
+      )
+        invalid()
+      owners.add(memberKey(member))
+    }
+    for (const reservation of lineage.reservations) {
+      const normalized = validateIssuedCode(reservation)
+      if (
+        normalized.accountId !== lock.accountId ||
+        normalized.code.slice(0, 10) !== lineage.baseCode ||
+        codeReservationMembers(normalized).some(
+          (owner) => !owners.has(memberKey(owner))
+        )
+      )
+        invalid()
+    }
+  }
+}
+
 /** Only sealed-reference namespaces reserve history; ordinary checkpoints do not. */
 export function historicalCodeReservations(locks = []) {
   const reservations = []
   for (const lock of locks.filter(supportedLock)) {
+    validateCodeLock(lock)
     if (!Array.isArray(lock.lineages))
       throw codeError(
         'INVALID_CODE_LOCK',
@@ -521,6 +576,7 @@ export function consumptionLocksForManifest(manifest, state = {}) {
             members: [...members.values()],
             reservations: historicalCodeReservations([
               {
+                ...old,
                 kind: 'code-history',
                 lineages: [
                   {
