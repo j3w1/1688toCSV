@@ -1,6 +1,7 @@
 // UI text only. Supplier/source strings never pass through this catalog.
 export const SMART_CARTON_MESSAGES = Object.fromEntries(
   [
+    ['Per carton', 'Por caja', '每箱'],
     [
       'Keep current carton mark',
       'Conservar marca de caja actual',

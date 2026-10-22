@@ -13,6 +13,7 @@ import { parseHTML } from 'linkedom'
 import { openProductDetails } from '../src/product-details.js'
 import { openPackingExportDialog } from '../src/packing-export-dialog.js'
 import { createProductAuthoring } from '../src/product-authoring.js'
+import { getLanguage, setLanguage } from '../src/i18n.js'
 import { validatePackingPreferences } from '../src/packing-model.js'
 import {
   mountOrderCartonGrid,
@@ -1312,6 +1313,33 @@ test('purchase evidence refresh retry never repeats a committed mutation after a
   assert.equal(writes, 1)
   assert.equal(modal.isConnected, false)
   authoring.dispose()
+})
+
+test('grid basis values translate live without replacing pending input and styled codes retain their copy feedback', async (testContext) => {
+  const { document, window } = dom(testContext),
+    fixture = exceptionSessionFixture(),
+    language = getLanguage()
+  fixture.context.preparation = syntheticManifest().orders[0].preparation
+  const session = await fixture.create(),
+    host = document.getElementById('host')
+  let grid = mountOrderCartonGrid(host, { session })
+  assert.ok(host.querySelector('[data-column="code"] .ce-code [role="status"]'))
+  grid.destroy()
+  grid = mountOrderCartonGrid(host, { session, kind: 'cartons' })
+  const input = host.querySelector('[data-grid-column="weight"]'),
+    basis = host.querySelector('[data-column="weightBasis"] button')
+  input.value = '保留原始草稿'
+  input.dispatchEvent(new window.Event('input'))
+  setLanguage('es', { persist: false })
+  assert.equal(basis.firstElementChild.textContent, 'Por caja')
+  assert.equal(host.querySelector('[data-grid-column="weight"]'), input)
+  assert.equal(input.value, '保留原始草稿')
+  setLanguage('zh', { persist: false })
+  assert.equal(basis.firstElementChild.textContent, '每箱')
+  assert.equal(input.value, '保留原始草稿')
+  grid.destroy()
+  session.dispose()
+  setLanguage(language, { persist: false })
 })
 
 test('all-orders and narrowed carton history share a bounded searchable table and inspect without selecting or mutating', async (context) => {

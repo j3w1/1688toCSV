@@ -1,5 +1,5 @@
-import { element as el, copyTextButton } from './ui.js'
-import { message as m, bindText, bindAttribute } from './i18n.js'
+import { element as el, copyTextButton, copied } from './ui.js'
+import { message as m, bindText, bindAttribute, isMessage } from './i18n.js'
 import { createVirtualTable } from './virtual-table.js'
 import { cartonBatchMetrics } from './carton-batches.js'
 import { physicalUnits, batchNeedsLegacyReview } from './inventory-model.js'
@@ -2235,7 +2235,9 @@ export function mountOrderCartonGrid(
           td.patternLabel = row.patternLabel
           bindText(readout, () => td.patternLabel())
           copy.onclick = () =>
-            void navigator.clipboard.writeText(td.patternLabel()).catch(onError)
+            void copied(copy, () =>
+              navigator.clipboard.writeText(td.patternLabel())
+            ).catch(onError)
           td.append(readout, copy)
           tr.append(td)
           continue
@@ -2248,18 +2250,27 @@ export function mountOrderCartonGrid(
           'needs-review': 'Needs review',
           carton: 'Per carton',
           batch: 'Combined set',
+          aggregate: 'Combined set',
+          exact: 'Confirmed facts',
         }
         const value =
           ['weightBasis', 'volumeBasis', 'provenance'].includes(column.key) &&
           labels[row[column.key]]
             ? m(labels[row[column.key]])
             : row[column.key]
-        const readout = copyTextButton(String(value ?? '—'), {
+        const readout = copyTextButton(value ?? '—', {
           label: m('Copy value'),
         })
+        if (isMessage(value)) {
+          const text = el('span')
+          bindText(text, value)
+          readout.firstChild.replaceWith(text)
+        }
         if (column.key === 'code' && /^CE\d{8}/.test(String(value))) {
+          const status = readout.querySelector('[role="status"]')
           readout.classList.add('ce-code')
           setCodeText(readout, value)
+          if (status) readout.append(status)
         }
         td.append(readout)
         if (column.key === 'code' && row.states?.length) {
@@ -2742,12 +2753,14 @@ export function mountOrderCartonGrid(
     dialog.append(el('h2', m('Review paste alignment')))
     for (const change of plan.changes) {
       const row = rows.find((row) => row.key === change.key)
-      body.append(
-        el(
-          'p',
-          `${row?.code || row?.label || change.key || '—'} · ${change.column || '—'}: ${change.before ?? '—'} → ${change.raw}`
-        )
+      const line = el('p'),
+        column = columns.find((entry) => entry.key === change.column)
+      bindText(
+        line,
+        () =>
+          `${row?.code || row?.label || change.key || '—'} · ${column ? m(column.label) : change.column || '—'}: ${change.before ?? '—'} → ${change.raw}`
       )
+      body.append(line)
     }
     for (const error of plan.errors)
       body.append(el('p', m(error.message), 'error'))
