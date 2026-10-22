@@ -187,7 +187,7 @@ for (const [field, value, action, message] of [
   }) => {
     const { page, refs } = await setup(extension)
     await page.locator('#view-orders').click()
-    const ref = { ...refs[0], entryId: 'entry-0' },
+    const ref = { ...refs[0], entryId: '2001' },
       editor = await editOrderProduct(page, ref, { [field]: value })
     await closeOrderProduct(editor)
     await page.locator('#clear-rows').click()
@@ -318,7 +318,7 @@ test('an unresolved size output error names the product and focuses its Orders s
   await page.locator('#clear-rows').click()
   await page
     .locator(
-      `#sheet-body tr[data-selection-key=${JSON.stringify(JSON.stringify(['local', refs[0].orderId, 'entry-0']))}]`
+      `#sheet-body tr[data-selection-key=${JSON.stringify(JSON.stringify(['local', refs[0].orderId, '2001']))}]`
     )
     .getByRole('checkbox')
     .check()

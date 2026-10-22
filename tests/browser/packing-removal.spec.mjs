@@ -112,7 +112,7 @@ test('removing a whole order releases its draft reservation while retaining auth
   await page.locator('#view-orders').click()
   const editor = await editOrderProduct(
     page,
-    { ...refs[0], entryId: 'entry-0' },
+    { ...refs[0], entryId: '2001' },
     { 'Spanish name': 'KEPT AUTHORING' }
   )
   await closeOrderProduct(editor)

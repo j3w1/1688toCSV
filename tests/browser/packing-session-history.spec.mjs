@@ -135,8 +135,8 @@ test('source-row grouping is one Undo step and code owners follow only current a
   await shareOrderBarcode(page)
   const grouped = await libraryBackup(extension)
   expect(grouped.preparations[0].groups[0].variants[0].entryIds).toEqual([
-    'entry-0',
-    'entry-1',
+    '2001',
+    '2002',
   ])
   await editOrderProduct(page, 0)
   await travel(page, 'Undo')
@@ -159,7 +159,7 @@ test('history follows edits across Orders while an unselected purchase retains i
   for (const [index, name] of ['FIRST SAVED', 'SECOND SAVED'].entries()) {
     const view = await editOrderProduct(
       page,
-      { ...refs[index], entryId: 'entry-0' },
+      { ...refs[index], entryId: '2001' },
       { 'Spanish name': name }
     )
     await closeOrderProduct(view)
@@ -170,7 +170,7 @@ test('history follows edits across Orders while an unselected purchase retains i
   ).toEqual(
     before.preparations.find((prep) => prep.orderId === refs[2].orderId)
   )
-  await editOrderProduct(page, { ...refs[0], entryId: 'entry-0' })
+  await editOrderProduct(page, { ...refs[0], entryId: '2001' })
   await travel(page, 'Undo')
   expect(
     (await libraryBackup(extension)).preparations.find(
@@ -239,7 +239,7 @@ test('Undo after a different tab edits the owner rejects without overwriting its
   await closeOrderProduct(
     await editOrderProduct(
       other,
-      { ...refs[0], entryId: 'entry-0' },
+      { ...refs[0], entryId: '2001' },
       { 'Chinese category': '外部保存' }
     )
   )
