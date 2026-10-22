@@ -1,6 +1,11 @@
 import { build } from 'esbuild'
 import { fileURLToPath } from 'node:url'
 import { test, expect } from './extension-fixture.mjs'
+import {
+  seedSmartOrder,
+  openSmartLibrary,
+  libraryBackup,
+} from './smart-workspace-helpers.mjs'
 
 let source, styles
 test.beforeAll(async () => {
@@ -57,7 +62,7 @@ test('change reviews show every product continuously and return the chosen decis
       document.querySelector('#launch').onclick = () => {
         window.reviewResult = undefined
         window.reviewPromise = Review.reviewPackingChanges({
-          title: 'Assign product codes?',
+          title: 'Review source changes',
           explanation: 'Review the product codes in this order.',
           changes: Array.from({ length: 15 }, (_, index) => ({
             name: `Synthetic product ${index + 1}`,
@@ -67,10 +72,10 @@ test('change reviews show every product continuously and return the chosen decis
             detail:
               'Synthetic description with enough detail to review each product before assigning its code.',
           })),
-          proceed: 'Assign codes and prepare',
+          proceed: 'Use reviewed changes',
           alternate: {
-            label: 'Assign only',
-            value: 'assign-only',
+            label: 'Keep saved version',
+            value: 'saved',
             help: 'Review the product codes in this order.',
           },
         })
@@ -96,238 +101,142 @@ test('change reviews show every product continuously and return the chosen decis
     await expect(dialog.getByRole('tooltip')).toHaveCount(0)
     await actions.getByRole('button').nth(1).click()
     expect(await page.evaluate(async () => await window.reviewPromise)).toBe(
-      'assign-only'
+      'saved'
     )
     await expect(dialog).toHaveCount(0)
   }
   await page.close()
 })
 
-async function launchAssignment(
-  page,
-  count,
-  { variants = 0, helpers = false } = {}
-) {
-  await page.evaluate(
-    ({ count, variants, helpers }) => {
-      document.querySelector('#launch').onclick = () => {
-        window.reviewPromise = Review.reviewPackingChanges({
-          title: 'Assign product codes?',
-          explanation: 'Review the product codes in this order.',
-          overview: true,
-          proceed: 'Assign codes and prepare',
-          media: {
-            photo() {
-              const photo = document.createElement('button')
-              photo.className = 'preparation-photo'
-              const image = document.createElement('img')
-              image.src =
-                'data:image/svg+xml,<svg xmlns="http://www.w3.org/2000/svg" width="96" height="96"><rect width="96" height="96" fill="tan"/></svg>'
-              photo.append(image)
-              return photo
-            },
-            forget() {},
-          },
-          changes: Array.from({ length: count }, (_, index) => {
-            const code = `CE2610${String(index + 1).padStart(4, '0')}`
-            return {
-              name: `Synthetic cup ${index + 1}`,
-              sourceDescription: `原始供应商玻璃杯 ${index + 1} · 6"`,
-              order: 'Synthetic review store',
-              photo: {},
-              after: code,
-              values: [
-                {
-                  label: 'Product code',
-                  before: 'Not prepared',
-                  after: code,
-                  kind: 'code',
-                },
-                ...Array.from({ length: variants }, (_, variant) => ({
-                  label: 'Barcode',
-                  context: `原始款式 ${variant + 1}`,
-                  before: 'Not prepared',
-                  after: `${code}${String.fromCharCode(65 + variant)}S`,
-                  kind: 'code',
-                })),
-                ...(helpers
-                  ? [
-                      {
-                        label: 'Spanish short name',
-                        before: '',
-                        after: 'Vaso',
-                      },
-                      {
-                        label: 'Chinese category',
-                        before: '',
-                        after: '玻璃杯',
-                      },
-                      { label: 'Material', before: '', after: '玻璃' },
-                    ]
-                  : []),
-              ],
-            }
-          }),
-        })
-      }
-    },
-    { count, variants, helpers }
-  )
-  await page.locator('#launch').click()
-  return page.locator('.packing-review-overview')
+async function actualCodeReview(extension, count, options = {}) {
+  await seedSmartOrder(extension, { count, assignCodes: false, ...options })
+  const page = await openSmartLibrary(extension)
+  await page.locator('#select-rows').click()
+  const before = await libraryBackup(extension)
+  await page.locator('#review-purchase-codes').click()
+  const review = page.locator('dialog[data-action="purchase-code-review"]')
+  await expect(review).toBeVisible()
+  return { page, review, before }
 }
 
-async function expectOverviewFits(review) {
-  expect(
-    await review.evaluate((dialog) => {
-      const content = dialog.querySelector('.scroll-dialog-content'),
-        host = dialog.querySelector('.packing-review-overview-fit'),
-        cards = [...dialog.querySelectorAll('.packing-review-overview-item')],
-        bounds = host.getBoundingClientRect()
-      return (
-        content.scrollHeight <= content.clientHeight + 1 &&
-        content.scrollWidth <= content.clientWidth + 1 &&
-        cards.every((card) => {
-          const rect = card.getBoundingClientRect()
-          return (
-            rect.top >= bounds.top - 1 &&
-            rect.bottom <= bounds.bottom + 1 &&
-            rect.left >= bounds.left - 1 &&
-            rect.right <= bounds.right + 1
-          )
-        })
-      )
-    })
-  ).toBe(true)
-  await expect(
-    review.locator('.scroll-dialog-content .dialog-actions')
-  ).toHaveCount(0)
-}
-
-test('single three-variant assignment exposes full changes and sizes the dialog to its content', async ({
+test('three source products expose exact full purchase codes and original photos in one real Orders review', async ({
   extension,
-}) => {
-  const page = await fixture(extension)
+}, testInfo) => {
+  const { page, review, before } = await actualCodeReview(extension, 3)
   await page.setViewportSize({ width: 1440, height: 1000 })
-  const review = await launchAssignment(page, 1, { variants: 3, helpers: true })
-  await expect(review).toHaveAttribute('data-review-layout', 'expanded')
-  const inline = review.locator('.packing-review-inline')
-  await expect(inline.locator('.packing-value-row')).toHaveCount(7)
-  await expect(inline.locator('.packing-value-after code')).toHaveText([
-    'CE26100001',
-    'CE26100001AS',
-    'CE26100001BS',
-    'CE26100001CS',
-  ])
-  for (const code of await inline.locator('.packing-value-after code').all()) {
+  await expect(review.locator('article')).toHaveCount(3)
+  const codes = await review.locator('.purchase-code').allTextContents()
+  expect(codes).toHaveLength(3)
+  expect(codes.every((code) => /^CE2609\d{4}[A-Z0-9]*$/.test(code))).toBe(true)
+  for (const code of await review.locator('.purchase-code').all()) {
     await expect(code).toBeInViewport()
     await expect(code.locator('[data-code-part="product"]')).toHaveCount(1)
     await expect(code).toHaveCSS('font-size', '16px')
   }
-  await expect(inline.locator('.packing-review-source')).toHaveText(
-    '原始供应商玻璃杯 1 · 6"'
-  )
-  await expect(review.locator('.packing-review-overview-summary')).toBeHidden()
-  const bounds = await review.boundingBox(),
-    photo = await review.locator('.preparation-photo').boundingBox()
-  expect(bounds.width).toBeGreaterThan(700)
-  expect(bounds.width).toBeLessThan(1000)
-  expect(bounds.height).toBeLessThan(800)
+  const photo = await review
+      .locator('.preparation-photo')
+      .first()
+      .boundingBox(),
+    bounds = await review.boundingBox()
   expect(photo.width).toBe(96)
   expect(photo.height).toBe(96)
-  await expectOverviewFits(review)
-  await review.screenshot({ path: 'work/adaptive-assignment-single.png' })
-  await review.locator('[data-action="review-cancel"]').click()
-  expect(await page.evaluate(async () => await window.reviewPromise)).toBe(
-    false
+  expect(bounds.width).toBeGreaterThan(700)
+  expect(bounds.width).toBeLessThan(1000)
+  expect(bounds.height).toBeLessThan(1000)
+  expect((await libraryBackup(extension)).orders).toEqual(before.orders)
+  expect((await libraryBackup(extension)).preparations).toEqual(
+    before.preparations
   )
-  await expect(page.locator('#launch')).toBeFocused()
-  await page.close()
-})
-
-test('small and moderate assignment batches use readable inline details when they fit', async ({
-  extension,
-}) => {
-  const page = await fixture(extension)
-  await page.setViewportSize({ width: 1800, height: 1000 })
-  for (const count of [3, 8]) {
-    const review = await launchAssignment(page, count, { helpers: true })
-    await expect(review).not.toHaveAttribute('data-review-layout', 'compact')
-    if (count === 8)
-      await expect(review).toHaveAttribute(
-        'data-review-layout',
-        'detailed-grid'
-      )
-    await expect(review.locator('.packing-review-inline:visible')).toHaveCount(
-      count
-    )
-    await expect(
-      review.locator('.packing-review-inline .packing-value-row')
-    ).toHaveCount(count * 4)
-    for (const row of await review
-      .locator('.packing-review-inline .packing-value-row')
-      .all())
-      await expect(row).toBeInViewport()
-    await expectOverviewFits(review)
-    await review.screenshot({
-      path: `work/adaptive-assignment-${count}-groups.png`,
-    })
-    await review.locator('[data-action="review-proceed"]').click()
-    expect(await page.evaluate(async () => await window.reviewPromise)).toBe(
-      true
-    )
-  }
-  await page.close()
-})
-
-test('large assignment batches keep every card fitted and expose complete changes on activation', async ({
-  extension,
-}) => {
-  const page = await fixture(extension)
-  await page.setViewportSize({ width: 1280, height: 900 })
-  const review = await launchAssignment(page, 52, {
-    variants: 3,
-    helpers: true,
+  await review.screenshot({
+    path: testInfo.outputPath('purchase-code-review-three.png'),
   })
+  await review.getByRole('button', { name: 'Cancel', exact: true }).click()
+  expect((await libraryBackup(extension)).issuedCodes).toEqual(
+    before.issuedCodes
+  )
+})
+
+test('small and moderate real purchase reviews keep every full code readable before one assignment', async ({
+  extension,
+}) => {
+  for (const count of [3, 8]) {
+    const ref = await seedSmartOrder(extension, {
+        count,
+        assignCodes: false,
+        orderId: String(800000000000000000n + BigInt(count)),
+        supplierId: `synthetic-review-${count}`,
+      }),
+      page = await openSmartLibrary(extension)
+    await page
+      .locator(`.order-card[data-order-id="${ref.orderId}"]`)
+      .getByRole('checkbox')
+      .check()
+    await page.locator('#select-rows').click()
+    await page.locator('#review-purchase-codes').click()
+    const review = page.locator('[data-action="purchase-code-review"]')
+    await expect(review.locator('article')).toHaveCount(count)
+    await expect(review.locator('.purchase-code')).toHaveCount(count)
+    const before = await libraryBackup(extension)
+    for (const code of await review.locator('.purchase-code').all()) {
+      await code.scrollIntoViewIfNeeded()
+      await expect(code).toBeVisible()
+    }
+    await review.locator('[data-action="assign-purchase-codes"]').click()
+    await expect(review).toBeHidden()
+    const saved = await libraryBackup(extension)
+    expect(
+      saved.preparations
+        .find((prep) => prep.orderId === ref.orderId)
+        .groups.flatMap((group) =>
+          group.variants.flatMap((variant) => variant.entryIds)
+        )
+    ).toHaveLength(count)
+    expect(saved.orders).toEqual(before.orders)
+    await page.close()
+  }
+})
+
+test('large real purchase review virtualizes source keys and keeps all150 exact assignments across viewport resizing', async ({
+  extension,
+}, testInfo) => {
+  const refs = []
+  for (let index = 0; index < 2; index++)
+    refs.push(
+      await seedSmartOrder(extension, {
+        count: 75,
+        assignCodes: false,
+        orderId: String(810000000000000000n + BigInt(index)),
+        supplierId: `synthetic-review-large-${index}`,
+      })
+    )
+  const page = await openSmartLibrary(extension)
+  await page.locator('#select-rows').click()
+  await page.locator('#review-purchase-codes').click()
+  const review = page.locator('[data-action="purchase-code-review"]'),
+    scroller = review.locator('.purchase-code-review-items')
+  await expect(scroller).toHaveAttribute('data-row-count', '150')
+  const before = await libraryBackup(extension)
   for (const width of [1280, 720, 390]) {
     await page.setViewportSize({ width, height: 900 })
-    await expect(review).toHaveAttribute('data-review-layout', 'compact')
-    await expect
-      .poll(async () =>
-        review.evaluate((dialog) => {
-          const host = dialog
-              .querySelector('.packing-review-overview-fit')
-              .getBoundingClientRect(),
-            card = dialog
-              .querySelector('.packing-review-overview-item:last-child')
-              .getBoundingClientRect()
-          return card.bottom <= host.bottom + 1
-        })
-      )
-      .toBe(true)
-    await expectOverviewFits(review)
-    if (width === 1280 || width === 390)
-      await review.screenshot({
-        path: `work/adaptive-assignment-52-groups${width === 390 ? '-narrow' : ''}.png`,
-      })
+    expect(await review.locator('article').count()).toBeLessThanOrEqual(100)
+    await scroller.evaluate((node) => {
+      node.scrollTop = node.scrollHeight
+    })
+    await expect(
+      review.locator('article').last().locator('.purchase-code')
+    ).toBeVisible()
+    const box = await review.boundingBox()
+    expect(box.x).toBeGreaterThanOrEqual(0)
+    expect(box.x + box.width).toBeLessThanOrEqual(width)
+    await review.screenshot({
+      path: testInfo.outputPath(`virtual-purchase-review-${width}.png`),
+    })
   }
-  const select = review.locator('.packing-review-overview-select').last()
-  await select.focus()
-  await select.press('Enter')
-  const detail = review.locator('.packing-review-detail:popover-open')
-  await expect(detail).toBeVisible()
-  await expect(detail.locator('.packing-value-row')).toHaveCount(7)
-  await expect(detail.locator('.packing-value-after code')).toHaveText([
-    'CE26100052',
-    'CE26100052AS',
-    'CE26100052BS',
-    'CE26100052CS',
-  ])
-  await detail.locator('.packing-review-detail-close').press('Escape')
-  await expect(detail).toHaveCount(0)
-  await expect(select).toBeFocused()
-  await review.locator('[data-action="review-cancel"]').click()
-  await page.close()
+  await review.getByRole('button', { name: 'Cancel', exact: true }).click()
+  expect((await libraryBackup(extension)).preparations).toEqual(
+    before.preparations
+  )
+  expect((await libraryBackup(extension)).orders).toEqual(before.orders)
 })
 
 test('scope confirmation cancels without accepting and restores keyboard focus', async ({

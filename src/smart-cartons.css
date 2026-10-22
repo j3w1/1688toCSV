@@ -236,6 +236,9 @@
 .purchase-code-review-items article p {
   margin: 0;
 }
+.purchase-code-review .purchase-code {
+  --ce-code-size: 16px;
+}
 .purchase-code-review .dialog-actions {
   position: sticky;
   inset-block-end: 0;
