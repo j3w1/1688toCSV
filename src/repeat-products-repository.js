@@ -8,7 +8,7 @@ import {
   assertRepeatCodeEligibility,
   purchaseSupplierForCodes,
 } from './purchase-codes.js'
-import { sourceRevision } from './inventory-model.js'
+import { sourceRevision, stableValue } from './inventory-model.js'
 
 /** Planning is read-only; expected revisions and source observations guard the atomic save. */
 export function createRepeatProductsRepository({
@@ -99,7 +99,9 @@ export function createRepeatProductsRepository({
         !expected.sourceRevision ||
         sourceRevision(record, preparation) !== expected.sourceRevision ||
         JSON.stringify(purchaseSupplierForCodes(record)) !==
-          JSON.stringify(expected.supplierIdentity)
+          JSON.stringify(expected.supplierIdentity) ||
+        stableValue(record.supplierCodeIdentityReview ?? null) !==
+          stableValue(expected.codeIdentityReview)
       )
         throw new Error(
           'The source order or preparation changed. Review the linked products again.'

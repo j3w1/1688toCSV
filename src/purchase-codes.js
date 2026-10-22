@@ -10,7 +10,11 @@ import {
   codeReservationMembers,
   packingCodeSellerId,
 } from './packing-model.js'
-import { eligibleOrderItems, sourceRevision } from './inventory-model.js'
+import {
+  eligibleOrderItems,
+  sourceRevision,
+  stableValue,
+} from './inventory-model.js'
 
 const key = (value) =>
   JSON.stringify([
@@ -779,6 +783,7 @@ export function planPurchaseCodeReview(
       observedAt: record.snapshot.observedAt,
       sourceRevision: sourceRevision(record, old),
       supplierIdentity: purchaseSupplierForCodes(record),
+      codeIdentityReview: clone(record.supplierCodeIdentityReview ?? null),
     })
     drafts.push(validatePreparation(draft))
   }
@@ -988,6 +993,11 @@ export function planLegacySupplierIdentityReview(state, reference) {
     issues: [],
     expectedRevisions: [preparation.revision],
     requiresAmendment,
+    affectedShipmentRevisions: clone(
+      (state.affectedShipmentRevisions ?? []).filter(
+        (value) => !value.orderId || value.orderId === preparation.orderId
+      )
+    ),
   }
 }
 
@@ -1016,7 +1026,7 @@ export function applyLegacySupplierIdentityReview({
       'The identity review requires its recorded confirmation time.'
     )
   const current = planLegacySupplierIdentityReview(state, plan).plan
-  if (JSON.stringify(current) !== JSON.stringify(plan))
+  if (stableValue(current) !== stableValue(plan))
     throw codeError(
       'STALE_IDENTITY_REVIEW',
       'The source or preparation changed. Review the supplier identity again.'

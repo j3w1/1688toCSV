@@ -26,6 +26,8 @@ import {
   planSharedProductUnlink,
   repeatProductCandidates,
 } from '../src/repeat-products.js'
+import { createPackingBackup } from '../src/packing-backup.js'
+import { validateBackup } from '../src/database.js'
 import { createRepeatProductsRepository } from '../src/repeat-products-repository.js'
 
 function records(months = ['2026-09', '2026-10', '2026-11']) {
@@ -1149,4 +1151,144 @@ test('legacy attestation rejects stale source/preparation/equivalence and consum
     /consumed/
   )
   assert.deepEqual(consumed.locks, locks)
+})
+
+test('typed packing archives retain reviewed legacy owner equivalence and source values for full and scoped restore', () => {
+  const s = legacyOwnerState()
+  for (const record of s.records) {
+    const snapshot = record.snapshot,
+      amount = `${BigInt(snapshot.items[0].quantity) * BigInt(snapshot.items[0].price.split('.')[0])}.00`
+    Object.assign(snapshot, {
+      schemaVersion: 1,
+      sourceUrl: `https://air.1688.com/app/ctf-page/trade-order-detail/index.html?orderId=${snapshot.orderId}`,
+      status: 'Completed',
+      totals: {
+        goodsGross: amount,
+        goodsNet: amount,
+        payable: amount,
+        sourceDiscount: '0.00',
+        shipping: '0.00',
+        orderAdjustment: '0.00',
+      },
+    })
+    Object.assign(snapshot.items[0], {
+      thumbnail: '',
+      sourceDiscount: '0.00',
+      allocatedDiscount: '0.00',
+      discount: '0.00',
+    })
+    Object.assign(record, {
+      notes: '',
+      tags: [],
+      changedEntryIds: [],
+      removedEntryIds: [],
+      changedAt: snapshot.observedAt,
+      lastCheckedAt: snapshot.observedAt,
+    })
+  }
+  for (const reservation of s.issuedCodes)
+    if (reservation.ownerSnapshot) reservation.ownerSnapshot.photos = []
+  const review = planLegacySupplierIdentityReview(s, {
+    accountId: 'local',
+    orderId: '101',
+  })
+  s.records[0] = applyLegacySupplierIdentityReview({
+    state: s,
+    plan: review.plan,
+    confirmed: true,
+    updatedAt: '2026-11-02T00:00:00Z',
+    reason: 'Recorded original supplier/code owner equivalence',
+  })
+  s.records[0].supplierCodeIdentityReviewUpdatedAt =
+    s.records[0].supplierCodeIdentityReview.updatedAt
+  const link = planSharedProductLink({
+    source: ref(s, 1),
+    target: ref(s, 0),
+    ...s,
+  })
+  const packing = activePackingState(
+    link.preparations,
+    s.allocations,
+    s.issuedCodes,
+    {
+      supplierIdentityEquivalences: supplierCodeIdentityEquivalences(s.records),
+    }
+  )
+  const backup = {
+    format: '1688-order-library',
+    version: 3,
+    exportedAt: '2026-11-03T00:00:00Z',
+    orders: s.records,
+    preparations: link.preparations,
+    history: [],
+    images: [],
+    ...packing,
+  }
+  const archive = createPackingBackup(backup, {
+    months: ['2026-09'],
+    orders: [
+      { accountId: 'local', orderId: '101', entryIds: ['1'] },
+      { accountId: 'local', orderId: '102', entryIds: ['1'] },
+    ],
+  })
+  const restored = validateBackup(JSON.parse(JSON.stringify(archive)))
+  assert.deepEqual(
+    restored.orders.find((record) => record.snapshot.orderId === '101')
+      .supplierCodeIdentityReview,
+    s.records[0].supplierCodeIdentityReview
+  )
+  assert.deepEqual(
+    restored.orders.map((record) => record.snapshot.items[0].price),
+    ['2.00', '3.00']
+  )
+  assert.deepEqual(
+    restored.preparations.map((prep) => prep.groups[0].baseCode),
+    ['CE26090101', 'CE26090101']
+  )
+  assert.ok(
+    restored.issuedCodes.every(
+      (code) => code.sellerId === 'Legacy displayed owner'
+    )
+  )
+  const scoped = createPackingBackup(backup, {
+    months: ['2026-09'],
+    orders: [{ accountId: 'local', orderId: '102', entryIds: ['1'] }],
+  })
+  const selected = validateBackup(JSON.parse(JSON.stringify(scoped)))
+  assert.equal(selected.orders.length, 1)
+  assert.equal(selected.orders[0].snapshot.items[0].quantity, '20')
+  assert.equal(selected.orders[0].snapshot.items[0].price, '3.00')
+  assert.ok(
+    selected.issuedCodes.every(
+      (code) =>
+        code.sellerId === 'Legacy displayed owner' &&
+        code.members.length === 1 &&
+        code.orderId === '102'
+    )
+  )
+})
+
+test('legacy review routing is exact supplied evidence and key ordering cannot create a false stale review', () => {
+  const s = legacyOwnerState()
+  s.affectedShipmentRevisions = [
+    { containerId: 'C', revisionId: 'C/r1', orderId: '101' },
+    { containerId: 'other', revisionId: 'other/r3', orderId: '102' },
+  ]
+  const reviewed = planLegacySupplierIdentityReview(s, {
+    accountId: 'local',
+    orderId: '101',
+  })
+  assert.deepEqual(reviewed.affectedShipmentRevisions, [
+    s.affectedShipmentRevisions[0],
+  ])
+  const reordered = Object.fromEntries(Object.entries(reviewed.plan).reverse())
+  assert.doesNotThrow(() =>
+    applyLegacySupplierIdentityReview({
+      state: s,
+      plan: reordered,
+      confirmed: true,
+      reason: 'Confirmed immutable owner equivalence',
+      updatedAt: '2026-11-02T00:00:00Z',
+    })
+  )
 })
