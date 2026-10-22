@@ -665,6 +665,28 @@ test('native active amendment epoch stages preparation and identity; forged and 
         }),
         candidate = structuredClone(oldContext.preparation)
       candidate.groups[0].baseCode = 'CE26090102'
+      await db.saveOrderCartonDraft({
+        orderId: '1001',
+        expectedRevision: 0,
+        draft: { count: 'invalid-count' },
+        contextContainerId: c.id,
+        expectedAmendment: oldContext.amendmentContext,
+      })
+      await db.savePackingReportDraft({
+        orderId: '1001',
+        expectedRevision: 0,
+        draft: { text: 'invalid report' },
+        contextContainerId: c.id,
+        expectedAmendment: oldContext.amendmentContext,
+      })
+      await db.updateOrderCapacities({
+        orderId: '1001',
+        values: { 2001: '7' },
+        expectedValues: { 2001: null },
+        expectedObservedAt: oldContext.record.snapshot.observedAt,
+        contextContainerId: c.id,
+        expectedAmendment: oldContext.amendmentContext,
+      })
       await db.savePreparations([candidate], {
         expectedRevisions: [candidate.revision],
         contextContainerId: c.id,
@@ -705,6 +727,24 @@ test('native active amendment epoch stages preparation and identity; forged and 
       } catch (error) {
         stale = error.code
       }
+      let staleCapacity
+      try {
+        await db.updateOrderCapacities({
+          orderId: '1001',
+          values: { 2001: '8' },
+          expectedValues: { 2001: null },
+          expectedObservedAt: oldContext.record.snapshot.observedAt,
+          contextContainerId: c.id,
+          expectedAmendment: oldContext.amendmentContext,
+        })
+      } catch (error) {
+        staleCapacity = error.code
+      }
+      const ordinary = await db.getOrderReconciliation({ orderId: '1001' }),
+        recoveredReport = await db.getPackingReportContext({
+          orderId: '1001',
+          contextContainerId: c.id,
+        })
       const fresh = await db.getOrderReconciliation({
           orderId: '1001',
           contextContainerId: c.id,
@@ -748,6 +788,19 @@ test('native active amendment epoch stages preparation and identity; forged and 
       return {
         forged,
         stale,
+        staleCapacity,
+        effectiveCapacity: during.records[0].unitsPerCarton?.['2001'] ?? null,
+        stagedCapacity: staged.record.unitsPerCarton['2001'],
+        canceledCapacity: canceled.records[0].unitsPerCarton?.['2001'] ?? null,
+        ordinaryDraft: ordinary.draft,
+        currentDraft: fresh.draft,
+        recoveredCount: fresh.recoveredDrafts.length,
+        recoveredValue: fresh.recoveredDrafts[0].value.count,
+        originalEpoch:
+          fresh.recoveredDrafts[0].amendmentContext.epoch ===
+          oldContext.amendmentContext.epoch,
+        reportDraft: recoveredReport.draft,
+        recoveredReportValue: recoveredReport.recoveredDrafts[0].value.text,
         duringCode: during.preparations[0].groups[0].baseCode,
         duringIdentity: !!during.records[0].supplierIdentityResolution,
         stagedCode: staged.preparation.groups[0].baseCode,
@@ -766,6 +819,17 @@ test('native active amendment epoch stages preparation and identity; forged and 
     assert.deepEqual(result, {
       forged: 'CONTAINER_MISSING',
       stale: 'AMENDMENT_CONTEXT_CONFLICT',
+      staleCapacity: 'AMENDMENT_CONTEXT_CONFLICT',
+      effectiveCapacity: null,
+      stagedCapacity: '7',
+      canceledCapacity: null,
+      ordinaryDraft: null,
+      currentDraft: null,
+      recoveredCount: 1,
+      recoveredValue: 'invalid-count',
+      originalEpoch: true,
+      reportDraft: null,
+      recoveredReportValue: 'invalid report',
       duringCode: 'CE26090101',
       duringIdentity: false,
       stagedCode: 'CE26090102',

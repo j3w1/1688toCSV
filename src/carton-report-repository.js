@@ -246,6 +246,16 @@ export function createCartonReportRepository({
         (dependency) => dependency.containerId !== input.contextContainerId
       ),
       manualFacts: value.batches.flatMap((batch) => batch.manualFacts || []),
+      ...(await domain.draftRecovery(
+        tx,
+        'report',
+        input,
+        input.contextContainerId
+          ? base.containers.find(
+              (container) => container.id === input.contextContainerId
+            )
+          : null
+      )),
     }
   }
   async function parseAsset(asset, reference) {
@@ -366,6 +376,9 @@ export function createCartonReportRepository({
             orderId: input.orderId,
             revision: (old?.revision || 0) + 1,
             value: clone(input.draft),
+            ...(container
+              ? { amendmentContext: domain.amendmentToken(container) }
+              : {}),
             updatedAt: nextEditTimestamp(old?.updatedAt),
           }
           tx.objectStore('orderCartonDrafts').put(draft)

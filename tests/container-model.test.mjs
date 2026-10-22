@@ -3,6 +3,7 @@ import assert from 'node:assert/strict'
 import {
   syntheticOrder,
   syntheticBatch,
+  syntheticManifest,
 } from './fixtures/container-fixture.mjs'
 import {
   captureContainerOrder,
@@ -138,4 +139,45 @@ test('stable per-unit contents and measured exceptions identify actual boxes and
   state.batches[0].revision++
   view = projectContainer(state, container)
   assert(view.issues.some((issue) => issue.code === 'CARTON_STALE'))
+})
+
+test('captured product rows retain canonical variant names, explicit blanks, material overrides and size state', () => {
+  const state = base(),
+    preparation = syntheticManifest().orders[0].preparation
+  const variant = preparation.groups[0].variants[0]
+  preparation.groups[0].spanishName = 'GRUPO'
+  preparation.groups[0].material = 'OBSOLETE GROUP MATERIAL'
+  Object.assign(variant, {
+    spanishName: '',
+    material: 'VIDRIO',
+    materialSource: 'manual',
+    materialOverrides: { 2001: { value: 'ACERO', source: 'manual' } },
+    variantSuffix: '01',
+    sizeSuffix: '02',
+    needsSizeMapping: false,
+    size: 'XL',
+    variant: 'Red / XL',
+  })
+  state.preparations = [preparation]
+  state.batches[0].groups = [
+    { orderId: '1001', groupId: preparation.groups[0].id },
+  ]
+  const container = draft(state)
+  container.draft.decisions = Object.fromEntries(
+    container.draft.orders[0].cartons.map((unit) => [unit.id, 'loaded'])
+  )
+  const row = projectContainer(state, container).products[0]
+  assert.equal(row.spanishName, '')
+  assert.equal(row.material, 'ACERO')
+  assert.equal(row.materialSource, 'manual')
+  assert.equal(row.variantSuffix, '01')
+  assert.equal(row.sizeSuffix, '02')
+  assert.equal(row.needsSizeMapping, false)
+  assert.equal(row.sourceSize, 'XL')
+  assert.equal(row.variantDescription, 'Red / XL')
+  assert.equal(row.cartonMarkCode, preparation.groups[0].baseCode)
+  variant.spanishName = 'LATER LIVE NAME'
+  variant.materialOverrides['2001'].value = 'LATER LIVE MATERIAL'
+  assert.equal(projectContainer(state, container).products[0].spanishName, '')
+  assert.equal(projectContainer(state, container).products[0].material, 'ACERO')
 })

@@ -17,7 +17,11 @@ import {
 } from './inventory-model.js'
 import { cartonBatchMetrics } from './carton-batches.js'
 import { shipmentMoney } from './shipment-money.js'
-import { validatePackingPreferences, barcodeValue } from './packing-model.js'
+import {
+  validatePackingPreferences,
+  barcodeValue,
+  variantMaterial,
+} from './packing-model.js'
 import { moneyToCents, centsToMoney } from './money.js'
 
 const clone = (value) => structuredClone(value)
@@ -439,10 +443,16 @@ function buildProductRows(
       source: member.record.snapshot.source || '1688',
       title: item.title,
       description: item.description,
-      spanishName: group?.spanishName || '',
+      spanishName: variant?.spanishName ?? group?.spanishName ?? '',
       category: group?.category || '',
-      material: group?.material || '',
+      material: variant ? variantMaterial(variant, entryId).value : '',
+      materialSource: variant ? variantMaterial(variant, entryId).source : '',
       size: variant?.sizeSuffix || '',
+      variantSuffix: variant?.variantSuffix || '',
+      sizeSuffix: variant?.sizeSuffix || '',
+      needsSizeMapping: variant?.needsSizeMapping === true,
+      sourceSize: variant?.size || '',
+      variantDescription: variant?.variant || '',
       baseCode: group?.baseCode || '',
       barcode,
       packingMonth: group?.month || member.preparation?.month || '',

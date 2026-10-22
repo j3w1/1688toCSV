@@ -154,6 +154,22 @@ export function createContainerRepository({
   function amendmentToken(container) {
     return { containerId: container.id, epoch: container.amendment.epoch }
   }
+  async function draftRecovery(tx, kind, reference, container) {
+    const currentId = draftId(kind, reference, container),
+      saved = await requested(tx.objectStore('orderCartonDrafts').getAll())
+    return {
+      draft: saved.find((draft) => draft.id === currentId) || null,
+      recoveredDrafts: container
+        ? saved.filter(
+            (draft) =>
+              draft.id !== currentId &&
+              orderKey(draft) === orderKey(reference) &&
+              draft.id.startsWith(`${kind}:`) &&
+              draft.amendmentContext?.containerId === container.id
+          )
+        : [],
+    }
+  }
   function refreshedMember(loaded, container, member) {
     const fresh = captureContainerOrder(
         overlay(loaded, container),
@@ -563,11 +579,7 @@ export function createContainerRepository({
     const reports = loaded.reports.filter(
         (report) => orderKey(report.orderKey || report) === orderKey(reference)
       ),
-      saved = await requested(
-        tx
-          .objectStore('orderCartonDrafts')
-          .get(draftId('cartons', reference, container))
-      )
+      recovery = await draftRecovery(tx, 'cartons', reference, container)
     const projection = {
       eligibility: Object.fromEntries(
         eligibleOrderItems(record, loaded.records).map((item) => [
@@ -597,7 +609,7 @@ export function createContainerRepository({
       preparation: contextualPreparation,
       batches,
       reports,
-      draft: saved || null,
+      ...recovery,
       projection,
       revisions: {
         ...reconciliationRevisions(loaded, reference),
@@ -930,6 +942,7 @@ export function createContainerRepository({
           ...ref(input),
           revision: (old?.revision || 0) + 1,
           value: clone(input.draft),
+          ...(container ? { amendmentContext: amendmentToken(container) } : {}),
           updatedAt: nextEditTimestamp(old?.updatedAt),
         }
         tx.objectStore('orderCartonDrafts').put(value)
@@ -937,44 +950,41 @@ export function createContainerRepository({
       })
     },
     updateOrderCapacities(input) {
-      return mutate('updateOrderCapacities', input, async (tx, loaded) => {
-        const { record } = orderScopeState(loaded, ref(input))
-        if (record.snapshot.observedAt !== input.expectedObservedAt)
-          fail('SOURCE_CONFLICT', 'The purchase source changed.')
-        for (const [entryId, value] of Object.entries(input.values || {})) {
-          if (
-            !record.snapshot.items.some((item) => item.entryId === entryId) ||
-            stableValue(record.unitsPerCarton?.[entryId] ?? null) !==
-              stableValue(input.expectedValues?.[entryId] ?? null)
-          )
-            fail(
-              'CAPACITY_CONFLICT',
-              'These capacities changed in another tab.',
-              { entryId }
+      return mutate('updateOrderCapacities', input, (tx, loaded) =>
+        saveOrderMetadata(tx, loaded, input, 'unitsPerCarton', (record) => {
+          if (record.snapshot.observedAt !== input.expectedObservedAt)
+            fail('SOURCE_CONFLICT', 'The purchase source changed.')
+          for (const [entryId, value] of Object.entries(input.values || {})) {
+            if (
+              !record.snapshot.items.some((item) => item.entryId === entryId) ||
+              stableValue(record.unitsPerCarton?.[entryId] ?? null) !==
+                stableValue(input.expectedValues?.[entryId] ?? null)
             )
-          if (
-            value !== null &&
-            (!/^\d+$/.test(String(value)) || BigInt(value) < 1n)
-          )
-            fail(
-              'INVALID_CAPACITY',
-              'Capacity must be a positive whole number or blank.'
+              fail(
+                'CAPACITY_CONFLICT',
+                'These capacities changed in another tab.',
+                { entryId }
+              )
+            if (
+              value !== null &&
+              (!/^\d+$/.test(String(value)) || BigInt(value) < 1n)
             )
-        }
-        record.unitsPerCarton = { ...record.unitsPerCarton }
-        for (const [id, value] of Object.entries(input.values || {})) {
-          if (value === null) delete record.unitsPerCarton[id]
-          else record.unitsPerCarton[id] = String(value)
-        }
-        record.unitsPerCartonUpdatedAt = nextEditTimestamp(
-          record.unitsPerCartonUpdatedAt
-        )
-        tx.objectStore('orders').put(record)
-        return {
-          record,
-          revisions: reconciliationRevisions(loaded, ref(input)),
-        }
-      })
+              fail(
+                'INVALID_CAPACITY',
+                'Capacity must be a positive whole number or blank.'
+              )
+          }
+          record.unitsPerCarton = { ...record.unitsPerCarton }
+          for (const [id, value] of Object.entries(input.values || {})) {
+            if (value === null) delete record.unitsPerCarton[id]
+            else record.unitsPerCarton[id] = String(value)
+          }
+          record.unitsPerCartonUpdatedAt = nextEditTimestamp(
+            record.unitsPerCartonUpdatedAt
+          )
+          return record
+        })
+      )
     },
     resolvePurchaseDate(input) {
       return mutate('resolvePurchaseDate', input, (tx, loaded) =>
@@ -1783,6 +1793,7 @@ export function createContainerRepository({
     amendmentFor,
     amendmentToken,
     draftId,
+    draftRecovery,
     refreshedMember,
   }
 }
