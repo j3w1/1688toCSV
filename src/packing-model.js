@@ -1849,10 +1849,14 @@ export function allocatePreparation(
   input,
   allocations,
   issuedCodes,
-  { snapshot } = {}
+  { snapshot, historicalReservations = [] } = {}
 ) {
   const preparation = validatePreparation(input)
-  const state = mergePackingState(allocations, issuedCodes)
+  const state = withHistoricalReservations(
+    allocations,
+    issuedCodes,
+    historicalReservations
+  )
   const issuedByCode = new Map(
     state.issuedCodes.map((entry) => [
       JSON.stringify([entry.accountId, entry.kind, entry.code]),
@@ -2014,7 +2018,8 @@ export function validatePreparationReservations(preparation, state) {
 export function activePackingState(
   preparations,
   allocations = [],
-  issuedCodes = []
+  issuedCodes = [],
+  { historicalReservations = [] } = {}
 ) {
   // Keep seller/month slots stable, but discard item counters from retired codes.
   const state = mergePackingState(allocations, [])
@@ -2123,5 +2128,47 @@ export function activePackingState(
   }
   // Validate duplicates once for the complete final set; rebuilding must stay
   // linear in product count rather than revalidating every growing prefix.
-  return mergePackingState(state.allocations, current)
+  return withHistoricalReservations(
+    state.allocations,
+    current,
+    historicalReservations
+  )
+}
+
+/** Sealed history occupies its old slots independently of ordinary checkpoints. */
+function withHistoricalReservations(
+  allocations,
+  issuedCodes,
+  historicalReservations
+) {
+  const state = mergePackingState(allocations, [])
+  const reservations = historicalReservations.map(validateIssuedCode)
+  for (const reservation of reservations) {
+    let allocation = state.allocations.find(
+      (value) =>
+        value.accountId === reservation.accountId &&
+        value.month === reservation.month
+    )
+    if (!allocation) {
+      allocation = {
+        accountId: reservation.accountId,
+        month: reservation.month,
+        groups: [],
+      }
+      state.allocations.push(allocation)
+    }
+    const number = Number(reservation.code.slice(6, 8))
+    let slot = allocation.groups.find((value) => value.number === number)
+    if (slot && slot.sellerId !== reservation.sellerId)
+      throw new Error('Historical code group belongs to another seller')
+    if (!slot) {
+      slot = { number, sellerId: reservation.sellerId, nextItem: 1 }
+      allocation.groups.push(slot)
+    }
+    slot.nextItem = Math.max(
+      slot.nextItem,
+      Number(reservation.code.slice(8, 10)) + 1
+    )
+  }
+  return mergePackingState(state.allocations, [...issuedCodes, ...reservations])
 }
