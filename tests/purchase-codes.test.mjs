@@ -3,6 +3,9 @@ import assert from 'node:assert/strict'
 import {
   purchaseMonthForCodes,
   purchaseSupplierForCodes,
+  planLegacySupplierIdentityReview,
+  applyLegacySupplierIdentityReview,
+  supplierCodeIdentityEquivalences,
   planPurchaseCodeReview,
   assertPurchaseCodeMonths,
   assertConsumedCodeChanges,
@@ -15,6 +18,8 @@ import {
   allocatePreparation,
   barcodeValue,
   createPreparation,
+  validatePreparationReservations,
+  codeOwnerEvidence,
 } from '../src/packing-model.js'
 import {
   planSharedProductLink,
@@ -947,4 +952,201 @@ test('malformed permanent lock identity/member ownership fails closed instead of
       /Historical code/
     )
   }
+})
+
+function legacyOwnerState() {
+  const s = state()
+  s.preparations[0].sellerId = 'Legacy displayed owner'
+  for (const allocation of s.allocations.filter(
+    (value) => value.month === '2026-09'
+  ))
+    for (const group of allocation.groups)
+      group.sellerId = 'Legacy displayed owner'
+  for (const reservation of s.issuedCodes.filter(
+    (value) => value.month === '2026-09'
+  ))
+    reservation.sellerId = 'Legacy displayed owner'
+  return s
+}
+
+test('legacy refusal -> one reasoned attestation -> eligible same-store link preserves original code namespace and source bytes', () => {
+  const s = legacyOwnerState(),
+    before = structuredClone(s)
+  assert.throws(
+    () => planSharedProductLink({ source: ref(s, 1), target: ref(s, 0), ...s }),
+    /legacy supplier code identity/
+  )
+  const review = planLegacySupplierIdentityReview(s, {
+    accountId: 'local',
+    orderId: '101',
+  })
+  assert.equal(review.changes[0].before, 'Legacy displayed owner')
+  assert.equal(review.changes[0].after, 'factory-id')
+  assert.equal(review.changes[0].codeOwners[0].baseCode, 'CE26090101')
+  assert.throws(
+    () =>
+      applyLegacySupplierIdentityReview({
+        state: s,
+        plan: review.plan,
+        confirmed: true,
+        updatedAt: '2026-11-02T00:00:00Z',
+        reason: ' ',
+      }),
+    /reason/
+  )
+  const confirmed = applyLegacySupplierIdentityReview({
+    state: s,
+    plan: review.plan,
+    confirmed: true,
+    updatedAt: '2026-11-02T00:00:00Z',
+    reason: 'Reviewed original supplier identity',
+  })
+  assert.deepEqual(confirmed.snapshot, before.records[0].snapshot)
+  assert.equal(
+    confirmed.supplierCodeIdentityReview.provenance,
+    'manual-confirmed'
+  )
+  assert.deepEqual(s.issuedCodes, before.issuedCodes)
+  assert.deepEqual(s.preparations, before.preparations)
+  s.records[0] = confirmed
+  assert.ok(
+    repeatProductCandidates({ source: ref(s, 1), ...s }).some(
+      (candidate) => candidate.orderId === '101'
+    )
+  )
+  const linked = planSharedProductLink({
+    source: ref(s, 1),
+    target: ref(s, 0),
+    ...s,
+  })
+  const packing = activePackingState(
+    linked.preparations,
+    s.allocations,
+    s.issuedCodes,
+    {
+      supplierIdentityEquivalences: supplierCodeIdentityEquivalences(s.records),
+    }
+  )
+  assert.equal(
+    packing.issuedCodes.find(
+      (code) => code.kind === 'base' && code.code === 'CE26090101'
+    ).sellerId,
+    'Legacy displayed owner'
+  )
+  assert.ok(
+    packing.issuedCodes.every((code) => code.code.startsWith('CE26090101'))
+  )
+  assert.equal(
+    linked.preparations.find((prep) => prep.orderId === '102').sellerId,
+    'factory-id'
+  )
+  for (const prep of linked.preparations)
+    validatePreparationReservations({ ...prep, revision: 1 }, packing)
+  const code = packing.issuedCodes.find((code) => code.kind === 'barcode'),
+    source = linked.preparations.find((prep) => prep.orderId === '102')
+  assert.equal(
+    codeOwnerEvidence(code, source, packing.issuedCodes).currentGroup.id,
+    source.groups[0].id
+  )
+  const restored = JSON.parse(
+    JSON.stringify({
+      ...s,
+      preparations: linked.preparations,
+      allocations: packing.allocations,
+      issuedCodes: packing.issuedCodes,
+    })
+  )
+  assert.deepEqual(
+    activePackingState(
+      restored.preparations,
+      restored.allocations,
+      restored.issuedCodes
+    ),
+    packing
+  )
+  assert.deepEqual(
+    restored.records.map((record) => record.snapshot),
+    before.records.map((record) => record.snapshot)
+  )
+  assert.equal(
+    restored.records[0].supplierCodeIdentityReview.reason,
+    'Reviewed original supplier identity'
+  )
+})
+
+test('legacy attestation rejects stale source/preparation/equivalence and consumed confirmation requires amendment without unlocking links', () => {
+  const s = legacyOwnerState(),
+    review = planLegacySupplierIdentityReview(s, {
+      accountId: 'local',
+      orderId: '101',
+    })
+  for (const mutate of [
+    (value) => {
+      value.records[0].snapshot.items[0].price = '100.00'
+    },
+    (value) => {
+      value.preparations[0].revision++
+    },
+    (value) => {
+      value.records[0].supplierCodeIdentityReview = { changed: true }
+    },
+    (value) => {
+      value.records[0].supplierIdentityResolution = {
+        sellerId: 'factory-id',
+        provenance: 'manual-confirmed',
+        updatedAt: '2026-11-01T00:00:00Z',
+      }
+    },
+  ]) {
+    const changed = structuredClone(s)
+    mutate(changed)
+    assert.throws(
+      () =>
+        applyLegacySupplierIdentityReview({
+          state: changed,
+          plan: review.plan,
+          confirmed: true,
+          updatedAt: '2026-11-02T00:00:00Z',
+          reason: 'Operator review',
+        }),
+      /source or preparation changed/
+    )
+  }
+  const locks = consumptionLocksForManifest(manifest(s), s),
+    consumed = { ...s, locks }
+  const sealedReview = planLegacySupplierIdentityReview(consumed, {
+    accountId: 'local',
+    orderId: '101',
+  })
+  assert.equal(sealedReview.requiresAmendment, true)
+  assert.throws(
+    () =>
+      applyLegacySupplierIdentityReview({
+        state: consumed,
+        plan: sealedReview.plan,
+        confirmed: true,
+        updatedAt: '2026-11-22T00:00:00Z',
+        reason: 'Historical correction',
+      }),
+    /versioned container amendment/
+  )
+  const corrected = applyLegacySupplierIdentityReview({
+    state: consumed,
+    plan: sealedReview.plan,
+    confirmed: true,
+    amendment: true,
+    updatedAt: '2026-11-22T00:00:00Z',
+    reason: 'Historical correction',
+  })
+  assert.throws(
+    () =>
+      planSharedProductLink({
+        source: ref(s, 1),
+        target: ref(s, 0),
+        ...consumed,
+        records: [corrected, ...s.records.slice(1)],
+      }),
+    /consumed/
+  )
+  assert.deepEqual(consumed.locks, locks)
 })

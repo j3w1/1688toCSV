@@ -8,6 +8,7 @@ import {
   validatePreparation,
   validateIssuedCode,
   codeReservationMembers,
+  packingCodeSellerId,
 } from './packing-model.js'
 import { eligibleOrderItems, sourceRevision } from './inventory-model.js'
 
@@ -717,7 +718,8 @@ export function planPurchaseCodeReview(
     if (
       old?.groups.some((group) => group.baseCode) &&
       supplier.sellerId &&
-      old.sellerId !== supplier.sellerId
+      old.sellerId !== supplier.sellerId &&
+      !hasReviewedSupplierCodeIdentity(record, old)
     ) {
       problem(
         'LEGACY_SUPPLIER_IDENTITY_REVIEW_REQUIRED',
@@ -781,11 +783,12 @@ export function planPurchaseCodeReview(
     drafts.push(validatePreparation(draft))
   }
   const historicalReservations = historicalCodeReservations(locksOf(state))
+  const supplierIdentityEquivalences = supplierCodeIdentityEquivalences(records)
   let packing = activePackingState(
     preparations,
     state.allocations ?? [],
     state.issuedCodes ?? [],
-    { historicalReservations }
+    { historicalReservations, supplierIdentityEquivalences }
   )
   const proposed = []
   if (!issues.length) {
@@ -806,7 +809,11 @@ export function planPurchaseCodeReview(
           draft,
           packing.allocations,
           packing.issuedCodes,
-          { snapshot: record.snapshot, historicalReservations }
+          {
+            snapshot: record.snapshot,
+            historicalReservations,
+            supplierIdentityEquivalences,
+          }
         )
         packing = allocation
         proposed.push(allocation.preparation)
@@ -870,4 +877,170 @@ export function planPurchaseCodeReview(
     issues: clone(issues),
   }
   return { plan, changes, issues, expectedRevisions }
+}
+
+/** Portable reviewed equivalence, scoped to one source order and its actual code owners. */
+export function supplierCodeIdentityEquivalences(records = []) {
+  const result = []
+  for (const record of records) {
+    const review = record.supplierCodeIdentityReview,
+      identity = purchaseSupplierForCodes(record)
+    if (
+      !review ||
+      identity.conflict ||
+      !identity.sellerId ||
+      review.accountId !== (record.snapshot.accountId || 'local') ||
+      review.orderId !== record.snapshot.orderId ||
+      review.canonicalSellerId !== identity.sellerId ||
+      review.storeId !== identity.storeId ||
+      review.provenance !== 'manual-confirmed' ||
+      !calendarDate(review.updatedAt) ||
+      !review.reason?.trim() ||
+      !calendarDate(review.reviewedObservedAt) ||
+      !Number.isSafeInteger(review.reviewedPreparationRevision) ||
+      review.reviewedPreparationRevision < 0 ||
+      !Array.isArray(review.codeOwners) ||
+      !review.legacySellerId ||
+      review.codeOwners.some(
+        (owner) => !owner.groupId || !/^CE\d{8}$/.test(owner.baseCode)
+      )
+    )
+      continue
+    result.push(clone(review))
+  }
+  return result
+}
+export function hasReviewedSupplierCodeIdentity(record, preparation) {
+  const identity = purchaseSupplierForCodes(record)
+  return Boolean(
+    !identity.conflict &&
+    identity.sellerId &&
+    (preparation.sellerId === identity.sellerId ||
+      supplierCodeIdentityEquivalences([record]).some(
+        (review) => review.legacySellerId === preparation.sellerId
+      ))
+  )
+}
+
+/** One review previews identity equivalence; no code, prefix, reservation or source changes. */
+export function planLegacySupplierIdentityReview(state, reference) {
+  const record = (state.records ?? state.orders ?? []).find(
+    (value) => key(value) === key(reference)
+  )
+  const preparation = (state.preparations ?? []).find(
+    (value) => key(value) === key(reference)
+  )
+  if (!record || !preparation)
+    throw codeError(
+      'PURCHASE_SOURCE_MISSING',
+      'The purchase code identity changed. Reopen the review.'
+    )
+  const identity = purchaseSupplierForCodes(record)
+  if (!identity.sellerId || identity.conflict)
+    throw codeError(
+      'SELLER_IDENTITY_REQUIRED',
+      'Resolve the original supplier identity before reviewing its historical code owner.'
+    )
+  const codeOwners = preparation.groups
+    .filter(
+      (group) =>
+        group.baseCode &&
+        packingCodeSellerId(preparation, group, state) === preparation.sellerId
+    )
+    .map((group) => ({ groupId: group.id, baseCode: group.baseCode }))
+  const expectedSourceRevision = sourceRevision(record, preparation)
+  const requiresAmendment = locksOf(state).some(
+    (lock) =>
+      lock.kind === 'code-consumption' &&
+      (key(lock) === key(reference) ||
+        lock.lineages.some((lineage) =>
+          lineage.members.some((member) => key(member) === key(reference))
+        ))
+  )
+  const plan = {
+    accountId: preparation.accountId,
+    orderId: preparation.orderId,
+    legacySellerId: preparation.sellerId,
+    canonicalSellerId: identity.sellerId,
+    storeId: identity.storeId,
+    codeOwners,
+    expectedObservedAt: record.snapshot.observedAt,
+    expectedPreparationRevision: preparation.revision,
+    expectedSourceRevision,
+    expectedSupplierResolution: clone(
+      record.supplierIdentityResolution ?? null
+    ),
+    expectedEquivalence: clone(record.supplierCodeIdentityReview ?? null),
+    requiresAmendment,
+  }
+  return {
+    plan,
+    changes: [
+      {
+        accountId: preparation.accountId,
+        orderId: preparation.orderId,
+        before: preparation.sellerId,
+        after: identity.sellerId,
+        codeOwners: clone(codeOwners),
+        source: identity.provenance,
+      },
+    ],
+    issues: [],
+    expectedRevisions: [preparation.revision],
+    requiresAmendment,
+  }
+}
+
+/** Storage invokes inside its guarded confirmation transaction, never from rendering. */
+export function applyLegacySupplierIdentityReview({
+  state,
+  plan,
+  confirmed,
+  amendment = false,
+  updatedAt,
+  reason,
+}) {
+  if (confirmed !== true)
+    throw codeError(
+      'IDENTITY_REVIEW_REQUIRED',
+      'Confirm that the historical code owner and canonical supplier identify the same supplier.'
+    )
+  if (typeof reason !== 'string' || !reason.trim())
+    throw codeError(
+      'IDENTITY_REVIEW_REQUIRED',
+      'Record the reason for confirming supplier identity equivalence.'
+    )
+  if (!calendarDate(updatedAt))
+    throw codeError(
+      'IDENTITY_REVIEW_REQUIRED',
+      'The identity review requires its recorded confirmation time.'
+    )
+  const current = planLegacySupplierIdentityReview(state, plan).plan
+  if (JSON.stringify(current) !== JSON.stringify(plan))
+    throw codeError(
+      'STALE_IDENTITY_REVIEW',
+      'The source or preparation changed. Review the supplier identity again.'
+    )
+  if (current.requiresAmendment && !amendment)
+    throw codeError(
+      'CONSUMED_CODE_LINEAGE',
+      'Consumed supplier identity corrections require a versioned container amendment.'
+    )
+  const record = (state.records ?? state.orders ?? []).find(
+    (value) => key(value) === key(plan)
+  )
+  const review = {
+    accountId: plan.accountId,
+    orderId: plan.orderId,
+    legacySellerId: plan.legacySellerId,
+    canonicalSellerId: plan.canonicalSellerId,
+    storeId: plan.storeId,
+    codeOwners: clone(plan.codeOwners),
+    provenance: 'manual-confirmed',
+    updatedAt,
+    reason: reason.trim(),
+    reviewedObservedAt: plan.expectedObservedAt,
+    reviewedPreparationRevision: plan.expectedPreparationRevision,
+  }
+  return { ...clone(record), supplierCodeIdentityReview: review }
 }

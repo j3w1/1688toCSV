@@ -18,12 +18,24 @@ export function createRepeatProductsRepository({
 }) {
   async function load() {
     return read(
-      ['orders', 'preparations', 'cartonBatches', 'shipmentLocks'],
+      [
+        'orders',
+        'preparations',
+        'cartonBatches',
+        'shipmentLocks',
+        'packingAllocations',
+        'issuedCodes',
+      ],
       async (tx) => ({
         records: await requested(tx.objectStore('orders').getAll()),
         preparations: await requested(tx.objectStore('preparations').getAll()),
         batches: await requested(tx.objectStore('cartonBatches').getAll()),
         locks: await requested(tx.objectStore('shipmentLocks').getAll()),
+        allocations:
+          (await requested(tx.objectStore('packingAllocations').getAll())) ??
+          [],
+        issuedCodes:
+          (await requested(tx.objectStore('issuedCodes').getAll())) ?? [],
       })
     )
   }

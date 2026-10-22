@@ -1641,7 +1641,17 @@ export function codeOwnerEvidence(reservation, preparation, issuedCodes = []) {
     preparation.previousPacking,
     preparation.previousPacking?.defaults,
   ]
-    .filter((view) => view?.sellerId === reservation.sellerId)
+    .filter(
+      (view) =>
+        view?.sellerId === reservation.sellerId ||
+        (reservation.sharedProductId &&
+          view?.groups.some(
+            (group) =>
+              group.sharedProductId === reservation.sharedProductId &&
+              group.sharedStoreId === reservation.sharedStoreId &&
+              group.baseCode === reservation.code.slice(0, 10)
+          ))
+    )
     .map((view) => ({
       current: view === preparation,
       groups: view.groups.filter(
@@ -1849,7 +1859,11 @@ export function allocatePreparation(
   input,
   allocations,
   issuedCodes,
-  { snapshot, historicalReservations = [] } = {}
+  {
+    snapshot,
+    historicalReservations = [],
+    supplierIdentityEquivalences = [],
+  } = {}
 ) {
   const preparation = validatePreparation(input)
   const state = withHistoricalReservations(
@@ -1879,7 +1893,10 @@ export function allocatePreparation(
       orderId: preparation.orderId,
       groupId: group.id,
       ...(variant ? { variantId: variant.id } : {}),
-      sellerId: preparation.sellerId,
+      sellerId: packingCodeSellerId(preparation, group, {
+        ...state,
+        supplierIdentityEquivalences,
+      }),
       month: groupPackingMonth(preparation, group),
       ...(group.sharedProductId
         ? {
@@ -1933,12 +1950,12 @@ export function allocatePreparation(
         : mergeCodeOwners(existing, reservation)
     )
   }
-  const claimGroup = (allocation, number) => {
+  const claimGroup = (allocation, number, sellerId = preparation.sellerId) => {
     let group = allocation.groups.find((entry) => entry.number === number)
-    if (group && group.sellerId !== preparation.sellerId)
+    if (group && group.sellerId !== sellerId)
       throw new Error('This monthly group belongs to another seller')
     if (!group) {
-      group = { number, sellerId: preparation.sellerId, nextItem: 1 }
+      group = { number, sellerId, nextItem: 1 }
       allocation.groups.push(group)
     }
     return group
@@ -1973,7 +1990,14 @@ export function allocatePreparation(
       group.baseCode = `${codePrefix(month)}${String(slot.number).padStart(2, '0')}${String(slot.nextItem).padStart(2, '0')}`
     }
     reserve(group.baseCode, group)
-    const slot = claimGroup(allocation, Number(group.baseCode.slice(6, 8)))
+    const slot = claimGroup(
+      allocation,
+      Number(group.baseCode.slice(6, 8)),
+      packingCodeSellerId(preparation, group, {
+        ...state,
+        supplierIdentityEquivalences,
+      })
+    )
     slot.nextItem = Math.max(
       slot.nextItem,
       Number(group.baseCode.slice(8, 10)) + 1
@@ -1988,7 +2012,11 @@ export function allocatePreparation(
   return { preparation: validatePreparation(preparation), ...validated }
 }
 
-export function validatePreparationReservations(preparation, state) {
+export function validatePreparationReservations(
+  preparation,
+  state,
+  options = {}
+) {
   if (
     preparation.revision < 1 ||
     preparation.groups.some((group) => !group.baseCode)
@@ -1997,7 +2025,8 @@ export function validatePreparationReservations(preparation, state) {
   const allocated = allocatePreparation(
     preparation,
     state.allocations,
-    state.issuedCodes
+    state.issuedCodes,
+    options
   )
   if (
     allocated.issuedCodes.length !== state.issuedCodes.length ||
@@ -2030,7 +2059,7 @@ export function activePackingState(
   preparations,
   allocations = [],
   issuedCodes = [],
-  { historicalReservations = [] } = {}
+  { historicalReservations = [], supplierIdentityEquivalences = [] } = {}
 ) {
   // Keep seller/month slots stable, but discard item counters from retired codes.
   const state = mergePackingState(allocations, [])
@@ -2065,12 +2094,17 @@ export function activePackingState(
         months.set(key, allocation)
         state.allocations.push(allocation)
       }
+      const sellerId = packingCodeSellerId(preparation, group, {
+        allocations: state.allocations,
+        issuedCodes,
+        supplierIdentityEquivalences,
+      })
       const number = Number(group.baseCode.slice(6, 8))
       let slot = allocation.groups.find((entry) => entry.number === number)
-      if (slot && slot.sellerId !== preparation.sellerId)
+      if (slot && slot.sellerId !== sellerId)
         throw new Error('This monthly group belongs to another seller')
       if (!slot) {
-        slot = { number, sellerId: preparation.sellerId, nextItem: 1 }
+        slot = { number, sellerId, nextItem: 1 }
         allocation.groups.push(slot)
       }
       slot.nextItem = Math.max(
@@ -2081,7 +2115,7 @@ export function activePackingState(
         accountId: preparation.accountId,
         orderId: preparation.orderId,
         groupId: group.id,
-        sellerId: preparation.sellerId,
+        sellerId,
         month,
         ...(group.sharedProductId
           ? {
@@ -2230,4 +2264,52 @@ function mergeHistoricalCodeOwners(existing, incoming) {
       })
   }
   return { ...canonical, members: [...members.values()] }
+}
+
+/** A code keeps its recorded namespace owner; reviewed aliases do not rename it. */
+export function packingCodeSellerId(
+  preparation,
+  group,
+  { allocations = [], issuedCodes = [], supplierIdentityEquivalences = [] } = {}
+) {
+  if (!group.sharedProductId) return preparation.sellerId
+  const committed = issuedCodes.find(
+    (entry) =>
+      entry.accountId === preparation.accountId &&
+      entry.kind === 'base' &&
+      entry.code === group.baseCode &&
+      entry.sharedProductId === group.sharedProductId &&
+      entry.sharedStoreId === group.sharedStoreId
+  )
+  if (committed) return committed.sellerId
+  const owners = [
+    ...new Set(
+      supplierIdentityEquivalences
+        .filter(
+          (review) =>
+            review.accountId === preparation.accountId &&
+            review.storeId === group.sharedStoreId &&
+            review.provenance === 'manual-confirmed' &&
+            review.codeOwners?.some(
+              (owner) => owner.baseCode === group.baseCode
+            )
+        )
+        .map((review) => review.legacySellerId)
+    ),
+  ]
+  if (owners.length > 1)
+    throw new Error('Reviewed supplier equivalence has conflicting code owners')
+  const owner = owners[0] ?? preparation.sellerId
+  const slot = allocations
+    .find(
+      (allocation) =>
+        allocation.accountId === preparation.accountId &&
+        allocation.month === groupPackingMonth(preparation, group)
+    )
+    ?.groups.find((slot) => slot.number === Number(group.baseCode.slice(6, 8)))
+  if (owners.length && slot && slot.sellerId !== owner)
+    throw new Error(
+      'Reviewed supplier equivalence does not own this code prefix'
+    )
+  return owner
 }
