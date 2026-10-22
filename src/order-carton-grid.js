@@ -595,6 +595,18 @@ export async function openLegacyCartonReview({
             : {}),
           reason: reason.value.trim(),
           ...(contextContainerId ? { contextContainerId } : {}),
+          ...(review.amendmentContext ||
+          Object.values(review.expectedOrderRevisions || {}).find(
+            (revision) => revision.amendmentContext
+          )?.amendmentContext
+            ? {
+                expectedAmendment:
+                  review.amendmentContext ||
+                  Object.values(review.expectedOrderRevisions).find(
+                    (revision) => revision.amendmentContext
+                  ).amendmentContext,
+              }
+            : {}),
         },
         signature = JSON.stringify(args)
       if (intent?.signature !== signature)
@@ -1128,6 +1140,15 @@ export async function createOrderCartonSession({
       : {}),
   })
   let context = await repository.getOrderReconciliation(repositoryRef())
+  const amendmentContext = clone(
+    context.amendmentContext || context.revisions?.amendmentContext
+  )
+  const mutationContext = () => ({
+    ...(getContextContainerId()
+      ? { contextContainerId: getContextContainerId() }
+      : {}),
+    ...(amendmentContext ? { expectedAmendment: amendmentContext } : {}),
+  })
   const restored = context.draft?.value || context.draft || {}
   let expectedDraftRevision = context.draft?.revision ?? 0
   let domainDraft =
@@ -1157,9 +1178,11 @@ export async function createOrderCartonSession({
     async persist(value) {
       const saved = await repository.saveOrderCartonDraft({
         ...orderRef,
+        ...mutationContext(),
         expectedRevision: expectedDraftRevision,
         draft: clone({
           version: 1,
+          ...(amendmentContext ? { amendmentContext } : {}),
           plannerDraft: domainDraft,
           rawCells: value.rawCells,
           generation: value.generation,
@@ -1432,6 +1455,7 @@ export async function createOrderCartonSession({
       )
     writeWork = repository.updateOrderCapacities({
       ...orderRef,
+      ...mutationContext(),
       values,
       expectedValues,
       expectedObservedAt: context.record.snapshot.observedAt,
@@ -1678,6 +1702,7 @@ export async function createOrderCartonSession({
         const contextContainerId = getContextContainerId()
         if (contextContainerId)
           input.draft.contextContainerId = contextContainerId
+        if (amendmentContext) input.draft.amendmentContext = amendmentContext
         const signature = JSON.stringify([input.draft, context.revisions])
         if (confirmIntent?.signature !== signature)
           confirmIntent = { signature, intentId: crypto.randomUUID() }
