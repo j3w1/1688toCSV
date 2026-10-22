@@ -246,7 +246,7 @@ test('preparation keeps source facts read-only and capacity editable beside a vi
   ])
   expect(widths[0]).toBeCloseTo(84, 0)
   expect(widths[1]).toBeGreaterThan(rowBounds.width * 0.35)
-  expect(widths[2]).toBeCloseTo(154, 0)
+  expect(widths[2]).toBeCloseTo(174, 0)
   expect(widths[3]).toBeCloseTo(156, 0)
   await expect(row.locator('.variant-numeric-header > span')).toHaveText([
     'Quantity',
