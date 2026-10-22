@@ -1155,6 +1155,24 @@ test('legacy attestation rejects stale source/preparation/equivalence and consum
 
 test('typed packing archives retain reviewed legacy owner equivalence and source values for full and scoped restore', () => {
   const s = legacyOwnerState()
+  // Transport fixtures follow the existing 1688 China-time contract. The
+  // October literal is September in UTC, so a UTC conversion would be wrong.
+  s.records[0].snapshot.purchasedAt = '2026-09-30T23:30:00+08:00'
+  s.records[1].snapshot.purchasedAt = '2026-10-01T07:30:00+08:00'
+  assert.deepEqual(s.records.slice(0, 2).map(purchaseMonthForCodes), [
+    '2026-09',
+    '2026-10',
+  ])
+  assert.equal(
+    new Date(s.records[1].snapshot.purchasedAt).toISOString().slice(0, 7),
+    '2026-09'
+  )
+  assert.deepEqual(
+    s.preparations
+      .slice(0, 2)
+      .map((preparation) => preparation.groups[0].baseCode.slice(2, 6)),
+    ['2609', '2610']
+  )
   for (const record of s.records) {
     const snapshot = record.snapshot,
       amount = `${BigInt(snapshot.items[0].quantity) * BigInt(snapshot.items[0].price.split('.')[0])}.00`
