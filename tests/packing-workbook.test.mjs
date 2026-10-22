@@ -4,6 +4,7 @@ import { CFB, read, SSF } from 'xlsx'
 import { DOMParser } from 'linkedom'
 import {
   createPackingWorkbook,
+  createPreparedPackingWorkbook,
   planPackingWorkbook,
   PACKING_WORKBOOK_COLUMNS,
   PACKING_WORKBOOK_COLUMN_ORDER,
@@ -57,6 +58,39 @@ const partText = (archive, name) =>
   new TextDecoder().decode(
     archive.FileIndex[archive.FullPaths.indexOf(`Root Entry/${name}`)]?.content
   )
+
+test('prepared workbook writer retains editable cells and an empty frozen worksheet', async () => {
+  const plan = planPackingWorkbook([source()], options)
+  const empty = {
+    ...structuredClone(plan),
+    name: 'Se quedó',
+    products: [],
+    rows: plan.rows.slice(0, 5),
+    lastRow: 5,
+    lastProductRow: 5,
+    totalRow: undefined,
+    filters: false,
+    merges: plan.merges.filter((range) => Number(range.match(/\d+$/)[0]) <= 5),
+  }
+  const prepared = {
+    ...plan,
+    sheets: [{ ...plan, name: 'Packing list' }, empty],
+  }
+  const before = structuredClone(prepared)
+  const bytes = await createPreparedPackingWorkbook(prepared)
+  const workbook = read(bytes, { type: 'array' })
+  assert.deepEqual(workbook.SheetNames, ['Packing list', 'Se quedó'])
+  assert.equal(workbook.Sheets['Packing list'][address('quantity', 7)].v, 100)
+  assert.equal(
+    workbook.Sheets['Se quedó']['!ref'].split(':')[1].match(/\d+$/)[0],
+    '5'
+  )
+  assert.deepEqual(prepared, before)
+  assert.deepEqual(
+    await createPreparedPackingWorkbook(plan),
+    await createPackingWorkbook([source()], options)
+  )
+})
 
 test('exactly one localized column header follows a blank spacer and preserves product offsets', () => {
   for (const language of ['en', 'es', 'zh']) {
