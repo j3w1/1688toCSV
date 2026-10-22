@@ -177,6 +177,8 @@ export function createImportController({
     const orders = records.filter((record) => ids.has(record.snapshot.orderId))
     if (!orders.length || orders.length !== ids.size)
       throw new Error('Choose saved orders to refresh.')
+    if (orders.some((record) => record.snapshot.source === 'other'))
+      throw new Error('Orders from other sources cannot be refreshed from 1688')
     const job = baseJob('refresh')
     // A refreshed order may have gained or lost lines; old row counts are not completeness evidence.
     job.orders = orders.map((record) => queued(record.snapshot))

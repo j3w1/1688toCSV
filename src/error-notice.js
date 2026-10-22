@@ -93,7 +93,10 @@ export function showErrorNotice(
     if (context.seller) values.append(element('div', String(context.seller)))
     if (context.orderId)
       values.append(
-        orderReference(context.orderId, { sourceType: context.sourceType })
+        orderReference(context.orderId, {
+          sourceType: context.sourceType,
+          snapshot: context.snapshot,
+        })
       )
     if (context.code)
       values.append(element('code', String(context.code), 'ce-code'))

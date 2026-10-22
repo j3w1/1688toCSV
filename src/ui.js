@@ -13,14 +13,27 @@ import {
 import { decorateIcon, icon } from './icons.js'
 import { preparationHelp } from './preparation-help.js'
 import { setCodeText, CODE_READING_HELP } from './code-display.js'
+import { orderDisplayReference } from './other-orders.js'
 
 /** Keep the full copyable order number and its source link together. */
-export function orderReference(orderId, { className = '', sourceType } = {}) {
+export function orderReference(
+  orderId,
+  { className = '', sourceType, snapshot, sourceLink = true } = {}
+) {
   const pair = element('span', undefined, 'order-reference-pair')
   pair.append(
-    copyTextButton(orderId, { label: 'Copy order number', className })
+    copyTextButton(snapshot ? orderDisplayReference(snapshot) : orderId, {
+      label: 'Copy order number',
+      className,
+    })
   )
-  if (sourceType === 'spreadsheet' || !/^[1-9]\d*$/.test(String(orderId)))
+  if (
+    !sourceLink ||
+    snapshot?.source === 'other' ||
+    sourceType === 'spreadsheet' ||
+    snapshot?.sourceType === 'spreadsheet' ||
+    !/^[1-9]\d*$/.test(String(orderId))
+  )
     return pair
   const link = element('a', undefined, 'order-source-link icon-button')
   link.href = `https://air.1688.com/app/ctf-page/trade-order-detail/index.html?orderId=${orderId}`

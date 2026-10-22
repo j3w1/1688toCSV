@@ -1539,7 +1539,7 @@ function planCartonWorksheet(rows, options) {
               productIdentity(content, batch.accountId || 'local')
             ),
             code = content.barcode || source?.barcode || content.entryId,
-            order = String(content.orderId)
+            order = String(source?.orderReference || content.orderId)
           return `${code} × ${content.quantity} · ${words[language][2]} ${order}`
         })
         .join('\n'),

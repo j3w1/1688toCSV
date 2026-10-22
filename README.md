@@ -22,6 +22,10 @@ Open **Extensions → Developer mode → Load unpacked** and select **dist**. In
 
 ## Import and prepare
 
+Orders bought elsewhere can use the same workspace. In **Orders → Add order**, enter the supplier, your order reference and date, then add products with descriptions, specs, whole quantities and CNY unit prices. Photos are optional: choose a local PNG, JPEG, WebP or GIF smaller than 1.4 MB. **Save order** validates the complete order before saving it. The new order appears marked **Other source**, with your reference and no invented 1688 link. A supplier/reference pair can be created only once.
+
+To enter a file instead, open **Add order → Import order JSON**, choose the file, review its fields, then **Save order**. The [documented JSON format](docs/automation.md#orders-from-other-sources) uses the same validation. Orders from other sources keep the normal packing lists, CE codes, label/carton PDFs, exports and Backup/Restore. They are omitted from 1688 refreshes. Existing source records are not converted or given a guessed origin.
+
 1. Open your [1688 orders](https://work.1688.com/home/buyer.htm), tick the orders you want, and choose **Import selected**. Confirm the count and keep the list open while the import runs. The reader tries a background tab, then an unfocused window, then a visible tab automatically, according to what the browser allows. If 1688 asks for a sign-in or verification, the import pauses and the workspace shows one notice: choose **Open the 1688 tab**, finish the step, then **Resume import**. Older paused queues need **Resume** or a new **Refresh**; reopening the workspace does not restart saved bulk jobs.
 2. Click **Open Workspace**. If a new tab is blocked, use **Open Workspace here** after the import finishes.
 3. In **Orders**, filter purchase months with the month chips, choose orders, then select the product rows to pack. **Ctrl+A** in the product table selects the full filtered product list across orders.

@@ -8,6 +8,49 @@ Use synthetic or the owner's own data only as the owner directs; this guide desc
 
 ## Controls
 
+### Orders from other sources
+
+In the workspace, `add-other-order` opens the entry dialog. Enter supplier, reference and date, add rows, then save. Alternatively set the `other-order-file` input through the browser file-upload mechanism with one JSON file from the shared folder. Import fills the dialog for review; it does not save automatically. Save uses the same complete-order validation for both paths. Do not request arbitrary host paths or a new business API.
+
+| `data-action`                | Accessible name   | Does                                                 |
+| ---------------------------- | ----------------- | ---------------------------------------------------- |
+| `add-other-order`            | Add order         | Opens a new order draft.                             |
+| `other-order-import-json`    | Import order JSON | Opens the JSON file picker.                          |
+| `other-order-file`           | Hidden file input | Accepts the chosen JSON file through browser upload. |
+| `other-order-add-product`    | Add product       | Adds an empty product row.                           |
+| `other-order-remove-product` | Remove product    | Removes its draft row; at least one remains.         |
+| `other-order-clear-photo`    | Remove photo      | Clears its draft photo.                              |
+| `other-order-save`           | Save order        | Validates and atomically creates the complete order. |
+| `other-order-cancel`         | Cancel            | Discards the unsaved draft.                          |
+
+Stable field actions are `other-order-supplier`, `other-order-reference`, `other-order-date`, and, inside each product fieldset, `other-order-description`, `other-order-specs`, `other-order-quantity`, `other-order-unit-price` and `other-order-photo`. Their associated labels supply accessible names in the chosen language. The dialog's alert explains errors in the chosen language and carries the stable machine path in `data-field` (for example, `products.1.quantity`). If that field exists in the current draft, its input carries `aria-invalid=true`. The draft stays intact; no product or partial order is saved on validation/duplicate failure. After saving, the workspace selects the new order and its purchase month.
+
+One JSON document creates one order:
+
+```json
+{
+  "format": "1688-order-entry",
+  "version": 1,
+  "supplier": "Synthetic supplier",
+  "reference": "EXT-DEMO-1",
+  "date": "2026-10-15",
+  "products": [
+    {
+      "description": "Glass vase",
+      "specs": "Clear · large",
+      "quantity": "4",
+      "unitPrice": "12.505"
+    }
+  ]
+}
+```
+
+Supplier/reference: nonempty single-line text, at most 160 characters each. Date: a real `YYYY-MM-DD` date. Include 1–200 products; each description is nonempty and each description/specs field is at most 2,000 characters. Quantities are **strings** of 1–12 digits representing positive whole numbers. CNY unit prices are nonnegative exact decimal **strings**, at most 18 integer digits and 6 decimal places. The existing calculation rounds each product-row amount once to cents. Unknown fields, versions, invalid dates and malformed values are refused.
+
+An optional product `photo` is an inline `data:image/png;base64,...`, JPEG, WebP or GIF image, limited to 2,000,000 characters; remote image URLs are not accepted. It must decode as an image with each side at most 8,192 pixels and at most 16,777,216 pixels in total. The manual photo picker accepts files smaller than 1.4 MB. The JSON file is limited to 8 MB. File import and manual input have identical validation and duplicate-supplier/reference checks, ignoring case, surrounding whitespace and Unicode compatibility differences. A duplicate is refused rather than overwriting an existing order. Backup restore checks the final reconciled library for duplicates and refuses the entire restore if a collision would result.
+
+These snapshots carry `source: "other"`, a separate human `reference` and an application-generated internal decimal ID. They have no 1688 member login, shop or source URL. Existing imported orders retain their source evidence; ambiguous legacy origins are not guessed or rewritten. Packing/print summaries preserve the internal `orderId` and additionally include `source: "other"` and `reference` for such orders. Copied/exported order-number cells display the human reference. Full and packing backups preserve source and reference along with products and optional photos. A manual order does not imply payment/shipping status or a supplier account.
+
 ### 1688 order list (floating toolbar)
 
 | `data-action`         | Accessible name                        | Does                                                                         |

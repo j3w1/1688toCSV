@@ -36,6 +36,10 @@ test('docs/automation.md and the source agree on data-action names', async () =>
     ...[...source.matchAll(/dataset\.action\s*=\s*'([a-z-]+)'/g)].map(
       (match) => match[1]
     ),
+    // Dialog button helpers take the stable action as their second argument.
+    ...[...source.matchAll(/\bbutton\(\s*'[^']*',\s*'([a-z-]+)'/g)].map(
+      (match) => match[1]
+    ),
     // Print menu buttons use their element id as the action.
     ...['print-labels', 'print-carton-marks'].filter((id) =>
       source.includes(`'${id}'`)
@@ -55,6 +59,7 @@ test('docs/automation.md and the source agree on data-action names', async () =>
   for (const name of [
     ...source.matchAll(/data-action="([a-z-]+)"/g),
     ...source.matchAll(/dataset\.action\s*=\s*'([a-z-]+)'/g),
+    ...source.matchAll(/\bbutton\(\s*'[^']*',\s*'([a-z-]+)'/g),
   ].map((match) => match[1]))
     assert.ok(documented.has(name), `in source but not documented: ${name}`)
 })

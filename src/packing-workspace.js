@@ -78,6 +78,7 @@ import { mountColorVocabulary } from './color-vocabulary-settings.js'
 import { mountAppearanceSettings } from './appearance-settings.js'
 import { downloadBackup, readBackupFile } from './backup-file.js'
 import { applyAppearance, labelColorKey } from './appearance.js'
+import { orderSource } from './other-orders.js'
 import { openImageCopyDialog, imageBatchPlans } from './image-copy-dialog.js'
 import {
   mountCopyActions,
@@ -1975,9 +1976,9 @@ export async function startPackingWorkspace({
       ...options,
       changes: options.changes.map((change) => ({
         ...change,
-        sourceType: getRecords().find(
+        snapshot: getRecords().find(
           ({ snapshot }) => snapshot.orderId === change.orderId
-        )?.snapshot.sourceType,
+        )?.snapshot,
       })),
     })
   }
@@ -1988,6 +1989,7 @@ export async function startPackingWorkspace({
       seller: issue.source?.sellerName,
       orderId: issue.orderId,
       sourceType: issue.source?.sourceType,
+      snapshot: issue.source,
       code: issue.group?.baseCode || issue.row.baseCode,
       variant: issue.variant?.variant || issue.item?.title,
       thumbnail: issue.item?.thumbnail
@@ -3864,7 +3866,7 @@ export async function startPackingWorkspace({
     const source = getRecords().find(
       (record) => record.snapshot.orderId === orderId
     )?.snapshot
-    if (!source || source.sourceType === 'spreadsheet') return
+    if (!source || orderSource(source) !== '1688') return
     selectedOrderOpening = true
     try {
       if (!globalThis.chrome?.tabs) {
@@ -5700,11 +5702,11 @@ export async function startPackingWorkspace({
     decorateIcon(open, 'external')
     open.disabled =
       packingOrders.size !== 1 ||
-      getRecords().some(
-        ({ snapshot }) =>
-          packingOrders.has(snapshot.orderId) &&
-          snapshot.sourceType === 'spreadsheet'
-      )
+      orderSource(
+        getRecords().find(
+          (record) => record.snapshot.orderId === [...packingOrders][0]
+        )?.snapshot
+      ) !== '1688'
     const selectAll = button(uiMessage('Select all'), () =>
         selectPackingRows(true)
       ),
@@ -6419,9 +6421,7 @@ export async function startPackingWorkspace({
       operationsStrip(sellerHeading, orderRecord)
       identity.append(sellerHeading)
       const orderNumber = el('span', undefined, 'packing-order-number')
-      orderNumber.append(
-        orderReference(draft.orderId, { sourceType: source?.sourceType })
-      )
+      orderNumber.append(orderReference(draft.orderId, { snapshot: source }))
       identity.append(orderNumber)
       const restoreActions = el('div', undefined, 'packing-restore-actions')
       const reset = orderButton('Reset order and codes', () =>
@@ -6822,6 +6822,8 @@ export async function startPackingWorkspace({
           orderId: draft.orderId,
           sellerName: source?.sellerName,
           sourceType: source?.sourceType,
+          source: source?.source,
+          orderReference: source?.reference,
           store: source?.store,
         }))
         const ownsDetailsEvent = (event) =>
@@ -7560,7 +7562,13 @@ export async function startPackingWorkspace({
             .filter((id) => selected.has(`${orderId}/${id}`))
             .reduce((sum, id) => sum + (quantityOf.get(id) || 0), 0)
           const existing = items.get(item.code)
-          const source = { orderId, seller: record.snapshot.sellerName || '' }
+          const source = {
+            orderId,
+            seller: record.snapshot.sellerName || '',
+            ...(record.snapshot.source === 'other'
+              ? { source: 'other', reference: record.snapshot.reference }
+              : {}),
+          }
           if (existing) {
             existing.refs.push(item.ref)
             if (kind === 'mark') {
@@ -7638,6 +7646,9 @@ export async function startPackingWorkspace({
             existing.orders.push({
               orderId: mark.orderId,
               seller: source?.sellerName || batch.sellerName,
+              ...(source?.source === 'other'
+                ? { source: 'other', reference: source.reference }
+                : {}),
             })
           continue
         }
@@ -7649,10 +7660,21 @@ export async function startPackingWorkspace({
         item.refs = [item.ref]
         item.orders = [
           ...new Map(
-            batch.contents.map((content) => [
-              content.orderId,
-              { orderId: content.orderId, seller: batch.sellerName },
-            ])
+            batch.contents.map((content) => {
+              const source = getRecords().find(
+                (record) => record.snapshot.orderId === content.orderId
+              )?.snapshot
+              return [
+                content.orderId,
+                {
+                  orderId: content.orderId,
+                  seller: source?.sellerName || batch.sellerName,
+                  ...(source?.source === 'other'
+                    ? { source: 'other', reference: source.reference }
+                    : {}),
+                },
+              ]
+            })
           ).values(),
         ]
         items.set(item.code, item)

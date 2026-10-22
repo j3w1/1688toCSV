@@ -26,9 +26,11 @@ import { OPERATIONS_MESSAGES } from './ui-messages-operations.js'
 import { PAYMENT_LINK_MESSAGES } from './ui-messages-payment-links.js'
 import { REPEAT_PRODUCT_MESSAGES } from './ui-messages-repeat-products.js'
 import { ORGANIZE_MESSAGES } from './ui-messages-organize.js'
+import { OTHER_ORDER_MESSAGES } from './ui-messages-other-orders.js'
 
 // Explicit interface messages only; original seller, product and label values are never translated.
 export const UI_MESSAGES = {
+  ...OTHER_ORDER_MESSAGES,
   ...ORGANIZE_MESSAGES,
   ...OPERATIONS_MESSAGES,
   ...PAYMENT_LINK_MESSAGES,

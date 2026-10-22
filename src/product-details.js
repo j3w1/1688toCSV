@@ -129,6 +129,7 @@ export function openProductDetails(
   if (item.orderId) {
     const reference = orderReference(item.orderId, {
         sourceType: item.sourceType,
+        snapshot: item.record?.snapshot,
       }),
       copyOrder = reference.querySelector('button'),
       feedback = copyOrder.querySelector('.copy-text-feedback')

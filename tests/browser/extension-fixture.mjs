@@ -42,6 +42,7 @@ async function startFixtureServer() {
         '/src/carton-batch-changes.js',
         '/src/carton-confirmations.js',
         '/src/carton-packing.js',
+        '/src/other-orders.js',
         '/src/packing-model.js',
         '/src/packing-grouping.js',
         '/src/packing-backup.js',

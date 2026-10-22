@@ -66,6 +66,27 @@ const options = (overrides = {}) => ({
 const field = (plan, row, key) =>
   row.cells[plan.columns.findIndex((column) => column.key === key)]
 
+test('carton contents display an external supplier reference while retaining the internal purchase identity', () => {
+  const external = rows.map((row) => ({
+    ...row,
+    source: 'other',
+    orderReference: 'EXT-SYNTHETIC-1001',
+  }))
+  const physical = batch()
+  const before = structuredClone(physical)
+  const plan = planPackingWorkbook(
+    external,
+    options({ cartonBatches: [physical] })
+  )
+  const cartons = plan.sheets[1]
+  const carton = cartons.rows.find((row) => row.kind === 'carton')
+  const contents = field(cartons, carton, 'contents').value
+  assert.match(contents, /CE26101001S × 3 · Order EXT-SYNTHETIC-1001/)
+  assert.doesNotMatch(contents, /Order order-1/)
+  assert.deepEqual(physical, before)
+  assert.equal(external[0].orderId, 'order-1')
+})
+
 test('shared S/M/L packing keeps purchases separate and owns physical totals on Cartons only', async () => {
   const plan = planPackingWorkbook(rows, options()),
     cartons = plan.sheets[1]

@@ -213,6 +213,9 @@ export function preparationOrderFields(
     storeNumber: order.store?.number || '',
     unitsPerCarton: record.unitsPerCarton?.[row.entryId] ?? '',
     orderDate: order.purchasedAt || '',
+    ...(order.source === 'other'
+      ? { source: 'other', orderReference: order.reference }
+      : {}),
     orderStatus: order.status || '',
     sellerName: order.sellerUnavailable ? '' : order.sellerName || '',
     sellerMemberLogin: order.sellerMemberLogin || '',
@@ -294,7 +297,12 @@ export function preparationGrid(rows, fields, translate = (value) => value) {
     const first = !seen.has(key)
     seen.add(key)
     return chosen.map(([field]) => {
-      const value = field === 'baseCode' && !first ? '' : (row[field] ?? '')
+      const value =
+        field === 'baseCode' && !first
+          ? ''
+          : field === 'orderId'
+            ? (row.orderReference ?? row.orderId ?? '')
+            : (row[field] ?? '')
       return Array.isArray(value) ? value.join(' · ') : value
     })
   })

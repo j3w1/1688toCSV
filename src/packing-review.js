@@ -391,7 +391,10 @@ export async function reviewPackingChanges({
       if (change.order) content.append(el('small', change.order))
       if (change.orderId)
         content.append(
-          orderReference(change.orderId, { sourceType: change.sourceType })
+          orderReference(change.orderId, {
+            sourceType: change.sourceType,
+            snapshot: change.snapshot,
+          })
         )
       content.append(packingValueComparison(valuesFor(change)))
       if (change.detail)

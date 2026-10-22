@@ -13,6 +13,8 @@ import {
 import { copyTable, copySingleImage, pngThumbnail } from './clipboard.js'
 import { openDatabase, storeIdentity } from './database.js'
 import { downloadBackup, readBackupFile } from './backup-file.js'
+import { openOtherOrderDialog } from './other-order-dialog.js'
+import { orderSource } from './other-orders.js'
 import {
   confirmScope,
   copied,
@@ -407,65 +409,68 @@ export async function startLibrary(
           snapshot.orderId === row.orderId &&
           (!row.record || accountId === row.record.accountId)
       ) || row.record
-    const details = openProductDetails(row, {
-      onOperations: record
-        ? () => {
-            void editOperations(record, row.entryId).catch((error) =>
-              feedback(error.message, true)
-            )
-          }
-        : undefined,
-      carton: record
-        ? packing?.cartonDetailsOptions(row) || {
-            value: productCartonDetails(row, record),
-            onSave: async (value) => {
-              await packing?.flush()
-              const store = repository || (await openDatabase())
-              await store.setCartonDetails(row.orderId, row.entryId, value, {
-                accountId: record.accountId,
-              })
-              await refresh()
-            },
-          }
-        : undefined,
-      tags:
-        record && repository?.setProductTags
-          ? {
-              selected: record.productTags?.[row.entryId] || [],
-              definitions: productTagDefinitions,
-              save: async (names) => {
-                await send('LIBRARY_PRODUCT_TAGS', {
-                  orderId: row.orderId,
-                  entryId: row.entryId,
-                  tags: names,
-                  accountId: record.accountId || 'local',
+    const details = openProductDetails(
+      { ...row, record },
+      {
+        onOperations: record
+          ? () => {
+              void editOperations(record, row.entryId).catch((error) =>
+                feedback(error.message, true)
+              )
+            }
+          : undefined,
+        carton: record
+          ? packing?.cartonDetailsOptions(row) || {
+              value: productCartonDetails(row, record),
+              onSave: async (value) => {
+                await packing?.flush()
+                const store = repository || (await openDatabase())
+                await store.setCartonDetails(row.orderId, row.entryId, value, {
+                  accountId: record.accountId,
                 })
                 await refresh()
-                return productTagDefinitions
               },
             }
           : undefined,
-      loadPhoto: async (url) => {
-        const result = await send('IMAGE_GET', { url })
-        return typeof result === 'string' ? result : result.dataUrl
-      },
-      onPhoto: () =>
-        void photos.open(
-          row,
-          sourceItems.length > 1 || !row.record ? sourceItems : filteredRows()
-        ),
-      onOrder: () =>
-        record &&
-        void openDetails(record).catch((error) =>
-          feedback(error.message, true)
-        ),
-      copyPhoto: async () => {
-        const result = await send('IMAGE_GET', { url: row.thumbnail })
-        await copySingleImage(
-          typeof result === 'string' ? result : result.dataUrl
-        )
-      },
-    })
+        tags:
+          record && repository?.setProductTags
+            ? {
+                selected: record.productTags?.[row.entryId] || [],
+                definitions: productTagDefinitions,
+                save: async (names) => {
+                  await send('LIBRARY_PRODUCT_TAGS', {
+                    orderId: row.orderId,
+                    entryId: row.entryId,
+                    tags: names,
+                    accountId: record.accountId || 'local',
+                  })
+                  await refresh()
+                  return productTagDefinitions
+                },
+              }
+            : undefined,
+        loadPhoto: async (url) => {
+          const result = await send('IMAGE_GET', { url })
+          return typeof result === 'string' ? result : result.dataUrl
+        },
+        onPhoto: () =>
+          void photos.open(
+            row,
+            sourceItems.length > 1 || !row.record ? sourceItems : filteredRows()
+          ),
+        onOrder: () =>
+          record &&
+          void openDetails(record).catch((error) =>
+            feedback(error.message, true)
+          ),
+        copyPhoto: async () => {
+          const result = await send('IMAGE_GET', { url: row.thumbnail })
+          await copySingleImage(
+            typeof result === 'string' ? result : result.dataUrl
+          )
+        },
+      }
+    )
     const { dialog } = details
     productDetailsEditor = details
     dialog.addEventListener(
@@ -775,6 +780,7 @@ export async function startLibrary(
           'LIBRARY_PRODUCT_TAGS',
           'LIBRARY_PACKING_EXCLUSION',
           'LIBRARY_REMOVE',
+          'OTHER_ORDER_CREATE',
         ].includes(type)
       ) {
         if (
@@ -785,6 +791,8 @@ export async function startLibrary(
             'Pause the import before removing orders or restoring a backup.'
           )
         let result
+        if (type === 'OTHER_ORDER_CREATE')
+          result = await repository.createOtherOrder(data.order)
         if (type === 'BACKUP_RESTORE')
           result = await repository.restoreBackup(data.backup)
         if (type === 'LIBRARY_NOTES')
@@ -880,6 +888,7 @@ export async function startLibrary(
           order.sellerMemberLogin,
           order.store?.number,
           order.orderId,
+          order.reference,
           ...record.tags,
         ]) &&
         (!selectedMonths.size || selectedMonths.has(purchaseMonth(order))) &&
@@ -922,6 +931,7 @@ export async function startLibrary(
               item.productNumber,
               order.sellerName,
               order.orderId,
+              order.reference,
               record.notes,
               ...record.tags,
               ...(record.productTags?.[item.entryId] || []),
@@ -937,6 +947,9 @@ export async function startLibrary(
           sellerMemberLogin: order.sellerMemberLogin,
           sourceType: order.sourceType,
           store: order.store,
+          ...(order.source === 'other'
+            ? { source: 'other', orderReference: order.reference }
+            : {}),
           record,
         }))
     })
@@ -1443,6 +1456,29 @@ export async function startLibrary(
           reference.append(costs)
         }
         const meta = node('div', undefined, 'order-card-meta')
+        if (order.sourceType !== 'spreadsheet') {
+          const source = orderSource(order)
+          const sourceBadge = node(
+            'span',
+            uiMessage(
+              source === 'other'
+                ? 'Other source'
+                : source === '1688'
+                  ? '1688'
+                  : 'Source unknown'
+            ),
+            'order-source'
+          )
+          sourceBadge.dataset.source = source || 'unknown'
+          meta.append(sourceBadge)
+        }
+        if (order.source === 'other')
+          meta.append(
+            orderReference(order.orderId, {
+              className: 'order-reference',
+              snapshot: order,
+            })
+          )
         if (
           order.store?.number &&
           !String(order.sellerName).split(/\D+/).includes(order.store.number)
@@ -1495,7 +1531,9 @@ export async function startLibrary(
   }
   function updateOrderActions() {
     const matching = scopedOrders().filter(
-      ({ snapshot }) => snapshot.sourceType !== 'spreadsheet'
+      ({ snapshot }) =>
+        snapshot.sourceType !== 'spreadsheet' &&
+        orderSource(snapshot) === '1688'
     )
     bindText(
       $('refresh-orders'),
@@ -1516,8 +1554,11 @@ export async function startLibrary(
     const running = jobs.some((job) => job.state === 'running')
     $('refresh-orders').disabled = !matching.length || running
     $('refresh-all').disabled =
-      !records.some(({ snapshot }) => snapshot.sourceType !== 'spreadsheet') ||
-      running
+      !records.some(
+        ({ snapshot }) =>
+          snapshot.sourceType !== 'spreadsheet' &&
+          orderSource(snapshot) === '1688'
+      ) || running
     $('remove-orders').disabled = !selectedOrders.size
   }
   function renderRows() {
@@ -1629,6 +1670,7 @@ export async function startLibrary(
           orderReference(row.orderId, {
             className: 'order-section-number',
             sourceType: row.sourceType,
+            snapshot: row.record.snapshot,
           }),
           dateBadge(row.record.snapshot),
           statusBadge(row.record.snapshot.status),
@@ -2392,6 +2434,7 @@ export async function startLibrary(
       orderReference(order.orderId, {
         className: 'order-reference',
         sourceType: order.sourceType,
+        snapshot: order,
       })
     )
     const sellerHeading = node('h2')
@@ -2946,7 +2989,9 @@ export async function startLibrary(
     orderIds = orderIds.filter((id) =>
       records.some(
         ({ snapshot }) =>
-          snapshot.orderId === id && snapshot.sourceType !== 'spreadsheet'
+          snapshot.orderId === id &&
+          snapshot.sourceType !== 'spreadsheet' &&
+          orderSource(snapshot) === '1688'
       )
     )
     if (!orderIds.length) return
@@ -2970,10 +3015,52 @@ export async function startLibrary(
     )
   }
   action('refresh-orders', () =>
-    refreshOrders(scopedOrders().map(({ snapshot }) => snapshot.orderId))
+    refreshOrders(
+      scopedOrders()
+        .filter(
+          ({ snapshot }) =>
+            snapshot.sourceType !== 'spreadsheet' &&
+            orderSource(snapshot) === '1688'
+        )
+        .map(({ snapshot }) => snapshot.orderId)
+    )
   )
   action('refresh-all', () =>
-    refreshOrders(records.map((record) => record.snapshot.orderId))
+    refreshOrders(
+      records
+        .filter(
+          ({ snapshot }) =>
+            snapshot.sourceType !== 'spreadsheet' &&
+            orderSource(snapshot) === '1688'
+        )
+        .map((record) => record.snapshot.orderId)
+    )
+  )
+  action('add-other-order', () =>
+    openOtherOrderDialog({
+      save: async (order) => {
+        const result = await send('OTHER_ORDER_CREATE', { order })
+        $('order-search').value =
+          $('search').value =
+          $('date-from').value =
+          $('date-to').value =
+            ''
+        $('status-filter').value = ''
+        $('changes-only').checked = false
+        storeFilter = null
+        orderSelection.reset()
+        productSelection.reset()
+        selectedOrders.add(result.order.snapshot.orderId)
+        selectedMonths.clear()
+        selectedMonths.add(purchaseMonth(result.order.snapshot))
+        expandedMonths.add(purchaseMonth(result.order.snapshot))
+        monthAnchor = null
+        resetOrderScroll()
+        productTable.reset()
+        await refresh()
+        feedback(uiMessage('Order added from another source.'))
+      },
+    })
   )
   action('clear-months', () => {
     selectedMonths.clear()
