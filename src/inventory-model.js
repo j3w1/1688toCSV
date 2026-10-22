@@ -152,7 +152,6 @@ export function batchOrderIds(batch) {
 }
 export function batchNeedsLegacyReview(batch) {
   return (
-    !batch.deletedAt &&
     !batch.legacyResolution &&
     (batchOrderIds(batch).length !== 1 ||
       Number(batch.loaded || 0) > 0 ||
@@ -555,7 +554,7 @@ export function projectBacklog(
       key = orderKey(record)
     const own = batches.filter(
       (batch) =>
-        !batch.deletedAt &&
+        (!batch.deletedAt || batchNeedsLegacyReview(batch)) &&
         (batch.accountId || 'local') === accountId &&
         batchOrderIds(batch).includes(orderId)
     )

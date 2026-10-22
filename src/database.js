@@ -3019,7 +3019,20 @@ export async function openDatabase({ name = '1688-order-library' } = {}) {
           const shipments = await requested(
             tx.objectStore('containers').getAll()
           )
+          const shipmentLocks = await requested(
+            tx.objectStore('shipmentLocks').getAll()
+          )
           if (
+            shipmentLocks.some(
+              (lock) =>
+                lock.accountId === accountId &&
+                (removed.has(lock.orderId) ||
+                  lock.lineages.some((lineage) =>
+                    lineage.members.some((member) =>
+                      removed.has(member.orderId)
+                    )
+                  ))
+            ) ||
             shipments.some(
               (container) =>
                 container.accountId === accountId &&
@@ -3107,6 +3120,13 @@ export async function openDatabase({ name = '1688-order-library' } = {}) {
               issuedCodes: activeCodes.issuedCodes,
               containers: await requested(
                 tx.objectStore('containers').getAll()
+              ),
+              shipmentLocks,
+              packingReports: await requested(
+                tx.objectStore('packingReports').getAll()
+              ),
+              orderCartonDrafts: await requested(
+                tx.objectStore('orderCartonDrafts').getAll()
               ),
             })
             for (const photo of candidates)
@@ -3433,6 +3453,14 @@ export async function openDatabase({ name = '1688-order-library' } = {}) {
             const existing = await requested(
               tx.objectStore('images').get(image.url)
             )
+            if (
+              localImageReference.test(image.url) &&
+              existing &&
+              existing.dataUrl !== image.dataUrl
+            )
+              throw new Error(
+                'Restore conflicts with an original imported photo; its retained bytes cannot be replaced.'
+              )
             if (!existing || existing.storedAt < image.storedAt)
               tx.objectStore('images').put(image)
           }
@@ -3828,6 +3856,17 @@ export async function openDatabase({ name = '1688-order-library' } = {}) {
     async putImage(input) {
       const image = validateImage(input)
       return write(['images'], async (tx) => {
+        const previous = await requested(
+          tx.objectStore('images').get(image.url)
+        )
+        if (
+          localImageReference.test(image.url) &&
+          previous &&
+          previous.dataUrl !== image.dataUrl
+        )
+          throw new Error(
+            'An original imported photo cannot be replaced under the same local reference.'
+          )
         await requested(tx.objectStore('images').put(image))
         return image
       })

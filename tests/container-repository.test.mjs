@@ -352,6 +352,34 @@ test('native sealed restore rejects missing locks, inconsistent physical quantit
       } catch (error) {
         lockCode = error.code
       }
+      const missingCurrent = structuredClone(backup)
+      missingCurrent.cartonBatches = []
+      let missingCurrentCode
+      try {
+        await fresh.restoreBackup(missingCurrent)
+      } catch (error) {
+        missingCurrentCode = error.code
+      }
+      const retiredCurrent = structuredClone(backup)
+      retiredCurrent.cartonBatches[0].deletedAt = '2026-10-23T00:00:00.000Z'
+      retiredCurrent.cartonBatches[0].updatedAt = '2026-10-23T00:00:00.000Z'
+      retiredCurrent.cartonBatches[0].revision += 1
+      let retiredCurrentCode
+      try {
+        await fresh.restoreBackup(retiredCurrent)
+      } catch (error) {
+        retiredCurrentCode = error.code
+      }
+      const changedCurrent = structuredClone(backup)
+      changedCurrent.cartonBatches[0].weight = '9.99'
+      changedCurrent.cartonBatches[0].revision += 1
+      changedCurrent.cartonBatches[0].updatedAt = '2026-10-23T00:00:00.000Z'
+      let changedCurrentCode
+      try {
+        await fresh.restoreBackup(changedCurrent)
+      } catch (error) {
+        changedCurrentCode = error.code
+      }
       const empty = (await fresh.listOrders({})).length
       fresh.close()
       const subset = structuredClone(backup)
@@ -379,10 +407,22 @@ test('native sealed restore rejects missing locks, inconsistent physical quantit
           })
         ) === old
       db.close()
-      return { lockCode, empty, subsetCode, forgedCode, history }
+      return {
+        lockCode,
+        missingCurrentCode,
+        retiredCurrentCode,
+        changedCurrentCode,
+        empty,
+        subsetCode,
+        forgedCode,
+        history,
+      }
     })
     assert.deepEqual(result, {
       lockCode: 'RESTORE_LOCKS_MISSING',
+      missingCurrentCode: 'SHIPMENT_CARTON_MISSING',
+      retiredCurrentCode: 'SHIPMENT_CARTON_MISSING',
+      changedCurrentCode: 'SHIPMENT_CARTON_CHANGED',
       empty: 0,
       subsetCode: 'RESTORE_OPERATIONAL_CONFLICT',
       forgedCode: 'INVALID_MANIFEST',
@@ -1063,5 +1103,439 @@ test('native amended partial shipments conserve source merchandise/discount/feat
     })
   } finally {
     await fixture.close()
+  }
+})
+
+test('native legacy loading, cross-order and retired evidence require explicit review and never create duplicate availability', async () => {
+  const browser = await databaseBrowser()
+  try {
+    const result = await browser.page.evaluate(async () => {
+      const {
+        openDatabase,
+        fixture: { syntheticOrder, syntheticBatch },
+      } = modules
+      const db = await openDatabase({ name: 'synthetic-legacy-review' })
+      const cross = syntheticBatch('1002', 1, '10', {
+        id: 'cross',
+        packingBasis: 'exact',
+        contents: [
+          { orderId: '1002', entryId: '2001', quantity: '10' },
+          { orderId: '1003', entryId: '2001', quantity: '10' },
+        ],
+        loaded: null,
+      })
+      cross.groups = [
+        { orderId: '1002', groupId: 'legacy2' },
+        { orderId: '1003', groupId: 'legacy3' },
+      ]
+      delete cross.orderId
+      delete cross.packingBasis
+      delete cross.unresolvedContents
+      const retired = syntheticBatch('1004', 1, '10', {
+        id: 'retired',
+        loaded: 1,
+        deletedAt: '2026-10-04T00:00:00.000Z',
+      })
+      await db.restoreBackup({
+        format: '1688-order-library',
+        version: 4,
+        exportedAt: new Date().toISOString(),
+        orders: ['1001', '1002', '1003', '1004'].map((id) =>
+          syntheticOrder(id)
+        ),
+        history: [],
+        images: [],
+        preparations: [],
+        allocations: [],
+        issuedCodes: [],
+        packingPreferences: null,
+        cartonBatches: [
+          syntheticBatch('1001', 10, '100', { loaded: 2 }),
+          cross,
+          retired,
+        ],
+      })
+      const before = await db.getBacklog({})
+      const a = await db.reviewLegacyCarton({
+        batchId: 'batch-1001',
+        expectedRevision: 1,
+      })
+      let denied
+      try {
+        await db.resolveLegacyCarton({
+          batchId: a.batch.id,
+          expectedRevision: 1,
+          resolution: 'not-shipped',
+          reason: 'No attestation',
+          expectedOrderRevisions: a.expectedOrderRevisions,
+        })
+      } catch (error) {
+        denied = error.code
+      }
+      await db.resolveLegacyCarton({
+        batchId: a.batch.id,
+        expectedRevision: 1,
+        resolution: 'not-shipped',
+        reason: 'Checked actual synthetic warehouse',
+        attestNotShipped: true,
+        expectedOrderRevisions: a.expectedOrderRevisions,
+      })
+      const x = await db.reviewLegacyCarton({
+        batchId: 'cross',
+        expectedRevision: 1,
+      })
+      let crossDenied
+      try {
+        await db.resolveLegacyCarton({
+          batchId: 'cross',
+          expectedRevision: 1,
+          resolution: 'not-shipped',
+          reason: 'Cross-order needs real owner',
+          attestNotShipped: true,
+          expectedOrderRevisions: x.expectedOrderRevisions,
+        })
+      } catch (error) {
+        crossDenied = error.code
+      }
+      await db.resolveLegacyCarton({
+        batchId: 'cross',
+        expectedRevision: 1,
+        resolution: 'owner-corrected',
+        ownerRef: { accountId: 'local', orderId: '1002' },
+        contents: [{ orderId: '1002', entryId: '2001', quantity: '10' }],
+        reason: 'The other source was a transcription mistake',
+        attestNotShipped: true,
+        expectedOrderRevisions: x.expectedOrderRevisions,
+      })
+      const r = await db.reviewLegacyCarton({
+        batchId: 'retired',
+        expectedRevision: 1,
+      })
+      await db.resolveLegacyCarton({
+        batchId: 'retired',
+        expectedRevision: 1,
+        resolution: 'not-shipped',
+        reason: 'Actual boxes repacked before any shipment',
+        attestNotShipped: true,
+        expectedOrderRevisions: r.expectedOrderRevisions,
+      })
+      const after = await db.exportBackup({}),
+        backlog = await db.getBacklog({})
+      db.close()
+      return {
+        before: before.orders.map((o) => o.remainingQuantity),
+        denied,
+        crossDenied,
+        after: backlog.orders.map((o) => o.remainingQuantity),
+        crossOwners: after.cartonBatches
+          .find((b) => b.id === 'cross')
+          .contents.map((r) => r.orderId),
+        originalOwners: after.cartonBatches
+          .find((b) => b.id === 'cross')
+          .sourceFacts.contents.map((r) => r.orderId),
+        retired: !!after.cartonBatches.find((b) => b.id === 'retired')
+          .deletedAt,
+        seals: after.containers.length,
+        source: after.orders.map((r) => [
+          r.snapshot.items[0].quantity,
+          r.snapshot.items[0].price,
+        ]),
+      }
+    })
+    assert.deepEqual(result, {
+      before: [null, null, null, null],
+      denied: 'LEGACY_RESOLUTION_REASON',
+      crossDenied: 'LEGACY_CROSS_ORDER',
+      after: ['100', '100', '100', '100'],
+      crossOwners: ['1002'],
+      originalOwners: ['1002', '1003'],
+      retired: true,
+      seals: 0,
+      source: Array.from({ length: 4 }, () => ['100', '10.00']),
+    })
+  } finally {
+    await browser.close()
+  }
+})
+
+test('native seal freezes original image bytes, source snapshots, canonical labels and complete preferences across amendment', async () => {
+  const browser = await databaseBrowser()
+  try {
+    const result = await browser.page.evaluate(async () => {
+      const {
+        openDatabase,
+        fixture: {
+          syntheticOrder,
+          syntheticBatch,
+          syntheticManifest,
+          SYNTHETIC_PHOTO,
+        },
+      } = modules
+      const db = await openDatabase({ name: 'synthetic-frozen-media' }),
+        ref = `local-image:${'1'.repeat(64)}`
+      const record = syntheticOrder()
+      record.snapshot.items[0].thumbnail = ref
+      record.snapshot.items[0].photos = [ref]
+      await db.restoreBackup({
+        format: '1688-order-library',
+        version: 4,
+        exportedAt: new Date().toISOString(),
+        orders: [record],
+        history: [],
+        images: [
+          {
+            url: ref,
+            dataUrl: SYNTHETIC_PHOTO,
+            storedAt: '2026-10-01T00:00:00.000Z',
+          },
+        ],
+        preparations: [],
+        allocations: [],
+        issuedCodes: [],
+        cartonBatches: [syntheticBatch()],
+        packingPreferences: null,
+      })
+      const prep = syntheticManifest().orders[0].preparation,
+        variant = prep.groups[0].variants[0]
+      Object.assign(variant, {
+        spanishName: 'VARIANTE',
+        material: 'VIDRIO',
+        materialSource: 'manual',
+        variantSuffix: 'A',
+        sizeSuffix: 'XL',
+        size: 'Extra Large',
+        variant: 'Rojo',
+        needsSizeMapping: false,
+      })
+      await db.savePreparations([prep], {
+        expectedRevisions: [0],
+        preserveNaming: true,
+      })
+      const prefs = await db.savePackingPreferences({
+        settings: {
+          labelWidth: '100',
+          customFont: 'Synthetic Font',
+          labelOffsets: { x: 3, y: 4 },
+        },
+        logoDataUrl: SYNTHETIC_PHOTO,
+      })
+      const sourceBefore = JSON.stringify(
+        (await db.getOperationalState({})).records[0].snapshot
+      )
+      const c = await db.createContainer({ name: 'Frozen' })
+      let view = await db.includeContainerOrders({
+        id: c.id,
+        orderRefs: [{ orderId: '1001' }],
+        expectedRevision: c.revision,
+      })
+      view = await db.markContainerLoaded({
+        id: c.id,
+        expectedRevision: view.container.revision,
+      })
+      let review = await db.reviewContainerSeal({
+        id: c.id,
+        expectedRevision: view.container.revision,
+      })
+      const first = await db.sealContainer({
+        id: c.id,
+        expectedRevision: view.container.revision,
+        reviewToken: review.reviewToken,
+      })
+      const original = JSON.stringify(first)
+      let imageDenied
+      try {
+        await db.putImage({
+          url: ref,
+          dataUrl: 'data:image/png;base64,AQID',
+          storedAt: '2026-10-22T00:00:00.000Z',
+        })
+      } catch (error) {
+        imageDenied = error.message
+      }
+      const forged = await db.exportBackup({})
+      forged.images[0].dataUrl = 'data:image/png;base64,AQID'
+      forged.images[0].storedAt = '2026-10-23T00:00:00.000Z'
+      let restoreDenied
+      try {
+        await db.restoreBackup(forged)
+      } catch (error) {
+        restoreDenied = error.message
+      }
+      let deletionDenied
+      try {
+        await db.removeOrders(['1001'])
+      } catch (error) {
+        deletionDenied = error.message
+      }
+      await db.savePackingPreferences({
+        ...prefs,
+        settings: { ...prefs.settings, labelOffsets: { x: 99, y: 98 } },
+      })
+      view = await db.getContainerView({ id: c.id })
+      view = await db.beginContainerAmendment({
+        id: c.id,
+        expectedRevision: view.container.revision,
+        reason: 'Label correction',
+      })
+      const ctx = await db.getOrderReconciliation({
+          orderId: '1001',
+          contextContainerId: c.id,
+        }),
+        next = structuredClone(ctx.preparation)
+      Object.assign(next.groups[0].variants[0], {
+        spanishName: '',
+        material: 'ACERO',
+      })
+      await db.savePreparations([next], {
+        expectedRevisions: [next.revision],
+        contextContainerId: c.id,
+        expectedAmendment: ctx.amendmentContext,
+        preserveNaming: true,
+      })
+      view = await db.getContainerView({ id: c.id })
+      review = await db.reviewContainerSeal({
+        id: c.id,
+        expectedRevision: view.container.revision,
+      })
+      const second = await db.applyContainerAmendment({
+        id: c.id,
+        expectedRevision: view.container.revision,
+        reviewToken: review.reviewToken,
+        reason: 'Label correction',
+      })
+      const saved = await db.getContainerManifest({
+          id: c.id,
+          revisionId: first.revisionId,
+        }),
+        backup = await db.exportBackup({})
+      db.close()
+      return {
+        imageDenied: !!imageDenied,
+        restoreDenied: !!restoreDenied,
+        deletionDenied: /Historical shipments require/.test(
+          deletionDenied || ''
+        ),
+        historic: JSON.stringify(saved) === original,
+        originalRef: saved.orders[0].record.snapshot.items[0].thumbnail,
+        rowPhoto: saved.products[0].thumbnail,
+        raw: saved.media.images[0].dataUrl,
+        fullPrefs: JSON.stringify(saved.preferences) === JSON.stringify(prefs),
+        first: [
+          saved.products[0].spanishName,
+          saved.products[0].material,
+          saved.products[0].variantSuffix,
+          saved.products[0].sizeSuffix,
+          saved.products[0].sourceSize,
+          saved.products[0].variantDescription,
+        ],
+        second: [second.products[0].spanishName, second.products[0].material],
+        source: JSON.stringify(backup.orders[0].snapshot) === sourceBefore,
+        photoCount: backup.images.length,
+      }
+    })
+    assert.deepEqual(result, {
+      imageDenied: true,
+      restoreDenied: true,
+      deletionDenied: true,
+      historic: true,
+      originalRef: `local-image:${'1'.repeat(64)}`,
+      rowPhoto: (await import('./fixtures/container-fixture.mjs'))
+        .SYNTHETIC_PHOTO,
+      raw: (await import('./fixtures/container-fixture.mjs')).SYNTHETIC_PHOTO,
+      fullPrefs: true,
+      first: ['VARIANTE', 'VIDRIO', 'A', 'XL', 'Extra Large', 'Rojo'],
+      second: ['', 'ACERO'],
+      source: true,
+      photoCount: 1,
+    })
+  } finally {
+    await browser.close()
+  }
+})
+
+test('native restore cannot consume another open draft whole-order remainder and rolls back the full graph', async () => {
+  const browser = await databaseBrowser()
+  try {
+    const result = await browser.page.evaluate(async () => {
+      const {
+        openDatabase,
+        fixture: { syntheticOrder, syntheticBatch },
+      } = modules
+      const initial = {
+        format: '1688-order-library',
+        version: 4,
+        exportedAt: new Date().toISOString(),
+        orders: [syntheticOrder()],
+        history: [],
+        images: [],
+        preparations: [],
+        allocations: [],
+        issuedCodes: [],
+        cartonBatches: [syntheticBatch()],
+        packingPreferences: null,
+      }
+      const a = await openDatabase({ name: 'synthetic-local-reservation' }),
+        b = await openDatabase({ name: 'synthetic-remote-shipment' })
+      await a.restoreBackup(initial)
+      await b.restoreBackup(initial)
+      const reservation = await a.createContainer({ name: 'Local draft' })
+      await a.includeContainerOrders({
+        id: reservation.id,
+        orderRefs: [{ orderId: '1001' }],
+        expectedRevision: reservation.revision,
+      })
+      const shipment = await b.createContainer({ name: 'Remote shipment' })
+      let view = await b.includeContainerOrders({
+        id: shipment.id,
+        orderRefs: [{ orderId: '1001' }],
+        expectedRevision: shipment.revision,
+      })
+      view = await b.setContainerLoading({
+        id: shipment.id,
+        expectedRevision: view.container.revision,
+        decisions: view.cartons.map((unit, i) => ({
+          cartonId: unit.id,
+          state: i === 0 ? 'loaded' : 'left-behind',
+        })),
+      })
+      const review = await b.reviewContainerSeal({
+        id: shipment.id,
+        expectedRevision: view.container.revision,
+      })
+      await b.sealContainer({
+        id: shipment.id,
+        expectedRevision: view.container.revision,
+        reviewToken: review.reviewToken,
+      })
+      const remote = await b.exportBackup({}),
+        before = JSON.stringify(await a.getOperationalState({}))
+      let conflict
+      try {
+        await a.restoreBackup(remote)
+      } catch (error) {
+        conflict = error.code || error.message
+      }
+      const unchanged =
+        JSON.stringify(await a.getOperationalState({})) === before
+      const backlog = await a.getBacklog({})
+      a.close()
+      b.close()
+      return {
+        conflict,
+        unchanged,
+        loaded: backlog.orders[0].loadedQuantity,
+        remaining: backlog.orders[0].remainingQuantity,
+        reserved: backlog.orders[0].reservation.containerId === reservation.id,
+      }
+    })
+    assert.deepEqual(result, {
+      conflict: 'ORDER_RESERVATION_CONFLICT',
+      unchanged: true,
+      loaded: '0',
+      remaining: '100',
+      reserved: true,
+    })
+  } finally {
+    await browser.close()
   }
 })

@@ -335,6 +335,92 @@ export function createContainerRepository({
       }
     }
     for (const { manifest } of effectiveShipments(state.containers))
+      for (const unit of manifest.cartons || []) {
+        const batch = state.batches.find((batch) => batch.id === unit.batchId),
+          current =
+            batch && physicalUnits(batch).find((value) => value.id === unit.id)
+        if (
+          !current ||
+          current.accountId !== unit.accountId ||
+          current.orderId !== unit.orderId
+        )
+          fail(
+            'SHIPMENT_CARTON_MISSING',
+            'An effective shipment requires its current physical carton and purchase ownership.',
+            { cartonId: unit.id }
+          )
+        const frozenBatch = manifest.batches.find(
+          (value) => value.id === batch.id
+        )
+        const fields = [
+          'contents',
+          'weight',
+          'volume',
+          'len',
+          'wid',
+          'ht',
+          'mark',
+          'reference',
+          'labelOrigin',
+        ]
+        if (
+          fields.some(
+            (field) => stableValue(current[field]) !== stableValue(unit[field])
+          ) ||
+          (unit.contents === null &&
+            [
+              'contents',
+              'unresolvedContents',
+              'contentsUnknown',
+              'packingBasis',
+              'count',
+            ].some(
+              (field) =>
+                stableValue(batch[field]) !== stableValue(frozenBatch?.[field])
+            )) ||
+          (['weightBasis', 'volumeBasis'].some(
+            (field) =>
+              batch[field] === 'batch' || frozenBatch?.[field] === 'batch'
+          ) &&
+            ['weight', 'weightBasis', 'suppliedCbm', 'volumeBasis'].some(
+              (field) =>
+                stableValue(batch[field]) !== stableValue(frozenBatch?.[field])
+            ))
+        )
+          fail(
+            'SHIPMENT_CARTON_CHANGED',
+            'Current physical facts contradict an effective shipment; review an amendment before restoring them.',
+            { cartonId: unit.id }
+          )
+      }
+    for (const container of state.containers)
+      for (const member of container.draft?.orders || []) {
+        if (member.reserveRemainder === false) continue
+        const { record } = orderScopeState(state, member)
+        for (const available of member.availableBefore || []) {
+          const eligible = eligibleOrderItems(record, state.records).find(
+            (item) => item.entryId === available.entryId
+          )?.eligible
+          const key = JSON.stringify([
+            member.accountId || 'local',
+            member.orderId,
+            available.entryId,
+          ])
+          if (
+            available.quantity !== null &&
+            eligible !== null &&
+            eligible !== undefined &&
+            BigInt(available.quantity) + (shipped.get(key) || 0n) >
+              BigInt(eligible)
+          )
+            fail(
+              'ORDER_RESERVATION_CONFLICT',
+              'An effective shipment or restored fact conflicts with the reserved purchase remainder.',
+              { orderId: member.orderId, entryId: available.entryId }
+            )
+        }
+      }
+    for (const { manifest } of effectiveShipments(state.containers))
       for (const order of manifest.orders || [])
         if (
           !state.records.some((record) => orderKey(record) === orderKey(order))
@@ -435,6 +521,9 @@ export function createContainerRepository({
             unit
               ? stableValue({
                   id: unit.id,
+                  reference: unit.reference,
+                  labelOrigin: unit.labelOrigin,
+                  quantity: unit.quantity,
                   contents: unit.contents,
                   weight: unit.weight,
                   volume: unit.volume,
@@ -445,6 +534,24 @@ export function createContainerRepository({
                 })
               : null
           if (
+            (units.some((unit) => unit.contents === null) &&
+              [
+                'contents',
+                'unresolvedContents',
+                'contentsUnknown',
+                'packingBasis',
+                'count',
+              ].some(
+                (field) =>
+                  stableValue(before?.[field]) !== stableValue(after[field])
+              )) ||
+            (units.length &&
+              ['weight', 'weightBasis', 'suppliedCbm', 'volumeBasis'].some(
+                (field) =>
+                  stableValue(before?.[field]) !== stableValue(after[field])
+              ) &&
+              (before?.weightBasis === 'batch' ||
+                before?.volumeBasis === 'batch')) ||
             units.some(
               (unit) =>
                 meaning(current.find((value) => value.id === unit.id)) !==
@@ -1613,8 +1720,8 @@ export function createContainerRepository({
         const batch = loaded.batches.find((value) => value.id === input.batchId)
         if (
           !batch ||
-          batch.deletedAt ||
-          batch.revision !== input.expectedRevision
+          batch.revision !== input.expectedRevision ||
+          (batch.deletedAt && !batchNeedsLegacyReview(batch))
         )
           fail('CARTON_BATCH_CONFLICT', 'This legacy evidence changed.')
         if (!input.reason?.trim() || input.attestNotShipped !== true)

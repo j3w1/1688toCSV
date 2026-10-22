@@ -312,3 +312,206 @@ test('native global physical identity cannot be overwritten by another order eve
     await fixture.close()
   }
 })
+
+test('native sealed report corrections stage complete payloads, cancel without mutation and reject ended amendment epochs', async () => {
+  const browser = await databaseBrowser()
+  try {
+    const result = await browser.page.evaluate(async () => {
+      const {
+        openDatabase,
+        fixture: { syntheticOrder },
+        cells,
+        reports,
+        matches,
+      } = modules
+      const db = await openDatabase({ name: 'synthetic-report-amendment' }),
+        record = syntheticOrder()
+      record.snapshot.items[0].productNumber = 'SKU'
+      await db.restoreBackup({
+        format: '1688-order-library',
+        version: 4,
+        exportedAt: new Date().toISOString(),
+        orders: [record],
+        history: [],
+        images: [],
+        preparations: [],
+        allocations: [],
+        issuedCodes: [],
+        cartonBatches: [],
+        packingPreferences: null,
+      })
+      async function plan(text, contextContainerId) {
+        const raw = await db.savePackingReportSource({
+          orderId: '1001',
+          kind: 'clipboard-tsv',
+          text,
+        })
+        const context = await db.getPackingReportContext({
+          orderId: '1001',
+          contextContainerId,
+        })
+        const source = cells.parsePackingReportCells({ ...raw, text }).source
+        const analysis = reports.analyzePackingReport({ source, context })
+        const prior = context.previousReports[0]
+        const review = reports.validatePackingReportReview({
+          analysis,
+          context,
+          previousReportRevision: prior?.revision ?? null,
+          expectedContextRevisions: context.expectedRevisions,
+        })
+        if (!review.valid) throw new Error(JSON.stringify(review.issues))
+        return {
+          context,
+          plan: matches.planPackingReportUpdate({
+            interpretedReport: review.interpretedReport,
+            priorReport: prior,
+            physicalFacts: context.batches,
+            sealedDependencies: context.sealedDependencies,
+            newIdentityPool: prior ? [] : ['report-box'],
+          }),
+        }
+      }
+      const original =
+        'Carton no\tArticle\tPieces per carton\tWeight per carton kg\n001\tSKU\t10\t1.25'
+      let value = await plan(original)
+      await db.commitPackingReportUpdate({
+        orderId: '1001',
+        plan: value.plan,
+        expectedRevisions: value.context.expectedRevisions,
+      })
+      const c = await db.createContainer({ name: 'Report' })
+      let view = await db.includeContainerOrders({
+        id: c.id,
+        orderRefs: [{ orderId: '1001' }],
+        expectedRevision: c.revision,
+      })
+      view = await db.markContainerLoaded({
+        id: c.id,
+        expectedRevision: view.container.revision,
+      })
+      let review = await db.reviewContainerSeal({
+        id: c.id,
+        expectedRevision: view.container.revision,
+      })
+      const first = await db.sealContainer({
+          id: c.id,
+          expectedRevision: view.container.revision,
+          reviewToken: review.reviewToken,
+        }),
+        frozen = JSON.stringify(first)
+      const changed = original.replace('1.25', '2.75')
+      value = await plan(changed)
+      const routed = await db.commitPackingReportUpdate({
+        orderId: '1001',
+        plan: value.plan,
+        expectedRevisions: value.context.expectedRevisions,
+      })
+      view = await db.getContainerView({ id: c.id })
+      view = await db.beginContainerAmendment({
+        id: c.id,
+        expectedRevision: view.container.revision,
+        reason: 'Report correction',
+      })
+      const epoch = (
+        await db.getOrderReconciliation({
+          orderId: '1001',
+          contextContainerId: c.id,
+        })
+      ).amendmentContext
+      value = await plan(changed, c.id)
+      if (value.plan.status !== 'ready')
+        throw new Error(JSON.stringify(value.plan))
+      const args = {
+        orderId: '1001',
+        contextContainerId: c.id,
+        expectedAmendment: epoch,
+        plan: value.plan,
+        expectedRevisions: value.context.expectedRevisions,
+      }
+      await db.commitPackingReportUpdate(args)
+      const staged = await db.getOrderReconciliation({
+          orderId: '1001',
+          contextContainerId: c.id,
+        }),
+        during = await db.getOperationalState({})
+      view = await db.getContainerView({ id: c.id })
+      await db.cancelContainerAmendment({
+        id: c.id,
+        expectedRevision: view.container.revision,
+      })
+      const canceled = await db.getOperationalState({})
+      view = await db.getContainerView({ id: c.id })
+      await db.beginContainerAmendment({
+        id: c.id,
+        expectedRevision: view.container.revision,
+        reason: 'Fresh correction',
+      })
+      let stale
+      try {
+        await db.commitPackingReportUpdate(args)
+      } catch (error) {
+        stale = error.code
+      }
+      value = await plan(changed, c.id)
+      const fresh = (
+        await db.getOrderReconciliation({
+          orderId: '1001',
+          contextContainerId: c.id,
+        })
+      ).amendmentContext
+      await db.commitPackingReportUpdate({
+        orderId: '1001',
+        contextContainerId: c.id,
+        expectedAmendment: fresh,
+        plan: value.plan,
+        expectedRevisions: value.context.expectedRevisions,
+      })
+      view = await db.getContainerView({ id: c.id })
+      review = await db.reviewContainerSeal({
+        id: c.id,
+        expectedRevision: view.container.revision,
+      })
+      if (!review.ready) throw new Error(JSON.stringify(review.issues))
+      const next = await db.applyContainerAmendment({
+        id: c.id,
+        expectedRevision: view.container.revision,
+        reviewToken: review.reviewToken,
+        reason: 'Fresh correction',
+      })
+      const after = await db.exportBackup({}),
+        historical = await db.getContainerManifest({
+          id: c.id,
+          revisionId: first.revisionId,
+        })
+      db.close()
+      return {
+        route: routed.status,
+        staged: staged.batches[0].weight,
+        during: during.batches[0].weight,
+        canceled: canceled.batches[0].weight,
+        stale,
+        after: after.cartonBatches[0].weight,
+        revision: after.packingReports[0].revision,
+        historic: JSON.stringify(historical) === frozen,
+        loaded: next.products[0].quantity,
+        purchased: after.orders[0].snapshot.items[0].quantity,
+        price: after.orders[0].snapshot.items[0].price,
+      }
+    })
+    assert.deepEqual(result, {
+      route: 'amendment-required',
+      staged: '2.75',
+      during: '1.25',
+      canceled: '1.25',
+      stale: 'AMENDMENT_CONTEXT_CONFLICT',
+      after: '2.75',
+      revision: 2,
+      historic: true,
+      loaded: '10',
+      purchased: '100',
+      price: '10.00',
+    })
+  } finally {
+    await browser.close()
+  }
+})
