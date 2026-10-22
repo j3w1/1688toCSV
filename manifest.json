@@ -1,10 +1,17 @@
 {
   "manifest_version": 3,
   "name": "1688toPL",
-  "version": "2.9.0",
+  "version": "2.10.0",
   "description": "Keep local 1688 and store spreadsheet orders, prepare packing lists, and copy product data and pictures to Excel.",
-  "permissions": ["alarms", "clipboardWrite", "unlimitedStorage", "tabs"],
-  "host_permissions": ["https://cbu01.alicdn.com/*"],
+  "permissions": [
+    "alarms",
+    "clipboardWrite",
+    "unlimitedStorage",
+    "tabs"
+  ],
+  "host_permissions": [
+    "https://cbu01.alicdn.com/*"
+  ],
   "background": {
     "service_worker": "background.js"
   },
@@ -20,7 +27,9 @@
         "https://trade.1688.com/order/new_step_order_detail.htm*",
         "https://air.1688.com/app/ctf-page/trade-order-detail/index.html*"
       ],
-      "js": ["content.js"]
+      "js": [
+        "content.js"
+      ]
     },
     {
       "matches": [
@@ -28,7 +37,9 @@
         "https://work.1688.com/*"
       ],
       "all_frames": true,
-      "js": ["list-content.js"]
+      "js": [
+        "list-content.js"
+      ]
     }
   ],
   "icons": {
