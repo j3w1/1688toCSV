@@ -263,6 +263,9 @@ test('reviewed payment links preserve source totals, skip payment rows and expor
   await page
     .getByRole('button', { name: 'Export packing list', exact: true })
     .click()
+  await page
+    .getByLabel('Include detailed automation JSON', { exact: true })
+    .check()
   await page.locator('[data-action="download-packing-list"]').click()
   await expect.poll(() => downloads.length).toBe(2)
   let files

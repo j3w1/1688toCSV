@@ -939,6 +939,11 @@ test('large image backups restore and export without runtime message limits', as
       storedAt: new Date().toISOString(),
     })),
   }
+  // Backups retain referenced originals rather than orphan cache entries. Keep
+  // all 37 large assets reachable without changing the eight purchase rows.
+  const originalOwners = JSON.stringify({ ...backup, images: [] })
+  for (const { url } of backup.images) expect(originalOwners).not.toContain(url)
+  records[0].snapshot.items[0].photos = backup.images.map(({ url }) => url)
   const buffer = Buffer.from(JSON.stringify(backup))
   expect(buffer.byteLength).toBeGreaterThan(64 * 1024 * 1024)
   const page = await openLibrary(extension)
@@ -968,6 +973,15 @@ test('large image backups restore and export without runtime message limits', as
   const exported = await readBackupFile(new Blob([compressed]))
   expect(exported.orders).toHaveLength(records.length)
   expect(exported.images).toHaveLength(37)
+  const savedOwner = exported.orders.find(
+    ({ snapshot }) => snapshot.orderId === records[0].snapshot.orderId
+  )
+  expect(savedOwner.snapshot.items[0].photos).toEqual(
+    records[0].snapshot.items[0].photos
+  )
+  expect(exported.images.map(({ url }) => url).sort()).toEqual(
+    backup.images.map(({ url }) => url).sort()
+  )
   for (const savedImage of exported.images)
     expect(savedImage.dataUrl).toBe(dataUrl)
 

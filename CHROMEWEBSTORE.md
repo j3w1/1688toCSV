@@ -1,6 +1,6 @@
 # Chrome Web Store Listing — 1688toPL
 
-Last updated: 2026-10-23. **Local candidate, version 2.9.0; unpublished.** This file is the store metadata source of truth, not authorization to submit or release. Current verification is tracked below; historical test counts do not establish acceptance of this candidate.
+Last updated: 2026-10-22. **Local candidate, version 2.9.0; unpublished.** This file is the store metadata source of truth, not authorization to submit or release. Current verification is tracked below; historical test counts do not establish acceptance of this candidate.
 
 ## Store Listing
 
@@ -109,7 +109,7 @@ Visibility/regions are unselected. Repository rename, local implementation or Gi
 
 | Version | Date       | Changes                                                                                                                                                                                                             | Status                                                                                                      |
 | ------- | ---------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------- |
-| 2.9.0   | 2026-10-23 | 1688toPL branding; opt-in detailed JSON; reachable/canonical backup photos; compatible scoped restore/settings initialization; shared XLSX/PDF media; repeat-workbook warning; organized illustrated documentation. | Local candidate; current validation pending. No store submission.                                           |
+| 2.9.0   | 2026-10-22 | 1688toPL branding; opt-in detailed JSON; reachable/canonical backup photos; compatible scoped restore/settings initialization; shared XLSX/PDF media; repeat-workbook warning; organized illustrated documentation. | Local candidate: 1,047 unit tests and all 538 Chromium tests passed. No store submission.                   |
 | 2.9.0   | 2026-10-22 | Integrated manual/JSON/store orders, physical cartons, inline capacity planning, Organize, photo tools, operational costs and two-sheet packing exports.                                                            | Historical repository integration; [PR #20](https://github.com/j3w1/1688toPL/pull/20). No store submission. |
 
 Earlier release and verification chronology remains in Git history. It is not current-candidate acceptance.
@@ -118,7 +118,21 @@ Earlier release and verification chronology remains in Git history. It is not cu
 
 ### Development verification
 
-The 2026-10-23 local candidate requires final source/docs, focused regressions, build, synthetic screenshot and supported installed-load results. Record passed, failed, blocked and not-run checks separately at delivery. Previous synthetic Chromium/Edge/native-Excel checks apply only to the snapshots they tested; they do not establish live 1688 compatibility or current installed acceptance. Current physical printing and hardware scanner acceptance are not established.
+The renamed 2.9.0 handoff and its verification corrections were checked on 2026-10-22 using native Node.js 24 on Linux and synthetic data in temporary browser profiles. The export tests explicitly opt into detailed automation JSON while retaining workbook, cost and summary-content assertions. Narrow export controls remain clickable without forcing pointer actions.
+
+| Evidence                               | Result                                                                                                                                                                                                                                                |
+| -------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Source syntax and documentation        | Passed.                                                                                                                                                                                                                                               |
+| Unit regressions                       | Passed: 1,047 tests; zero failures or skips.                                                                                                                                                                                                          |
+| Production rebuild                     | Passed: complete extension; 28 manifest resources checked.                                                                                                                                                                                            |
+| Chromium                               | Passed: all 538 tests, serialized; zero failures or skips. The 23-test affected packet also passed.                                                                                                                                                   |
+| Backup/restore                         | Passed synthetic browser checks: referenced original photos and history retained, unreferenced cache images omitted, a backup above 64 MiB restored/exported, compressed restore/corruption checks and scoped annotation/month equivalence preserved. |
+| Installed extension / owner acceptance | Not run: no local trial target configured. No installed library was used for tests.                                                                                                                                                                   |
+| Synthetic screenshot regeneration      | Not run for this verification batch; existing documentation images are synthetic.                                                                                                                                                                     |
+| Native Excel                           | Not run for this candidate. Downloaded XLSX content checks are browser evidence.                                                                                                                                                                      |
+| Physical print / hardware scanner      | Not run. Generated PDF checks do not establish physical acceptance.                                                                                                                                                                                   |
+
+Earlier Chromium/Edge/native-Excel results apply only to their checked snapshots. These local results do not establish live 1688 compatibility, owner acceptance or store-publication readiness.
 
 ### Known limitations
 

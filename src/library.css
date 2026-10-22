@@ -3309,6 +3309,7 @@ button.copyable-text:hover {
   display: grid;
   grid-template-rows: auto auto auto minmax(0, 1fr);
   gap: 8px;
+  min-inline-size: 0;
   min-block-size: 0;
 }
 .packing-export-sheet-tabs {
@@ -3599,6 +3600,13 @@ button.copyable-text:hover {
   .packing-export-column {
     flex-wrap: wrap;
     padding-block: 3px;
+  }
+  .packing-export-column label {
+    flex-basis: 100%;
+    overflow-wrap: anywhere;
+  }
+  .packing-export-sheet-tabs {
+    flex-wrap: wrap;
   }
   .packing-export-moves {
     margin-inline-start: auto;

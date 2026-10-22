@@ -164,6 +164,9 @@ test('an agent prepares, exports and prints through stable data-action controls'
   await expect(cartonsDialog).toHaveCount(0)
   // Export the whole packing list: .xlsx plus its JSON summary.
   await action(page, 'export-packing-list').click()
+  await page
+    .getByLabel('Include detailed automation JSON', { exact: true })
+    .check()
   await page.locator('[data-action="download-packing-list"]').click()
   let files = await downloads(extension, 2)
   const xlsx = files.find((file) => file.filename.endsWith('.xlsx'))
