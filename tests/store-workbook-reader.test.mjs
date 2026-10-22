@@ -200,3 +200,122 @@ test('nonworkbooks and oversized files fail before parsing', async () => {
     /100 MB/
   )
 })
+
+test('report evidence is opt-in: default China decoder cell contract stays exactly unchanged', async () => {
+  const workbook = utils.book_new(),
+    sheet = utils.aoa_to_sheet([['Code'], [1]])
+  sheet.A2.z = '000'
+  utils.book_append_sheet(workbook, sheet, 'Evidence')
+  const bytes = write(workbook, { type: 'array', bookType: 'xlsx' })
+  const legacy = await readStoreWorkbook(bytes)
+  assert.deepEqual(legacy.sheets[0].rows[1].cells[0], {
+    col: 1,
+    address: 'A2',
+    value: 1,
+  })
+  assert.equal('reportEvidence' in legacy, false)
+  assert.equal('hiddenRows' in legacy.sheets[0], false)
+  const rich = await readStoreWorkbook(bytes, { reportEvidence: true })
+  assert.deepEqual(rich.sheets[0].rows[1].cells[0], {
+    col: 1,
+    address: 'A2',
+    value: 1,
+    type: 'n',
+    display: '001',
+    numberFormat: '000',
+  })
+})
+
+test('report ZIP member/inflated limits preflight before decode; sparse/long worksheet evidence rejects explicitly', async () => {
+  const workbook = utils.book_new(),
+    sheet = utils.aoa_to_sheet([['a'], ['b']])
+  utils.book_append_sheet(workbook, sheet, 'Synthetic')
+  const raw = new Uint8Array(
+    write(workbook, { type: 'array', bookType: 'xlsx' })
+  )
+  await assert.rejects(
+    readStoreWorkbook(raw, {
+      reportEvidence: true,
+      limits: { archiveMembers: 1 },
+    }),
+    /archive member/
+  )
+  await assert.rejects(
+    readStoreWorkbook(raw, {
+      reportEvidence: true,
+      limits: { archiveBytes: 10 },
+    }),
+    /inflated archive/
+  )
+  await assert.rejects(
+    readStoreWorkbook(raw, { reportEvidence: true, limits: { cells: 1 } }),
+    /cell\/row\/column/
+  )
+  const altered = raw.slice(),
+    view = new DataView(altered.buffer)
+  for (let offset = 0; offset + 46 < altered.length; offset++) {
+    if (view.getUint32(offset, true) === 0x02014b50) {
+      view.setUint32(offset + 24, 201 * 1024 * 1024, true)
+      break
+    }
+  }
+  await assert.rejects(
+    readStoreWorkbook(altered, { reportEvidence: true }),
+    /inflated archive/
+  )
+  sheet.A1000000 = { t: 's', v: 'far' }
+  sheet['!ref'] = 'A1:A1000000'
+  const sparse = write(workbook, { type: 'array', bookType: 'xlsx' })
+  await assert.rejects(
+    readStoreWorkbook(sparse, { reportEvidence: true }),
+    /cell\/row\/column/
+  )
+  delete sheet.A1000000
+  sheet['!ref'] = 'A1:A2'
+  sheet.A2.v = 'long text'
+  await assert.rejects(
+    readStoreWorkbook(write(workbook, { type: 'array', bookType: 'xlsx' }), {
+      reportEvidence: true,
+      limits: { cellText: 2 },
+    }),
+    /cell\/row\/column/
+  )
+})
+
+test('rich report decode retains an actual uncached formula and enforces the sheet ceiling', async () => {
+  const archive = CFB.read(new Uint8Array(xlsxFixture()), { type: 'array' })
+  const part =
+    archive.FileIndex[
+      archive.FullPaths.indexOf('Root Entry/xl/worksheets/sheet1.xml')
+    ]
+  part.content = text.encode(
+    new TextDecoder()
+      .decode(part.content)
+      .replace('<f>2+2</f><v>4</v>', '<f>2+2</f>')
+  )
+  part.size = part.content.length
+  const decoded = await readStoreWorkbook(
+    CFB.write(archive, { type: 'array', fileType: 'zip' }),
+    { reportEvidence: true }
+  )
+  const formula = decoded.sheets[0].rows
+    .find((row) => row.row === 2)
+    .cells.find((cell) => cell.col === 3)
+  assert.equal(formula.formula, '2+2')
+  assert.equal(formula.value, null)
+  assert.equal(formula.formulaCachePresent, false)
+  assert.equal(formula.display, '')
+  const workbook = utils.book_new()
+  for (let index = 0; index < 21; index++)
+    utils.book_append_sheet(
+      workbook,
+      utils.aoa_to_sheet([['synthetic']]),
+      `Sheet ${index}`
+    )
+  await assert.rejects(
+    readStoreWorkbook(write(workbook, { type: 'array', bookType: 'xlsx' }), {
+      reportEvidence: true,
+    }),
+    /sheet limit/
+  )
+})

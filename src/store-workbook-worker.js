@@ -5,6 +5,8 @@ self.addEventListener('message', async ({ data }) => {
   try {
     const workbook = await readStoreWorkbook(data.buffer, {
       filename: data.filename,
+      reportEvidence: data.reportEvidence === true,
+      limits: data.limits,
     })
     self.postMessage({ workbook })
   } catch (error) {

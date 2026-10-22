@@ -1,3 +1,4 @@
+import { limitsFor } from './packing-report-utils.js'
 import { CFB, read, utils } from 'xlsx'
 
 const decoder = new TextDecoder()
@@ -311,10 +312,95 @@ function xlsPictures(parts, sheets) {
   }
 }
 
+// Central-directory metadata is inspected before SheetJS/CFB inflate any ZIP members.
+// ZIP64/encrypted or nonstandard archives are unsupported for bounded report intake.
+function preflightReportArchive(raw, limits) {
+  if (raw[0] !== 0x50) return
+  const view = new DataView(raw.buffer, raw.byteOffset, raw.byteLength)
+  let end = -1
+  for (
+    let offset = raw.length - 22;
+    offset >= Math.max(0, raw.length - 65557);
+    offset--
+  )
+    if (
+      view.getUint32(offset, true) === 0x06054b50 &&
+      offset + 22 + view.getUint16(offset + 20, true) === raw.length
+    ) {
+      end = offset
+      break
+    }
+  if (end < 0) throw new Error('Report archive directory missing')
+  const count = view.getUint16(end + 10, true),
+    size = view.getUint32(end + 12, true),
+    start = view.getUint32(end + 16, true)
+  if (
+    view.getUint16(end + 4, true) ||
+    view.getUint16(end + 6, true) ||
+    count === 65535 ||
+    count > limits.archiveMembers ||
+    start + size !== end
+  )
+    throw new Error('Report archive member/directory limit exceeded')
+  let offset = start,
+    inflated = 0
+  for (let member = 0; member < count; member++) {
+    if (offset + 46 > end || view.getUint32(offset, true) !== 0x02014b50)
+      throw new Error('Invalid report archive directory')
+    const flags = view.getUint16(offset + 8, true),
+      method = view.getUint16(offset + 10, true)
+    const expanded = view.getUint32(offset + 24, true),
+      compressed = view.getUint32(offset + 20, true)
+    if (
+      flags & 1 ||
+      ![0, 8].includes(method) ||
+      expanded === 0xffffffff ||
+      compressed === 0xffffffff
+    )
+      throw new Error('Unsupported report archive encoding')
+    inflated += expanded
+    if (inflated > limits.archiveBytes)
+      throw new Error('Report inflated archive byte limit exceeded')
+    offset +=
+      46 +
+      view.getUint16(offset + 28, true) +
+      view.getUint16(offset + 30, true) +
+      view.getUint16(offset + 32, true)
+    if (offset > end) throw new Error('Invalid report archive member bounds')
+  }
+  if (offset !== end) throw new Error('Invalid report archive member count')
+}
+
+// SheetJS supplies zero for some XLSX formulas with no <v>. Report intake
+// must distinguish that placeholder from an explicitly cached zero.
+function reportFormulaCaches(parts) {
+  const workbook = decoder.decode(
+    parts.get('xl/workbook.xml') || new Uint8Array()
+  )
+  const links = relationships(parts, 'xl/workbook.xml'),
+    result = new Map()
+  for (const descriptor of elements(workbook, 'sheet')) {
+    const link = links.get(descriptor.attrs['r:id'])
+    if (!link || link.TargetMode === 'External') continue
+    const part = resolvePart('xl/workbook.xml', link.Target)
+    const cells = new Map()
+    for (const cell of elements(
+      decoder.decode(parts.get(part) || new Uint8Array()),
+      'c'
+    )) {
+      if (!elements(cell.body, 'f').length) continue
+      const value = elements(cell.body, 'v')[0]
+      cells.set(cell.attrs.r, !!value && value.body.trim() !== '')
+    }
+    result.set(descriptor.attrs.name, cells)
+  }
+  return result
+}
+
 /** Read cells and anchored raster pictures without executing workbook formulas or macros. */
 export async function readStoreWorkbook(
   arrayBuffer,
-  { filename = 'spreadsheet.xlsx' } = {}
+  { filename = 'spreadsheet.xlsx', reportEvidence = false, limits } = {}
 ) {
   const raw = bytes(arrayBuffer)
   if (raw.length > 100 * 1024 * 1024)
@@ -326,12 +412,25 @@ export async function readStoreWorkbook(
     )
   )
     throw new Error('Choose an Excel .xlsx or .xls workbook.')
+  const bounds = reportEvidence ? limitsFor(limits) : null
+  if (bounds) preflightReportArchive(raw, bounds)
   const workbook = read(raw, {
     type: 'array',
     cellFormula: true,
     cellStyles: true,
     cellDates: false,
+    ...(reportEvidence ? { cellNF: true, cellText: true } : {}),
   })
+  if (bounds && workbook.SheetNames.length > bounds.sheets)
+    throw new Error('Report sheet limit exceeded')
+  const evidenceParts = reportEvidence
+    ? archiveParts(CFB.read(raw, { type: 'array' }))
+    : null
+  const formulaCaches =
+    evidenceParts && raw[0] === 0x50
+      ? reportFormulaCaches(evidenceParts)
+      : new Map()
+  let reportCells = 0
   const sheets = workbook.SheetNames.map((name) => {
     const source = workbook.Sheets[name]
     const rowMap = new Map()
@@ -340,11 +439,32 @@ export async function readStoreWorkbook(
     )) {
       const cell = source[address]
       const location = utils.decode_cell(address)
+      const cachePresent = formulaCaches.get(name)?.get(address)
+      const value = cachePresent === false ? null : (cell.v ?? null)
+      if (
+        bounds &&
+        (++reportCells > bounds.cells ||
+          location.r > bounds.rows ||
+          location.c >= bounds.columns ||
+          String(cell.v ?? '').length > bounds.cellText)
+      )
+        throw new Error('Report cell/row/column limit exceeded')
       if (!rowMap.has(location.r + 1)) rowMap.set(location.r + 1, [])
       rowMap.get(location.r + 1).push({
         col: location.c + 1,
         address,
-        value: cell.v ?? null,
+        value,
+        ...(reportEvidence
+          ? {
+              type: cell.t || null,
+              display:
+                cachePresent === false ? '' : (cell.w ?? String(value ?? '')),
+              numberFormat: cell.z || null,
+              ...(cachePresent !== undefined
+                ? { formulaCachePresent: cachePresent }
+                : {}),
+            }
+          : {}),
         ...(cell.f ? { formula: cell.f } : {}),
         ...(cell.t === 'e' ? { error: cell.w || 'Formula error' } : {}),
       })
@@ -358,14 +478,28 @@ export async function readStoreWorkbook(
           cells: cells.sort((a, b) => a.col - b.col),
         })),
       images: [],
+      ...(reportEvidence
+        ? {
+            hiddenRows: (source['!rows'] || []).flatMap((row, index) =>
+              row?.hidden ? [index + 1] : []
+            ),
+            hiddenColumns: (source['!cols'] || []).flatMap((col, index) =>
+              col?.hidden ? [index + 1] : []
+            ),
+          }
+        : {}),
       merges: (source['!merges'] || []).map((range) => ({
         from: { row: range.s.r + 1, col: range.s.c + 1 },
         to: { row: range.e.r + 1, col: range.e.c + 1 },
       })),
     }
   })
-  const parts = archiveParts(CFB.read(raw, { type: 'array' }))
+  const parts = evidenceParts || archiveParts(CFB.read(raw, { type: 'array' }))
   if (raw[0] === 0x50) xlsxPictures(parts, sheets)
   else xlsPictures(parts, sheets)
-  return { filename, sheets }
+  return {
+    filename,
+    sheets,
+    ...(reportEvidence ? { reportEvidence: true } : {}),
+  }
 }
