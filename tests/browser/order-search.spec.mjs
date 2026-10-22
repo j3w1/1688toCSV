@@ -30,7 +30,7 @@ test('order search combines seller, member login and order IDs with purchase fil
       localStorage.setItem('1688-library-purchase-months', '[]')
   })
   await page.goto(`${extension.extensionBaseUrl}/library.html`)
-  await expect(page.locator('#orders-page')).toHaveText(/^1 \/ /)
+  await expect(page.locator('.month-toggle')).not.toHaveCount(0)
   for (const toggle of await page
     .locator('.month-toggle[aria-expanded=false]')
     .all())
@@ -60,7 +60,18 @@ test('order search combines seller, member login and order IDs with purchase fil
   await expect(page.locator('#sheet-body tr[data-selection-key]')).toHaveCount(
     3
   )
+  const suggestions = page.locator('.order-search > .search-suggestions')
+  await expect(suggestions).toBeVisible()
+  const [suggestionBounds, monthBounds] = await Promise.all([
+    suggestions.boundingBox(),
+    page.locator('#month-filter').boundingBox(),
+  ])
+  expect(suggestionBounds.y + suggestionBounds.height).toBeLessThanOrEqual(
+    monthBounds.y
+  )
   await page.locator('[data-month="2026-09"]').click()
+  await expect(search).toHaveAttribute('aria-expanded', 'false')
+  await expect(search).toHaveValue('  HABITAT  ')
   await expect(page.locator('.order-card')).toHaveCount(0)
   await expect(page.locator('.order-search-empty')).toHaveText(
     'No orders match these filters.'

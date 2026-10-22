@@ -1,5 +1,27 @@
 const allowedImage =
-  /^data:image\/(?:png|jpeg|webp|gif);base64,[A-Za-z0-9+/=]+$/
+  /^data:image\/(?:png|jpeg|webp|gif|bmp);base64,[A-Za-z0-9+/=]+$/
+
+export const localImageReference = /^local-image:[a-f0-9]{64}$/
+
+/** Stable content keys retain originals without repeating base64 data per product. */
+export async function localImageAsset(
+  dataUrl,
+  storedAt = new Date().toISOString()
+) {
+  if (typeof dataUrl !== 'string' || !allowedImage.test(dataUrl))
+    throw new Error('Imported photos must be supported raster images.')
+  if (dataUrl.length > 32 * 1024 * 1024)
+    throw new Error('An imported photo exceeds the 32 MB limit.')
+  const bytes = Uint8Array.from(
+    atob(dataUrl.slice(dataUrl.indexOf(',') + 1)),
+    (character) => character.charCodeAt(0)
+  )
+  const hash = await crypto.subtle.digest('SHA-256', bytes)
+  const digest = [...new Uint8Array(hash)]
+    .map((byte) => byte.toString(16).padStart(2, '0'))
+    .join('')
+  return { url: `local-image:${digest}`, dataUrl, storedAt }
+}
 
 export function originalImageUrl(url) {
   const parsed = new URL(url)
@@ -22,7 +44,15 @@ export function originalImageUrl(url) {
 }
 
 export async function loadThumbnail(url, repository) {
-  if (allowedImage.test(url) && url.length <= 2_000_000) return url
+  if (allowedImage.test(url) && url.length <= 32 * 1024 * 1024) return url
+  if (localImageReference.test(url)) {
+    const cached = await repository.getImage(url)
+    if (!cached)
+      throw new Error(
+        'The original imported photo is missing from this library.'
+      )
+    return cached.dataUrl
+  }
   let originalUrl
   try {
     originalUrl = originalImageUrl(url)

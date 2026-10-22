@@ -1,0 +1,196 @@
+import { groupPackingMonth } from './packing-model.js'
+import { cartonBatchIssues, cartonBatchMark } from './carton-batches.js'
+import { repeatProductStoreIdentity } from './repeat-products.js'
+
+const key = (accountId, orderId, entryId) =>
+  JSON.stringify([accountId || 'local', orderId, entryId])
+const refKey = (reference) =>
+  JSON.stringify([reference.orderId, reference.groupId])
+
+function owners(preparations) {
+  const result = new Map()
+  for (const preparation of preparations)
+    for (const group of preparation.groups)
+      for (const variant of group.variants)
+        for (const entryId of variant.entryIds)
+          result.set(key(preparation.accountId, preparation.orderId, entryId), {
+            preparation,
+            group,
+            variant,
+          })
+  return result
+}
+
+function ownership(batch, values) {
+  return batch.contents.map((item) => {
+    const owner = values.get(key(batch.accountId, item.orderId, item.entryId))
+    if (!owner) return null
+    return {
+      orderId: owner.preparation.orderId,
+      groupId: owner.group.id,
+      month: groupPackingMonth(owner.preparation, owner.group),
+      sharedProductId: owner.group.sharedProductId || '',
+      sharedStoreId: owner.group.sharedStoreId || '',
+      baseCode: owner.group.baseCode,
+    }
+  })
+}
+
+function references(values) {
+  return [
+    ...new Map(
+      values.filter(Boolean).map(({ orderId, groupId }) => {
+        const reference = { orderId, groupId }
+        return [refKey(reference), reference]
+      })
+    ).values(),
+  ]
+}
+
+const distinct = (values) => [...new Set(values.filter(Boolean))]
+
+function markOwner(batch, preparations, records) {
+  const mark = cartonBatchMark(batch),
+    preparation = preparations.find(
+      (entry) =>
+        entry.accountId === batch.accountId && entry.orderId === mark?.orderId
+    ),
+    group = preparation?.groups.find((entry) => entry.id === mark?.groupId),
+    record = records.find(
+      (entry) =>
+        entry.snapshot.accountId === batch.accountId &&
+        entry.snapshot.orderId === mark?.orderId
+    )
+  return group && record
+    ? {
+        ...mark,
+        month: groupPackingMonth(preparation, group),
+        baseCode: group.baseCode,
+        storeId: repeatProductStoreIdentity(record.snapshot),
+      }
+    : null
+}
+
+/**
+ * Plan physical changes against the complete final preparation set, before review.
+ * This never allocates individual boxes, copies month confirmations, or writes data.
+ */
+export function planCartonBatchChanges({
+  batches,
+  records,
+  beforePreparations,
+  afterPreparations,
+}) {
+  const beforeOwners = owners(beforePreparations)
+  const afterOwners = owners(afterPreparations)
+  const changes = [],
+    before = {},
+    after = {},
+    reviews = []
+  for (const batch of batches) {
+    if (batch.deletedAt) continue
+    const previous = ownership(batch, beforeOwners)
+    const next = ownership(batch, afterOwners)
+    const previousMark = markOwner(batch, beforePreparations, records),
+      nextMark = markOwner(batch, afterPreparations, records),
+      ownershipChanged =
+        JSON.stringify(previous) !== JSON.stringify(next) ||
+        JSON.stringify(previousMark) !== JSON.stringify(nextMark)
+    const originalIssues = cartonBatchIssues(
+      batch,
+      records,
+      beforePreparations,
+      batches
+    )
+    const resultingIssues = cartonBatchIssues(
+      batch,
+      records,
+      afterPreparations,
+      batches
+    )
+    if (!resultingIssues.length) continue
+    // A source-refresh/legacy issue alone must not block unrelated subsequent edits.
+    if ((batch.needsReview || originalIssues.length) && !ownershipChanged)
+      continue
+
+    const destinationGroups = references(next)
+    const candidate = {
+      ...structuredClone(batch),
+      groups: destinationGroups.length
+        ? destinationGroups
+        : structuredClone(batch.groups),
+    }
+    const mark = cartonBatchMark(batch),
+      intactMark =
+        nextMark &&
+        nextMark.baseCode &&
+        nextMark.month === batch.month &&
+        nextMark.storeId === batch.storeId
+    // Changing which product owns a code must not silently change a physical
+    // carton's printed mark, including a mark with no pieces in its contents.
+    if (intactMark && refKey(candidate.groups[0]) !== refKey(mark))
+      candidate.mark = structuredClone(mark)
+    const legacyReanchor =
+      !batch.mark &&
+      !nextMark &&
+      destinationGroups.length === 1 &&
+      next.every((owner) => owner?.baseCode === previousMark?.baseCode)
+    const intact = next.every(Boolean)
+    const sameMonth =
+      intact && next.every((owner) => owner.month === batch.month)
+    const candidateIssues =
+      intact && sameMonth
+        ? cartonBatchIssues(candidate, records, afterPreparations, batches)
+        : resultingIssues
+    const canReanchor =
+      intact &&
+      sameMonth &&
+      (intactMark || legacyReanchor) &&
+      !candidateIssues.length
+    // Uncertain partitions retain their exact original physical evidence, not a split
+    // copy of counts or confirmations attributed to every resulting code group.
+    const proposed = canReanchor
+      ? candidate
+      : { ...structuredClone(batch), needsReview: true }
+    const reason = !intact
+      ? 'missing-products'
+      : !sameMonth
+        ? 'packing-month'
+        : !intactMark && !legacyReanchor
+          ? 'carton-mark'
+          : previous.some(
+                (owner, index) =>
+                  owner?.sharedProductId &&
+                  owner.sharedProductId !== next[index]?.sharedProductId
+              )
+            ? 'shared-link'
+            : 'code-groups'
+    before[batch.id] = structuredClone(batch)
+    after[batch.id] = proposed
+    changes.push({ after: proposed, expectedRevision: batch.revision })
+    reviews.push({
+      id: batch.id,
+      kind: canReanchor ? 'reanchor' : 'review',
+      reason,
+      month: batch.month,
+      destinationMonths: distinct(next.map((owner) => owner?.month)),
+      originalGroups: structuredClone(batch.groups),
+      destinationGroups,
+      originalMark: cartonBatchMark(batch),
+      destinationMark: cartonBatchMark(proposed),
+      beforeMarkCode: previousMark?.baseCode || '',
+      afterMarkCode:
+        markOwner(proposed, afterPreparations, records)?.baseCode || '',
+      cartonNumber: batch.cartonNumber || '',
+      beforeCodes: distinct(previous.map((owner) => owner?.baseCode)),
+      afterCodes: distinct(next.map((owner) => owner?.baseCode)),
+      count: batch.count,
+      received: batch.received,
+      loaded: batch.loaded,
+      contents: structuredClone(batch.contents),
+      issues: canReanchor ? [] : [...new Set(candidateIssues)],
+      needsReview: Boolean(proposed.needsReview),
+    })
+  }
+  return { changes, before, after, reviews }
+}

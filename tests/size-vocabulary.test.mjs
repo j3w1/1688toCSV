@@ -81,6 +81,20 @@ test('scalar units normalize length, capacity and mass without confusing L with 
   ])
 })
 
+test('quoted inch measurements compare with inch wording without treating seller codes as sizes', () => {
+  assert.deepEqual(codes(['6"', '7.5 in', '8″', '10.5英寸']), [
+    'S',
+    'M',
+    'L',
+    'XL',
+  ])
+  assert.deepEqual(codes(['6"', '15cm']), ['', ''])
+  const extracted = classifier.extract({
+    skuProperties: [{ label: '货号', value: 'MODEL-10.5"' }],
+  })
+  assert.equal(extracted.size, '')
+})
+
 test('incomparable, tied, mixed and unsupported assortments need an explicit mapping', () => {
   for (const sizes of [
     ['40x50cm', '30x60cm'],

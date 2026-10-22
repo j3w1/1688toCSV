@@ -8,6 +8,11 @@ import {
 } from '../src/excel-image.js'
 import { createExcelImageBadges } from '../src/excel-image-badges.js'
 import { orderTagColors } from '../src/order-tags.js'
+import {
+  workspaceExportStyle,
+  excelImagePalette,
+} from '../src/excel-image-style.js'
+import { appearanceTokens } from '../src/appearance.js'
 
 const excelImageColumns = allExcelImageColumns
   .filter((column) => !column.supplier)
@@ -53,7 +58,7 @@ const measure = (value) =>
 // The browser acceptance suite checks the actual canvas raster and font output.
 async function withCanvas(
   work,
-  { bitmapHeight = 252, headerWidthScale = 1 } = {}
+  { bitmapHeight = 264, headerWidthScale = 1, measureFontSize = false } = {}
 ) {
   const previousDocument = globalThis.document
   const previousBitmap = globalThis.createImageBitmap
@@ -76,7 +81,10 @@ async function withCanvas(
           return {
             width:
               measure(text) *
-              (this.font?.startsWith('700 14px') ? headerWidthScale : 1),
+              (this.font?.startsWith('700 14px') ? headerWidthScale : 1) *
+              (measureFontSize
+                ? Number(this.font?.match(/([\d.]+)px/)?.[1] || 14) / 14
+                : 1),
           }
         },
         fillText(text, x, y) {
@@ -130,7 +138,7 @@ async function withCanvas(
     },
   }
   globalThis.createImageBitmap = async (_, options) => {
-    assert.ok([252, 312].includes(options.resizeWidth))
+    assert.ok([264, 312].includes(options.resizeWidth))
     const mark = options.resizeWidth === 312
     const bitmap = {
       width: options.resizeWidth,
@@ -162,6 +170,73 @@ async function withCanvas(
 
 const cell = (entry, key) =>
   entry.cells[excelImageColumns.findIndex((column) => column.key === key)]
+
+test('Excel images left-align long 1688 descriptions and center China-store descriptions', async () => {
+  for (const sourceType of ['', 'spreadsheet']) {
+    await withCanvas(async (state) => {
+      const plan = planExcelImage(
+        [{ ...row, sourceType, description: 'Alignment sample' }],
+        {
+          columns: ['description'],
+          showOrderDetails: false,
+          details: { title: true, specifications: false, spanishName: false },
+        }
+      )[0]
+      await renderExcelImage(plan)
+      const drawn = state.text.find(
+        (entry) => entry.text === 'Alignment sample'
+      )
+      assert.ok(drawn)
+      assert.equal(
+        drawn.x,
+        sourceType === 'spreadsheet'
+          ? 1 + (plan.columns[0].width - measure(drawn.text)) / 2
+          : 11
+      )
+    })
+  }
+})
+
+for (const mode of ['light', 'dark'])
+  test(`Excel image tables keep light surfaces and the workspace accent in ${mode} mode`, async () =>
+    withCanvas(async (state) => {
+      const tokens = appearanceTokens({ [`${mode}Theme`]: 'terracotta' }, mode)
+      const style = workspaceExportStyle({
+        ownerDocument: {
+          defaultView: {
+            getComputedStyle: () => ({
+              getPropertyValue: (name) => tokens[name.slice(2)] || '',
+            }),
+          },
+        },
+      })
+      const input = {
+        ...row,
+        sellerName: 'Workspace theme supplier',
+        title: 'Workspace theme product',
+        description: 'Workspace theme product\n颜色：红色',
+      }
+      const [plan] = planExcelImage([input, { ...input, orderId: 'order-2' }], {
+        columns: ['description', 'quantity', 'barcode'],
+        style,
+      })
+      await renderExcelImage(plan)
+      const palette = excelImagePalette(style)
+      assert.ok(state.fills.some(({ color }) => color === '#ffffff'))
+      assert.ok(state.fills.some(({ color }) => color === palette.order))
+      assert.ok(
+        state.fills.some(({ color }) => color === tokens['excel-accent'])
+      )
+      assert.ok(state.text.some(({ color }) => color === palette.text))
+      assert.ok(state.text.some(({ color }) => color === palette.muted))
+      for (const draw of state.text.filter(
+        ({ text }) => text === 'Workspace theme product'
+      ))
+        assert.equal(draw.color, palette.text)
+      const codes = state.text.filter(({ text }) => text === row.barcode)
+      assert.ok(codes.length)
+      assert.ok(codes.every(({ color }) => color === '#fff'))
+    }))
 
 for (const mode of ['light', 'dark'])
   test(`Excel image badges preserve assigned colors, rounded shapes and wrapped text in ${mode} mode`, async () =>
@@ -735,17 +810,11 @@ test('Custom image columns preserve the chosen order and leave supplier fields b
     )
     assert.deepEqual(
       plan.columns.map((column) => column.label),
-      [
-        'N.º de caja',
-        'Cantidad',
-        'Medidas de caja',
-        'Precio unitario (CNY)',
-        'Peso (kg)',
-      ]
+      ['N.º de caja', 'Cantidad', 'Medidas de caja', 'Precio (元)', 'Peso (kg)']
     )
     assert.deepEqual(
       plan.rows[0].cells.map((cell) => cell.text),
-      ['', '20', '', '¥ 3.00', '']
+      ['', '20', '', '3.00 元', '']
     )
     assert.equal(
       plan.cssWidth,
@@ -958,7 +1027,7 @@ test('Chinese Excel image keeps saved values and one carton mark per group', asy
         '图片',
         '产品描述',
         '唛头货号',
-        '条码货号',
+        '标签货号',
         '品类与材质',
         '单价（元）',
         '数量',
@@ -983,7 +1052,7 @@ test('Chinese Excel image keeps saved values and one carton mark per group', asy
       plan.rows.map((entry) => entry.separator),
       ['none', 'row', 'order']
     )
-    assert.equal(cell(plan.rows[0], 'price').text, '¥ 3.00')
+    assert.equal(cell(plan.rows[0], 'price').text, '3.00 元')
     assert.equal(plan.rows[0].source.price, '3.00')
     assert.equal(cell(plan.rows[0], 'description').text, row.description)
     assert.equal(cell(plan.rows[1], 'barcode').text, 'CE26100101AL')
@@ -1065,7 +1134,7 @@ test('CJK descriptions and long barcode values wrap fully without exceeding thei
     )
   }))
 
-test('Code emphasis preserves complete values and marks every reordered row without repeating group codes', async () =>
+test('Code badges preserve complete values, white bold text and rounding without repeating group codes', async () =>
   withCanvas(async (state) => {
     const barcode = `${row.baseCode}ABCDEFGHIJKLMNOPQRSTUVWXYZAMBS`
     const [plan] = planExcelImage([
@@ -1076,36 +1145,16 @@ test('Code emphasis preserves complete values and marks every reordered row with
     const first = cell(plan.rows[0], 'barcode')
     assert.equal(first.lines.join(''), barcode)
     const firstRuns = first.richLines.flat()
-    assert.equal(
-      firstRuns
-        .filter((run) => !run.font.startsWith('700'))
-        .map((run) => run.text)
-        .join(''),
-      row.baseCode
-    )
-    assert.equal(
-      firstRuns
-        .filter((run) => run.font.startsWith('700'))
-        .map((run) => run.text)
-        .join(''),
-      barcode.slice(10)
-    )
+    assert.equal(firstRuns.map((run) => run.text).join(''), barcode)
     assert.ok(
-      firstRuns
-        .filter((run) => !run.font.startsWith('700'))
-        .every((run) => run.color === '#1d4ed8')
+      firstRuns.every(
+        (run) => run.font.startsWith('700') && run.color === '#fff'
+      )
     )
-    assert.ok(
-      firstRuns
-        .filter((run) => run.font.startsWith('700'))
-        .every((run) => run.color === '#24211c')
-    )
+    assert.equal(first.codeBadge, true)
     assert.equal(cell(plan.rows[1], 'baseCode').text, '')
-    assert.equal(cell(plan.rows[1], 'barcode').richLines[0][0].color, '#1d4ed8')
-    assert.equal(
-      cell(plan.rows[2], 'baseCode').richLines[0][0].color,
-      '#24211c'
-    )
+    assert.equal(cell(plan.rows[1], 'barcode').richLines[0][0].color, '#fff')
+    assert.equal(cell(plan.rows[2], 'baseCode').richLines[0][0].color, '#fff')
     assert.equal(Object.isFrozen(first.richLines[0][0]), true)
     for (const entry of plan.rows)
       for (const column of ['baseCode', 'barcode']) {
@@ -1120,19 +1169,72 @@ test('Code emphasis preserves complete values and marks every reordered row with
         )
       }
     await renderExcelImage(plan, { loadImage: async () => png })
-    assert.ok(
-      state.text.some(
-        (value) => value.text === row.baseCode && value.color === '#1d4ed8'
+    const printed = state.text
+      .filter(
+        (value) => value.font.startsWith('700 ') && value.color === '#fff'
       )
-    )
-    assert.ok(
-      state.text.some(
-        (value) => value.text === 'BS' && value.font.startsWith('700 17px')
-      )
+      .map((value) => value.text)
+      .join('')
+    assert.equal(printed, `${barcode}${row.baseCode}BS${row.baseCode}XL`)
+    assert.equal(
+      state.fills.filter((fill) => fill.color === '#000' && fill.radius > 0)
+        .length,
+      3,
+      'Each barcode has one rounded backing even when its text wraps'
     )
   }))
 
-test('Headers, numeric cells and mixed-style descriptions center horizontally and vertically', async () =>
+test('barcode image cells underline only product digits across schemes, languages, variants and wrapped endings', async () => {
+  for (const language of ['en', 'es', 'zh'])
+    for (const scheme of ['neutral', 'warm', 'sage', 'ink', 'custom'])
+      await withCanvas(async (state) => {
+        const sources = ['A', 'BL', 'XYZ'.repeat(15)].map((ending) => ({
+          ...row,
+          barcode: `${row.baseCode}${ending}`,
+        }))
+        const [plan] = planExcelImage(sources, {
+          columns: ['baseCode', 'barcode', 'quantity'],
+          language,
+          style: { scheme },
+          showOrderDetails: false,
+        })
+        assert.equal(plan.markSpans.length, 1)
+        for (const entry of plan.rows) {
+          assert.equal(entry.cells[0].codeProductRange, undefined)
+          assert.deepEqual(entry.cells[1].codeProductRange, [6, 10])
+          assert.equal(Object.isFrozen(entry.cells[1].codeProductRange), true)
+        }
+        assert.ok(plan.rows[2].cells[1].lines.length > 1)
+        await renderExcelImage(plan, { loadImage: async () => png })
+        const underlines = state.fills.filter(
+          (fill) => fill.color === '#fff' && fill.height === 1
+        )
+        assert.equal(underlines.length, 3, `${language}/${scheme}`)
+        const printed = state.text.filter((draw) =>
+          draw.text.startsWith(row.baseCode)
+        )
+        assert.equal(printed.length, 3)
+        for (const [index, underline] of underlines.entries()) {
+          const draw = printed[index]
+          const fontSize = plan.rows[index].cells[1].codeFontSize
+          assert.equal(underline.x, draw.x + measure('CE2610'))
+          assert.equal(underline.width, measure('0101'))
+          assert.equal(
+            underline.y,
+            Math.round((draw.y + fontSize * 0.18) * 2) / 2
+          )
+          assert.equal(Number.isInteger(underline.y * 2), true)
+        }
+      })
+  await withCanvas(() => {
+    const [plan] = planExcelImage([{ ...row, barcode: 'unfinished' }], {
+      columns: ['barcode'],
+    })
+    assert.equal(plan.rows[0].cells[0].codeProductRange, undefined)
+  })
+})
+
+test('Headers and numeric cells center while 1688 descriptions retain a readable left edge', async () =>
   withCanvas(async (state) => {
     const [plan] = planExcelImage([
       {
@@ -1165,7 +1267,7 @@ test('Headers, numeric cells and mixed-style descriptions center horizontally an
     const rowCenter = plan.headerHeight + 1 + plan.rows[0].height / 2
     for (const [key, text] of [
       ['number', '1'],
-      ['price', '¥ 3.00'],
+      ['price', '3.00 元'],
       ['quantity', '20'],
       ['chineseCategory', '玻璃'],
     ]) {
@@ -1177,12 +1279,15 @@ test('Headers, numeric cells and mixed-style descriptions center horizontally an
     const value = state.text.find((entry) => entry.text === '透明')
     assert.equal(label.y, value.y)
     assert.equal(
-      (label.x + value.x + measure(value.text)) / 2,
-      centers.description
+      label.x,
+      centers.description -
+        excelImageColumns.find((column) => column.key === 'description').width /
+          2 +
+        10
     )
     const [, photoX, photoY, photoWidth, photoHeight] = state.draws[0]
-    assert.equal(photoWidth, 126)
-    assert.equal(photoHeight, 126)
+    assert.equal(photoWidth, 132)
+    assert.equal(photoHeight, 132)
     assert.equal(photoX + photoWidth / 2, centers.thumbnail)
     assert.equal(photoY + photoHeight / 2, rowCenter)
   }))
@@ -1200,15 +1305,15 @@ test('Large financial values remain complete and portrait photos fit the availab
         const value = cell(plan.rows[0], key)
         assert.equal(
           value.lines.join('').replaceAll(' ', ''),
-          `${key === 'price' ? '¥' : ''}${input[key]}`
+          `${input[key]}${key === 'price' ? '元' : ''}`
         )
         assert.ok(value.height + 20 <= plan.rows[0].height)
       }
       await renderExcelImage(plan, { loadImage: async () => png })
       const [, , photoY, photoWidth, photoHeight] = state.draws[0]
-      assert.ok(photoWidth <= 126)
-      assert.ok(photoHeight <= plan.rows[0].height - 6)
-      assert.equal(photoWidth / photoHeight, 1 / 3)
+      assert.ok(photoWidth <= 132)
+      assert.ok(photoHeight <= plan.rows[0].height)
+      assert.equal(photoWidth / photoHeight, 264 / 756)
       assert.equal(
         photoY + photoHeight / 2,
         plan.headerHeight + 1 + plan.rows[0].height / 2
@@ -1216,6 +1321,163 @@ test('Large financial values remain complete and portrait photos fit the availab
       assert.equal(plan.rows[0].source.price, input.price)
     },
     { bitmapHeight: 756 }
+  ))
+
+test('Spreadsheet descriptions use larger planned and rendered text while 1688 typography stays unchanged', async () =>
+  withCanvas(async (state) => {
+    const input = {
+      ...row,
+      title: '简短商品',
+      description: '简短商品\n颜色：透明\n货号：TEST-01',
+    }
+    const original = structuredClone(input)
+    const [plan] = planExcelImage(
+      [
+        input,
+        { ...input, sourceType: '1688' },
+        { ...input, sourceType: 'spreadsheet' },
+      ],
+      { columns: ['description', 'quantity'] }
+    )
+    const descriptions = plan.rows.map((entry) => entry.cells[0])
+    assert.deepEqual(descriptions[0], descriptions[1])
+    assert.deepEqual(
+      descriptions.map(({ text }) => text),
+      Array(3).fill(input.description)
+    )
+    assert.ok(descriptions[0].blocks[0].font.startsWith('600 16px'))
+    assert.ok(descriptions[0].blocks[1].font.startsWith('14px'))
+    assert.ok(descriptions[2].blocks[0].font.startsWith('600 22px'))
+    assert.ok(descriptions[2].blocks[1].font.startsWith('19px'))
+    assert.ok(descriptions[2].blocks[2].font.startsWith('600 19px'))
+    assert.ok(
+      descriptions[2].blocks.every((block) =>
+        block.labelFont.startsWith('600 17px')
+      )
+    )
+    assert.equal(plan.rows[2].source.sourceType, 'spreadsheet')
+    assert.ok(Object.isFrozen(plan.rows[2].source))
+    assert.deepEqual(input, original)
+    await renderExcelImage(plan)
+    for (const [text, font] of [
+      ['简短商品', '600 22px'],
+      ['透明', '19px'],
+      ['货号：', '600 17px'],
+    ])
+      assert.ok(
+        state.text.some(
+          (draw) => draw.text === text && draw.font.startsWith(font)
+        )
+      )
+    assert.deepEqual(plan.rows[0].cells[1], plan.rows[2].cells[1])
+  }))
+
+test('Spreadsheet descriptions retain long text and measured line bounds without clipping or changing column widths', async () =>
+  withCanvas(
+    async (state) => {
+      const title = 'China wholesale product',
+        note =
+          'Every supplied word remains available in this imported product description. '
+            .repeat(45)
+            .trim()
+      const input = {
+        ...row,
+        sourceType: 'spreadsheet',
+        title,
+        description: `${title}\n${note}\n非常长的供应商属性名称需要单独换行：保留全部规格文字\n货号：SUPPLIER-2026`,
+      }
+      const [plan] = planExcelImage([input], {
+        columns: ['description', 'quantity'],
+      })
+      const description = plan.rows[0].cells[0],
+        width = plan.columns[0].width - 20
+      assert.equal(plan.columns[0].width, 330)
+      assert.equal(description.text, input.description)
+      assert.ok(description.height + 20 <= plan.rows[0].height)
+      for (const block of description.blocks) {
+        const fontSize = Number(block.font.match(/([\d.]+)px/)[1]),
+          labelSize = Number(block.labelFont.match(/([\d.]+)px/)[1])
+        for (const label of block.labelLines)
+          assert.ok((measure(label) * labelSize) / 14 <= width + 1e-8)
+        for (const [index, line] of block.lines.entries()) {
+          const labelWidth =
+            !index && !block.labelLines.length ? block.labelWidth : 0
+          assert.ok(
+            (measure(line) * fontSize) / 14 + labelWidth <= width + 1e-8
+          )
+        }
+      }
+      await renderExcelImage(plan)
+      const top =
+          plan.headerHeight +
+          1 +
+          (plan.rows[0].height - description.height) / 2,
+        bottom = top + description.height
+      for (const draw of state.text.filter(({ font }) =>
+        /^(?:600 )?(?:17|19|22)px/.test(font)
+      )) {
+        const size = Number(draw.font.match(/([\d.]+)px/)[1])
+        assert.ok(draw.y - size * 0.8 >= top - 1e-8)
+        assert.ok(draw.y + size * 0.2 <= bottom + 1e-8)
+        assert.ok(draw.x >= 11 - 1e-8)
+        assert.ok(draw.x + (measure(draw.text) * size) / 14 <= 321 + 1e-8)
+      }
+    },
+    { measureFontSize: true }
+  ))
+
+test('Spreadsheet descriptions keep the same image batches for short photo rows and all source text in every language', async () =>
+  withCanvas(
+    async (state) => {
+      const rows = Array.from({ length: 120 }, (_, index) => ({
+        ...row,
+        entryId: String(index),
+        title: '简短商品',
+        description: '简短商品\n颜色：透明',
+      }))
+      const options = {
+        columns: ['thumbnail', 'description'],
+        showOrderDetails: false,
+      }
+      const baseline = planExcelImage(rows, options),
+        imported = planExcelImage(
+          rows.map((row) => ({ ...row, sourceType: 'spreadsheet' })),
+          options
+        )
+      assert.deepEqual(
+        imported.map(({ start, end, width, height }) => ({
+          start,
+          end,
+          width,
+          height,
+        })),
+        baseline.map(({ start, end, width, height }) => ({
+          start,
+          end,
+          width,
+          height,
+        }))
+      )
+      assert.equal(
+        imported.reduce((sum, plan) => sum + plan.rowCount, 0),
+        120
+      )
+      for (const language of ['en', 'es', 'zh']) {
+        const [plan] = planExcelImageBase(
+          [{ ...rows[0], sourceType: 'spreadsheet' }],
+          { columns: ['description'], language }
+        )
+        assert.ok(plan.rows[0].cells[0].text.includes('简短商品'))
+        await renderExcelImage(plan)
+        assert.ok(
+          state.text.some(
+            (draw) =>
+              draw.text === '简短商品' && draw.font.startsWith('600 22px')
+          )
+        )
+      }
+    },
+    { measureFontSize: true }
   ))
 
 test('Rich descriptions separate original titles and attributes and include latest variant notes once', async () =>
@@ -1495,7 +1757,7 @@ test('Excel image reuses photos, reports real row completion and releases resour
       [0, 1, 2, 3]
     )
     assert.ok(progress.every((value) => value.total === 3))
-    assert.ok(state.text.some((value) => value.text === '¥ 3.00'))
+    assert.ok(state.text.some((value) => value.text === '3.00 元'))
     assert.ok(!state.text.some((value) => value.text === '0.20'))
     assert.ok(!state.text.some((value) => value.text === 'FRASCO DE VIDRIO'))
     assert.ok(
@@ -1544,7 +1806,7 @@ test('Photo cache evicts before exceeding its bounded retained memory', async ()
       })
       assert.equal(loads, plan.rowCount)
       // One just-decoded bitmap may coexist with the retained cache before eviction.
-      assert.ok(state.peakLiveBytes <= 4 * 1024 * 1024 + 252 * 756 * 4)
+      assert.ok(state.peakLiveBytes <= 4 * 1024 * 1024 + 264 * 756 * 4)
       assert.ok(state.bitmaps.every((bitmap) => bitmap.closed))
     },
     { bitmapHeight: 756 }
@@ -1597,7 +1859,7 @@ test('Cancellation interrupts a pending photo and stops subsequent row work', as
     )
   }))
 
-test('Real canvas output preserves centered rich text, blue reordered codes and contained photos', async (t) => {
+test('Real canvas output preserves centered rich text, black/white code badges and contained photos', async (t) => {
   const { build } = await import('esbuild')
   const { chromium } = await import('@playwright/test')
   const bundle = await build({
@@ -1710,15 +1972,32 @@ test('Real canvas output preserves centered rich text, blue reordered codes and 
     canvas.height = bitmap.height
     const context = canvas.getContext('2d')
     context.drawImage(bitmap, 0, 0)
-    const { data } = context.getImageData(0, 0, bitmap.width, bitmap.height)
+    const codeIndex = plan.columns.findIndex(
+      (column) => column.key === 'barcode'
+    )
+    const codeLeft =
+      1 +
+      plan.columns
+        .slice(0, codeIndex)
+        .reduce((sum, column) => sum + column.width, 0)
+    const { data } = context.getImageData(
+      Math.round(codeLeft * 2),
+      Math.round((plan.headerHeight + 1) * 2),
+      plan.columns[codeIndex].width * 2,
+      plan.rows[0].height * 2
+    )
     let bluePixels = 0
-    for (let index = 0; index < data.length; index += 4)
+    let blackPixels = 0
+    for (let index = 0; index < data.length; index += 4) {
       if (
         data[index] === 29 &&
         data[index + 1] === 78 &&
         data[index + 2] === 216
       )
         bluePixels++
+      if (data[index] === 0 && data[index + 1] === 0 && data[index + 2] === 0)
+        blackPixels++
+    }
     bitmap.close()
     canvas.width = canvas.height = 0
     photo.width = photo.height = 0
@@ -1727,13 +2006,15 @@ test('Real canvas output preserves centered rich text, blue reordered codes and 
       calls,
       photos,
       bluePixels,
+      blackPixels,
       plan,
       headerChecks,
       width: result.width,
       height: result.height,
     }
   }, row)
-  assert.ok(actual.bluePixels > 100)
+  assert.equal(actual.bluePixels, 0)
+  assert.ok(actual.blackPixels > 100)
   for (const check of actual.headerChecks) {
     for (const [index, column] of check.columns.entries())
       for (const word of column.label.split(/\s+/))
@@ -1775,9 +2056,6 @@ test('Real canvas output preserves centered rich text, blue reordered codes and 
     )
     x += column.width
   }
-  const prefix = actual.calls.find((call) => call.text === row.baseCode)
-  assert.equal(prefix.color, '#1d4ed8')
-  assert.ok(prefix.font.startsWith('17px'))
   const barcodeIndex = excelImageColumns.findIndex(
     (column) => column.key === 'barcode'
   )
@@ -1803,29 +2081,26 @@ test('Real canvas output preserves centered rich text, blue reordered codes and 
     // Font metrics differ by OS. Verify every drawn character and its style,
     // including suffixes that wrap into separate draw calls.
     assert.equal(calls.map((call) => call.text).join(''), expected)
-    let offset = 0
+    assert.equal(
+      calls.length === 1,
+      index === 0,
+      'Ordinary codes fit on one line; long endings remain complete by wrapping'
+    )
     for (const call of calls) {
-      if (offset < row.baseCode.length) {
-        assert.ok(offset + call.text.length <= row.baseCode.length)
-        assert.ok(call.font.startsWith('17px'))
-        assert.equal(call.color, '#1d4ed8')
-      } else {
-        assert.match(call.font, /^(?:700|bold) 17px/)
-        assert.equal(call.color, '#24211c')
-      }
-      offset += call.text.length
+      assert.match(call.font, /^(?:700|bold) (?:1[2-7])px/)
+      assert.match(call.color, /^#(?:fff|ffffff)$/i)
     }
     barcodeTop = barcodeBottom
   }
-  assert.ok(actual.calls.some((call) => call.text.startsWith('¥ ')))
-  const photos = actual.photos.filter((photo) => photo.bitmapWidth === 252)
+  assert.ok(actual.calls.some((call) => call.text.endsWith(' 元')))
+  const photos = actual.photos.filter((photo) => photo.bitmapWidth === 264)
   const marks = actual.photos.filter((photo) => photo.bitmapWidth === 312)
   assert.equal(photos.length, 2)
   assert.equal(marks.length, 1)
   let y = actual.plan.headerHeight + 1
   for (const [index, photo] of photos.entries()) {
     const [left, top, width, height] = photo.args
-    assert.equal(width, 126)
+    assert.equal(width, 132)
     assert.equal(width / height, photo.bitmapWidth / photo.bitmapHeight)
     assert.equal(left + width / 2, 117)
     assert.equal(top + height / 2, y + actual.plan.rows[index].height / 2)

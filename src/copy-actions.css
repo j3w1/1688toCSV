@@ -48,6 +48,9 @@
   color: var(--muted);
 }
 .copy-actions-panel .copy-format-group > button {
+  display: flex;
+  align-items: flex-start;
+  gap: 7px;
   width: 100%;
   min-width: 0;
   min-height: 28px;
@@ -58,6 +61,13 @@
   white-space: normal;
   text-align: left;
   font-size: 12px;
+}
+.copy-actions-panel .copy-format-group > button:last-child:nth-child(2) {
+  grid-column: 1 / -1;
+}
+.copy-actions-panel .copy-format-group > button .ui-icon {
+  flex: 0 0 16px;
+  margin-block-start: 1px;
 }
 .copy-actions-panel .copy-format-group > button:hover:not(:disabled) {
   background: var(--hover);

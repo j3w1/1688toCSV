@@ -2,6 +2,7 @@ import { readFile } from 'node:fs/promises'
 import { test, expect } from './extension-fixture.mjs'
 import { createDemoRecords } from '../../preview/library-fixture.js'
 import { otherOrderSnapshot } from '../../src/other-orders.js'
+import { readBackupFile } from '../../src/backup-file.js'
 
 const documentFor = (reference = 'EXT-SYNTHETIC-1') => ({
   format: '1688-order-entry',
@@ -193,7 +194,9 @@ test('manual other-source order follows packing, labels, carton marks and full/s
     .getByRole('button', { name: 'Back up packing', exact: true })
     .click()
   const backupFiles = await downloaded(extension, 5)
-  const scoped = JSON.parse(await readFile(backupFiles[4].filename, 'utf8'))
+  const scoped = await readBackupFile(
+    new Blob([await readFile(backupFiles[4].filename)])
+  )
   expect(scoped.packingScope).toBeTruthy()
   expect(scoped.orders[0].snapshot).toMatchObject({
     source: 'other',

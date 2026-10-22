@@ -1,15 +1,13 @@
 import { message as uiMessage, getLanguage } from './i18n.js'
 import { planExcelImage, renderExcelImage } from './excel-image.js'
-import {
-  createExcelImageBadges,
-  currentExcelImageMode,
-} from './excel-image-badges.js'
+import { createExcelImageBadges } from './excel-image-badges.js'
 import {
   selectedExcelImageColumns,
   createExcelImageOptions,
   readExcelImagePreference,
 } from './excel-image-options.js'
 import { openImageCopyDialog } from './image-copy-dialog.js'
+import { workspaceExportStyle } from './excel-image-style.js'
 
 export async function copyExcelImage(
   rows,
@@ -19,7 +17,7 @@ export async function copyExcelImage(
     signal,
     columns,
     language = getLanguage(),
-    badges = createExcelImageBadges({}, currentExcelImageMode()),
+    badges = createExcelImageBadges(),
     errorOptions,
   }
 ) {
@@ -64,11 +62,17 @@ export async function copyExcelImage(
     }))
   })
   if (!frozen.length) return false
+  let outputLanguage = language
   return openImageCopyDialog({
     title: 'Copy Excel image',
     count: frozen.length,
     signal,
     interactivePreview: true,
+    languageToggle: true,
+    language,
+    onLanguageChange: (value) => {
+      outputLanguage = value
+    },
     errorOptions,
     createOptions: columns
       ? undefined
@@ -80,10 +84,10 @@ export async function copyExcelImage(
       return planExcelImage(frozen, {
         columns: columns || selectedExcelImageColumns(preference),
         showOrderDetails: preference.showOrderDetails,
-        style: preference.style,
+        style: workspaceExportStyle(),
         details: preference.details,
         badges,
-        language,
+        language: outputLanguage,
       })
     },
     prepare: async (plan, { signal, onProgress }) => {

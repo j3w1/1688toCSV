@@ -12,7 +12,7 @@
   "engines": {
     "node": ">=24 <25"
   },
-  "description": "A Chrome extension to effortlessly export 1688.com order details into a clean CSV format.",
+  "description": "Local 1688 and store spreadsheet orders, packing lists and Excel copying.",
   "name": "1688tocsv",
   "scripts": {
     "build": "node scripts/build.mjs",
@@ -32,6 +32,7 @@
     "format:check": "prettier --check ."
   },
   "dependencies": {
-    "jsbarcode": "3.12.3"
+    "jsbarcode": "3.12.3",
+    "xlsx": "https://cdn.sheetjs.com/xlsx-0.20.3/xlsx-0.20.3.tgz"
   }
 }

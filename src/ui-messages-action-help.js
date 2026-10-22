@@ -39,9 +39,9 @@ export const ACTION_HELP_RULES = [
   ],
   [
     ['Copy images', 'Product photos'],
-    'Preview full-size product photos in batches, then copy separate pictures to paste into Excel or a message.',
-    '分批预览商品原图，再复制为独立图片，粘贴到 Excel 或消息中。',
-    'Previsualiza fotos de tamaño completo por lotes y copia imágenes separadas para pegarlas en Excel o un mensaje.',
+    'Copy full-size photos to Excel or a message, one batch at a time.',
+    '逐批复制商品原图到 Excel 或消息。',
+    'Copia fotos originales a Excel o a un mensaje, un lote a la vez.',
   ],
   [
     ['Copy to Excel', 'Excel cells'],
@@ -57,9 +57,9 @@ export const ACTION_HELP_RULES = [
   ],
   [
     ['Copy preparation columns', 'Copy columns', 'Chosen columns'],
-    'Choose packing and source columns to paste as editable cells in Excel. Column choices and their order are remembered.',
-    '选择装箱和原始数据列，粘贴为可编辑的 Excel 单元格。所选列及顺序会保留。',
-    'Elige columnas de empaque y datos originales para pegarlas como celdas editables en Excel. Se recuerdan las columnas y su orden.',
+    'Choose and arrange editable Excel columns. Your layout is saved.',
+    '选择并排列可编辑的 Excel 列，版式会保存。',
+    'Elige y ordena columnas editables de Excel. El formato se guarda.',
   ],
   [
     ['Copy group codes', 'Group codes'],
@@ -81,21 +81,21 @@ export const ACTION_HELP_RULES = [
   ],
   [
     ['Copy current batch'],
-    'Copy the previewed batch to the clipboard. Paste it in your destination before choosing another batch; this popup stays open.',
-    '将预览中的当前批次复制到剪贴板。先在目标位置粘贴，再选择下一批；此窗口保持打开。',
-    'Copia el lote que ves al portapapeles. Pégalo en tu destino antes de elegir otro lote; esta ventana permanece abierta.',
+    'Copy this batch. Paste it before choosing the next.',
+    '复制当前批次，粘贴后再选下一批。',
+    'Copia este lote. Pégalo antes de elegir el siguiente.',
   ],
   [
     ['Previous batch'],
-    'Show the previous batch without changing the clipboard. A check mark means that batch was copied.',
-    '显示上一批，不更改剪贴板。勾号表示该批已复制。',
-    'Muestra el lote anterior sin cambiar el portapapeles. La marca indica que ese lote ya se copió.',
+    'Previous batch. A check means it was copied.',
+    '上一批。勾号表示已复制。',
+    'Lote anterior. La marca indica que ya se copió.',
   ],
   [
     ['Next batch'],
-    'Show the next batch without changing the clipboard. Copy and paste each batch separately.',
-    '显示下一批，不更改剪贴板。请逐批复制并粘贴。',
-    'Muestra el siguiente lote sin cambiar el portapapeles. Copia y pega cada lote por separado.',
+    'Next batch. Copy and paste each batch separately.',
+    '下一批。请逐批复制粘贴。',
+    'Lote siguiente. Copia y pega cada lote por separado.',
   ],
   [
     ['Copy chosen columns'],
@@ -123,21 +123,21 @@ export const ACTION_HELP_RULES = [
   ],
   [
     ['Zoom in'],
-    'Enlarge the preview to inspect small details. You can also scroll to zoom and drag to move around.',
-    '放大预览以查看细节。也可滚轮缩放并拖动查看。',
-    'Amplía la vista para revisar detalles. También puedes usar la rueda y arrastrar para desplazarte.',
+    'Zoom in. Scroll to zoom; drag to move.',
+    '放大。滚轮缩放，拖动平移。',
+    'Amplía. Usa la rueda para ampliar y arrastra para mover.',
   ],
   [
     ['Zoom out'],
-    'Reduce the preview to see more of the image without changing the copied image quality.',
-    '缩小预览以查看更多内容，不改变复制图片的质量。',
-    'Reduce la vista para ver más de la imagen sin cambiar la calidad de la copia.',
+    'Zoom out. Copy quality stays unchanged.',
+    '缩小，不影响复制画质。',
+    'Reduce la vista sin cambiar la calidad de la copia.',
   ],
   [
     ['Fit', 'Fit image'],
-    'Fit the whole image in the available preview area and reset its position.',
-    '让整张图片适应预览区域，并重置位置。',
-    'Ajusta toda la imagen al área de vista previa y restablece su posición.',
+    'Fit the whole image and reset its position.',
+    '显示完整图片并重置位置。',
+    'Ajusta la imagen completa y restablece su posición.',
   ],
   [
     ['Actual size (100%)'],
@@ -219,9 +219,9 @@ export const ACTION_HELP_RULES = [
   ],
   [
     ['Resolve', 'Resolve code'],
-    'Inspect the products and currently assigned codes involved in this conflict, then choose a correction.',
-    '查看冲突涉及的商品和当前分配的货号，再选择修正方法。',
-    'Revisa los productos y códigos actualmente asignados que intervienen en el conflicto y elige una corrección.',
+    'Compare conflicting products and edit their codes.',
+    '对比冲突商品并修改货号。',
+    'Compara los productos en conflicto y edita sus códigos.',
   ],
   [
     ['Continue editing'],
@@ -331,9 +331,9 @@ export const ACTION_HELP_RULES = [
       'Close label editor',
       'Close image preview',
     ],
-    'Close this popup and return to the workspace. Copied clipboard contents remain available to paste.',
-    '关闭弹窗并返回工作区。已复制的剪贴板内容仍可粘贴。',
-    'Cierra esta ventana y vuelve al espacio de trabajo. El contenido copiado sigue disponible para pegar.',
+    'Close popup.',
+    '关闭窗口。',
+    'Cierra la ventana.',
   ],
 ]
 

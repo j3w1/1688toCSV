@@ -18,6 +18,8 @@ const paths = {
   columns: 'M3 4h18v16H3zM9 4v16M15 4v16',
   store:
     'M3 10v11h18V10M2 6l2-4h16l2 4v4a3 3 0 0 1-5 2 3 3 0 0 1-5 0 3 3 0 0 1-5 0 3 3 0 0 1-5-2V6zM9 21v-6h6v6',
+  wechat:
+    'M14 13.5a7.5 7.5 0 0 1-6 1.7L4 17l1-3.5A6.2 6.2 0 0 1 2 8.5C2 5 5.5 2.5 9.5 2.5S17 5 17 8.5M8 7h.01M12 7h.01M22 15c0 2.7-2.6 4.9-5.8 4.9l-2-.3-3.1 1.4.8-2.7A4.6 4.6 0 0 1 10.4 15c0-2.7 2.6-4.9 5.8-4.9S22 12.3 22 15M14.2 14h.01M18.2 14h.01',
   packing: 'M3 7l9-5 9 5v11l-9 4-9-4zM3 7l9 5 9-5M12 12v10M7 5l10 5',
   refresh: 'M20 7a9 9 0 1 0 1 8M20 2v5h-5',
   skip: 'M21 12a9 9 0 1 0-18 0 9 9 0 0 0 18 0M8 12h8',
@@ -30,6 +32,19 @@ const paths = {
   chevron: 'm7 10 5 5 5-5',
   search: 'M10 3a7 7 0 1 0 0 14 7 7 0 0 0 0-14M15 15l6 6',
   text: 'M4 5h16M12 5v15M8 20h8',
+  tag: 'M20 12l-8 8-9-9V3h8zM7 7h.01',
+  link: 'M10 13a5 5 0 0 0 7 0l4-4a5 5 0 0 0-7-7l-2 2M14 11a5 5 0 0 0-7 0l-4 4a5 5 0 0 0 7 7l2-2',
+  clock: 'M21 12a9 9 0 1 0-18 0 9 9 0 0 0 18 0M12 7v5l3 2',
+  printer: 'M6 8V3h12v5M6 17H3V9h18v8h-3M6 14h12v7H6zM17 11h.01',
+  truck:
+    'M1 5h14v12H1zM15 9h4l4 4v4h-8M8 18a2 2 0 1 1-4 0 2 2 0 0 1 4 0M21 18a2 2 0 1 1-4 0 2 2 0 0 1 4 0',
+  warehouse: 'M3 9l9-6 9 6v12H3zM7 21V11h10v10M7 15h10M7 18h10',
+  warning: 'M12 3 23 21H1zM12 9v5M12 17h.01',
+  lightbulb: 'M8 16a7 7 0 1 1 8 0l-1 2H9zM9 21h6M12 3V1',
+  rotation: 'M20 8a9 9 0 1 0 1 8M20 3v5h-5M8 12h8',
+  more: 'M6.2 12a1.7 1.7 0 1 0-3.4 0 1.7 1.7 0 1 0 3.4 0M13.7 12a1.7 1.7 0 1 0-3.4 0 1.7 1.7 0 1 0 3.4 0M21.2 12a1.7 1.7 0 1 0-3.4 0 1.7 1.7 0 1 0 3.4 0',
+  refund:
+    'M4 8a9 9 0 1 1-1 8M4 3v5h5M15 9h-4a2 2 0 0 0 0 4h2a2 2 0 0 1 0 4H9M12 7v12',
   plus: 'M12 5v14M5 12h14',
   previous: 'm14 5-7 7 7 7',
   next: 'm10 5 7 7-7 7',
@@ -52,6 +67,10 @@ export function icon(name) {
   svg.classList.add('ui-icon')
   const path = document.createElementNS(svg.namespaceURI, 'path')
   path.setAttribute('d', paths[name] || paths.copy)
+  if (name === 'more') {
+    path.setAttribute('fill', 'currentColor')
+    path.setAttribute('stroke', 'none')
+  }
   svg.append(path)
   return svg
 }

@@ -3,7 +3,9 @@
 .packing-review-item code.ce-code,
 .packing-review-codes code.ce-code,
 .row-preparation .row-code-copy.ce-code,
+.product-photo-dialog .photo-viewer-code.ce-code,
 .preparation-workspace .preparation-group input.group-code-editor.ce-code {
+  --ce-code-reading-weight: 0.5;
   display: inline-block;
   box-sizing: border-box;
   inline-size: fit-content;
@@ -65,8 +67,47 @@ input.ce-code,
 .label-composed-code.ce-code {
   --ce-code-size: 20px;
 }
+/* The workspace-only aid never changes spacing or the white code text. */
+.ce-code-part {
+  display: inline;
+  white-space: nowrap;
+}
+.ce-code-part[data-code-part='product'] {
+  position: relative;
+}
+.ce-code-part[data-code-part='product']::after {
+  content: '';
+  position: absolute;
+  inset-inline: 0;
+  inset-block-end: 0;
+  height: 1px;
+  background: #fff;
+  /* Scaling avoids text-decoration's whole-device-pixel minimum. */
+  transform: scaleY(var(--ce-code-reading-weight, 0.5));
+  pointer-events: none;
+}
+input.ce-code.ce-code-input-readable,
+.preparation-workspace
+  .preparation-group
+  input.group-code-editor.ce-code-input-readable {
+  background-image: linear-gradient(#fff, #fff);
+  background-repeat: no-repeat;
+  background-size: var(--ce-code-underline-width)
+    calc(1px * var(--ce-code-reading-weight, 0.5));
+  background-position: calc(50% + var(--ce-code-underline-shift))
+    calc(50% + 0.58em);
+}
+@supports (height: 1cap) {
+  input.ce-code.ce-code-input-readable,
+  .preparation-workspace
+    .preparation-group
+    input.group-code-editor.ce-code-input-readable {
+    background-position: calc(50% + var(--ce-code-underline-shift))
+      calc(50% + 0.5cap + 0.22em);
+  }
+}
 .variant-code-design {
-  --ce-code-size: 20px;
+  --ce-code-size: 16px;
   display: flex;
   flex-wrap: wrap;
   align-items: center;
@@ -78,10 +119,12 @@ input.ce-code,
 }
 .variant-code-band.ce-code {
   display: inline-flex;
-  align-items: center;
+  align-items: baseline;
   gap: 0;
   block-size: calc(0.72em + 2 * var(--ce-code-padding-block));
-  padding-block: 0;
+  /* Keep the readout and native suffix fields on one baseline, then center
+     their matching 1em line boxes inside the cap-height badge envelope. */
+  padding-block: calc((0.72em + 2 * var(--ce-code-padding-block) - 1em) / 2);
 }
 .variant-code-design .variant-code-base,
 .preparation-workspace .variants .variant-code-design input {
@@ -100,7 +143,11 @@ input.ce-code,
   background: transparent;
 }
 .variant-code-design .variant-code-base {
-  text-box: trim-both cap alphabetic;
+  /* Keep the same native line box even when both suffixes are empty. A
+     trimmed readout alone otherwise raises the text within the fixed badge;
+     adding a suffix then changes that flex line's height and baseline. */
+  text-box: normal;
+  block-size: 1em;
 }
 .preparation-workspace .variants .variant-code-band input {
   min-inline-size: 0;
@@ -112,6 +159,9 @@ input.ce-code,
   input.ce-code,
   .preparation-workspace .preparation-group input.group-code-editor.ce-code {
     block-size: calc(1cap + 2 * var(--ce-code-padding-block));
+  }
+  .variant-code-band.ce-code {
+    padding-block: calc((1cap + 2 * var(--ce-code-padding-block) - 1em) / 2);
   }
 }
 .preparation-workspace

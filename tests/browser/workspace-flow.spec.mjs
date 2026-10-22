@@ -323,10 +323,11 @@ test('filtered totals count each whole order once and row clicks toggle without 
     await expect(host.locator('.order-seller')).toHaveText(
       records[0].snapshot.sellerName
     )
-    await expect(
-      host.locator('.order-reference, .order-section-number')
-    ).toHaveText(records[0].snapshot.orderId)
   }
+  await expect(page.locator('.order-card .order-reference')).toHaveCount(0)
+  await expect(
+    page.locator('.order-section-band .order-section-number').first()
+  ).toHaveText(records[0].snapshot.orderId)
   const total = page.locator('#order-totals .totals-payable dd')
   await expect(total).toHaveText(
     money(summarizeOrders(records).amounts.payable)
@@ -402,7 +403,7 @@ test('workspace hints are compact, leave with the pointer and dismiss when editi
   const settings = page.getByRole('button', { name: 'Settings', exact: true })
   await settings.hover()
   const tooltip = page.getByRole('tooltip')
-  await expect(tooltip.locator(':scope > span').first()).toHaveText(
+  await expect(tooltip.locator(':scope > div').first()).toHaveText(
     'Label layout, naming rules, backup and restore.'
   )
   await expect(tooltip.locator('kbd')).toHaveText('Alt+Shift+S')

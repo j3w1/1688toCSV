@@ -14,6 +14,13 @@ export function photoCopyTile(
   } = {}
 ) {
   const tile = element('div', undefined, 'photo-copy-tile')
+  if (
+    photoButton.matches(
+      '.preparation-photo, .product-photo-button, .store-import-photo-button'
+    )
+  )
+    tile.classList.add('photo-copy-square')
+  photoButton.classList.add('photo-copy-source')
   const copy = element('button', undefined, 'photo-copy-button')
   copy.type = 'button'
   copy.disabled = disabled || !copyTask

@@ -30,9 +30,17 @@ function interactionMode(doc) {
 }
 
 /** Add help to an existing field or action, without another button or tab stop. */
-export function preparationHelp(target, text) {
+export function preparationHelp(
+  target,
+  text,
+  { renderContent, panelClass = '' } = {}
+) {
   if (hints.has(target)) {
-    bindText(hints.get(target).content, text)
+    const hint = hints.get(target)
+    hint.text = text
+    hint.renderContent = renderContent
+    hint.panel.className = `preparation-help-popover ${panelClass}`.trim()
+    if (!renderContent) bindText(hint.content, text)
     return target
   }
   const doc = target.ownerDocument,
@@ -40,11 +48,12 @@ export function preparationHelp(target, text) {
     panel = doc.createElement('div'),
     nativePopover = 'popover' in panel
   panel.id = `help-${crypto.randomUUID()}`
-  panel.className = 'preparation-help-popover'
-  const content = doc.createElement('span')
-  bindText(content, text)
+  panel.className = `preparation-help-popover ${panelClass}`.trim()
+  const content = doc.createElement('div')
+  if (!renderContent) bindText(content, text)
   panel.append(content)
-  hints.set(target, { panel, content })
+  const hint = { panel, content, text, renderContent }
+  hints.set(target, hint)
   target.removeAttribute('title')
   panel.setAttribute('role', 'tooltip')
   if (nativePopover) panel.setAttribute('popover', 'manual')
@@ -52,6 +61,7 @@ export function preparationHelp(target, text) {
   target.classList.add('preparation-hint')
   let hovered = false,
     pointerPosition,
+    pointerDriven = false,
     focused = false,
     keyboardFocused = false,
     focusPointerVersion = mode.pointerVersion,
@@ -59,7 +69,9 @@ export function preparationHelp(target, text) {
     timer,
     listeners,
     observer,
+    positionFrame,
     controls = []
+  if (hint.renderContent) content.replaceChildren()
 
   function ownsDialog(node) {
     return (node?.closest?.('dialog') ?? null) === target.closest('dialog')
@@ -88,15 +100,40 @@ export function preparationHelp(target, text) {
       size = panel.getBoundingClientRect(),
       width = doc.documentElement.clientWidth,
       height = doc.documentElement.clientHeight
-    panel.style.left = `${Math.max(8, Math.min(bounds.left, width - size.width - 8))}px`
-    const top =
-      bounds.bottom + size.height + 16 <= height
+    const pointer = hovered && pointerDriven ? pointerPosition : undefined
+    const left = pointer
+      ? pointer.x + size.width + 20 <= width
+        ? pointer.x + 12
+        : pointer.x - size.width - 12
+      : bounds.left
+    const top = pointer
+      ? pointer.y + size.height + 20 <= height
+        ? pointer.y + 12
+        : pointer.y - size.height - 12
+      : bounds.bottom + size.height + 16 <= height
         ? bounds.bottom + 8
         : bounds.top - size.height - 8
+    panel.style.left = `${Math.max(8, Math.min(left, width - size.width - 8))}px`
     panel.style.top = `${Math.max(8, Math.min(top, height - size.height - 8))}px`
+  }
+  function requestPosition() {
+    if (
+      activeHint !== close ||
+      listeners?.signal.aborted ||
+      positionFrame !== undefined
+    )
+      return
+    positionFrame = doc.defaultView.requestAnimationFrame(() => {
+      positionFrame = undefined
+      if (activeHint === close && !listeners.signal.aborted) position()
+    })
   }
   function close() {
     clearTimeout(timer)
+    if (positionFrame !== undefined) {
+      doc.defaultView.cancelAnimationFrame(positionFrame)
+      positionFrame = undefined
+    }
     listeners?.abort()
     observer?.disconnect()
     if (nativePopover && panel.matches(':popover-open')) panel.hidePopover()
@@ -124,9 +161,24 @@ export function preparationHelp(target, text) {
       target.querySelector('.preparation-hint:hover')
     )
       return
-    if (activeHint === close) return
+    if (activeHint === close) return requestPosition()
     activeHint?.()
     activeHint = close
+    listeners = new AbortController()
+    const { signal } = listeners
+    if (hint.renderContent) {
+      content.replaceChildren()
+      try {
+        hint.renderContent(content, {
+          signal,
+          requestPosition: () => {
+            if (!signal.aborted) requestPosition()
+          },
+        })
+      } catch {
+        bindText(content, hint.text)
+      }
+    } else bindText(content, hint.text)
     // Keep the tooltip in its modal dialog's top layer and accessibility tree.
     const host = target.closest('dialog') || doc.body
     const keys = shortcutKeys.get(target)
@@ -161,7 +213,6 @@ export function preparationHelp(target, text) {
       )
     }
     position()
-    listeners = new AbortController()
     const options = { capture: true, signal: listeners.signal }
     doc.addEventListener(
       'keydown',
@@ -188,8 +239,8 @@ export function preparationHelp(target, text) {
       },
       options
     )
-    doc.addEventListener('scroll', position, options)
-    doc.defaultView.addEventListener('resize', position, options)
+    doc.addEventListener('scroll', requestPosition, options)
+    doc.defaultView.addEventListener('resize', requestPosition, options)
     host.addEventListener('close', close, { signal: listeners.signal })
     observer = new MutationObserver(() => {
       if (!target.isConnected) close()
@@ -201,15 +252,24 @@ export function preparationHelp(target, text) {
     if (!hovered && !keyboardFocus()) {
       dismissed = false
       close()
-    }
+    } else requestPosition()
   }
   target.addEventListener('pointerover', (event) => {
     if (event.pointerType === 'touch') return
     if (!ownsHint(event.target) || ownsHint(event.relatedTarget)) return
     hovered = true
+    pointerDriven = true
     pointerPosition = { x: event.clientX, y: event.clientY }
+    requestPosition()
     clearTimeout(timer)
     if (!dismissed) timer = setTimeout(show, 500)
+  })
+  target.addEventListener('pointermove', (event) => {
+    if (event.pointerType === 'touch' || !hovered || !ownsHint(event.target))
+      return
+    pointerPosition = { x: event.clientX, y: event.clientY }
+    pointerDriven = true
+    requestPosition()
   })
   target.addEventListener('pointerout', (event) => {
     if (ownsHint(event.relatedTarget)) return
@@ -228,7 +288,10 @@ export function preparationHelp(target, text) {
     // input mode so that newly mounted helper cannot turn the click into a pin.
     keyboardFocused = mode.keyboard
     focusPointerVersion = mode.pointerVersion
-    if (keyboardFocus()) show()
+    if (keyboardFocus()) {
+      pointerDriven = false
+      show()
+    }
   })
   target.addEventListener('focusout', (event) => {
     focused = ownsHint(event.relatedTarget)

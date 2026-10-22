@@ -91,7 +91,13 @@ export function showErrorNotice(
     }
     const values = element('div')
     if (context.seller) values.append(element('div', String(context.seller)))
-    if (context.orderId) values.append(orderReference(context.orderId))
+    if (context.orderId)
+      values.append(
+        orderReference(context.orderId, {
+          sourceType: context.sourceType,
+          snapshot: context.snapshot,
+        })
+      )
     if (context.code)
       values.append(element('code', String(context.code), 'ce-code'))
     if (context.variant) values.append(element('div', String(context.variant)))

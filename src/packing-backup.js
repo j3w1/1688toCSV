@@ -6,6 +6,10 @@ import {
   mergeVariantMaterials,
 } from './packing-model.js'
 import { preparationAuthoring } from './product-vocabulary.js'
+import { paymentSourceDependencies } from './payment-links.js'
+import { cartonBatchesForItems } from './carton-confirmations.js'
+import { batchInPackingScope, cartonBatchMark } from './carton-batches.js'
+import { repeatProductStoreIdentity } from './repeat-products.js'
 
 const key = (entry) =>
   JSON.stringify([entry.accountId ?? 'local', entry.orderId])
@@ -110,9 +114,61 @@ export function validatePackingScope(input, orders, preparations) {
   if (
     input.mode === 'selection' &&
     orders.some((order) => !seen.has(key(order.snapshot)))
-  )
-    throw new Error('Packing backup contains an unselected source order')
-  return { mode: 'selection', months, orders: scope }
+  ) {
+    // Financial source orders are dependencies, never additional packing scope.
+    if (!Array.isArray(input.dependencies))
+      throw new Error('Packing backup contains an unselected source order')
+  }
+  let dependencies
+  if (input.dependencies !== undefined) {
+    if (!Array.isArray(input.dependencies))
+      throw new Error('Packing backup dependencies must be an array')
+    const actual = paymentSourceDependencies(orders, scope)
+    const actualKeys = new Set(actual.map((order) => key(order.snapshot)))
+    const declared = new Set()
+    dependencies = input.dependencies.map((dependency) => {
+      if (
+        !dependency ||
+        typeof dependency.orderId !== 'string' ||
+        !/^[1-9]\d*$/.test(dependency.orderId) ||
+        (dependency.accountId !== undefined &&
+          (typeof dependency.accountId !== 'string' ||
+            !dependency.accountId.trim()))
+      )
+        throw new Error(
+          'Packing backup contains an invalid financial dependency'
+        )
+      const dependencyKey = key(dependency)
+      if (
+        seen.has(dependencyKey) ||
+        declared.has(dependencyKey) ||
+        !actualKeys.has(dependencyKey)
+      )
+        throw new Error(
+          'Packing backup contains an unrelated or duplicate financial dependency'
+        )
+      declared.add(dependencyKey)
+      return {
+        accountId: dependency.accountId || 'local',
+        orderId: dependency.orderId,
+      }
+    })
+    if (
+      actualKeys.size !== declared.size ||
+      (input.mode === 'selection' &&
+        orders.some(
+          (order) =>
+            !seen.has(key(order.snapshot)) && !declared.has(key(order.snapshot))
+        ))
+    )
+      throw new Error('Packing backup is missing a financial source dependency')
+  }
+  return {
+    mode: 'selection',
+    months,
+    orders: scope,
+    ...(dependencies?.length ? { dependencies } : {}),
+  }
 }
 
 function selectedGroups(groups, selected) {
@@ -148,19 +204,72 @@ export function selectPackingPreparation(preparation, ids) {
   return result
 }
 
-export function selectPackingOrder(order, ids) {
+export function selectPackingOrder(order, ids, preparation) {
   const selected = new Set(ids)
+  const confirmedBatches = new Set(
+    cartonBatchesForItems(order, ids)
+      .filter((batch) => batch.complete)
+      .map((batch) => batch.entryId)
+  )
+  const confirmationMonths = new Map()
+  if (preparation) {
+    const selectedByMonth = new Map()
+    for (const group of preparation.groups) {
+      const month = groupPackingMonth(preparation, group)
+      if (!selectedByMonth.has(month)) selectedByMonth.set(month, new Set())
+      for (const id of group.variants.flatMap((variant) => variant.entryIds))
+        if (selected.has(id)) selectedByMonth.get(month).add(id)
+    }
+    for (const [month, monthIds] of selectedByMonth)
+      for (const batch of cartonBatchesForItems(order, monthIds)) {
+        if (!batch.complete) continue
+        if (!confirmationMonths.has(batch.entryId))
+          confirmationMonths.set(batch.entryId, new Set())
+        confirmationMonths.get(batch.entryId).add(month)
+      }
+  }
   const result = structuredClone(order)
   if (result.productTags)
     result.productTags = Object.fromEntries(
       Object.entries(result.productTags).filter(([id]) => selected.has(id))
     )
+  if (result.productWorkflow)
+    result.productWorkflow = Object.fromEntries(
+      Object.entries(result.productWorkflow).filter(([id]) => selected.has(id))
+    )
+  if (result.unitsPerCarton)
+    result.unitsPerCarton = Object.fromEntries(
+      Object.entries(result.unitsPerCarton).filter(([id]) => selected.has(id))
+    )
+  if (result.cartonDetails)
+    result.cartonDetails = Object.fromEntries(
+      Object.entries(result.cartonDetails).filter(([id]) => selected.has(id))
+    )
+  for (const field of ['cartonConfirmations', 'cartonConfirmationClocks'])
+    if (result[field])
+      result[field] = Object.fromEntries(
+        Object.entries(result[field])
+          .filter(([id]) => confirmedBatches.has(id))
+          .map(([id, months]) => [
+            id,
+            Object.fromEntries(
+              Object.entries(months).filter(
+                ([month]) =>
+                  !preparation || confirmationMonths.get(id)?.has(month)
+              )
+            ),
+          ])
+          .filter(([, months]) => Object.keys(months).length)
+      )
   if (result.packingExcludedEntryIds)
     result.packingExcludedEntryIds = result.packingExcludedEntryIds.filter(
       (id) => selected.has(id)
     )
   for (const [clock, partial] of [
     ['productTagsUpdatedAt', 'productTagsPartialClocks'],
+    ['productWorkflowUpdatedAt', 'productWorkflowPartialClocks'],
+    ['unitsPerCartonUpdatedAt', 'unitsPerCartonPartialClocks'],
+    ['cartonDetailsUpdatedAt', 'cartonDetailsPartialClocks'],
     ['packingExclusionsUpdatedAt', 'packingExclusionsPartialClocks'],
   ])
     if (order[clock] || order[partial]) {
@@ -208,6 +317,88 @@ function packingPreferences(preferences, orders) {
   return { value: result, updatedAt: preferences.updatedAt }
 }
 
+/** Retain only historical observations required to prove included physical allocations. */
+function cartonSourceHistory(backup, batches, orders) {
+  const demands = new Map(),
+    current = new Map(orders.map((order) => [key(order.snapshot), order])),
+    history = [...(backup.history || [])].sort((a, b) =>
+      b.snapshot.observedAt.localeCompare(a.snapshot.observedAt)
+    ),
+    retained = new Map()
+  for (const batch of batches) {
+    if (batch.deletedAt) continue
+    for (const item of batch.contents) {
+      const identity = JSON.stringify([
+        batch.accountId,
+        item.orderId,
+        item.entryId,
+      ])
+      if (!demands.has(identity))
+        demands.set(identity, {
+          accountId: batch.accountId,
+          orderId: item.orderId,
+          entryId: item.entryId,
+          quantity: 0n,
+          stores: new Set(),
+        })
+      const demand = demands.get(identity)
+      demand.quantity += BigInt(item.quantity)
+      demand.stores.add(batch.storeId)
+    }
+  }
+  const quantity = (record, entryId) => {
+    const value = record?.snapshot.items.find(
+      (item) => item.entryId === entryId
+    )?.quantity
+    return /^\d+$/.test(value || '') ? BigInt(value) : 0n
+  }
+  const keep = (record) => {
+    if (record)
+      retained.set(
+        JSON.stringify([
+          record.snapshot.accountId,
+          record.snapshot.orderId,
+          record.snapshot.observedAt,
+        ]),
+        record
+      )
+  }
+  for (const demand of demands.values()) {
+    const orderKey = key(demand),
+      source = current.get(orderKey),
+      candidates = history.filter(
+        (record) =>
+          key(record.snapshot) === orderKey &&
+          record.snapshot.items.some((item) => item.entryId === demand.entryId)
+      )
+    if (quantity(source, demand.entryId) < demand.quantity)
+      keep(
+        candidates.find(
+          (record) => quantity(record, demand.entryId) >= demand.quantity
+        )
+      )
+    for (const storeId of demand.stores)
+      if (!source || repeatProductStoreIdentity(source.snapshot) !== storeId)
+        keep(
+          candidates.find(
+            (record) => repeatProductStoreIdentity(record.snapshot) === storeId
+          )
+        )
+  }
+  return [...retained.values()].map((record) =>
+    structuredClone({
+      snapshot: record.snapshot,
+      revision: record.revision,
+      changedAt: record.changedAt,
+      lastCheckedAt: record.lastCheckedAt,
+      notes: '',
+      tags: [],
+      changedEntryIds: [],
+      removedEntryIds: [],
+    })
+  )
+}
+
 /** Full source orders remain dependencies so their money totals still reconcile. */
 export function createPackingBackup(backup, selection) {
   const scope = validatePackingScope(
@@ -218,33 +409,59 @@ export function createPackingBackup(backup, selection) {
   const selected = new Map(
     scope.orders.map((order) => [key(order), order.entryIds])
   )
-  const orders = backup.orders
+  const selectedOrders = backup.orders
     .filter((order) => selected.has(key(order.snapshot)))
     .map((order) =>
-      selectPackingOrder(order, selected.get(key(order.snapshot)))
+      selectPackingOrder(
+        order,
+        selected.get(key(order.snapshot)),
+        backup.preparations.find(
+          (preparation) => key(preparation) === key(order.snapshot)
+        )
+      )
     )
+  const dependencies = paymentSourceDependencies(backup.orders, selectedOrders)
+  if (dependencies.length)
+    scope.dependencies = dependencies.map(({ snapshot }) => ({
+      accountId: snapshot.accountId || 'local',
+      orderId: snapshot.orderId,
+    }))
+  const orders = [...selectedOrders, ...structuredClone(dependencies)]
   const preparations = backup.preparations
     .filter((preparation) => selected.has(key(preparation)))
     .map((preparation) =>
       selectPackingPreparation(preparation, selected.get(key(preparation)))
     )
+  const cartonBatches = structuredClone(
+      (backup.cartonBatches || []).filter(
+        (batch) =>
+          scope.months.includes(batch.month) &&
+          batchInPackingScope(batch, scope.orders, preparations)
+      )
+    ),
+    history = cartonSourceHistory(backup, cartonBatches, selectedOrders)
   const urls = new Set(
     orders.flatMap((order) =>
       order.snapshot.items
         .filter((item) =>
-          selected.get(key(order.snapshot)).includes(item.entryId)
+          selected.get(key(order.snapshot))?.includes(item.entryId)
         )
-        .map((item) => item.thumbnail)
+        .flatMap((item) => [item.thumbnail, ...(item.photos || [])])
     )
   )
+  // Full source rows are retained to reconcile money. Local originals have no
+  // remote fallback, so keep every original referenced by those dependencies.
+  for (const order of [...orders, ...history])
+    for (const item of order.snapshot.items)
+      for (const url of [item.thumbnail, ...(item.photos || [])])
+        if (url?.startsWith('local-image:')) urls.add(url)
   return {
     format: '1688-order-library',
-    version: 3,
+    version: 4,
     exportedAt: backup.exportedAt,
     orders,
-    // Every scoped preparation/checkpoint entry exists in its current source.
-    // Prior scraped snapshots and retired ownership are not restore dependencies.
-    history: [],
+    // Physical allocations can predate reduced current purchase quantities.
+    history,
     preparations,
     ...activePackingState(preparations),
     images: structuredClone(
@@ -252,6 +469,35 @@ export function createPackingBackup(backup, selection) {
     ),
     packingPreferences: packingPreferences(backup.packingPreferences, orders),
     packingScope: scope,
+    cartonBatches,
+    omittedCartonBatchIds: (backup.cartonBatches || [])
+      .filter(
+        (batch) =>
+          !batch.deletedAt &&
+          scope.months.includes(batch.month) &&
+          !batchInPackingScope(batch, scope.orders, preparations) &&
+          (batch.contents.some((item) =>
+            scope.orders.some(
+              (order) =>
+                (order.accountId || 'local') === batch.accountId &&
+                order.orderId === item.orderId &&
+                order.entryIds.includes(item.entryId)
+            )
+          ) ||
+            [...batch.groups, cartonBatchMark(batch)].some(
+              (reference) =>
+                reference &&
+                preparations.some(
+                  (preparation) =>
+                    preparation.accountId === batch.accountId &&
+                    preparation.orderId === reference.orderId &&
+                    preparation.groups.some(
+                      (group) => group.id === reference.groupId
+                    )
+                )
+            ))
+      )
+      .map((batch) => batch.id),
   }
 }
 

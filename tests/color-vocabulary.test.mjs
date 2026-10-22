@@ -3,6 +3,7 @@ import assert from 'node:assert/strict'
 import {
   COLOR_VOCABULARY,
   COLOR_VOCABULARY_VERSION,
+  configureColorVocabulary,
   getItemColorHints,
 } from '../src/color-vocabulary.js'
 
@@ -197,11 +198,76 @@ test('finishes and patterns are not presented as exact colors', () => {
 test('bare colors need an exact color segment or explicit physical component', () => {
   assert.deepEqual(ids('黑'), ['black'])
   assert.deepEqual(ids('黑 / 白'), ['black', 'white'])
+  assert.deepEqual(ids('红（35L）'), ['red'])
+  assert.deepEqual(ids('（红）35L'), ['red'])
   assert.deepEqual(ids('灰底麋鹿'), ['gray'])
   assert.deepEqual(ids('绿盆黄刷'), ['green', 'yellow'])
   assert.deepEqual(ids('黑小号'), ['black'])
   assert.deepEqual(ids('咖啡小狗'), [])
   assert.deepEqual(ids('粉朵朵'), [])
+})
+
+test('explicit color fields recognize a named shade ending before a separator or end', () => {
+  for (const value of [
+    '安可拉红-35L（带盖有轮）',
+    '安可拉红',
+    '安可拉红 / 35L',
+    '安可拉红（带盖有轮）',
+  ]) {
+    const hints = getItemColorHints(item(value))
+    assert.deepEqual(
+      hints.map((hint) => hint.id),
+      ['red'],
+      value
+    )
+    assert.equal(hints[0].swatch, '#ca4445')
+    assert.equal(hints[0].source, '红')
+  }
+  assert.deepEqual(ids('安可拉红-35L', '规格'), [])
+  assert.deepEqual(ids('安可拉红-35L', '货号'), [])
+  assert.deepEqual(
+    getItemColorHints({ description: '安可拉红-35L（带盖有轮）' }),
+    []
+  )
+  assert.deepEqual(ids('红酒杯'), [])
+  assert.deepEqual(ids('黑板'), [])
+  assert.deepEqual(ids('银杏'), [])
+  assert.deepEqual(ids('安可拉红色-35L'), ['red'])
+  assert.deepEqual(ids('酒红-35L'), ['burgundy'])
+  assert.deepEqual(ids('砖红-35L'), ['brick-red'])
+  assert.deepEqual(ids('安可拉红绿-35L'), ['combined-red-green'])
+  assert.equal(getItemColorHints(item('安可拉红绿-35L'))[0].swatch, null)
+})
+
+test('English display names match whole words in explicit color fields without case sensitivity', () => {
+  for (const value of [
+    'Red-35L（带盖有轮）',
+    'red-35L',
+    'RED',
+    'Dark blue-35L',
+  ]) {
+    const hints = getItemColorHints(item(value))
+    assert.deepEqual(
+      hints.map((hint) => hint.id),
+      value.startsWith('Dark') ? ['dark-blue'] : ['red'],
+      value
+    )
+  }
+  assert.deepEqual(ids('Redwine'), [])
+  assert.deepEqual(ids('Infrared'), [])
+  assert.deepEqual(ids('Red-35L', '规格'), [])
+  assert.deepEqual(ids('Red-35L', '货号'), [])
+  assert.deepEqual(getItemColorHints({ description: 'Red-35L' }), [])
+  const rules = structuredClone(COLOR_VOCABULARY)
+  rules.find((rule) => rule.id === 'red').labels.en = 'Scarlet'
+  try {
+    configureColorVocabulary(rules)
+    assert.deepEqual(ids('scarlet-35L'), ['red'])
+    assert.deepEqual(ids('Red-35L'), [])
+    assert.deepEqual(ids('Scarletwine'), [])
+  } finally {
+    configureColorVocabulary()
+  }
 })
 
 test('negated color mentions do not generate misleading chips', () => {

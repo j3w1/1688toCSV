@@ -7,12 +7,30 @@ import {
   preparationColumns,
   preparationCopyFields,
   preparationOrderFields,
+  preparationFeatureFields,
   normalizePreparationColumnPreference,
   selectedPreparationColumns,
   DEFAULT_PREPARATION_COLUMNS,
 } from '../src/preparation-clipboard.js'
 import { createSizeClassifier } from '../src/size-vocabulary.js'
 import { UI_MESSAGES } from '../src/ui-messages.js'
+import { t, getLanguage } from '../src/i18n.js'
+
+test('popup export language translates generated feature wording while retaining custom text and workspace language', () => {
+  const features = {
+    lighting: true,
+    custom: { name: '20.5cm / 大盘', unitCost: '2.50', included: false },
+  }
+  const baseline = getLanguage()
+  const values = preparationFeatureFields(features, (source, params) =>
+    t(source, params, 'es')
+  )
+  assert.equal(values.productFeatures, 'Iluminación · 20.5cm / 大盘')
+  assert.match(values.productFeatureCosts, /^20\.5cm \/ 大盘 \(¥2\.50 /)
+  assert.ok(!values.productFeatureCosts.includes('per piece'))
+  assert.ok(!values.productFeatureCosts.includes('Added cost'))
+  assert.equal(getLanguage(), baseline)
+})
 
 const row = {
   orderId: '1',
@@ -63,6 +81,22 @@ test('individual columns respect optional headers and text formula safety', () =
   assert.equal(result.plain, "Spanish description\r\n'=SUM(A1)")
   assert.match(result.html, /mso-number-format/)
   assert.throws(() => preparationTable([row], []), /Choose columns/)
+})
+
+test('copy calculations preserve decimal and zero quantities for feature cost exports', () => {
+  const decimal = preparationCopyFields({
+    ...row,
+    price: '1.005',
+    quantity: '1.5',
+    discount: '0.00',
+    featureCharge: '0.02',
+  })
+  assert.equal(decimal.lineAmount, '1.51')
+  assert.equal(decimal.featureCharge, '0.02')
+  assert.equal(
+    preparationCopyFields({ ...row, quantity: '0' }).lineAmount,
+    '0.00'
+  )
 })
 
 test('size wording and the assigned size code copy independently as exact text', () => {
@@ -149,6 +183,26 @@ test('column preferences preserve legacy choices, exact order and an intentional
     for (const key of [title, group])
       for (const language of ['zh', 'es'])
         assert.ok(UI_MESSAGES[key]?.[language], `${key}: ${language}`)
+})
+
+test('preparation rows preserve the authoritative spreadsheet source type for factory and market image formatting', () => {
+  for (const kind of ['factory', 'market']) {
+    const record = {
+      snapshot: { sourceType: 'spreadsheet', store: { kind }, totals: {} },
+    }
+    const copied = preparationCopyFields({
+      ...row,
+      sourceType: '1688',
+      ...preparationOrderFields(row, record),
+    })
+    assert.equal(copied.sourceType, 'spreadsheet')
+  }
+  assert.equal(
+    preparationOrderFields(row, {
+      snapshot: { sourceType: '1688', totals: {} },
+    }).sourceType,
+    '1688'
+  )
 })
 
 test('expanded columns copy only the matching saved source metadata and use exact row amounts', () => {

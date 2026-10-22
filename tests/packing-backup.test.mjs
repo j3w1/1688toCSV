@@ -1,6 +1,7 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
 import { mergeProductAnnotations, validateBackup } from '../src/database.js'
+import { paymentSourceEvidence } from '../src/payment-links.js'
 import {
   upgradeWorkspaceColors,
   WORKSPACE_COLOR_REVISION,
@@ -100,10 +101,148 @@ const selection = (entryIds = ['2']) => ({
   months: ['2026-10'],
   orders: [{ orderId: '1001', entryIds }],
 })
+
+test('packing backups retain complete linked payment sources without adding their packing scope', () => {
+  const { backup } = fixture()
+  const target = backup.orders[0]
+  const source = structuredClone(target)
+  source.snapshot.orderId = '1002'
+  source.snapshot.sourceUrl = source.snapshot.sourceUrl.replace('1001', '1002')
+  source.productWorkflow = {
+    1: { features: { lighting: true } },
+    3: { features: { rotation: true } },
+  }
+  source.productWorkflowUpdatedAt = '2026-10-02T12:00:00.000Z'
+  source.packingExcludedEntryIds = ['1', '2', '3']
+  source.packingExclusionsUpdatedAt = '2026-10-02T12:00:00.000Z'
+  target.paymentLinks = [
+    {
+      id: 'synthetic-payment',
+      sourceOrderId: '1002',
+      amount: '30.00',
+      reason: 'Recorded service payment',
+      targetEntryIds: ['1', '2', '3'],
+      reviewedAt: '2026-10-02T12:00:00.000Z',
+      sourceEvidence: paymentSourceEvidence(source),
+    },
+  ]
+  target.paymentLinksUpdatedAt = '2026-10-02T12:00:00.000Z'
+  backup.orders.push(source)
+  const partial = createPackingBackup(backup, selection())
+  assert.deepEqual(partial.packingScope.orders, [
+    { accountId: 'local', orderId: '1001', entryIds: ['2'] },
+  ])
+  assert.deepEqual(partial.packingScope.dependencies, [
+    { accountId: 'local', orderId: '1002' },
+  ])
+  assert.deepEqual(
+    partial.orders.find((record) => record.snapshot.orderId === '1002'),
+    source
+  )
+  assert.equal(partial.preparations.length, 1)
+  assert.doesNotThrow(() => validateBackup(partial))
+  const missing = structuredClone(partial)
+  missing.packingScope.dependencies = []
+  assert.throws(() => validateBackup(missing), /financial source dependency/)
+  const dangling = structuredClone(partial)
+  dangling.orders = dangling.orders.filter(
+    (record) => record.snapshot.orderId !== '1002'
+  )
+  assert.throws(() => validateBackup(dangling), /source order was not found/)
+  const unrelated = structuredClone(partial)
+  const extra = structuredClone(source)
+  extra.snapshot.orderId = '1003'
+  extra.snapshot.sourceUrl = extra.snapshot.sourceUrl.replace('1002', '1003')
+  unrelated.orders.push(extra)
+  assert.throws(() => validateBackup(unrelated), /financial source dependency/)
+})
 const members = (preparation) =>
   preparation.groups.flatMap((group) =>
     group.variants.flatMap((variant) => variant.entryIds)
   )
+
+test('full and scoped 1688 backups retain optional independent pointer sizes without rewriting legacy photos', () => {
+  const { backup } = fixture()
+  const edit = {
+    tagScale: 1.5,
+    pointerScale: 3.25,
+    invertPointer: true,
+    tags: [
+      { id: 'tag-a', code: 'A', x: 0.25, y: 0.3, labelX: 0.8, labelY: 0.8 },
+    ],
+  }
+  backup.orders[0].snapshot.items[1].photoEdits = { 0: edit }
+  for (const data of [
+    validateBackup(backup),
+    validateBackup(createPackingBackup(backup, selection())),
+  ]) {
+    assert.deepEqual(data.orders[0].snapshot.items[1].photoEdits, { 0: edit })
+    assert.equal(data.orders[0].snapshot.items[0].photoEdits, undefined)
+  }
+  const invalid = structuredClone(backup)
+  invalid.orders[0].snapshot.items[1].photoEdits['0'].pointerScale = NaN
+  assert.throws(() => validateBackup(invalid), /Photo pointer size/)
+  for (const invertPointer of [false, true]) {
+    backup.orders[0].snapshot.items[1].photoEdits['0'].invertPointer =
+      invertPointer
+    for (const data of [
+      validateBackup(backup),
+      validateBackup(createPackingBackup(backup, selection())),
+    ])
+      assert.equal(
+        data.orders[0].snapshot.items[1].photoEdits['0'].invertPointer,
+        invertPointer
+      )
+  }
+  const wrongInversion = structuredClone(backup)
+  wrongInversion.orders[0].snapshot.items[1].photoEdits['0'].invertPointer =
+    'false'
+  assert.throws(
+    () => validateBackup(wrongInversion),
+    /Photo pointer color inversion/
+  )
+})
+
+test('scoped backup retains every local original referenced by full source dependencies', () => {
+  const { backup } = fixture()
+  const localUrls = ['a', 'b', 'c'].map(
+    (char) => `local-image:${char.repeat(64)}`
+  )
+  backup.orders[0].snapshot.items.forEach((item, index) => {
+    item.photos = [localUrls[index]]
+  })
+  backup.images.push(
+    ...localUrls.map((url) => ({
+      url,
+      dataUrl: 'data:image/png;base64,AAAA',
+      storedAt: backup.exportedAt,
+    }))
+  )
+  const unrelated = `local-image:${'d'.repeat(64)}`
+  backup.images.push({
+    url: unrelated,
+    dataUrl: 'data:image/png;base64,AAAA',
+    storedAt: backup.exportedAt,
+  })
+  const scoped = createPackingBackup(backup, selection(['2']))
+  assert.deepEqual(
+    scoped.images
+      .filter((image) => image.url.startsWith('local-image:'))
+      .map((image) => image.url),
+    localUrls
+  )
+  assert.equal(
+    scoped.images.some((image) => image.url === unrelated),
+    false
+  )
+  assert.equal(
+    scoped.images.some(
+      (image) => image.url === backup.orders[0].snapshot.items[0].thumbnail
+    ),
+    false
+  )
+  assert.deepEqual(members(scoped.preparations[0]), ['2'])
+})
 
 test('packing backup contains only selected prepared products and checkpoints, with full money dependencies', () => {
   const { backup } = fixture()
@@ -238,18 +377,20 @@ test('packing backup omits unrelated history, allocations, image blobs and globa
   const restored = validateBackup(scoped)
   assert.deepEqual(Object.keys(scoped).sort(), [
     'allocations',
+    'cartonBatches',
     'exportedAt',
     'format',
     'history',
     'images',
     'issuedCodes',
+    'omittedCartonBatchIds',
     'orders',
     'packingPreferences',
     'packingScope',
     'preparations',
     'version',
   ])
-  assert.equal(scoped.version, 3)
+  assert.equal(scoped.version, 4)
   assert.equal(scoped.orders.length, 1)
   assert.deepEqual(scoped.orders[0].snapshot, snapshot)
   assert.deepEqual(scoped.history, [])
@@ -474,6 +615,103 @@ test('partial annotation metadata is validated and survives backup validation', 
     invalid.orders[0][partial] = { 2: invalid.orders[0][clock] }
     assert.throws(() => validateBackup(invalid), /must follow/)
   }
+})
+
+test('carton capacity survives full backup validation and rejects malformed saved values', () => {
+  const { backup } = fixture()
+  Object.assign(backup.orders[0], {
+    unitsPerCarton: { 1: 10, 2: 20 },
+    unitsPerCartonUpdatedAt: backup.exportedAt,
+  })
+  assert.deepEqual(validateBackup(backup).orders, backup.orders)
+  for (const unitsPerCarton of [
+    [],
+    { bad: 10 },
+    { 1: 0 },
+    { 1: -1 },
+    { 1: 1.5 },
+    { 1: '10' },
+    { 1: null },
+    { 1: Number.MAX_SAFE_INTEGER + 1 },
+  ]) {
+    const invalid = structuredClone(backup)
+    invalid.orders[0].unitsPerCarton = unitsPerCarton
+    assert.throws(() => validateBackup(invalid), /Pcs\/box/)
+  }
+})
+
+test('packing capacity backup clips entries and clocks while full restore preserves newer clears', () => {
+  const { backup } = fixture()
+  const clock = backup.exportedAt
+  const later = '2026-10-06T12:00:00.000Z'
+  Object.assign(backup.orders[0], {
+    unitsPerCarton: { 1: 10, 2: 20, 3: 30 },
+    unitsPerCartonUpdatedAt: clock,
+  })
+  const scoped = createPackingBackup(backup, selection())
+  const partial = validateBackup(scoped).orders[0]
+  assert.deepEqual(partial.unitsPerCarton, { 2: 20 })
+  assert.deepEqual(partial.unitsPerCartonPartialClocks, { 2: clock })
+  assert.equal(partial.unitsPerCartonUpdatedAt, undefined)
+  assert.deepEqual(
+    mergeProductAnnotations(partial, backup.orders[0]),
+    backup.orders[0]
+  )
+  const cleared = {
+    ...partial,
+    unitsPerCarton: {},
+    unitsPerCartonPartialClocks: { 2: later },
+  }
+  const completed = mergeProductAnnotations(cleared, backup.orders[0])
+  assert.deepEqual(completed.unitsPerCarton, { 1: 10, 3: 30 })
+  assert.equal(completed.unitsPerCartonUpdatedAt, clock)
+  assert.deepEqual(completed.unitsPerCartonPartialClocks, { 2: later })
+  const clearedBackup = createPackingBackup(
+    { ...backup, orders: [completed] },
+    selection(['1', '2'])
+  )
+  assert.deepEqual(clearedBackup.orders[0].unitsPerCartonPartialClocks, {
+    1: clock,
+    2: later,
+  })
+  assert.deepEqual(clearedBackup.orders[0].unitsPerCarton, { 1: 10 })
+  assert.deepEqual(validateBackup(clearedBackup).orders, clearedBackup.orders)
+  assert.equal(mergeProductAnnotations(completed, partial), completed)
+  const merged = mergeProductAnnotations(
+    backup.orders[0],
+    clearedBackup.orders[0]
+  )
+  assert.deepEqual(merged.unitsPerCarton, { 1: 10, 3: 30 })
+  const newest = {
+    ...backup.orders[0],
+    unitsPerCartonUpdatedAt: '2026-10-07T12:00:00.000Z',
+  }
+  assert.equal(
+    mergeProductAnnotations(completed, newest).unitsPerCartonPartialClocks,
+    undefined
+  )
+})
+
+test('capacity partial clocks must cover every saved value and follow the complete clock', () => {
+  const { backup } = fixture()
+  Object.assign(backup.orders[0], {
+    unitsPerCarton: { 2: 10 },
+    unitsPerCartonPartialClocks: { 2: backup.exportedAt },
+  })
+  assert.deepEqual(validateBackup(backup).orders, backup.orders)
+  for (const value of [
+    [],
+    {},
+    { 2: 'yesterday' },
+    { bad: backup.exportedAt },
+  ]) {
+    const invalid = structuredClone(backup)
+    invalid.orders[0].unitsPerCartonPartialClocks = value
+    assert.throws(() => validateBackup(invalid), /Partial product annotation/)
+  }
+  const invalid = structuredClone(backup)
+  invalid.orders[0].unitsPerCartonUpdatedAt = backup.exportedAt
+  assert.throws(() => validateBackup(invalid), /must follow/)
 })
 
 test('same-time preparation completion accepts exact subsets but rejects changed shared authoring', () => {

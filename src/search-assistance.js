@@ -95,12 +95,18 @@ export function searchSuggestions(query, candidates, limit = 8) {
 }
 
 /** Local-only editable combobox. Focus remains in the native search input. */
-export function attachSearchSuggestions(input, getCandidates) {
+export function attachSearchSuggestions(
+  input,
+  getCandidates,
+  { showOnFocus = false } = {}
+) {
+  const inlineHost = input.closest('.orders-pane .search')
   const list = document.createElement('div')
   list.id = `search-suggestions-${crypto.randomUUID()}`
   list.className = 'search-suggestions'
   list.setAttribute('role', 'listbox')
-  list.setAttribute('popover', 'manual')
+  if (inlineHost) list.hidden = true
+  else list.setAttribute('popover', 'manual')
   bindAttribute(list, 'aria-label', message('Search suggestions'))
   input.setAttribute('role', 'combobox')
   input.setAttribute('aria-autocomplete', 'list')
@@ -108,14 +114,19 @@ export function attachSearchSuggestions(input, getCandidates) {
   input.setAttribute('aria-expanded', 'false')
   input.autocomplete = 'off'
   const scope = input.closest('dialog') || document.body
-  scope.append(list)
+  if (inlineHost) inlineHost.append(list)
+  else scope.append(list)
   let values = [],
     current = -1,
     timer,
     composing = false,
+    pointerExit = false,
     openListeners,
     observer
+  const isOpen = () =>
+    inlineHost ? !list.hidden : list.matches(':popover-open')
   const position = () => {
+    if (inlineHost) return
     const box = input.getBoundingClientRect()
     list.style.inlineSize = `${Math.min(Math.max(box.width, 230), innerWidth - 24)}px`
     list.style.left = `${Math.max(12, Math.min(box.left, innerWidth - list.offsetWidth - 12))}px`
@@ -127,10 +138,12 @@ export function attachSearchSuggestions(input, getCandidates) {
   }
   const close = () => {
     clearTimeout(timer)
-    if (list.matches(':popover-open')) list.hidePopover()
+    if (inlineHost) list.hidden = true
+    else if (isOpen()) list.hidePopover()
     input.setAttribute('aria-expanded', 'false')
     input.removeAttribute('aria-activedescendant')
     current = -1
+    pointerExit = false
     openListeners?.abort()
     observer?.disconnect()
   }
@@ -173,7 +186,8 @@ export function attachSearchSuggestions(input, getCandidates) {
         return option
       })
     )
-    if (!list.matches(':popover-open')) list.showPopover()
+    if (inlineHost) list.hidden = false
+    else if (!isOpen()) list.showPopover()
     input.setAttribute('aria-expanded', 'true')
     position()
     openListeners?.abort()
@@ -184,10 +198,23 @@ export function attachSearchSuggestions(input, getCandidates) {
     document.addEventListener(
       'pointerdown',
       (event) => {
-        if (event.target !== input && !list.contains(event.target)) close()
+        if (event.target !== input && !list.contains(event.target)) {
+          // Inline suggestions reserve space. Keep that space until click has
+          // its target, so dismissing cannot move a month chip before release.
+          if (inlineHost) pointerExit = true
+          else close()
+        }
       },
       { capture: true, signal }
     )
+    if (inlineHost)
+      document.addEventListener(
+        'click',
+        (event) => {
+          if (event.target !== input && !list.contains(event.target)) close()
+        },
+        { capture: true, signal }
+      )
     observer?.disconnect()
     observer = new MutationObserver(() => {
       if (!input.isConnected || !input.checkVisibility()) close()
@@ -202,35 +229,33 @@ export function attachSearchSuggestions(input, getCandidates) {
   input.addEventListener('input', () => {
     clearTimeout(timer)
     if (input.ownerDocument.activeElement === input)
-      timer = setTimeout(show, 100)
+      timer = setTimeout(() => show(showOnFocus), 100)
   })
-  input.addEventListener('focus', () => show())
-  input.addEventListener('blur', close)
+  input.addEventListener('focus', () => show(showOnFocus))
+  input.addEventListener('blur', () => {
+    if (!inlineHost || !pointerExit) close()
+  })
   input.addEventListener('compositionstart', () => {
     composing = true
     close()
   })
   input.addEventListener('compositionend', () => {
     composing = false
-    show()
+    show(showOnFocus)
   })
   input.addEventListener('keydown', (event) => {
     if (event.isComposing) return
     if (event.key === 'ArrowDown' || event.key === 'ArrowUp') {
-      if (!list.matches(':popover-open')) show(true)
-      if (!values.length || !list.matches(':popover-open')) return
+      if (!isOpen()) show(true)
+      if (!values.length || !isOpen()) return
       event.preventDefault()
       active(
         current + (event.key === 'ArrowDown' ? 1 : current === -1 ? 0 : -1)
       )
-    } else if (
-      event.key === 'Enter' &&
-      current >= 0 &&
-      list.matches(':popover-open')
-    ) {
+    } else if (event.key === 'Enter' && current >= 0 && isOpen()) {
       event.preventDefault()
       choose(current)
-    } else if (event.key === 'Escape' && list.matches(':popover-open')) {
+    } else if (event.key === 'Escape' && isOpen()) {
       event.preventDefault()
       event.stopPropagation()
       close()

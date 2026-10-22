@@ -1,9 +1,6 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
-import {
-  createExcelImageBadges,
-  currentExcelImageMode,
-} from '../src/excel-image-badges.js'
+import { createExcelImageBadges } from '../src/excel-image-badges.js'
 import { appearanceTokens, UI_LABEL_COLORS } from '../src/appearance.js'
 import { orderTagColors } from '../src/order-tags.js'
 
@@ -29,15 +26,6 @@ test('image badge defaults follow workspace labels in each light and dark mode',
     createExcelImageBadges({}, 'unknown'),
     createExcelImageBadges()
   )
-})
-
-test('explicit workspace mode overrides the system and other meta values use the system', () => {
-  assert.equal(currentExcelImageMode('light', true), 'light')
-  assert.equal(currentExcelImageMode('dark', false), 'dark')
-  for (const scheme of ['light dark', '', 'system', 'unknown', null]) {
-    assert.equal(currentExcelImageMode(scheme, true), 'dark')
-    assert.equal(currentExcelImageMode(scheme, false), 'light')
-  }
 })
 
 test('order and product tag catalogs keep independent colors for the same name', () => {

@@ -32,6 +32,20 @@ async function fixture(extension, html) {
       document.documentElement.style.setProperty(name, value)
     document.body.style.padding = '60px'
   }, variables)
+  const code = await build({
+    entryPoints: [
+      fileURLToPath(new URL('../../src/code-display.js', import.meta.url)),
+    ],
+    bundle: true,
+    write: false,
+    format: 'iife',
+    globalName: 'CodeDisplay',
+  })
+  await page.addScriptTag({ content: code.outputFiles[0].text })
+  await page.evaluate(() => {
+    for (const input of document.querySelectorAll('input.ce-code'))
+      CodeDisplay.decorateCodeInput(input)
+  })
   return page
 }
 
@@ -50,6 +64,7 @@ test('code inputs preserve their value after selecting text beyond the field', a
   for (const name of ['Group code', 'Correction code', 'Large code']) {
     const input = page.getByRole('textbox', { name })
     const original = await input.inputValue()
+    await expect(input).toHaveClass(/ce-code-input-readable/)
     for (const vertical of [50, -50]) {
       await input.fill(original.replace(/.$/, '9'))
       await input.fill(original)

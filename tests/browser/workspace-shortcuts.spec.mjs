@@ -212,11 +212,13 @@ test('packing shortcuts call the existing undo, redo, arrange, grouping and retu
   ).toBeEnabled()
   await page.keyboard.press('Control+Shift+z')
   await expect(code).toHaveValue(after)
+  await packing.getByRole('button', { name: 'Organize', exact: true }).click()
   await page.keyboard.press('Alt+Shift+a')
   await expect(
     packing.getByRole('group', { name: 'Arrange packing', exact: true })
   ).toBeVisible()
   await page.keyboard.press('Escape')
+  await packing.getByRole('button', { name: 'Done', exact: true }).click()
   // Undo/redo restores authoring and leaves a fresh selection scope. Grouping
   // must still obey its normal requirement for selected products.
   await packing.getByRole('button', { name: 'Select all', exact: true }).click()

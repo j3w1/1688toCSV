@@ -1,6 +1,11 @@
 import JsBarcode from 'jsbarcode'
 import { pngWithDpi } from './png-resolution.js'
 import { CE_CODE_DESIGN, codeDesignMetrics } from './code-design.js'
+import { printText } from './print-language.js'
+
+// Standalone copies and editors retain their established Chinese field labels.
+export const normalizeLabelLanguage = (value) =>
+  ['en', 'es', 'zh'].includes(value) ? value : 'zh'
 
 export const DEFAULT_LABEL_SETTINGS = Object.freeze({
   dpi: 300,
@@ -465,7 +470,7 @@ async function drawBarcode(
   }
 }
 
-function drawMark(context, model, settings, width, height) {
+function drawMark(context, model, settings, width, height, language) {
   const factor = settings.mark.textScale
   textBox(
     context,
@@ -474,21 +479,34 @@ function drawMark(context, model, settings, width, height) {
     { size: height * 0.72 * factor, fitInk: true }
   )
   drawCodeBand(context, model, settings, width, height)
-  for (const [caption, unit, top] of [
-    ['数量：', '', 0.805],
-    ['重量：', 'KG', 0.865],
-    ['体积：', 'CBM', 0.925],
+  for (const [key, unit, top] of [
+    ['quantity', '', 0.805],
+    ['weight', 'KG', 0.865],
+    ['volume', 'CBM', 0.925],
   ]) {
+    const caption = printText(key, language)
+    const chinese = language === 'zh'
     textBox(
       context,
       caption,
-      [width * 0.045, height * top, width * 0.1, height * 0.05],
-      { size: height * 0.04 * factor, align: 'left' }
+      [
+        width * 0.045,
+        height * top,
+        width * (chinese ? 0.1 : 0.16),
+        height * 0.05,
+      ],
+      { size: height * (chinese ? 0.04 : 0.035) * factor, align: 'left' }
     )
+    const lineStart = chinese
+      ? width * 0.135
+      : Math.max(
+          width * 0.135,
+          width * 0.057 + context.measureText(caption).width
+        )
     context.strokeStyle = '#000'
     context.lineWidth = Math.max(1, Math.round(width / 1500))
     context.beginPath()
-    context.moveTo(width * 0.135, height * (top + 0.044))
+    context.moveTo(lineStart, height * (top + 0.044))
     context.lineTo(width * (unit ? 0.38 : 0.475), height * (top + 0.044))
     context.stroke()
     if (unit)
@@ -514,7 +532,7 @@ function drawMark(context, model, settings, width, height) {
 }
 
 async function drawLabel(request) {
-  const { model, settings, logoUrl, signal, logoBounds } = request
+  const { model, settings, logoUrl, signal, logoBounds, language } = request
   aborted(signal)
   const { widthMm, heightMm } = settings[model.kind]
   const width = Math.round((widthMm * settings.dpi) / 25.4)
@@ -545,7 +563,7 @@ async function drawLabel(request) {
         signal,
         logoBounds
       )
-    else drawMark(context, model, settings, width, height)
+    else drawMark(context, model, settings, width, height, language)
     aborted(signal)
     await yieldToBrowser()
     const png = await new Promise((resolve, reject) =>
@@ -639,12 +657,13 @@ export function createLabelRenderer({
         aborted(request.signal)
         const model = normalizeLabel(request)
         const settings = normalizeLabelSettings(request.settings)
+        const language = normalizeLabelLanguage(request.language)
         const logoUrl =
           request.logoUrl ??
           (typeof chrome !== 'undefined' && chrome.runtime?.getURL
             ? chrome.runtime.getURL('assets/casa-elida.png')
             : '')
-        const key = JSON.stringify([model, settings, logoUrl])
+        const key = JSON.stringify([model, settings, logoUrl, language])
         const hit = cached(key)
         if (hit) return Promise.resolve(hit)
         return new Promise((resolve, reject) => {
@@ -671,6 +690,7 @@ export function createLabelRenderer({
               logoUrl,
               signal: controller.signal,
               logoBounds,
+              language,
             },
             cleanup: () => request.signal?.removeEventListener('abort', abort),
           }

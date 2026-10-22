@@ -1,5 +1,7 @@
 // File names and machine-readable summaries for workspace exports, so an
 // automation agent can find each file and check what it contains.
+import { printText } from './print-language.js'
+import { cartonBatchMetrics } from './carton-batches.js'
 
 export const SUMMARY_FORMAT = '1688-export-summary'
 
@@ -18,12 +20,24 @@ export function exportStamp(now = new Date()) {
   return `${exportDate(now)}-${pad(now.getHours())}${pad(now.getMinutes())}${pad(now.getSeconds())}`
 }
 
-/** CE-labels-2026-10-19-153012-3-products.pdf and the carton-mark and calibration forms. */
-export function printFileName(kind, productCount, now = new Date()) {
+/** Print popup language controls PDF names and their matching JSON companions. */
+export function printFileName(
+  kind,
+  productCount,
+  now = new Date(),
+  language = 'en'
+) {
   if (kind === 'calibration')
-    return `CE-print-calibration-${exportStamp(now)}.pdf`
-  const prefix = kind === 'marks' ? 'CE-carton-marks' : 'CE-labels'
-  return `${prefix}-${exportStamp(now)}-${productCount}-${productCount === 1 ? 'product' : 'products'}.pdf`
+    return `CE-${printText('fileCalibration', language)}-${exportStamp(now)}.pdf`
+  const prefix = printText(
+    kind === 'marks' ? 'fileMarks' : 'fileLabels',
+    language
+  )
+  const unit = printText(
+    productCount === 1 ? 'fileProduct' : 'fileProducts',
+    language
+  )
+  return `CE-${prefix}-${exportStamp(now)}-${productCount}-${unit}.pdf`
 }
 
 /** A file-name-safe part: letters and digits in any script, joined by hyphens. */
@@ -78,12 +92,41 @@ function exactTotal(values) {
   return values.reduce((sum, value) => sum + Number(value), 0)
 }
 
+function exactAmount(value, field) {
+  if (value === undefined || value === null || value === '') return undefined
+  const text = String(value).trim()
+  if (!/^\d+(?:\.\d+)?$/.test(text))
+    throw new Error(`Invalid ${field} in export summary`)
+  return text
+}
+
+const packingDetailFields = [
+  'plannedBoxes',
+  'receivedBoxes',
+  'loadedBoxes',
+  'cartons',
+  'cartonWeight',
+  'cartonVolume',
+  'cartonLength',
+  'cartonWidth',
+  'cartonHeight',
+  'sourceUnitPrice',
+  'effectiveUnitPrice',
+  'sourceAmount',
+  'effectiveAmount',
+  'additionalCharge',
+  'featureCharge',
+  'linkedPaymentCharge',
+]
+
 /** Which orders, products and quantities a packing-list export holds. */
 export function packingSummary({
   rows,
+  cartonBatches,
   file,
   exportedAt = new Date().toISOString(),
 }) {
+  const authoritative = Array.isArray(cartonBatches)
   const orders = new Map()
   const products = []
   for (const row of rows) {
@@ -95,21 +138,121 @@ export function packingSummary({
           ? { source: 'other', reference: row.orderReference }
           : {}),
       })
+    const order = orders.get(row.orderId)
+    if (
+      row.storeNumber !== undefined &&
+      row.storeNumber !== null &&
+      String(row.storeNumber).trim()
+    )
+      order.storeNumber = String(row.storeNumber)
+    const orderCosts = exactAmount(
+      row.orderAdditionalCharges,
+      'orderAdditionalCharges'
+    )
+    if (orderCosts !== undefined && /[1-9]/.test(orderCosts)) {
+      if (
+        order.orderAdditionalCharges !== undefined &&
+        order.orderAdditionalCharges !== orderCosts
+      )
+        throw new Error(
+          'Inconsistent order additional charges in export summary'
+        )
+      order.orderAdditionalCharges = orderCosts
+      if (row.additionalChargeReasons)
+        order.additionalChargeReasons = String(row.additionalChargeReasons)
+    }
+    const details = Object.fromEntries(
+      packingDetailFields.flatMap((field) => {
+        if (authoritative && /Boxes$|^cartons$|^carton/.test(field)) return []
+        const value = exactAmount(row[field], field)
+        return value === undefined ? [] : [[field, value]]
+      })
+    )
     products.push({
       orderId: row.orderId,
+      ...(authoritative
+        ? { accountId: row.accountId || 'local', entryId: row.entryId }
+        : {}),
       code: row.barcode || row.baseCode || '',
       name: row.spanishName || '',
       quantity: exactQuantity(row.quantity),
+      ...details,
+      ...(row.packingMonth ? { packingMonth: row.packingMonth } : {}),
+      ...(row.cartonBatchId
+        ? {
+            cartonBatchId: row.cartonBatchId,
+            cartonBatchComplete: row.cartonBatchComplete === true,
+          }
+        : {}),
+      ...(row.storeNumber !== undefined &&
+      row.storeNumber !== null &&
+      String(row.storeNumber).trim()
+        ? { storeNumber: String(row.storeNumber) }
+        : {}),
+      ...(row.additionalChargeReasons
+        ? { additionalChargeReasons: String(row.additionalChargeReasons) }
+        : {}),
+      ...(row.linkedPaymentReasons
+        ? { linkedPaymentReasons: String(row.linkedPaymentReasons) }
+        : {}),
+      ...(row.productFeatures
+        ? { productFeatures: String(row.productFeatures) }
+        : {}),
+      ...(row.productFeatureCosts
+        ? { productFeatureCosts: String(row.productFeatureCosts) }
+        : {}),
     })
   }
+  const identity = (row, accountId = row.accountId || 'local') =>
+      JSON.stringify([accountId, String(row.orderId), String(row.entryId)]),
+    included = new Map(rows.map((row) => [identity(row), row.packingMonth])),
+    inScope = (content, batch) =>
+      included.get(identity(content, batch.accountId || 'local')) ===
+      batch.month,
+    batches = authoritative
+      ? cartonBatches
+          .filter(
+            (batch) =>
+              !batch.deletedAt &&
+              batch.contents?.some((content) => inScope(content, batch))
+          )
+          .map((batch) => ({
+            id: batch.id,
+            accountId: batch.accountId,
+            month: batch.month,
+            storeId: batch.storeId,
+            code: batch.baseCode || '',
+            ...(batch.cartonNumber ? { cartonNumber: batch.cartonNumber } : {}),
+            ...(batch.mark ? { mark: { ...batch.mark } } : {}),
+            contents: batch.contents.map((content) => ({
+              orderId: content.orderId,
+              entryId: content.entryId,
+              code: content.barcode || '',
+              quantity: String(content.quantity),
+            })),
+            count: batch.count,
+            received: batch.received,
+            loaded: batch.loaded,
+            len: batch.len || '',
+            wid: batch.wid || '',
+            ht: batch.ht || '',
+            weightBasis: batch.weightBasis,
+            weight: batch.weight || '',
+            includedInTotals:
+              !batch.needsReview &&
+              batch.contents.every((content) => inScope(content, batch)),
+            ...cartonBatchMetrics(batch),
+          }))
+      : undefined
   return {
     format: SUMMARY_FORMAT,
-    version: 1,
+    version: authoritative ? 2 : 1,
     kind: 'packing-list',
     exportedAt,
     files: [file, summaryFileName(file)],
     orders: [...orders.values()],
     products,
+    ...(authoritative ? { cartonBatches: batches } : {}),
     totals: {
       orders: orders.size,
       products: products.length,
@@ -121,6 +264,7 @@ export function packingSummary({
 /** Which labels or carton marks a PDF export holds, page count included. */
 export function printSummary({
   kind,
+  language = 'en',
   file,
   items,
   pages,
@@ -150,6 +294,7 @@ export function printSummary({
     format: SUMMARY_FORMAT,
     version: 1,
     kind: kind === 'marks' ? 'carton-marks' : 'labels',
+    language,
     exportedAt,
     files: [file, summaryFileName(file)],
     pages,

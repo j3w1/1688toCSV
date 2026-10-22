@@ -1,6 +1,11 @@
 // The print preview's drawing adapter: the PDF page API on a 2D canvas, with
 // the same units (millimetres, dash lengths included) and caption placement.
 import { captionText, captionLeftMm } from './pdf-writer.js'
+import {
+  hasUnicodeCaption,
+  unicodeCaption,
+  printCaptionFont,
+} from './print-captions.js'
 
 /** Canvas drawing with the PDF page API, at `k` pixels per millimetre. */
 export function canvasPage(context, k) {
@@ -58,15 +63,22 @@ export function canvasPage(context, k) {
       context.restore()
       return api
     },
-    // Same text and the same left edge as the PDF writer, not canvas metrics.
+    // ASCII shares Helvetica geometry; Unicode shares the PDF caption raster font.
     text(value, x, y, { size = 6, gray = 0.45, align = 'left' } = {}) {
-      const text = captionText(value)
+      const unicode = hasUnicodeCaption(value)
+      const text = unicode ? unicodeCaption(value) : captionText(value)
       if (!text) return api
       context.save()
       context.fillStyle = shade(gray)
-      context.font = `${(size / 72) * 25.4 * k}px Helvetica, Arial, sans-serif`
-      context.textAlign = 'left'
-      context.fillText(text, captionLeftMm(value, x, size, align) * k, y * k)
+      context.font = unicode
+        ? printCaptionFont((size / 72) * 25.4 * k)
+        : `${(size / 72) * 25.4 * k}px Helvetica, Arial, sans-serif`
+      context.textAlign = unicode ? align : 'left'
+      context.fillText(
+        text,
+        (unicode ? x : captionLeftMm(value, x, size, align)) * k,
+        y * k
+      )
       context.restore()
       return api
     },

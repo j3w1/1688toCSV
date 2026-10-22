@@ -23,6 +23,22 @@ try {
   await page.getByRole('button', { name: 'Switch to light theme' }).click()
   await page.screenshot({ path: 'screenshots/order-library.png' })
   await page.getByRole('button', { name: 'Switch to dark theme' }).click()
+  await page
+    .getByRole('button', { name: 'Import spreadsheet', exact: true })
+    .click()
+  const spreadsheetImport = page.getByRole('dialog', {
+    name: 'Import store spreadsheet',
+    exact: true,
+  })
+  await spreadsheetImport
+    .getByRole('tab', { name: 'Markers', exact: true })
+    .click()
+  await spreadsheetImport.screenshot({
+    path: 'screenshots/store-spreadsheet-import.png',
+  })
+  await spreadsheetImport
+    .getByRole('button', { name: 'Close import', exact: true })
+    .click()
   const product = page.locator('#sheet-body tr[data-selection-key]').nth(1)
   await product.focus()
   await product.press('Enter')
@@ -88,7 +104,7 @@ try {
   if (!(await columnSummary.evaluate((node) => node.parentElement.open)))
     await columnSummary.click()
   await imageColumns.screenshot({ path: 'screenshots/excel-image-columns.png' })
-  await imageColumns.getByText('Style & details', { exact: true }).click()
+  await imageColumns.getByText('Image details', { exact: true }).click()
   for (const name of ['Order tags', 'Purchase date', 'Order status']) {
     await imageColumns.getByRole('checkbox', { name, exact: true }).check()
     await expect(imageColumns.locator('.image-copy-submit')).toBeEnabled()
@@ -110,6 +126,13 @@ try {
     .waitFor()
   await group.getByAltText('Carton mark preview').waitFor()
   await group.getByAltText('Barcode preview').first().waitFor()
+  const packingPreviews = page.locator(
+    '#packing-view .preparation-label-preview img:not([hidden])'
+  )
+  await expect(packingPreviews).toHaveCount(6)
+  await packingPreviews.evaluateAll((images) =>
+    Promise.all(images.map((image) => image.decode()))
+  )
   await page.locator('#packing-view h1').click()
   await page.mouse.move(0, 0)
   await page
@@ -117,6 +140,15 @@ try {
     .waitFor({ state: 'hidden' })
   await page.evaluate(() => window.scrollTo(0, 0))
   await page.screenshot({ path: 'screenshots/preparation.png' })
+  await page.getByRole('button', { name: 'Organize', exact: true }).click()
+  await expect(page.locator('.packing-organize-group').first()).toBeVisible()
+  await expect(page.locator('#packing-view .variants')).toHaveCount(0)
+  await page
+    .locator('#packing-view img')
+    .evaluateAll((images) => Promise.all(images.map((image) => image.decode())))
+  await page.mouse.move(0, 0)
+  await page.screenshot({ path: 'screenshots/packing-organize.png' })
+  await page.getByRole('button', { name: 'Done', exact: true }).click()
   await page
     .getByRole('button', { name: 'More copy formats', exact: true })
     .click()
@@ -159,6 +191,7 @@ try {
   await page.getByRole('button', { name: 'Orders', exact: true }).click()
   await page.screenshot({ path: 'work/prepared-products-dark.png' })
   await page.getByRole('button', { name: 'Settings', exact: true }).click()
+  await page.getByRole('tab', { name: 'Labels', exact: true }).click()
   await page.locator('#settings-dialog h2').click()
   await page.mouse.move(0, 0)
   await page
@@ -168,6 +201,10 @@ try {
     .locator('#settings-dialog')
     .screenshot({ path: 'screenshots/settings.png' })
   await page.getByRole('tab', { name: 'Appearance', exact: true }).click()
+  for (const mode of ['Light', 'Dark'])
+    await page
+      .getByLabel(`${mode} palette`, { exact: true })
+      .selectOption('classic-brown')
   await page.mouse.move(0, 0)
   await page
     .locator('#settings-dialog')

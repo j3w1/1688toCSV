@@ -1,4 +1,5 @@
 export const PACKING_MESSAGES = {
+  'Variants: {0}': { zh: '规格：{0}', es: 'Variantes: {0}' },
   Packing: { zh: '装箱', es: 'Empaque' },
   'In this packing': { zh: '在此装箱中', es: 'En este empaque' },
   'Saved values from before this preparation session will be restored.': {
@@ -816,8 +817,8 @@ export const PACKING_MESSAGES = {
     es: 'Restaurar empaque anterior',
   },
   Labels: {
-    zh: '标签',
-    es: 'Etiquetas',
+    zh: '打印标签',
+    es: 'Etiquetas de impresión',
   },
   'Product names': {
     zh: '商品名称',

@@ -1031,7 +1031,8 @@ test('v2 databases migrate to current ownership without changing source records,
     }
   }, snapshot('1001'))
   expect(result.before.history).toHaveLength(1)
-  expect(result.after.version).toBe(3)
+  expect(result.after.version).toBe(4)
+  expect(result.after.cartonBatches).toEqual([])
   for (const field of [
     'orders',
     'history',

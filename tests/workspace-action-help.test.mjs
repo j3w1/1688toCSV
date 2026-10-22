@@ -18,9 +18,11 @@ test('action help covers copy formats, view controls and settings with translate
   const { document } = parseHTML('<html><body></body></html>')
   const seen = new Set()
   for (const [actions, description, zh, es] of ACTION_HELP_RULES) {
-    assert.ok(description.length > 30)
-    assert.ok(zh.length > 10)
-    assert.ok(es.length > 30)
+    // Short action help is intentional; translations must still contain words.
+    for (const text of [description, zh, es]) {
+      assert.equal(text, text.trim())
+      assert.match(text, /\p{L}/u)
+    }
     for (const name of actions) {
       assert.ok(!seen.has(name), `Duplicate action: ${name}`)
       seen.add(name)

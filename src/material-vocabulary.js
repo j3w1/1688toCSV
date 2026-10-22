@@ -351,15 +351,86 @@ const languageKey = (language) =>
     : /^(?:es|spa)(?:-|$)/i.test(language)
       ? 'es'
       : 'en'
-const aliases = MATERIAL_VOCABULARY.flatMap((material) =>
-  [
-    ...new Set([material.zh, material.en, material.es, ...material.aliases]),
-  ].map((alias) => ({
-    alias: normalize(alias),
-    material,
-  }))
-).sort((a, b) => b.alias.length - a.alias.length)
-const byValue = new Map(aliases.map(({ alias, material }) => [alias, material]))
+
+/** Validate saved rules and return a detached, normalized vocabulary. */
+export function validateMaterialVocabulary(input = MATERIAL_VOCABULARY) {
+  if (!Array.isArray(input) || input.length > 500)
+    throw new Error('Material rules must be a list with at most 500 entries.')
+  const ids = new Set(),
+    names = new Map()
+  return input.map((entry, index) => {
+    const fail = (reason, field = 'aliases') => {
+      const error = new Error(`Material rule ${index + 1}: ${reason}`)
+      error.ruleIndex = index
+      error.ruleReason = reason
+      error.ruleField = field
+      throw error
+    }
+    if (!entry || typeof entry !== 'object' || Array.isArray(entry))
+      fail('Enter a valid material rule.')
+    const id = String(entry.id ?? '').trim()
+    if (!/^[a-z0-9-]{1,80}$/.test(id) || ids.has(id))
+      fail('Material identifiers must be unique.')
+    ids.add(id)
+    const clean = (raw, field) => {
+      if (typeof raw !== 'string')
+        fail('Each material name must contain 1–80 characters.', field)
+      const text = raw.normalize('NFKC').trim()
+      if (!text || text.length > 80)
+        fail('Each material name must contain 1–80 characters.', field)
+      const key = normalize(text)
+      if (names.has(key) && names.get(key) !== id)
+        fail(
+          `The material name “${text}” appears in more than one rule.`,
+          field
+        )
+      names.set(key, id)
+      return text
+    }
+    if (
+      !Array.isArray(entry.aliases) ||
+      !entry.aliases.length ||
+      entry.aliases.length > 100
+    )
+      fail('Enter 1–100 seller material names.')
+    const aliases = [
+      ...new Set(entry.aliases.map((raw) => clean(raw, 'aliases'))),
+    ]
+    const labels = Object.fromEntries(
+      ['en', 'zh', 'es'].map((language) => [
+        language,
+        clean(entry[language], language),
+      ])
+    )
+    const parent = String(entry.parent ?? '').trim()
+    if (parent && (!/^[a-z0-9-]{1,80}$/.test(parent) || parent === id))
+      fail('Choose a valid parent material.')
+    return { id, aliases, ...labels, parent }
+  })
+}
+
+let aliases, byValue
+function indexVocabulary(vocabulary) {
+  aliases = vocabulary
+    .flatMap((material) =>
+      [
+        ...new Set([
+          material.zh,
+          material.en,
+          material.es,
+          ...material.aliases,
+        ]),
+      ].map((alias) => ({ alias: normalize(alias), material }))
+    )
+    .sort((a, b) => b.alias.length - a.alias.length)
+  byValue = new Map(aliases.map(({ alias, material }) => [alias, material]))
+}
+
+/** Recognition and display only; saved manual materials remain authored text. */
+export function configureMaterialVocabulary(input) {
+  indexVocabulary(validateMaterialVocabulary(input ?? MATERIAL_VOCABULARY))
+}
+indexVocabulary(MATERIAL_VOCABULARY)
 
 /** Translate complete material names; leave unknown user-authored wording intact. */
 export function translateMaterial(value, language = 'en') {

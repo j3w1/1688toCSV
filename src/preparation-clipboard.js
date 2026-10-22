@@ -1,6 +1,16 @@
 import { productAttributes } from './product-attributes.js'
 import { createSizeClassifier } from './size-vocabulary.js'
-import { centsToMoney, lineGrossCents, moneyToCents } from './money.js'
+import { centsToMoney, moneyToCents } from './money.js'
+import { productCartonDetails, cartonVolume } from './carton-details.js'
+import {
+  orderCostAdjustments,
+  additionalChargesTotal,
+  productNetCents,
+} from './order-charges.js'
+import { paymentCostAdjustments } from './payment-links.js'
+import { resolveOperations } from './operations-workflow.js'
+import { hasProductFeatureCosts, productFeatures } from './product-features.js'
+import { t } from './i18n.js'
 
 const escape = (value) =>
   String(value ?? '').replace(
@@ -26,6 +36,14 @@ export const preparationColumns = [
   ['spanishName', 'Spanish description', 'Codes & packing'],
   ['chineseCategory', 'Chinese category', 'Codes & packing'],
   ['material', 'Material', 'Codes & packing'],
+  ['unitsPerCarton', 'Pcs/box', 'Codes & packing'],
+  ['cartons', 'Cartons', 'Codes & packing'],
+  ['cartonWeight', 'Weight (kg/box)', 'Codes & packing'],
+  ['cartonVolume', 'Volume (m³/box)', 'Codes & packing'],
+  ['cartonLength', 'Length (cm)', 'Codes & packing'],
+  ['cartonWidth', 'Width (cm)', 'Codes & packing'],
+  ['cartonHeight', 'Height (cm)', 'Codes & packing'],
+  ['storeNumber', 'Store number', 'Order & supplier'],
   ['title', 'Product title', 'Product details'],
   ['description', 'Description', 'Product details'],
   ['productNumber', 'Seller product code', 'Product details'],
@@ -43,6 +61,15 @@ export const preparationColumns = [
   ['allocatedDiscount', 'Allocated price change', 'Amounts'],
   ['lineAmount', 'Item amount', 'Amounts'],
   ['lineNetAmount', 'Amount after discount', 'Amounts'],
+  ['effectiveUnitPrice', 'Unit price with charges', 'Amounts'],
+  ['effectiveAmount', 'Amount with charges', 'Amounts'],
+  ['additionalCharge', 'Added cost', 'Amounts'],
+  ['additionalChargeReasons', 'Additional charge reasons', 'Amounts'],
+  ['featureCharge', 'Feature added cost', 'Amounts'],
+  ['productFeatureCosts', 'Feature cost details', 'Amounts'],
+  ['linkedPaymentCharge', 'Linked cost', 'Amounts'],
+  ['linkedPaymentReasons', 'Linked cost reasons', 'Amounts'],
+  ['orderAdditionalCharges', 'Additional order costs', 'Order & supplier'],
   ['orderId', 'Order number', 'Order & supplier'],
   ['orderDate', 'Purchase date', 'Order & supplier'],
   ['orderStatus', 'Order status', 'Order & supplier'],
@@ -58,6 +85,7 @@ export const preparationColumns = [
   ['orderCustomization', 'Order customization service', 'Order & supplier'],
   ['orderRedPacket', 'Order red-packet discount', 'Order & supplier'],
   ['productTags', 'Product tags', 'Tags & links'],
+  ['productFeatures', 'Product features', 'Product details'],
   ['orderTags', 'Order tags', 'Tags & links'],
   ['orderNotes', 'Order notes', 'Tags & links'],
   ['orderUrl', 'Order link', 'Tags & links'],
@@ -76,6 +104,19 @@ export const DEFAULT_PREPARATION_COLUMNS = [
 export const PREPARATION_COLUMN_PREFERENCE = '1688-packing-copy-columns'
 const columnKeys = preparationColumns.map(([key]) => key)
 const numericFields = new Set([
+  'effectiveUnitPrice',
+  'effectiveAmount',
+  'additionalCharge',
+  'featureCharge',
+  'linkedPaymentCharge',
+  'orderAdditionalCharges',
+  'cartons',
+  'cartonWeight',
+  'cartonVolume',
+  'cartonLength',
+  'cartonWidth',
+  'cartonHeight',
+  'unitsPerCarton',
   'price',
   'quantity',
   'discount',
@@ -117,12 +158,60 @@ export function selectedPreparationColumns(preference) {
   return order.filter((key) => selected.includes(key))
 }
 
+/** Only generated feature wording is translated; custom feature names stay data. */
+export function preparationFeatureFields(rawFeatures, translate = t) {
+  const features = productFeatures(rawFeatures)
+  const featureName = (feature) =>
+    rawFeatures[feature.key] === true ? translate(feature.name) : feature.name
+  return {
+    productFeatures: features.map(featureName).join(' · '),
+    productFeatureCosts: features
+      .filter((feature) => moneyToCents(feature.unitCost) > 0n)
+      .map(
+        (feature) =>
+          `${featureName(feature)} (¥${feature.unitCost} ${translate('per piece')}; ${translate(feature.included ? 'Already recorded' : 'Added cost')})`
+      )
+      .join(' · '),
+  }
+}
+
 /** Snapshot metadata is copied per source entry, never inferred from another row. */
-export function preparationOrderFields(row, record = row.record) {
+export function preparationOrderFields(
+  row,
+  record = row.record,
+  { records, costs } = {}
+) {
   const order = record?.snapshot
   if (!order) return {}
   const totals = order.totals || {}
+  const carton = productCartonDetails(row, record)
+  const cost =
+    costs?.get(row.entryId) ||
+    (records
+      ? paymentCostAdjustments(record, records).get(row.entryId)
+      : record.additionalCharges?.length || hasProductFeatureCosts(record)
+        ? orderCostAdjustments(record).get(row.entryId)
+        : {})
+  const rawFeatures = resolveOperations(record, row.entryId).effective.features
   return {
+    ...cost,
+    sourceType: order.sourceType ?? '',
+    linkedPaymentReasons: cost?.linkedPaymentReasons?.join(' · ') || '',
+    ...preparationFeatureFields(rawFeatures),
+    additionalChargeReasons: (record.additionalCharges || [])
+      .map((charge) => `${charge.reason} (¥${charge.amount})`)
+      .join(' · '),
+    orderAdditionalCharges: record.additionalCharges?.length
+      ? additionalChargesTotal(record)
+      : '',
+    cartons: carton.boxes ?? '',
+    cartonWeight: carton.kg ?? '',
+    cartonVolume: cartonVolume(carton),
+    cartonLength: carton.len ?? '',
+    cartonWidth: carton.wid ?? '',
+    cartonHeight: carton.ht ?? '',
+    storeNumber: order.store?.number || '',
+    unitsPerCarton: record.unitsPerCarton?.[row.entryId] ?? '',
     orderDate: order.purchasedAt || '',
     ...(order.source === 'other'
       ? { source: 'other', orderReference: order.reference }
@@ -171,7 +260,7 @@ export function preparationCopyFields(
   let lineAmount = '',
     lineNetAmount = ''
   if (row.price !== undefined && row.quantity !== undefined) {
-    const gross = lineGrossCents(row.price, row.quantity)
+    const gross = productNetCents({ ...row, discount: '0.00' })
     lineAmount = centsToMoney(gross)
     if (row.discount !== undefined)
       lineNetAmount = centsToMoney(gross - moneyToCents(row.discount))

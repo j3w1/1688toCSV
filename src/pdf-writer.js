@@ -24,6 +24,20 @@ export function pdfText(value) {
   return captionText(value).replace(/[\\()]/g, (character) => `\\${character}`)
 }
 
+// PDF metadata strings support UTF-16BE even when page text uses Helvetica.
+function metadataString(value) {
+  if (/^[\x20-\x7e]*$/.test(String(value))) return `(${pdfText(value)})`
+  const bytes = [...String(value)]
+    .flatMap((character) => {
+      const encoded = []
+      for (let index = 0; index < character.length; index++)
+        encoded.push(character.charCodeAt(index).toString(16).padStart(4, '0'))
+      return encoded
+    })
+    .join('')
+  return `<feff${bytes}>`
+}
+
 /**
  * Left edge (mm) of a caption anchored at xMm. Helvetica averages about half
  * an em per character; the PDF and the preview both use this one rule.
@@ -171,7 +185,7 @@ export function createPdf({
         `<< /Type /Pages /Kids [${pageRefs.map((ref) => `${ref} 0 R`).join(' ')}] /Count ${pageRefs.length} >>`,
       ]
       const info = add([
-        `<< /Title (${pdfText(title)}) /Producer (1688toCSV) >>`,
+        `<< /Title ${metadataString(title)} /Producer (1688toCSV) >>`,
       ])
       // The header's binary marker uses raw bytes, not UTF-8.
       const chunks = [

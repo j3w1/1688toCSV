@@ -21,6 +21,7 @@ function completeOrder(
     redPacket = false,
     shopDiscount = false,
     promotionDiscount = false,
+    crossStoreIncluded = false,
     includedCustomization = false,
     freeShippingBadge = false,
     foreignFee = false,
@@ -72,7 +73,8 @@ function completeOrder(
     <div class="detail-price">
       <dl><dt>原价总计</dt><dd>¥${includedCustomization ? '78.50' : includedDiscounts ? '86.00' : '66.00'}</dd></dl>
       <dl><dt>运费</dt><dd>¥4.40</dd></dl>
-      <dl><dt>商品优惠</dt><dd>减 ¥${includedDiscounts ? '1.00' : '2.40'}</dd></dl>
+      <dl><dt>${crossStoreIncluded ? '店铺优惠' : '商品优惠'}</dt><dd>减 ¥${crossStoreIncluded ? '0.80' : includedDiscounts ? '1.00' : '2.40'}</dd></dl>
+      ${crossStoreIncluded ? '<dl><dt>跨店满减</dt><dd>减 ¥1.60</dd></dl>' : ''}
       ${includedDiscounts ? '<dl><dt>批发优惠</dt><dd>减 ¥20.00</dd></dl><dl><dt>商品改价</dt><dd>减 ¥1.40</dd></dl>' : ''}
       ${unsignedAdjustment ? '<dl><dt>商品改价</dt><dd>¥1.90</dd></dl>' : ''}
       ${customization ? '<dl><dt>定制服务</dt><dd>¥12.50</dd></dl>' : ''}
@@ -96,6 +98,7 @@ async function setup(
     redPacket = false,
     shopDiscount = false,
     promotionDiscount = false,
+    crossStoreIncluded = false,
     includedCustomization = false,
     freeShippingBadge = false,
     foreignFee = false,
@@ -130,7 +133,7 @@ async function setup(
       body = `<script>
         ${buildOrderFixture.toString()}
         ${completeOrder.toString()}
-        setTimeout(() => completeOrder(document, ${JSON.stringify(id)}, ${JSON.stringify({ summary, customization, redPacket, shopDiscount, promotionDiscount, includedCustomization, freeShippingBadge, foreignFee, includedDiscounts, unsignedAdjustment, missingSeller, unsupported: unsupportedIds.includes(id) })}), ${typeof delay === 'object' ? delay[id] || 0 : delay});
+        setTimeout(() => completeOrder(document, ${JSON.stringify(id)}, ${JSON.stringify({ summary, customization, redPacket, shopDiscount, promotionDiscount, crossStoreIncluded, includedCustomization, freeShippingBadge, foreignFee, includedDiscounts, unsignedAdjustment, missingSeller, unsupported: unsupportedIds.includes(id) })}), ${typeof delay === 'object' ? delay[id] || 0 : delay});
       </script>`
     }
     await route.fulfill({
@@ -546,6 +549,43 @@ test('legacy promotions, free-shipping badges and included customization import 
   )
 })
 
+test('cross-store reductions already included on product rows import without a second deduction', async ({
+  extension,
+}) => {
+  const { list, library } = await setup(extension, { crossStoreIncluded: true })
+  await list
+    .getByRole('button', { name: 'Import selected', exact: true })
+    .click()
+  await list
+    .getByRole('button', { name: 'Import 2 selected orders', exact: true })
+    .click()
+  await assertImported(extension, library)
+  const result = await extension.inspector.evaluate(() =>
+    chrome.runtime.sendMessage({ type: 'BACKUP_EXPORT' })
+  )
+  expect(result.ok, result.error).toBe(true)
+  expect(result.data.orders).toHaveLength(2)
+  for (const { snapshot } of result.data.orders) {
+    expect(snapshot.totals).toMatchObject({
+      goodsGross: '66.00',
+      sourceDiscount: '2.40',
+      shipping: '4.40',
+      orderAdjustment: '0.00',
+      goodsNet: '63.60',
+      payable: '68.00',
+    })
+    expect(snapshot.totals.orderDiscount).toBeUndefined()
+    expect(snapshot.items.map((item) => item.discount)).toEqual([
+      '2.10',
+      '0.30',
+    ])
+    expect(snapshot.items.map((item) => item.allocatedDiscount)).toEqual([
+      '0.00',
+      '0.00',
+    ])
+  }
+})
+
 test('order-only shop discounts and unspecified foreign fees import without changing copied product discounts', async ({
   extension,
 }) => {
@@ -585,7 +625,14 @@ test('order-only shop discounts and unspecified foreign fees import without chan
   await expect(library.locator('#order-details')).toContainText(
     'Order-only discount'
   )
-  await expect(library.locator('#order-details')).toContainText('¥ −1.60')
+  await expect(
+    library
+      .locator('#order-details dt')
+      .filter({
+        hasText: /^Order-only discount$/,
+      })
+      .locator('xpath=following-sibling::dd[1]')
+  ).toHaveText('−¥1.60')
   await expect(library.locator('#order-details')).toContainText(
     'Foreign-currency payment fee: amount not shown by the page.'
   )
@@ -623,7 +670,12 @@ test('red-packet payment reduction imports separately alongside customization an
   await expect(library.locator('#order-details')).toContainText(
     'Red-packet discount (payment only)'
   )
-  await expect(library.locator('#order-details')).toContainText('¥ −1.25')
+  await expect(
+    library
+      .locator('#order-details dt')
+      .filter({ hasText: /^Red-packet discount \(payment only\)$/ })
+      .locator('xpath=following-sibling::dd[1]')
+  ).toHaveText('−¥1.25')
 })
 
 test('unsupported totals promptly retain bounded financial evidence, continue other orders and survive successful retry in a report', async ({
@@ -760,7 +812,12 @@ test('customization services survive complete import without changing copied pro
   await expect(library.locator('#order-details')).toContainText(
     'Customization service'
   )
-  await expect(library.locator('#order-details')).toContainText('¥ 12.50')
+  await expect(
+    library
+      .locator('#order-details dt')
+      .filter({ hasText: /^Customization service$/ })
+      .locator('xpath=following-sibling::dd[1]')
+  ).toHaveText('¥12.50')
 })
 
 test('selected import reaches persistent spreadsheet and clipboard through real extension messaging', async ({

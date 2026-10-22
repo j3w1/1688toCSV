@@ -11,7 +11,8 @@ import {
   setLanguage,
 } from './i18n.js'
 import { copyTable, copySingleImage, pngThumbnail } from './clipboard.js'
-import { openDatabase } from './database.js'
+import { openDatabase, storeIdentity } from './database.js'
+import { downloadBackup, readBackupFile } from './backup-file.js'
 import { openOtherOrderDialog } from './other-order-dialog.js'
 import { orderSource } from './other-orders.js'
 import {
@@ -30,12 +31,29 @@ import {
   progressPresentation,
 } from './import-progress.js'
 import { createPhotoViewer } from './photo-viewer.js'
+import { formatCny } from './money-format.js'
+import { createSizeClassifier } from './size-vocabulary.js'
+import { openStoreImportDialog } from './store-import-dialog.js'
+import { productCartonDetails } from './carton-details.js'
+import { openCartonCapacityEditor } from './carton-packing-ui.js'
+import { mountOrderCharges } from './order-charges-ui.js'
+import { mountOperationsStrip, openOperationsDialog } from './operations-ui.js'
+import { mountPaymentLinks } from './payment-links-ui.js'
+import { paymentCostAdjustments, paymentLinksTotal } from './payment-links.js'
+import { hasProductFeatureCosts } from './product-features.js'
+import { centsToMoney, moneyToCents } from './money.js'
+import {
+  orderCostAdjustments,
+  additionalChargesTotal,
+} from './order-charges.js'
 import { presentOrderStatus } from './order-presentation.js'
 import { labelColorKey } from './appearance.js'
 import { applyCodeDesign } from './code-design.js'
 import { orderTagBadge, mountOrderAnnotations } from './order-tags-ui.js'
 import { mergeOrderTags } from './order-tags.js'
 import { createRowSelection } from './row-selection.js'
+import { createVirtualTable } from './virtual-table.js'
+import { createVirtualList } from './virtual-list.js'
 import { copyExcelImage } from './excel-image-copy.js'
 import { copySourceImages } from './source-image-copy.js'
 import { mountProductCopyActions, mountCopyActions } from './copy-actions.js'
@@ -45,6 +63,7 @@ import { photoCopyTile } from './photo-copy.js'
 import { summarizeOrders, summarizeProductRows } from './order-summary.js'
 import { decorateIcon, icon } from './icons.js'
 import { preparationHelp } from './preparation-help.js'
+import { orderContextHelp, productContextHelp } from './item-context-help.js'
 import { installWorkspaceActionHelp } from './workspace-action-help.js'
 import { installWorkspaceShortcuts } from './workspace-shortcuts.js'
 import { createActivityTracker, ACTIVITY_READ_KEY } from './activity-state.js'
@@ -60,6 +79,7 @@ applyCodeDesign(document.documentElement)
 
 const $ = (id) => document.getElementById(id)
 const keyFor = (row) => `${row.orderId}/${row.entryId}`
+const storeKeyFor = (order) => storeIdentity(order) || order.orderId
 const headerPreference = '1688-library-include-headers'
 const monthPreference = '1688-library-purchase-months'
 const purchaseDay = (order) => order.purchasedAt?.slice(0, 10) || ''
@@ -114,12 +134,29 @@ function node(tag, text, className) {
   }
   return element
 }
+function wechatCopyButton(value) {
+  if (!value) return null
+  const button = decorateIcon(node('button'), 'wechat', {
+    iconOnly: true,
+    label: uiMessage('Copy WeChat ID'),
+  })
+  button.type = 'button'
+  button.classList.add('store-wechat-copy')
+  preparationHelp(button, uiMessage('Copy WeChat ID: {0}', { 0: value }))
+  button.onclick = (event) => {
+    event.stopPropagation()
+    void copied(button, () => navigator.clipboard.writeText(value))
+  }
+  return button
+}
 function statusBadge(status) {
   const display = presentOrderStatus(status)
   const badge = node('span', uiMessage(display.label), 'order-status')
   badge.dataset.tone = display.tone
   badge.dataset.uiLabel = labelColorKey(display.label)
-  badge.title = status
+  if (status === 'Imported')
+    bindAttribute(badge, 'title', uiMessage('Imported'))
+  else badge.title = status
   return badge
 }
 function revisionBadge(updated) {
@@ -238,24 +275,37 @@ export async function startLibrary(
     enableLightDismiss(dialog)
   let records = [],
     jobs = [],
-    page = 0,
     refreshWork,
     hasLoadedLibrary = false,
     refreshPending = false,
     copyBusy = false,
     showDismissed = false,
-    orderPage = 0
+    resetOrders = true
   let packing
+  let productKeys = [],
+    orderKeys = [],
+    orderList
+  let storeFilter = null
   let orderTagDefinitions = [],
     productTagDefinitions = [],
     productDetailsEditor,
-    annotationEditor
+    annotationEditor,
+    chargeEditor,
+    paymentEditor
   const annotationDrafts = new Map()
   async function flushOrderDetails() {
     if (annotationEditor) await annotationEditor.flush()
+    if (chargeEditor) await chargeEditor.flush()
+    if (paymentEditor) await paymentEditor.flush()
   }
   addEventListener('beforeunload', (event) => {
-    if (!annotationEditor?.dirty() && !productDetailsEditor?.dirty()) return
+    if (
+      !annotationEditor?.dirty() &&
+      !productDetailsEditor?.dirty() &&
+      !chargeEditor?.dirty() &&
+      !paymentEditor?.dirty()
+    )
+      return
     event.preventDefault()
     event.returnValue = ''
   })
@@ -270,6 +320,8 @@ export async function startLibrary(
       detailsDialog.close()
       annotationEditor?.destroy()
       annotationEditor = undefined
+      chargeEditor = undefined
+      paymentEditor = undefined
     } catch {
       annotationEditor?.section
         .querySelector('.annotation-footer button')
@@ -294,14 +346,62 @@ export async function startLibrary(
   const selectedMonths = new Set(savedMonths)
   const expandedMonths = new Set([currentMonth, ...savedMonths])
   let monthAnchor = null
-  const photos = createPhotoViewer(async (url) => {
-    const data = await send('IMAGE_GET', { url })
-    return typeof data === 'string' ? data : data.dataUrl
-  })
+  const photos = createPhotoViewer(
+    async (url) => {
+      const data = await send('IMAGE_GET', { url })
+      return typeof data === 'string' ? data : data.dataUrl
+    },
+    {
+      getProductContext: (item) => packing?.photoContext(item),
+      getSizeClassifier: () =>
+        packing?.sizeClassifier() ?? createSizeClassifier(),
+      onEdit: async (item, edit) => {
+        const store = repository || (await openDatabase())
+        const sourceItem = records
+          .find(({ snapshot }) => snapshot.orderId === item.orderId)
+          ?.snapshot.items.find((entry) => entry.entryId === item.entryId)
+        await packing?.flush()
+        await store.setProductPhoto(item.orderId, item.entryId, edit, {
+          accountId: item.record?.accountId || 'local',
+        })
+        if (edit.photoIndex === 0 && sourceItem)
+          packing?.refreshPhoto(sourceItem, edit.thumbnail)
+        await refresh()
+      },
+    }
+  )
   const selectedOrders = new Set(),
     selectedRows = new Set(),
     preparedImages = new Map(),
     loadingImages = new Map()
+  async function editOperations(record, entryId) {
+    await packing?.flush()
+    const store = repository || (await openDatabase())
+    const fresh = await store.getOrder(record.snapshot.orderId, {
+      accountId: record.snapshot.accountId,
+    })
+    if (!fresh) throw new Error('Order was not found')
+    return openOperationsDialog({
+      record: fresh,
+      entryId,
+      records,
+      repository: store,
+      onSaved: refresh,
+    })
+  }
+  function operationsStrip(host, record, entryId) {
+    const controller = mountOperationsStrip(host, {
+      record,
+      entryId,
+      onEdit: () => {
+        void (async () => {
+          const saved = await editOperations(record, entryId)
+          if (saved && host.isConnected) controller.update(saved)
+        })().catch((error) => feedback(error.message, true))
+      },
+    })
+    return controller
+  }
   function showProductDetails(row, { sourceItems = [row] } = {}) {
     const record =
       records.find(
@@ -312,6 +412,26 @@ export async function startLibrary(
     const details = openProductDetails(
       { ...row, record },
       {
+        onOperations: record
+          ? () => {
+              void editOperations(record, row.entryId).catch((error) =>
+                feedback(error.message, true)
+              )
+            }
+          : undefined,
+        carton: record
+          ? packing?.cartonDetailsOptions(row) || {
+              value: productCartonDetails(row, record),
+              onSave: async (value) => {
+                await packing?.flush()
+                const store = repository || (await openDatabase())
+                await store.setCartonDetails(row.orderId, row.entryId, value, {
+                  accountId: record.accountId,
+                })
+                await refresh()
+              },
+            }
+          : undefined,
         tags:
           record && repository?.setProductTags
             ? {
@@ -392,10 +512,43 @@ export async function startLibrary(
     }
     return dialog
   }
+  function editCartonCapacity({ orderId, entryId, accountId }) {
+    const record = records.find(
+        ({ snapshot }) =>
+          snapshot.orderId === orderId &&
+          (snapshot.accountId || 'local') === accountId
+      ),
+      item = record?.snapshot.items.find((item) => item.entryId === entryId)
+    if (!item) throw new Error('Source product unavailable in Orders.')
+    const row = {
+        ...item,
+        orderId,
+        sellerName: record.snapshot.sellerName,
+        record,
+      },
+      key = keyFor(row),
+      visible = filteredRows().some((item) => keyFor(item) === key),
+      input =
+        visible &&
+        productTable.ensureVisible(key)?.querySelector('.pack-size-cell input')
+    if (input) {
+      input.focus({ preventScroll: true })
+      input.select()
+      return
+    }
+    // Keep all filters and selections intact when they exclude this source row.
+    openCartonCapacityEditor({
+      item: row,
+      code: packing.preparedRows([row])[0]?.barcode,
+      controller: packing.cartonCapacityEditor(row),
+      loadPhoto: loadContextImage,
+    })
+  }
   const productSelection = createRowSelection({
     selected: selectedRows,
-    getKeys: () => filteredRows().map(keyFor),
+    getKeys: () => productKeys,
     onChange: updateSelection,
+    ensureVisible: (key) => productTable.ensureVisible(key),
     onActivate: (key) => {
       const row = filteredRows().find((item) => keyFor(item) === key)
       if (!row) return
@@ -433,13 +586,14 @@ export async function startLibrary(
   )
   const orderSelection = createRowSelection({
     selected: selectedOrders,
-    getKeys: () =>
-      matchingOrders()
-        .filter(({ snapshot }) => expandedMonths.has(purchaseMonth(snapshot)))
-        .map(({ snapshot }) => snapshot.orderId),
+    getKeys: () => orderKeys,
+    ensureVisible: (key) => {
+      if (key === orderKeys[0]) $('order-list').scrollTop = 0
+      return orderList?.ensureVisible(key)
+    },
     onChange: () => {
       productSelection.reset()
-      page = 0
+      productTable.reset()
       renderRows()
       updateOrderActions()
       packing?.updateActions()
@@ -468,7 +622,17 @@ export async function startLibrary(
     },
     { rootMargin: '150px' }
   )
-  const pageSize = 100
+  let tableContext
+  const productTable = createVirtualTable({
+    scroller: document.querySelector('.table-scroll'),
+    body: $('sheet-body'),
+    render: renderTableEntries,
+    paint: () => productSelection.paint(),
+    remove: (element) => {
+      for (const image of element.querySelectorAll('img'))
+        imageObserver.unobserve(image)
+    },
+  })
   for (const [id, name, iconOnly] of [
     ['packing-settings', 'settings', true],
     ['activity-open', 'activity', false],
@@ -489,17 +653,15 @@ export async function startLibrary(
   ])
     decorateIcon($(id), name, { iconOnly })
   decorateIcon(document.querySelector('.open-orders'), 'external')
-  preparationHelp(
-    $('orders-heading'),
-    uiMessage(
-      'Click to select or deselect. Shift-click for a range; Ctrl-click adds orders. Double-click or Enter opens details. Click a month heading to expand or collapse it.'
-    )
-  )
+  async function loadContextImage(url) {
+    if (preparedImages.has(url)) return preparedImages.get(url)
+    const image = await send('IMAGE_GET', { url })
+    return typeof image === 'string' ? image : image.dataUrl
+  }
   preparationHelp(
     $('select-rows'),
-    uiMessage(
-      'Click a product row to select or deselect it. Shift-click selects a range; Ctrl-click adds rows. Buttons and photos work independently.'
-    )
+    () =>
+      `${t('Filtered rows')}: ${filteredRows().length.toLocaleString(getLocale())}`
   )
   for (const [id, hint] of [
     ['activity-open', 'Import progress, paused jobs and reports.'],
@@ -567,11 +729,11 @@ export async function startLibrary(
     ],
     [
       'backup',
-      'Save orders, packing edits, naming rules and current code assignments to a local file.',
+      'Save a compressed backup with each picture stored once. Keeps orders, packing edits, history, settings and original photos.',
     ],
     [
       'restore',
-      'Merge a saved backup into this library, preserving newer edits and checking current code conflicts.',
+      'Restore a compressed .json.gz or older .json backup, preserving newer edits and checking current code conflicts.',
     ],
     [
       'pause-active',
@@ -720,9 +882,11 @@ export async function startLibrary(
       const order = record.snapshot
       const day = purchaseDay(order)
       return (
+        (!storeFilter || storeKeyFor(order) === storeFilter) &&
         matches([
           order.sellerName,
           order.sellerMemberLogin,
+          order.store?.number,
           order.orderId,
           order.reference,
           ...record.tags,
@@ -781,6 +945,8 @@ export async function startLibrary(
           orderId: order.orderId,
           sellerName: order.sellerName,
           sellerMemberLogin: order.sellerMemberLogin,
+          sourceType: order.sourceType,
+          store: order.store,
           ...(order.source === 'other'
             ? { source: 'other', orderReference: order.reference }
             : {}),
@@ -896,42 +1062,86 @@ export async function startLibrary(
         .find((part) => part.type === 'decimal').value
       return `¥ ${BigInt(whole).toLocaleString(getLocale())}${decimal}${fraction}`
     }
+    const metric = (key, label, raw, formatted) => {
+      const pair = node('div')
+      pair.dataset.selectionTotal = key
+      const amount = node('dd')
+      if (raw === null) amount.textContent = formatted
+      else {
+        const copy = copyTextButton(String(raw), {
+          label: uiMessage('Copy {0}', { 0: uiMessage(label) }),
+          className: 'selection-total-value',
+        })
+        // Keep the copy closure exact while formatting only its visible number.
+        copy.firstChild.textContent = formatted
+        preparationHelp(
+          copy,
+          uiMessage('Copy without currency symbols or separators.')
+        )
+        amount.append(copy)
+      }
+      pair.append(node('dt', uiMessage(label)), amount)
+      return pair
+    }
     const amounts = node('dl', undefined, 'selection-totals-grid')
-    for (const [key, label, value] of [
-      ['rows', 'Selected rows', integer(selectedTotals.rowCount)],
-      ['quantity', 'Quantity', integer(selectedTotals.quantity)],
-      ['gross', 'Price × quantity', money(selectedTotals.gross)],
+    for (const [key, label, raw, formatted] of [
+      [
+        'rows',
+        'Selected rows',
+        selectedTotals.rowCount,
+        integer(selectedTotals.rowCount),
+      ],
+      [
+        'quantity',
+        'Quantity',
+        selectedTotals.quantity,
+        integer(selectedTotals.quantity),
+      ],
+      [
+        'gross',
+        'Price × quantity',
+        selectedTotals.gross,
+        money(selectedTotals.gross),
+      ],
       [
         'after-discounts',
         'After row discounts',
+        selectedTotals.afterDiscount,
         money(selectedTotals.afterDiscount),
       ],
-    ]) {
-      const pair = node('div')
-      pair.dataset.selectionTotal = key
-      pair.append(node('dt', uiMessage(label)), node('dd', value))
-      amounts.append(pair)
-    }
+    ])
+      amounts.append(metric(key, label, raw, formatted))
     preparationHelp(
       amounts,
       uiMessage(
-        'Only selected product rows are summed, across all filtered pages. After row discounts uses the saved Discount column, including already allocated seller adjustments. Shipping and other order-wide charges are not added or divided. This is not the order payable total.'
+        'Selected rows only. Net subtracts row discounts, including allocated seller adjustments. Shipping and order charges are excluded; this is not the order total.'
       )
     )
-    const context = node('p', undefined, 'selection-totals-context')
+    const context = node('dl', undefined, 'selection-totals-context')
     context.append(
-      node(
-        'span',
-        uiMessage('Filtered products: {rows} rows · Quantity {quantity}', {
-          rows: integer(filteredTotals.rowCount),
-          quantity: integer(filteredTotals.quantity),
-        })
+      metric(
+        'filtered-rows',
+        'Filtered rows',
+        filteredTotals.rowCount,
+        integer(filteredTotals.rowCount)
       ),
-      node(
-        'span',
-        uiMessage('Complete matching orders: Quantity {quantity}', {
-          quantity: integer(matchingTotals.quantity),
-        })
+      metric(
+        'filtered-quantity',
+        'Filtered quantity',
+        filteredTotals.quantity,
+        integer(filteredTotals.quantity)
+      ),
+      metric(
+        'matching-quantity',
+        'Matching-order quantity',
+        matchingTotals.quantity,
+        integer(matchingTotals.quantity)
+      )
+    )
+    preparationHelp(
+      context.querySelector('[data-selection-total="matching-quantity"] dt'),
+      uiMessage(
+        'Quantity in the complete orders containing the filtered products.'
       )
     )
     host.replaceChildren(amounts, context)
@@ -1003,21 +1213,19 @@ export async function startLibrary(
   }
   function renderOrders() {
     const list = $('order-list')
+    const anchor = resetOrders ? undefined : orderList?.anchor()
+    const active = document.activeElement?.closest(
+      '#order-list [data-virtual-key]'
+    )?.dataset.virtualKey
+    orderList?.destroy()
     list.replaceChildren()
     orderSelection.detach()
     const matching = matchingOrders()
-    const expanded = matching.filter(({ snapshot }) =>
-      expandedMonths.has(purchaseMonth(snapshot))
-    )
-    orderPage = Math.min(
-      orderPage,
-      Math.max(0, Math.ceil(expanded.length / 50) - 1)
-    )
-    $('orders-page').textContent =
-      `${orderPage + 1} / ${Math.max(1, Math.ceil(expanded.length / 50))}`
-    $('orders-prev').disabled = orderPage === 0
-    $('orders-next').disabled = (orderPage + 1) * 50 >= expanded.length
-    if (!matching.length)
+    orderKeys = matching
+      .filter(({ snapshot }) => expandedMonths.has(purchaseMonth(snapshot)))
+      .map(({ snapshot }) => snapshot.orderId)
+    const positions = new Map(orderKeys.map((key, index) => [key, index + 1]))
+    if (!matching.length) {
       list.append(
         node(
           'p',
@@ -1025,151 +1233,307 @@ export async function startLibrary(
           'order-search-empty'
         )
       )
-    const visible = new Set(
-      expanded
-        .slice(orderPage * 50, (orderPage + 1) * 50)
-        .map(({ snapshot }) => snapshot.orderId)
-    )
+      orderList = undefined
+      resetOrders = false
+      updateOrderActions()
+      return
+    }
+    const counts = new Map()
+    for (const { snapshot } of matching) {
+      const month = purchaseMonth(snapshot)
+      counts.set(month, (counts.get(month) || 0) + 1)
+    }
+    const entries = []
     let lastMonth
     for (const record of matching) {
-      const order = record.snapshot
-      const month = purchaseMonth(order)
-      if (month !== lastMonth) {
-        const section = node('h3', undefined, 'order-month')
-        const toggle = node('button', undefined, 'month-toggle')
-        toggle.append(
-          node('span', monthLabel(month)),
-          node(
-            'small',
-            String(
-              matching.filter(
-                ({ snapshot }) => purchaseMonth(snapshot) === month
-              ).length
-            )
-          )
-        )
-        decorateIcon(toggle, 'chevron')
-        toggle.setAttribute('aria-expanded', String(expandedMonths.has(month)))
-        bindAttribute(
-          toggle,
-          'aria-label',
-          uiMessage('{0} orders', { 0: () => monthLabel(month) })
-        )
-        preparationHelp(
-          toggle,
-          uiMessage(
-            'Expand or collapse this month. Use the purchase-month filter to change the product list.'
-          )
-        )
-        toggle.addEventListener('click', () => {
-          if (expandedMonths.has(month)) expandedMonths.delete(month)
-          else expandedMonths.add(month)
-          const first = matching
-            .filter(({ snapshot }) =>
-              expandedMonths.has(purchaseMonth(snapshot))
-            )
-            .findIndex(({ snapshot }) => purchaseMonth(snapshot) === month)
-          orderPage = Math.max(0, Math.floor(first / 50))
-          renderOrders()
-        })
-        section.append(toggle)
-        list.append(section)
-      }
+      const month = purchaseMonth(record.snapshot)
+      if (month !== lastMonth)
+        entries.push({ key: `month:${month}`, heading: true, month })
       lastMonth = month
-      if (!visible.has(order.orderId)) continue
-      const card = node('div', undefined, 'order-card')
-      card.setAttribute('role', 'option')
-      card.dataset.action = 'choose-order'
-      card.dataset.orderId = order.orderId
-      bindAttribute(
-        card,
-        'aria-label',
-        uiMessage('Order {0}', { 0: order.orderId })
-      )
-      card.setAttribute('aria-describedby', `order-summary-${order.orderId}`)
-      preparationHelp(
-        card,
-        uiMessage(
-          'Click to select or deselect. Shift-click selects a range. Double-click opens order details.'
-        )
-      )
-      const summary = node('div', undefined, 'order-summary')
-      summary.id = `order-summary-${order.orderId}`
-      const identity = node('div', undefined, 'order-card-identity')
-      identity.append(
-        copyTextButton(order.sellerName, {
-          label: 'Copy store name',
-          className: 'order-seller',
-        })
-      )
-      const productNames = packing?.orderNames(order.orderId) || []
-      if (getLanguage() !== 'zh' && productNames.length) {
-        const names = node('span', undefined, 'order-name-summary spanish-name')
-        names.append(node('span', productNames[0], 'order-name-label'))
-        names.tabIndex = 0
-        if (productNames.length > 1)
-          names.append(
-            node('small', `+${productNames.length - 1}`, 'order-name-count')
-          )
-        preparationHelp(
-          names,
-          uiMessage('Product names: {0}', { 0: productNames.join(' · ') })
-        )
-        identity.append(names)
-      }
-      summary.append(identity)
-      const reference = node('div', undefined, 'order-card-reference')
-      reference.append(
-        orderReference(order.orderId, {
-          className: 'order-reference',
-          snapshot: order,
-        }),
-        node(
-          'span',
-          uiMessage(order.items.length === 1 ? '{0} product' : '{0} products', {
-            0: () => order.items.length.toLocaleString(getLocale()),
-          }),
-          'order-products'
-        )
-      )
-      const meta = node('div', undefined, 'order-card-meta')
-      const source = orderSource(order)
-      const sourceBadge = node(
-        'span',
-        uiMessage(
-          source === 'other'
-            ? 'Other source'
-            : source === '1688'
-              ? '1688'
-              : 'Source unknown'
-        ),
-        'order-source'
-      )
-      sourceBadge.dataset.source = source || 'unknown'
-      meta.append(sourceBadge)
-      meta.append(
-        statusBadge(order.status),
-        dateBadge(order),
-        revisionBadge(record.revision > 1)
-      )
-      if (record.tags.length) {
-        const tags = node('div', undefined, 'order-card-tags')
-        tags.append(
-          ...record.tags.map((name) => orderTagBadge(name, orderTagDefinitions))
-        )
-        meta.append(tags)
-      }
-      summary.append(reference, meta)
-      card.append(summary)
-      orderSelection.bind(card, order.orderId)
-      list.append(card)
+      if (expandedMonths.has(month))
+        entries.push({ key: record.snapshot.orderId, record })
     }
+    let mounting = true
+    orderList = createVirtualList({
+      scroller: list,
+      sections: [{ element: list, entries }],
+      limit: 100,
+      paint: () => {
+        if (!mounting) orderSelection.paint()
+      },
+      render: ({ heading, month, record }) => {
+        if (heading) {
+          const section = node('h3', undefined, 'order-month')
+          const toggle = node('button', undefined, 'month-toggle')
+          toggle.append(
+            node('span', monthLabel(month)),
+            node('small', String(counts.get(month)))
+          )
+          decorateIcon(toggle, 'chevron')
+          toggle.setAttribute(
+            'aria-expanded',
+            String(expandedMonths.has(month))
+          )
+          bindAttribute(
+            toggle,
+            'aria-label',
+            uiMessage('{0} orders', { 0: () => monthLabel(month) })
+          )
+          preparationHelp(
+            toggle,
+            uiMessage(
+              'Expand or collapse this month. Use the purchase-month filter to change the product list.'
+            )
+          )
+          toggle.addEventListener('click', () => {
+            if (expandedMonths.has(month)) expandedMonths.delete(month)
+            else expandedMonths.add(month)
+            renderOrders()
+            orderList
+              .ensureVisible(`month:${month}`)
+              ?.querySelector('button')
+              .focus({ preventScroll: true })
+          })
+          section.append(toggle)
+          return section
+        }
+        const order = record.snapshot
+        const card = node('div', undefined, 'order-card')
+        card.setAttribute('role', 'option')
+        card.setAttribute('aria-posinset', String(positions.get(order.orderId)))
+        card.setAttribute('aria-setsize', String(orderKeys.length))
+        card.dataset.action = 'choose-order'
+        card.dataset.orderId = order.orderId
+        bindAttribute(
+          card,
+          'aria-label',
+          uiMessage('Order {0}', { 0: order.orderId })
+        )
+        card.setAttribute('aria-describedby', `order-summary-${order.orderId}`)
+        const orderContext = {
+          getRecord: () => record,
+          getProducts: () => {
+            const items = order.items.slice(0, 3).map((item) => ({
+              ...item,
+              orderId: order.orderId,
+              sellerName: order.sellerName,
+              record,
+            }))
+            return packing?.preparedRows(items) || items
+          },
+          loadImage: loadContextImage,
+        }
+        orderContextHelp(card, orderContext)
+        const summary = node('div', undefined, 'order-summary')
+        summary.id = `order-summary-${order.orderId}`
+        const main = node('div', undefined, 'order-card-main')
+        const identity = node('div', undefined, 'order-card-identity')
+        const details = node(
+          'button',
+          order.sellerName,
+          'order-seller order-details-trigger'
+        )
+        details.type = 'button'
+        bindAttribute(
+          details,
+          'aria-label',
+          uiMessage('{0}: {1}', {
+            0: order.sellerName,
+            1: uiMessage('Details for order {0}', { 0: order.orderId }),
+          })
+        )
+        details.setAttribute('aria-haspopup', 'dialog')
+        details.setAttribute('aria-controls', 'order-details')
+        orderContextHelp(details, orderContext)
+        details.addEventListener('click', (event) => {
+          event.stopPropagation()
+          void openDetails(record).catch((error) =>
+            feedback(error.message, true)
+          )
+        })
+        identity.append(details)
+        const actions = node('span', undefined, 'order-card-actions')
+        const contact = wechatCopyButton(record.storeWechat)
+        if (contact) actions.append(contact)
+        operationsStrip(actions, record)
+        const receiving = records.filter((target) =>
+          target.paymentLinks?.some(
+            (link) => link.sourceOrderId === order.orderId
+          )
+        )
+        if (receiving.length) {
+          const linked = decorateIcon(node('button'), 'link', {
+            iconOnly: true,
+            label: uiMessage('Linked payment'),
+          })
+          linked.classList.add('operations-payment-source', 'operations-state')
+          linked.querySelector('svg')?.classList.add('operations-icon')
+          preparationHelp(
+            linked,
+            uiMessage(
+              'This payment is allocated to another purchase. Source totals are counted once.'
+            )
+          )
+          linked.onclick = (event) => {
+            event.stopPropagation()
+            void openDetails(receiving[0]).catch((error) =>
+              feedback(error.message, true)
+            )
+          }
+          const paymentStrip = node('span', undefined, 'operations-strip')
+          paymentStrip.append(linked)
+          actions.append(paymentStrip)
+        }
+        identity.append(actions)
+        main.append(identity)
+        const reference = node('div', undefined, 'order-card-reference')
+        const products = node('span', undefined, 'order-card-products')
+        const productNames = packing?.orderNames(order.orderId) || []
+        if (getLanguage() !== 'zh' && productNames.length) {
+          const names = node(
+            'span',
+            undefined,
+            'order-name-summary spanish-name'
+          )
+          names.append(node('span', productNames[0], 'order-name-label'))
+          names.tabIndex = 0
+          if (productNames.length > 1)
+            names.append(
+              node('small', `+${productNames.length - 1}`, 'order-name-count')
+            )
+          preparationHelp(
+            names,
+            uiMessage('Product names: {0}', { 0: productNames.join(' · ') })
+          )
+          products.append(names)
+        }
+        products.append(
+          node(
+            'span',
+            uiMessage(
+              order.items.length === 1 ? '{0} product' : '{0} products',
+              {
+                0: () => order.items.length.toLocaleString(getLocale()),
+              }
+            ),
+            'order-products'
+          )
+        )
+        reference.append(products)
+        const charges = centsToMoney(
+          moneyToCents(additionalChargesTotal(record)) +
+            moneyToCents(paymentLinksTotal(record))
+        )
+        if (charges !== '0.00') {
+          const costs = node('button', `+¥${charges}`, 'order-card-charges')
+          costs.type = 'button'
+          bindAttribute(
+            costs,
+            'aria-label',
+            uiMessage('Additional charges: ¥{0}', { 0: charges })
+          )
+          preparationHelp(
+            costs,
+            uiMessage('Additional order charges: {0}. Click to edit.', {
+              0: [
+                ...(record.additionalCharges || []),
+                ...(record.paymentLinks || []),
+              ]
+                .map((charge) => `${charge.reason} (¥${charge.amount})`)
+                .join(' · '),
+            })
+          )
+          costs.onclick = (event) => {
+            event.stopPropagation()
+            void openDetails(record)
+              .then(() =>
+                $('details-content')
+                  .querySelector('.order-charges')
+                  ?.scrollIntoView({ block: 'nearest' })
+              )
+              .catch((error) => feedback(error.message, true))
+          }
+          reference.append(costs)
+        }
+        const meta = node('div', undefined, 'order-card-meta')
+        if (order.sourceType !== 'spreadsheet') {
+          const source = orderSource(order)
+          const sourceBadge = node(
+            'span',
+            uiMessage(
+              source === 'other'
+                ? 'Other source'
+                : source === '1688'
+                  ? '1688'
+                  : 'Source unknown'
+            ),
+            'order-source'
+          )
+          sourceBadge.dataset.source = source || 'unknown'
+          meta.append(sourceBadge)
+        }
+        if (order.source === 'other')
+          meta.append(
+            orderReference(order.orderId, {
+              className: 'order-reference',
+              snapshot: order,
+            })
+          )
+        if (
+          order.store?.number &&
+          !String(order.sellerName).split(/\D+/).includes(order.store.number)
+        )
+          meta.append(
+            copyTextButton(order.store.number, {
+              label: 'Copy store number',
+              className: 'store-number',
+            })
+          )
+        meta.append(
+          statusBadge(order.status),
+          dateBadge(order),
+          revisionBadge(record.revision > 1)
+        )
+        if (record.tags.length) {
+          const tags = node('div', undefined, 'order-card-tags')
+          tags.append(
+            ...record.tags.map((name) =>
+              orderTagBadge(name, orderTagDefinitions)
+            )
+          )
+          meta.append(tags)
+        }
+        main.append(reference)
+        summary.append(main, meta)
+        card.append(summary)
+        orderSelection.bind(card, order.orderId)
+        return card
+      },
+    })
+    if (resetOrders) list.scrollTop = 0
+    orderList.update(anchor)
+    if (active && !resetOrders) {
+      const target = orderList.ensureVisible(active)
+      if (target)
+        (target.matches('.order-card')
+          ? target
+          : target.querySelector('button')
+        )?.focus({ preventScroll: true })
+    }
+    mounting = false
+    resetOrders = false
     orderSelection.paint()
     updateOrderActions()
   }
+  function resetOrderScroll() {
+    resetOrders = true
+    $('order-list').scrollTop = 0
+  }
   function updateOrderActions() {
     const matching = scopedOrders().filter(
-      (record) => orderSource(record.snapshot) === '1688'
+      ({ snapshot }) =>
+        snapshot.sourceType !== 'spreadsheet' &&
+        orderSource(snapshot) === '1688'
     )
     bindText(
       $('refresh-orders'),
@@ -1190,17 +1554,17 @@ export async function startLibrary(
     const running = jobs.some((job) => job.state === 'running')
     $('refresh-orders').disabled = !matching.length || running
     $('refresh-all').disabled =
-      !records.some((record) => orderSource(record.snapshot) === '1688') ||
-      running
+      !records.some(
+        ({ snapshot }) =>
+          snapshot.sourceType !== 'spreadsheet' &&
+          orderSource(snapshot) === '1688'
+      ) || running
     $('remove-orders').disabled = !selectedOrders.size
   }
   function renderRows() {
     const rows = filteredRows()
-    const maxPage = Math.max(0, Math.ceil(rows.length / pageSize) - 1)
-    page = Math.min(page, maxPage)
+    productKeys = rows.map(keyFor)
     imageObserver.disconnect()
-    const body = $('sheet-body')
-    body.replaceChildren()
     productSelection.detach()
     const orderCounts = new Map()
     for (const row of rows)
@@ -1208,11 +1572,67 @@ export async function startLibrary(
     const orderPositions = new Map(
       [...orderCounts.keys()].map((id, index) => [id, index])
     )
+    const linkedOrders = new Set(
+      records.flatMap((record) =>
+        record.paymentLinks?.length
+          ? [
+              record.snapshot.orderId,
+              ...record.paymentLinks.map((link) => link.sourceOrderId),
+            ]
+          : []
+      )
+    )
+    const adjustedCosts = new Map(
+      records
+        .filter(
+          (record) =>
+            record.additionalCharges?.length ||
+            hasProductFeatureCosts(record) ||
+            linkedOrders.has(record.snapshot.orderId)
+        )
+        .map((record) => [
+          record.snapshot.orderId,
+          paymentCostAdjustments(record, records),
+        ])
+    )
+    tableContext = { orderCounts, orderPositions, adjustedCosts }
+    const entries = []
     let previousOrder
-    let sectionId
-    const pageRows = rows.slice(page * pageSize, (page + 1) * pageSize)
+    for (const [index, row] of rows.entries()) {
+      if (previousOrder !== row.orderId)
+        entries.push({
+          key: `heading:${row.orderId}`,
+          heading: true,
+          row,
+          index,
+        })
+      entries.push({ key: keyFor(row), row, index })
+      previousOrder = row.orderId
+    }
+    productTable.setItems(entries)
+    $('empty-state').hidden = !!records.length
+    document.querySelector('.table-scroll').hidden = !records.length
+    bindText(
+      $('sheet-title'),
+      selectedOrders.size
+        ? uiMessage('{0} selected order{1}', {
+            0: selectedOrders.size,
+            1: selectedOrders.size === 1 ? '' : 's',
+          })
+        : uiMessage('All products')
+    )
+    productSelection.paint()
+    updateSelection()
+    renderTotals(rows)
+    updateOrderActions()
+  }
+  function renderTableEntries(entries) {
+    const { orderCounts, orderPositions, adjustedCosts } = tableContext
+    const products = entries
+      .filter((entry) => !entry.heading)
+      .map((entry) => entry.row)
     const effectiveMaterials = new Map(
-      (packing?.preparedRows(pageRows) || pageRows).map((row) => [
+      (packing?.preparedRows(products) || products).map((row) => [
         keyFor(row),
         {
           value: row.material ?? suggestMaterial(row),
@@ -1220,7 +1640,8 @@ export async function startLibrary(
         },
       ])
     )
-    for (const [index, row] of pageRows.entries()) {
+    const elements = []
+    for (const { row, index, heading: isHeading } of entries) {
       const changed = row.record.changedEntryIds.includes(row.entryId)
       const tr = node('tr', undefined, changed ? 'changed-row' : '')
       const tone =
@@ -1228,11 +1649,11 @@ export async function startLibrary(
           ? 'order-tone-olive'
           : 'order-tone-clay'
       tr.classList.add(tone)
-      if (previousOrder !== row.orderId) {
+      if (isHeading) {
         const heading = node('tr', undefined, `order-section-heading ${tone}`)
         const cell = node('th')
-        cell.colSpan = 6
-        sectionId = `order-section-${row.orderId}`
+        cell.colSpan = 9
+        const sectionId = `order-section-${row.orderId}`
         cell.id = sectionId
         const band = node('div', undefined, 'order-section-band')
         const shop = node('span', undefined, 'order-section-store')
@@ -1244,12 +1665,11 @@ export async function startLibrary(
           })
         )
         const count = orderCounts.get(row.orderId)
-        const continued =
-          rows[page * pageSize + index - 1]?.orderId === row.orderId
         band.append(
           shop,
           orderReference(row.orderId, {
             className: 'order-section-number',
+            sourceType: row.sourceType,
             snapshot: row.record.snapshot,
           }),
           dateBadge(row.record.snapshot),
@@ -1257,31 +1677,34 @@ export async function startLibrary(
           revisionBadge(row.record.revision > 1),
           node(
             'span',
-            uiMessage('{0} matching product{1}{2}', {
+            uiMessage('{0} product row{1}{2}', {
               0: () => count.toLocaleString(getLocale()),
               1: count === 1 ? '' : 's',
-              2: continued ? uiMessage(' · continued') : '',
+              2: '',
             }),
             'order-section-count'
           )
         )
+        operationsStrip(band, row.record)
         cell.append(band)
         heading.append(cell)
-        body.append(heading)
+        elements.push(heading)
+        continue
       }
-      tr.setAttribute('aria-describedby', sectionId)
-      previousOrder = row.orderId
-      const selection = node(
-        'td',
-        String(page * pageSize + index + 1),
-        'row-number'
-      )
+      tr.setAttribute('aria-description', row.sellerName)
+      const selection = node('td', String(index + 1), 'row-number')
       bindAttribute(
         tr,
         'aria-label',
         uiMessage('Product {0}', { 0: row.entryId })
       )
       productSelection.bind(tr, keyFor(row))
+      const productContext = {
+        getProduct: () => packing?.preparedRows([row])[0] || row,
+        getRecord: () => row.record,
+        loadImage: loadContextImage,
+      }
+      productContextHelp(tr, productContext)
       const thumb = node('td', undefined, 'thumb-cell')
       const image = node('img')
       image.width = 74
@@ -1300,14 +1723,13 @@ export async function startLibrary(
         'aria-label',
         uiMessage('Zoom product photo {0}', { 0: row.entryId })
       )
-      preparationHelp(
-        zoom,
-        uiMessage(
-          'Open the large photo. Scroll to zoom, then drag to inspect it.'
-        )
-      )
+      productContextHelp(zoom, productContext)
       zoom.disabled = !row.thumbnail
       zoom.append(image)
+      if (row.photos?.length > 1)
+        zoom.append(
+          node('span', String(row.photos.length), 'product-photo-count')
+        )
       zoom.addEventListener(
         'click',
         () => void photos.open(row, filteredRows())
@@ -1326,6 +1748,10 @@ export async function startLibrary(
       )
       const description = node('td', undefined, 'description-cell')
       description.append(createProductDescription(row))
+      productContextHelp(
+        description.querySelector('.product-title'),
+        productContext
+      )
       // Show the same effective material used by packing and exports. A manual
       // empty value is intentional; source materials remain in original details.
       const material = effectiveMaterials.get(keyFor(row))
@@ -1357,7 +1783,18 @@ export async function startLibrary(
         pair.append(node('dt', uiMessage('Material')), value)
         attributes.append(pair)
       }
-      packing?.decorateRow(description, row)
+      const capacity = node('td', undefined, 'numeric pack-size-cell')
+      const weight = node('td', undefined, 'numeric measurement-cell'),
+        volume = node('td', undefined, 'numeric measurement-cell')
+      packing?.decorateRow(description, row, capacity, {
+        kg: weight,
+        cbm: volume,
+      })
+      operationsStrip(
+        description.querySelector('.row-preparation') || description,
+        row.record,
+        row.entryId
+      )
       const assignedTags = row.record.productTags?.[row.entryId] || []
       if (assignedTags.length) {
         const tags = node('div', undefined, 'product-row-tags')
@@ -1381,11 +1818,40 @@ export async function startLibrary(
             uiMessage('incl. {0} allocated', { 0: row.allocatedDiscount })
           )
         )
+      const priceCell = node('td', amount(row.price), 'numeric price-cell')
+      const adjustment = adjustedCosts.get(row.orderId)?.get(row.entryId)
+      if (
+        adjustment &&
+        (Number(adjustment.additionalCharge) ||
+          Number(adjustment.featureCharge) ||
+          Number(adjustment.linkedPaymentNet))
+      ) {
+        const effective = node(
+          'strong',
+          `→ ${amount(adjustment.effectiveUnitPrice)}`,
+          'additional-cost-price'
+        )
+        preparationHelp(
+          effective,
+          uiMessage(
+            'Includes ¥{0} of added costs. The source unit price stays unchanged.',
+            {
+              0: centsToMoney(
+                moneyToCents(adjustment.additionalCharge || '0.00') +
+                  moneyToCents(adjustment.featureCharge || '0.00') +
+                  moneyToCents(adjustment.linkedPaymentNet || '0.00')
+              ),
+            }
+          )
+        )
+        priceCell.append(effective)
+      }
       tr.append(
         selection,
         thumb,
         description,
-        node('td', amount(row.price), 'numeric price-cell'),
+        priceCell,
+        discount,
         node(
           'td',
           Number(row.quantity).toLocaleString(getLocale(), {
@@ -1393,28 +1859,13 @@ export async function startLibrary(
           }),
           'numeric quantity-cell'
         ),
-        discount
+        capacity,
+        weight,
+        volume
       )
-      body.append(tr)
+      elements.push(tr)
     }
-    $('empty-state').hidden = !!records.length
-    document.querySelector('.table-scroll').hidden = !records.length
-    bindText(
-      $('sheet-title'),
-      selectedOrders.size
-        ? uiMessage('{0} selected order{1}', {
-            0: selectedOrders.size,
-            1: selectedOrders.size === 1 ? '' : 's',
-          })
-        : uiMessage('All products')
-    )
-    $('page-label').textContent = `${page + 1} / ${maxPage + 1}`
-    $('previous-page').disabled = page === 0
-    $('next-page').disabled = page === maxPage
-    productSelection.paint()
-    updateSelection()
-    renderTotals(rows)
-    updateOrderActions()
+    return elements
   }
   const activityTracker = createActivityTracker()
   window.addEventListener('storage', (event) => {
@@ -1447,13 +1898,11 @@ export async function startLibrary(
           })
         : state.status === 'needs-sign-in'
           ? uiMessage('Status: needs sign-in or verification')
-          : state.status === 'needs-visible-tab'
-            ? uiMessage('Status: needs permission for a visible import tab')
-            : state.status === 'export-finished'
-              ? uiMessage('Status: export finished · {0}', {
-                  0: state.files.join(', '),
-                })
-              : uiMessage('Status: idle')
+          : state.status === 'export-finished'
+            ? uiMessage('Status: export finished · {0}', {
+                0: state.files.join(', '),
+              })
+            : uiMessage('Status: idle')
     bindText($('workspace-status-text'), text)
     line.title = String(text)
   }
@@ -1464,21 +1913,6 @@ export async function startLibrary(
       })
     } catch (error) {
       showErrorNotice(error)
-    }
-  })
-  $('import-attention-allow').addEventListener('click', async (event) => {
-    const button = event.currentTarget
-    button.disabled = true
-    try {
-      await send('IMPORT_ALLOW_VISIBLE', {
-        jobId: $('import-attention').dataset.jobId,
-      })
-      ;({ jobs } = await send('JOBS_QUERY'))
-      renderJobs()
-    } catch (error) {
-      showErrorNotice(error)
-    } finally {
-      button.disabled = false
     }
   })
   $('import-attention-resume').addEventListener('click', async (event) => {
@@ -1541,28 +1975,21 @@ export async function startLibrary(
     bindAttribute(activityButton, 'aria-description', activityHelp)
     preparationHelp(activityButton, activityHelp)
     $('active-job').hidden = !active
-    // One notice for a sign-in or verification step; the importer never
-    // switches tabs by itself, so this button is the only way forward.
+    // Only sign-in or verification needs a user prompt. Reader fallback is automatic.
     const attention = sorted.find(
-      (job) => job.state === 'paused' && job.attention && !job.dismissedAt
+      (job) =>
+        job.state === 'paused' &&
+        job.attention?.kind === 'sign-in' &&
+        !job.dismissedAt
     )
     $('import-attention').hidden = !attention
     $('import-attention').dataset.jobId = attention?.id || ''
-    // A browser without background tabs asks for a visible reader instead.
-    const visibleRequest = attention?.attention?.kind === 'visible-reader'
     bindText(
       $('import-attention-text'),
-      visibleRequest
-        ? uiMessage(
-            'This browser does not allow background import tabs. Use a visible import tab for this import? It will switch to that tab while it reads.'
-          )
-        : uiMessage(
-            '1688 needs a sign-in or verification in the import tab. Open that tab, finish the step, then resume.'
-          )
+      uiMessage(
+        '1688 needs a sign-in or verification in the import tab. Open that tab, finish the step, then resume.'
+      )
     )
-    $('import-attention-allow').hidden = !visibleRequest
-    $('import-attention-open').hidden = visibleRequest
-    $('import-attention-resume').hidden = visibleRequest
     renderStatus()
     if (active) {
       const display = progressPresentation(active)
@@ -1615,15 +2042,6 @@ export async function startLibrary(
         const targets = jobs.filter(
           (job) => !job.dismissedAt && job.state !== 'running'
         )
-        if (
-          !(await confirmScope({
-            action: 'Dismiss',
-            count: targets.length,
-            unit: 'activities',
-            detail: 'Saved orders and labels will stay in the library.',
-          }))
-        )
-          return
         dismissAll.disabled = true
         try {
           for (const job of targets)
@@ -1834,7 +2252,7 @@ export async function startLibrary(
     $('clear-months').setAttribute('aria-pressed', String(!selectedMonths.size))
   }
   // Recent months stay visible as chips; older ones open on demand.
-  const visibleMonths = 7
+  const visibleMonths = 4
   let monthsExpanded = false
   const shortMonth = (month) =>
     month === 'unknown'
@@ -1845,19 +2263,19 @@ export async function startLibrary(
           timeZone: 'UTC',
         }).format(new Date(`${month}-01T00:00:00Z`))
   function renderMonthOptions() {
-    const months = [
-      ...new Set([
-        currentMonth,
-        ...selectedMonths,
-        ...records.map(({ snapshot }) => purchaseMonth(snapshot)),
-      ]),
-    ]
-      .sort()
-      .reverse()
+    const newestFirst = (a, b) =>
+      a === 'unknown' ? 1 : b === 'unknown' ? -1 : b.localeCompare(a)
+    const availableMonths = [
+      ...new Set(records.map(({ snapshot }) => purchaseMonth(snapshot))),
+    ].sort(newestFirst)
+    const recentMonths = new Set(availableMonths.slice(0, visibleMonths))
+    const months = [...new Set([...availableMonths, ...selectedMonths])].sort(
+      newestFirst
+    )
     const shown = monthsExpanded
       ? months
       : months.filter(
-          (month, index) => index < visibleMonths || selectedMonths.has(month)
+          (month) => recentMonths.has(month) || selectedMonths.has(month)
         )
     const hidden = months.length - shown.length
     const more = node('button', undefined, 'month-choice month-more')
@@ -1902,7 +2320,8 @@ export async function startLibrary(
           for (const value of selectedMonths) expandedMonths.add(value)
           orderSelection.reset()
           productSelection.reset()
-          page = orderPage = 0
+          resetOrderScroll()
+          productTable.reset()
           updateMonthFilter()
           render()
         })
@@ -1981,11 +2400,12 @@ export async function startLibrary(
         addedOrderIds.has(record.snapshot.orderId)
       )
       if (addedMatchingOrders.length) {
-        orderPage = 0
+        resetOrderScroll()
         for (const { snapshot } of addedMatchingOrders)
           expandedMonths.add(purchaseMonth(snapshot))
       }
-      if (filteredRows().some((row) => addedOrderIds.has(row.orderId))) page = 0
+      if (filteredRows().some((row) => addedOrderIds.has(row.orderId)))
+        productTable.reset()
     }
     render()
     hasLoadedLibrary = true
@@ -1994,8 +2414,9 @@ export async function startLibrary(
     await flushOrderDetails()
     annotationEditor?.destroy()
     annotationEditor = undefined
-    const order = record.snapshot,
-      content = $('details-content')
+    chargeEditor = undefined
+    let order = record.snapshot
+    const content = $('details-content')
     const metadata = node('div', undefined, 'row-meta')
     metadata.append(
       statusBadge(order.status),
@@ -2012,6 +2433,7 @@ export async function startLibrary(
     identity.append(
       orderReference(order.orderId, {
         className: 'order-reference',
+        sourceType: order.sourceType,
         snapshot: order,
       })
     )
@@ -2025,6 +2447,231 @@ export async function startLibrary(
       metadata
     )
     content.replaceChildren()
+    const profile = node('section', undefined, 'store-profile'),
+      profileFields = node('div', undefined, 'store-profile-fields'),
+      profileStatus = node('p', undefined, 'store-profile-status'),
+      wechatForm = node('form', undefined, 'store-wechat-form'),
+      wechatField = node('div', undefined, 'store-profile-field'),
+      wechatLabel = node('label', uiMessage('WeChat ID')),
+      wechatControls = node('span', undefined, 'store-contact-controls'),
+      wechatInput = node('input'),
+      wechatSave = node('button', uiMessage('Save'))
+    let savedWechat = record.storeWechat || '',
+      profileBusy = false,
+      nameInput,
+      nameSave
+    wechatInput.type = 'text'
+    wechatInput.name = 'store-wechat'
+    wechatInput.id = `store-wechat-${crypto.randomUUID()}`
+    wechatInput.value = savedWechat
+    wechatInput.maxLength = 128
+    wechatInput.autocomplete = 'off'
+    wechatInput.spellcheck = false
+    wechatLabel.htmlFor = wechatInput.id
+    wechatSave.type = 'submit'
+    bindAttribute(wechatSave, 'aria-label', uiMessage('Save WeChat ID'))
+    decorateIcon(wechatSave, 'check')
+    preparationHelp(
+      wechatSave,
+      uiMessage(
+        'Save this WeChat ID for every order from this store. Leave it blank to remove the saved contact.'
+      )
+    )
+    profileStatus.setAttribute('role', 'status')
+    const renderContact = () => {
+      wechatControls.querySelector('.store-wechat-copy')?.remove()
+      const copy = wechatCopyButton(savedWechat)
+      if (copy) wechatControls.append(copy)
+    }
+    const profileButtons = () => {
+      wechatInput.disabled = profileBusy
+      wechatSave.disabled =
+        profileBusy || wechatInput.value.trim() === savedWechat
+      if (nameInput) {
+        nameInput.disabled = profileBusy
+        nameSave.disabled =
+          profileBusy ||
+          !nameInput.value.trim() ||
+          nameInput.value.trim() === order.sellerName
+      }
+    }
+    const saveProfile = async (field) => {
+      if (profileBusy) return
+      const nameDirty =
+          nameInput && nameInput.value.trim() !== order.sellerName,
+        contactDirty = wechatInput.value.trim() !== savedWechat
+      profileBusy = true
+      profileButtons()
+      profileStatus.classList.remove('is-error')
+      bindText(profileStatus, uiMessage('Saving…'))
+      try {
+        const store = repository || (await openDatabase())
+        await packing?.flush()
+        const next =
+          field === 'name'
+            ? await store.renameStore(order.orderId, nameInput.value, {
+                accountId: record.accountId,
+              })
+            : await store.setStoreWechat(order.orderId, wechatInput.value, {
+                accountId: record.accountId,
+              })
+        record = next
+        order = next.snapshot
+        savedWechat = next.storeWechat || ''
+        if (field === 'wechat' || !contactDirty) wechatInput.value = savedWechat
+        if (nameInput && (field === 'name' || !nameDirty))
+          nameInput.value = order.sellerName
+        sellerHeading.replaceChildren(
+          copyTextButton(order.sellerName, { label: 'Copy store name' })
+        )
+        renderContact()
+        chargeEditor?.update(next)
+        await refresh()
+        bindText(profileStatus, uiMessage('Saved'))
+      } catch (error) {
+        profileStatus.classList.add('is-error')
+        bindText(profileStatus, uiMessage(error.message))
+      } finally {
+        profileBusy = false
+        profileButtons()
+      }
+    }
+    const profileInputChanged = () => {
+      bindText(profileStatus, '')
+      profileStatus.classList.remove('is-error')
+      profileButtons()
+    }
+    wechatInput.addEventListener('input', profileInputChanged)
+    wechatForm.addEventListener('submit', (event) => {
+      event.preventDefault()
+      void saveProfile('wechat')
+    })
+    wechatControls.append(wechatInput)
+    wechatField.append(wechatLabel, wechatControls)
+    wechatForm.append(wechatField, wechatSave)
+    if (order.sourceType === 'spreadsheet') {
+      const source = node('p', undefined, 'store-source-file')
+      source.append(
+        node('span', uiMessage('Source spreadsheet')),
+        node(
+          'code',
+          `${order.spreadsheet.filename} · ${order.spreadsheet.sheetName}`
+        )
+      )
+      if (order.store.number)
+        source.append(
+          node('span', uiMessage('Store number')),
+          copyTextButton(order.store.number, { label: 'Copy store number' })
+        )
+      const rename = node('form', undefined, 'store-rename'),
+        field = node('div', undefined, 'store-profile-field'),
+        label = node('label', uiMessage('Store name')),
+        input = node('input'),
+        save = node('button', uiMessage('Save'))
+      nameInput = input
+      nameSave = save
+      input.type = 'text'
+      input.id = `store-name-${crypto.randomUUID()}`
+      input.name = 'store-name'
+      input.value = order.sellerName
+      input.required = true
+      label.htmlFor = input.id
+      field.append(label, input)
+      save.type = 'submit'
+      bindAttribute(save, 'aria-label', uiMessage('Save store name'))
+      decorateIcon(save, 'check')
+      preparationHelp(
+        save,
+        uiMessage(
+          'Save the store name for every imported order from this store.'
+        )
+      )
+      rename.append(field, save)
+      input.addEventListener('input', profileInputChanged)
+      rename.addEventListener('submit', (event) => {
+        event.preventDefault()
+        void saveProfile('name')
+      })
+      profileFields.append(rename)
+      profile.append(source)
+    }
+    profileFields.append(wechatForm)
+    profile.prepend(profileFields)
+    profile.append(profileStatus)
+    content.append(profile)
+    renderContact()
+    profileButtons()
+    const storeOrders = records.filter(
+      ({ snapshot }) => storeKeyFor(snapshot) === storeKeyFor(order)
+    )
+    const allStoreOrders = node(
+      'button',
+      uiMessage('View all {0} orders from this store', {
+        0: storeOrders.length,
+      }),
+      'store-orders-link'
+    )
+    decorateIcon(allStoreOrders, 'store')
+    allStoreOrders.onclick = async () => {
+      await closeOrderDetails(new Event('click', { cancelable: true }))
+      storeFilter = storeKeyFor(order)
+      selectedOrders.clear()
+      selectedMonths.clear()
+      $('order-search').value = order.sellerName
+      $('date-from').value = ''
+      $('date-to').value = ''
+      resetOrderScroll()
+      productTable.reset()
+      renderMonthOptions()
+      render()
+    }
+    const storeOrdersBar = node('div', undefined, 'store-orders-bar')
+    storeOrdersBar.append(allStoreOrders)
+    const detailsTools = node('div', undefined, 'order-details-tools')
+    detailsTools.append(storeOrdersBar)
+    content.append(detailsTools)
+    const operationTools = node('div', undefined, 'store-operations-tools')
+    const editWorkflow = decorateIcon(
+      node('button', uiMessage('Operations')),
+      'check'
+    )
+    operationTools.append(editWorkflow)
+    const detailsOperations = operationsStrip(operationTools, record)
+    editWorkflow.onclick = () => {
+      void (async () => {
+        const saved = await editOperations(record)
+        if (saved && operationTools.isConnected) detailsOperations.update(saved)
+      })().catch((error) => feedback(error.message, true))
+    }
+    detailsTools.append(operationTools)
+    paymentEditor = mountPaymentLinks(detailsTools, {
+      record,
+      records,
+      onSave: async (links, options) => {
+        await packing?.flush()
+        const store = repository || (await openDatabase())
+        const result = await store.setPaymentLinks(order.orderId, links, {
+          ...options,
+          accountId: order.accountId,
+        })
+        await refresh()
+        return { record: result, records }
+      },
+    })
+    chargeEditor = mountOrderCharges(content, {
+      record,
+      onSave: async (charges) => {
+        const store = repository || (await openDatabase())
+        await packing?.flush()
+        const result = await store.setAdditionalCharges(
+          order.orderId,
+          charges,
+          { accountId: record.accountId }
+        )
+        await refresh()
+        return result
+      },
+    })
     if (order.sellerUnavailable)
       content.append(
         node(
@@ -2035,7 +2682,7 @@ export async function startLibrary(
           'packing-help'
         )
       )
-    const totals = node('dl')
+    const totals = node('dl', undefined, 'order-details-totals')
     for (const [label, value] of [
       [
         Number(order.totals.grossIncludedCustomization) > 0
@@ -2076,14 +2723,23 @@ export async function startLibrary(
         : []),
       ['Order total', order.totals.payable],
     ])
-      totals.append(node('dt', uiMessage(label)), node('dd', `¥ ${value}`))
+      totals.append(
+        node('dt', uiMessage(label)),
+        bindText(node('dd'), () => formatCny(value))
+      )
     content.append(
+      node(
+        'h3',
+        uiMessage('Source order totals'),
+        'order-source-totals-heading'
+      ),
       totals,
       node(
         'p',
         uiMessage(
           'Price changes not already included in product discounts are allocated in proportion to each product’s value after its own discounts. Wholesale reductions already in prices are counted once. Order-only shop and promotion discounts, shipping, customization services and red-packet payment reductions stay separate. Discounts are totals per row.'
-        )
+        ),
+        'order-details-explanation'
       )
     )
     if (order.foreignCurrencyFeeUnspecified)
@@ -2315,6 +2971,7 @@ export async function startLibrary(
     })
   )
   action('all-orders', () => {
+    storeFilter = null
     clearTimeout(orderSearchTimer)
     orderSelection.reset()
     productSelection.reset()
@@ -2324,19 +2981,19 @@ export async function startLibrary(
     $('order-search').value = ''
     $('date-from').value = ''
     $('date-to').value = ''
-    orderPage = 0
-    page = 0
+    resetOrderScroll()
+    productTable.reset()
     render()
   })
-  action('previous-page', () => {
-    page--
-    renderRows()
-  })
-  action('next-page', () => {
-    page++
-    renderRows()
-  })
   async function refreshOrders(orderIds) {
+    orderIds = orderIds.filter((id) =>
+      records.some(
+        ({ snapshot }) =>
+          snapshot.orderId === id &&
+          snapshot.sourceType !== 'spreadsheet' &&
+          orderSource(snapshot) === '1688'
+      )
+    )
     if (!orderIds.length) return
     const frozen = [...orderIds]
     if (
@@ -2360,14 +3017,22 @@ export async function startLibrary(
   action('refresh-orders', () =>
     refreshOrders(
       scopedOrders()
-        .filter((record) => orderSource(record.snapshot) === '1688')
+        .filter(
+          ({ snapshot }) =>
+            snapshot.sourceType !== 'spreadsheet' &&
+            orderSource(snapshot) === '1688'
+        )
         .map(({ snapshot }) => snapshot.orderId)
     )
   )
   action('refresh-all', () =>
     refreshOrders(
       records
-        .filter((record) => orderSource(record.snapshot) === '1688')
+        .filter(
+          ({ snapshot }) =>
+            snapshot.sourceType !== 'spreadsheet' &&
+            orderSource(snapshot) === '1688'
+        )
         .map((record) => record.snapshot.orderId)
     )
   )
@@ -2382,12 +3047,16 @@ export async function startLibrary(
             ''
         $('status-filter').value = ''
         $('changes-only').checked = false
-        selectedOrders.clear()
+        storeFilter = null
+        orderSelection.reset()
+        productSelection.reset()
         selectedOrders.add(result.order.snapshot.orderId)
         selectedMonths.clear()
         selectedMonths.add(purchaseMonth(result.order.snapshot))
         expandedMonths.add(purchaseMonth(result.order.snapshot))
-        page = orderPage = 0
+        monthAnchor = null
+        resetOrderScroll()
+        productTable.reset()
         await refresh()
         feedback(uiMessage('Order added from another source.'))
       },
@@ -2398,8 +3067,9 @@ export async function startLibrary(
     monthAnchor = null
     orderSelection.reset()
     productSelection.reset()
-    page = orderPage = 0
-    updateMonthFilter()
+    resetOrderScroll()
+    productTable.reset()
+    renderMonthOptions()
     render()
   })
   action('activity-open', () => {
@@ -2412,14 +3082,6 @@ export async function startLibrary(
     if (active) await send('IMPORT_PAUSE', { jobId: active.id })
     ;({ jobs } = await send('JOBS_QUERY'))
     renderJobs()
-  })
-  action('orders-prev', () => {
-    orderPage--
-    renderOrders()
-  })
-  action('orders-next', () => {
-    orderPage++
-    renderOrders()
   })
   action('remove-orders', async () => {
     if (
@@ -2439,19 +3101,55 @@ export async function startLibrary(
     feedback(uiMessage('Selected orders removed from the library.'))
   })
   action('backup', async () => {
-    const backup = await send('BACKUP_EXPORT')
-    downloadJson(
-      backup,
-      `1688-orders-${new Date().toISOString().slice(0, 10)}.json`
-    )
-    feedback(uiMessage('Backup requested. Check your downloads.'))
+    const target = $('backup')
+    target.disabled = true
+    try {
+      feedback(uiMessage('Preparing compressed backup…'))
+      await packing?.flush()
+      const backup = await send('BACKUP_EXPORT')
+      await downloadBackup(
+        backup,
+        `1688-orders-${new Date().toISOString().slice(0, 10)}`
+      )
+      feedback(uiMessage('Backup requested. Check your downloads.'))
+    } finally {
+      target.disabled = false
+    }
   })
   action('restore', () => $('backup-file').click())
+  $('import-store-sheet').addEventListener('click', () => {
+    void (async () => {
+      await packing?.flush()
+      await openStoreImportDialog({
+        getSizeClassifier: () =>
+          packing?.sizeClassifier() ?? createSizeClassifier(),
+        repository: repository || (await openDatabase()),
+        onImported: async () => {
+          await refresh()
+          globalThis.chrome?.runtime
+            ?.sendMessage?.({ type: 'LIBRARY_CHANGED' })
+            .catch(() => {})
+        },
+      })
+    })().catch((error) => feedback(error.message, true))
+  })
+  decorateIcon($('import-store-sheet'), 'upload')
+  bindAttribute(
+    $('import-store-sheet'),
+    'aria-label',
+    uiMessage('Import spreadsheet')
+  )
+  preparationHelp(
+    $('import-store-sheet'),
+    uiMessage(
+      'Import a marked store spreadsheet. Review pictures, quantities, prices and purchase date before saving a new order.'
+    )
+  )
   $('backup-file').addEventListener('change', async () => {
     try {
       const file = $('backup-file').files[0]
       if (!file) return
-      await send('BACKUP_RESTORE', { backup: JSON.parse(await file.text()) })
+      await send('BACKUP_RESTORE', { backup: await readBackupFile(file) })
       await refresh()
       feedback(uiMessage('Backup restored. Existing notes were preserved.'))
     } catch (error) {
@@ -2465,7 +3163,7 @@ export async function startLibrary(
   $('search').addEventListener('input', () => {
     clearTimeout(searchTimer)
     searchTimer = setTimeout(() => {
-      page = 0
+      productTable.reset()
       productSelection.reset()
       renderRows()
     }, 150)
@@ -2512,11 +3210,12 @@ export async function startLibrary(
     }
   })
   $('order-search').addEventListener('input', () => {
+    storeFilter = null
     clearTimeout(orderSearchTimer)
     orderSelection.reset()
     productSelection.reset()
-    page = 0
-    orderPage = 0
+    productTable.reset()
+    resetOrderScroll()
     orderSearchTimer = setTimeout(() => {
       if ($('order-search').value.trim())
         for (const { snapshot } of matchingOrders())
@@ -2526,7 +3225,7 @@ export async function startLibrary(
   })
   for (const id of ['status-filter', 'changes-only'])
     $(id).addEventListener('change', () => {
-      page = 0
+      productTable.reset()
       productSelection.reset()
       renderRows()
     })
@@ -2534,8 +3233,8 @@ export async function startLibrary(
     $(id).addEventListener('change', () => {
       orderSelection.reset()
       productSelection.reset()
-      page = 0
-      orderPage = 0
+      productTable.reset()
+      resetOrderScroll()
       if ($('date-from').value || $('date-to').value)
         for (const { snapshot } of matchingOrders())
           expandedMonths.add(purchaseMonth(snapshot))
@@ -2636,6 +3335,7 @@ export async function startLibrary(
         }
       },
       onProductDetails: showProductDetails,
+      onEditCartonCapacity: editCartonCapacity,
       onRefreshOrder: (orderId) => refreshOrders([orderId]),
       loadImage: async (url) => {
         const result = await send('IMAGE_GET', { url })

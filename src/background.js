@@ -38,6 +38,10 @@ const changed = () => broadcast('LIBRARY_CHANGED')
 const progress = () => broadcast('IMPORT_PROGRESS')
 const marker = (id) => `#1688tocsv-import=${encodeURIComponent(id)}`
 const blankUrl = (url) => !url || url === 'about:blank'
+const missingTab = (error) =>
+  /no tab(?: with (?:id|given id))?\b|invalid tab id|unknown tab id/i.test(
+    error?.message || ''
+  )
 const detailTabUrl = (tab) =>
   detailUrl(tab.pendingUrl) ? tab.pendingUrl : tab.url
 function owns(tab, id) {
@@ -81,31 +85,39 @@ const browser = {
   async changePage(source, page) {
     return content(source.tabId, { type: 'LIST_PAGE', page }, source.frameId)
   },
-  async openDetailTab(url, id, options = {}) {
+  async openDetailTab(url, id) {
     // The marker is written atomically with tab creation. Reuse it if the
     // worker stopped between creating the tab and saving its numeric ID.
     const existing = (await chrome.tabs.query({})).find((tab) => owns(tab, id))
-    if (existing) {
+    if (existing && (await this.getDetailTab(existing.id, id))) {
       if (detailUrl(detailTabUrl(existing)) !== detailUrl(url))
         await chrome.tabs.update(existing.id, { url: `${url}${marker(id)}` })
       return existing.id
     }
-    return createReaderTab(`${url}${marker(id)}`, options)
+    return createReaderTab(`${url}${marker(id)}`)
   },
   async navigateDetailTab(tabId, url, id) {
     const tab = await this.getDetailTab(tabId, id)
     if (!tab)
-      throw new Error(
-        'The import tab was closed or changed. Resume to reopen it.'
+      throw Object.assign(
+        new Error('The import tab was closed or changed. Resume to reopen it.'),
+        { readerMissing: true }
       )
-    if (detailUrl(detailTabUrl(tab)) !== detailUrl(url))
-      await chrome.tabs.update(tabId, { url: `${url}${marker(id)}` })
+    if (detailUrl(detailTabUrl(tab)) !== detailUrl(url)) {
+      try {
+        await chrome.tabs.update(tabId, { url: `${url}${marker(id)}` })
+      } catch (error) {
+        if (missingTab(error)) error.readerMissing = true
+        throw error
+      }
+    }
   },
   async getDetailTab(tabId, id) {
     let tab
     try {
       tab = await chrome.tabs.get(tabId)
     } catch (error) {
+      if (missingTab(error)) return null
       // Browser API failures do not prove that the tab was closed.
       let tabs
       try {
@@ -192,42 +204,48 @@ async function pump() {
 }
 
 /**
- * The import reader opens in the background so imports never take over the
- * visible tab: a background tab, else a separate unfocused window. Browsers
- * that allow neither (an earlier embedded browser rejected inactive tabs)
- * pause the import; a visible reader is used only after the owner allows it.
+ * Prefer a background reader, then an unfocused window. Restricted browsers
+ * can require a visible tab; use it automatically to complete the same import.
  */
-async function createReaderTab(url, { allowVisible = false } = {}) {
-  let tab
-  let visible = false
-  try {
-    // Open blank, then navigate: background tabs then load like any other
-    // navigation (and test harnesses attach before the order page loads).
-    tab = await chrome.tabs.create({ url: 'about:blank', active: false })
-    tab = await chrome.tabs.update(tab.id, { url })
-  } catch (error) {
-    if (!/active/i.test(error?.message || '')) throw error
+async function createReaderTab(url) {
+  let lastError
+  const methods = [
+    () => chrome.tabs.create({ url: 'about:blank', active: false }),
+    async () =>
+      (await chrome.windows.create({ url, focused: false }))?.tabs?.[0],
+    () => chrome.tabs.create({ url, active: true }),
+  ]
+  for (const [index, create] of methods.entries()) {
+    let tab
     try {
-      const window = await chrome.windows.create({ url, focused: false })
-      tab = window?.tabs?.[0]
-    } catch {}
-    if (!tab) {
-      if (!allowVisible)
-        throw Object.assign(
-          new Error(
-            'This browser does not allow background import tabs. Allow a visible import tab to continue.'
-          ),
-          { attention: 'visible-reader' }
-        )
-      tab = await chrome.tabs.create({ url, active: true })
-      visible = true
+      tab = await create()
+      if (!Number.isInteger(tab?.id)) {
+        tab = undefined
+        throw new Error('The browser did not create an import tab.')
+      }
+      if (blankUrl(tab.url) && blankUrl(tab.pendingUrl))
+        await chrome.tabs.update(tab.id, { url })
+      // Some embedded browsers return an ID for a tab that was never retained.
+      // Verify it before the durable job takes ownership of that reader.
+      await chrome.tabs.get(tab.id)
+      try {
+        await chrome.tabs.update(tab.id, { autoDiscardable: false })
+      } catch {}
+      return { id: tab.id, visible: index === 2 }
+    } catch (error) {
+      lastError = error
+      try {
+        const current = tab && (await chrome.tabs.get(tab.id))
+        // Never close a login page or a tab the user has navigated elsewhere.
+        if (current && blankUrl(current.url) && blankUrl(current.pendingUrl))
+          await chrome.tabs.remove(tab.id)
+      } catch {}
+      // A lost ID allows another reader method; unrelated navigation failures
+      // stay actionable without creating more tabs or retrying indefinitely.
+      if (tab && !missingTab(error)) throw error
     }
   }
-  // A background reader must not be discarded to save memory mid-import.
-  try {
-    await chrome.tabs.update(tab.id, { autoDiscardable: false })
-  } catch {}
-  return { id: tab.id, visible }
+  throw lastError
 }
 
 /** Bring the tab that needs a sign-in or verification forward, on request only. */
@@ -445,8 +463,6 @@ async function dispatch(message, sender, repository, controller) {
       }
     case 'IMPORT_ATTENTION_OPEN':
       return openAttentionTab(await repository.getJob(message.jobId))
-    case 'IMPORT_ALLOW_VISIBLE':
-      return controller.allowVisibleReader(message.jobId)
     case 'JOBS_QUERY':
       return { jobs: (await repository.listJobs()).map(importJobView) }
     case 'LIBRARY_HISTORY':
@@ -526,7 +542,6 @@ chrome.runtime.onMessage.addListener((message, sender, respond) => {
           'REFRESH_ORDERS',
           'CONTENT_READY',
           'IMPORT_PAUSE',
-          'IMPORT_ALLOW_VISIBLE',
         ].includes(message.type)
       )
         void pump()

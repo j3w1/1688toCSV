@@ -20,16 +20,20 @@ export const HELP_MESSAGES = {
       zh: '点击商品行可选中或取消选中。按住 Shift 点击可选择连续行，按住 Ctrl 点击可追加选择。按钮和图片独立操作。',
       es: 'Haz clic en una fila para seleccionarla o deseleccionarla. Mayús + clic selecciona un rango; Ctrl + clic añade filas. Los botones y las fotos funcionan por separado.',
     },
-  'Click to select or deselect. Shift-click for a range; Ctrl-click adds orders. Double-click or Enter opens details. Click a month heading to expand or collapse it.':
+  'Click to select or deselect. Shift-click for a range; Ctrl-click adds orders. Click the store name or press Enter for order details, tags and notes. Click a month heading to expand or collapse it.':
     {
-      zh: '点击可选中或取消选中。按住 Shift 点击可选择连续订单，按住 Ctrl 点击可追加选择。双击或按 Enter 查看详情。点击月份标题可展开或收起。',
-      es: 'Haz clic para seleccionar o deseleccionar. Mayús + clic selecciona un rango; Ctrl + clic añade pedidos. Haz doble clic o pulsa Enter para ver los detalles. Haz clic en el mes para expandirlo o contraerlo.',
+      zh: '点击可选中或取消选中。按住 Shift 点击可选择连续订单，按住 Ctrl 点击可追加选择。点击店铺名称或按 Enter 可查看订单详情、标签和备注。点击月份标题可展开或收起。',
+      es: 'Haz clic para seleccionar o deseleccionar. Mayús + clic selecciona un rango; Ctrl + clic añade pedidos. Haz clic en el nombre de la tienda o pulsa Enter para ver los datos, etiquetas y notas del pedido. Haz clic en el mes para expandirlo o contraerlo.',
     },
-  'Click to select or deselect. Shift-click selects a range. Double-click opens order details.':
+  'Click to select or deselect. Shift-click selects a range. Click the store name or press Enter for order details, tags and notes.':
     {
-      zh: '点击可选中或取消选中。按住 Shift 点击可选择连续行，双击可查看订单详情。',
-      es: 'Haz clic para seleccionar o deseleccionar. Mayús + clic selecciona un rango. Haz doble clic para ver los detalles del pedido.',
+      zh: '点击可选中或取消选中。按住 Shift 点击可选择连续行。点击店铺名称或按 Enter 可查看订单详情、标签和备注。',
+      es: 'Haz clic para seleccionar o deseleccionar. Mayús + clic selecciona un rango. Haz clic en el nombre de la tienda o pulsa Enter para ver los datos, etiquetas y notas del pedido.',
     },
+  'View order details, tags and notes without changing your selection.': {
+    zh: '查看订单详情、标签和备注，不改变当前选择。',
+    es: 'Consulta los datos, etiquetas y notas del pedido sin cambiar tu selección.',
+  },
   'Copy the full-size product picture. Paste it into Excel or a message.': {
     zh: '复制商品原图，可粘贴到 Excel 或消息中。',
     es: 'Copia la foto del producto en tamaño completo y pégala en Excel o en un mensaje.',
@@ -127,17 +131,6 @@ export const HELP_MESSAGES = {
       zh: '1688 需要在导入标签页中登录或验证。打开该标签页完成后再继续。',
       es: '1688 necesita un inicio de sesión o una verificación en la pestaña de importación. Ábrela, completa el paso y luego reanuda.',
     },
-  'This browser does not allow background import tabs. Use a visible import tab for this import? It will switch to that tab while it reads.':
-    {
-      zh: '这个浏览器不允许后台导入标签页。这次导入要使用可见的导入标签页吗？读取时会切换到该标签页。',
-      es: 'Este navegador no permite pestañas de importación en segundo plano. ¿Usar una pestaña visible para esta importación? Cambiará a esa pestaña mientras lee.',
-    },
-  'This browser does not allow background import tabs. Allow a visible import tab to continue.':
-    {
-      zh: '这个浏览器不允许后台导入标签页。允许使用可见的导入标签页才能继续。',
-      es: 'Este navegador no permite pestañas de importación en segundo plano. Permite una pestaña visible para continuar.',
-    },
-  'Use a visible tab': { zh: '使用可见标签页', es: 'Usar una pestaña visible' },
   'Open the 1688 tab': {
     zh: '打开 1688 标签页',
     es: 'Abrir la pestaña de 1688',
@@ -353,10 +346,10 @@ export const HELP_MESSAGES = {
     es: 'Páginas de lista revisadas',
   },
   'Loading preview…': { zh: '正在加载预览…', es: 'Cargando vista previa…' },
-  'Merge a saved backup into this library, preserving newer edits and checking current code conflicts.':
+  'Restore a compressed .json.gz or older .json backup, preserving newer edits and checking current code conflicts.':
     {
-      zh: '将备份合并到当前订单库，保留较新的修改并检查当前货号是否冲突。',
-      es: 'Incorpora una copia de seguridad a esta biblioteca, conserva las ediciones más recientes y comprueba si hay conflictos con códigos en uso.',
+      zh: '恢复压缩的 .json.gz 或旧版 .json 备份，保留较新的修改并检查当前货号是否冲突。',
+      es: 'Restaura una copia comprimida .json.gz o una anterior .json, conserva las ediciones más recientes y comprueba los códigos en uso.',
     },
   'Moving to the next order': {
     zh: '正在转到下一订单',
@@ -426,10 +419,10 @@ export const HELP_MESSAGES = {
       zh: '确定从此浏览器删除 {count} 个订单及其历史记录？可以使用已保存的备份恢复。',
       es: '¿Eliminar {count} pedidos y su historial de este navegador? Puedes recuperarlos con una copia de seguridad guardada.',
     },
-  'Save orders, packing edits, naming rules and current code assignments to a local file.':
+  'Save a compressed backup with each picture stored once. Keeps orders, packing edits, history, settings and original photos.':
     {
-      zh: '将订单、装箱修改、命名规则及当前货号分配保存到本地文件。',
-      es: 'Guarda pedidos, cambios de empaque, reglas de nombres y asignaciones actuales de códigos en un archivo local.',
+      zh: '保存压缩备份，每张图片仅存储一次。保留订单、装箱修改、历史记录、设置和原始照片。',
+      es: 'Guarda una copia comprimida con cada imagen una sola vez. Conserva pedidos, cambios de empaque, historial, ajustes y fotos originales.',
     },
   'Saved orders and labels will stay in the library.': {
     zh: '已保存的订单和标签仍保留在订单库中。',

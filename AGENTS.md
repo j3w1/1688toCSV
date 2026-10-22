@@ -6,6 +6,15 @@ release decisions inside an explicitly authorized change. Never commit credentia
 data, downloaded exports, or personal/provider configuration. Metadata work does not authorize an
 extension build, package update, publication, store release, or production mutation.
 
+## China-store orders
+
+Before changing supplier spreadsheets, store identity, carton calculations or product photos, read
+the [China-store developer contract](docs/development.md#china-store-spreadsheets) and the
+[user workflow and marker reference](README.md#store-spreadsheet-orders). They describe the shared
+1688/market/factory model, validation rules, source-row allocations, template, photo edits and
+current limits. Keep the in-app guide, these documents and regression tests aligned; do not infer
+new import markers or physical carton allocations from chat history or unmarked workbook columns.
+
 ## Delivery: local first
 
 Standing owner rule (2026-10-19, issue #10). It overrides older wording that asked for full

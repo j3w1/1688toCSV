@@ -2,7 +2,7 @@
   "manifest_version": 3,
   "name": "1688toCSV",
   "version": "2.9.0",
-  "description": "Keep a local 1688 order spreadsheet, reconcile changes, and copy products and images to Excel.",
+  "description": "Keep local 1688 and store spreadsheet orders, prepare packing lists, and copy product data and pictures to Excel.",
   "permissions": ["alarms", "clipboardWrite", "unlimitedStorage", "tabs"],
   "host_permissions": ["https://cbu01.alicdn.com/*"],
   "background": {

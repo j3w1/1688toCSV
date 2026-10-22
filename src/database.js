@@ -7,12 +7,64 @@ import {
 
 const SNAPSHOT_VERSION = 1
 const BACKUP_FORMAT = '1688-order-library'
+import {
+  OPERATIONS_METADATA_FIELDS,
+  validateOperationsMetadata,
+  mergeOperations,
+  latestStoreWorkflow,
+  mergeStoreWorkflow,
+} from './operations-workflow.js'
+import { createOperationsRepository } from './operations-repository.js'
+import {
+  validatePaymentLinks,
+  mergePaymentLinks,
+  validatePaymentGraph,
+  paymentSourceDependencies,
+} from './payment-links.js'
+import { createPaymentLinksRepository } from './payment-links-repository.js'
+import {
+  validateSharedProducts,
+  assertSharedPreparationEdit,
+  repeatProductStoreIdentity,
+} from './repeat-products.js'
+import { createRepeatProductsRepository } from './repeat-products-repository.js'
+import {
+  editCartonConfirmation,
+  validateCartonConfirmationMetadata,
+  mergeCartonConfirmations,
+} from './carton-confirmations.js'
+import { createCartonBatchesRepository } from './carton-batches-repository.js'
+import {
+  validateCartonBatch,
+  createLegacyCartonBatches,
+  cartonBatchIssues,
+  assertCartonBatchEvidence,
+} from './carton-batches.js'
 const productAnnotationFields = [
-  ['productTags', 'productTagsUpdatedAt', 'productTagsPartialClocks'],
+  [
+    'productWorkflow',
+    'productWorkflowUpdatedAt',
+    'productWorkflowPartialClocks',
+    'map',
+  ],
+  ['productTags', 'productTagsUpdatedAt', 'productTagsPartialClocks', 'map'],
+  [
+    'unitsPerCarton',
+    'unitsPerCartonUpdatedAt',
+    'unitsPerCartonPartialClocks',
+    'map',
+  ],
+  [
+    'cartonDetails',
+    'cartonDetailsUpdatedAt',
+    'cartonDetailsPartialClocks',
+    'map',
+  ],
   [
     'packingExcludedEntryIds',
     'packingExclusionsUpdatedAt',
     'packingExclusionsPartialClocks',
+    'list',
   ],
 ]
 const decimalFields = [
@@ -197,6 +249,12 @@ function validateSnapshot(input) {
     throw new Error('Unsupported snapshot schema version')
   if (!Array.isArray(input.items) || !input.items.length)
     throw new Error('A complete order must contain product rows')
+  const spreadsheet = input.sourceType === 'spreadsheet'
+  if (
+    input.sourceType !== undefined &&
+    !['1688', 'spreadsheet'].includes(input.sourceType)
+  )
+    throw new Error('Unsupported order source type')
   const items = input.items.map((item) => {
     object(item, 'Product row')
     return {
@@ -215,6 +273,13 @@ function validateSnapshot(input) {
         ? { skuProperties: validateSkuProperties(item.skuProperties) }
         : {}),
       ...decimals(item, decimalFields, 'Product row'),
+      ...(spreadsheet ? validateStoreItem(item) : {}),
+      ...(!spreadsheet && item.photoEdits !== undefined
+        ? { photoEdits: validatePhotoEdits(item.photoEdits, 1) }
+        : {}),
+      ...(!spreadsheet && item.photos !== undefined
+        ? { photos: strings(item.photos, 'Original product photos') }
+        : {}),
     }
   })
   if (new Set(items.map((item) => item.entryId)).size !== items.length)
@@ -232,6 +297,51 @@ function validateSnapshot(input) {
     'Order totals'
   )
   validateAmounts(items, totals)
+  const storeSource = spreadsheet
+    ? validateStoreSource(input.spreadsheet)
+    : null
+  if (spreadsheet) {
+    if (input.sourceUrl !== '')
+      throw new Error('Spreadsheet orders do not have a 1688 source URL')
+    const rows = new Map(storeSource.rows.map((row) => [row.row, row]))
+    const identity = validateStoreIdentity(input.store)
+    if (
+      input.sellerName !== identity.name ||
+      input.sellerMemberLogin !== `store:${identity.key}`
+    )
+      throw new Error('Spreadsheet seller must match its store identity')
+    for (const item of items) {
+      const row = rows.get(item.sourceRow)
+      if (
+        !row ||
+        row.group !== item.sourceGroup ||
+        row.price !== item.price ||
+        [item.sourceDiscount, item.allocatedDiscount, item.discount].some(
+          (value) => moneyToCents(value) !== 0n
+        )
+      )
+        throw new Error('Spreadsheet item does not match its source row')
+    }
+    for (const row of rows.values()) {
+      const entries = items.filter((item) => item.sourceRow === row.row)
+      if (
+        !entries.length ||
+        entries.reduce((sum, item) => sum + BigInt(item.quantity), 0n) !==
+          BigInt(row.quantity) ||
+        entries.filter((item) => item.carton).length !== 1
+      )
+        throw new Error(
+          'Spreadsheet allocations do not reconcile with source rows'
+        )
+      const carton = entries.find((item) => item.carton).carton
+      if (
+        ['boxes', 'kg', 'cbm', 'len', 'wid', 'ht'].some(
+          (field) => carton[field] !== row[field]
+        )
+      )
+        throw new Error('Spreadsheet carton data does not match its source row')
+    }
+  }
   if (Object.hasOwn(input, 'sellerUnavailable')) {
     if (
       input.sellerUnavailable !== true ||
@@ -252,13 +362,22 @@ function validateSnapshot(input) {
   )
     throw new Error('foreignCurrencyFeeUnspecified must be true when present')
   const purchasedAt = purchaseTimestamp(input.purchasedAt)
+  if (spreadsheet && !purchasedAt)
+    throw new Error('Spreadsheet orders require a confirmed purchase date')
   if (input.purchasedAt !== undefined && !purchasedAt)
     throw new Error('purchasedAt must be a valid purchase timestamp')
   return {
     schemaVersion: SNAPSHOT_VERSION,
     accountId: string(input.accountId, 'accountId', { empty: false }),
     orderId,
-    sourceUrl: other ? '' : detailUrl(input.sourceUrl, orderId),
+    sourceUrl: spreadsheet || other ? '' : detailUrl(input.sourceUrl, orderId),
+    ...(spreadsheet
+      ? {
+          sourceType: 'spreadsheet',
+          store: validateStoreIdentity(input.store),
+          spreadsheet: storeSource,
+        }
+      : {}),
     ...(input.source !== undefined ? { source: input.source } : {}),
     ...(other ? { reference: input.reference.trim() } : {}),
     sellerName: string(input.sellerName, 'sellerName', { empty: false }),
@@ -319,7 +438,48 @@ function sellerShopOrigin(value) {
   return url.origin
 }
 
-function validateRecord(input) {
+export function normalizeStoreWechat(value) {
+  if (typeof value !== 'string') throw new Error('WeChat ID must be text')
+  const id = value.trim()
+  if (id.length > 128)
+    throw new Error('WeChat ID must be 128 characters or fewer')
+  return id
+}
+
+/** Source names are editable display data, never proof of a shared store. */
+export function storeIdentity(snapshot) {
+  return repeatProductStoreIdentity(snapshot)
+}
+
+export function mergeStoreWechat(previous, incoming, next = previous) {
+  const previousClock = previous.storeWechatUpdatedAt || ''
+  const incomingClock = incoming.storeWechatUpdatedAt || ''
+  if (
+    incomingClock &&
+    incomingClock === previousClock &&
+    (incoming.storeWechat || '') !== (previous.storeWechat || '')
+  )
+    throw new Error('Backup conflict: WeChat IDs have the same timestamp')
+  if (incomingClock <= previousClock) return next
+  const result = { ...next, storeWechatUpdatedAt: incomingClock }
+  if (incoming.storeWechat) result.storeWechat = incoming.storeWechat
+  else delete result.storeWechat
+  return result
+}
+
+function latestStoreWechat(records) {
+  const newest = records.reduce(
+    (result, record) =>
+      (record.storeWechatUpdatedAt || '') > (result.storeWechatUpdatedAt || '')
+        ? record
+        : result,
+    {}
+  )
+  for (const record of records) mergeStoreWechat(newest, record)
+  return newest
+}
+
+function validateRecord(input, sourceSnapshots = []) {
   object(input, 'Order record')
   if (!Number.isSafeInteger(input.revision) || input.revision < 1)
     throw new Error('Order revision must be a positive integer')
@@ -333,6 +493,25 @@ function validateRecord(input) {
     changedEntryIds: strings(input.changedEntryIds, 'changedEntryIds'),
     removedEntryIds: strings(input.removedEntryIds, 'removedEntryIds'),
   }
+  Object.assign(record, validateOperationsMetadata(input))
+  if (input.paymentLinks !== undefined)
+    record.paymentLinks = validatePaymentLinks(input.paymentLinks)
+  if (input.paymentLinksUpdatedAt !== undefined)
+    record.paymentLinksUpdatedAt = date(
+      input.paymentLinksUpdatedAt,
+      'Payment links updatedAt'
+    )
+  if (record.paymentLinks?.length && !record.paymentLinksUpdatedAt)
+    throw new Error('Payment links require an update timestamp')
+  if (input.storeWechat !== undefined) {
+    const id = normalizeStoreWechat(input.storeWechat)
+    if (id) record.storeWechat = id
+  }
+  if (input.storeWechatUpdatedAt !== undefined)
+    record.storeWechatUpdatedAt = date(
+      input.storeWechatUpdatedAt,
+      'WeChat ID updatedAt'
+    )
   if (input.productTags !== undefined) {
     object(input.productTags, 'Product tags')
     record.productTags = Object.fromEntries(
@@ -347,6 +526,51 @@ function validateRecord(input) {
       input.productTagsUpdatedAt,
       'Product tags updatedAt'
     )
+  if (input.unitsPerCarton !== undefined) {
+    object(input.unitsPerCarton, 'Pcs/box')
+    record.unitsPerCarton = Object.fromEntries(
+      Object.entries(input.unitsPerCarton).map(([entryId, value]) => {
+        identifier(entryId, 'Pcs/box entry ID')
+        if (!Number.isSafeInteger(value) || value < 1)
+          throw new Error('Pcs/box must be a positive whole number')
+        return [entryId, value]
+      })
+    )
+  }
+  if (input.unitsPerCartonUpdatedAt !== undefined)
+    record.unitsPerCartonUpdatedAt = date(
+      input.unitsPerCartonUpdatedAt,
+      'Pcs/box updatedAt'
+    )
+  if (input.cartonDetails !== undefined) {
+    object(input.cartonDetails, 'Carton details')
+    record.cartonDetails = Object.fromEntries(
+      Object.entries(input.cartonDetails).map(([entryId, value]) => [
+        identifier(entryId, 'Carton entry ID'),
+        validateCartonDetails(value),
+      ])
+    )
+  }
+  if (input.cartonDetailsUpdatedAt !== undefined)
+    record.cartonDetailsUpdatedAt = date(
+      input.cartonDetailsUpdatedAt,
+      'Carton details updatedAt'
+    )
+  Object.assign(
+    record,
+    validateCartonConfirmationMetadata(input, record, sourceSnapshots)
+  )
+  if (input.additionalCharges !== undefined)
+    record.additionalCharges = validateAdditionalCharges(
+      input.additionalCharges
+    )
+  if (input.additionalChargesUpdatedAt !== undefined)
+    record.additionalChargesUpdatedAt = date(
+      input.additionalChargesUpdatedAt,
+      'Additional charges updatedAt'
+    )
+  if (record.additionalCharges?.length && !record.additionalChargesUpdatedAt)
+    throw new Error('Additional charges require an update timestamp')
   if (input.packingExcludedEntryIds !== undefined)
     record.packingExcludedEntryIds = strings(
       input.packingExcludedEntryIds,
@@ -357,7 +581,7 @@ function validateRecord(input) {
       input.packingExclusionsUpdatedAt,
       'Packing exclusions updatedAt'
     )
-  for (const [field, clock, partial] of productAnnotationFields) {
+  for (const [field, clock, partial, kind] of productAnnotationFields) {
     if (input[partial] === undefined) continue
     object(input[partial], 'Partial product annotation clocks')
     record[partial] = Object.fromEntries(
@@ -374,9 +598,7 @@ function validateRecord(input) {
         'Partial product annotation clocks must follow the complete annotation timestamp'
       )
     const ids =
-      field === 'productTags'
-        ? Object.keys(record[field] || {})
-        : record[field] || []
+      kind === 'map' ? Object.keys(record[field] || {}) : record[field] || []
     if (!record[clock] && ids.some((id) => !record[partial][id]))
       throw new Error('Partial product annotations are missing an entry clock')
   }
@@ -403,8 +625,9 @@ function validateImage(input) {
   const url = string(input.url, 'Cached image URL', { empty: false })
   const dataUrl = string(input.dataUrl, 'Cached image data', { empty: false })
   const raster =
-    /^data:image\/(?:png|jpeg|webp|gif);base64,[A-Za-z0-9+/]+={0,2}$/
-  let allowed = raster.test(url)
+    /^data:image\/(?:png|jpeg|webp|gif|bmp);base64,[A-Za-z0-9+/]+={0,2}$/
+  const local = localImageReference.test(url)
+  let allowed = raster.test(url) || local
   if (!allowed) {
     try {
       const parsed = new URL(url)
@@ -427,8 +650,8 @@ function validateImage(input) {
     throw new Error(
       'Cached images must use an Alibaba CDN URL and raster image data'
     )
-  if (JSON.stringify(image).length > 2 * 1024 * 1024)
-    throw new Error('Cached image exceeds the 2 MB limit')
+  if (JSON.stringify(image).length > (local ? 32 : 2) * 1024 * 1024)
+    throw new Error(`Cached image exceeds the ${local ? 32 : 2} MB limit`)
   return image
 }
 
@@ -493,23 +716,32 @@ function reconcile(snapshot, previous) {
       lastCheckedAt: snapshot.observedAt,
       notes: previous?.notes ?? '',
       tags: previous?.tags ?? [],
-      ...(previous?.productTags !== undefined
-        ? { productTags: previous.productTags }
-        : {}),
-      ...(previous?.productTagsUpdatedAt !== undefined
-        ? { productTagsUpdatedAt: previous.productTagsUpdatedAt }
-        : {}),
-      ...(previous?.packingExcludedEntryIds !== undefined
-        ? { packingExcludedEntryIds: previous.packingExcludedEntryIds }
-        : {}),
-      ...(previous?.packingExclusionsUpdatedAt !== undefined
-        ? { packingExclusionsUpdatedAt: previous.packingExclusionsUpdatedAt }
+      ...Object.fromEntries(
+        [...OPERATIONS_METADATA_FIELDS, 'paymentLinks', 'paymentLinksUpdatedAt']
+          .filter((field) => previous?.[field] !== undefined)
+          .map((field) => [field, previous[field]])
+      ),
+      ...(previous?.storeWechat ? { storeWechat: previous.storeWechat } : {}),
+      ...(previous?.storeWechatUpdatedAt
+        ? { storeWechatUpdatedAt: previous.storeWechatUpdatedAt }
         : {}),
       ...Object.fromEntries(
         productAnnotationFields
-          .filter(([, , partial]) => previous?.[partial] !== undefined)
-          .map(([, , partial]) => [partial, previous[partial]])
+          .flatMap(([field, clock, partial]) => [field, clock, partial])
+          .filter((field) => previous?.[field] !== undefined)
+          .map((field) => [field, previous[field]])
       ),
+      ...Object.fromEntries(
+        ['cartonConfirmations', 'cartonConfirmationClocks']
+          .filter((field) => previous?.[field] !== undefined)
+          .map((field) => [field, previous[field]])
+      ),
+      ...(previous?.additionalCharges !== undefined
+        ? { additionalCharges: previous.additionalCharges }
+        : {}),
+      ...(previous?.additionalChargesUpdatedAt
+        ? { additionalChargesUpdatedAt: previous.additionalChargesUpdatedAt }
+        : {}),
       changedEntryIds: previous
         ? snapshot.items
             .filter(
@@ -528,18 +760,22 @@ function reconcile(snapshot, previous) {
 
 /** Partial packing imports preserve known entries without claiming unknown clears. */
 export function mergeProductAnnotations(previous, incoming, next = previous) {
-  for (const [field, clock, partial] of productAnnotationFields) {
+  for (const [field, clock, partial, kind] of productAnnotationFields) {
     const previousClock = previous[clock] || ''
     const incomingClock = incoming[clock] || ''
     const completeClock =
       incomingClock > previousClock ? incomingClock : previousClock
-    const isTags = field === 'productTags'
-    let value = structuredClone(previous[field] || (isTags ? {} : []))
+    const isMap = kind === 'map'
+    let value = structuredClone(previous[field] || (isMap ? {} : []))
     let entryClocks = { ...previous[partial] }
     let changed = false
     const assignEntry = (source, id) => {
-      if (isTags) {
-        if (source[field]?.[id]?.length) value[id] = [...source[field][id]]
+      if (isMap) {
+        if (
+          Object.hasOwn(source[field] || {}, id) &&
+          (!Array.isArray(source[field][id]) || source[field][id].length)
+        )
+          value[id] = structuredClone(source[field][id])
         else delete value[id]
       } else {
         const ids = new Set(value)
@@ -549,7 +785,7 @@ export function mergeProductAnnotations(previous, incoming, next = previous) {
       }
     }
     if (incomingClock > previousClock) {
-      value = structuredClone(incoming[field] || (isTags ? {} : []))
+      value = structuredClone(incoming[field] || (isMap ? {} : []))
       entryClocks = {}
       for (const [id, timestamp] of Object.entries(previous[partial] || {})) {
         if (timestamp >= incomingClock) assignEntry(previous, id)
@@ -612,13 +848,27 @@ async function transaction(database, stores, mode, run) {
 
 export function validateBackup(input) {
   object(input, 'Backup')
-  if (input.format !== BACKUP_FORMAT || ![1, 2, 3].includes(input.version))
+  if (input.format !== BACKUP_FORMAT || ![1, 2, 3, 4].includes(input.version))
     throw new Error('Unsupported order-library backup')
   date(input.exportedAt, 'exportedAt')
   if (!Array.isArray(input.orders) || !Array.isArray(input.history))
     throw new Error('Backup orders and history must be arrays')
-  const orders = input.orders.map(validateRecord)
-  const history = input.history.map(validateRecord)
+  const sourceSnapshots = new Map()
+  for (const record of [...input.orders, ...input.history]) {
+    const snapshot = record?.snapshot
+    const key = JSON.stringify([snapshot?.accountId, snapshot?.orderId])
+    if (!sourceSnapshots.has(key)) sourceSnapshots.set(key, [])
+    if (snapshot) sourceSnapshots.get(key).push(snapshot)
+  }
+  const validatedRecord = (record) =>
+    validateRecord(
+      record,
+      sourceSnapshots.get(
+        JSON.stringify([record?.snapshot?.accountId, record?.snapshot?.orderId])
+      ) || []
+    )
+  const orders = input.orders.map(validatedRecord)
+  const history = input.history.map(validatedRecord)
   if (input.images !== undefined && !Array.isArray(input.images))
     throw new Error('Backup images must be an array')
   const images = (input.images ?? []).map(validateImage)
@@ -652,6 +902,7 @@ export function validateBackup(input) {
       throw new Error('Backup contains duplicate history entries')
     historyKeys.add(key)
   }
+  validatePaymentGraph(orders)
   if (input.version === 1)
     return {
       orders,
@@ -660,6 +911,7 @@ export function validateBackup(input) {
       preparations: [],
       allocations: [],
       issuedCodes: [],
+      cartonBatches: [],
     }
   for (const field of ['preparations', 'allocations', 'issuedCodes'])
     if (!Array.isArray(input[field]))
@@ -682,6 +934,7 @@ export function validateBackup(input) {
     )
       throw new Error(`Backup contains duplicate ${label}`)
   const originalState = mergePackingState(allocations, issuedCodes)
+  validateSharedProducts(preparations, { orders, issuedCodes })
   const state = activePackingState(preparations, allocations, issuedCodes)
   for (const preparation of preparations) {
     const key = JSON.stringify([preparation.accountId, preparation.orderId])
@@ -731,18 +984,63 @@ export function validateBackup(input) {
   const inPackingScope = (record) =>
     !scopedOrderKeys ||
     scopedOrderKeys.has(JSON.stringify(keyFor(record.snapshot)))
+  if (input.version === 4 && !Array.isArray(input.cartonBatches))
+    throw new Error('Backup cartonBatches must be an array')
+  const cartonBatches = (
+    input.cartonBatches ?? createLegacyCartonBatches(orders, preparations)
+  ).map(validateCartonBatch)
+  if (
+    new Set(cartonBatches.map((batch) => batch.id)).size !==
+    cartonBatches.length
+  )
+    throw new Error('Backup contains duplicate carton batches')
+  assertCartonBatchEvidence(cartonBatches, orders, {
+    history,
+    packingScope: packingScope?.orders,
+    preparations: scopedPreparations,
+  })
+  for (const batch of cartonBatches) {
+    if (batch.deletedAt) continue
+    const issues = cartonBatchIssues(batch, orders, preparations, cartonBatches)
+    if (issues.length) {
+      const changedSource = batch.contents.some((item) =>
+        orders.some(
+          (record) =>
+            record.snapshot.accountId === batch.accountId &&
+            record.snapshot.orderId === item.orderId &&
+            record.snapshot.observedAt > batch.updatedAt
+        )
+      )
+      if (!batch.needsReview && !batch.legacyKeys?.length && !changedSource)
+        throw new Error(issues[0])
+      batch.needsReview = true
+    }
+  }
   return {
     orders: orders
-      .filter(inPackingScope)
+      .filter(
+        (record) =>
+          inPackingScope(record) ||
+          packingScope?.dependencies?.some(
+            (entry) =>
+              entry.accountId === record.snapshot.accountId &&
+              entry.orderId === record.snapshot.orderId
+          )
+      )
       .map((record) =>
-        packingScope
+        packingScope && inPackingScope(record)
           ? selectPackingOrder(
               record,
               packingScope.orders.find(
                 (scope) =>
                   scope.accountId === record.snapshot.accountId &&
                   scope.orderId === record.snapshot.orderId
-              ).entryIds
+              ).entryIds,
+              preparations.find(
+                (preparation) =>
+                  preparation.accountId === record.snapshot.accountId &&
+                  preparation.orderId === record.snapshot.orderId
+              )
             )
           : record
       ),
@@ -752,6 +1050,7 @@ export function validateBackup(input) {
     ...state,
     packingPreferences,
     packingScope,
+    cartonBatches,
   }
 }
 
@@ -786,7 +1085,7 @@ function validatePreparationMembership(preparation, order, history) {
 /** Extension-origin IndexedDB is the only durable store for orders and import jobs. */
 export async function openDatabase({ name = '1688-order-library' } = {}) {
   const database = await new Promise((resolve, reject) => {
-    const request = globalThis.indexedDB.open(name, 3)
+    const request = globalThis.indexedDB.open(name, 4)
     let blocked = false
     request.onupgradeneeded = (event) => {
       const db = request.result
@@ -826,6 +1125,32 @@ export async function openDatabase({ name = '1688-order-library' } = {}) {
           tx.abort()
         })
       }
+      if (event.oldVersion < 4) {
+        const batches = db.createObjectStore('cartonBatches', { keyPath: 'id' })
+        batches.createIndex('accountMonth', ['accountId', 'month'])
+        // Freeze historical defaults once during the schema upgrade. Later
+        // capacity and measurement edits remain proposals until Apply.
+        const tx = request.transaction
+        void Promise.all([
+          requested(tx.objectStore('orders').getAll()),
+          requested(tx.objectStore('preparations').getAll()),
+        ])
+          .then(([records, preparations]) => {
+            for (const batch of createLegacyCartonBatches(
+              records,
+              preparations
+            ))
+              batches.put(batch)
+          })
+          .catch((error) => {
+            reject(error)
+            try {
+              tx.abort()
+            } catch {
+              // A failed request may already have aborted the upgrade.
+            }
+          })
+      }
     }
     request.onsuccess = () => {
       if (blocked) request.result.close()
@@ -844,6 +1169,12 @@ export async function openDatabase({ name = '1688-order-library' } = {}) {
   database.onversionchange = () => database.close()
   const read = (stores, run) => transaction(database, stores, 'readonly', run)
   const write = (stores, run) => transaction(database, stores, 'readwrite', run)
+  const cartonBatchesRepository = createCartonBatchesRepository({
+    read,
+    write,
+    requested,
+    nextEditTimestamp,
+  })
 
   async function replaceActiveCodes(
     tx,
@@ -897,6 +1228,55 @@ export async function openDatabase({ name = '1688-order-library' } = {}) {
     ).toISOString()
   }
 
+  async function sameStoreOrders(tx, record) {
+    const identity = storeIdentity(record.snapshot)
+    if (!identity) return [record]
+    return (
+      await requested(
+        tx
+          .objectStore('orders')
+          .index('account')
+          .getAll(record.snapshot.accountId)
+      )
+    ).filter((entry) => storeIdentity(entry.snapshot) === identity)
+  }
+
+  async function inheritStoreWechat(tx, record) {
+    const siblings = [record, ...(await sameStoreOrders(tx, record))]
+    const contact = mergeStoreWechat(record, latestStoreWechat(siblings))
+    return mergeStoreWorkflow(contact, latestStoreWorkflow(siblings))
+  }
+
+  async function shareRestoredWechat(tx) {
+    const store = tx.objectStore('orders')
+    const records = await requested(store.getAll())
+    const contacts = new Map()
+    for (const record of records) {
+      const identity = storeIdentity(record.snapshot)
+      if (!identity || !record.storeWechatUpdatedAt) continue
+      const key = JSON.stringify([record.snapshot.accountId, identity])
+      if (!contacts.has(key)) contacts.set(key, [])
+      contacts.get(key).push(record)
+    }
+    for (const [key, entries] of contacts)
+      contacts.set(key, latestStoreWechat(entries))
+    for (const record of records) {
+      const identity = storeIdentity(record.snapshot)
+      if (!identity) continue
+      const contact = contacts.get(
+        JSON.stringify([record.snapshot.accountId, identity])
+      )
+      if (!contact) continue
+      const next = mergeStoreWechat(record, contact)
+      if (next !== record) store.put(next)
+    }
+    for (const record of await requested(store.getAll())) {
+      const siblings = await sameStoreOrders(tx, record)
+      const next = mergeStoreWorkflow(record, latestStoreWorkflow(siblings))
+      if (next !== record) store.put(next)
+    }
+  }
+
   function annotationEditClock(record, field, ids) {
     const [, clock, partial] = productAnnotationFields.find(
       ([name]) => name === field
@@ -913,6 +1293,84 @@ export async function openDatabase({ name = '1688-order-library' } = {}) {
       [partial]: {
         ...record[partial],
         ...Object.fromEntries(ids.map((id) => [id, timestamp])),
+      },
+    }
+  }
+
+  function validateCartonMeasurementEdits(edits) {
+    if (!Array.isArray(edits))
+      throw new Error('Carton measurement edits must be an array')
+    const seen = new Set()
+    return edits.map((edit) => {
+      object(edit, 'Carton measurement edit')
+      const entryId = identifier(edit.entryId, 'Carton measurement entryId')
+      if (seen.has(entryId))
+        throw new Error('Edit each product carton measurement only once')
+      seen.add(entryId)
+      const before = object(edit.before, 'Previous carton measurements')
+      const after = object(edit.after, 'New carton measurements')
+      const fields = Object.keys(before)
+      if (
+        !fields.length ||
+        fields.some(
+          (field) => !['kg', 'cbm', 'len', 'wid', 'ht'].includes(field)
+        ) ||
+        fields.length !== Object.keys(after).length ||
+        fields.some((field) => !Object.hasOwn(after, field))
+      )
+        throw new Error('Edit matching carton measurement fields only')
+      for (const field of fields) {
+        string(before[field], `Previous carton ${field}`)
+        string(after[field], `New carton ${field}`)
+      }
+      return {
+        entryId,
+        before: { ...before },
+        after: { ...after },
+      }
+    })
+  }
+
+  // Build a complete validated result before either standalone edits or a
+  // preparation/history batch writes it. Comparing only edited effective fields
+  // permits unrelated concurrent product edits without overwriting them.
+  async function cartonMeasurementResult(tx, orderId, accountId, edits) {
+    const order = await requested(
+      tx.objectStore('orders').get([accountId, orderId])
+    )
+    if (!order) throw new Error('Order was not found')
+    const cartonDetails = { ...order.cartonDetails }
+    const changedIds = []
+    for (const { entryId, before, after } of edits) {
+      const item = order.snapshot.items.find((item) => item.entryId === entryId)
+      if (!item) throw new Error('Product was not found in this order')
+      const current = productCartonDetails(item, order)
+      const fields = Object.keys(before)
+      if (fields.some((field) => (current[field] ?? '') !== before[field])) {
+        const error = new Error(
+          'Carton measurements changed in another tab. Reload before saving your edits.'
+        )
+        error.code = 'CARTON_MEASUREMENTS_CONFLICT'
+        throw error
+      }
+      const next = { ...current, ...after }
+      const validated = validateCartonDetails(next)
+      if (
+        fields.some(
+          (field) => (current[field] ?? '') !== (validated[field] ?? '')
+        )
+      ) {
+        cartonDetails[entryId] = validated
+        changedIds.push(entryId)
+      }
+    }
+    if (!changedIds.length) return { order, changed: false }
+    return {
+      changed: true,
+      order: {
+        ...order,
+        cartonDetails,
+        ...annotationEditClock(order, 'cartonDetails', changedIds),
       },
     }
   }
@@ -1001,10 +1459,26 @@ export async function openDatabase({ name = '1688-order-library' } = {}) {
       resetDefaults = false,
       preview = false,
       preserveNaming = false,
+      cartonMeasurements = [],
+      cartonBatchChanges = [],
+      allowCartonReview = false,
+      suffixBaselines = [],
+      expectedSnapshots = [],
+      allowSharedProductEdits = false,
     } = {}
   ) {
     if (!Array.isArray(inputs) || !inputs.length)
       throw new Error('Choose at least one order to prepare')
+    if (!Array.isArray(expectedSnapshots))
+      throw new Error('Expected source observations must be an array')
+    for (const expected of expectedSnapshots) {
+      object(expected, 'Expected source observation')
+      string(expected.accountId, 'Expected buyer account', { empty: false })
+      identifier(expected.orderId, 'Expected source order ID')
+      date(expected.observedAt, 'Expected source observation timestamp')
+      if (expected.productFeatures !== undefined)
+        object(expected.productFeatures, 'Expected product features')
+    }
     const drafts = inputs.map(validatePreparation)
     if (
       !Array.isArray(expectedRevisions) ||
@@ -1023,6 +1497,47 @@ export async function openDatabase({ name = '1688-order-library' } = {}) {
       throw new Error('Save each order preparation only once in a batch')
     const selectedKeys = new Set(keys)
     const selectedOrderIds = new Set(drafts.map((draft) => draft.orderId))
+    if (!Array.isArray(suffixBaselines))
+      throw new Error('Suffix restoration baselines must be an array')
+    const restoredByKey = new Map()
+    for (const input of suffixBaselines) {
+      const baseline = validatePreparation(input)
+      const key = JSON.stringify([baseline.accountId, baseline.orderId])
+      if (!selectedKeys.has(key))
+        throw new Error(
+          'Suffix restoration baseline contains an order outside this preparation batch'
+        )
+      if (restoredByKey.has(key))
+        throw new Error(
+          'Provide only one suffix restoration baseline per order'
+        )
+      restoredByKey.set(key, baseline)
+    }
+    if (!Array.isArray(cartonMeasurements))
+      throw new Error('Carton measurement batches must be an array')
+    const measurementKeys = new Set()
+    const measurementBatches = cartonMeasurements.map((batch) => {
+      object(batch, 'Carton measurement batch')
+      const orderId = identifier(batch.orderId, 'Carton measurement orderId')
+      const accountId = string(batch.accountId ?? 'local', 'accountId', {
+        empty: false,
+      })
+      const key = JSON.stringify([accountId, orderId])
+      if (!selectedKeys.has(key))
+        throw new Error(
+          'Carton measurements contain an order outside this preparation batch'
+        )
+      if (measurementKeys.has(key))
+        throw new Error(
+          'Edit each order carton measurement only once in a batch'
+        )
+      measurementKeys.add(key)
+      return {
+        orderId,
+        accountId,
+        edits: validateCartonMeasurementEdits(batch.edits),
+      }
+    })
     function checkpointScope(value, label) {
       if (typeof value === 'boolean')
         return value ? selectedOrderIds : new Set()
@@ -1036,9 +1551,20 @@ export async function openDatabase({ name = '1688-order-library' } = {}) {
     const previousOrderIds = checkpointScope(capturePrevious, 'capturePrevious')
     const defaultOrderIds = checkpointScope(resetDefaults, 'resetDefaults')
     return (preview ? read : write)(
-      ['orders', 'preparations', 'packingAllocations', 'issuedCodes'],
+      [
+        'orders',
+        'history',
+        'preparations',
+        'packingAllocations',
+        'issuedCodes',
+        'packingPreferences',
+        'cartonBatches',
+      ],
       async (tx) => {
         const store = tx.objectStore('preparations')
+        const preferences = await requested(
+          tx.objectStore('packingPreferences').get('packing')
+        )
         let allocations = await requested(
           tx.objectStore('packingAllocations').getAll()
         )
@@ -1046,14 +1572,49 @@ export async function openDatabase({ name = '1688-order-library' } = {}) {
           tx.objectStore('issuedCodes').getAll()
         )
         const previousPreparations = await requested(store.getAll())
+        for (const expected of expectedSnapshots) {
+          const order = await requested(
+            tx.objectStore('orders').get([expected.accountId, expected.orderId])
+          )
+          if (!order || order.snapshot.observedAt !== expected.observedAt)
+            throw new Error(
+              'The source order changed. Review the linked products again.'
+            )
+          for (const [entryId, features] of Object.entries(
+            expected.productFeatures || {}
+          )) {
+            const signature = (value) =>
+              JSON.stringify(
+                Object.entries(value || {}).sort(([a], [b]) =>
+                  a.localeCompare(b)
+                )
+              )
+            if (
+              signature(order.productWorkflow?.[entryId]?.features) !==
+              signature(features)
+            )
+              throw new Error(
+                'The source order changed. Review the linked products again.'
+              )
+          }
+        }
         const previousByKey = new Map(
           previousPreparations.map((entry) => [
             JSON.stringify([entry.accountId, entry.orderId]),
             entry,
           ])
         )
+        const orders = await requested(tx.objectStore('orders').getAll())
+        const ordersByKey = new Map(
+          orders.map((order) => [
+            JSON.stringify([order.snapshot.accountId, order.snapshot.orderId]),
+            order,
+          ])
+        )
         for (const [index, draft] of drafts.entries()) {
           const previous = previousByKey.get(keys[index])
+          if (!allowSharedProductEdits)
+            assertSharedPreparationEdit(previous, draft, previousPreparations)
           if ((previous?.revision ?? 0) !== expectedRevisions[index]) {
             const error = new Error(
               'Preparation changed in another tab. Reload it before saving your edits.'
@@ -1062,7 +1623,32 @@ export async function openDatabase({ name = '1688-order-library' } = {}) {
             error.packingIssue = { orderId: draft.orderId }
             throw error
           }
+          const order = ordersByKey.get(keys[index])
+          if (!order)
+            throw new Error('Save the source order before preparing labels')
+          validatePreparationSuffixEdits(draft, previous, {
+            snapshot: order.snapshot,
+            restored: restoredByKey.get(keys[index]),
+            sizeVocabulary: preferences?.value.sizeVocabulary,
+          })
         }
+        const measurementResults = []
+        for (const { orderId, accountId, edits } of measurementBatches)
+          measurementResults.push(
+            await cartonMeasurementResult(tx, orderId, accountId, edits)
+          )
+        validateSharedProducts(
+          [
+            ...previousPreparations.filter(
+              (entry) =>
+                !selectedKeys.has(
+                  JSON.stringify([entry.accountId, entry.orderId])
+                )
+            ),
+            ...drafts,
+          ],
+          { orders }
+        )
         // Reserve the complete final set of explicit codes before allocating blanks.
         // This makes swaps and bulk edits atomic and ignores retired assignments.
         const current = activePackingState(
@@ -1088,11 +1674,8 @@ export async function openDatabase({ name = '1688-order-library' } = {}) {
           const draft = drafts[index]
           const resetOrderDefaults = defaultOrderIds.has(draft.orderId)
           const expectedRevision = expectedRevisions[index]
-          const key = [draft.accountId, draft.orderId]
           const previous = previousByKey.get(keys[index])
-          const order = await requested(tx.objectStore('orders').get(key))
-          if (!order)
-            throw new Error('Save the source order before preparing labels')
+          const order = ordersByKey.get(keys[index])
           const knownIds = new Set([
             ...order.snapshot.items.map((item) => item.entryId),
             ...(previous?.groups.flatMap((group) =>
@@ -1151,8 +1734,49 @@ export async function openDatabase({ name = '1688-order-library' } = {}) {
           issuedCodes = result.issuedCodes
           results.push(preparation)
         }
-        // No writes occur until every draft and reservation has been checked.
+        const nextPreparations = previousPreparations
+          .filter(
+            (entry) =>
+              !selectedKeys.has(
+                JSON.stringify([entry.accountId, entry.orderId])
+              )
+          )
+          .concat(results)
+        const physical = await requested(
+          tx.objectStore('cartonBatches').getAll()
+        )
+        const changedBatchIds = new Set(
+          cartonBatchChanges.map(
+            (change) => change.after?.id || change.batch?.id
+          )
+        )
+        const affected = physical.filter(
+          (batch) =>
+            !batch.deletedAt &&
+            !batch.needsReview &&
+            !changedBatchIds.has(batch.id) &&
+            !cartonBatchIssues(batch, orders, previousPreparations, physical)
+              .length &&
+            cartonBatchIssues(batch, orders, nextPreparations, physical).length
+        )
+        if (affected.length && !(preview && allowCartonReview)) {
+          const error = new Error(
+            'Review the affected cartons before changing their products or packing month.'
+          )
+          error.code = 'CARTON_BATCHES_AFFECTED'
+          error.cartonBatches = affected
+          throw error
+        }
+        // No writes occur until every draft, reservation and physical batch has been checked.
         if (!preview) {
+          if (cartonBatchChanges.length)
+            await cartonBatchesRepository.apply(tx, cartonBatchChanges, {
+              records: orders,
+              preparations: nextPreparations,
+              allowReview: allowCartonReview,
+            })
+          for (const result of measurementResults)
+            if (result.changed) tx.objectStore('orders').put(result.order)
           tx.objectStore('packingAllocations').clear()
           tx.objectStore('issuedCodes').clear()
           for (const allocation of allocations)
@@ -1167,6 +1791,138 @@ export async function openDatabase({ name = '1688-order-library' } = {}) {
   }
 
   return {
+    ...cartonBatchesRepository.api,
+    ...createOperationsRepository({
+      read,
+      write,
+      requested,
+      nextEditTimestamp,
+      storeIdentity,
+      sameStoreOrders,
+      syncTagCatalogs,
+      packingPreferencesFor,
+      annotationEditClock,
+    }),
+    ...createPaymentLinksRepository({
+      read,
+      write,
+      requested,
+      nextEditTimestamp,
+      annotationEditClock,
+    }),
+    ...createRepeatProductsRepository({
+      read,
+      write,
+      requested,
+      savePreparations,
+      replaceActiveCodes,
+      storeIdentity,
+    }),
+    async importStoreOrder(input) {
+      const random = new Uint32Array(2)
+      crypto.getRandomValues(random)
+      const orderId = `9${Date.now()}${String(random[0]).padStart(10, '0')}${String(random[1]).padStart(10, '0')}`
+      const prepared = await createStoreOrder(input, { orderId })
+      const snapshot = validateSnapshot(prepared.snapshot)
+      const images = prepared.images.map(validateImage)
+      return write(['orders', 'images', 'packingPreferences'], async (tx) => {
+        const orders = tx.objectStore('orders')
+        if (await requested(orders.get(keyFor(snapshot))))
+          throw new Error('Import identity collision; retry this import')
+        let record = reconcile(snapshot).order
+        record = await inheritStoreWechat(tx, record)
+        record.unitsPerCarton = prepared.unitsPerCarton
+        record.unitsPerCartonUpdatedAt = snapshot.observedAt
+        const preferences = await packingPreferencesFor(tx)
+        record.namingSuggestions = orderNamingSuggestions(
+          snapshot,
+          createNameSuggester(preferences.vocabulary)
+        )
+        for (const image of images) tx.objectStore('images').put(image)
+        orders.add(record)
+        return record
+      })
+    },
+
+    async renameStore(orderId, name, { accountId = 'local' } = {}) {
+      string(name, 'Store name', { empty: false })
+      return write(['orders'], async (tx) => {
+        const store = tx.objectStore('orders')
+        const order = await requested(store.get([accountId, orderId]))
+        if (order?.snapshot.sourceType !== 'spreadsheet')
+          throw new Error('Only imported store names can be edited')
+        const records = await requested(
+          store.index('account').getAll(accountId)
+        )
+        for (const record of records) {
+          if (
+            record.snapshot.sourceType !== 'spreadsheet' ||
+            record.snapshot.store.key !== order.snapshot.store.key
+          )
+            continue
+          record.snapshot.sellerName = name.trim()
+          record.snapshot.store.name = name.trim()
+          record.revision++
+          record.snapshot.observedAt = nextEditTimestamp(
+            record.snapshot.observedAt
+          )
+          record.changedAt = record.snapshot.observedAt
+          record.lastCheckedAt = record.snapshot.observedAt
+          store.put(record)
+        }
+        return requested(store.get([accountId, orderId]))
+      })
+    },
+
+    async setStoreWechat(orderId, wechatId, { accountId = 'local' } = {}) {
+      identifier(orderId, 'WeChat orderId')
+      string(accountId, 'accountId', { empty: false })
+      const id = normalizeStoreWechat(wechatId)
+      return write(['orders'], async (tx) => {
+        const store = tx.objectStore('orders')
+        const order = await requested(store.get([accountId, orderId]))
+        if (!order) throw new Error('Order was not found')
+        const records = await sameStoreOrders(tx, order)
+        if (records.every((record) => (record.storeWechat || '') === id))
+          return order
+        const timestamp = nextEditTimestamp(
+          records
+            .map((record) => record.storeWechatUpdatedAt || '')
+            .sort()
+            .at(-1)
+        )
+        for (const record of records) {
+          const next = { ...record, storeWechatUpdatedAt: timestamp }
+          if (id) next.storeWechat = id
+          else delete next.storeWechat
+          store.put(next)
+        }
+        return requested(store.get([accountId, orderId]))
+      })
+    },
+
+    async setCartonDetails(
+      orderId,
+      entryId,
+      details,
+      { accountId = 'local' } = {}
+    ) {
+      const value = validateCartonDetails(details)
+      return write(['orders'], async (tx) => {
+        const store = tx.objectStore('orders'),
+          order = await requested(store.get([accountId, orderId]))
+        if (!order?.snapshot.items.some((item) => item.entryId === entryId))
+          throw new Error('Product was not found in this order')
+        const result = {
+          ...order,
+          cartonDetails: { ...order.cartonDetails, [entryId]: value },
+          ...annotationEditClock(order, 'cartonDetails', [entryId]),
+        }
+        store.put(result)
+        return result
+      })
+    },
+
     async createOtherOrder(input) {
       const snapshot = validateSnapshot(otherOrderSnapshot(input))
       await validateOtherSnapshotPhotos(snapshot)
@@ -1189,6 +1945,93 @@ export async function openDatabase({ name = '1688-order-library' } = {}) {
       })
     },
 
+    async setCartonMeasurements(orderId, edits, { accountId = 'local' } = {}) {
+      identifier(orderId, 'Carton measurement orderId')
+      string(accountId, 'accountId', { empty: false })
+      const validated = validateCartonMeasurementEdits(edits)
+      return write(['orders'], async (tx) => {
+        const result = await cartonMeasurementResult(
+          tx,
+          orderId,
+          accountId,
+          validated
+        )
+        if (result.changed) tx.objectStore('orders').put(result.order)
+        return result.order
+      })
+    },
+
+    async setAdditionalCharges(orderId, charges, { accountId = 'local' } = {}) {
+      const value = validateAdditionalCharges(charges)
+      return write(['orders'], async (tx) => {
+        const store = tx.objectStore('orders')
+        const order = await requested(store.get([accountId, orderId]))
+        if (!order) throw new Error('Order was not found')
+        const result = {
+          ...order,
+          additionalCharges: value,
+          additionalChargesUpdatedAt: nextEditTimestamp(
+            order.additionalChargesUpdatedAt
+          ),
+        }
+        orderCostAdjustments(result)
+        store.put(result)
+        return result
+      })
+    },
+
+    async setProductPhoto(
+      orderId,
+      entryId,
+      { photoIndex = 0, thumbnail, edit, originalPhoto },
+      { accountId = 'local' } = {}
+    ) {
+      if (
+        thumbnail !== undefined &&
+        (typeof thumbnail !== 'string' ||
+          !/^data:image\/(?:png|jpeg|webp);base64,[A-Za-z0-9+/=]+$/.test(
+            thumbnail
+          ) ||
+          thumbnail.length > 2_000_000)
+      )
+        throw new Error('Edited photo thumbnail is invalid')
+      return write(['orders'], async (tx) => {
+        const store = tx.objectStore('orders'),
+          order = await requested(store.get([accountId, orderId]))
+        const item = order?.snapshot.items.find(
+          (entry) => entry.entryId === entryId
+        )
+        if (
+          !item ||
+          !Number.isInteger(photoIndex) ||
+          photoIndex < 0 ||
+          photoIndex >= (item.photos?.length || 1)
+        )
+          throw new Error('Product photo was not found')
+        if (
+          originalPhoto !== undefined &&
+          originalPhoto !== (item.photos?.[photoIndex] || item.thumbnail)
+        )
+          throw new Error(
+            'The source photo changed. Reopen the photo before editing it.'
+          )
+        if (!item.photos) item.photos = [item.thumbnail]
+        if (edit !== undefined)
+          item.photoEdits = validatePhotoEdits(
+            { ...item.photoEdits, [photoIndex]: edit },
+            item.photos?.length || 1
+          )
+        if (thumbnail !== undefined && photoIndex === 0)
+          item.thumbnail = thumbnail
+        order.revision++
+        order.snapshot.observedAt = nextEditTimestamp(order.snapshot.observedAt)
+        order.changedAt = order.snapshot.observedAt
+        order.lastCheckedAt = order.snapshot.observedAt
+        store.put(order)
+        return order
+      })
+    },
+
     async saveSnapshot(input) {
       if (input?.source === 'other')
         throw new Error('Create other-source orders through order entry')
@@ -1198,8 +2041,21 @@ export async function openDatabase({ name = '1688-order-library' } = {}) {
         async (tx) => {
           const orders = tx.objectStore('orders')
           const previous = await requested(orders.get(keyFor(snapshot)))
+          if (snapshot.sourceType !== 'spreadsheet') {
+            for (const item of snapshot.items) {
+              const saved = previous?.snapshot.items.find(
+                (entry) => entry.entryId === item.entryId
+              )
+              if (saved?.photoEdits && saved.photos?.[0] === item.thumbnail) {
+                item.photos = saved.photos
+                item.photoEdits = saved.photoEdits
+                item.thumbnail = saved.thumbnail
+              }
+            }
+          }
           const result = reconcile(snapshot, previous)
           if (!result.ignored) {
+            result.order = await inheritStoreWechat(tx, result.order)
             const preferences = await packingPreferencesFor(tx)
             const suggest = createNameSuggester(preferences.vocabulary)
             if (result.changed && previous)
@@ -1209,6 +2065,7 @@ export async function openDatabase({ name = '1688-order-library' } = {}) {
               suggest
             )
             orders.put(result.order)
+            validatePaymentGraph(await requested(orders.getAll()))
             refreshPreparedNames(
               tx,
               await requested(
@@ -1292,6 +2149,88 @@ export async function openDatabase({ name = '1688-order-library' } = {}) {
       })
     },
 
+    async setCartonConfirmation(
+      orderId,
+      entryId,
+      month,
+      field,
+      value,
+      { accountId = 'local' } = {}
+    ) {
+      identifier(orderId, 'Order ID')
+      identifier(entryId, 'Carton confirmation entry ID')
+      return write(['orders'], async (tx) => {
+        const store = tx.objectStore('orders')
+        const order = await requested(store.get([accountId, orderId]))
+        if (!order) throw new Error('Order was not found')
+        const edited = editCartonConfirmation(
+          order,
+          entryId,
+          month,
+          field,
+          value
+        )
+        if (
+          JSON.stringify(order.cartonConfirmations || {}) ===
+            JSON.stringify(edited.cartonConfirmations) &&
+          order.cartonConfirmationClocks?.[edited.entryId]?.[month]
+        )
+          return order
+        const result = {
+          ...order,
+          cartonConfirmations: edited.cartonConfirmations,
+          cartonConfirmationClocks: {
+            ...order.cartonConfirmationClocks,
+            [edited.entryId]: {
+              ...order.cartonConfirmationClocks?.[edited.entryId],
+              [month]: nextEditTimestamp(
+                order.cartonConfirmationClocks?.[edited.entryId]?.[month]
+              ),
+            },
+          },
+        }
+        store.put(result)
+        return result
+      })
+    },
+
+    async setUnitsPerCarton(
+      orderId,
+      entryId,
+      value,
+      { accountId = 'local' } = {}
+    ) {
+      identifier(orderId, 'Order ID')
+      identifier(entryId, 'Pcs/box entry ID')
+      const capacity = normalizeUnitsPerCarton(value)
+      return write(['orders'], async (tx) => {
+        const store = tx.objectStore('orders')
+        const order = await requested(store.get([accountId, orderId]))
+        if (!order) throw new Error('Order was not found')
+        if (
+          !order.snapshot.items.some((item) => item.entryId === entryId) &&
+          !Object.hasOwn(order.unitsPerCarton || {}, entryId)
+        )
+          throw new Error('Product was not found in this order')
+        if (
+          (order.unitsPerCarton?.[entryId] ?? null) === capacity &&
+          (order.unitsPerCartonUpdatedAt ||
+            order.unitsPerCartonPartialClocks?.[entryId])
+        )
+          return order
+        const unitsPerCarton = { ...order.unitsPerCarton }
+        if (capacity === null) delete unitsPerCarton[entryId]
+        else unitsPerCarton[entryId] = capacity
+        const result = {
+          ...order,
+          unitsPerCarton,
+          ...annotationEditClock(order, 'unitsPerCarton', [entryId]),
+        }
+        store.put(result)
+        return result
+      })
+    },
+
     async setPackingExcluded(
       orderId,
       entryIds,
@@ -1332,6 +2271,7 @@ export async function openDatabase({ name = '1688-order-library' } = {}) {
           ...annotationEditClock(order, 'packingExcludedEntryIds', ids),
         }
         store.put(result)
+        validatePaymentGraph(await requested(store.getAll()))
         return result
       })
     },
@@ -1467,23 +2407,94 @@ export async function openDatabase({ name = '1688-order-library' } = {}) {
           'packingPreferences',
           'issuedCodes',
           'packingAllocations',
+          'cartonBatches',
+          'images',
         ],
         async (tx) => {
+          const allOrders = await requested(tx.objectStore('orders').getAll())
+          const removed = new Set(ids)
+          const cartonBatches = await requested(
+            tx.objectStore('cartonBatches').getAll()
+          )
+          if (
+            cartonBatches.some(
+              (batch) =>
+                batch.accountId === accountId &&
+                !batch.deletedAt &&
+                (batch.contents.some((item) => removed.has(item.orderId)) ||
+                  batch.groups.some((group) => removed.has(group.orderId)) ||
+                  (batch.mark && removed.has(batch.mark.orderId)))
+            )
+          )
+            throw new Error(
+              'Remove this order’s active carton batches before deleting it.'
+            )
+          for (const record of allOrders)
+            if (
+              record.snapshot.accountId === accountId &&
+              removed.has(record.snapshot.orderId)
+            )
+              if (
+                (record.paymentLinks || []).some(
+                  (link) => !removed.has(link.sourceOrderId)
+                )
+              )
+                throw new Error(
+                  'Unlink this order’s payments before deleting it. The payment sources will stay in the library.'
+                )
+          validatePaymentGraph(
+            allOrders.filter(
+              (record) =>
+                record.snapshot.accountId !== accountId ||
+                !removed.has(record.snapshot.orderId)
+            )
+          )
           const previousRecords = []
+          const deletedRecords = []
           for (const id of ids) {
             const record = await requested(
               tx.objectStore('orders').get([accountId, id])
             )
-            if (record) previousRecords.push(record)
+            if (record) {
+              previousRecords.push(record)
+              deletedRecords.push(record)
+            }
             tx.objectStore('orders').delete([accountId, id])
             tx.objectStore('preparations').delete([accountId, id])
-            const keys = await requested(
-              tx
-                .objectStore('history')
-                .index('order')
-                .getAllKeys([accountId, id])
+            const history = await requested(
+              tx.objectStore('history').index('order').getAll([accountId, id])
             )
-            for (const key of keys) tx.objectStore('history').delete(key)
+            deletedRecords.push(...history)
+            for (const entry of history)
+              tx.objectStore('history').delete([
+                ...keyFor(entry.snapshot),
+                entry.snapshot.observedAt,
+              ])
+          }
+          const localPhotos = (records) =>
+            new Set(
+              records
+                .flatMap(({ snapshot }) => [
+                  ...snapshot.items.flatMap((item) => [
+                    item.thumbnail,
+                    ...(item.photos || []),
+                  ]),
+                  ...(snapshot.spreadsheet?.rows || []).flatMap(
+                    (row) => row.photos || []
+                  ),
+                ])
+                .filter((photo) => localImageReference.test(photo))
+            )
+          const candidates = localPhotos(deletedRecords)
+          if (candidates.size) {
+            // Only collect assets owned by the removed orders. Other cached
+            // photos stay intact, and another order/history can share an original.
+            const retained = localPhotos([
+              ...(await requested(tx.objectStore('orders').getAll())),
+              ...(await requested(tx.objectStore('history').getAll())),
+            ])
+            for (const photo of candidates)
+              if (!retained.has(photo)) tx.objectStore('images').delete(photo)
           }
           await syncTagCatalogs(tx, await packingPreferencesFor(tx), {
             previousRecords,
@@ -1494,7 +2505,7 @@ export async function openDatabase({ name = '1688-order-library' } = {}) {
       )
     },
 
-    async exportBackup({ orderIds, accountId = 'local' } = {}) {
+    async exportBackup({ orderIds, accountId = 'local', packingScope } = {}) {
       const includedIds =
         orderIds === undefined
           ? null
@@ -1503,7 +2514,7 @@ export async function openDatabase({ name = '1688-order-library' } = {}) {
                 identifier(id, 'Backup order ID')
               )
             )
-      return read(
+      return write(
         [
           'orders',
           'history',
@@ -1512,8 +2523,10 @@ export async function openDatabase({ name = '1688-order-library' } = {}) {
           'packingAllocations',
           'issuedCodes',
           'packingPreferences',
+          'cartonBatches',
         ],
         async (tx) => {
+          const physical = await cartonBatchesRepository.seed(tx)
           let orders = await requested(tx.objectStore('orders').getAll())
           let history = await requested(tx.objectStore('history').getAll())
           let images = await requested(tx.objectStore('images').getAll())
@@ -1530,6 +2543,16 @@ export async function openDatabase({ name = '1688-order-library' } = {}) {
             tx.objectStore('packingPreferences').get('packing')
           )
           if (includedIds) {
+            const dependencies = paymentSourceDependencies(
+              orders,
+              orders.filter(
+                (entry) =>
+                  entry.snapshot.accountId === accountId &&
+                  includedIds.has(entry.snapshot.orderId)
+              )
+            )
+            for (const record of dependencies)
+              includedIds.add(record.snapshot.orderId)
             const included = (entry) =>
               entry.accountId === accountId && includedIds.has(entry.orderId)
             orders = orders.filter((entry) => included(entry.snapshot))
@@ -1544,7 +2567,10 @@ export async function openDatabase({ name = '1688-order-library' } = {}) {
             )
             const photoUrls = new Set([
               ...[...orders, ...history].flatMap((entry) =>
-                entry.snapshot.items.map((item) => item.thumbnail)
+                entry.snapshot.items.flatMap((item) => [
+                  item.thumbnail,
+                  ...(item.photos || []),
+                ])
               ),
               ...issuedCodes
                 .filter(included)
@@ -1552,19 +2578,33 @@ export async function openDatabase({ name = '1688-order-library' } = {}) {
             ])
             images = images.filter((entry) => photoUrls.has(entry.url))
           }
-          return {
+          const backup = {
             format: BACKUP_FORMAT,
-            version: 3,
+            version: 4,
             exportedAt: new Date().toISOString(),
             orders,
             history,
             images,
             preparations,
+            cartonBatches: physical.batches.filter(
+              (batch) =>
+                !includedIds ||
+                (batch.accountId === accountId &&
+                  batch.contents.every((item) => includedIds.has(item.orderId)))
+            ),
             ...activePackingState(preparations, allocations, issuedCodes),
             packingPreferences: preferences
               ? { value: preferences.value, updatedAt: preferences.updatedAt }
               : null,
           }
+          // Scope physical cartons only after the packing planner has seen
+          // every intersecting batch, so omitted linked purchases are reported.
+          return packingScope
+            ? createPackingBackup(
+                { ...backup, cartonBatches: physical.batches },
+                packingScope
+              )
+            : backup
         }
       )
     },
@@ -1584,6 +2624,7 @@ export async function openDatabase({ name = '1688-order-library' } = {}) {
           'packingAllocations',
           'issuedCodes',
           'packingPreferences',
+          'cartonBatches',
         ],
         async (tx) => {
           const orders = tx.objectStore('orders')
@@ -1671,10 +2712,37 @@ export async function openDatabase({ name = '1688-order-library' } = {}) {
                   updated += 1
                 }
               }
-              // A packing restore never replaces existing local annotations.
+              // Packing restores merge selected capacity observations. Existing
+              // local tags/exclusions retain their established restore policy.
               // Full restores fill partial observations without undoing newer edits.
-              if (!backup.packingScope)
-                next = mergeProductAnnotations(previous, incoming, next)
+              next = mergeProductAnnotations(
+                previous,
+                backup.packingScope
+                  ? Object.fromEntries(
+                      productAnnotationFields
+                        .filter(([field]) =>
+                          [
+                            'unitsPerCarton',
+                            'cartonDetails',
+                            'productWorkflow',
+                          ].includes(field)
+                        )
+                        .flatMap(([field, clock, partial]) => [
+                          field,
+                          clock,
+                          partial,
+                        ])
+                        .filter((field) => incoming[field] !== undefined)
+                        .map((field) => [field, incoming[field]])
+                    )
+                  : incoming,
+                next
+              )
+              next = mergeAdditionalCharges(previous, incoming, next)
+              next = mergeCartonConfirmations(previous, incoming, next)
+              next = mergeStoreWechat(previous, incoming, next)
+              next = mergeOperations(previous, incoming, next)
+              next = mergePaymentLinks(previous, incoming, next)
               if (next !== previous) orders.put(next)
               // An older backup's current version is still useful history.
               if (incoming.snapshot.observedAt < previous.snapshot.observedAt) {
@@ -1687,10 +2755,20 @@ export async function openDatabase({ name = '1688-order-library' } = {}) {
           // Reconciliation can keep a newer local snapshot. Validate the actual
           // final records, not a projection which assumes incoming ids replace it.
           assertUniqueOtherReferences(await requested(orders.getAll()))
+          // Physical allocations may depend on an older source quantity. Make
+          // its evidence visible to merged-batch validation in this transaction.
           for (const record of backup.history) {
             const key = [...keyFor(record.snapshot), record.snapshot.observedAt]
             if (!(await requested(history.getKey(key)))) history.put(record)
           }
+          await cartonBatchesRepository.restore(tx, backup.cartonBatches || [])
+          await shareRestoredWechat(tx)
+          const mergedOrders = await requested(orders.getAll())
+          validatePaymentGraph(mergedOrders)
+          validateSharedProducts(
+            await requested(tx.objectStore('preparations').getAll()),
+            { orders: mergedOrders }
+          )
           for (const image of backup.images) {
             const existing = await requested(
               tx.objectStore('images').get(image.url)
@@ -1726,6 +2804,12 @@ export async function openDatabase({ name = '1688-order-library' } = {}) {
                 await requested(tx.objectStore('preparations').get(key))
               )
             }
+            for (const dependency of backup.packingScope.dependencies || [])
+              restoredOrders.push(
+                await requested(
+                  orders.get([dependency.accountId, dependency.orderId])
+                )
+              )
             try {
               // Local preparations legitimately retain unselected products.
               validatePackingScope(
@@ -1822,115 +2906,122 @@ export async function openDatabase({ name = '1688-order-library' } = {}) {
         async (tx) => {
           const owners = []
           for (const kind of ['base', 'barcode']) {
-            const reservation = await requested(
+            const activeReservation = await requested(
               tx.objectStore('issuedCodes').get([accountId, kind, code])
             )
-            if (!reservation) continue
-            const key = [accountId, reservation.orderId]
-            const preparation = await requested(
-              tx.objectStore('preparations').get(key)
-            )
-            const order = await requested(tx.objectStore('orders').get(key))
-            const barcodeReservations =
-              kind === 'base'
-                ? await requested(
-                    tx
-                      .objectStore('issuedCodes')
-                      .getAll(
-                        globalThis.IDBKeyRange.bound(
-                          [accountId, 'barcode', code],
-                          [accountId, 'barcode', `${code}\uffff`]
+            if (!activeReservation) continue
+            for (const reservation of codeReservationMembers(
+              activeReservation
+            )) {
+              const key = [accountId, reservation.orderId]
+              const preparation = await requested(
+                tx.objectStore('preparations').get(key)
+              )
+              const order = await requested(tx.objectStore('orders').get(key))
+              const barcodeReservations =
+                kind === 'base'
+                  ? await requested(
+                      tx
+                        .objectStore('issuedCodes')
+                        .getAll(
+                          globalThis.IDBKeyRange.bound(
+                            [accountId, 'barcode', code],
+                            [accountId, 'barcode', `${code}\uffff`]
+                          )
                         )
-                      )
-                  )
-                : []
-            const evidence = codeOwnerEvidence(
-              reservation,
-              preparation,
-              barcodeReservations
-            )
-            const {
-              group,
-              variant,
-              evidenceGroup,
-              evidenceVariant,
-              currentGroup,
-              currentVariant,
-            } = evidence
-            const snapshot = reservation.ownerSnapshot
-            const entryIds = evidence.entryIds ?? snapshot?.entryIds ?? []
-            const members = new Set(entryIds)
-            const sourceTitle = [
-              ...new Set(
-                order?.snapshot.items
-                  .filter((item) => members.has(item.entryId))
-                  .map((item) => item.title || item.description)
-                  .filter(Boolean) || []
-              ),
-            ].join(' · ')
-            let photos = snapshot?.photos || []
-            if (!photos.length && order) {
-              const records = [
-                order,
-                ...(await requested(
-                  tx.objectStore('history').index('order').getAll(key)
-                )),
-              ]
-              photos = [
+                    )
+                  : []
+              const evidence = codeOwnerEvidence(
+                reservation,
+                preparation,
+                barcodeReservations
+              )
+              const {
+                group,
+                variant,
+                evidenceGroup,
+                evidenceVariant,
+                currentGroup,
+                currentVariant,
+              } = evidence
+              const snapshot = reservation.ownerSnapshot
+              const entryIds = evidence.entryIds ?? snapshot?.entryIds ?? []
+              const members = new Set(entryIds)
+              const sourceTitle = [
                 ...new Set(
-                  records.flatMap((record) =>
-                    record.snapshot.items
-                      .filter((item) => members.has(item.entryId))
-                      .map((item) => item.thumbnail)
-                      .filter(Boolean)
-                  )
+                  order?.snapshot.items
+                    .filter((item) => members.has(item.entryId))
+                    .map((item) => item.title || item.description)
+                    .filter(Boolean) || []
                 ),
-              ].slice(0, 6)
+              ].join(' · ')
+              let photos = snapshot?.photos || []
+              if (!photos.length && order) {
+                const records = [
+                  order,
+                  ...(await requested(
+                    tx.objectStore('history').index('order').getAll(key)
+                  )),
+                ]
+                photos = [
+                  ...new Set(
+                    records.flatMap((record) =>
+                      record.snapshot.items
+                        .filter((item) => members.has(item.entryId))
+                        .map((item) => item.thumbnail)
+                        .filter(Boolean)
+                    )
+                  ),
+                ].slice(0, 6)
+              }
+              const currentCode =
+                kind === 'base'
+                  ? currentGroup?.baseCode
+                  : currentGroup &&
+                      currentVariant &&
+                      !currentVariant.needsSizeMapping
+                    ? barcodeValue(currentGroup, currentVariant)
+                    : ''
+              owners.push({
+                kind,
+                accountId,
+                orderId: reservation.orderId,
+                groupId: reservation.groupId,
+                ...(reservation.variantId
+                  ? { variantId: reservation.variantId }
+                  : {}),
+                month: reservation.month,
+                sellerId: reservation.sellerId,
+                status: 'active',
+                orderExists: Boolean(order),
+                groupExists: Boolean(group),
+                sellerName:
+                  order?.snapshot.sellerName ||
+                  snapshot?.sellerName ||
+                  reservation.sellerId,
+                groupTitle:
+                  currentGroup?.title ||
+                  snapshot?.groupTitle ||
+                  (evidence.recovered ? sourceTitle : evidenceGroup?.title) ||
+                  '',
+                spanishName:
+                  currentGroup?.spanishName ?? snapshot?.spanishName ?? '',
+                category: currentGroup?.category ?? snapshot?.category ?? '',
+                variant:
+                  currentVariant?.variant ??
+                  snapshot?.variant ??
+                  evidenceVariant?.variant ??
+                  '',
+                entryIds,
+                photos,
+                currentCode: currentCode || '',
+                currentBaseCode: currentGroup?.baseCode || '',
+                currentGroupId: currentGroup?.id || '',
+                ...(activeReservation.sharedProductId
+                  ? { sharedProductId: activeReservation.sharedProductId }
+                  : {}),
+              })
             }
-            const currentCode =
-              kind === 'base'
-                ? currentGroup?.baseCode
-                : currentGroup &&
-                    currentVariant &&
-                    !currentVariant.needsSizeMapping
-                  ? barcodeValue(currentGroup, currentVariant)
-                  : ''
-            owners.push({
-              kind,
-              accountId,
-              orderId: reservation.orderId,
-              groupId: reservation.groupId,
-              ...(reservation.variantId
-                ? { variantId: reservation.variantId }
-                : {}),
-              month: reservation.month,
-              sellerId: reservation.sellerId,
-              status: 'active',
-              orderExists: Boolean(order),
-              groupExists: Boolean(group),
-              sellerName:
-                order?.snapshot.sellerName ||
-                snapshot?.sellerName ||
-                reservation.sellerId,
-              groupTitle:
-                currentGroup?.title ||
-                snapshot?.groupTitle ||
-                (evidence.recovered ? sourceTitle : evidenceGroup?.title) ||
-                '',
-              spanishName:
-                currentGroup?.spanishName ?? snapshot?.spanishName ?? '',
-              category: currentGroup?.category ?? snapshot?.category ?? '',
-              variant:
-                currentVariant?.variant ??
-                snapshot?.variant ??
-                evidenceVariant?.variant ??
-                '',
-              entryIds,
-              photos,
-              currentCode: currentCode || '',
-              currentBaseCode: currentGroup?.baseCode || '',
-              currentGroupId: currentGroup?.id || '',
-            })
           }
           return { code, owners }
         }
@@ -2091,7 +3182,24 @@ import {
 import { upgradeWorkspaceColors } from './appearance.js'
 import { lineGrossCents, moneyToCents } from './money.js'
 import { purchaseTimestamp } from './order-date.js'
+import { normalizeUnitsPerCarton } from './carton-packing.js'
+import { productCartonDetails } from './carton-details.js'
 import {
+  validateAdditionalCharges,
+  mergeAdditionalCharges,
+  orderCostAdjustments,
+} from './order-charges.js'
+import { localImageReference } from './images.js'
+import {
+  createStoreOrder,
+  validateStoreIdentity,
+  validateStoreSource,
+  validateStoreItem,
+  validatePhotoEdits,
+  validateCartonDetails,
+} from './store-order.js'
+import {
+  createPackingBackup,
   isPackingPreparationSubset,
   mergePackingPreparation,
   selectPackingOrder,
@@ -2111,6 +3219,7 @@ import {
   allocatePreparation,
   barcodeValue,
   codeOwnerEvidence,
+  codeReservationMembers,
   extendDefaultPacking,
   mergePackingState,
   packingCheckpoint,
@@ -2119,5 +3228,6 @@ import {
   validateIssuedCode,
   validatePackingPreferences,
   validatePreparation,
+  validatePreparationSuffixEdits,
   validatePreparationReservations,
 } from './packing-model.js'

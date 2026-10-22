@@ -2,7 +2,7 @@ import { test, expect } from './extension-fixture.mjs'
 import { createDemoRecords } from '../../preview/library-fixture.js'
 
 for (const mode of ['light', 'dark'])
-  test(`Products and Packing export assigned ${mode} badge colors and copy the exact preview PNG`, async ({
+  test(`Products and Packing export light badge colors in ${mode} workspace and copy the exact preview PNG`, async ({
     extension,
   }) => {
     const colors = {
@@ -142,14 +142,14 @@ for (const mode of ['light', 'dark'])
               .map(({ color }) => color)
           ),
         ].sort()
-      ).toEqual([colors[mode].order[1], colors[mode].product[1]].sort())
+      ).toEqual([colors.light.order[1], colors.light.product[1]].sort())
       for (const [label, key] of [
         ['15 Oct 2026', 'dates'],
         ['Completed', 'completed'],
       ])
         expect(
           text.some(
-            (draw) => draw.text === label && draw.color === colors[mode][key][1]
+            (draw) => draw.text === label && draw.color === colors.light[key][1]
           )
         ).toBe(true)
       const preview = await dialog.locator('.copy-preview img').evaluate(
@@ -190,7 +190,7 @@ for (const mode of ['light', 'dark'])
           canvas.width = canvas.height = 0
           return { hash: await window.badgeDigest(blob), pixels }
         },
-        Object.values(colors[mode]).map(([background]) => background)
+        Object.values(colors.light).map(([background]) => background)
       )
       for (const [color, pixels] of Object.entries(preview.pixels))
         expect(pixels, `Rendered ${mode} background ${color}`).toBeGreaterThan(
@@ -211,15 +211,15 @@ for (const mode of ['light', 'dark'])
     await page.locator('#copy-excel-image').click()
     await assertPreviewAndCopy()
     // Changing the workspace mode while this session is open must not recolor
-    // the captured badges when a style change regenerates its image.
+    // the captured badges when a detail change regenerates its image.
     await page.locator('meta[name="color-scheme"]').evaluate((meta, mode) => {
       meta.content = mode === 'light' ? 'dark' : 'light'
       window.badgeText = []
     }, mode)
     await dialog.locator('.excel-style-details > summary').click()
     await dialog
-      .getByRole('combobox', { name: 'Image color scheme' })
-      .selectOption('sage')
+      .getByRole('checkbox', { name: 'Order number', exact: true })
+      .uncheck()
     await assertPreviewAndCopy()
     await dialog.getByRole('button', { name: 'Done', exact: true }).click()
     await page.locator('meta[name="color-scheme"]').evaluate((meta, mode) => {
@@ -274,6 +274,11 @@ test('image style and detail controls persist, update the same preview, and keep
   const page = await extension.context.newPage()
   await page.addInitScript(() => {
     localStorage.setItem('1688-library-purchase-months', '[]')
+    if (!localStorage.getItem('1688-excel-image-columns'))
+      localStorage.setItem(
+        '1688-excel-image-columns',
+        JSON.stringify({ style: { scheme: 'custom', accent: '#ffff00' } })
+      )
     window.imageDetailText = []
     window.imageDetailColors = []
     const fillText = CanvasRenderingContext2D.prototype.fillText
@@ -291,6 +296,16 @@ test('image style and detail controls persist, update the same preview, and keep
   await expect(page.locator('#sheet-body tr[data-selection-key]')).toHaveCount(
     3
   )
+  await page.getByRole('button', { name: 'Settings', exact: true }).click()
+  const appearance = page.getByRole('dialog', { name: 'Settings', exact: true })
+  for (const mode of ['Light', 'Dark'])
+    await appearance
+      .getByLabel(`${mode} palette`, { exact: true })
+      .selectOption('classic-brown')
+  await appearance
+    .getByRole('button', { name: 'Save settings', exact: true })
+    .click()
+  await expect(appearance).not.toBeVisible()
   await page.locator('#copy-excel-image').click()
   const dialog = page.locator('.image-copy-dialog')
   const ready = () => expect(dialog.locator('.image-copy-submit')).toBeEnabled()
@@ -300,9 +315,15 @@ test('image style and detail controls persist, update the same preview, and keep
     expect((await label.boundingBox()).height).toBeLessThanOrEqual(30)
     await expect(label).toHaveCSS('margin-top', '0px')
   }
-  await dialog
-    .getByRole('combobox', { name: 'Image color scheme' })
-    .selectOption('sage')
+  await expect(
+    dialog.getByRole('combobox', { name: 'Image color scheme' })
+  ).toHaveCount(0)
+  await expect(
+    dialog.getByLabel('Custom image accent', { exact: true })
+  ).toHaveCount(0)
+  await expect(dialog).toContainText(
+    'Excel exports use the current theme in light mode.'
+  )
   await dialog
     .getByRole('checkbox', { name: 'Product tags', exact: true })
     .check()
@@ -350,27 +371,37 @@ test('image style and detail controls persist, update the same preview, and keep
   await expect(
     dialog.getByRole('checkbox', { name: 'Product tags', exact: true })
   ).toBeEnabled()
-  await dialog
-    .getByLabel('Custom image accent', { exact: true })
-    .evaluate((input) => {
-      input.value = '#ffff00'
-      input.dispatchEvent(new Event('input', { bubbles: true }))
+  for (const mode of ['light', 'dark']) {
+    await page.locator('meta[name="color-scheme"]').evaluate((meta, mode) => {
+      meta.content = mode
+      window.imageDetailColors = []
+    }, mode)
+    await dialog
+      .getByRole('checkbox', { name: 'Original product name', exact: true })
+      .setChecked(mode === 'dark')
+    await ready()
+    const renderedColors = await page.evaluate(() => {
+      const style = getComputedStyle(document.documentElement)
+      return {
+        fills: window.imageDetailColors,
+        header: style.getPropertyValue('--excel-accent').trim(),
+        body: '#ffffff',
+      }
     })
-  await ready()
-  await expect(
-    dialog.getByRole('combobox', { name: 'Image color scheme' })
-  ).toHaveValue('custom')
-  expect(await page.evaluate(() => window.imageDetailColors)).toContain(
-    '#ffff00'
-  )
-  await dialog.locator('.image-copy-heading > button').click()
+    expect(renderedColors.fills).toContain(renderedColors.header)
+    expect(renderedColors.header).toBe('#5c3700')
+    expect(renderedColors.fills).toContain(renderedColors.body)
+    expect(renderedColors.fills).not.toContain('#ffff00')
+  }
+  await dialog.screenshot({ path: 'work/classic-brown-excel-image.png' })
+  await dialog.locator('.image-copy-heading [data-icon="close"]').click()
   await page.reload()
   await page.locator('#copy-excel-image').click()
   await ready()
   await dialog.locator('.excel-style-details > summary').click()
   await expect(
     dialog.getByLabel('Custom image accent', { exact: true })
-  ).toHaveValue('#ffff00')
+  ).toHaveCount(0)
   await expect(
     dialog.getByRole('checkbox', { name: 'Product tags', exact: true })
   ).toBeChecked()
@@ -391,18 +422,15 @@ test('image style and detail controls persist, update the same preview, and keep
     .click()
   await expect(
     dialog.getByLabel('Custom image accent', { exact: true })
-  ).toHaveValue('#ffff00')
+  ).toHaveCount(0)
   await expect(
     dialog.getByRole('checkbox', { name: 'Product tags', exact: true })
   ).toBeEnabled()
   await dialog.locator('[data-column="price"] .excel-column-toggle').click()
   await dialog
-    .getByRole('button', { name: 'Reset style & details', exact: true })
+    .getByRole('button', { name: 'Reset image details', exact: true })
     .click()
   await ready()
-  await expect(
-    dialog.getByRole('combobox', { name: 'Image color scheme' })
-  ).toHaveValue('neutral')
   await expect(
     dialog.getByRole('checkbox', { name: 'Product tags', exact: true })
   ).not.toBeChecked()
@@ -636,7 +664,7 @@ test('image columns reorder, persist across copying and reload, and use the sele
     'quantity'
   )
   await dialog
-    .getByRole('button', { name: 'Move Unit price (CNY) left', exact: true })
+    .getByRole('button', { name: 'Move Price (元) left', exact: true })
     .click()
   await expect(dialog.locator('.image-copy-submit')).toBeEnabled()
   await expect(dialog.locator('.copy-preview img')).toHaveCount(1)
@@ -748,7 +776,7 @@ test('image columns reorder, persist across copying and reload, and use the sele
     )
   ).toEqual(preference)
   await page.setViewportSize({ width: 1280, height: 800 })
-  await dialog.locator('.image-copy-heading > button').click()
+  await dialog.locator('.image-copy-heading [data-icon="close"]').click()
   await extension.context.grantPermissions([
     'clipboard-read',
     'clipboard-write',
@@ -774,12 +802,12 @@ test('image columns reorder, persist across copying and reload, and use the sele
   await expect(page.locator('#copy-excel-image')).toHaveClass(/copied/)
   const rendered = await page.evaluate(() => imageColumnText.join(' '))
   expect(rendered).toContain('Cantidad')
-  expect(rendered).toContain('Precio unitario (CNY)')
+  expect(rendered).toContain('Precio (元)')
   expect(rendered).toContain('Peso (kg)')
   expect(rendered).not.toContain('Carton')
   expect(rendered).not.toContain('Product description')
   for (const item of record.snapshot.items)
-    expect(rendered).toContain(`¥ ${item.price}`)
+    expect(rendered).toContain(`${item.price} 元`)
   expect(
     await page.evaluate(() =>
       JSON.parse(localStorage.getItem('1688-excel-image-columns'))

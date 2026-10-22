@@ -12,6 +12,8 @@ import { t } from './i18n.js'
 import { labelColorKey } from './appearance.js'
 import { orderTagColors } from './order-tags.js'
 import { createExcelImageBadges } from './excel-image-badges.js'
+import { CE_CODE_DESIGN, codeDesignMetrics } from './code-design.js'
+import { codeParts } from './code-display.js'
 
 const SCALE = 2
 const DPI = 192
@@ -20,8 +22,8 @@ const MAX_EDGE = 8192
 const CACHE_BYTES = 4 * 1024 * 1024
 const PADDING = 10
 const LINE_HEIGHT = 20
-const PHOTO_SIZE = 126
-const PHOTO_PADDING = 3
+const PHOTO_SIZE = 132
+const PHOTO_PADDING = 0
 const MARK_PADDING = 8
 const FONT_FAMILY =
   '"Segoe UI", "Microsoft YaHei", "Noto Sans CJK SC", sans-serif'
@@ -30,15 +32,31 @@ const MATERIAL_FONT = `700 16px ${FONT_FAMILY}`
 const HEADER_FONT = `700 14px ${FONT_FAMILY}`
 const NUMBER_FONT = `18px ${FONT_FAMILY}`
 const QUANTITY_FONT = `700 19px ${FONT_FAMILY}`
-const CODE_FONT = `17px ${FONT_FAMILY}`
-const CODE_SUFFIX_FONT = `700 17px ${FONT_FAMILY}`
+const CODE_FONT_SIZE = 17
+const codeFont = (size) =>
+  `${CE_CODE_DESIGN.fontWeight} ${size}px ${CE_CODE_DESIGN.fontFamily}`
 const TITLE_FONT = `600 16px ${FONT_FAMILY}`
 const DETAIL_FONT = `14px ${FONT_FAMILY}`
 const ARTICLE_FONT = `600 14px ${FONT_FAMILY}`
 const DETAIL_LABEL_FONT = `600 13px ${FONT_FAMILY}`
+const DESCRIPTION_TYPE = Object.freeze({
+  title: TITLE_FONT,
+  article: ARTICLE_FONT,
+  detail: DETAIL_FONT,
+  label: DETAIL_LABEL_FONT,
+  titleHeight: 23,
+  lineHeight: LINE_HEIGHT,
+})
+const SPREADSHEET_DESCRIPTION_TYPE = Object.freeze({
+  title: `600 22px ${FONT_FAMILY}`,
+  article: `600 19px ${FONT_FAMILY}`,
+  detail: `19px ${FONT_FAMILY}`,
+  label: `600 17px ${FONT_FAMILY}`,
+  titleHeight: 30,
+  lineHeight: 26,
+})
 const TAG_FONT = `13px ${FONT_FAMILY}`
 const LABEL_FONT = `600 12px ${FONT_FAMILY}`
-const REORDERED_CODE_COLOR = '#1d4ed8'
 
 export const excelImageColumns = Object.freeze(
   [
@@ -56,7 +74,7 @@ export const excelImageColumns = Object.freeze(
     },
     {
       key: 'barcode',
-      labels: ['Barcode code', 'Código de barras', '条码货号'],
+      labels: ['Barcode code', 'Código de barras', '标签货号'],
       width: 142,
     },
     {
@@ -66,7 +84,7 @@ export const excelImageColumns = Object.freeze(
     },
     {
       key: 'price',
-      labels: ['Unit price (CNY)', 'Precio unitario (CNY)', '单价（元）'],
+      labels: ['Price (元)', 'Precio (元)', '单价（元）'],
       width: 94,
       numeric: true,
     },
@@ -247,6 +265,7 @@ function snapshot(row, index, columns) {
   const values = {}
   for (const key of [
     'orderId',
+    'sourceType',
     'orderReference',
     'entryId',
     'sellerName',
@@ -382,6 +401,10 @@ function orderDateLabel(value, language) {
 }
 
 function descriptionCell(context, source, width, language, details, badges) {
+  const typography =
+    source.sourceType === 'spreadsheet'
+      ? SPREADSHEET_DESCRIPTION_TYPE
+      : DESCRIPTION_TYPE
   const articleLabel =
     /^(?:货号|款号|商品编号|产品编号|型号|模型|model|article(?: number)?|item(?: no\.?)?|sku)$/i
   const isDisplayed = (section) =>
@@ -487,15 +510,17 @@ function descriptionCell(context, source, width, language, details, badges) {
     .map((section, index) => {
       const article = section.article || articleLabel.test(section.label || '')
       const font = section.title
-        ? TITLE_FONT
+        ? typography.title
         : article
-          ? ARTICLE_FONT
-          : DETAIL_FONT
-      const lineHeight = section.title ? 23 : LINE_HEIGHT
+          ? typography.article
+          : typography.detail
+      const lineHeight = section.title
+        ? typography.titleHeight
+        : typography.lineHeight
       const label = section.label
         ? `${section.label}${language === 'zh' ? '：' : ': '}`
         : ''
-      context.font = DETAIL_LABEL_FONT
+      context.font = typography.label
       let labelWidth = context.measureText(label).width
       // Very long imported attribute labels get their own fully wrapped block.
       const ownLabel = labelWidth > width / 2
@@ -514,8 +539,9 @@ function descriptionCell(context, source, width, language, details, badges) {
         labelLines: Object.freeze(labelLines),
         lines: Object.freeze(lines),
         font,
+        labelFont: typography.label,
         lineHeight,
-        color: section.title ? '#25221d' : '#514a40',
+        colorRole: section.title ? 'text' : 'muted',
         gapBefore,
         height: blockHeight,
       })
@@ -578,23 +604,35 @@ function categoryCell(context, source, width, language) {
   })
 }
 
-/** Measure each style while wrapping, so bold code endings cannot overflow. */
-function codeCell(context, value, width, reordered) {
-  const boundary = /^CE\d{8}/.test(value) ? 10 : value.length
+/** Codes stay contiguous; only the barcode column adds the product reading aid. */
+function codeCell(context, value, width, readingAid = false) {
+  context.font = codeFont(CODE_FONT_SIZE)
+  const naturalWidth =
+    context.measureText(value).width +
+    2 * codeDesignMetrics(CODE_FONT_SIZE).paddingInline
+  // Fit ordinary payloads on one line; only long endings need wrapping.
+  const fontSize = Math.max(
+    12,
+    Math.min(
+      CODE_FONT_SIZE,
+      Math.floor((CODE_FONT_SIZE * width) / naturalWidth)
+    )
+  )
+  const font = codeFont(fontSize)
+  const design = codeDesignMetrics(fontSize)
+  const parts = readingAid ? codeParts(value) : null
+  const innerWidth = width - 2 * design.paddingInline
   const lines = []
   let runs = []
-  let offset = 0
   for (const { segment } of graphemes.segment(value)) {
-    const font = offset < boundary ? CODE_FONT : CODE_SUFFIX_FONT
-    const color =
-      reordered && offset < boundary ? REORDERED_CODE_COLOR : '#24211c'
+    const color = CE_CODE_DESIGN.foreground
     context.font = font
     const last = runs.at(-1)
     const sameStyle = last?.font === font && last.color === color
     const candidate = sameStyle ? last.text + segment : segment
     const measured = context.measureText(candidate).width
     const previousWidth = runs.reduce((sum, run) => sum + run.width, 0)
-    if (previousWidth - (sameStyle ? last.width : 0) + measured > width) {
+    if (previousWidth - (sameStyle ? last.width : 0) + measured > innerWidth) {
       if (!runs.length)
         throw new Error('A product character cannot fit in the Excel image.')
       lines.push(runs)
@@ -611,20 +649,29 @@ function codeCell(context, value, width, reordered) {
         color,
         width: context.measureText(segment).width,
       })
-    offset += segment.length
   }
   if (runs.length || !lines.length) lines.push(runs)
   return Object.freeze({
     text: value,
-    font: CODE_FONT,
+    font,
+    codeBadge: true,
+    codeFontSize: fontSize,
+    ...(parts
+      ? {
+          codeProductRange: Object.freeze([
+            parts[0].length,
+            parts[0].length + parts[1].length,
+          ]),
+        }
+      : {}),
     richLines: Object.freeze(
       lines.map((line) => Object.freeze(line.map(Object.freeze)))
     ),
     lines: Object.freeze(
       lines.map((line) => line.map((run) => run.text).join(''))
     ),
-    lineHeight: 24,
-    height: lines.length * 24,
+    lineHeight: Math.ceil((32 * fontSize) / CODE_FONT_SIZE),
+    height: lines.length * Math.ceil((32 * fontSize) / CODE_FONT_SIZE),
   })
 }
 
@@ -826,9 +873,9 @@ export function planExcelImage(
             context,
             text,
             column.width - PADDING * 2,
-            source.manualReordered
+            column.key === 'barcode'
           )
-        if (column.key === 'price' && text.trim()) text = `¥ ${text}`
+        if (column.key === 'price' && text.trim()) text = `${text} 元`
         const font =
           column.key === 'quantity'
             ? QUANTITY_FONT
@@ -1041,7 +1088,7 @@ export async function renderExcelImage(
       )
     }
   }
-  function line(runs, center, top, lineHeight) {
+  function line(runs, center, top, lineHeight, align = 'center') {
     context.textAlign = 'left'
     context.textBaseline = 'alphabetic'
     let width = 0,
@@ -1057,23 +1104,74 @@ export async function renderExcelImage(
       return { ...run, width: bounds.width }
     })
     const baseline = top + (lineHeight - ascent - descent) / 2 + ascent
-    let left = center - width / 2
+    let left = align === 'left' ? center : center - width / 2
+    const start = left
     for (const run of measured) {
       context.font = run.font
-      context.fillStyle = run.color || '#24211c'
+      context.fillStyle = run.color || palette.text
       context.fillText(run.text, left, baseline)
       left += run.width
     }
+    return { left: start, baseline }
   }
   function text(cell, x, y, column, rowHeight) {
     const top = y + (rowHeight - cell.height) / 2
-    for (const [index, value] of cell.lines.entries())
-      line(
+    if (cell.codeBadge && cell.text) {
+      context.font = cell.font
+      const bounds = cell.lines.map((value) => context.measureText(value))
+      const design = codeDesignMetrics(cell.codeFontSize)
+      const inkHeight = Math.max(
+        ...bounds.map(
+          (metrics) =>
+            (metrics.actualBoundingBoxAscent ?? cell.codeFontSize * 0.8) +
+            (metrics.actualBoundingBoxDescent ?? cell.codeFontSize * 0.2)
+        )
+      )
+      const width =
+        Math.max(...bounds.map((metrics) => metrics.width)) +
+        2 * design.paddingInline
+      const lineHeight = inkHeight + 2 * design.paddingBlock
+      // A wrapped payload still belongs to one code, so keep one backing.
+      const height = lineHeight + (cell.lines.length - 1) * cell.lineHeight
+      context.fillStyle = CE_CODE_DESIGN.background
+      context.beginPath()
+      context.roundRect(
+        x + (column.width - width) / 2,
+        top + (cell.lineHeight - lineHeight) / 2,
+        width,
+        height,
+        design.radius
+      )
+      context.fill()
+    }
+    let offset = 0
+    for (const [index, value] of cell.lines.entries()) {
+      const placement = line(
         cell.richLines?.[index] || [{ text: value, font: cell.font }],
         x + column.width / 2,
         top + index * cell.lineHeight,
         cell.lineHeight
       )
+      if (cell.codeProductRange) {
+        const start = Math.max(0, cell.codeProductRange[0] - offset)
+        const end = Math.min(value.length, cell.codeProductRange[1] - offset)
+        if (end > start) {
+          context.font = cell.font
+          context.fillStyle = CE_CODE_DESIGN.foreground
+          context.fillRect(
+            placement.left + context.measureText(value.slice(0, start)).width,
+            // A full CSS pixel, aligned to the output grid, remains opaque
+            // white instead of spreading a faint hairline over adjacent pixels.
+            Math.round(
+              (placement.baseline + cell.codeFontSize * 0.18) * SCALE
+            ) / SCALE,
+            context.measureText(value.slice(start, end)).width,
+            1
+          )
+        }
+      }
+      offset += value.length
+    }
   }
   function tags(layout, center, top) {
     if (!layout?.height) return
@@ -1100,29 +1198,34 @@ export async function renderExcelImage(
       top += height + 5
     }
   }
-  function description(cell, x, y, column, rowHeight) {
+  function description(cell, x, y, column, rowHeight, sourceType) {
     let top = y + (rowHeight - cell.height) / 2
     const center = x + column.width / 2
+    const align = sourceType === 'spreadsheet' ? 'center' : 'left'
+    const textX = align === 'left' ? x + PADDING : center
     for (const block of cell.blocks) {
       top += block.gapBefore
       for (const label of block.labelLines) {
         line(
-          [{ text: label, font: DETAIL_LABEL_FONT, color: '#746757' }],
-          center,
+          [{ text: label, font: block.labelFont, color: palette.muted }],
+          textX,
           top,
-          block.lineHeight
+          block.lineHeight,
+          align
         )
         top += block.lineHeight
       }
       for (const [index, value] of block.lines.entries()) {
-        const runs = [{ text: value, font: block.font, color: block.color }]
+        const runs = [
+          { text: value, font: block.font, color: palette[block.colorRole] },
+        ]
         if (!index && block.label && !block.labelLines.length)
           runs.unshift({
             text: block.label,
-            font: DETAIL_LABEL_FONT,
-            color: '#746757',
+            font: block.labelFont,
+            color: palette.muted,
           })
-        line(runs, center, top, block.lineHeight)
+        line(runs, textX, top, block.lineHeight, align)
         top += block.lineHeight
       }
     }
@@ -1143,7 +1246,7 @@ export async function renderExcelImage(
     const width = bitmap.width * ratio
     const height = bitmap.height * ratio
     const y = top + (span.height - height) / 2
-    context.fillStyle = '#fff'
+    context.fillStyle = palette.body
     context.fillRect(
       markLeft + 1,
       top + 1,
@@ -1164,7 +1267,7 @@ export async function renderExcelImage(
     context.scale(SCALE, SCALE)
     context.imageSmoothingEnabled = true
     context.imageSmoothingQuality = 'high'
-    context.fillStyle = '#fff'
+    context.fillStyle = palette.body
     context.fillRect(0, 0, plan.cssWidth, plan.cssHeight)
     context.fillStyle = palette.header
     context.fillRect(1, 1, plan.cssWidth - 2, plan.headerHeight)
@@ -1218,7 +1321,14 @@ export async function renderExcelImage(
         } else if (column.key === 'baseCode') {
           // Draw one mark after every row in its contiguous merged cell is painted.
         } else if (column.key === 'description')
-          description(row.cells[cellIndex], x, y, column, row.height)
+          description(
+            row.cells[cellIndex],
+            x,
+            y,
+            column,
+            row.height,
+            row.source.sourceType
+          )
         else text(row.cells[cellIndex], x, y, column, row.height)
         x += column.width
       }
@@ -1274,7 +1384,7 @@ export async function renderExcelImage(
       context.stroke()
       for (const [index, value] of band.lines.entries())
         line(
-          [{ text: value, font: HEADER_FONT, color: '#383128' }],
+          [{ text: value, font: HEADER_FONT, color: palette.text }],
           plan.cssWidth / 2,
           band.top + 8 + index * LINE_HEIGHT,
           LINE_HEIGHT

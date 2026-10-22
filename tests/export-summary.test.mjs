@@ -85,6 +85,103 @@ test('a packing-list summary lists its orders, products, quantities and files', 
   assert.deepEqual(summary.totals, { orders: 2, products: 3, quantity: 64 })
 })
 
+test('packing summaries keep feature, linked and manual costs separate and include custom product details', () => {
+  const summary = packingSummary({
+    file: 'packing-list-synthetic.xlsx',
+    rows: [
+      {
+        orderId: '9001',
+        sellerName: 'Synthetic store',
+        quantity: '3',
+        sourceAmount: '30.00',
+        effectiveAmount: '486.00',
+        additionalCharge: '0.00',
+        linkedPaymentCharge: '456.00',
+        featureCharge: '1.25',
+        productFeatureCosts: 'Engraving (¥1.25 per piece; Added cost)',
+        linkedPaymentReasons: 'Recorded lighting and rotation service',
+        productFeatures: 'Lighting · Rotation',
+      },
+    ],
+  })
+  assert.equal(summary.products[0].sourceAmount, '30.00')
+  assert.equal(summary.products[0].effectiveAmount, '486.00')
+  assert.equal(summary.products[0].additionalCharge, '0.00')
+  assert.equal(summary.products[0].linkedPaymentCharge, '456.00')
+  assert.equal(summary.products[0].featureCharge, '1.25')
+  assert.equal(
+    summary.products[0].productFeatureCosts,
+    'Engraving (¥1.25 per piece; Added cost)'
+  )
+  assert.equal(
+    summary.products[0].linkedPaymentReasons,
+    'Recorded lighting and rotation service'
+  )
+  assert.equal(summary.products[0].productFeatures, 'Lighting · Rotation')
+  assert.equal(summary.totals.orders, 1)
+  assert.equal(summary.orders[0].orderAdditionalCharges, undefined)
+})
+
+test('packing summaries preserve optional carton and additional-cost evidence as exact strings', () => {
+  const rows = [
+    {
+      orderId: '9001',
+      sellerName: 'Synthetic store',
+      quantity: '3',
+      cartons: '2',
+      cartonWeight: '10.50',
+      cartonVolume: '0.105',
+      cartonLength: '70',
+      cartonWidth: '50',
+      cartonHeight: '30',
+      storeNumber: '04321',
+      sourceUnitPrice: '10.00',
+      effectiveUnitPrice: '10.335',
+      sourceAmount: '30.00',
+      effectiveAmount: '31.00',
+      additionalCharge: '1.00',
+      additionalChargeReasons: 'Unloading (¥3.00)',
+      orderAdditionalCharges: '3.00',
+    },
+    {
+      orderId: '9001',
+      sellerName: 'Synthetic store',
+      quantity: '7',
+      sourceUnitPrice: '10.00',
+      effectiveUnitPrice: '10.28571429',
+      sourceAmount: '70.00',
+      effectiveAmount: '72.00',
+      additionalCharge: '2.00',
+      additionalChargeReasons: 'Unloading (¥3.00)',
+      orderAdditionalCharges: '3.00',
+    },
+  ]
+  const summary = packingSummary({ file: 'synthetic.xlsx', rows })
+  assert.equal(summary.orders.length, 1)
+  assert.equal(summary.orders[0].orderAdditionalCharges, '3.00')
+  assert.equal(summary.orders[0].additionalChargeReasons, 'Unloading (¥3.00)')
+  assert.equal(summary.orders[0].storeNumber, '04321')
+  assert.equal(summary.products[0].cartonVolume, '0.105')
+  assert.equal(summary.products[0].cartonWeight, '10.50')
+  assert.equal(summary.products[0].effectiveUnitPrice, '10.335')
+  assert.equal(summary.products[1].effectiveUnitPrice, '10.28571429')
+  assert.equal(summary.products[1].effectiveAmount, '72.00')
+  assert.equal('cartonWeight' in summary.products[1], false)
+  assert.deepEqual(summary.totals, { orders: 1, products: 2, quantity: 10 })
+  const invalid = structuredClone(rows)
+  invalid[0].effectiveAmount = 'incorrect'
+  assert.throws(
+    () => packingSummary({ file: 'synthetic.xlsx', rows: invalid }),
+    /Invalid effectiveAmount/
+  )
+  invalid[0].effectiveAmount = '31.00'
+  invalid[1].orderAdditionalCharges = '4.00'
+  assert.throws(
+    () => packingSummary({ file: 'synthetic.xlsx', rows: invalid }),
+    /Inconsistent order additional charges/
+  )
+})
+
 test('label and carton-mark summaries carry pages, counts and files', () => {
   const labels = printSummary({
     kind: 'labels',
@@ -176,7 +273,8 @@ test('the status line reports the most urgent state', () => {
     state: 'paused',
     attention: { kind: 'visible-reader', tabId: null },
   }
-  assert.equal(workspaceStatus({ jobs: [visible] }).status, 'needs-visible-tab')
+  // Older paused jobs can be resumed from Activity without an obsolete warning.
+  assert.equal(workspaceStatus({ jobs: [visible] }).status, 'idle')
 })
 
 test('a repeated export gets a predictable suffix instead of a silent browser rename', async () => {
@@ -228,6 +326,52 @@ test('export names carry the local date and time, so each export has its own fil
   assert.notEqual(
     printFileName('labels', 3, new Date(2026, 9, 19, 15, 30, 13)),
     printFileName('labels', 3, at)
+  )
+})
+
+test('print filenames use the chosen language for PDFs, matching summaries and calibration', async () => {
+  const { printFileName } = await import('../src/export-summary.js')
+  const at = new Date(2026, 9, 21, 18, 5, 51)
+  for (const [language, labels, marks, calibration, single, plural] of [
+    [
+      'en',
+      'labels',
+      'carton-marks',
+      'print-calibration',
+      'product',
+      'products',
+    ],
+    [
+      'es',
+      'etiquetas',
+      'marcas-de-caja',
+      'calibracion-de-impresion',
+      'producto',
+      'productos',
+    ],
+    ['zh', '标签', '唛头', '打印校准', '产品', '产品'],
+  ]) {
+    for (const [kind, name] of [
+      ['labels', labels],
+      ['marks', marks],
+    ])
+      for (const [count, unit] of [
+        [1, single],
+        [52, plural],
+      ]) {
+        const stem = `CE-${name}-2026-10-21-180551-${count}-${unit}`
+        const file = printFileName(kind, count, at, language)
+        assert.equal(file, `${stem}.pdf`)
+        assert.equal(summaryFileName(file), `${stem}.json`)
+      }
+    assert.equal(
+      printFileName('calibration', 0, at, language),
+      `CE-${calibration}-2026-10-21-180551.pdf`
+    )
+  }
+  assert.equal(
+    printFileName('labels', 1, at, 'unsupported'),
+    printFileName('labels', 1, at, 'en')
   )
 })
 

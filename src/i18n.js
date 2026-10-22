@@ -6,7 +6,9 @@ const listeners = new Set()
 const bindings = new Set()
 const textBindings = new WeakMap()
 const attributeBindings = new WeakMap()
+const languageScopes = new WeakMap()
 let language = 'en'
+let renderingLanguage
 let templateMessages
 try {
   const stored = globalThis.localStorage?.getItem(LANGUAGE_PREFERENCE)
@@ -15,12 +17,36 @@ try {
   /* The in-memory selection still works if storage is unavailable. */
 }
 
-export const getLanguage = () => language
-export const getLocale = () => locales[language]
+function scopeFor(element) {
+  for (let node = element; node; node = node.parentNode || node.host) {
+    const scope = languageScopes.get(node)
+    if (scope) return scope
+  }
+}
+
+export const getLanguage = (element) =>
+  element
+    ? (scopeFor(element)?.language ?? language)
+    : (renderingLanguage ?? language)
+export const getLocale = (element) => locales[getLanguage(element)]
 export const isMessage = (value) => value instanceof UIMessage
 
+function inLanguage(value, render) {
+  const previous = renderingLanguage
+  renderingLanguage = value
+  try {
+    return render()
+  } finally {
+    renderingLanguage = previous
+  }
+}
+
 /** Only explicitly marked UI messages are translated. Source data stays data. */
-export function t(source, params = {}) {
+export function t(source, params = {}, value = getLanguage()) {
+  return inLanguage(value, () => translate(source, params, value))
+}
+
+function translate(source, params, language) {
   if (isMessage(source)) return source.toString()
   const key = String(source ?? '')
   let translated = UI_MESSAGES[key]?.[language]
@@ -114,7 +140,9 @@ export function bindText(element, source, params = {}) {
       params,
       update() {
         if (this.node.parentNode === this.element)
-          this.node.data = resolve(this.source, this.params)
+          this.node.data = inLanguage(getLanguage(this.element), () =>
+            resolve(this.source, this.params)
+          )
       },
     }
     textBindings.set(element, binding)
@@ -157,7 +185,9 @@ export function bindAttribute(element, attribute, source, params = {}) {
           this.element.getAttribute(this.attribute) !== this.last
         )
           return
-        this.last = resolve(this.source, this.params)
+        this.last = inLanguage(getLanguage(this.element), () =>
+          resolve(this.source, this.params)
+        )
         this.element.setAttribute(this.attribute, this.last)
         this.initialized = true
       },
@@ -203,8 +233,65 @@ export function localize(root = document) {
   }
 }
 
-export function setLanguage(value, { persist = true } = {}) {
+function updateBindings(scope) {
+  for (const reference of bindings) {
+    const binding = reference.deref()
+    if (!binding) bindings.delete(reference)
+    else if (scopeFor(binding.element) === scope) binding.update()
+  }
+}
+
+/** Own a popup language without changing workspace preferences or other scopes. */
+export function createLanguageScope(root, initialLanguage) {
+  let scope = languageScopes.get(root)
+  if (scope) {
+    if (initialLanguage) setLanguage(initialLanguage, { scope: root })
+    return
+  }
+  const value = initialLanguage ?? getLanguage(root)
+  scope = {
+    language: Object.hasOwn(locales, value) ? value : getLanguage(),
+    listeners: new Set(),
+  }
+  languageScopes.set(root, scope)
+  root.lang = scope.language === 'zh' ? 'zh-CN' : scope.language
+  // Controls are often built detached, then appended after their text is bound.
+  // Resolve those new bindings in their actual scope before the next paint.
+  if (globalThis.MutationObserver) {
+    const observer = new MutationObserver((records) => {
+      if (
+        records.some((record) =>
+          [...record.addedNodes].some((node) => node.nodeType === 1)
+        )
+      )
+        updateBindings(scope)
+    })
+    observer.observe(root, { childList: true, subtree: true })
+    root.addEventListener('close', () => observer.disconnect(), { once: true })
+  }
+  updateBindings(scope)
+}
+
+/** Portalled child dialogs start in their opener's language. */
+export function inheritLanguageScope(
+  root,
+  opener = globalThis.document?.activeElement
+) {
+  if (scopeFor(opener)) createLanguageScope(root, getLanguage(opener))
+}
+
+export function setLanguage(value, { persist = true, scope: root } = {}) {
   if (!Object.hasOwn(locales, value)) return false
+  if (root) {
+    createLanguageScope(root)
+    const scope = languageScopes.get(root)
+    scope.language = value
+    root.lang = value === 'zh' ? 'zh-CN' : value
+    updateBindings(scope)
+    for (const listener of scope.listeners)
+      inLanguage(value, () => listener(value))
+    return true
+  }
   language = value
   if (persist) {
     try {
@@ -213,18 +300,16 @@ export function setLanguage(value, { persist = true } = {}) {
   }
   if (globalThis.document)
     document.documentElement.lang = value === 'zh' ? 'zh-CN' : value
-  for (const reference of bindings) {
-    const binding = reference.deref()
-    if (binding) binding.update()
-    else bindings.delete(reference)
-  }
+  updateBindings(undefined)
   for (const listener of listeners) listener(value)
   return true
 }
 
-export function onLanguageChange(listener) {
-  listeners.add(listener)
-  return () => listeners.delete(listener)
+export function onLanguageChange(listener, root) {
+  if (root) createLanguageScope(root)
+  const subscribers = root ? languageScopes.get(root).listeners : listeners
+  subscribers.add(listener)
+  return () => subscribers.delete(listener)
 }
 
 globalThis.addEventListener?.('storage', (event) => {

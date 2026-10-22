@@ -2,6 +2,7 @@ import { PACKING_MESSAGES } from './ui-messages-packing.js'
 import { HELP_MESSAGES } from './ui-messages-help.js'
 import { VALIDATION_MESSAGES } from './ui-messages-validation.js'
 import { EXCEL_MESSAGES } from './ui-messages-excel.js'
+import { PACKING_EXPORT_MESSAGES } from './ui-messages-packing-export.js'
 import { MATERIAL_MESSAGES } from './ui-messages-materials.js'
 import { COPY_ACTION_MESSAGES } from './ui-messages-copy-actions.js'
 import { ERROR_MESSAGES } from './ui-messages-errors.js'
@@ -14,11 +15,58 @@ import { REVIEW_MESSAGES } from './ui-messages-review.js'
 import { EXCLUSION_MESSAGES } from './ui-messages-exclusions.js'
 import { SHELL_MESSAGES } from './ui-messages-shell.js'
 import { PRINT_MESSAGES } from './ui-messages-print.js'
+import { CARTON_MESSAGES } from './ui-messages-cartons.js'
+import { CARTON_BATCH_MESSAGES } from './ui-messages-carton-batches.js'
+import { STORE_IMPORT_MESSAGES } from './ui-messages-store-import.js'
+import { STORE_DETAILS_MESSAGES } from './ui-messages-store-details.js'
+import { PHOTO_TAG_MESSAGES } from './ui-messages-photo-tags.js'
+import { ORDER_CHARGE_MESSAGES } from './ui-messages-order-charges.js'
+import { SUMMARY_MESSAGES } from './ui-messages-summary.js'
+import { OPERATIONS_MESSAGES } from './ui-messages-operations.js'
+import { PAYMENT_LINK_MESSAGES } from './ui-messages-payment-links.js'
+import { REPEAT_PRODUCT_MESSAGES } from './ui-messages-repeat-products.js'
+import { ORGANIZE_MESSAGES } from './ui-messages-organize.js'
 import { OTHER_ORDER_MESSAGES } from './ui-messages-other-orders.js'
 
 // Explicit interface messages only; original seller, product and label values are never translated.
 export const UI_MESSAGES = {
   ...OTHER_ORDER_MESSAGES,
+  ...ORGANIZE_MESSAGES,
+  ...OPERATIONS_MESSAGES,
+  ...PAYMENT_LINK_MESSAGES,
+  ...REPEAT_PRODUCT_MESSAGES,
+  'Linked payment source. Unlink the payment before including this row in packing.':
+    {
+      zh: '此商品行是已关联的付款来源。请先解除付款关联，再将此行加入装箱。',
+      es: 'Esta fila es un pago vinculado. Desvincula el pago antes de incluirla en el embalaje.',
+    },
+  'Unlink this order’s payments before deleting it. The payment sources will stay in the library.':
+    {
+      zh: '删除前请先解除此订单的付款关联。付款来源订单将保留在库中。',
+      es: 'Desvincula los pagos de este pedido antes de eliminarlo. Los pedidos de pago permanecerán en la biblioteca.',
+    },
+  'Linked payment': { zh: '已关联付款', es: 'Pago vinculado' },
+  'This payment is allocated to another purchase. Source totals are counted once.':
+    {
+      zh: '此付款已分摊至其他采购。原始总额只计算一次。',
+      es: 'Este pago está asignado a otra compra. Los importes originales se cuentan una sola vez.',
+    },
+  'Preparing compressed backup…': {
+    zh: '正在准备压缩备份…',
+    es: 'Preparando copia comprimida…',
+  },
+  'The backup image archive is incomplete or invalid.': {
+    zh: '备份中的图片归档不完整或无效。',
+    es: 'El archivo de imágenes de la copia está incompleto o no es válido.',
+  },
+  'The compressed backup is damaged or incomplete.': {
+    zh: '压缩备份已损坏或不完整。',
+    es: 'La copia comprimida está dañada o incompleta.',
+  },
+  'Underline: four-digit product number.': {
+    zh: '下划线：四位商品编号。',
+    es: 'Subrayado: número de producto de cuatro cifras.',
+  },
   'Shortcut outside text fields': {
     zh: '非文本输入时的快捷键',
     es: 'Atajo fuera de los campos de texto',
@@ -26,6 +74,13 @@ export const UI_MESSAGES = {
   ...EXCLUSION_MESSAGES,
   ...SHELL_MESSAGES,
   ...PRINT_MESSAGES,
+  ...CARTON_MESSAGES,
+  ...CARTON_BATCH_MESSAGES,
+  ...STORE_IMPORT_MESSAGES,
+  ...STORE_DETAILS_MESSAGES,
+  ...PHOTO_TAG_MESSAGES,
+  ...SUMMARY_MESSAGES,
+  ...ORDER_CHARGE_MESSAGES,
   ...REVIEW_MESSAGES,
   Sizes: { zh: '尺寸', es: 'Tallas' },
   'Size handling': { zh: '尺寸处理', es: 'Tratamiento de tallas' },
@@ -119,6 +174,10 @@ export const UI_MESSAGES = {
     zh: '点击复制此内容。',
     es: 'Haz clic para copiar este valor.',
   },
+  'Click to copy': {
+    zh: '点击复制',
+    es: 'Haz clic para copiar',
+  },
   'Double-click for original product details. Click an attribute value to copy it.':
     {
       zh: '双击查看商品原始详情。点击属性内容即可复制。',
@@ -128,6 +187,7 @@ export const UI_MESSAGES = {
   ...HELP_MESSAGES,
   ...VALIDATION_MESSAGES,
   ...EXCEL_MESSAGES,
+  ...PACKING_EXPORT_MESSAGES,
   ...MATERIAL_MESSAGES,
   ...COPY_ACTION_MESSAGES,
   ...ERROR_MESSAGES,
@@ -147,10 +207,10 @@ export const UI_MESSAGES = {
     zh: '匹配的完整订单：数量 {quantity}',
     es: 'Pedidos completos coincidentes: Cantidad {quantity}',
   },
-  'Only selected product rows are summed, across all filtered pages. After row discounts uses the saved Discount column, including already allocated seller adjustments. Shipping and other order-wide charges are not added or divided. This is not the order payable total.':
+  'Selected rows only. Net subtracts row discounts, including allocated seller adjustments. Shipping and order charges are excluded; this is not the order total.':
     {
-      zh: '仅合计所有筛选页面中选中的商品行。行优惠后金额使用已保存的“优惠”列，包括已分摊的卖家改价。不添加或分摊运费及其他订单级费用。此金额不是订单实付款。',
-      es: 'Solo se suman las filas seleccionadas de todas las páginas filtradas. El importe tras descuentos usa la columna Descuento guardada, incluidos los ajustes del vendedor ya repartidos. No se añaden ni reparten el envío ni otros cargos del pedido. No es el total a pagar del pedido.',
+      zh: '仅合计选中行。净额扣除行优惠，含已分摊的卖家改价。不含运费和订单费用，并非订单总额。',
+      es: 'Solo filas seleccionadas. El neto resta descuentos y ajustes del vendedor ya repartidos. Excluye envío y cargos del pedido; no es el total del pedido.',
     },
   'Previous photo': { zh: '上一张图片', es: 'Foto anterior' },
   'Next photo': { zh: '下一张图片', es: 'Foto siguiente' },
@@ -1050,10 +1110,6 @@ export const UI_MESSAGES = {
     zh: '完整订单合计 · {0} 个匹配订单',
     es: 'Totales completos · {0} pedido{1} coincidente{1}',
   },
-  '{0} matching product{1}{2}': {
-    zh: '{0} 件匹配商品{2}',
-    es: '{0} producto{1} coincidente{1}{2}',
-  },
   ' · continued': {
     zh: ' · 续页',
     es: ' · continuación',
@@ -1184,7 +1240,7 @@ export const UI_MESSAGES = {
     es: 'Código CE base',
   },
   'Barcode code': {
-    zh: '条码货号',
+    zh: '标签货号',
     es: 'Código de barras',
   },
   'Product code · edit on the carton mark': {
@@ -1262,6 +1318,10 @@ export const UI_MESSAGES = {
   'No matching size rules.': {
     zh: '没有匹配的尺码规则。',
     es: 'No hay reglas de talla coincidentes.',
+  },
+  '{0} rules': {
+    zh: '{0} 条规则',
+    es: '{0} reglas',
   },
   '{0}–{1} of {2} rules': {
     zh: '第 {0}–{1} 条，共 {2} 条规则',

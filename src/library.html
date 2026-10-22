@@ -7,7 +7,13 @@
     <meta name="viewport" content="width=device-width,initial-scale=1" />
     <title data-i18n="1688 Packing workspace">1688 Packing workspace</title>
     <link rel="stylesheet" href="library.css" />
+    <link rel="stylesheet" href="store-import.css" />
+    <link rel="stylesheet" href="order-charges.css" />
+    <link rel="stylesheet" href="operations.css" />
+    <link rel="stylesheet" href="payment-links.css" />
+    <link rel="stylesheet" href="repeat-products.css" />
     <link rel="stylesheet" href="packing.css" />
+    <link rel="stylesheet" href="carton-batches.css" />
     <link rel="stylesheet" href="label-editor.css" />
     <link rel="stylesheet" href="copy-actions.css" />
     <link rel="stylesheet" href="code-design.css" />
@@ -88,6 +94,13 @@
         <span id="workspace-status-text">Status: idle</span>
       </p>
       <div class="top-actions">
+        <button
+          id="import-store-sheet"
+          type="button"
+          data-i18n="Import spreadsheet"
+        >
+          Import spreadsheet
+        </button>
         <a
           data-i18n="Open 1688 orders"
           class="open-orders"
@@ -156,7 +169,7 @@
         <input
           id="backup-file"
           type="file"
-          accept="application/json,.json"
+          accept="application/json,application/gzip,.json,.gz"
           hidden
         />
       </div>
@@ -184,14 +197,6 @@
           data-i18n="Open the 1688 tab"
         >
           Open the 1688 tab</button
-        ><button
-          id="import-attention-allow"
-          type="button"
-          data-action="allow-visible-reader"
-          data-i18n="Use a visible tab"
-          hidden
-        >
-          Use a visible tab</button
         ><button
           id="import-attention-resume"
           type="button"
@@ -283,22 +288,6 @@
             aria-label="Saved orders"
             aria-multiselectable="true"
           ></div>
-          <div class="order-pagination">
-            <button
-              data-i18n-aria-label="Previous order page"
-              id="orders-prev"
-              aria-label="Previous order page"
-            >
-              ←</button
-            ><span id="orders-page"></span
-            ><button
-              data-i18n-aria-label="Next order page"
-              id="orders-next"
-              aria-label="Next order page"
-            >
-              →
-            </button>
-          </div>
           <div class="pane-footer">
             <div class="order-refresh">
               <button data-i18n="Refresh orders" id="refresh-orders">
@@ -379,35 +368,42 @@
               <thead>
                 <tr>
                   <th class="row-number" scope="col">#</th>
-                  <th data-i18n="Photo">Photo</th>
-                  <th data-i18n="Description & labels">
+                  <th scope="col" data-i18n="Photo">Photo</th>
+                  <th scope="col" data-i18n="Description & labels">
                     Description &amp; labels
                   </th>
-                  <th data-i18n="Price" class="numeric">Price</th>
-                  <th data-i18n="Quantity" class="numeric">Quantity</th>
-                  <th data-i18n="Discount" class="numeric">Discount</th>
+                  <th scope="col" data-i18n="Price" class="numeric">Price</th>
+                  <th scope="col" data-i18n="Discount" class="numeric">
+                    Discount
+                  </th>
+                  <th scope="col" data-i18n="Quantity" class="numeric">
+                    Quantity
+                  </th>
+                  <th
+                    scope="col"
+                    data-i18n="Pcs/box"
+                    class="numeric pack-size-heading"
+                  >
+                    Pcs/box
+                  </th>
+                  <th
+                    scope="col"
+                    data-i18n="kg/box"
+                    class="numeric measurement-heading"
+                  >
+                    kg/box
+                  </th>
+                  <th
+                    scope="col"
+                    data-i18n="m³/box"
+                    class="numeric measurement-heading"
+                  >
+                    m³/box
+                  </th>
                 </tr>
               </thead>
               <tbody id="sheet-body"></tbody>
             </table>
-          </div>
-          <div class="sheet-footer">
-            <div>
-              <button
-                data-i18n-aria-label="Previous product page"
-                id="previous-page"
-                aria-label="Previous product page"
-              >
-                ←</button
-              ><span data-i18n="Page 1" id="page-label">Page 1</span
-              ><button
-                data-i18n-aria-label="Next product page"
-                id="next-page"
-                aria-label="Next product page"
-              >
-                →
-              </button>
-            </div>
           </div>
         </section>
         <div
@@ -521,7 +517,7 @@
               <input
                 id="restore-packing-file"
                 type="file"
-                accept=".json,application/json"
+                accept=".json,.gz,application/json,application/gzip"
                 hidden
                 aria-label="Packing backup file"
                 data-i18n-aria-label="Packing backup file"

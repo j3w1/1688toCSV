@@ -1,0 +1,463 @@
+.carton-batch-dialog {
+  box-sizing: border-box;
+  inline-size: min(1040px, calc(100vw - 32px));
+  max-inline-size: none;
+  max-block-size: calc(100dvh - 32px);
+  margin: auto;
+  padding: 0;
+  overflow: hidden;
+  border: 1px solid var(--border);
+  border-radius: 14px;
+  background: var(--surface);
+  color: var(--text);
+}
+.carton-batch-dialog[open] {
+  display: flex;
+  flex-direction: column;
+}
+.carton-batch-header,
+.carton-batch-footer {
+  display: flex;
+  flex: none;
+  align-items: center;
+  gap: 8px;
+  padding: 10px 13px;
+  background: var(--panel, var(--surface));
+}
+.carton-batch-header {
+  justify-content: space-between;
+  border-block-end: 1px solid var(--border);
+}
+.carton-batch-heading {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px 9px;
+  min-inline-size: 0;
+}
+.carton-batch-heading h2 {
+  margin: 0;
+  font-size: 16px;
+}
+.carton-batch-context {
+  color: var(--muted);
+  font-size: 11px;
+}
+.carton-batch-identity {
+  display: flex;
+  align-items: end;
+  flex-wrap: wrap;
+  gap: 8px 12px;
+}
+.carton-batch-mode {
+  display: inline-flex;
+  align-items: stretch;
+  gap: 2px;
+  padding: 2px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--field);
+}
+.carton-batch-mode button[aria-pressed='true'],
+.carton-batch-mark-options button[aria-pressed='true'] {
+  border-color: var(--control-accent);
+  background: color-mix(in srgb, var(--surface), var(--control-accent) 14%);
+}
+.carton-batch-dialog .carton-batch-number input {
+  box-sizing: border-box;
+  inline-size: 100px;
+  width: 100px;
+  min-block-size: 32px;
+  height: 32px;
+  margin: 0;
+  padding: 4px 7px;
+  font-size: 13px;
+}
+.carton-batch-mode-help {
+  flex-basis: 100%;
+  margin: 0;
+  color: var(--muted);
+  font-size: 10px;
+}
+.carton-batch-mark-choices h3 {
+  margin: 0 0 6px;
+  font-size: 12px;
+}
+.carton-batch-mark-options {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 5px;
+}
+.carton-batch-mark-options button {
+  padding: 4px;
+}
+.carton-batch-mark {
+  display: flex;
+  align-items: center;
+  max-inline-size: 70px;
+  max-block-size: 52px;
+}
+.carton-batch-mark img,
+.carton-batch-mark canvas {
+  max-inline-size: 70px;
+  max-block-size: 52px;
+  object-fit: contain;
+}
+.carton-batch-header-tools {
+  display: flex;
+  flex: none;
+  align-items: center;
+  gap: 8px;
+}
+.carton-batch-body {
+  display: grid;
+  grid-template-columns: 160px minmax(0, 1fr);
+  min-block-size: 0;
+  overflow: hidden;
+}
+.carton-batch-navigation {
+  display: flex;
+  flex-direction: column;
+  align-items: stretch;
+  gap: 7px;
+  min-inline-size: 0;
+  padding: 10px;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  border-inline-end: 1px solid var(--border);
+}
+.carton-batch-navigation .carton-batch-card {
+  display: grid;
+  flex: none;
+  justify-items: start;
+  gap: 4px;
+  padding: 8px;
+  white-space: normal;
+  text-align: start;
+}
+.carton-batch-card > span {
+  color: var(--muted);
+  font-size: 10px;
+}
+.carton-batch-month {
+  color: var(--muted);
+  font-size: 10px;
+  font-variant-numeric: tabular-nums;
+}
+.carton-batch-readonly-note {
+  margin: 0;
+  padding: 7px 9px;
+  border: 1px solid var(--warning-border, var(--border));
+  border-radius: 7px;
+  background: var(--warning);
+  color: var(--warning-text);
+  font-size: 11px;
+}
+.carton-batch-card[aria-current='true'] {
+  border-color: var(--control-accent);
+  background: color-mix(in srgb, var(--surface), var(--control-accent) 12%);
+}
+.carton-batch-card > .carton-batch-review {
+  color: var(--warning-text);
+}
+.carton-batch-dialog .carton-batch-editor {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  gap: 13px;
+  min-inline-size: 0;
+  padding: 12px;
+  margin: 0;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  border: 0;
+  border-radius: 0;
+  background: var(--surface);
+}
+.carton-batch-section-heading,
+.carton-batch-shortcuts {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-block-end: 7px;
+}
+.carton-batch-section-heading {
+  justify-content: space-between;
+}
+.carton-batch-section-heading h3 {
+  margin: 0;
+  font-size: 12px;
+}
+.carton-batch-section-heading > span {
+  font-size: 10px;
+  color: var(--muted);
+}
+.carton-batch-dialog button {
+  box-sizing: border-box;
+  min-block-size: 30px;
+  margin: 0;
+  padding: 4px 8px;
+  font-size: 11px;
+  line-height: 1.25;
+}
+.carton-batch-dialog label {
+  margin: 0;
+}
+.carton-batch-dialog button.icon-button {
+  padding: 4px;
+}
+.carton-batch-dialog button:focus-visible,
+.carton-batch-dialog input:focus-visible {
+  outline: 2px solid var(--control-accent);
+  outline-offset: 2px;
+}
+.carton-batch-choices {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(245px, 1fr));
+  gap: 6px;
+}
+.carton-batch-product {
+  display: flex;
+  align-items: center;
+  min-inline-size: 0;
+  gap: 8px;
+  padding: 7px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--field);
+}
+.carton-batch-product[data-selected='true'] {
+  border-color: var(--control-accent);
+  background: color-mix(in srgb, var(--field), var(--control-accent) 7%);
+}
+.carton-batch-product-pick {
+  display: flex;
+  flex: 1;
+  align-items: center;
+  min-inline-size: 0;
+  gap: 7px;
+  cursor: pointer;
+}
+.carton-batch-dialog input[type='checkbox'] {
+  inline-size: 16px;
+  block-size: 16px;
+  width: 16px;
+  height: 16px;
+  flex: none;
+  margin: 0;
+  accent-color: var(--control-accent);
+}
+.carton-batch-product > .photo-copy-tile,
+.carton-batch-product-photo {
+  flex: none;
+  inline-size: 40px;
+  block-size: 40px;
+  border-radius: 5px;
+}
+.carton-batch-product-photo > img {
+  object-fit: contain;
+}
+.carton-batch-product-info {
+  display: grid;
+  justify-items: start;
+  gap: 3px;
+  min-inline-size: 0;
+}
+.carton-batch-product-description {
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+  color: var(--muted);
+  font-size: 10px;
+  line-height: 1.35;
+}
+.carton-batch-product-info > small {
+  max-inline-size: 100%;
+  overflow-wrap: anywhere;
+  color: var(--muted);
+  font-size: 9px;
+}
+.carton-batch-product-info .ce-code {
+  font-size: 14px;
+}
+.carton-batch-quantity {
+  display: grid;
+  flex: none;
+  justify-items: center;
+  gap: 3px;
+  color: var(--muted);
+  font-size: 10px;
+}
+.carton-batch-dialog .carton-batch-quantity input {
+  box-sizing: border-box;
+  inline-size: 64px;
+  width: 64px;
+  min-inline-size: 0;
+  block-size: 30px;
+  height: 30px;
+  padding: 3px 5px;
+  border: 1px solid var(--border);
+  border-radius: 5px;
+  background: var(--surface);
+  color: var(--text);
+  font: 600 13px/1.2 system-ui;
+  font-variant-numeric: tabular-nums;
+  text-align: center;
+}
+.carton-batch-measurements {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: start;
+  gap: 10px 15px;
+  border-block-start: 1px solid var(--border);
+  padding-block-start: 10px;
+}
+.carton-batch-measurements .carton-batch-section-heading,
+.carton-batch-reuse-list {
+  grid-column: 1 / -1;
+  margin: 0;
+}
+.carton-batch-reuse-list {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 5px;
+}
+.carton-batch-reuse-list[hidden] {
+  display: none;
+}
+.carton-batch-counts {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  grid-column: 1 / -1;
+}
+.carton-batch-counts > .product-carton-field {
+  inline-size: 135px;
+}
+.carton-batch-weight {
+  display: grid;
+  align-self: end;
+  grid-column: 2;
+  grid-row: 2;
+  gap: 5px;
+  inline-size: 168px;
+}
+.carton-batch-weight-basis {
+  display: flex;
+  align-items: stretch;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  overflow: hidden;
+}
+.carton-batch-weight-basis button {
+  flex: 1;
+  min-block-size: 26px;
+  padding: 3px;
+  border: 0;
+  border-radius: 0;
+  font-size: 10px;
+}
+.carton-batch-weight-basis button[aria-pressed='true'] {
+  background: var(--control-accent);
+  color: var(--on-accent, var(--surface));
+}
+.carton-batch-summary {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 8px;
+  padding: 8px;
+  background: var(--field);
+  border-radius: 8px;
+}
+.carton-batch-metric {
+  display: grid;
+  gap: 4px;
+  min-inline-size: 0;
+}
+.carton-batch-metric > small {
+  color: var(--muted);
+  font-size: 10px;
+}
+.carton-batch-metric > strong {
+  overflow-wrap: anywhere;
+  font-size: 13px;
+  font-variant-numeric: tabular-nums;
+}
+.carton-batch-warning {
+  margin: 0;
+  color: var(--warning-text);
+  font-size: 11px;
+  line-height: 1.4;
+}
+.carton-batch-footer {
+  border-block-start: 1px solid var(--border);
+}
+.carton-batch-status {
+  min-inline-size: 0;
+  flex: 1;
+  color: var(--muted);
+  font-size: 11px;
+  overflow-wrap: anywhere;
+}
+.carton-batch-dialog[data-save-state='error'] .carton-batch-status {
+  color: var(--danger-text);
+}
+.carton-batch-dialog .carton-batch-remove {
+  color: var(--danger-text);
+}
+.carton-batch-dismissal {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 7px;
+  padding: 8px 12px;
+  border-block-start: 1px solid var(--border);
+  background: var(--warning);
+  color: var(--warning-text);
+  font-size: 11px;
+}
+.carton-batch-dismissal > span {
+  flex: 1;
+}
+.carton-batch-dismissal[hidden],
+.carton-batch-dialog [hidden] {
+  display: none;
+}
+@media (max-width: 760px) {
+  .carton-batch-body {
+    grid-template-columns: minmax(0, 1fr);
+  }
+  .carton-batch-navigation {
+    flex-direction: row;
+    flex-wrap: wrap;
+    max-block-size: 140px;
+    border-inline-end: 0;
+    border-block-end: 1px solid var(--border);
+  }
+  .carton-batch-measurements {
+    grid-template-columns: minmax(0, 1fr);
+  }
+  .carton-batch-weight {
+    grid-column: auto;
+    grid-row: auto;
+    inline-size: 180px;
+  }
+  .carton-batch-summary {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+  .carton-batch-header,
+  .carton-batch-footer {
+    flex-wrap: wrap;
+  }
+}
+@media (pointer: coarse) {
+  .carton-batch-dialog button,
+  .carton-batch-dialog .carton-batch-quantity input {
+    min-block-size: 44px;
+    height: auto;
+  }
+  .carton-batch-counts > .product-carton-field {
+    inline-size: 165px;
+  }
+}

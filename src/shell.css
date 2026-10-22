@@ -210,16 +210,38 @@ body > .topbar {
   background: var(--field);
 }
 .top-actions .language-toggle button {
-  inline-size: 28px;
-  min-inline-size: 28px;
+  inline-size: 32px;
+  min-inline-size: 32px;
   block-size: 26px;
   min-block-size: 26px;
   border-radius: var(--radius-s);
   font-size: var(--text-m);
 }
+.language-toggle button:focus-visible {
+  outline: 1px solid var(--focus);
+  outline-offset: 1px;
+}
 .top-actions .language-toggle button[aria-pressed='true'] {
   background: var(--surface);
   box-shadow: 0 0 0 1px var(--border);
+}
+
+dialog .popup-language-toggle {
+  gap: 0;
+  padding: 2px;
+  border: 1px solid var(--divider);
+  border-radius: var(--radius-m);
+  background: var(--field);
+}
+dialog .language-toggle.popup-language-toggle button {
+  inline-size: 32px;
+  min-inline-size: 32px;
+  flex: 0 0 32px;
+  block-size: 26px;
+  min-block-size: 26px;
+  padding: 0;
+  font-size: 11px;
+  white-space: nowrap;
 }
 
 body > main {
@@ -258,6 +280,12 @@ body > main {
   }
 }
 @media (max-width: 760px) {
+  .top-actions #import-store-sheet {
+    inline-size: 32px;
+    min-inline-size: 32px;
+    padding: 4px;
+    font-size: 0;
+  }
   .view-tabs button {
     padding-inline: 10px;
   }
@@ -539,9 +567,9 @@ body > main {
   margin-inline-start: auto;
 }
 .action-bar .product-selection-totals {
-  flex: 0 1 auto;
+  flex: 1 1 440px;
   min-inline-size: 0;
-  max-inline-size: 460px;
+  max-inline-size: 560px;
   padding: 0;
   background: transparent;
 }
@@ -565,35 +593,42 @@ body > main {
   border-inline-start: 1px solid var(--divider);
 }
 .action-bar .selection-totals-grid {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 2px var(--space-4);
+  display: grid;
+  grid-template-columns:
+    minmax(0, 0.75fr) minmax(0, 0.65fr) minmax(0, 1.15fr)
+    minmax(0, 1.25fr);
+  align-items: stretch;
+  gap: 2px 12px;
 }
 .action-bar .selection-totals-grid > div {
-  display: grid;
-  gap: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
   min-inline-size: 0;
 }
+.action-bar .selection-totals-grid > [data-selection-total='gross'] {
+  padding-inline-start: 12px;
+  border-inline-start: 1px solid var(--divider);
+}
 .action-bar .selection-totals-grid dt {
-  overflow: hidden;
-  font-size: var(--text-xs);
-  text-overflow: ellipsis;
-  white-space: nowrap;
+  font-size: 10px;
+  line-height: 1.3;
+  white-space: normal;
 }
 .action-bar .selection-totals-grid dd {
-  font-size: var(--text-m);
-  white-space: nowrap;
+  font-size: 14px;
+  line-height: 1.35;
+  font-weight: 700;
+  white-space: normal;
 }
 .action-bar .selection-totals-context {
-  display: block;
-  margin: 2px 0 0;
-  overflow: hidden;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 2px 14px;
+  margin: 5px 0 0;
   font-size: 10px;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-.action-bar .selection-totals-context > span + span::before {
-  content: ' · ';
+  line-height: 1.3;
+  white-space: normal;
 }
 .action-bar .row-selection-actions button {
   border-color: transparent;
@@ -686,6 +721,16 @@ body > main {
     flex: 1 1 100%;
     justify-content: flex-start;
   }
+  .action-bar .selection-totals-grid {
+    /* Give the amounts full tracks so changing digit counts cannot add a line
+       and move the product table when the viewport is divided between panes. */
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    row-gap: 4px;
+  }
+  .action-bar .selection-totals-grid > [data-selection-total='gross'] {
+    padding-inline-start: 0;
+    border-inline-start: 0;
+  }
   .action-bar .packing-launch {
     padding-inline-start: 0;
     border-inline-start: 0;
@@ -774,74 +819,7 @@ dialog.packing-review.packing-change-dialog {
   .packing-value-comparison {
   grid-column: 2;
   grid-row: 1 / span 3;
-  display: flex;
-  flex-wrap: wrap;
-  align-items: baseline;
-  gap: var(--space-1) var(--space-4);
   margin: 0;
-}
-.packing-review.packing-change-dialog .packing-value-row {
-  display: inline-flex;
-  align-items: baseline;
-  gap: 6px;
-}
-.packing-review.packing-change-dialog
-  .packing-value-row
-  > .packing-value-label {
-  font-size: var(--text-xs);
-}
-.packing-review.packing-change-dialog .packing-value-cell {
-  display: inline-flex;
-  align-items: baseline;
-  padding: 0;
-  background: transparent;
-}
-.packing-review.packing-change-dialog
-  .packing-value-row[data-changed]
-  .packing-value-cell {
-  background: transparent;
-}
-.packing-review.packing-change-dialog .packing-value-caption {
-  position: absolute;
-  inline-size: 1px;
-  block-size: 1px;
-  overflow: hidden;
-  clip-path: inset(50%);
-  white-space: nowrap;
-}
-.packing-review.packing-change-dialog .packing-value-content {
-  font-size: var(--text-m);
-}
-.packing-review.packing-change-dialog .packing-value-after::before {
-  content: '→';
-  margin-inline-end: 6px;
-  color: var(--muted);
-}
-.packing-review.packing-change-dialog
-  .packing-value-row[data-changed='true']
-  .packing-value-before
-  .packing-value-text {
-  color: var(--muted);
-  text-decoration: line-through;
-}
-.packing-review.packing-change-dialog
-  .packing-value-row[data-changed='true']
-  .packing-value-after
-  .packing-value-text {
-  font-weight: 650;
-}
-.packing-review.packing-change-dialog .packing-value-row[data-changed='false'] {
-  opacity: 0.75;
-}
-.packing-review.packing-change-dialog
-  .packing-value-row[data-changed='false']
-  .packing-value-before {
-  display: none;
-}
-.packing-review.packing-change-dialog
-  .packing-value-row[data-changed='false']
-  .packing-value-after::before {
-  content: none;
 }
 .packing-change-dialog .packing-review-item p {
   grid-column: 1 / -1;
@@ -997,7 +975,7 @@ html:has(body.packing-active) {
   }
 }
 
-/* Settings: sections listed on the left; the panel scrolls and Save stays visible. */
+/* One viewport-bounded Settings frame: section content scrolls without resizing it. */
 #settings-dialog {
   inline-size: min(1040px, calc(100vw - 24px));
   max-inline-size: 1040px;
@@ -1011,7 +989,8 @@ html:has(body.packing-active) {
   display: grid;
   grid-template-columns: 200px minmax(0, 1fr);
   grid-template-rows: auto minmax(0, 1fr) auto;
-  min-block-size: min(620px, calc(100dvh - 34px));
+  block-size: min(720px, calc(100dvh - 34px));
+  min-block-size: 0;
   max-block-size: calc(100dvh - 34px);
 }
 #settings-content > h2 {
@@ -1034,6 +1013,12 @@ html:has(body.packing-active) {
   border: 0;
   border-inline-end: 1px solid var(--divider);
   background: var(--field);
+  min-block-size: 0;
+  overflow: auto;
+  overscroll-behavior: contain;
+}
+#orders-view .sheet-pane .table-scroll {
+  scroll-padding-block-start: var(--virtual-table-heading-height, 48px);
 }
 #settings-content > h2 {
   border-inline-end: 1px solid var(--divider);
@@ -1051,6 +1036,17 @@ html:has(body.packing-active) {
   grid-column: 2;
   grid-row: 1 / span 2;
   padding: var(--space-5) var(--space-6) var(--space-4);
+}
+@media (min-width: 761px) {
+  #settings-content
+    .settings-panel
+    > :is(h3, .settings-section-heading):first-child,
+  #settings-content
+    .settings-panel
+    > .appearance-section:first-child
+    > .settings-section-heading {
+    padding-inline-end: 32px;
+  }
 }
 #settings-content .settings-footer {
   grid-column: 2;
@@ -1133,7 +1129,86 @@ dialog.print-dialog.packing-review {
 }
 .print-table-scroll {
   min-inline-size: 0;
-  overflow-x: auto;
+  max-block-size: min(36vh, 260px);
+  overflow: auto;
+}
+.print-quantity-section {
+  display: grid;
+  min-inline-size: 0;
+  gap: var(--space-1);
+}
+.print-quantity-toolbar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-2);
+  justify-content: flex-start;
+  padding-block: 2px;
+}
+.print-quantity-heading {
+  display: flex;
+  flex: 0 1 auto;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 4px 8px;
+  font-size: var(--text-s);
+}
+.print-quantity-preview {
+  color: var(--accent-text);
+  font-size: var(--text-xs);
+  font-variant-numeric: tabular-nums;
+}
+.print-quantity-actions {
+  display: grid;
+  flex: 0 1 196px;
+  grid-template-columns: minmax(0, 1fr) 48px 26px;
+  align-items: center;
+  gap: 0;
+  min-inline-size: 0;
+  padding: 2px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-s);
+  background: var(--field);
+}
+.print-quantity-actions .print-field > span {
+  position: absolute;
+  inline-size: 1px;
+  block-size: 1px;
+  overflow: hidden;
+  clip-path: inset(50%);
+}
+.print-dialog .print-quantity-actions .print-field :is(input, select) {
+  min-block-size: 26px;
+  block-size: 26px;
+  padding: 2px 6px;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  font-size: var(--text-s);
+}
+.print-quantity-actions .print-field + .print-field {
+  border-inline-start: 1px solid var(--divider);
+}
+.print-dialog .print-quantity-apply {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  inline-size: 26px;
+  block-size: 26px;
+  min-inline-size: 0;
+  min-block-size: 0;
+  padding: 0;
+  border-radius: 4px;
+}
+.print-quantity-apply-icon {
+  font-size: 17px;
+  line-height: 1;
+}
+.print-quantity-section:has(.has-error) .print-quantity-reason {
+  color: var(--danger-text);
+}
+.print-quantity-reason:empty {
+  display: none;
 }
 .print-dialog .print-options {
   display: flex;
@@ -1157,6 +1232,7 @@ dialog.print-dialog.packing-review {
   padding: var(--space-2) var(--space-3) var(--space-3);
   border: 1px solid var(--divider);
   border-radius: var(--radius-m);
+  min-inline-size: 0;
 }
 .print-fieldset legend {
   padding-inline: 4px;
@@ -1183,7 +1259,7 @@ dialog.print-dialog.packing-review {
 }
 .print-grid-fields {
   display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(150px, 1fr));
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 130px), 1fr));
   gap: var(--space-2) var(--space-3);
   align-items: end;
 }
@@ -1192,9 +1268,13 @@ dialog.print-dialog.packing-review {
   gap: 2px;
   color: var(--muted);
   font-size: var(--text-s);
+  min-inline-size: 0;
 }
-.print-field :is(input, select) {
+.print-dialog .print-field :is(input, select) {
+  inline-size: 100%;
+  min-inline-size: 0;
   min-block-size: 32px;
+  margin: 0;
   padding: 4px var(--space-2);
   border: 1px solid var(--border);
   border-radius: var(--radius-s);
@@ -1214,14 +1294,34 @@ dialog.print-dialog.packing-review {
 }
 .print-counts {
   inline-size: 100%;
+  /* The source order table's global minimum and column widths do not apply
+     to this compact dialog table. Keep any necessary narrow-screen scroll local. */
+  min-width: 0;
+  min-inline-size: 300px;
+  table-layout: fixed;
   border-collapse: collapse;
-  font-size: var(--text-m);
+  font-size: var(--text-s);
+}
+.print-counts.print-caps {
+  min-inline-size: 384px;
+}
+.print-counts.print-counts-marks {
+  min-inline-size: 260px;
 }
 .print-counts :is(th, td) {
-  padding: 6px var(--space-2);
+  inline-size: auto;
+  padding: 4px 6px;
   border-block-end: 1px solid var(--divider);
   text-align: start;
   vertical-align: middle;
+  overflow-wrap: anywhere;
+}
+.print-counts :is(th, td):not(:first-child) {
+  inline-size: 56px;
+}
+.print-counts :is(th, td):nth-child(2),
+.print-counts :is(th, td).print-cap-column {
+  inline-size: 84px;
 }
 .print-counts th {
   color: var(--muted);
@@ -1231,24 +1331,63 @@ dialog.print-dialog.packing-review {
   letter-spacing: 0.04em;
 }
 .print-counts td:first-child {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: baseline;
-  gap: 2px var(--space-2);
+  overflow-wrap: anywhere;
+}
+.print-counts .ce-code {
+  --ce-code-size: 12px;
+}
+.print-counts .print-name {
+  margin-inline-start: 6px;
 }
 .print-counts td:first-child small {
-  flex-basis: 100%;
+  display: block;
   color: var(--muted);
 }
-.print-counts input {
-  inline-size: 96px;
-  min-block-size: 30px;
+.print-dialog .print-counts input {
+  inline-size: 72px;
+  min-block-size: 28px;
   padding: 2px 6px;
   border: 1px solid var(--border);
   border-radius: var(--radius-s);
   background: var(--field);
   color: var(--text);
   font-variant-numeric: tabular-nums;
+  font-size: var(--text-s);
+}
+.print-quantity-input {
+  position: relative;
+  inline-size: 72px;
+}
+.print-dialog .print-quantity-input input {
+  padding-inline-end: 28px;
+  appearance: textfield;
+}
+.print-quantity-input input::-webkit-inner-spin-button,
+.print-quantity-input input::-webkit-outer-spin-button {
+  appearance: none;
+  margin: 0;
+}
+.print-dialog .print-quantity-add {
+  position: absolute;
+  inset-inline-end: 3px;
+  inset-block-start: 3px;
+  inline-size: 23px;
+  block-size: 22px;
+  min-inline-size: 0;
+  min-block-size: 0;
+  margin: 0;
+  padding: 0;
+  border: 0;
+  border-radius: 4px;
+  background: var(--selected);
+  color: var(--accent-text);
+  font-size: var(--text-xs);
+  font-weight: 600;
+  line-height: 1;
+}
+.print-dialog .print-quantity-add:hover:enabled {
+  background: var(--control-accent);
+  color: var(--on-accent);
 }
 .print-counts .print-cap-column input::placeholder {
   font-size: var(--text-xs);
@@ -1265,6 +1404,7 @@ dialog.print-dialog.packing-review {
 .print-preview-pane {
   position: sticky;
   top: 0;
+  min-inline-size: 0;
 }
 .print-preview {
   display: block;
@@ -1275,6 +1415,87 @@ dialog.print-dialog.packing-review {
   border-radius: 2px;
   background: #fff;
   box-shadow: var(--shadow-1);
+}
+.print-preview-tools {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 4px;
+  margin-block-end: var(--space-2);
+}
+.print-preview-tools > button {
+  min-inline-size: 28px;
+  min-block-size: 28px;
+  padding: 3px 8px;
+  font-size: var(--text-s);
+}
+.print-preview-tools > span {
+  flex-basis: 100%;
+  color: var(--muted);
+  font-size: var(--text-xs);
+}
+.print-preview-viewport {
+  block-size: min(64dvh, 650px);
+  min-block-size: 240px;
+  min-inline-size: 0;
+  overflow: auto;
+  overscroll-behavior: contain;
+  border: 1px solid var(--divider);
+  border-radius: var(--radius-s);
+  background: var(--field);
+}
+.print-preview-viewport:not(.is-zoomed) {
+  overflow-x: hidden;
+}
+.print-preview-figure {
+  display: grid;
+  place-items: center;
+  inline-size: max-content;
+  block-size: max-content;
+  min-inline-size: 100%;
+  min-block-size: 100%;
+  margin: 0;
+  padding: 4px;
+}
+.print-preview-pane .print-preview-pan {
+  position: relative;
+  display: block;
+  inline-size: max-content;
+  block-size: max-content;
+  min-inline-size: 0;
+  min-block-size: 0;
+  max-inline-size: none;
+  margin: 0;
+  padding: 0;
+  border: 0;
+  border-radius: 2px;
+  background: transparent;
+  line-height: 0;
+  cursor: zoom-in;
+}
+.print-preview-pan .print-preview {
+  max-inline-size: none;
+  max-block-size: none;
+  -webkit-user-select: none;
+  user-select: none;
+}
+.print-safe-area {
+  position: absolute;
+  inset: 0;
+  inline-size: 100%;
+  block-size: 100%;
+  overflow: hidden;
+  pointer-events: none;
+  fill: none;
+  stroke: var(--control-accent);
+  stroke-width: 0.3;
+  stroke-dasharray: 2 1.5;
+}
+.print-preview-viewport.is-zoomed .print-preview-pan {
+  cursor: grab;
+}
+.print-preview-viewport.is-panning .print-preview-pan {
+  cursor: grabbing;
 }
 .print-note {
   margin: 0;
@@ -1305,25 +1526,18 @@ dialog.print-dialog.packing-review {
   color: var(--muted);
 }
 .print-preset-row {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  align-items: end;
+  gap: var(--space-2) var(--space-3);
+}
+.print-preset-actions {
+  grid-column: 1 / -1;
   display: flex;
   flex-wrap: wrap;
-  align-items: end;
   gap: var(--space-2);
 }
-.print-preset-row > .print-field {
-  flex: none;
-}
-.print-preset-row > input {
-  flex: 1 1 140px;
-  min-inline-size: 0;
-  min-block-size: 32px;
-  padding: 4px var(--space-2);
-  border: 1px solid var(--border);
-  border-radius: var(--radius-s);
-  background: var(--field);
-  color: var(--text);
-}
-.print-preset-row > button,
+.print-preset-actions > button,
 .print-fieldset > button {
   min-block-size: 32px;
   justify-self: start;
@@ -1354,10 +1568,21 @@ dialog.print-dialog.packing-review {
   font-size: var(--text-l);
 }
 .print-page-contents {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 8px;
   margin: 0 0 var(--space-2);
   color: var(--muted);
   font-size: var(--text-xs);
   overflow-wrap: anywhere;
+}
+.print-page-run {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+}
+.print-page-run .ce-code {
+  --ce-code-size: 11px;
 }
 .print-recent-dialog.packing-review {
   inline-size: min(640px, calc(100vw - 24px));
@@ -1396,6 +1621,11 @@ dialog.print-dialog.packing-review {
   .print-preview-pane {
     position: static;
     max-inline-size: 360px;
+  }
+}
+@media (max-width: 500px) {
+  .print-preset-row {
+    grid-template-columns: minmax(0, 1fr);
   }
 }
 
@@ -1448,5 +1678,195 @@ dialog.print-dialog.packing-review {
     order: 4;
     flex-basis: 100%;
     max-inline-size: none;
+  }
+}
+.print-counts .print-carton-review {
+  display: flex;
+  align-items: center;
+  gap: 3px;
+  max-inline-size: 90px;
+  margin-block-start: 4px;
+  font-size: 10px;
+  white-space: normal;
+}
+.print-dialog .print-counts .print-carton-review input[type='checkbox'] {
+  flex: none;
+  inline-size: 12px;
+  block-size: 12px;
+  margin: 0;
+}
+.print-carton-breakdown {
+  color: var(--muted);
+}
+
+/* The workspace owns the viewport; only its data panels scroll. */
+html {
+  block-size: 100%;
+}
+body {
+  block-size: 100dvh;
+  display: flex;
+  flex-direction: column;
+}
+body > .topbar {
+  position: static;
+  flex: none;
+}
+body > main {
+  display: flex;
+  flex-direction: column;
+  flex: 1 1 0;
+  min-block-size: 0;
+  padding-block-end: var(--space-3);
+  gap: var(--space-2);
+}
+body > main > :is(#active-job, #import-attention, #feedback) {
+  flex: none;
+}
+#feedback {
+  margin: 0;
+}
+#feedback:empty {
+  display: none;
+}
+#orders-view.workspace {
+  flex: 1 1 0;
+  min-block-size: 0;
+  grid-template-rows: minmax(0, 1fr) auto;
+  align-items: stretch;
+}
+#orders-view.workspace:has(> .packing-progress) {
+  grid-template-rows: auto minmax(0, 1fr) auto;
+}
+#orders-view :is(.orders-pane, .sheet-pane) {
+  display: flex;
+  flex-direction: column;
+  min-block-size: 0;
+}
+#orders-view :is(.orders-pane, .sheet-pane) > * {
+  flex: none;
+}
+#orders-view .orders-pane #order-list,
+#orders-view .sheet-pane .table-scroll {
+  flex: 1 1 0;
+  min-block-size: 0;
+  max-block-size: none;
+  overflow: auto;
+  overscroll-behavior: contain;
+}
+#orders-view .action-bar {
+  position: static;
+}
+body.packing-active #packing-view {
+  flex: 1 1 0;
+  min-block-size: 0;
+  display: flex;
+  padding-block-end: 0;
+}
+#packing-view #preparation-content {
+  flex: 1 1 0;
+  min-block-size: 0;
+  display: grid;
+  grid-template-rows: auto minmax(0, 1fr) auto;
+  gap: var(--space-2);
+}
+#packing-view .packing-command-bar {
+  grid-row: 1;
+  padding-block-end: 0;
+}
+#packing-view .packing-order-sections {
+  grid-row: 2;
+  display: block;
+  min-block-size: 0;
+  overflow: auto;
+  overflow-anchor: none;
+  overscroll-behavior: contain;
+  scrollbar-gutter: stable;
+}
+#packing-view .packing-order-section,
+#packing-view .packing-order-section + .packing-order-section {
+  margin: 0;
+  padding: 0;
+  border: 0;
+  border-radius: 0;
+  box-shadow: none;
+}
+#packing-view .packing-order-chrome {
+  display: flow-root;
+  padding-inline: var(--space-4);
+}
+#packing-view .packing-order-header {
+  margin-block: 8px 0;
+  padding: 6px 10px;
+  gap: 5px 10px;
+  border: 1px solid var(--border);
+  border-inline-start: 3px solid var(--accent);
+  border-radius: 6px;
+  background: var(--field);
+}
+#packing-view .packing-order-header h2 {
+  font-size: 15px;
+  font-weight: 700;
+}
+#packing-view .packing-order-header > .packing-help {
+  color: var(--text);
+  font-size: 11px;
+}
+#packing-view .packing-order-header .packing-restore-actions button {
+  min-block-size: 26px;
+  padding: 4px 6px;
+  font-size: 11px;
+}
+#packing-view .order-tools {
+  margin-block: 4px 0;
+  padding: 4px 8px;
+  gap: 5px 8px;
+}
+#packing-view .order-tools button {
+  min-block-size: 28px;
+  padding: 4px 8px;
+  font-size: 11px;
+}
+#packing-view .preparation-group {
+  display: flow-root;
+  margin: 0;
+  padding: 4px var(--space-4) 8px;
+}
+.packing-active .preparation-output.packing-selection-toolbar {
+  position: static;
+  grid-row: 3;
+}
+.packing-active :is(.preparation-group, .variants tr, input, textarea) {
+  scroll-margin-block: var(--space-2);
+}
+#orders-view[hidden],
+#packing-view[hidden] {
+  display: none;
+}
+@media (max-width: 760px) {
+  #orders-view.workspace {
+    grid-template-rows: minmax(120px, 0.8fr) minmax(0, 1fr) auto;
+  }
+  #orders-view.workspace:has(> .packing-progress) {
+    grid-template-rows: auto minmax(120px, 0.8fr) minmax(0, 1fr) auto;
+  }
+  #orders-view :is(.orders-pane, .sheet-pane) {
+    overflow: auto;
+    overscroll-behavior: contain;
+  }
+  #orders-view .orders-pane #order-list {
+    flex: none;
+    min-block-size: 80px;
+    max-block-size: 180px;
+  }
+  #orders-view .sheet-pane .table-scroll {
+    /* A centered cell must have room below the sticky column headings. */
+    min-block-size: max(
+      140px,
+      calc(2 * var(--virtual-table-heading-height, 48px) + 16px)
+    );
+  }
+  #packing-view :is(.packing-order-chrome, .preparation-group) {
+    padding-inline: var(--space-2);
   }
 }

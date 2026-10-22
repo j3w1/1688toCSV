@@ -122,7 +122,8 @@ for (const language of ['en', 'es', 'zh']) {
       await title.click()
       await expect(row).toHaveAttribute('aria-selected', 'false')
       expect(await layout(), `deselection at ${width}px`).toEqual(before)
-      await row.focus()
+      // Exercise Select All from the row focused by the actual click handler.
+      await expect(row).toBeFocused()
       await page.keyboard.press('ControlOrMeta+a')
       await expect(
         page.locator('#sheet-body tr[aria-selected="true"]')
@@ -142,7 +143,7 @@ for (const language of ['en', 'es', 'zh']) {
   })
 }
 
-test('source identities copy directly without changing selection, layout, or opening details', async ({
+test('source identities copy directly and the card store name opens details without changing selection or layout', async ({
   extension,
 }) => {
   const { page, record } = await openWorkspace(extension)
@@ -174,15 +175,20 @@ test('source identities copy directly without changing selection, layout, or ope
   await expect(card).toHaveAttribute('aria-selected', 'false')
   await card.locator('.order-seller').click()
   await expect(card).toHaveAttribute('aria-selected', 'false')
-  await card.locator('.order-reference').dblclick()
-  await expect(page.locator('#order-details')).not.toBeVisible()
+  const details = page.locator('#order-details')
+  await expect(details).toBeVisible()
+  await expect(rows.first()).toHaveAttribute('aria-selected', 'true')
+  await expect(card.locator('.order-reference')).toHaveCount(0)
+  await details.locator('.order-reference').dblclick()
+  await expect(details).toBeVisible()
   await expect(rows.first()).toHaveAttribute('aria-selected', 'true')
   await expect(shop.locator('.copy-text-feedback')).toBeHidden()
-  await card.locator('.order-reference').focus()
+  await details.locator('.order-reference').focus()
   await page.keyboard.press('Enter')
   expect(await page.evaluate(() => navigator.clipboard.readText())).toBe(
     record.snapshot.orderId
   )
+  await details.getByRole('button', { name: 'Close order details' }).click()
   await expect(card).toHaveAttribute('aria-selected', 'false')
 })
 
@@ -322,6 +328,7 @@ test('an open settings draft translates across tabs without losing unsaved field
   const { page } = await openWorkspace(extension)
   await page.locator('#packing-settings').click()
   const settings = page.locator('#settings-dialog')
+  await settings.getByRole('tab', { name: 'Labels', exact: true }).click()
   await settings.getByLabel('Website', { exact: true }).fill('unsaved.example')
   const other = await extension.context.newPage()
   await other.goto(`${extension.extensionBaseUrl}/library.html`)

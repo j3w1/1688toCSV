@@ -1,7 +1,11 @@
 import { test, expect } from './extension-fixture.mjs'
 import { createDemoRecords } from '../../preview/library-fixture.js'
+import {
+  openOrganizing,
+  finishOrganizing,
+} from './packing-organize-helpers.mjs'
 
-test('a newly saved matching order returns both lists to their newest page and preserves filters and product selection', async ({
+test('a newly saved matching order returns both lists to their newest position and preserves filters and product selection', async ({
   extension,
 }) => {
   const [template] = await extension.inspector.evaluate(
@@ -38,12 +42,13 @@ test('a newly saved matching order returns both lists to their newest page and p
         }),
       orders
     )
-  const initial = await test.step('Seed two pages of saved orders', () =>
-    save(
-      Array.from({ length: 51 }, (_, index) =>
-        makeOrder(index, '2026-10-17T08:00:00+08:00')
-      )
-    ))
+  const initial =
+    await test.step('Seed more orders and products than fit in one view', () =>
+      save(
+        Array.from({ length: 51 }, (_, index) =>
+          makeOrder(index, '2026-10-17T08:00:00+08:00')
+        )
+      ))
   expect(initial.ok, initial.error).toBe(true)
   const page = await extension.context.newPage()
   await page.clock.setFixedTime(new Date('2026-10-17T04:00:00Z'))
@@ -51,7 +56,7 @@ test('a newly saved matching order returns both lists to their newest page and p
     localStorage.setItem('1688-library-purchase-months', '[]')
   )
   await page.goto(`${extension.extensionBaseUrl}/library.html`)
-  await expect(page.locator('#orders-page')).toHaveText('1 / 2')
+  await expect(page.locator('.order-card')).toHaveCount(51)
   await page.locator('#order-search').fill('Paging supplier')
   // Escape dismisses suggestions only after they open; before that, the
   // native search input clears its value. Keep the filter active for this test.
@@ -63,14 +68,24 @@ test('a newly saved matching order returns both lists to their newest page and p
   await expect(page.locator('#order-search')).toHaveValue('Paging supplier')
   await page.locator('.date-range > summary').click()
   await page.locator('#date-from').fill('2026-10-17')
-  await expect(page.locator('#page-label')).toHaveText('1 / 2')
-  await expect(page.locator('#orders-page')).toHaveText('1 / 2')
-  await page.locator('#orders-next').click()
-  await page.locator('#next-page').click()
-  await expect(page.locator('#orders-page')).toHaveText('2 / 2')
-  await expect(page.locator('#page-label')).toHaveText('2 / 2')
-  const selected = page.locator('#sheet-body tr[data-selection-key]').first()
-  const selectedKey = await selected.getAttribute('data-selection-key')
+  const rows = page.locator('#sheet-body tr[data-selection-key]')
+  await expect(rows).toHaveCount(100)
+  await page.locator('#order-list').evaluate((scroller) => {
+    scroller.scrollTop = scroller.scrollHeight
+  })
+  await page.locator('.table-scroll').evaluate((scroller) => {
+    scroller.scrollTop = scroller.scrollHeight
+  })
+  await expect
+    .poll(() =>
+      page.locator('#order-list').evaluate((scroller) => scroller.scrollTop)
+    )
+    .toBeGreaterThan(0)
+  await expect(rows.last().locator('.row-number')).toHaveText('153')
+  const selectedKey = await rows.last().getAttribute('data-selection-key')
+  const selected = page.locator(
+    `#sheet-body tr[data-selection-key="${selectedKey}"]`
+  )
   await selected.focus()
   await page.keyboard.press('Space')
   const newest = makeOrder(100, '2026-10-17T15:00:00+08:00')
@@ -78,8 +93,12 @@ test('a newly saved matching order returns both lists to their newest page and p
     await test.step('Commit the new order and notify the open library', () =>
       save([newest]))
   expect(result.ok, result.error).toBe(true)
-  await expect(page.locator('#page-label')).toHaveText('1 / 2')
-  await expect(page.locator('#orders-page')).toHaveText('1 / 2')
+  await expect(page.locator('.order-card')).toHaveCount(52)
+  await expect
+    .poll(() =>
+      page.locator('#order-list').evaluate((scroller) => scroller.scrollTop)
+    )
+    .toBe(0)
   await expect(page.locator('.order-card').first()).toHaveAttribute(
     'data-selection-key',
     newest.snapshot.orderId
@@ -90,10 +109,17 @@ test('a newly saved matching order returns both lists to their newest page and p
     'data-selection-key',
     `${newest.snapshot.orderId}/${newest.snapshot.items[0].entryId}`
   )
+  await expect
+    .poll(() =>
+      page.locator('.table-scroll').evaluate((scroller) => scroller.scrollTop)
+    )
+    .toBe(0)
   await expect(page.locator('#order-search')).toHaveValue('Paging supplier')
   await expect(page.locator('#date-from')).toHaveValue('2026-10-17')
   await expect(page.locator('#selection-summary')).toContainText('1 selected')
-  await page.locator('#next-page').click()
+  await rows.first().focus()
+  await page.keyboard.press('Control+End')
+  await expect(rows.last().locator('.row-number')).toHaveText('156')
   await expect(
     page.locator(`#sheet-body tr[data-selection-key="${selectedKey}"]`)
   ).toHaveAttribute('aria-selected', 'true')
@@ -194,17 +220,28 @@ test('main order and product views retain purchase chronology and source rows af
       .evaluateAll((groups) => groups.map((group) => group.dataset.groupId))
   const originalGroups = await groupIds()
   expect(originalGroups.length).toBeGreaterThan(1)
+  await openOrganizing(page)
+  const organizingGroups = view.locator('.packing-organize-group')
+  await expect(organizingGroups).toHaveCount(originalGroups.length)
   await view
-    .getByRole('button', {
-      name: 'Move group 1; use Up or Down arrows',
-      exact: true,
-    })
-    .press('ArrowDown')
+    .locator(
+      `.packing-organize-group[data-group-id="${originalGroups[0]}"] input[type="checkbox"]`
+    )
+    .check()
+  await view.getByRole('button', { name: 'Move down', exact: true }).click()
   const arranged = [
     originalGroups[1],
     originalGroups[0],
     ...originalGroups.slice(2),
   ]
+  await expect
+    .poll(() =>
+      organizingGroups.evaluateAll((groups) =>
+        groups.map((group) => group.dataset.groupId)
+      )
+    )
+    .toEqual(arranged)
+  await finishOrganizing(page)
   await expect.poll(groupIds).toEqual(arranged)
   await view.page().locator('#view-orders').click()
   await page.getByRole('button', { name: 'Show all', exact: true }).click()

@@ -5,7 +5,11 @@ import { centsToMoney, lineGrossCents, moneyToCents } from '../../src/money.js'
 
 const productRows = (page) => page.locator('#sheet-body tr[data-selection-key]')
 
-async function seedOrder(extension, quantities = ['40', '24', '80']) {
+async function seedOrder(
+  extension,
+  quantities = ['40', '24', '80'],
+  capacities = []
+) {
   const [record] = await extension.inspector.evaluate(
     `(${createDemoRecords.toString()})(document)`
   )
@@ -26,6 +30,12 @@ async function seedOrder(extension, quantities = ['40', '24', '80']) {
     item.description = `${item.title}\n${item.skuProperties[0].raw}\n货号：${item.productNumber}`
     item.price = ['12.3450', '18.900', '8.20'][index]
     item.quantity = quantities[index]
+  }
+  if (capacities.length) {
+    record.unitsPerCarton = Object.fromEntries(
+      order.items.map((item, index) => [item.entryId, capacities[index]])
+    )
+    record.unitsPerCartonUpdatedAt = order.observedAt
   }
   const gross = order.items.reduce(
     (sum, item) => sum + lineGrossCents(item.price, item.quantity),
@@ -83,8 +93,8 @@ async function prepare(page) {
   return view
 }
 
-async function openPacking(extension, quantities) {
-  const record = await seedOrder(extension, quantities)
+async function openPacking(extension, quantities, capacities) {
+  const record = await seedOrder(extension, quantities, capacities)
   const page = await extension.context.newPage()
   await page.clock.setFixedTime(new Date('2026-10-15T04:00:00Z'))
   await page.goto(`${extension.extensionBaseUrl}/library.html`)
@@ -145,8 +155,11 @@ test('packing rows show exact source unit prices and quantities as read-only fac
     ['¥ 8.20', '80'],
   ].entries()) {
     const facts = rows.nth(index).locator('.variant-order-facts')
-    await expect(facts.locator('dt')).toHaveText(['Unit price', 'Quantity'])
-    await expect(facts.locator('dd')).toHaveText([price, quantity])
+    await expect(facts.locator('dt')).toHaveText(['Unit price'])
+    await expect(facts.locator('dd')).toHaveText([price])
+    await expect(
+      rows.nth(index).locator('.variant-numeric-row .variant-quantity')
+    ).toHaveText(quantity)
     await expect(
       facts.locator('input, textarea, [contenteditable=true]')
     ).toHaveCount(0)
@@ -172,6 +185,167 @@ test('packing rows show exact source unit prices and quantities as read-only fac
       )
       .toBeLessThanOrEqual(1)
   }
+  expect(extension.unexpectedRequests).toEqual([])
+})
+
+test('preparation keeps source facts read-only and capacity editable beside a visible label editor at wide and narrow widths', async ({
+  extension,
+}) => {
+  const { page, view } = await openPacking(extension, undefined, [10, 8, 10])
+  const row = view.locator('tr[data-variant-id]').first()
+  const group = view.locator('.preparation-group').first()
+  const cartons = group.locator(':scope > .packing-group-cartons')
+  const facts = row.locator('.variant-numeric-row')
+  const capacity = facts.getByRole('spinbutton', {
+    name: 'Pcs/box',
+    exact: true,
+  })
+  await expect(capacity).toHaveValue('10')
+  await expect(capacity).toBeEditable()
+  await expect(facts.locator('.carton-capacity-summary')).toHaveText(
+    '4 calculated cartons'
+  )
+  await expect(facts.locator('.carton-capacity-summary')).toBeVisible()
+  await expect(
+    row.locator('.variant-order-facts input, .variant-source-attributes input')
+  ).toHaveCount(0)
+  await expect(
+    row.locator('.variant-source-attributes .product-attributes')
+  ).toBeVisible()
+  await expect(
+    row.locator('.variant-heading .variant-code-options')
+  ).toBeVisible()
+  const copyQuantity = facts.getByRole('button', {
+    name: 'Copy quantity: 40',
+    exact: true,
+  })
+  await expect(copyQuantity).toHaveCSS('padding', '0px')
+  await expect(copyQuantity).toHaveCSS('min-height', '0px')
+
+  await page.setViewportSize({ width: 1440, height: 1000 })
+  const quantityBox = await row.locator('.variant-quantity').boundingBox()
+  const packBox = await facts.locator('.carton-capacity').boundingBox()
+  expect(
+    Math.abs(
+      packBox.y + packBox.height / 2 - quantityBox.y - quantityBox.height / 2
+    )
+  ).toBeLessThanOrEqual(5)
+  expect(packBox.x).toBeGreaterThan(quantityBox.x + quantityBox.width)
+  const rowBounds = await row.boundingBox()
+  expect(rowBounds.height).toBeLessThanOrEqual(148)
+  const widths = await row
+    .locator(':scope > td')
+    .evaluateAll((cells) =>
+      cells.map((cell) => cell.getBoundingClientRect().width)
+    )
+  await expect(row.locator(':scope > td')).toHaveClass([
+    'variant-photos',
+    'variant-option',
+    'variant-carton-columns',
+    '',
+  ])
+  expect(widths[0]).toBeCloseTo(84, 0)
+  expect(widths[1]).toBeGreaterThan(rowBounds.width * 0.35)
+  expect(widths[2]).toBeCloseTo(174, 0)
+  expect(widths[3]).toBeCloseTo(156, 0)
+  await expect(row.locator('.variant-numeric-header > span')).toHaveText([
+    'Quantity',
+    'Pcs/box',
+  ])
+  await expect(
+    row.locator('.carton-measurement, .variant-actions')
+  ).toHaveCount(0)
+  await expect(
+    view.locator(
+      '.reorder-handle, .packing-item-actions, .packing-remove-button'
+    )
+  ).toHaveCount(0)
+  await expect(cartons).toContainText('7 calculated cartons')
+  await expect(
+    cartons.getByRole('button', { name: 'Cartons', exact: true })
+  ).toBeVisible()
+  await expect(cartons.locator('input, textarea')).toHaveCount(0)
+
+  for (const width of [1440, 768, 390]) {
+    await page.setViewportSize({ width, height: 1000 })
+    const editor = row.getByRole('button', {
+      name: 'Edit barcode',
+      exact: true,
+    })
+    const carton = view.locator('.carton-preview').first()
+    await expect(editor).toBeVisible()
+    await expect(carton).toBeVisible()
+    await expect(cartons).toBeVisible()
+    const numericBounds = await row
+      .locator('.variant-carton-columns')
+      .boundingBox()
+    for (const readout of [row.locator('.variant-quantity'), capacity]) {
+      await expect(readout).toBeVisible()
+      const bounds = await readout.boundingBox()
+      expect(bounds.height).toBeLessThanOrEqual(32)
+      expect(bounds.x).toBeGreaterThanOrEqual(numericBounds.x - 1)
+      expect(bounds.x + bounds.width).toBeLessThanOrEqual(
+        numericBounds.x + numericBounds.width + 1
+      )
+    }
+    const within = await row.evaluate((node) => {
+      const bounds = node.getBoundingClientRect()
+      return [...node.querySelectorAll('td')].every((cell) => {
+        const value = cell.getBoundingClientRect()
+        return value.left >= bounds.left - 1 && value.right <= bounds.right + 1
+      })
+    })
+    expect(within).toBe(true)
+    for (const control of [editor, carton, cartons]) {
+      const bounds = await control.boundingBox()
+      expect(bounds.x).toBeGreaterThanOrEqual(0)
+      expect(bounds.x + bounds.width).toBeLessThanOrEqual(width)
+    }
+    await expect
+      .poll(() =>
+        page.evaluate(
+          () =>
+            document.documentElement.scrollWidth -
+            document.documentElement.clientWidth
+        )
+      )
+      .toBeLessThanOrEqual(1)
+  }
+  await page.setViewportSize({ width: 1440, height: 1000 })
+  await expect(
+    view.locator('.preparation-label-preview img:visible')
+  ).toHaveCount(5, { timeout: 15_000 })
+  await page.screenshot({ path: 'work/compact-preparation-wide.png' })
+  await page.setViewportSize({ width: 390, height: 1000 })
+  await page.evaluate(
+    () =>
+      new Promise((resolve) =>
+        requestAnimationFrame(() => requestAnimationFrame(resolve))
+      )
+  )
+  // Labels outside the narrow scroll viewport deliberately release their images.
+  // Capture one complete visible row instead of waiting for offscreen artwork.
+  await row.scrollIntoViewIfNeeded()
+  await expect(row.locator('.preparation-label-preview')).toHaveAttribute(
+    'data-preview-state',
+    'ready',
+    { timeout: 15_000 }
+  )
+  await expect(row.locator('.preparation-label-preview img')).toBeVisible()
+  await row.screenshot({
+    path: 'work/compact-preparation-narrow.png',
+  })
+  await page.setViewportSize({ width: 1440, height: 1000 })
+  await page.evaluate(() => {
+    navigator.clipboard.writeText = async (text) => {
+      window.compactPreparationCopy = text
+    }
+  })
+  await copyQuantity.click()
+  await expect
+    .poll(() => page.evaluate(() => window.compactPreparationCopy))
+    .toBe('40')
+  await expect(copyQuantity).toContainText('Copied')
   expect(extension.unexpectedRequests).toEqual([])
 })
 
@@ -222,12 +396,11 @@ test('reopening one selected source row of a shared barcode shows only that row 
   const row = view.locator('tr[data-variant-id]')
   await expect(row.locator('.variant-order-facts dt')).toHaveText([
     'Unit price',
-    'Quantity',
   ])
-  await expect(row.locator('.variant-order-facts dd')).toHaveText([
-    '¥ 18.90',
-    '24',
-  ])
+  await expect(row.locator('.variant-order-facts dd')).toHaveText(['¥ 18.90'])
+  await expect(
+    row.locator('.variant-numeric-row .variant-quantity')
+  ).toHaveText('24')
   await expect(row.locator('.variant-price')).not.toContainText('12.345')
   await expect(row.locator('.variant-source-count')).toHaveCount(0)
   await expect(view.locator('.preparation-copy-scope')).toHaveText(

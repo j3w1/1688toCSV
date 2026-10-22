@@ -1893,7 +1893,8 @@ test('invalid backup rows and image data reject the whole restore before writing
         orders: [nextRecord, original.orders[0]],
       }
       const invalid = [
-        { ...candidate, version: 4 },
+        { ...candidate, version: 5 },
+        { ...candidate, cartonBatches: {} },
         {
           ...candidate,
           orders: [nextRecord, { ...original.orders[0], revision: 0 }],
@@ -1933,7 +1934,9 @@ test('invalid backup rows and image data reject the whole restore before writing
     },
     { first: snapshot(), image }
   )
-  expect(result.errors).toHaveLength(6)
+  expect(result.errors).toHaveLength(7)
+  expect(result.errors[0]).toBe('Unsupported order-library backup')
+  expect(result.errors[1]).toBe('Backup cartonBatches must be an array')
   expect(result.orders).toHaveLength(1)
   expect(result.orders[0].snapshot.orderId).toBe(orderId)
   expect(result.images).toEqual([])
@@ -2032,6 +2035,7 @@ test('v1 databases upgrade in place with orders, history, images and jobs preser
         job: await upgraded.getJob('keep-job'),
         image: await upgraded.getImage(image.url),
         preparations: await upgraded.listPreparations(),
+        cartonBatches: await upgraded.listCartonBatches(),
         backup: await upgraded.exportBackup(),
       }
       upgraded.close()
@@ -2043,7 +2047,9 @@ test('v1 databases upgrade in place with orders, history, images and jobs preser
   expect(result.job.status).toBe('paused')
   expect(result.image).toEqual(image)
   expect(result.preparations).toEqual([])
-  expect(result.backup.version).toBe(3)
+  expect(result.cartonBatches).toEqual([])
+  expect(result.backup.version).toBe(4)
+  expect(result.backup.cartonBatches).toEqual([])
   expect(result.backup.issuedCodes).toEqual([])
 })
 
@@ -2829,7 +2835,10 @@ test('current assignments allow the 3103 to 3105 to 3103 sequence and release 31
     result.afterConflict.preparations
   )
   expect(result.roundtrip.issuedCodes).toEqual(result.afterConflict.issuedCodes)
-  expect(result.roundtrip.version).toBe(3)
+  expect(result.roundtrip.version).toBe(4)
+  expect(result.roundtrip.cartonBatches).toEqual(
+    result.afterConflict.cartonBatches
+  )
 })
 
 test('an atomic code swap checks final assignments and rejects a duplicate without partial writes', async ({

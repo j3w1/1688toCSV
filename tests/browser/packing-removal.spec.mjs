@@ -1,5 +1,10 @@
 import { test, expect, holdPreparationWrites } from './extension-fixture.mjs'
 import { createDemoRecords } from '../../preview/library-fixture.js'
+import {
+  packingRemovalAction,
+  finishOrganizing,
+  openOrganizing,
+} from './packing-organize-helpers.mjs'
 
 async function backup(extension) {
   const response = await extension.inspector.evaluate(() =>
@@ -82,115 +87,67 @@ function memberships(preparation) {
 }
 
 async function removalAction(container, name) {
-  const action = container.getByRole('button', { name, exact: true }).first()
-  await action.focus()
-  await expect(action).toBeVisible()
-  return action
+  return packingRemovalAction(
+    container,
+    name === 'Remove product' ? 'product' : 'group'
+  )
 }
 
-test('packing keeps direct drag and trash controls at the far left for pointer, keyboard and touch', async ({
+test('packing keeps management controls in Organize and removes normal action gutters for pointer, keyboard and touch', async ({
   extension,
 }) => {
   const { page, view } = await seedPacking(extension)
   const group = view.locator('.preparation-group').first()
   const row = group.locator('tr[data-variant-id]').first()
-  await expect(group.locator('.variant-index')).toHaveCount(0)
   await expect(row.locator(':scope > td')).toHaveCount(4)
-  await expect(row.locator(':scope > td').first()).toHaveClass(
-    'variant-actions'
-  )
+  await expect(row.locator(':scope > td').first()).toHaveClass('variant-photos')
   await expect(group.getByRole('columnheader')).toHaveText([
-    'Product actions',
     'Photo',
     'Product variant',
+    'Carton details',
     'Barcode',
   ])
   expect(
     (await group.locator('thead').boundingBox()).height
   ).toBeLessThanOrEqual(1)
-  await expect(group).toHaveCSS('background-color', 'rgba(0, 0, 0, 0)')
-  await expect(group).toHaveCSS('border-left-width', '0px')
-  await expect(row.locator('td').first()).toHaveCSS(
-    'border-bottom-width',
-    '0px'
-  )
-  const actions = row.getByRole('group', {
-    name: 'Product actions',
-    exact: true,
-  })
-  const grip = actions.locator('.reorder-handle')
-  const remove = actions.getByRole('button', {
-    name: 'Remove product',
-    exact: true,
-  })
-  const groupActions = group.locator(
-    '.product-overview > .packing-item-actions'
-  )
-  const groupGrip = groupActions.locator('.reorder-handle')
-  const removeGroup = groupActions.getByRole('button', {
-    name: 'Remove group',
-    exact: true,
-  })
-  await expect(groupActions).toHaveAccessibleName('Group actions')
+  await expect(
+    view.locator(
+      '.reorder-handle, .packing-item-actions, .packing-remove-button'
+    )
+  ).toHaveCount(0)
   await expect(group.locator('.product-overview > :first-child')).toHaveClass(
-    'packing-item-actions'
+    'product-summary'
   )
-  for (const controls of [actions, groupActions]) {
-    await expect(controls.locator(':scope > button')).toHaveCount(2)
-    await expect(controls.locator(':scope > button').first()).toHaveClass(
-      /reorder-handle/
-    )
-    await expect(controls.locator(':scope > button').last()).toHaveClass(
-      /packing-remove-button/
-    )
-    await expect(controls.locator('[popover], [popovertarget]')).toHaveCount(0)
-  }
-  await view.locator('h1').click()
-  await page.mouse.move(0, 0)
-  for (const control of [grip, remove, groupGrip, removeGroup])
-    await expect(control).toHaveCSS('opacity', '0')
-  await row.hover()
+  await openOrganizing(page)
+  const cards = view.locator('.packing-organize-group')
+  await expect(cards).toHaveCount(2)
+  await expect(view.locator('.variants, .variant-carton-columns')).toHaveCount(
+    0
+  )
+  await expect(view.locator('.packing-organize-remove')).toBeDisabled()
+  const grip = cards.first().locator('.reorder-handle')
+  await expect(grip).toBeVisible()
   await expect(grip).toHaveCSS('opacity', '1')
-  await expect(remove).toHaveCSS('opacity', '1')
-  const gripBox = await grip.boundingBox()
-  const removeBox = await remove.boundingBox()
-  expect(Math.abs(gripBox.y - removeBox.y)).toBeLessThanOrEqual(1)
-  expect(gripBox.x + gripBox.width).toBeLessThanOrEqual(removeBox.x)
-  expect(removeBox.x + removeBox.width - gripBox.x).toBeLessThanOrEqual(50)
-  const actionsBox = await actions.boundingBox()
-  const photoBox = await row.locator('.variant-photos').boundingBox()
-  expect(actionsBox.x + actionsBox.width).toBeLessThanOrEqual(photoBox.x)
-  await group.locator('.product-overview').hover()
-  await expect(groupGrip).toHaveCSS('opacity', '1')
-  await expect(removeGroup).toHaveCSS('opacity', '1')
-  const groupActionsBox = await groupActions.boundingBox()
-  const summaryBox = await group.locator('.product-summary').boundingBox()
-  expect(groupActionsBox.x + groupActionsBox.width).toBeLessThanOrEqual(
-    summaryBox.x
-  )
-  const groupGripBox = await groupGrip.boundingBox()
-  const groupRemoveBox = await removeGroup.boundingBox()
-  expect(Math.abs(groupGripBox.y - groupRemoveBox.y)).toBeLessThanOrEqual(1)
-  expect(groupGripBox.x + groupGripBox.width).toBeLessThanOrEqual(
-    groupRemoveBox.x
-  )
-  await page.mouse.move(0, 0)
-  await grip.focus()
-  await expect(grip).toHaveCSS('opacity', '1')
-  await expect(remove).toHaveCSS('opacity', '1')
-  await expect(grip).toHaveAccessibleName(
-    'Move product 1; use Up or Down arrows'
-  )
-  await removeGroup.focus()
-  await expect(groupGrip).toHaveCSS('opacity', '1')
-  await expect(removeGroup).toHaveCSS('opacity', '1')
+  await expect(grip).toHaveCSS('touch-action', 'none')
+  await expect(grip).toHaveAccessibleName(/use Up or Down arrows/)
+  await cards.first().locator('input[type="checkbox"]').check()
+  await expect(view.locator('.packing-organize-remove')).toBeEnabled()
+  await expect(cards.first().locator('.packing-remove-button')).toHaveCount(0)
+  await cards
+    .first()
+    .getByRole('button', { name: 'Products', exact: true })
+    .click()
+  await expect(view.locator('.packing-organize-product')).toHaveCount(2)
+  await view
+    .locator('.packing-organize-product')
+    .first()
+    .locator('input[type="checkbox"]')
+    .check()
   await page.setViewportSize({ width: 390, height: 844 })
-  for (const control of [remove, removeGroup]) {
-    await control.focus()
-    const bounds = await control.boundingBox()
-    expect(bounds.x).toBeGreaterThanOrEqual(0)
-    expect(bounds.x + bounds.width).toBeLessThanOrEqual(390)
-  }
+  const remove = view.locator('.packing-organize-remove')
+  const bounds = await remove.boundingBox()
+  expect(bounds.x).toBeGreaterThanOrEqual(0)
+  expect(bounds.x + bounds.width).toBeLessThanOrEqual(390)
   await remove.focus()
   await remove.press('Enter')
   const review = page.getByRole('dialog', {
@@ -206,25 +163,27 @@ test('packing keeps direct drag and trash controls at the far left for pointer, 
   ).toHaveCount(1)
   await review.getByRole('button', { name: 'Cancel', exact: true }).click()
   await expect(review).toBeHidden()
-  await expect(group.locator('tr[data-variant-id]')).toHaveCount(2)
-  await expect(view).toBeVisible()
   const session = await extension.context.newCDPSession(page)
   try {
     await session.send('Emulation.setTouchEmulationEnabled', { enabled: true })
     await expect
       .poll(() => page.evaluate(() => matchMedia('(pointer: coarse)').matches))
       .toBe(true)
-    await view.locator('h1').click()
-    await page.mouse.move(0, 0)
-    for (const control of [grip, remove, groupGrip, removeGroup]) {
-      await expect(control).toHaveCSS('opacity', '1')
-      const bounds = await control.boundingBox()
-      expect(bounds.width).toBeGreaterThanOrEqual(44)
-      expect(bounds.height).toBeGreaterThanOrEqual(44)
+    for (const control of [
+      view.locator('.packing-organize-product .reorder-handle').first(),
+      remove,
+    ]) {
+      await expect(control).toBeVisible()
+      expect((await control.boundingBox()).height).toBeGreaterThanOrEqual(44)
     }
   } finally {
     await session.detach()
   }
+  await finishOrganizing(page)
+  await expect(group.locator('tr[data-variant-id]')).toHaveCount(2)
+  await expect(
+    view.locator('.reorder-handle, .packing-remove-button')
+  ).toHaveCount(0)
 })
 
 test('group selection adds and removes independently without modifiers or interfering with editors', async ({
@@ -305,12 +264,14 @@ test('new product removal returns it to unassigned and later sessions retain the
   await expect(keptSibling).toContainText('1 product rows · 1 variants')
   await expect(review).toContainText('Original order data is kept')
   await review.getByRole('button', { name: 'Cancel', exact: true }).click()
+  await finishOrganizing(page)
   expect((await backup(extension)).preparations).toEqual(before.preparations)
   await removalAction(jarCard, 'Remove product')
   await remove.click()
   await review
     .getByRole('button', { name: 'Remove from packing', exact: true })
     .click()
+  await finishOrganizing(page)
   const remaining = memberships(initial).filter(
     (id) => !removedIds.includes(id)
   )
@@ -334,6 +295,7 @@ test('new product removal returns it to unassigned and later sessions retain the
   await review
     .getByRole('button', { name: 'Remove from packing', exact: true })
     .click()
+  await finishOrganizing(page)
   await expect(view.locator('.preparation-group')).toHaveCount(1)
   const afterGroup = await backup(extension)
   expect(afterGroup.preparations[0].groups.map((group) => group.id)).toEqual([
@@ -372,6 +334,7 @@ test('removing the last group keeps an empty saved packing while original produc
     await review
       .getByRole('button', { name: 'Remove from packing', exact: true })
       .click()
+    await finishOrganizing(page)
     await expect(view.locator('.preparation-group')).toHaveCount(count - 1)
   }
   await expect
@@ -428,17 +391,18 @@ test('reset shows position and barcode changes and becomes unavailable after the
   await expect(view.locator('.preparation-save-status')).toHaveText(
     'Saved automatically'
   )
+  await openOrganizing(page)
   await view
-    .getByRole('button', {
-      name: 'Move group 1; use Up or Down arrows',
-      exact: true,
-    })
+    .locator(
+      `.packing-organize-group[data-group-id="${jar.id}"] .reorder-handle`
+    )
     .press('ArrowDown')
   await expect
     .poll(async () =>
       (await backup(extension)).preparations[0].groups.map((group) => group.id)
     )
     .toEqual([box.id, jar.id])
+  await finishOrganizing(page)
   await expect(reset).toBeEnabled()
   const changed = await backup(extension)
   await reset.click()
@@ -466,6 +430,7 @@ test('reset shows position and barcode changes and becomes unavailable after the
     originalBarcode
   )
   await review.getByRole('button', { name: 'Cancel', exact: true }).click()
+  await finishOrganizing(page)
   expect((await backup(extension)).preparations).toEqual(changed.preparations)
   await holdPreparationWrites(page)
   await reset.click()

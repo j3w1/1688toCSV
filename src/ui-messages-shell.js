@@ -4,6 +4,11 @@ export const SHELL_MESSAGES = {
   'Packing list': { zh: '装箱清单', es: 'Lista de empaque' },
   'Fewer months': { zh: '收起月份', es: 'Menos meses' },
   '+{0} months': { zh: '另外 {0} 个月', es: '+{0} meses' },
+  Details: { zh: '详情', es: 'Detalles' },
+  'Details for order {0}': {
+    zh: '订单 {0} 的详情',
+    es: 'Detalles del pedido {0}',
+  },
   'Status: idle': { zh: '状态：空闲', es: 'Estado: inactivo' },
   'Status: importing · {0}': {
     zh: '状态：导入中 · {0}',
@@ -12,10 +17,6 @@ export const SHELL_MESSAGES = {
   'Status: needs sign-in or verification': {
     zh: '状态：需要登录或验证',
     es: 'Estado: requiere inicio de sesión o verificación',
-  },
-  'Status: needs permission for a visible import tab': {
-    zh: '状态：需要允许使用可见的导入标签页',
-    es: 'Estado: requiere permiso para una pestaña de importación visible',
   },
   'Status: export finished · {0}': {
     zh: '状态：导出完成 · {0}',

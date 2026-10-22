@@ -10,7 +10,10 @@ import {
   resolvePendingSizeMappings,
   validateSizeVocabulary,
 } from './size-vocabulary.js'
-import { suggestMaterial } from './material-vocabulary.js'
+import {
+  suggestMaterial,
+  validateMaterialVocabulary,
+} from './material-vocabulary.js'
 import { validateColorVocabulary } from './color-vocabulary.js'
 import { normalizeAppearance } from './appearance.js'
 import { normalizeOrderTags, normalizeTags } from './order-tags.js'
@@ -192,9 +195,14 @@ export function createPreparation(
   const groups = new Map()
   const candidates = new Map()
   const variantKeys = new Map()
+  const sourceEndings = new Map()
   for (const item of snapshot.items) {
     const title = (item.title || item.description).trim()
-    let group = groups.get(title)
+    // Spreadsheet group markers are authoritative even when names repeat or
+    // descriptions differ. A marker is source identity, never an assigned code.
+    const groupKey =
+      snapshot.sourceType === 'spreadsheet' ? item.sourceGroup : title
+    let group = groups.get(groupKey)
     if (!group) {
       const suggestion = suggest(title)
       group = {
@@ -206,14 +214,21 @@ export function createPreparation(
         naming: automaticNaming(suggestion),
         variants: [],
       }
-      groups.set(title, group)
+      groups.set(groupKey, group)
     }
-    const { size, variantProperties, variant } = sizeClassifier.extract(item)
+    const extracted = sizeClassifier.extract(item)
+    const size = item.sourceSize || extracted.size
+    const variant = item.sourceVariant || extracted.variant
+    const variantProperties = extracted.variantProperties
     // Only identical complete attribute sets suggest a shared variant. No source
     // row or amount is combined; entry IDs remain individually addressable.
     const attributes = (entries) =>
       entries.map((property) => [property.label.trim(), property.value.trim()])
-    const key = JSON.stringify([title, attributes(variantProperties), size])
+    const variantIdentity =
+      snapshot.sourceType === 'spreadsheet' && item.sourceVariant
+        ? [['variant', item.sourceVariant]]
+        : attributes(variantProperties)
+    const key = JSON.stringify([groupKey, variantIdentity, size])
     const existing = candidates.get(key)
     if (existing) existing.entryIds.push(item.entryId)
     else {
@@ -227,10 +242,12 @@ export function createPreparation(
         needsSizeMapping: false,
       }
       candidates.set(key, candidate)
-      variantKeys.set(
-        candidate.id,
-        JSON.stringify(attributes(variantProperties))
-      )
+      variantKeys.set(candidate.id, JSON.stringify(variantIdentity))
+      if (snapshot.sourceType === 'spreadsheet')
+        sourceEndings.set(candidate.id, {
+          variant: item.sourceVariant,
+          size: item.sourceSize,
+        })
       group.variants.push(candidate)
     }
   }
@@ -244,9 +261,10 @@ export function createPreparation(
     )
     for (const [index, variant] of group.variants.entries()) {
       variant.variantSuffix =
-        variants.length > 1
+        sourceEndings.get(variant.id)?.variant ||
+        (variants.length > 1
           ? letters(variants.indexOf(variantKeys.get(variant.id)))
-          : ''
+          : '')
       variant.sizeSuffix = sizeSuggestions[index].sizeSuffix
       variant.needsSizeMapping = sizeSuggestions[index].needsSizeMapping
     }
@@ -936,7 +954,22 @@ export function validatePreparation(input) {
       groupId,
       kind: 'base',
       code: baseCode,
+      ...(inputGroup.sharedProductId !== undefined
+        ? {
+            sharedProductId: id(
+              inputGroup.sharedProductId,
+              'Shared product ID'
+            ),
+            sharedStoreId: text(
+              inputGroup.sharedStoreId,
+              'Shared store identity',
+              false
+            ),
+          }
+        : {}),
     }
+    if (inputGroup.sharedStoreId !== undefined && !owner.sharedProductId)
+      throw new Error('Shared store identity requires a shared product')
     if (baseCode && codes.has(baseCode))
       throw new CodeConflictError(codes.get(baseCode), owner)
     if (baseCode) codes.set(baseCode, owner)
@@ -946,6 +979,12 @@ export function validatePreparation(input) {
       id: groupId,
       title: text(inputGroup.title, 'Product title'),
       baseCode,
+      ...(owner.sharedProductId
+        ? {
+            sharedProductId: owner.sharedProductId,
+            sharedStoreId: owner.sharedStoreId,
+          }
+        : {}),
       ...(inputGroup.month !== undefined ? { month: groupMonth } : {}),
       ...reordered(inputGroup.manualReordered, 'Group manual ordering'),
       spanishName: text(
@@ -1006,6 +1045,14 @@ export function validatePreparation(input) {
         variantSuffix,
         sizeSuffix,
         needsSizeMapping: inputVariant.needsSizeMapping ?? false,
+        ...(inputVariant.sharedVariantId !== undefined
+          ? {
+              sharedVariantId: id(
+                inputVariant.sharedVariantId,
+                'Shared variant ID'
+              ),
+            }
+          : {}),
         ...reordered(inputVariant.manualReordered, 'Variant manual ordering'),
         ...(inputVariant.spanishName !== undefined
           ? {
@@ -1019,6 +1066,10 @@ export function validatePreparation(input) {
           ? { material: text(inputVariant.material, 'Material') }
           : {}),
       }
+      if (Boolean(group.sharedProductId) !== Boolean(variant.sharedVariantId))
+        throw new Error(
+          'Shared products require a shared identity for every variant'
+        )
       if (inputVariant.materialSource !== undefined) {
         if (!['manual', 'suggested'].includes(inputVariant.materialSource))
           throw new Error('Material source must be manual or suggested')
@@ -1049,6 +1100,9 @@ export function validatePreparation(input) {
           kind: 'barcode',
           code: value,
           variantId,
+          ...(variant.sharedVariantId
+            ? { sharedVariantId: variant.sharedVariantId }
+            : {}),
         }
         if (barcodes.has(value))
           throw new CodeConflictError(barcodes.get(value), variantOwner)
@@ -1130,6 +1184,119 @@ export function validatePreparation(input) {
   return result
 }
 
+/** New model/color endings must not borrow standard or configured size codes. */
+export function createVariantSuffixValidator(
+  sizeVocabulary = DEFAULT_SIZE_VOCABULARY
+) {
+  const sizes = new Set(
+    [...DEFAULT_SIZE_VOCABULARY, ...validateSizeVocabulary(sizeVocabulary)].map(
+      ({ suffix }) => suffix
+    )
+  )
+  return (value) =>
+    typeof value === 'string' &&
+    /^[A-Z]*$/.test(value) &&
+    !sizes.has(value) &&
+    !/^(?:X*[SL]|M)$/.test(value)
+}
+
+/** Check authored suffix changes without reinterpreting saved or source codes. */
+export function validatePreparationSuffixEdits(
+  preparation,
+  previous,
+  { snapshot, restored, sizeVocabulary = DEFAULT_SIZE_VOCABULARY } = {}
+) {
+  const validVariantSuffix = createVariantSuffixValidator(sizeVocabulary)
+  const previousVariants = new Map(),
+    previousEntries = new Map(),
+    restoredEntries = new Map()
+  if (
+    previous?.accountId === preparation.accountId &&
+    previous?.orderId === preparation.orderId
+  )
+    for (const group of previous.groups)
+      for (const variant of group.variants) {
+        previousVariants.set(variant.id, variant)
+        for (const entryId of variant.entryIds)
+          previousEntries.set(entryId, variant)
+      }
+  if (
+    restored?.accountId === preparation.accountId &&
+    restored?.orderId === preparation.orderId
+  )
+    for (const group of restored.groups)
+      for (const variant of group.variants)
+        for (const entryId of variant.entryIds)
+          restoredEntries.set(entryId, variant)
+  let sourceVariants
+  const sourceVariant = (variant) => {
+    if (!snapshot) return false
+    if (!sourceVariants)
+      sourceVariants = new Map(
+        createPreparation(snapshot, preparation.month, [], sizeVocabulary)
+          .groups.flatMap((group) => group.variants)
+          .flatMap((variant) =>
+            variant.entryIds.map((entryId) => [entryId, variant.variantSuffix])
+          )
+      )
+    return (
+      variant.entryIds.length > 0 &&
+      variant.entryIds.every(
+        (entryId) => sourceVariants.get(entryId) === variant.variantSuffix
+      )
+    )
+  }
+  for (const group of preparation.groups)
+    for (const variant of group.variants)
+      for (const [field, key] of [
+        ['variant', 'variantSuffix'],
+        ['size', 'sizeSuffix'],
+      ]) {
+        const value = variant[key]
+        if (
+          !value ||
+          (variant.entryIds.length === 0 &&
+            previousVariants.get(variant.id)?.entryIds.length === 0 &&
+            previousVariants.get(variant.id)[key] === value) ||
+          (variant.entryIds.length > 0 &&
+            variant.entryIds.every(
+              (entryId) => previousEntries.get(entryId)?.[key] === value
+            )) ||
+          (variant.entryIds.length > 0 &&
+            variant.entryIds.every(
+              (entryId) => restoredEntries.get(entryId)?.[key] === value
+            ))
+        )
+          continue
+        if (
+          field === 'variant'
+            ? validVariantSuffix(value) || sourceVariant(variant)
+            : !validVariantSuffix(value) ||
+              value === 'X' ||
+              !/^[A-Z]$/.test(value)
+        )
+          continue
+        throw Object.assign(
+          new Error(
+            field === 'variant'
+              ? 'Enter size endings in Size code; use model/color letters here.'
+              : 'Enter model/color letters in Variant code; use a size code here.'
+          ),
+          {
+            code: 'PACKING_SUFFIX_FIELD_MISMATCH',
+            packingIssue: {
+              orderId: preparation.orderId,
+              groupId: group.id,
+              variantId: variant.id,
+              field,
+              value,
+            },
+          }
+        )
+      }
+  return preparation
+}
+
 function validateNaming(input) {
   record(input, 'Name provenance')
   const result = {}
@@ -1183,6 +1350,13 @@ export function validatePackingPreferences(input = {}) {
     ),
     ...(input.colorVocabulary !== undefined
       ? { colorVocabulary: validateColorVocabulary(input.colorVocabulary) }
+      : {}),
+    ...(input.materialVocabulary !== undefined
+      ? {
+          materialVocabulary: validateMaterialVocabulary(
+            input.materialVocabulary
+          ),
+        }
       : {}),
     ...(input.appearance !== undefined
       ? { appearance: normalizeAppearance(input.appearance) }
@@ -1278,6 +1452,60 @@ export function validateIssuedCode(input) {
       photos: snapshot.photos.map((photo) => text(photo, 'Code owner photo')),
     }
   }
+  if (input.sharedProductId !== undefined) {
+    result.sharedProductId = id(input.sharedProductId, 'Shared product ID')
+    result.sharedStoreId = text(
+      input.sharedStoreId,
+      'Shared store identity',
+      false
+    )
+    if (result.kind === 'barcode')
+      result.sharedVariantId = id(input.sharedVariantId, 'Shared variant ID')
+    else if (input.sharedVariantId !== undefined)
+      throw new Error('A base reservation cannot own a shared variant')
+    if (!Array.isArray(input.members) || !input.members.length)
+      throw new Error('Shared code reservation requires its source members')
+    const seen = new Set()
+    result.members = input.members.map((member) => {
+      record(member, 'Shared code member')
+      const owner = validateIssuedCode({
+        ...result,
+        ...member,
+        sharedProductId: undefined,
+        sharedStoreId: undefined,
+        sharedVariantId: undefined,
+        members: undefined,
+      })
+      const value = {
+        orderId: owner.orderId,
+        groupId: owner.groupId,
+        ...(result.kind === 'barcode' ? { variantId: owner.variantId } : {}),
+        ...(member.ownerSnapshot ? { ownerSnapshot: owner.ownerSnapshot } : {}),
+      }
+      const key = JSON.stringify([
+        value.orderId,
+        value.groupId,
+        value.variantId,
+      ])
+      if (seen.has(key))
+        throw new Error('Shared code reservation contains duplicate members')
+      seen.add(key)
+      return value
+    })
+    if (
+      !result.members.some((member) =>
+        sameOwner(result, { ...result, ...member })
+      )
+    )
+      throw new Error(
+        'Shared code reservation is missing its primary source member'
+      )
+  } else if (
+    input.sharedStoreId !== undefined ||
+    input.sharedVariantId !== undefined ||
+    input.members !== undefined
+  )
+    throw new Error('Shared code members require a shared product identity')
   return result
 }
 
@@ -1293,8 +1521,70 @@ function sameOwner(a, b) {
   ].every((field) => a[field] === b[field])
 }
 
+/** One current code owner can have explicitly reviewed source aliases. */
+export function codeReservationMembers(reservation) {
+  return (
+    reservation.members?.map((member) => ({
+      ...reservation,
+      ...member,
+      ownerSnapshot: member.ownerSnapshot,
+      members: undefined,
+    })) || [reservation]
+  )
+}
+
+export function codeReservationIncludes(reservation, owner) {
+  return codeReservationMembers(reservation).some((member) =>
+    sameOwner(member, owner)
+  )
+}
+
+export function sameCodeOwner(a, b) {
+  if (a.sharedProductId || b.sharedProductId)
+    return (
+      Boolean(a.sharedProductId && b.sharedProductId) &&
+      [
+        'accountId',
+        'kind',
+        'sellerId',
+        'month',
+        'sharedProductId',
+        'sharedStoreId',
+        'sharedVariantId',
+      ].every((field) => a[field] === b[field])
+    )
+  return sameOwner(a, b)
+}
+
+function mergeCodeOwners(existing, incoming) {
+  if (!existing) return incoming
+  if (!sameCodeOwner(existing, incoming))
+    throw new CodeConflictError(existing, incoming)
+  if (!existing.sharedProductId)
+    return existing.ownerSnapshot ? existing : incoming
+  const members = new Map()
+  for (const member of [...existing.members, ...incoming.members]) {
+    const key = JSON.stringify([
+      member.orderId,
+      member.groupId,
+      member.variantId,
+    ])
+    const previous = members.get(key)
+    members.set(key, previous?.ownerSnapshot ? previous : member)
+  }
+  return { ...existing, members: [...members.values()] }
+}
+
 /** Read-only evidence for old reservations whose group was later split or merged. */
 export function codeOwnerEvidence(reservation, preparation, issuedCodes = []) {
+  if (reservation.sharedProductId && preparation) {
+    const alias = codeReservationMembers(reservation).find(
+      (member) =>
+        member.accountId === preparation.accountId &&
+        member.orderId === preparation.orderId
+    )
+    if (alias) reservation = alias
+  }
   if (
     !preparation ||
     preparation.accountId !== reservation.accountId ||
@@ -1427,10 +1717,8 @@ export function mergePackingState(allocations, issuedCodes) {
       reservation.code,
     ])
     const existing = issued.get(key)
-    if (existing && !sameOwner(existing, reservation))
-      throw new CodeConflictError(existing, reservation)
     // Keep the first captured owner evidence even if that product is renamed.
-    issued.set(key, existing?.ownerSnapshot ? existing : reservation)
+    issued.set(key, mergeCodeOwners(existing, reservation))
     const allocation = months.get(
       JSON.stringify([reservation.accountId, reservation.month])
     )
@@ -1457,9 +1745,54 @@ export function mergePackingState(allocations, issuedCodes) {
     )
     if (
       !base ||
-      !sameOwner(base, { ...reservation, kind: 'base', variantId: undefined })
+      !sameCodeOwner(base, {
+        ...reservation,
+        kind: 'base',
+        variantId: undefined,
+        sharedVariantId: undefined,
+      }) ||
+      codeReservationMembers(reservation).some(
+        (member) =>
+          !codeReservationIncludes(base, {
+            ...member,
+            kind: 'base',
+            variantId: undefined,
+          })
+      )
     )
       throw new Error('Issued barcode is missing its owning base reservation')
+  }
+  const shared = new Map()
+  for (const reservation of issued.values()) {
+    if (!reservation.sharedProductId) continue
+    const key = JSON.stringify([
+      reservation.accountId,
+      reservation.sharedProductId,
+    ])
+    const identity = [
+      reservation.sellerId,
+      reservation.month,
+      reservation.sharedStoreId,
+      reservation.code.slice(0, 10),
+    ]
+    const previous = shared.get(key)
+    if (
+      previous &&
+      JSON.stringify(previous.identity) !== JSON.stringify(identity)
+    )
+      throw new Error(
+        'Shared product identity has inconsistent store, packing month or product codes'
+      )
+    const entry = previous || { identity, variants: new Map() }
+    if (reservation.kind === 'barcode') {
+      const code = entry.variants.get(reservation.sharedVariantId)
+      if (code && code !== reservation.code)
+        throw new Error(
+          'Shared variant identity has inconsistent barcode endings'
+        )
+      entry.variants.set(reservation.sharedVariantId, reservation.code)
+    }
+    shared.set(key, entry)
   }
   return {
     allocations: [...months.values()],
@@ -1495,6 +1828,13 @@ export function allocatePreparation(
       ...(variant ? { variantId: variant.id } : {}),
       sellerId: preparation.sellerId,
       month: groupPackingMonth(preparation, group),
+      ...(group.sharedProductId
+        ? {
+            sharedProductId: group.sharedProductId,
+            sharedStoreId: group.sharedStoreId,
+            ...(variant ? { sharedVariantId: variant.sharedVariantId } : {}),
+          }
+        : {}),
       ...(snapshot
         ? {
             ownerSnapshot: {
@@ -1516,15 +1856,24 @@ export function allocatePreparation(
           }
         : {}),
     }
+    if (group.sharedProductId)
+      reservation.members = [
+        {
+          orderId: reservation.orderId,
+          groupId: reservation.groupId,
+          ...(variant ? { variantId: variant.id } : {}),
+          ...(reservation.ownerSnapshot
+            ? { ownerSnapshot: reservation.ownerSnapshot }
+            : {}),
+        },
+      ]
     const key = JSON.stringify([
       reservation.accountId,
       reservation.kind,
       reservation.code,
     ])
     const existing = issuedByCode.get(key)
-    if (existing && !sameOwner(existing, reservation))
-      throw new CodeConflictError(existing, reservation)
-    issuedByCode.set(key, existing || reservation)
+    issuedByCode.set(key, mergeCodeOwners(existing, reservation))
     state.issuedCodes.push(reservation)
   }
   const claimGroup = (allocation, number) => {
@@ -1596,6 +1945,25 @@ export function validatePreparationReservations(preparation, state) {
     JSON.stringify(allocated.allocations) !== JSON.stringify(state.allocations)
   )
     throw new Error('Preparation is missing issued code reservations')
+  for (const reservation of allocated.issuedCodes) {
+    const existing = state.issuedCodes.find(
+      (entry) =>
+        entry.accountId === reservation.accountId &&
+        entry.kind === reservation.kind &&
+        entry.code === reservation.code
+    )
+    if (
+      !existing ||
+      !sameCodeOwner(existing, reservation) ||
+      codeReservationMembers(reservation).some(
+        (member) =>
+          member.orderId === preparation.orderId &&
+          member.accountId === preparation.accountId &&
+          !codeReservationIncludes(existing, member)
+      )
+    )
+      throw new Error('Preparation is missing issued code reservations')
+  }
 }
 
 /** Rebuild ownership from current assignments. Checkpoints never reserve codes. */
@@ -1655,6 +2023,12 @@ export function activePackingState(
         groupId: group.id,
         sellerId: preparation.sellerId,
         month,
+        ...(group.sharedProductId
+          ? {
+              sharedProductId: group.sharedProductId,
+              sharedStoreId: group.sharedStoreId,
+            }
+          : {}),
       }
       const entries = [
         { ...owner, kind: 'base', code: group.baseCode },
@@ -1665,12 +2039,24 @@ export function activePackingState(
             kind: 'barcode',
             code: barcodeValue(group, variant),
             variantId: variant.id,
+            ...(variant.sharedVariantId
+              ? { sharedVariantId: variant.sharedVariantId }
+              : {}),
           })),
       ]
       for (const entry of entries) {
+        if (group.sharedProductId)
+          entry.members = [
+            {
+              orderId: entry.orderId,
+              groupId: entry.groupId,
+              ...(entry.variantId ? { variantId: entry.variantId } : {}),
+            },
+          ]
         const previous = evidence
           .get(JSON.stringify([entry.accountId, entry.kind, entry.code]))
-          ?.find((value) => value.ownerSnapshot && sameOwner(value, entry))
+          ?.flatMap(codeReservationMembers)
+          .find((value) => value.ownerSnapshot && sameOwner(value, entry))
         const variant = group.variants.find(
           (value) => value.id === entry.variantId
         )
@@ -1683,9 +2069,11 @@ export function activePackingState(
           snapshot &&
           snapshot.entryIds.length === entryIds.length &&
           snapshot.entryIds.every((id) => entryIds.includes(id))
-        current.push(
-          sameMembers ? { ...entry, ownerSnapshot: snapshot } : entry
-        )
+        if (sameMembers) {
+          entry.ownerSnapshot = snapshot
+          if (entry.members) entry.members[0].ownerSnapshot = snapshot
+        }
+        current.push(entry)
       }
     }
   }

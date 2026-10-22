@@ -5,6 +5,7 @@ import {
   normalizeLabelLayout,
   normalizeMarkLayout,
 } from './print-layout.js'
+import { printLanguage } from './print-language.js'
 
 export const PRINT_KEYS = Object.freeze({
   labels: '1688-print-labels',
@@ -56,16 +57,45 @@ function cleanRef(ref) {
     orderId: ref.orderId,
     groupId: ref.groupId,
     variantId: text(ref.variantId),
+    ...(Array.isArray(ref.entryIds) &&
+    ref.entryIds.length &&
+    ref.entryIds.length <= 10000 &&
+    ref.entryIds.every((entryId) => text(entryId))
+      ? { entryIds: [...new Set(ref.entryIds)] }
+      : {}),
+    ...(Array.isArray(ref.cartonBatchIds) &&
+    ref.cartonBatchIds.length &&
+    ref.cartonBatchIds.length <= 10000 &&
+    ref.cartonBatchIds.every(
+      (id) => typeof id === 'string' && id && id.length <= 512
+    )
+      ? { cartonBatchIds: [...new Set(ref.cartonBatchIds)] }
+      : {}),
   }
 }
 export const refKey = (ref) =>
   ref ? `${ref.orderId}/${ref.groupId}/${ref.variantId ?? ''}` : ''
 
+function cleanRefs(value) {
+  if (
+    !Array.isArray(value) ||
+    !value.length ||
+    value.length > RECENT_PRODUCT_LIMIT
+  )
+    return undefined
+  const refs = value.map(cleanRef)
+  if (refs.some((ref) => !ref)) return undefined
+  return [...new Map(refs.map((ref) => [refKey(ref), ref])).values()]
+}
+
 function cleanJob(input) {
   if (!input || !['labels', 'marks'].includes(input.kind)) return null
   if (
     !Array.isArray(input.products) ||
-    input.products.length > RECENT_PRODUCT_LIMIT
+    input.products.length > RECENT_PRODUCT_LIMIT ||
+    input.products.some(
+      (product) => product?.refs !== undefined && !cleanRefs(product.refs)
+    )
   )
     return null
   const products = Array.isArray(input.products)
@@ -74,6 +104,7 @@ function cleanJob(input) {
         .map((product) => ({
           code: product.code,
           ...(cleanRef(product.ref) ? { ref: cleanRef(product.ref) } : {}),
+          ...(cleanRefs(product.refs) ? { refs: cleanRefs(product.refs) } : {}),
           name:
             typeof product.name === 'string' ? product.name.slice(0, 120) : '',
           quantity: Math.max(0, Math.floor(Number(product.quantity)) || 0),
@@ -89,6 +120,7 @@ function cleanJob(input) {
   return {
     id: String(input.id || `${input.kind}-${date.getTime()}`).slice(0, 80),
     kind: input.kind,
+    language: printLanguage(input.language),
     date: Number.isNaN(date.getTime())
       ? new Date(0).toISOString()
       : date.toISOString(),
@@ -204,13 +236,24 @@ export function createPrintStore(storage = safeStorage()) {
  * job's references (each with its `ref`); quantities and caps come from the job.
  */
 export function restoreJob(job, current) {
-  const byRef = new Map(current.map((item) => [refKey(item.ref), item]))
+  const byRef = new Map(
+    current.flatMap((item) =>
+      (item.refs || (item.ref ? [item.ref] : [])).map((ref) => [
+        refKey(ref),
+        item,
+      ])
+    )
+  )
   const items = new Map()
   const missing = []
   const changed = []
   for (const product of job.products) {
-    const item = product.ref ? byRef.get(refKey(product.ref)) : undefined
-    if (!item) {
+    const refs = product.refs || (product.ref ? [product.ref] : [])
+    const matches = refs.map((ref) => byRef.get(refKey(ref)))
+    const item = matches[0]
+    // A historic shared quantity cannot be assigned to a surviving alias or
+    // split across newly unlinked codes without another quantity review.
+    if (!item || matches.some((match) => !match || match.key !== item.key)) {
       missing.push(product)
       continue
     }

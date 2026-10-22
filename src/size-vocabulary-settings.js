@@ -10,6 +10,7 @@ import {
 } from './i18n.js'
 import { decorateIcon } from './icons.js'
 import { preparationHelp } from './preparation-help.js'
+import { createVocabularyTable } from './vocabulary-table.js'
 import { element as el } from './ui.js'
 import { attachSearchSuggestions, searchMatcher } from './search-assistance.js'
 import {
@@ -22,8 +23,7 @@ export function mountSizeVocabulary(host, value) {
   value.sizeVocabulary ??= DEFAULT_SIZE_VOCABULARY.map((entry) => ({
     ...entry,
   }))
-  const pageSize = 12,
-    errors = new Map(),
+  const errors = new Map(),
     controls = new Map(),
     toolbar = el('div', undefined, 'vocabulary-toolbar'),
     searchLabel = el(
@@ -35,9 +35,8 @@ export function mountSizeVocabulary(host, value) {
     scroll = el('div', undefined, 'vocabulary-scroll'),
     table = el('table', undefined, 'vocabulary-table size-vocabulary-table'),
     body = el('tbody'),
-    navigation = el('div', undefined, 'vocabulary-navigation'),
+    navigation = el('div', undefined, 'vocabulary-status'),
     count = el('span', undefined, 'packing-help')
-  let page = 0
   search.type = 'search'
   search.id = `size-search-${crypto.randomUUID()}`
   searchLabel.htmlFor = search.id
@@ -46,8 +45,7 @@ export function mountSizeVocabulary(host, value) {
   searchLabel.append(search)
   preparationHelp(search, uiMessage('Filter by a size name or barcode ending.'))
   search.addEventListener('input', () => {
-    page = 0
-    render()
+    render(true)
   })
 
   function action(label, name, help, handler, iconOnly = false) {
@@ -57,41 +55,20 @@ export function mountSizeVocabulary(host, value) {
     preparationHelp(button, help)
     return button
   }
-  const previous = action(
-      uiMessage('Previous size rules'),
-      'previous',
-      'Previous page of size rules.',
-      () => {
-        page--
-        render()
-      },
-      true
-    ),
-    next = action(
-      uiMessage('Next size rules'),
-      'next',
-      'Next page of size rules.',
-      () => {
-        page++
-        render()
-      },
-      true
-    ),
-    add = action(
-      uiMessage('Add size rule'),
-      'plus',
-      'Add size names and their shared barcode ending.',
-      () => {
-        if (value.sizeVocabulary.length >= 500) return
-        value.sizeVocabulary.unshift({ match: '', suffix: '' })
-        search.value = ''
-        page = 0
-        render()
-        body.querySelector('input')?.focus()
-      }
-    )
+  const add = action(
+    uiMessage('Add size rule'),
+    'plus',
+    'Add size names and their shared barcode ending.',
+    () => {
+      if (value.sizeVocabulary.length >= 500) return
+      value.sizeVocabulary.unshift({ match: '', suffix: '' })
+      search.value = ''
+      render(true)
+      virtual.reveal(value.sizeVocabulary[0])?.querySelector('input')?.focus()
+    }
+  )
   count.setAttribute('role', 'status')
-  navigation.append(previous, count, next)
+  navigation.append(count)
   toolbar.append(searchLabel, add)
   scroll.tabIndex = 0
   scroll.setAttribute('role', 'region')
@@ -208,14 +185,16 @@ export function mountSizeVocabulary(host, value) {
         'trash',
         'Remove this size rule when you save Settings.',
         () => {
-          const index = value.sizeVocabulary.indexOf(entry)
+          const matching = matchingRules(),
+            index = value.sizeVocabulary.indexOf(entry),
+            position = matching.indexOf(entry)
           if (index < 0) return
           value.sizeVocabulary.splice(index, 1)
           errors.delete(entry)
           render()
-          const remaining = [...body.querySelectorAll('button')]
-          remaining[Math.min(remaining.length - 1, index % pageSize)]?.focus()
-          if (!remaining.length) add.focus()
+          const next = matching[position + 1] || matching[position - 1]
+          if (next) virtual.reveal(next)?.querySelector('button')?.focus()
+          else add.focus()
         },
         true
       )
@@ -224,41 +203,27 @@ export function mountSizeVocabulary(host, value) {
     row.addEventListener('focusout', (event) => {
       if (!row.contains(event.relatedTarget)) validateRow(entry)
     })
-    body.append(row)
     controls.set(entry, { inputs, error })
     rowError(entry, errors.get(entry))
+    return row
   }
-  function render() {
-    const matches = searchMatcher(search.value),
-      matching = value.sizeVocabulary.filter((entry) =>
-        matches([entry.match, entry.suffix])
-      ),
-      pages = Math.max(1, Math.ceil(matching.length / pageSize))
-    page = Math.max(0, Math.min(page, pages - 1))
-    controls.clear()
-    body.replaceChildren()
-    matching.slice(page * pageSize, (page + 1) * pageSize).forEach(renderRow)
-    if (!matching.length) {
-      const row = el('tr'),
-        cell = el(
-          'td',
-          uiMessage('No matching size rules.'),
-          'vocabulary-empty'
-        )
-      cell.colSpan = 3
-      row.append(cell)
-      body.append(row)
-    }
-    bindText(
-      count,
-      uiMessage('{0}–{1} of {2} rules', {
-        0: matching.length ? page * pageSize + 1 : 0,
-        1: Math.min((page + 1) * pageSize, matching.length),
-        2: matching.length,
-      })
+  const virtual = createVocabularyTable({
+    scroller: scroll,
+    body,
+    render: renderRow,
+    remove: (entry) => controls.delete(entry),
+    emptyMessage: uiMessage('No matching size rules.'),
+  })
+  function matchingRules() {
+    const matches = searchMatcher(search.value)
+    return value.sizeVocabulary.filter((entry) =>
+      matches([entry.match, entry.suffix])
     )
-    previous.disabled = page === 0
-    next.disabled = page + 1 === pages
+  }
+  function render(reset = false) {
+    const matching = matchingRules()
+    virtual.setItems(matching, { reset })
+    bindText(count, uiMessage('{0} rules', { 0: matching.length }))
     add.disabled = value.sizeVocabulary.length >= 500
   }
   host.replaceChildren(
@@ -282,11 +247,18 @@ export function mountSizeVocabulary(host, value) {
     ])
   )
   return {
+    destroy: () => virtual.destroy(),
+    revealError() {
+      const entry = value.sizeVocabulary.find((entry) => errors.has(entry))
+      return entry
+        ? virtual.reveal(entry)?.querySelector('[aria-invalid="true"]')
+        : undefined
+    },
     validate() {
       try {
         return validateSizeVocabulary(value.sizeVocabulary)
       } catch (error) {
-        // Locate the first failing prefix so aliases duplicated across pages
+        // Locate the first failing prefix so offscreen duplicate aliases
         // are revealed too; the shared validator remains the single contract.
         let index = 0
         for (; index < value.sizeVocabulary.length; index++) {
@@ -300,8 +272,8 @@ export function mountSizeVocabulary(host, value) {
         if (entry) {
           errors.set(entry, error.message)
           search.value = ''
-          page = Math.floor(index / pageSize)
-          render()
+          render(true)
+          virtual.reveal(entry)
           controls.get(entry)?.inputs[0].focus()
         }
         throw error

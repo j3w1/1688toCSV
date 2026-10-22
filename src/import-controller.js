@@ -89,10 +89,9 @@ export function createImportController({
     job.state = 'paused'
     job.error = reason
     // A sign-in or verification step is shown once in the workspace with a
-    // button to open the tab; the importer never switches tabs by itself.
+    // button to open the tab when the seller requires user interaction.
     job.attention =
-      attention &&
-      (Number.isInteger(job.workerTabId) || attention === 'visible-reader')
+      attention && Number.isInteger(job.workerTabId)
         ? {
             kind: attention,
             tabId: Number.isInteger(job.workerTabId) ? job.workerTabId : null,
@@ -223,6 +222,7 @@ export function createImportController({
       if (order.state === 'failed')
         Object.assign(order, { state: 'pending', error: '' })
     job.state = 'running'
+    job.readerReopens = 0
     delete job.dismissedAt
     job.error = ''
     job.attention = null
@@ -313,6 +313,18 @@ export function createImportController({
     return null
   }
 
+  async function reopenReader(job) {
+    if ((job.readerReopens || 0) >= 2)
+      throw new Error(
+        'The browser repeatedly closed the import tab. Resume to try again.'
+      )
+    job.readerReopens = (job.readerReopens || 0) + 1
+    job.workerTabId = null
+    job.detailNavigationPending = false
+    await write(job)
+    return 'continue'
+  }
+
   async function details(job) {
     const order = job.orders.find((item) => item.state === 'pending')
     if (!order) {
@@ -330,16 +342,14 @@ export function createImportController({
       job.currentRows = null
       job.detailError = ''
       await write(job)
-      const reader = await browser.openDetailTab(order.sourceUrl, job.id, {
-        allowVisible: job.allowVisibleReader === true,
-      })
+      const reader = await browser.openDetailTab(order.sourceUrl, job.id)
       job.workerTabId = typeof reader === 'object' ? reader.id : reader
       job.visibleReader = typeof reader === 'object' && reader.visible === true
       await write(job)
       return 'wait'
     }
     const tab = await browser.getDetailTab(job.workerTabId, job.id)
-    if (!tab) throw new Error('The import tab was closed. Resume to reopen it.')
+    if (!tab) return reopenReader(job)
     if (
       !job.detailNavigationPending &&
       job.currentOrderId &&
@@ -369,7 +379,16 @@ export function createImportController({
         job.detailStage = 'loading'
         await write(job)
       }
-      await browser.navigateDetailTab(job.workerTabId, order.sourceUrl, job.id)
+      try {
+        await browser.navigateDetailTab(
+          job.workerTabId,
+          order.sourceUrl,
+          job.id
+        )
+      } catch (error) {
+        if (error.readerMissing) return reopenReader(job)
+        throw error
+      }
       job.detailNavigationPending = false
       await write(job)
       return 'wait'
@@ -413,6 +432,7 @@ export function createImportController({
       })
       saved = true
       order.state = 'done'
+      job.readerReopens = 0
       order.error = ''
       order.savedRows = snapshot.items.length
       job.detailError = ''
@@ -499,15 +519,6 @@ export function createImportController({
     }
   }
 
-  /** The owner allowed a visible reader for this import; continue it. */
-  async function allowVisibleReader(jobId) {
-    const job = await repository.getJob(jobId)
-    if (!job) throw new Error('That import no longer exists.')
-    job.allowVisibleReader = true
-    await write(job)
-    return resume(jobId)
-  }
-
   return {
     start,
     refresh,
@@ -517,6 +528,5 @@ export function createImportController({
     tick,
     startup,
     removedTab,
-    allowVisibleReader,
   }
 }

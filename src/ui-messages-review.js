@@ -1,4 +1,21 @@
 export const REVIEW_MESSAGES = {
+  "Edit either product's codes. Apply saves both corrections together.": {
+    zh: '可修改任一商品的货号。点击应用后将一并保存双方的修正。',
+    es: 'Puedes editar los códigos de ambos productos. Aplicar guarda las dos correcciones juntas.',
+  },
+  '{0} unchanged': { zh: '{0} 项未更改', es: '{0} sin cambios' },
+  'Enter size endings in Size code; use model/color letters here.': {
+    zh: '请在尺码代码中填写尺码后缀；此处填写款式或颜色字母。',
+    es: 'Escribe las tallas en Código de talla; aquí van las letras de modelo/color.',
+  },
+  'Enter model/color letters in Variant code; use a size code here.': {
+    zh: '请在款式代码中填写款式或颜色字母；此处填写尺码代码。',
+    es: 'Escribe las letras de modelo/color en Código de variante; aquí va la talla.',
+  },
+  'Restore saved codes on both sides. Keep names, materials and other edits.': {
+    zh: '恢复双方已保存的货号，保留名称、材质及其他修改。',
+    es: 'Recupera los códigos guardados de ambos productos. Conserva nombres, materiales y otros cambios.',
+  },
   'Cancel removal': { zh: '取消移除', es: 'Cancelar eliminación' },
   'Removing these products would restore a code now assigned elsewhere. Choose a free code for the restored product, then apply to finish removing it from this packing. Cancel keeps the current packing unchanged.':
     {

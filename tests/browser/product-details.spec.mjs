@@ -1,7 +1,10 @@
 import { test, expect } from './extension-fixture.mjs'
 import { createDemoRecords } from '../../preview/library-fixture.js'
 
-async function workspace(extension, { longDescription = false } = {}) {
+async function workspace(
+  extension,
+  { longDescription = false, cartonDetails } = {}
+) {
   const [record] = await extension.inspector.evaluate(
     `(${createDemoRecords.toString()})(document)`
   )
@@ -10,6 +13,8 @@ async function workspace(extension, { longDescription = false } = {}) {
   record.snapshot.sellerShopOrigin =
     'https://synthetic-product-details.1688.com'
   const [structured, legacy, minimal] = record.snapshot.items
+  if (cartonDetails)
+    record.cartonDetails = { [structured.entryId]: cartonDetails }
   structured.title = '合成规格测试玻璃花瓶'
   structured.productNumber = 'ABC-42'
   structured.skuProperties = [
@@ -145,6 +150,9 @@ test('original product details copy exact source values and description and link
     exact: true,
   })
   await expect(details).toBeVisible()
+  await expect(details.locator('.product-details-identity')).not.toContainText(
+    record.snapshot.orderId
+  )
   const selected = await row.getAttribute('aria-selected')
   await expectCopied(
     page,
@@ -333,4 +341,264 @@ test('translated product details never rewrite saved label names or original ord
   const after = await backup(extension)
   expect(after.orders).toEqual(before.orders)
   expect(after.preparations).toEqual(before.preparations)
+})
+
+test('original product and carton panels stay compact, always visible and usable in all three languages and narrow layouts', async ({
+  extension,
+}) => {
+  test.setTimeout(60_000)
+  const { page } = await workspace(extension)
+  const before = await backup(extension)
+  for (const [language, heading, source] of [
+    ['en', 'Carton details', 'Volume not set'],
+    ['es', 'Datos de la caja', 'Volumen sin definir'],
+    ['zh', '纸箱信息', '未填写体积'],
+  ]) {
+    await page.locator(`#language-toggle [data-language=${language}]`).click()
+    await page
+      .locator('#sheet-body tr[data-selection-key]')
+      .first()
+      .press('Enter')
+    const details = page.locator('.product-details-dialog'),
+      carton = details.locator('.product-carton-details')
+    await expect(
+      carton.getByRole('heading', { name: heading, exact: true })
+    ).toBeVisible()
+    await expect(details.locator('details, summary')).toHaveCount(0)
+    await expect(carton.locator('input')).toHaveCount(5)
+    await expect(carton.locator('input[name=cbm]')).toHaveCount(0)
+    await expect(carton.locator('.product-carton-volume-source')).toHaveText(
+      source
+    )
+    await carton.locator('input[name=boxes]').focus()
+    for (const theme of ['light', 'dark']) {
+      await page.evaluate((theme) => {
+        document.querySelector('meta[name="color-scheme"]').content = theme
+      }, theme)
+      for (const width of [1280, 390]) {
+        await page.setViewportSize({ width, height: 960 })
+        await page.mouse.move(1, 1)
+        const layout = await details.evaluate((dialog) => {
+          const panel = dialog.querySelector('.product-carton-details'),
+            box = panel.getBoundingClientRect(),
+            summary = dialog
+              .querySelector('.product-details-body')
+              .getBoundingClientRect(),
+            photo = dialog
+              .querySelector('.product-photo-button')
+              .getBoundingClientRect(),
+            dimensions = [
+              ...panel.querySelectorAll(
+                '.product-carton-dimension-fields input'
+              ),
+            ].map((input) => input.getBoundingClientRect()),
+            save = panel.querySelector('[type=submit]').getBoundingClientRect()
+          return {
+            overflow:
+              dialog.scrollWidth > dialog.clientWidth ||
+              panel.scrollWidth > panel.clientWidth,
+            fullWidth: Math.abs(box.width - summary.width),
+            photo: { width: photo.width, height: photo.height },
+            dimensions: dimensions.map(({ left, top, right }) => ({
+              left,
+              top,
+              right,
+            })),
+            box: { left: box.left, right: box.right },
+            save: { left: save.left, right: save.right },
+            controls: [...panel.querySelectorAll('input, button')].map(
+              (node) => {
+                const rect = node.getBoundingClientRect()
+                return { left: rect.left, right: rect.right }
+              }
+            ),
+            inputBorders: [...panel.querySelectorAll('input')].map(
+              (input) => getComputedStyle(input).borderTopWidth
+            ),
+          }
+        })
+        expect(layout.overflow).toBe(false)
+        expect(layout.fullWidth).toBeLessThanOrEqual(1)
+        expect(layout.photo.width).toBeLessThanOrEqual(96)
+        expect(layout.photo.height).toBe(layout.photo.width)
+        expect(layout.inputBorders).toEqual(Array(5).fill('0px'))
+        expect(
+          Math.max(...layout.dimensions.map(({ top }) => top)) -
+            Math.min(...layout.dimensions.map(({ top }) => top))
+        ).toBeLessThanOrEqual(1)
+        for (const control of [...layout.controls, layout.save]) {
+          expect(control.left).toBeGreaterThanOrEqual(layout.box.left)
+          expect(control.right).toBeLessThanOrEqual(layout.box.right)
+        }
+        if (language === 'en' && width === 1280 && theme === 'dark')
+          await details.screenshot({
+            path: 'work/carton-details-redesign-wide.png',
+          })
+        if (language === 'es' && width === 390 && theme === 'light')
+          await details.screenshot({
+            path: 'work/carton-details-redesign-narrow.png',
+          })
+      }
+    }
+    await details.locator('.product-details-heading > button').click()
+    await expect(details).toHaveCount(0)
+  }
+  expect((await backup(extension)).orders).toEqual(before.orders)
+})
+
+test('carton details validate XYZ, retain read-only supplied volume and recover pending and failed writes', async ({
+  extension,
+}) => {
+  const manual = '0.123456789123456789',
+    { page, record } = await workspace(extension, {
+      cartonDetails: { cbm: manual },
+    }),
+    entryId = record.snapshot.items[0].entryId,
+    before = await backup(extension)
+  await page
+    .locator('#sheet-body tr[data-selection-key]')
+    .first()
+    .press('Enter')
+  const details = page.locator('.product-details-dialog'),
+    carton = details.locator('.product-carton-details'),
+    input = (name) => carton.locator(`input[name=${name}]`),
+    save = carton.getByRole('button', {
+      name: 'Save carton details',
+      exact: true,
+    })
+  for (const name of ['len', 'wid', 'ht'])
+    await expect(input(name)).toHaveValue('')
+  await expect(input('cbm')).toHaveCount(0)
+  await expect(carton.locator('.product-carton-volume-value')).toHaveText(
+    manual
+  )
+  await expect(carton.locator('.product-carton-volume-source')).toHaveText(
+    'Supplied volume'
+  )
+  await expect(carton.locator('.product-carton-supplied')).toHaveText(
+    `Supplied volume: ${manual} m³ · read-only`
+  )
+  await carton
+    .getByRole('button', { name: 'Increase Cartons', exact: true })
+    .click()
+  await expect(input('boxes')).toHaveValue('1')
+  await carton
+    .getByRole('button', { name: 'Increase Cartons', exact: true })
+    .click()
+  await carton
+    .getByRole('button', { name: 'Decrease Cartons', exact: true })
+    .click()
+  await expect(input('boxes')).toHaveValue('1')
+  await input('kg').fill('0')
+  await save.click()
+  await expect(carton.locator('.product-carton-status')).toHaveText('Saved')
+  let saved = await backup(extension)
+  expect(saved.orders[0].cartonDetails[entryId]).toEqual({
+    boxes: '1',
+    kg: '0',
+    cbm: manual,
+  })
+  await input('len').fill('58.5')
+  await save.click()
+  await expect(input('wid')).toBeFocused()
+  expect(
+    await input('wid').evaluate((input) => input.validity.valueMissing)
+  ).toBe(true)
+  expect((await backup(extension)).orders).toEqual(saved.orders)
+  await input('wid').fill('35.2')
+  await input('ht').fill('0')
+  await save.click()
+  await expect(input('ht')).toBeFocused()
+  expect(await input('ht').evaluate((input) => input.validationMessage)).toBe(
+    'Carton dimensions must be greater than zero'
+  )
+  await page.evaluate(() => {
+    window.holdCartonSave = true
+    window.failCartonSave = true
+    window.cartonSaveStarted = false
+    const put = IDBObjectStore.prototype.put
+    IDBObjectStore.prototype.put = function (...args) {
+      const result = put.apply(this, args)
+      if (
+        this.name === 'orders' &&
+        args[0].cartonDetails &&
+        window.holdCartonSave
+      ) {
+        window.cartonSaveStarted = true
+        const store = this,
+          transaction = this.transaction
+        const keepAlive = () => {
+          if (!window.holdCartonSave) {
+            if (window.failCartonSave) transaction.abort()
+            return
+          }
+          const request = store.get([
+            args[0].snapshot.accountId,
+            args[0].snapshot.orderId,
+          ])
+          request.onsuccess = keepAlive
+        }
+        keepAlive()
+      }
+      return result
+    }
+  })
+  await input('ht').fill('47')
+  await save.click()
+  await expect
+    .poll(() => page.evaluate(() => window.cartonSaveStarted))
+    .toBe(true)
+  await expect(save).toBeDisabled()
+  await expect(details).toHaveAttribute('aria-busy', 'true')
+  await expect(carton.locator('.product-carton-volume-value')).toHaveText(
+    '0.0967824'
+  )
+  await expect(carton.locator('.product-carton-volume-source')).toHaveText(
+    'Calculated from dimensions'
+  )
+  await expect(carton.locator('.product-carton-supplied')).toHaveText(
+    `Supplied volume: ${manual} m³ · read-only`
+  )
+  for (const control of ['boxes', 'kg', 'len', 'wid', 'ht'])
+    await expect(input(control)).toBeEnabled()
+  await page.keyboard.press('Escape')
+  await expect(details).toBeVisible()
+  await page.evaluate(() => {
+    window.holdCartonSave = false
+  })
+  await expect(carton.locator('.product-carton-status')).toContainText(
+    'Your draft is still here.'
+  )
+  await expect(input('cbm')).toHaveCount(0)
+  await expect(carton.locator('.product-carton-volume-value')).toHaveText(
+    '0.0967824'
+  )
+  await expect(input('len')).toHaveValue('58.5')
+  await expect(input('ht')).toHaveValue('47')
+  await expect(save).toBeEnabled()
+  expect((await backup(extension)).orders).toEqual(saved.orders)
+  await save.click()
+  await expect(carton.locator('.product-carton-status')).toHaveText('Saved')
+  saved = await backup(extension)
+  expect(saved.orders[0].cartonDetails[entryId]).toEqual({
+    boxes: '1',
+    kg: '0',
+    cbm: manual,
+    len: '58.5',
+    wid: '35.2',
+    ht: '47',
+  })
+  expect(saved.orders[0].snapshot).toEqual(before.orders[0].snapshot)
+  for (const name of ['kg', 'len', 'wid', 'ht']) await input(name).fill('')
+  await expect(carton.locator('.product-carton-volume-value')).toHaveText(
+    manual
+  )
+  await expect(carton.locator('.product-carton-volume-source')).toHaveText(
+    'Supplied volume'
+  )
+  await expect(carton.locator('.product-carton-status')).toHaveText('Saved')
+  expect((await backup(extension)).orders[0].cartonDetails[entryId]).toEqual({
+    boxes: '1',
+    cbm: manual,
+  })
 })

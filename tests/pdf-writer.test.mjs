@@ -4,6 +4,22 @@ import { createPdf, rgbImage, pdfText } from '../src/pdf-writer.js'
 
 const latin1 = (bytes) => Buffer.from(bytes).toString('latin1')
 
+test('PDF metadata preserves Spanish accents and Chinese titles using UTF-16BE strings', () => {
+  for (const title of ['CE 标签', 'Calibración CE']) {
+    const pdf = createPdf({ title })
+    pdf.page()
+    const value = /\/Title <feff([0-9a-f]+)>/.exec(latin1(pdf.build()))?.[1]
+    assert.ok(value, title)
+    assert.equal(
+      value
+        .match(/.{4}/g)
+        .map((unit) => String.fromCharCode(Number.parseInt(unit, 16)))
+        .join(''),
+      title
+    )
+  }
+})
+
 test('an A4 PDF has exact page size, a valid cross-reference table and placed images', async () => {
   const pdf = createPdf({ title: 'CE labels (test)' })
   const image = await rgbImage({

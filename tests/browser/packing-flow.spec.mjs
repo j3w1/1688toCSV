@@ -5,7 +5,13 @@ import {
 import { test, expect } from './extension-fixture.mjs'
 import { createDemoRecords } from '../../preview/library-fixture.js'
 import { UI_MESSAGES } from '../../src/ui-messages.js'
+import { preparationColumns } from '../../src/preparation-clipboard.js'
 import { readFile } from 'node:fs/promises'
+import { readBackupFile } from '../../src/backup-file.js'
+import {
+  openOrganizing,
+  finishOrganizing,
+} from './packing-organize-helpers.mjs'
 
 const codeOwners = (codes) =>
   codes
@@ -432,7 +438,10 @@ test('chosen columns search, keyboard selection and paste order persist with tra
     .click()
   await expect(
     columns.locator('.preparation-column-groups input:checked')
-  ).toHaveCount(45)
+  ).toHaveCount(preparationColumns.length)
+  await expect(
+    columns.getByRole('checkbox', { name: 'Pcs/box', exact: true })
+  ).toBeChecked()
   expect(extension.unexpectedRequests).toEqual([])
 })
 
@@ -727,8 +736,10 @@ test('a released code is reusable and an active conflict identifies its owner be
     exact: true,
   })
   await expect(conflict).toContainText('CE26109998')
-  await expect(conflict).toContainText(
-    'is currently assigned to another product'
+  const owner = conflict.locator('.conflict-owner-card')
+  await expect(owner).toContainText('Current assignment')
+  await expect(owner.getByLabel('Product code', { exact: true })).toHaveValue(
+    'CE26109998'
   )
   await expect(conflict.getByAltText('Product photo')).toHaveCount(2)
   await expect(
@@ -777,8 +788,11 @@ test('keyboard group moves and pointer product moves persist and export in the d
   )
   const [jar, box] = first.groups
   const order = view.locator(`[data-packing-order="${first.orderId}"]`)
+  await openOrganizing(page)
   await order
-    .getByRole('button', { name: 'Move group 1; use Up or Down arrows' })
+    .locator(
+      `.packing-organize-group[data-group-id="${jar.id}"] .reorder-handle`
+    )
     .press('ArrowDown')
   await expect
     .poll(async () => {
@@ -788,6 +802,7 @@ test('keyboard group moves and pointer product moves persist and export in the d
       return saved.groups.map((group) => group.id)
     })
     .toEqual([box.id, jar.id])
+  await finishOrganizing(page)
   await expect
     .poll(() =>
       order
@@ -796,10 +811,13 @@ test('keyboard group moves and pointer product moves persist and export in the d
     )
     .toEqual([box.baseCode, jar.baseCode])
   const jarCard = order.locator(`[data-group-id="${jar.id}"]`)
-  const rows = jarCard.locator('.variants tbody tr')
-  const grip = rows.nth(1).getByRole('button', {
-    name: 'Move product 2; use Up or Down arrows',
-  })
+  await openOrganizing(page)
+  await order
+    .locator(`.packing-organize-group[data-group-id="${jar.id}"]`)
+    .getByRole('button', { name: 'Products', exact: true })
+    .click()
+  const rows = view.locator('.packing-organize-product')
+  const grip = rows.nth(1).locator('.reorder-handle')
   await grip.scrollIntoViewIfNeeded()
   const from = await grip.boundingBox()
   const to = await rows.first().boundingBox()
@@ -817,6 +835,7 @@ test('keyboard group moves and pointer product moves persist and export in the d
       return saved.groups[1].variants.map((variant) => variant.id)
     })
     .toEqual(jar.variants.map((variant) => variant.id).reverse())
+  await finishOrganizing(page)
   await expect(view.locator('.preparation-copy-scope')).toHaveText(
     '6 selected products · 2 orders'
   )
@@ -824,9 +843,19 @@ test('keyboard group moves and pointer product moves persist and export in the d
   const current = reordered.preparations.find(
     (entry) => entry.orderId === first.orderId
   )
+  // The first Organize move materializes missing global order positions once.
+  // Its sibling keeps all authoring data and is not rewritten by the product move.
+  expect(current.packingPosition).toBe(0)
   expect(
     reordered.preparations.find((entry) => entry.orderId === second.orderId)
-  ).toEqual(second)
+  ).toEqual({
+    ...second,
+    packingPosition: 1,
+    revision: second.revision + 1,
+    updatedAt: new Date(Date.parse(second.updatedAt) + 1).toISOString(),
+  })
+  expect(reordered.orders).toEqual(original.orders)
+  expect(reordered.cartonBatches).toEqual(original.cartonBatches)
   expect(codeOwners(reordered.issuedCodes)).toEqual(
     codeOwners(original.issuedCodes)
   )
@@ -888,6 +917,7 @@ test('keyboard group moves and pointer product moves persist and export in the d
           text: String(text),
           y: args[1],
           color: this.fillStyle,
+          font: this.font,
         })
       return fillText.call(this, text, ...args)
     }
@@ -902,18 +932,15 @@ test('keyboard group moves and pointer product moves persist and export in the d
   await expect(image).toHaveText('Copied')
   await expect(image).toHaveAttribute('data-icon', 'check')
   const imageRuns = await page.evaluate(() => packingImageRuns)
-  for (const code of [box.baseCode, jar.baseCode]) {
-    const runs = imageRuns.filter((run) => run.text === code)
-    expect(runs.length).toBeGreaterThan(0)
-    expect(runs.every((run) => run.color === '#1d4ed8')).toBe(true)
-  }
-  expect(imageRuns.find((run) => run.text === box.baseCode).y).toBeLessThan(
-    imageRuns.find((run) => run.text === jar.baseCode).y
+  const codeRuns = imageRuns.filter((run) => /^CE\d/.test(run.text))
+  // Each barcode is one complete white, bold payload in the displayed row order.
+  expect(codeRuns.map((run) => run.text)).toEqual(
+    expected.map(([, barcode]) => barcode)
   )
-  for (const group of second.groups) {
-    const runs = imageRuns.filter((run) => run.text === group.baseCode)
-    expect(runs.length).toBeGreaterThan(0)
-    expect(runs.every((run) => run.color !== '#1d4ed8')).toBe(true)
+  for (const [index, run] of codeRuns.entries()) {
+    expect(run.color).toMatch(/^#(?:fff|ffffff)$/i)
+    expect(run.font).toMatch(/^(?:700|bold) (?:1[2-7])px /)
+    if (index) expect(run.y).toBeGreaterThan(codeRuns[index - 1].y)
   }
   expect(
     await page.evaluate(async () => (await navigator.clipboard.read())[0].types)
@@ -994,9 +1021,12 @@ test('reset order and codes retains current names while previous packing restore
   await expect(view.locator('.preparation-save-status')).toHaveText(
     'Saved automatically'
   )
+  await openOrganizing(page)
   await view
-    .getByRole('button', { name: 'Move group 1; use Up or Down arrows' })
+    .locator('.packing-organize-group .reorder-handle')
+    .first()
     .press('ArrowDown')
+  await finishOrganizing(page)
   await expect(form).toBeEnabled()
   await expect.poll(productCodes).toEqual([movedCodes[1], 'CE26129998'])
   await expect
@@ -1074,14 +1104,16 @@ test('reset order and codes retains current names while previous packing restore
     .getByRole('button', { name: 'Back up packing', exact: true })
     .click()
   const download = await downloading
-  expect(download.suggestedFilename()).toBe('1688-packing-2026-10.json')
+  expect(download.suggestedFilename()).toBe('1688-packing-2026-10.json.gz')
   expect(await download.failure()).toBeNull()
   const files = await extension.inspector.evaluate(() =>
     chrome.downloads.search({})
   )
   expect(files).toHaveLength(1)
   expect(files[0].state).toBe('complete')
-  const exported = JSON.parse(await readFile(files[0].filename, 'utf8'))
+  const exported = await readBackupFile(
+    new Blob([await readFile(files[0].filename)])
+  )
   expect(exported.packingScope.months).toEqual(['2026-10'])
   expect(exported.preparations).toEqual(restored.preparations)
   // Scoped backups carry current ownership only, without redundant owner

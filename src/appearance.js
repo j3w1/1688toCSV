@@ -3,6 +3,13 @@ export const APPEARANCE_CACHE = '1688-workspace-appearance'
 export const WORKSPACE_COLOR_REVISION = 1
 export const THEME_PALETTES = [
   {
+    id: 'classic-brown',
+    name: 'Classic brown',
+    light: '#f6f3ee',
+    dark: '#171512',
+    accent: '#5c3700',
+  },
+  {
     id: 'warm',
     name: 'Warm orange',
     light: '#f6f3ee',
@@ -147,6 +154,21 @@ const dark = {
   'description-text': '#ddd2c5',
 }
 const variants = {
+  'classic-brown': {
+    light: {
+      accent: '#5c3700',
+      'accent-hover': '#482b00',
+      'accent-text': '#5c3700',
+      'control-accent': '#765023',
+      focus: '#765023',
+    },
+    dark: {
+      accent: '#dab47c',
+      'accent-hover': '#e9c99b',
+      'on-accent': '#291e11',
+      'control-accent': '#dab47c',
+    },
+  },
   1688: {
     light: {
       page: '#fff7f0',
@@ -323,6 +345,7 @@ export function appearanceTokens(input, mode) {
   const tokens = {
     ...(mode === 'dark' ? dark : light),
     ...variants[theme]?.[mode],
+    'excel-accent': variants[theme]?.light?.accent || light.accent,
   }
   for (const [key] of UI_LABEL_COLORS) {
     const offset = mode === 'dark' ? 2 : 0

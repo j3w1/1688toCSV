@@ -1,0 +1,180 @@
+.order-charges {
+  border-block-start: 1px solid var(--border);
+  padding-block: 8px;
+  min-inline-size: 0;
+}
+.order-charges-heading {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 5px 10px;
+  font-size: 11px;
+}
+.order-charges-heading > strong {
+  margin-inline-end: auto;
+}
+.order-charges-summary-total {
+  margin-inline-start: 0;
+  color: var(--danger-text, #bd2727);
+  font-variant-numeric: tabular-nums;
+}
+.order-charges-help,
+.order-charges-empty,
+.order-charges-status {
+  font-size: 11px;
+  line-height: 1.5;
+  color: var(--muted);
+  margin-block: 5px;
+}
+.order-charges fieldset {
+  border: 0;
+  margin: 0;
+  padding: 0;
+  min-inline-size: 0;
+}
+.order-charges-toolbar {
+  display: flex;
+  justify-content: flex-end;
+  gap: 6px;
+  background: transparent;
+  padding: 0;
+}
+.order-charges-toolbar button {
+  min-block-size: 25px;
+  padding: 2px 7px;
+  font-size: 11px;
+}
+.order-charges-inputs {
+  table-layout: fixed;
+  inline-size: 100%;
+  border-collapse: collapse;
+  font-size: 11px;
+}
+.order-charges-inputs th,
+.order-charges-inputs td {
+  text-align: start;
+  padding: 3px 4px;
+  border: 0;
+}
+.order-charges-inputs th:nth-child(2),
+.order-charges-inputs td:nth-child(2) {
+  inline-size: 98px;
+}
+.order-charges-inputs td:last-child {
+  inline-size: 30px;
+}
+.order-charges-inputs input {
+  box-sizing: border-box;
+  inline-size: 100%;
+  min-inline-size: 0;
+  block-size: 28px;
+  padding: 3px 6px;
+  font-size: 12px;
+}
+.order-charges .order-charges-inputs input {
+  min-block-size: 28px;
+  margin: 0;
+}
+.order-charges-inputs input[aria-invalid='true'] {
+  outline: 1px solid var(--danger-text, #bd2727);
+}
+.order-charges-inputs .icon-button {
+  inline-size: 26px;
+  block-size: 26px;
+  min-inline-size: 0;
+  min-block-size: 0;
+  padding: 4px;
+}
+.order-charges-error {
+  color: var(--danger-text, #bd2727);
+  font-size: 12px;
+}
+.order-charges-total {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: space-between;
+  gap: 5px 10px;
+  padding-block: 5px;
+  font-size: 12px;
+  border-block-end: 1px solid var(--border);
+}
+.order-charges-products {
+  display: grid;
+  gap: 4px;
+  max-block-size: 190px;
+  overflow: auto;
+  overscroll-behavior: contain;
+}
+.order-charge-product {
+  display: grid;
+  grid-template-columns: 38px minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 0;
+  font-size: 11px;
+  border-block-end: 1px solid var(--border);
+}
+.order-charge-product:not(:has(img)) {
+  grid-template-columns: minmax(0, 1fr) auto;
+}
+.order-charge-product img {
+  inline-size: 38px;
+  block-size: 38px;
+  object-fit: contain;
+  border-radius: 4px;
+  background: var(--field);
+}
+.order-charge-product-info {
+  min-inline-size: 0;
+}
+.order-charge-product-name {
+  display: block;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  margin-block-end: 3px;
+}
+.order-charge-product-cost {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 3px 8px;
+  color: var(--muted);
+}
+.order-charge-comparison {
+  display: inline-flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 5px;
+  font-variant-numeric: tabular-nums;
+}
+.order-charge-source,
+.order-charge-arrow {
+  color: var(--muted);
+}
+.order-charge-increase {
+  color: var(--danger-text, #bd2727);
+}
+.additional-cost-price {
+  display: block;
+  color: var(--danger-text, #bd2727);
+  font-size: 11px;
+}
+.order-charges-quick-reasons {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  margin-block: 4px;
+}
+.order-charges-quick-reasons button {
+  min-block-size: 21px;
+  padding: 1px 6px;
+  border-radius: 4px;
+  font-size: 10px;
+  color: var(--muted);
+}
+.order-charges-status:empty {
+  display: none;
+}
+.order-charges-preview[hidden] {
+  display: none;
+}

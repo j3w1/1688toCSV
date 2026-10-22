@@ -3,21 +3,22 @@ import {
   bindText,
   bindAttribute,
   isMessage,
-  t,
   getLocale,
   getLanguage,
   onLanguageChange,
   textMessage,
   attributeMessage,
+  inheritLanguageScope,
 } from './i18n.js'
 import { decorateIcon, icon } from './icons.js'
 import { preparationHelp } from './preparation-help.js'
+import { setCodeText, CODE_READING_HELP } from './code-display.js'
 import { orderDisplayReference } from './other-orders.js'
 
 /** Keep the full copyable order number and its source link together. */
 export function orderReference(
   orderId,
-  { className = '', snapshot, sourceLink = true } = {}
+  { className = '', sourceType, snapshot, sourceLink = true } = {}
 ) {
   const pair = element('span', undefined, 'order-reference-pair')
   pair.append(
@@ -26,8 +27,14 @@ export function orderReference(
       className,
     })
   )
-  if (!sourceLink || snapshot?.source === 'other') return pair
-  if (!/^[1-9]\d*$/.test(String(orderId))) return pair
+  if (
+    !sourceLink ||
+    snapshot?.source === 'other' ||
+    sourceType === 'spreadsheet' ||
+    snapshot?.sourceType === 'spreadsheet' ||
+    !/^[1-9]\d*$/.test(String(orderId))
+  )
+    return pair
   const link = element('a', undefined, 'order-source-link icon-button')
   link.href = `https://air.1688.com/app/ctf-page/trade-order-detail/index.html?orderId=${orderId}`
   link.target = '_blank'
@@ -48,7 +55,6 @@ export function copyTextButton(
   value,
   { label = 'Copy text', className = '' } = {}
 ) {
-  const sourceLabel = isMessage(label) ? label.source : label
   const button = element(
     'button',
     String(value ?? ''),
@@ -63,16 +69,7 @@ export function copyTextButton(
       1: value,
     })
   )
-  preparationHelp(
-    button,
-    uiMessage(
-      sourceLabel === 'Copy order number'
-        ? 'Click to copy the order number.'
-        : sourceLabel === 'Copy store name'
-          ? 'Click to copy the store name.'
-          : 'Click to copy this value.'
-    )
-  )
+  preparationHelp(button, uiMessage('Click to copy'))
   const status = element('span', undefined, 'copy-text-feedback')
   status.setAttribute('role', 'status')
   status.setAttribute('aria-live', 'polite')
@@ -155,10 +152,19 @@ export function enableLightDismiss(dialog) {
 
 export function element(tag, text, className) {
   const node = document.createElement(tag)
-  if (tag === 'dialog') enableLightDismiss(node)
+  if (tag === 'dialog') {
+    enableLightDismiss(node)
+    inheritLanguageScope(node)
+  }
   if (isMessage(text)) bindText(node, text)
   else if (text !== undefined) node.textContent = text
   if (className) node.className = className
+  if (
+    node.classList.contains('ce-code') &&
+    typeof text === 'string' &&
+    setCodeText(node, text)
+  )
+    preparationHelp(node, uiMessage(CODE_READING_HELP))
   return node
 }
 

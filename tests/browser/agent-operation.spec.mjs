@@ -1,4 +1,6 @@
-import { readFile } from 'node:fs/promises'
+import { readFile, writeFile } from 'node:fs/promises'
+import { basename } from 'node:path'
+import * as XLSX from 'xlsx'
 import { test, expect } from './extension-fixture.mjs'
 import { createDemoRecords } from '../../preview/library-fixture.js'
 
@@ -8,6 +10,26 @@ async function open(extension) {
   const records = await extension.inspector.evaluate(
     `(${createDemoRecords.toString()})(document)`
   )
+  for (const [index, record] of records.entries())
+    record.snapshot.sellerMemberLogin = `synthetic-agent-store-${index}`
+  // A saved composition may have no cached composed thumbnail, e.g. after restore.
+  records.find(
+    (record) => record.snapshot.orderId === '900000000000000003'
+  ).snapshot.items[0].photoEdits = {
+    0: {
+      tagScale: 2.75,
+      tags: [
+        {
+          id: 'synthetic-tag',
+          code: 'AX',
+          x: 0.5,
+          y: 0.5,
+          labelX: 0.8,
+          labelY: 0.15,
+        },
+      ],
+    },
+  }
   const restored = await extension.inspector.evaluate(
     (orders) =>
       chrome.runtime.sendMessage({
@@ -51,7 +73,7 @@ const status = (page) => page.locator('#workspace-status')
 
 test('an agent prepares, exports and prints through stable data-action controls', async ({
   extension,
-}) => {
+}, testInfo) => {
   const page = await open(extension)
   await expect(status(page)).toHaveAttribute('data-status', 'idle')
   // Older months start collapsed; the current month's two orders are listed.
@@ -103,9 +125,46 @@ test('an agent prepares, exports and prints through stable data-action controls'
     'open-print-menu',
   ])
     await expect(action(page, name)).toHaveCount(1)
+  // Physical carton totals belong to the batch, not the product rows.
+  await page.locator('.packing-group-cartons-edit').first().click()
+  const cartonsDialog = page.getByRole('dialog', {
+      name: 'Carton batches',
+      exact: true,
+    }),
+    cartonCount = cartonsDialog.locator('input[name="count"]')
+  await cartonsDialog
+    .getByRole('button', { name: 'Batch', exact: true })
+    .click()
+  await cartonCount.fill('1.5')
+  await cartonsDialog
+    .getByRole('button', { name: 'Apply carton contents', exact: true })
+    .click()
+  await expect(cartonCount).toHaveAttribute('aria-invalid', 'true')
+  await cartonCount.fill('6')
+  await expect(cartonCount).not.toHaveAttribute('aria-invalid')
+  await expect(
+    cartonsDialog.locator('input[name="cbm"], input[name="suppliedCbm"]')
+  ).toHaveCount(0)
+  for (const key of ['len', 'wid', 'ht'])
+    await cartonsDialog.locator(`input[name="${key}"]`).fill('50')
+  await cartonsDialog.locator('input[name="weight"]').fill('9.5')
+  await cartonsDialog
+    .getByRole('button', { name: 'Apply carton contents', exact: true })
+    .click()
+  await expect(cartonsDialog.locator('.carton-batch-status')).toHaveText(
+    'Saved'
+  )
+  await expect(cartonsDialog.locator('.carton-batch-summary')).toContainText(
+    '0.125 m³'
+  )
+  await cartonsDialog.getByLabel('Received boxes', { exact: true }).fill('6')
+  await cartonsDialog.getByLabel('Loaded boxes', { exact: true }).fill('0')
+  // Closing flushes confirmations even while their quiet autosave timer is pending.
+  await cartonsDialog.getByRole('button', { name: 'Done', exact: true }).click()
+  await expect(cartonsDialog).toHaveCount(0)
   // Export the whole packing list: .xlsx plus its JSON summary.
-  await action(page, 'open-copy-menu').click()
   await action(page, 'export-packing-list').click()
+  await page.locator('[data-action="download-packing-list"]').click()
   let files = await downloads(extension, 2)
   const xlsx = files.find((file) => file.filename.endsWith('.xlsx'))
   const summaryFile = files.find((file) => file.filename.endsWith('.json'))
@@ -114,8 +173,50 @@ test('an agent prepares, exports and prints through stable data-action controls'
   )
   expect(summaryFile.filename).toBe(xlsx.filename.replace(/\.xlsx$/, '.json'))
   const workbook = await readFile(xlsx.filename)
+  await writeFile(
+    testInfo.outputPath('packing-workbook-synthetic.xlsx'),
+    workbook
+  )
   expect(workbook.subarray(0, 2).toString('latin1')).toBe('PK')
   expect(workbook.toString('latin1')).toContain('xl/worksheets/sheet1.xml')
+  expect(workbook.toString('latin1')).toContain('xl/drawings/drawing1.xml')
+  expect(workbook.toString('latin1')).toContain('xl/media/')
+  const archive = XLSX.CFB.read(workbook, { type: 'buffer' })
+  const drawing = Buffer.from(
+    archive.FileIndex[
+      archive.FullPaths.findIndex((path) =>
+        path.endsWith('/xl/drawings/drawing1.xml')
+      )
+    ].content
+  ).toString('utf8')
+  expect(drawing).toContain('name="mark-')
+  const photoIndex = archive.FullPaths.findIndex((path) =>
+    path.endsWith('.jpg')
+  )
+  const raster = await page.evaluate(async (bytes) => {
+    const bitmap = await createImageBitmap(
+      new Blob([new Uint8Array(bytes)], { type: 'image/jpeg' })
+    )
+    const canvas = document.createElement('canvas')
+    canvas.width = bitmap.width
+    canvas.height = bitmap.height
+    const context = canvas.getContext('2d')
+    context.drawImage(bitmap, 0, 0)
+    const pixels = context.getImageData(0, 0, canvas.width, canvas.height).data
+    let black = 0
+    for (let index = 0; index < pixels.length; index += 4)
+      if (
+        pixels[index] < 40 &&
+        pixels[index + 1] < 40 &&
+        pixels[index + 2] < 40
+      )
+        black++
+    const dimensions = [bitmap.width, bitmap.height]
+    bitmap.close()
+    return { black, dimensions }
+  }, Array.from(archive.FileIndex[photoIndex].content))
+  expect(raster.black).toBeGreaterThan(500)
+  expect(raster.dimensions).toEqual([240, 240])
   const summary = JSON.parse(await readFile(summaryFile.filename, 'utf8'))
   expect(summary).toMatchObject({
     format: '1688-export-summary',
@@ -123,9 +224,69 @@ test('an agent prepares, exports and prints through stable data-action controls'
     totals: { orders: 1, products: 3 },
   })
   expect(summary.files).toEqual([
-    xlsx.filename.split('/').at(-1),
-    summaryFile.filename.split('/').at(-1),
+    basename(xlsx.filename),
+    basename(summaryFile.filename),
   ])
+  expect(summary.products[0]).toMatchObject({
+    packingMonth: '2026-10',
+  })
+  expect(summary.cartonBatches).toHaveLength(1)
+  expect(summary.cartonBatches[0]).toMatchObject({
+    count: 6,
+    received: 6,
+    loaded: 0,
+    weightBasis: 'carton',
+    weight: '9.5',
+    len: '50',
+    wid: '50',
+    ht: '50',
+    volumePerCarton: '0.125',
+    totalWeight: '57',
+    totalVolume: '0.75',
+    loadedWeight: '0',
+    loadedVolume: '0',
+    month: '2026-10',
+    includedInTotals: true,
+  })
+  for (const product of summary.products)
+    for (const field of [
+      'receivedBoxes',
+      'loadedBoxes',
+      'cartonWeight',
+      'cartonVolume',
+    ])
+      expect(product).not.toHaveProperty(field)
+  const exportedWorkbook = XLSX.read(workbook, { type: 'buffer' }),
+    table = XLSX.utils.sheet_to_json(exportedWorkbook.Sheets.Products, {
+      header: 1,
+      defval: '',
+    }),
+    cartonTable = XLSX.utils.sheet_to_json(exportedWorkbook.Sheets.Cartons, {
+      header: 1,
+      defval: '',
+    })
+  expect(exportedWorkbook.SheetNames).toEqual(['Products', 'Cartons'])
+  expect(table[4]).not.toContain('Loaded boxes')
+  expect(table[4].join(' ')).not.toMatch(/Payments|Deposits|Balance/)
+  const headings = table[4]
+  const exported = table.find(
+    (row) => row[headings.indexOf('Code')] === summary.products[0].code
+  )
+  expect(headings).not.toContain('Store')
+  expect(headings[headings.indexOf('Code') + 1]).toBe('Carton mark')
+  expect(exported[headings.indexOf('Cartons')]).toContain('C001')
+  const cartonHeadings = cartonTable[4],
+    exportedCartons = cartonTable.find((row) => row[0] === 'C001')
+  expect(exportedCartons[cartonHeadings.indexOf('Loaded')]).toBe(0)
+  expect(exportedCartons[cartonHeadings.indexOf('Received')]).toBe(6)
+  expect(exportedCartons[cartonHeadings.indexOf('Loaded kg')]).toBe(0)
+  expect(exportedCartons[cartonHeadings.indexOf('Loaded m³')]).toBe(0)
+  expect(
+    await page
+      .locator('.packing-order-sections')
+      .evaluate((node) => node.scrollWidth - node.clientWidth)
+  ).toBeLessThanOrEqual(1)
+  await page.screenshot({ path: 'work/packing-export-workspace.png' })
   expect(summary.orders).toEqual([
     { orderId: '900000000000000003', seller: expect.any(String) },
   ])
@@ -161,7 +322,7 @@ test('an agent prepares, exports and prints through stable data-action controls'
   ).toBe(true)
   // Exporting again saves a new pair under the names the summary and status
   // announce; the browser never renames it behind their back.
-  const base = (file) => file.filename.split('/').at(-1)
+  const base = (file) => basename(file.filename)
   await page.waitForTimeout(1100)
   await page.locator('[data-action="export-pdf"]').click()
   files = await downloads(extension, 6)

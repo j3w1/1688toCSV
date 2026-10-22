@@ -28,6 +28,7 @@
   overscroll-behavior: contain;
 }
 .image-copy-heading,
+.image-copy-heading-actions,
 .image-copy-navigation,
 .image-copy-actions {
   display: flex;
@@ -36,12 +37,16 @@
 }
 .image-copy-heading {
   justify-content: space-between;
+  flex-wrap: wrap;
+}
+.image-copy-heading-actions {
+  margin-inline-start: auto;
 }
 .image-copy-heading h2 {
   margin: 0;
   font-size: 20px;
 }
-.image-copy-heading > button {
+.image-copy-heading-actions > button {
   flex: none;
 }
 .image-copy-hint {
@@ -100,6 +105,9 @@
 .copy-preview.copy-preview-interactive {
   display: block;
   block-size: min(58dvh, 580px);
+}
+.copy-preview-interactive:not(.is-zoomed) {
+  overflow-x: hidden;
 }
 .copy-preview-interactive figure,
 .copy-preview-interactive figure.is-enlarged {

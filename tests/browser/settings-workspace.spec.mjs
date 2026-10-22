@@ -60,16 +60,91 @@ async function openSettings(extension) {
   await page.getByRole('button', { name: 'Settings', exact: true }).click()
   const dialog = page.getByRole('dialog', { name: 'Settings', exact: true })
   await expect(
-    dialog.getByRole('tab', { name: 'Labels', exact: true })
+    dialog.getByRole('tab', { name: 'Appearance', exact: true })
   ).toHaveAttribute('aria-selected', 'true')
+  await expect(dialog.getByRole('tab').first()).toHaveAccessibleName(
+    'Appearance'
+  )
   return { page, dialog }
 }
 
-test('Settings sections support the keyboard, preserve edits across searches and pages, and persist naming rules', async ({
+test('Settings keeps the same frame, navigation and save position across every section', async ({
+  extension,
+}) => {
+  const { page, dialog } = await openSettings(extension)
+  const tabs = dialog.getByRole('tab')
+  await expect(tabs).toHaveCount(8)
+  await expect(
+    dialog.getByRole('tab', { name: 'Tags', exact: true })
+  ).toBeVisible()
+  const footer = dialog.locator('.settings-footer')
+  for (const viewport of [
+    { width: 1440, height: 1000 },
+    { width: 1024, height: 650 },
+    { width: 1280, height: 420 },
+    { width: 390, height: 844 },
+    { width: 320, height: 568 },
+    { width: 740, height: 390 },
+  ]) {
+    await page.setViewportSize(viewport)
+    await tabs.first().click()
+    const frame = await dialog.boundingBox()
+    const navigation = await dialog.locator('.settings-tabs').boundingBox()
+    const actions = await footer.boundingBox()
+    expect(frame.y).toBeGreaterThanOrEqual(0)
+    expect(frame.y + frame.height).toBeLessThanOrEqual(viewport.height)
+    for (let index = 0; index < (await tabs.count()); index++) {
+      await tabs.nth(index).click()
+      await expect(tabs.nth(index)).toHaveAttribute('aria-selected', 'true')
+      const panel = dialog.locator('.settings-panel:not([hidden])')
+      await expect(panel).toHaveCount(1)
+      const checkFrame = async () => {
+        for (const [locator, baseline] of [
+          [dialog, frame],
+          [dialog.locator('.settings-tabs'), navigation],
+          [footer, actions],
+        ]) {
+          const current = await locator.boundingBox()
+          for (const key of ['x', 'y', 'width', 'height'])
+            expect(
+              Math.abs(current[key] - baseline[key]),
+              `${viewport.width}×${viewport.height}, section ${index}, ${key}`
+            ).toBeLessThanOrEqual(1)
+        }
+      }
+      await checkFrame()
+      const bounds = await panel.boundingBox()
+      expect(bounds.height).toBeGreaterThan(40)
+      expect(bounds.y + bounds.height).toBeLessThanOrEqual(actions.y + 1)
+      // Long sections scroll within the fixed frame, without moving actions.
+      await panel.evaluate((node) => node.scrollTo(0, node.scrollHeight))
+      await checkFrame()
+      expect(
+        await dialog.evaluate(
+          (node) => node.scrollHeight <= node.clientHeight + 1
+        )
+      ).toBe(true)
+      expect(
+        await page.evaluate(
+          () => document.documentElement.scrollWidth <= innerWidth
+        )
+      ).toBe(true)
+      await expect(
+        dialog.getByRole('button', { name: 'Save settings', exact: true })
+      ).toBeInViewport()
+      await expect(
+        dialog.getByRole('button', { name: 'Close settings', exact: true })
+      ).toBeInViewport()
+    }
+  }
+})
+
+test('Settings sections support the keyboard, preserve edits across searches, and persist naming rules without pagers', async ({
   extension,
 }) => {
   const { page, dialog } = await openSettings(extension)
   await page.setViewportSize({ width: 390, height: 844 })
+  await dialog.getByRole('tab', { name: 'Labels', exact: true }).click()
   await dialog.getByLabel('Website', { exact: true }).fill('labels.example')
   await dialog.getByRole('tab', { name: 'Labels', exact: true }).focus()
   await page.keyboard.press('ArrowRight')
@@ -83,8 +158,11 @@ test('Settings sections support the keyboard, preserve edits across searches and
     name: 'Product names',
     exact: true,
   })
-  const rows = names.locator('.vocabulary-table tbody tr')
-  await expect(rows).toHaveCount(12)
+  const rows = names.locator(
+    '.vocabulary-table tbody tr:not(.virtual-table-spacer)'
+  )
+  expect(await rows.count()).toBeGreaterThan(12)
+  expect(await rows.count()).toBeLessThanOrEqual(100)
   const firstMatch = await rows
     .first()
     .getByLabel('Title includes', { exact: true })
@@ -93,13 +171,9 @@ test('Settings sections support the keyboard, preserve edits across searches and
     .first()
     .getByLabel('Spanish name', { exact: true })
     .fill('NOMBRE DE PRUEBA')
-  await names.getByRole('button', { name: 'Next rules', exact: true }).click()
   await expect(
-    names.locator('.vocabulary-navigation [role=status]')
-  ).toContainText('13–24 of')
-  await names
-    .getByRole('button', { name: 'Previous rules', exact: true })
-    .click()
+    names.getByRole('button', { name: 'Next rules', exact: true })
+  ).toHaveCount(0)
   await expect(
     rows.first().getByLabel('Spanish name', { exact: true })
   ).toHaveValue('NOMBRE DE PRUEBA')
@@ -165,6 +239,7 @@ test('invalid label dimensions stay editable and do not replace saved settings',
   extension,
 }) => {
   const { page, dialog } = await openSettings(extension)
+  await dialog.getByRole('tab', { name: 'Labels', exact: true }).click()
   const width = dialog.getByLabel('Barcode width (mm)', { exact: true })
   await width.fill('1')
   await dialog
@@ -178,6 +253,7 @@ test('invalid label dimensions stay editable and do not replace saved settings',
     .getByRole('button', { name: 'Close settings', exact: true })
     .click()
   await page.getByRole('button', { name: 'Settings', exact: true }).click()
+  await dialog.getByRole('tab', { name: 'Labels', exact: true }).click()
   await expect(width).toHaveValue('40')
   const scale = dialog.getByRole('slider', {
     name: 'Barcode text scale (0.75–1.25)',

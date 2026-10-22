@@ -151,6 +151,8 @@ test('the error popup opens the existing visual code resolver and clears after s
   const { page, view } = await openPacking(extension)
   const groups = view.locator('.preparation-group')
   const code = groups.first().getByLabel('Product code', { exact: true })
+  const editedGroupId = await groups.first().getAttribute('data-group-id')
+  const before = await preparations(extension)
   const conflicting = await groups
     .nth(1)
     .getByLabel('Product code', { exact: true })
@@ -170,6 +172,15 @@ test('the error popup opens the existing visual code resolver and clears after s
     .getByRole('button', { name: 'Use next available code', exact: true })
     .click()
   await expect(resolver).toBeVisible()
+  const proposed = resolver.locator(
+    '.conflict-edit-card input[data-code-part="baseCode"]'
+  )
+  await expect(proposed).not.toHaveValue(conflicting)
+  const proposedCode = await proposed.inputValue()
+  await expect(
+    resolver.locator('.conflict-owner-card input[data-code-part="baseCode"]')
+  ).toHaveValue(conflicting)
+  expect(await preparations(extension)).toEqual(before)
   await resolver
     .getByRole('button', { name: 'Apply corrections', exact: true })
     .click()
@@ -179,6 +190,20 @@ test('the error popup opens the existing visual code resolver and clears after s
     'Saved automatically'
   )
   await expect(page.locator('.error-notice')).toHaveCount(0)
+  const after = await preparations(extension)
+  const saved = after.find((entry) => entry.orderId === before[0].orderId)
+  expect(
+    saved.groups.find((entry) => entry.id === editedGroupId).baseCode
+  ).toBe(proposedCode)
+  expect(
+    saved.groups
+      .filter((entry) => entry.id !== editedGroupId)
+      .map((entry) => entry.baseCode)
+  ).toEqual(
+    before[0].groups
+      .filter((entry) => entry.id !== editedGroupId)
+      .map((entry) => entry.baseCode)
+  )
 })
 
 test('operation errors are nonmodal and dismiss before leaving the current view', async ({

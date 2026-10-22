@@ -2,6 +2,11 @@ import test from 'node:test'
 import assert from 'node:assert/strict'
 import { parseHTML } from 'linkedom'
 import { preparationHelp } from '../src/preparation-help.js'
+import {
+  productContextHelp,
+  orderContextHelp,
+} from '../src/item-context-help.js'
+import { setLanguage } from '../src/i18n.js'
 
 function setup(t) {
   const { document, window } = parseHTML(
@@ -34,6 +39,29 @@ function setup(t) {
     configurable: true,
     writable: true,
   })
+  const frames = new Map()
+  let frameId = 0
+  for (const [name, value] of Object.entries({
+    requestAnimationFrame(callback) {
+      frames.set(++frameId, callback)
+      return frameId
+    },
+    cancelAnimationFrame(id) {
+      frames.delete(id)
+    },
+  })) {
+    const previous = Object.getOwnPropertyDescriptor(window, name)
+    Object.defineProperty(window, name, { configurable: true, value })
+    t.after(() => {
+      if (previous) Object.defineProperty(window, name, previous)
+      else delete window[name]
+    })
+  }
+  const frame = () => {
+    const callbacks = [...frames.values()]
+    frames.clear()
+    for (const callback of callbacks) callback(0)
+  }
   // LinkeDOM has no layout hit-testing; model the actual pointer target.
   let pointerHit = document.body
   document.elementFromPoint = () => pointerHit
@@ -73,7 +101,18 @@ function setup(t) {
   }
   const leave = (target, relatedTarget = document.body) =>
     event(target, 'pointerout', { relatedTarget })
-  return { document, button, input, event, focus, hint, hover, leave }
+  return {
+    document,
+    button,
+    input,
+    event,
+    focus,
+    hint,
+    hover,
+    leave,
+    frame,
+    frames,
+  }
 }
 
 test('pointer exit removes a helper immediately and cancels a queued reveal', (t) => {
@@ -171,4 +210,178 @@ test('a control covered before the hover delay cannot show its tooltip', (t) => 
   document.elementFromPoint = () => document.body
   t.mock.timers.tick(500)
   assert.equal(hint(), null)
+})
+
+test('pointer help opens at the latest delayed position and coalesces moves into one frame', (t) => {
+  const { button, event, hint, frame, frames, leave } = setup(t)
+  event(button, 'pointerover', {
+    pointerType: 'mouse',
+    clientX: 30,
+    clientY: 30,
+  })
+  event(button, 'pointermove', {
+    pointerType: 'mouse',
+    clientX: 120,
+    clientY: 100,
+  })
+  assert.equal(frames.size, 0)
+  t.mock.timers.tick(499)
+  assert.equal(hint(), null)
+  t.mock.timers.tick(1)
+  assert.equal(hint().style.left, '132px')
+  assert.equal(hint().style.top, '112px')
+  event(button, 'pointermove', { clientX: 200, clientY: 180 })
+  event(button, 'pointermove', { clientX: 240, clientY: 210 })
+  assert.equal(frames.size, 1)
+  assert.equal(hint().style.left, '132px')
+  frame()
+  assert.equal(hint().style.left, '252px')
+  assert.equal(hint().style.top, '222px')
+  event(button, 'pointermove', { clientX: 260, clientY: 220 })
+  leave(button)
+  assert.equal(frames.size, 0)
+  assert.equal(hint(), null)
+  event(button, 'pointermove', { clientX: 280, clientY: 230 })
+  assert.equal(frames.size, 0)
+})
+
+test('pointer help flips within the viewport while keyboard help remains anchored to its target', (t) => {
+  const { document, button, event, hint, frame, hover, leave, focus } = setup(t)
+  hover(button)
+  event(button, 'pointermove', { clientX: 795, clientY: 595 })
+  frame()
+  assert.equal(hint().style.left, '623px')
+  assert.equal(hint().style.top, '543px')
+  leave(button)
+  event(document, 'keydown', { key: 'Tab' })
+  focus(button)
+  assert.equal(hint().style.left, '20px')
+  assert.equal(hint().style.top, '68px')
+  hover(button)
+  frame()
+  assert.equal(hint().style.left, '52px')
+  leave(button)
+  frame()
+  assert.equal(hint().style.left, '20px')
+  assert.equal(hint().style.top, '68px')
+})
+
+test('rich-content reflow shares the pointer frame and old lifecycle callbacks stay canceled after reopening', (t) => {
+  const { button, event, hint, frame, frames, hover, leave } = setup(t)
+  const lifecycles = []
+  preparationHelp(button, 'Rich helper', {
+    renderContent(content, lifecycle) {
+      content.textContent = 'Rich helper'
+      lifecycles.push(lifecycle)
+    },
+  })
+  hover(button)
+  event(button, 'pointermove', { clientX: 180, clientY: 140 })
+  lifecycles[0].requestPosition()
+  assert.equal(frames.size, 1)
+  frame()
+  assert.equal(hint().style.left, '192px')
+  leave(button)
+  lifecycles[0].requestPosition()
+  assert.equal(frames.size, 0)
+  hover(button)
+  lifecycles[0].requestPosition()
+  assert.equal(frames.size, 0)
+  assert.equal(lifecycles[0].signal.aborted, true)
+  leave(button)
+})
+
+test('item context is lazy, literal and refreshed without changing selection or adding controls', async (t) => {
+  const { document, button, hint, hover, leave } = setup(t)
+  const item = {
+    entryId: '1',
+    orderId: '00123',
+    sellerName: 'Supplier',
+    barcode: 'CE26103102ALS',
+    description: '<script>source text</script>',
+    quantity: '12',
+    price: '1.25',
+    discount: '0.00',
+    thumbnail: 'test-photo',
+  }
+  const record = {
+    notes: 'Saved supplier note',
+    snapshot: { sellerName: 'Supplier' },
+  }
+  let read = 0,
+    loaded = 0,
+    resolvePhoto
+  productContextHelp(button, {
+    getProduct: () => {
+      read++
+      return item
+    },
+    getRecord: () => record,
+    loadImage: () => {
+      loaded++
+      return new Promise((resolve) => {
+        resolvePhoto = resolve
+      })
+    },
+  })
+  assert.equal(read, 0)
+  assert.equal(loaded, 0)
+  const controls = document.querySelectorAll('button,input').length
+  button.setAttribute('aria-selected', 'true')
+  hover(button)
+  assert.equal(read, 1)
+  assert.equal(loaded, 1)
+  assert.equal(hint().querySelector('code').textContent, item.barcode)
+  assert.equal(hint().querySelector('script'), null)
+  assert.match(hint().textContent, /<script>source text<\/script>/)
+  assert.match(hint().textContent, /15\.00 CNY/)
+  assert.match(hint().textContent, /Saved supplier note/)
+  assert.equal(document.querySelectorAll('button,input').length, controls)
+  assert.equal(button.getAttribute('aria-selected'), 'true')
+  const image = hint().querySelector('img')
+  leave(button)
+  resolvePhoto('data:image/png;base64,late')
+  await Promise.resolve()
+  assert.equal(hint(), null)
+  assert.equal(image.getAttribute('src'), null)
+  item.description = 'Updated source description'
+  hover(button)
+  assert.equal(read, 2)
+  assert.match(hint().textContent, /Updated source description/)
+  leave(button)
+})
+
+test('order context shows bounded products, source totals and notes with translated labels', (t) => {
+  const { button, hint, hover, leave } = setup(t)
+  const items = Array.from({ length: 5 }, (_, index) => ({
+    entryId: String(index + 1),
+    description: `Product ${index + 1}`,
+    quantity: '2',
+    price: '3.50',
+  }))
+  const record = {
+    notes: 'Do not fold cartons',
+    snapshot: {
+      orderId: '001234',
+      sellerName: 'Factory',
+      status: '交易成功',
+      items,
+      totals: { shipping: '0.00', payable: '35.00' },
+    },
+  }
+  orderContextHelp(button, { getRecord: () => record })
+  setLanguage('es', { persist: false })
+  try {
+    hover(button)
+    assert.equal(hint().querySelectorAll('.item-context-product').length, 3)
+    assert.match(hint().textContent, /Factory/)
+    assert.match(hint().textContent, /001234/)
+    assert.match(hint().textContent, /Total del pedido/)
+    assert.match(hint().textContent, /35\.00 CNY/)
+    assert.match(hint().textContent, /0\.00 CNY/)
+    assert.match(hint().textContent, /Do not fold cartons/)
+    leave(button)
+  } finally {
+    setLanguage('en', { persist: false })
+  }
 })
