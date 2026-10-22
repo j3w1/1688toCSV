@@ -6,6 +6,8 @@ import {
   validatePackingReportReview,
 } from '../src/packing-report-model.js'
 import { planPackingReportUpdate } from '../src/packing-report-matches.js'
+import { applyCartonUnitException } from '../src/carton-batches.js'
+import { physicalUnits } from '../src/inventory-model.js'
 
 const context = {
   accountId: 'local',
@@ -474,6 +476,19 @@ test('invalid manual structural payload cannot partly commit alongside valid par
     { len: '60', wid: '', ht: '' },
     { contents: [{ orderId: 'linked-order', entryId: 'A', quantity: '10' }] },
     { unresolvedContents: [{ entryIds: ['foreign'], quantity: '10' }] },
+    {
+      unitContents: {
+        0: [{ orderId: 'linked-order', entryId: 'A', quantity: '10' }],
+      },
+    },
+    {
+      unitContents: {
+        0: [{ orderId: '1688', entryId: 'foreign', quantity: '10' }],
+      },
+    },
+    { unitMeasurements: { 0: { weight: '-1' } } },
+    { packingBasis: 'invented' },
+    { contentsUnknown: 'yes' },
   ]) {
     const plan = planPackingReportUpdate({
       ...prior,
@@ -487,4 +502,124 @@ test('invalid manual structural payload cannot partly commit alongside valid par
     assert.equal(plan.commitPayload, undefined)
     assert(plan.issues.some((item) => item.code === 'invalidCommitPayload'))
   }
+})
+
+test('corrected report preserves actual indexed unit exceptions and reviews new source facts that intersect them', () => {
+  const header =
+    'Carton no\tArticle\tCarton count\tPieces per carton\tWeight per carton kg'
+  const prior = accepted(['SET\tC\t3\t10\t5'], { header })
+  assert.equal(prior.physicalFacts[0].packingBasis, 'uniform')
+  const modified = applyCartonUnitException({
+    batch: {
+      ...prior.physicalFacts[0],
+      storeId: 'synthetic-factory',
+      entitlementIndices: [2, 5, 9],
+    },
+    index: 5,
+    contents: [{ orderId: '1688', entryId: 'A', quantity: '9' }],
+  })
+  prior.physicalFacts = [modified]
+  const before = structuredClone(prior)
+  const interpretedReport = report(['SET\tC\t3\t10\t6'], {
+    header,
+    revision: 1,
+  })
+  const needsReview = planPackingReportUpdate({ ...prior, interpretedReport })
+  assert.equal(needsReview.status, 'review-required')
+  assert(
+    needsReview.unresolvedMatches.some(
+      (match) =>
+        match.batchId === 'box-a' &&
+        match.field === 'unitMeasurements' &&
+        match.reason === 'manual-conflict'
+    )
+  )
+  assert.equal(
+    needsReview.unresolvedMatches.some(
+      (match) => match.field === 'unitContents'
+    ),
+    false
+  )
+  const retained = planPackingReportUpdate({
+    ...prior,
+    interpretedReport,
+    explicitMatches: { manualConflicts: ['box-a:unitMeasurements'] },
+  })
+  assert.equal(retained.status, 'ready', JSON.stringify(retained))
+  const batch = retained.commitPayload.cartonBatches[0]
+  for (const field of [
+    'unitContents',
+    'unitMeasurements',
+    'entitlementIndices',
+    'sourceFacts',
+    'cartonHistory',
+    'packingBasis',
+    'contentsUnknown',
+  ])
+    assert.deepEqual(batch[field], modified[field], field)
+  assert.equal(batch.contents[0].quantity, '29')
+  const units = physicalUnits(batch)
+  assert.deepEqual(
+    units.map((unit) => unit.index),
+    [2, 5, 9]
+  )
+  assert.deepEqual(
+    units.map((unit) => unit.contents[0].quantity),
+    ['10', '9', '10']
+  )
+  assert.deepEqual(
+    units.map((unit) => unit.weight),
+    ['5', null, '5']
+  )
+  assert.equal(batch.weight, '6') // New reported evidence remains independently retained.
+  assert.deepEqual(prior, before)
+  assert.deepEqual(retained.commitPayload.evidenceHistory, [prior.priorReport])
+})
+
+test('mapping correction cannot silently overwrite indexed physical contents with a new nominal uniform split', () => {
+  const header =
+    'Carton no\tArticle\tCarton count\tPieces per carton\tWeight per carton kg'
+  const ctx = {
+    ...context,
+    products: [
+      ...context.products,
+      {
+        entryId: 'B',
+        groupId: 'H',
+        purchased: '100',
+        ceCodes: ['D'],
+        supplierCodes: [],
+      },
+    ],
+  }
+  const prior = accepted(['SET\tC\t3\t10\t5'], { header, ctx })
+  const modified = applyCartonUnitException({
+    batch: { ...prior.physicalFacts[0], storeId: 'synthetic-factory' },
+    index: 1,
+    contents: [{ orderId: '1688', entryId: 'A', quantity: '9' }],
+  })
+  const interpretedReport = report(['SET\tD\t3\t10\t5'], {
+    header,
+    ctx,
+    revision: 1,
+  })
+  const plan = planPackingReportUpdate({
+    ...prior,
+    physicalFacts: [modified],
+    interpretedReport,
+    explicitMatches: {
+      matches: { [interpretedReport.candidates[0].candidateKey]: 'box-a' },
+    },
+  })
+  assert.equal(plan.status, 'review-required')
+  assert.equal(plan.commitPayload, undefined)
+  assert(
+    plan.unresolvedMatches.some(
+      (match) =>
+        match.field === 'unitContents' && match.reason === 'manual-conflict'
+    )
+  )
+  assert.deepEqual(modified.unitContents[1], [
+    { orderId: '1688', entryId: 'A', quantity: '9' },
+  ])
 })
