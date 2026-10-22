@@ -34,8 +34,6 @@ const manualFields = [
   'contentsUnknown',
   'unitContents',
   'unitMeasurements',
-  'sourceFacts',
-  'cartonHistory',
 ]
 const unitDependencies = {
   unitContents: ['count', 'contents', 'unresolvedContents', 'packingBasis'],
@@ -728,6 +726,8 @@ export function planPackingReportUpdate({
           'revision',
           'updatedAt',
           'entitlementIndices',
+          'sourceFacts',
+          'cartonHistory',
         ])
           if (
             current[field] !== undefined &&
