@@ -1,6 +1,22 @@
 // UI text only. Supplier/source strings never pass through this catalog.
 export const SMART_CARTON_MESSAGES = Object.fromEntries(
   [
+    ['{0} pieces in {1}', '{0} unidades en {1}', '{1} 中有 {0} 件'],
+    [
+      '{0} pieces in {1} cartons; per-carton contents unknown',
+      '{0} unidades en {1} cajas; contenido por caja desconocido',
+      '{0} 件装在 {1} 箱中，每箱内容未知',
+    ],
+    [
+      '{0} of this product · {1} total in shared {2}',
+      '{0} de este producto · {1} en total en la caja compartida {2}',
+      '此商品 {0} 件 · 共享 {2} 共 {1} 件',
+    ],
+    [
+      'Enter a nonnegative decimal or leave the measurement unknown.',
+      'Ingresa un decimal no negativo o deja la medida desconocida.',
+      '请输入非负小数，或留空表示测量未知。',
+    ],
     [
       'Review legacy supplier identity',
       'Revisar identidad histórica del proveedor',
