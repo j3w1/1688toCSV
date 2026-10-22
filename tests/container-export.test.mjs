@@ -436,6 +436,48 @@ test('left-behind remains historical with known cartons separate from unprepared
   assert.equal(plan.leftBehind.totals.quantity, '3')
 })
 
+test('operator supplier identity remains explicitly authored in revision output without leaking unselected metadata', () => {
+  const manifest = fixture()
+  const identity = {
+    sellerId: 'synthetic-manual-factory',
+    storeId: '["1688","synthetic-manual-factory"]',
+    provenance: 'manual-confirmed',
+    conflict: false,
+    sourceSellerId: null,
+    resolvedSellerId: 'synthetic-manual-factory',
+    contact: 'PRIVATE-CONTACT',
+    rawAsset: 'RAW-PRIVATE-ASSET',
+  }
+  manifest.orders[0].supplierIdentity = identity
+  manifest.products[0].supplierIdentity = identity
+  manifest.leftBehind.products[0].supplierIdentity = identity
+  const summary = createContainerSummary(manifest, { file: 'actual-r2.xlsx' })
+  for (const row of [
+    summary.orders[0],
+    summary.products[0],
+    summary.leftBehind.products[0],
+  ]) {
+    assert.equal(row.supplierIdentity.provenance, 'manual-confirmed')
+    assert.equal(row.supplierIdentity.sellerId, identity.sellerId)
+    assert.equal('contact' in row.supplierIdentity, false)
+    assert.equal('rawAsset' in row.supplierIdentity, false)
+  }
+  for (const [language, wording] of [
+    ['en', 'Operator-confirmed supplier identity'],
+    ['es', 'Identidad del proveedor confirmada por el operador'],
+    ['zh', '操作员确认的供应商身份'],
+  ]) {
+    const plan = planContainerWorkbook(manifest, { ...settings, language })
+    assert(
+      plan.sheets.every((sheet) => JSON.stringify(sheet.rows).includes(wording))
+    )
+  }
+  assert.doesNotMatch(
+    JSON.stringify(summary),
+    /PRIVATE-CONTACT|RAW-PRIVATE-ASSET/
+  )
+})
+
 test('summary discloses frozen full costs and reasons independently of XLSX columns, without source assets/contacts', () => {
   const manifest = fixture(),
     summary = createContainerSummary(manifest, {

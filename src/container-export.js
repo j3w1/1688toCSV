@@ -73,6 +73,7 @@ const strings = {
     weight: 'kg',
     volume: 'm³',
     freight: 'Allocated freight 元',
+    authoredSupplier: 'Operator-confirmed supplier identity',
   },
   es: {
     sheets: ['Lista de empaque', 'Cajas', 'Se quedó'],
@@ -112,6 +113,7 @@ const strings = {
     weight: 'kg',
     volume: 'm³',
     freight: 'Envío asignado 元',
+    authoredSupplier: 'Identidad del proveedor confirmada por el operador',
   },
   zh: {
     sheets: ['装箱单', '纸箱', '未装柜'],
@@ -151,6 +153,7 @@ const strings = {
     weight: 'kg',
     volume: 'm³',
     freight: '分摊运费 元',
+    authoredSupplier: '操作员确认的供应商身份',
   },
 }
 
@@ -352,6 +355,7 @@ function pick(source, fields) {
 function publicProduct(source) {
   return {
     ...pick(source, productFields),
+    ...publicSupplierIdentity(source),
     ...(source.group?.id && !source.groupId
       ? { groupId: source.group.id }
       : {}),
@@ -359,6 +363,21 @@ function publicProduct(source) {
       ? { variantId: source.variant.id }
       : {}),
   }
+}
+function publicSupplierIdentity(source) {
+  const identity = source.supplierIdentity
+  return identity && typeof identity === 'object' && !Array.isArray(identity)
+    ? {
+        supplierIdentity: pick(identity, [
+          'sellerId',
+          'storeId',
+          'provenance',
+          'conflict',
+          'sourceSellerId',
+          'resolvedSellerId',
+        ]),
+      }
+    : {}
 }
 function publicCarton(source) {
   return {
@@ -505,7 +524,16 @@ function contextFor(manifest, options = {}) {
     words = strings[language]
   const revision =
     manifest.revisionId ?? `draft-r${manifest.revision ?? 'unknown'}`
-  const metadata = `${words.container}: ${manifest.container.name || manifest.container.id} · ${manifest.container.id} · ${words.revision}: ${revision}${draft ? ` · ${words.draft}` : ''}`
+  const authoredSuppliers = [
+    ...new Set(
+      (manifest.orders ?? [])
+        .filter(
+          (order) => order.supplierIdentity?.provenance === 'manual-confirmed'
+        )
+        .map((order) => String(order.orderId))
+    ),
+  ]
+  const metadata = `${words.container}: ${manifest.container.name || manifest.container.id} · ${manifest.container.id} · ${words.revision}: ${revision}${draft ? ` · ${words.draft}` : ''}${authoredSuppliers.length ? ` · ${words.authoredSupplier}: ${authoredSuppliers.join(', ')}` : ''}`
   return {
     ...options,
     language,
@@ -1036,16 +1064,17 @@ export function createContainerSummary(
     draft: context.draft,
     status: manifest.status,
     sealedAt: manifest.sealedAt ?? null,
-    orders: (manifest.orders ?? []).map((order) =>
-      pick(order, [
+    orders: (manifest.orders ?? []).map((order) => ({
+      ...pick(order, [
         'accountId',
         'orderId',
         'orderReference',
         'availableBeforeQuantity',
         'loadedQuantity',
         'remainingQuantity',
-      ])
-    ),
+      ]),
+      ...publicSupplierIdentity(order),
+    })),
     products: manifest.products.map(publicProduct),
     cartons: manifest.cartons.map(publicCarton),
     cartonBatches: (manifest.batches ?? []).map(publicCarton),
