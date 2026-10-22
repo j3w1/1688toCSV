@@ -1,8 +1,9 @@
-import { element as el, copyTextButton } from './ui.js'
+import { element as el, copyTextButton, copied } from './ui.js'
 import { message as m, bindText, bindAttribute, getLocale } from './i18n.js'
 import { createVirtualTable } from './virtual-table.js'
 import { photoCopyTile } from './photo-copy.js'
 import { copySingleImage } from './clipboard.js'
+import { mountProductCopyActions } from './copy-actions.js'
 
 const clone = (value) => structuredClone(value)
 const orderRef = (order) => ({
@@ -298,7 +299,10 @@ export function createContainerWorkspace({
     const button = el('button', m(title))
     button.type = 'button'
     button.dataset.action = name
-    button.onclick = () => void Promise.resolve().then(run).catch(failure)
+    button.onclick = () =>
+      void Promise.resolve()
+        .then(() => run(button))
+        .catch(failure)
     parent.append(button)
     return button
   }
@@ -421,7 +425,76 @@ export function createContainerWorkspace({
   action(tools, 'Copy Excel image', 'copy-excel-image', () =>
     capturedCopy('excel-image')
   )
-  action(tools, 'Copy values', 'copy-values', () => capturedCopy('values'))
+  action(tools, 'Copy values', 'copy-values', (target) =>
+    copied(target, () => capturedCopy('values'), { onError: failure })
+  )
+  const copyHost = el('div', undefined, 'container-copy-actions')
+  tools.append(copyHost)
+  const columns = action(
+      copyHost,
+      'Copy columns',
+      'copy-container-columns',
+      () => capturedCopy('columns')
+    ),
+    codes = action(
+      copyHost,
+      'Copy group codes',
+      'copy-group-codes',
+      (target) => {
+        const scope = captureCopyScope()
+        return copied(
+          target,
+          async () => {
+            await controller.flush()
+            const context = await selectedOutput(scope),
+              codes = [
+                ...new Set(
+                  context.products.map((row) => row.baseCode).filter(Boolean)
+                ),
+              ]
+            if (!codes.length)
+              throw new Error('Review product codes in Orders first.')
+            await navigator.clipboard.writeText(codes.join('\r\n'))
+          },
+          { onError: failure }
+        )
+      }
+    ),
+    photos = action(copyHost, 'Copy images', 'copy-container-images', () =>
+      capturedCopy('images')
+    ),
+    cells = action(copyHost, 'Copy to Excel', 'copy-container-cells', () =>
+      capturedCopy('cells')
+    ),
+    barcodes = action(
+      copyHost,
+      'Copy barcode images',
+      'copy-container-barcodes',
+      async () => {
+        const scope = captureCopyScope()
+        await controller.flush()
+        return output.copyLabels('barcode', await selectedOutput(scope))
+      }
+    ),
+    marks = action(
+      copyHost,
+      'Copy carton marks',
+      'copy-container-marks',
+      async () => {
+        const scope = captureCopyScope()
+        await controller.flush()
+        return output.copyLabels('mark', await selectedOutput(scope))
+      }
+    ),
+    copyMenu = mountProductCopyActions(copyHost, {
+      columns,
+      codes,
+      photos,
+      cells,
+      barcodes,
+      marks,
+    })
+  copyMenu.trigger.dataset.action = 'open-copy-menu'
   action(tools, 'Print labels', 'print-labels', async () =>
     output.printLabels('barcode', await selectedOutput())
   )
@@ -454,22 +527,32 @@ export function createContainerWorkspace({
       .filter((row) => selected.has(row.key) && row.kind === 'carton')
       .map((row) => ({ cartonId: idFor(row.source), state }))
   }
-  async function selectedOutput() {
-    const context = await output.containerContext(controller.route())
-    if (!selected.size || currentView === 'loading') return context
-    const keys = new Set(
-      allRows
-        .filter((row) => selected.has(row.key))
-        .map((row) => refKey(row.source) + '/' + row.source.entryId)
-    )
+  function captureCopyScope() {
+    return {
+      route: clone(controller.route()),
+      partial: selected.size > 0 && currentView !== 'loading',
+      keys: [
+        ...new Set(
+          allRows
+            .filter((row) => selected.has(row.key))
+            .map((row) => refKey(row.source) + '/' + row.source.entryId)
+        ),
+      ],
+    }
+  }
+  async function selectedOutput(scope = captureCopyScope()) {
+    const context = await output.containerContext(scope.route)
+    if (!scope.partial) return context
+    const keys = new Set(scope.keys)
     const products = context.products.filter((row) =>
       keys.has(refKey(row) + '/' + row.entryId)
     )
     return { ...context, products, partial: true }
   }
   async function capturedCopy(format) {
+    const scope = captureCopyScope()
     await controller.flush()
-    return output.copy(await selectedOutput(), format)
+    return output.copy(await selectedOutput(scope), format)
   }
   async function reloadContainers(preferred) {
     const containers = await repository.listContainers({})
@@ -1205,6 +1288,7 @@ export function createContainerWorkspace({
     controller,
     dispose() {
       controller.dispose()
+      copyMenu.destroy()
       virtual.destroy()
       host.replaceChildren()
     },

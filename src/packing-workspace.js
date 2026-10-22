@@ -125,6 +125,10 @@ export async function startPackingWorkspace({
         modules = await adapter()
         return output.printLabels(...args)
       },
+      async copyLabels(...args) {
+        modules = await adapter()
+        return output.copyLabels(...args)
+      },
       async openWorkbook(context) {
         modules = await adapter()
         return output.openWorkbook(context)

@@ -299,6 +299,7 @@ function dom(context) {
       disconnect() {}
     },
     MutationObserver: window.MutationObserver,
+    CSS: { supports: () => false },
     requestAnimationFrame: (fn) => setTimeout(fn, 0),
     cancelAnimationFrame: clearTimeout,
   })) {
@@ -311,6 +312,13 @@ function dom(context) {
     )
   }
   const prototype = Object.getPrototypeOf(document.createElement('dialog'))
+  const matches = window.HTMLElement.prototype.matches
+  window.HTMLElement.prototype.matches = function (selector) {
+    return selector === ':popover-open' ? false : matches.call(this, selector)
+  }
+  context.after(() => {
+    window.HTMLElement.prototype.matches = matches
+  })
   const selectPrototype = Object.getPrototypeOf(
       document.createElement('select')
     ),
