@@ -61,16 +61,12 @@ async function openOrders(
   await page.goto(`${extension.extensionBaseUrl}/library.html`)
   const rows = page.locator('#sheet-body tr[data-selection-key]')
   await expect(rows).toHaveCount(3)
-  await page.getByLabel('Packing month', { exact: true }).fill('2026-10')
-  return { page, rows, record, view: page.locator('#packing-view') }
+  return { page, rows, record, view: page.locator('#orders-view') }
 }
 
 async function reviewSelection(page) {
-  await page.locator('#prepare-orders').click()
-  const review = page.getByRole('dialog', {
-    name: 'Assign product codes?',
-    exact: true,
-  })
+  await page.locator('#review-purchase-codes').click()
+  const review = page.locator('dialog[data-action="purchase-code-review"]')
   await expect(review).toBeVisible()
   await expect(page.locator('#packing-view')).toBeHidden()
   return review
@@ -81,157 +77,118 @@ function expectPackingUnchanged(actual, before) {
     expect(actual[key]).toEqual(before[key])
 }
 
-test('one group with three selected variants shows every full code inline and Assign only saves exactly that proposal', async ({
+test('one group reviews every full source code without reserving it and one assignment saves exactly that plan', async ({
   extension,
-}) => {
+}, testInfo) => {
   const { page, record, view } = await openOrders(extension, { oneGroup: true })
   await page.setViewportSize({ width: 1440, height: 1000 })
   await page.locator('#select-rows').click()
   const before = await backup(extension),
-    review = await reviewSelection(page)
-  await expect(review.locator('.packing-review-item')).toHaveCount(1)
-  await expect(review).toHaveAttribute('data-review-layout', 'expanded')
-  const inline = review.locator('.packing-review-inline'),
-    codes = await inline.locator('.packing-value-after code').allTextContents()
-  expect(codes).toHaveLength(4)
-  expect(codes[0]).toMatch(/^CE2610\d{4}$/)
-  for (const code of codes.slice(1))
-    expect(code).toMatch(new RegExp(`^${codes[0]}[A-Z0-9]+$`))
-  for (const code of await inline.locator('.packing-value-after code').all()) {
+    review = await reviewSelection(page),
+    codes = await review.locator('article code').allTextContents()
+  expect(codes).toHaveLength(3)
+  expect(new Set(codes).size).toBe(3)
+  expect(codes.every((code) => /^CE2610\d{4}[A-Z0-9]*$/.test(code))).toBe(true)
+  await expect(review.locator('article')).toHaveCount(3)
+  for (const code of await review.locator('article code').all())
     await expect(code).toBeInViewport()
-    await expect(code.locator('[data-code-part="product"]')).toHaveCount(1)
-  }
   expectPackingUnchanged(await backup(extension), before)
   await review.screenshot({
-    path: 'work/adaptive-assignment-real-three-variants.png',
+    path: testInfo.outputPath('purchase-code-review-three-variants.png'),
   })
-  await review.locator('[data-action="review-assign-only"]').click()
-  await expect(review).toHaveCount(0)
-  await expect(view).toBeHidden()
-  // The review closes before the asynchronous assignment transaction starts.
-  await expect
-    .poll(async () => (await backup(extension)).preparations.length)
-    .toBe(1)
-  const after = await backup(extension)
+  await review.locator('[data-action="assign-purchase-codes"]').click()
+  await expect(review).toBeHidden()
+  await expect(view).toBeVisible()
+  const after = await backup(extension),
+    group = after.preparations[0].groups[0]
   expect(after.orders).toEqual(before.orders)
   expect(after.preparations).toHaveLength(1)
   expect(after.preparations[0].groups).toHaveLength(1)
-  const group = after.preparations[0].groups[0]
-  expect(group.baseCode).toBe(codes[0])
   expect(
     group.variants.map(
       (variant) =>
         `${group.baseCode}${variant.variantSuffix}${variant.sizeSuffix}`
     )
-  ).toEqual(codes.slice(1))
+  ).toEqual(codes)
   expect(group.variants.flatMap((variant) => variant.entryIds).sort()).toEqual(
     record.snapshot.items.map((item) => item.entryId).sort()
   )
 })
 
-test('one new product reviews its proposed code and helpers before saving; cancel reserves nothing and an assigned reopen needs no review', async ({
+test('single-product code review cancel reserves nothing and assignment never opens Packing or creates cartons', async ({
   extension,
 }) => {
   const { page, rows, record, view } = await openOrders(extension)
-  await rows.first().focus()
-  await page.keyboard.press('Space')
-  const before = await backup(extension)
-  const review = await reviewSelection(page)
-  await expect(review).toContainText('1 selected product rows from 1 orders')
-  await expect(review.locator('.packing-review-item')).toHaveCount(1)
+  await rows.first().getByRole('checkbox').check()
+  const before = await backup(extension),
+    review = await reviewSelection(page),
+    proposed = await review.locator('article code').textContent()
+  expect(proposed).toMatch(/^CE2610\d{4}[A-Z0-9]*$/)
+  await expect(review.locator('article')).toHaveCount(1)
   await expect(review.locator('.preparation-photo')).toHaveCount(1)
-  await expect(review).toContainText('Packing month: October 2026')
-  for (const value of [
-    'Spanish:',
-    'Chinese:',
-    'Size codes:',
-    'Colors:',
-    'Materials: Glass',
-  ])
-    await expect(review).toContainText(value)
-  const proposed = await review
-    .locator(
-      '.packing-value-row:first-child .packing-value-after .packing-value-content'
-    )
-    .textContent()
-  expect(proposed).toMatch(/^CE2610\d{4}$/)
   expectPackingUnchanged(await backup(extension), before)
   await review.getByRole('button', { name: 'Cancel', exact: true }).click()
-  await expect(view).toBeHidden()
   expectPackingUnchanged(await backup(extension), before)
   await reviewSelection(page)
-  await expect(
-    review.locator(
-      '.packing-value-row:first-child .packing-value-after .packing-value-content'
-    )
-  ).toHaveText(proposed)
-  await review
-    .getByRole('button', { name: 'Assign codes and prepare', exact: true })
-    .click()
+  await expect(review.locator('article code')).toHaveText(proposed)
+  await review.locator('[data-action="assign-purchase-codes"]').click()
+  await expect(review).toBeHidden()
   await expect(view).toBeVisible()
-  await expect(view.locator('.preparation-save-status')).toHaveText(
-    'Saved automatically'
-  )
-  const saved = await backup(extension)
+  const saved = await backup(extension),
+    group = saved.preparations[0].groups[0],
+    variant = group.variants[0]
   expect(
     saved.preparations[0].groups.flatMap((group) =>
       group.variants.flatMap((variant) => variant.entryIds)
     )
   ).toEqual([record.snapshot.items[0].entryId])
-  expect(saved.preparations[0].groups[0].baseCode).toBe(proposed)
+  expect(group.baseCode + variant.variantSuffix + variant.sizeSuffix).toBe(
+    proposed
+  )
   expect(saved.orders).toEqual(before.orders)
-  await view.page().locator('#view-orders').click()
-  await page.locator('#prepare-orders').click()
-  await expect(view).toBeVisible()
-  await expect(review).toHaveCount(0)
+  expect(saved.cartonBatches).toEqual([])
+  await reviewSelection(page)
+  await review.getByRole('button', { name: 'Cancel', exact: true }).click()
   expect((await backup(extension)).issuedCodes).toEqual(saved.issuedCodes)
 })
 
-test('adding another source row of an existing product reviews only the unassigned selection and preserves its existing code', async ({
+test('adding an unassigned source row preserves existing codes and prices through preview cancel and assignment', async ({
   extension,
 }) => {
-  const { page, rows, record, view } = await openOrders(extension)
-  await rows.first().focus()
-  await page.keyboard.press('Space')
-  const review = await reviewSelection(page)
-  await review
-    .getByRole('button', { name: 'Assign codes and prepare', exact: true })
-    .click()
-  await expect(view).toBeVisible()
-  await view.page().locator('#view-orders').click()
-  const before = await backup(extension)
-  const original = before.preparations[0].groups[0]
-  await rows.nth(1).focus()
-  await page.keyboard.press('Control+Space')
-  await reviewSelection(page)
-  await expect(review).toContainText('1 selected product rows from 1 orders')
-  await expect(review.locator('.packing-review-item')).toHaveCount(1)
-  await expect(review).toContainText('1 product rows · 1 variants')
-  const nextCode = await review
-    .locator(
-      '.packing-value-row:first-child .packing-value-after .packing-value-content'
-    )
-    .textContent()
-  expect(nextCode).not.toBe(original.baseCode)
+  const { page, rows, record } = await openOrders(extension)
+  await rows.first().getByRole('checkbox').check()
+  let review = await reviewSelection(page)
+  await review.locator('[data-action="assign-purchase-codes"]').click()
+  await expect(review).toBeHidden()
+  const before = await backup(extension),
+    original = before.preparations[0].groups[0]
+  await page.locator('#clear-rows').click()
+  await rows.nth(1).getByRole('checkbox').check()
+  review = await reviewSelection(page)
+  await expect(review.locator('article')).toHaveCount(1)
+  const nextCode = await review.locator('article code').textContent()
   expectPackingUnchanged(await backup(extension), before)
   await review.getByRole('button', { name: 'Cancel', exact: true }).click()
   expectPackingUnchanged(await backup(extension), before)
-  await reviewSelection(page)
-  await review
-    .getByRole('button', { name: 'Assign codes and prepare', exact: true })
-    .click()
-  await expect(view).toBeVisible()
-  const after = await backup(extension)
-  expect(
-    after.preparations[0].groups.find((group) => group.id === original.id)
-      .baseCode
-  ).toBe(original.baseCode)
-  const added = after.preparations[0].groups.find((group) =>
-    group.variants.some((variant) =>
+  review = await reviewSelection(page)
+  await review.locator('[data-action="assign-purchase-codes"]').click()
+  await expect(review).toBeHidden()
+  const after = await backup(extension),
+    retained = after.preparations[0].groups.find(
+      (group) => group.id === original.id
+    ),
+    added = after.preparations[0].groups.find((group) =>
+      group.variants.some((variant) =>
+        variant.entryIds.includes(record.snapshot.items[1].entryId)
+      )
+    ),
+    variant = added.variants.find((variant) =>
       variant.entryIds.includes(record.snapshot.items[1].entryId)
     )
+  expect(retained.baseCode).toBe(original.baseCode)
+  expect(added.baseCode + variant.variantSuffix + variant.sizeSuffix).toBe(
+    nextCode
   )
-  expect(added.baseCode).toBe(nextCode)
   expect(
     after.preparations[0].groups
       .flatMap((group) => group.variants.flatMap((variant) => variant.entryIds))
@@ -245,35 +202,32 @@ test('adding another source row of an existing product reviews only the unassign
   expect(after.orders).toEqual(before.orders)
 })
 
-test('seller-missing additions still require review and cancel neither opens packing nor reserves codes', async ({
+test('missing seller review cannot allocate placeholder codes and exposes explicit purchase evidence recovery', async ({
   extension,
 }) => {
   const { page, rows, view } = await openOrders(extension, {
     missingSeller: true,
   })
-  await rows.first().focus()
-  await page.keyboard.press('Space')
-  const before = await backup(extension)
-  const review = await reviewSelection(page)
-  await expect(review.locator('.packing-review-item')).toHaveCount(1)
-  await expect(review).toContainText('1 selected product rows from 1 orders')
+  await rows.first().getByRole('checkbox').check()
+  const before = await backup(extension),
+    review = await reviewSelection(page)
   await expect(
-    review.locator(
-      '.packing-value-row:first-child .packing-value-after .packing-value-content'
-    )
-  ).toHaveText('Seller login required before assigning codes')
+    review.locator('[data-action="assign-purchase-codes"]')
+  ).toBeDisabled()
+  await expect(
+    review.locator('[data-action="review-purchase-evidence"]')
+  ).toBeVisible()
   expectPackingUnchanged(await backup(extension), before)
   await review.getByRole('button', { name: 'Cancel', exact: true }).click()
-  await expect(view).toBeHidden()
+  await expect(view).toBeVisible()
   expectPackingUnchanged(await backup(extension), before)
   await reviewSelection(page)
   await review
-    .getByRole('button', { name: 'Assign codes and prepare', exact: true })
+    .locator('[data-action="review-purchase-evidence"]')
+    .first()
     .click()
-  await expect(view).toBeVisible()
   await expect(
-    view.getByLabel('Seller member login (required)', { exact: true })
-  ).toHaveValue('')
-  await expect(view.getByLabel('Product code', { exact: true })).toHaveValue('')
+    page.locator('dialog[data-action="review-purchase-evidence"]')
+  ).toBeVisible()
   expectPackingUnchanged(await backup(extension), before)
 })

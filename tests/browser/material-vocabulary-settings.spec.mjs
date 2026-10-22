@@ -1,5 +1,10 @@
 import { test, expect } from './extension-fixture.mjs'
 import { createDemoRecords } from '../../preview/library-fixture.js'
+import {
+  assignSelectedPurchaseCodes,
+  editOrderProduct,
+  closeOrderProduct,
+} from './smart-workspace-helpers.mjs'
 
 test('material Settings rules survive reload and backup, update recognition, and preserve manual text and clears', async ({
   extension,
@@ -45,27 +50,22 @@ test('material Settings rules survive reload and backup, update recognition, and
     productRows.nth(2).locator('[data-attribute="material"] dd')
   ).toHaveText('晶透新材质')
   await page.locator('#select-rows').click()
-  await page.locator('#prepare-orders').click()
-  const assignment = page.getByRole('dialog', { name: 'Assign product codes?' })
-  await expect(assignment).toBeVisible()
-  await assignment
-    .getByRole('button', { name: 'Assign codes and prepare', exact: true })
-    .click()
-  const packing = page.locator('#packing-view'),
-    materials = packing
-      .locator('.variants')
-      .getByRole('textbox', { name: 'Material', exact: true }),
-    saved = packing.locator('.preparation-save-status')
-  await expect(packing).toBeVisible()
-  await expect(materials).toHaveCount(3)
-  await expect(materials.nth(0)).toHaveValue('Glass')
-  await expect(materials.nth(2)).toHaveValue('')
-  await materials.nth(0).fill('Owner material wording')
-  await expect(saved).toHaveText('Saved automatically')
-  await materials.nth(1).fill('')
-  await expect(saved).toHaveText('Saved automatically')
-  await page.keyboard.press('Escape')
-  await expect(packing).toBeHidden()
+  await assignSelectedPurchaseCodes(page)
+  let editor = await editOrderProduct(page, 0)
+  await expect(
+    editor.getByRole('textbox', { name: 'Material', exact: true })
+  ).toHaveValue('Glass')
+  await editor
+    .getByRole('textbox', { name: 'Material', exact: true })
+    .fill('Owner material wording')
+  await closeOrderProduct(editor)
+  editor = await editOrderProduct(page, 1, { Material: '' })
+  await closeOrderProduct(editor)
+  editor = await editOrderProduct(page, 2)
+  await expect(
+    editor.getByRole('textbox', { name: 'Material', exact: true })
+  ).toHaveValue('')
+  await closeOrderProduct(editor)
 
   await page.getByRole('button', { name: 'Settings', exact: true }).click()
   const dialog = page.getByRole('dialog', { name: 'Settings', exact: true }),
@@ -104,20 +104,24 @@ test('material Settings rules survive reload and backup, update recognition, and
   await dialog
     .getByRole('button', { name: 'Close settings', exact: true })
     .click()
-  await page.locator('#prepare-orders').click()
-  await expect(packing).toBeVisible()
-  await expect(saved).toHaveText('Saved automatically')
-  await expect(materials.nth(0)).toHaveValue('Owner material wording')
-  await expect(materials.nth(1)).toHaveValue('')
-  await expect(materials.nth(2)).toHaveValue('Clear crystal')
+  for (const [index, value] of [
+    'Owner material wording',
+    '',
+    'Clear crystal',
+  ].entries()) {
+    editor = await editOrderProduct(page, index)
+    await expect(
+      editor.getByRole('textbox', { name: 'Material', exact: true })
+    ).toHaveValue(value)
+    await closeOrderProduct(editor)
+  }
   await page.locator('#language-toggle [data-language=es]').click()
-  await expect(materials.nth(0)).toHaveValue('Owner material wording')
   await expect(
-    packing
-      .locator('.variants')
-      .getByRole('textbox', { name: 'Material', exact: true })
-      .nth(2)
-  ).toHaveValue('Cristal claro')
+    productRows.nth(0).locator('[data-attribute="material"] dd')
+  ).toHaveText('Owner material wording')
+  await expect(
+    productRows.nth(2).locator('[data-attribute="material"] dd')
+  ).toHaveText('Cristal claro')
   await page.locator('#language-toggle [data-language=en]').click()
   const backup = await extension.inspector.evaluate(() =>
     chrome.runtime.sendMessage({ type: 'BACKUP_EXPORT' })
