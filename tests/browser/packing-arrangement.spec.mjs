@@ -298,3 +298,50 @@ test('a stale loading revision rejects without rewriting another tab and reload 
     view.locator('.reorder-handle,[data-action="organize-packing"]')
   ).toHaveCount(0)
 })
+
+test('an unresolved size output error names the product and focuses its Orders size field without changing saved evidence', async ({
+  extension,
+}) => {
+  const { page, refs } = await setup(extension)
+  await extension.inspector.evaluate(async (ref) => {
+    const repository = await window.testRepository,
+      context = await repository.getOrderReconciliation(ref),
+      preparation = structuredClone(context.preparation)
+    preparation.groups[0].variants[0].size = '未知尺寸'
+    preparation.groups[0].variants[0].needsSizeMapping = true
+    await repository.savePreparations([preparation], {
+      expectedRevisions: [preparation.revision],
+    })
+  }, refs[0])
+  await page.locator('#view-orders').click()
+  await page.reload()
+  await page.locator('#clear-rows').click()
+  await page
+    .locator(
+      `#sheet-body tr[data-selection-key=${JSON.stringify(JSON.stringify(['local', refs[0].orderId, 'entry-0']))}]`
+    )
+    .getByRole('checkbox')
+    .check()
+  const before = await libraryBackup(extension)
+  await revealCopyActions(page)
+  await page
+    .getByRole('button', { name: 'Copy barcode images', exact: true })
+    .click()
+  const notice = page.locator('.error-notice:visible').last()
+  await expect(notice).toContainText(/size/i)
+  await expect(notice).toContainText(refs[0].orderId)
+  await expect(notice.locator('img')).toHaveCount(1)
+  await notice
+    .getByRole('button', {
+      name: /Edit in Orders|Map size code|Show affected field/,
+    })
+    .click()
+  await expect(
+    page
+      .locator('.product-authoring-dialog')
+      .getByRole('textbox', { name: 'Size ending', exact: true })
+  ).toBeFocused()
+  expect((await libraryBackup(extension)).preparations).toEqual(
+    before.preparations
+  )
+})
