@@ -1,7 +1,10 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
 import { readFileSync } from 'node:fs'
-import { createContainerController } from '../src/container-workspace.js'
+import {
+  createContainerController,
+  createContainerWorkspace,
+} from '../src/container-workspace.js'
 import {
   captureContainerOutput,
   outputLabelModels,
@@ -22,6 +25,12 @@ function dom(context) {
     document,
     Event: window.Event,
     HTMLDialogElement: class {},
+    Option: function (text, value) {
+      const option = document.createElement('option')
+      option.textContent = text
+      option.value = value
+      return option
+    },
     ResizeObserver: class {
       observe() {}
       unobserve() {}
@@ -39,6 +48,21 @@ function dom(context) {
     )
   }
   const prototype = Object.getPrototypeOf(document.createElement('dialog'))
+  const selectPrototype = Object.getPrototypeOf(
+      document.createElement('select')
+    ),
+    selectValue = Object.getOwnPropertyDescriptor(selectPrototype, 'value')
+  Object.defineProperty(selectPrototype, 'value', {
+    ...selectValue,
+    set(value) {
+      for (const option of this.querySelectorAll('option'))
+        option.selected = option.value === String(value)
+    },
+    configurable: true,
+  })
+  context.after(() =>
+    Object.defineProperty(selectPrototype, 'value', selectValue)
+  )
   for (const [key, value] of Object.entries({
     clientWidth: 800,
     clientHeight: 600,
@@ -741,4 +765,54 @@ test('zero-loaded container export keeps full-revision scope, three sheets and f
     .find((button) => button.getAttribute('aria-label') === 'Close export')
     .click()
   assert.equal(await opening, false)
+})
+
+test('interchangeable count control uses complete logical set size once and is absent from sealed history', async (context) => {
+  let workspace
+  context.after(() => workspace?.dispose())
+  const { document } = dom(context),
+    fixture = setup(),
+    draft = view()
+  draft.cartons = Array.from({ length: 5 }, (_, index) => ({
+    id: `unit-${index}`,
+    batchId: 'batch1',
+    accountId: 'local',
+    orderId: '10001',
+    count: 1,
+    state: 'unconfirmed',
+    canSelectCount: index === 0,
+    contents: [],
+  }))
+  fixture.setView(draft)
+  workspace = createContainerWorkspace({
+    host: document.querySelector('#host'),
+    repository: fixture.repository,
+    output: {},
+    inspectProduct() {},
+    editInOrders() {},
+  })
+  await workspace.open('c1')
+  document
+    .querySelector('.container-order [data-action="expand-container-order"]')
+    .click()
+  await Promise.resolve()
+  await Promise.resolve()
+  const counts = document.querySelectorAll(
+    '.container-main input[type="number"]'
+  )
+  assert.equal(counts.length, 1)
+  assert.equal(counts[0].max, '5')
+  assert.equal(counts[0].getAttribute('aria-label'), 'Left behind out of 5')
+  draft.draft = false
+  fixture.setView(draft)
+  await workspace.open('c1', 'sealed-r1')
+  document
+    .querySelector('.container-order [data-action="expand-container-order"]')
+    .click()
+  await Promise.resolve()
+  await Promise.resolve()
+  assert.equal(
+    document.querySelectorAll('.container-main input[type="number"]').length,
+    0
+  )
 })

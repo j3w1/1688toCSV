@@ -868,16 +868,30 @@ export function createContainerWorkspace({
           action(state, title, 'set-carton-loading', () =>
             controller.setLoading([{ cartonId: idFor(source), state: value }])
           ).dataset.state = value
-      if (source.interchangeable === true || source.canSelectCount === true) {
+      const batchUnits = view.cartons.filter(
+        (carton) => carton.batchId === source.batchId
+      )
+      const interchangeable = batchUnits.filter(
+        (carton) =>
+          carton.interchangeable === true || carton.canSelectCount === true
+      )
+      if (
+        (view.draft || view.container.amendment) &&
+        !controller.route().revisionId &&
+        (source.interchangeable === true || source.canSelectCount === true) &&
+        idFor(interchangeable[0] || source) === idFor(source)
+      ) {
+        const availableCount =
+          source.count > 1 ? source.count : batchUnits.length
         const input = el('input')
         input.type = 'number'
         input.min = '0'
-        input.max = String(source.count)
+        input.max = String(availableCount)
         input.step = '1'
         bindAttribute(
           input,
           'aria-label',
-          m('Left behind out of {0}', { 0: source.count })
+          m('Left behind out of {0}', { 0: availableCount })
         )
         input.value = String(source.leftBehind ?? '')
         input.onchange = () =>
