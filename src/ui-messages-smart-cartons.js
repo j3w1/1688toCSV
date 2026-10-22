@@ -1,6 +1,65 @@
 // UI text only. Supplier/source strings never pass through this catalog.
 export const SMART_CARTON_MESSAGES = Object.fromEntries(
   [
+    ['Carton history', 'Historial de cajas', '纸箱历史'],
+    ['Filter carton history', 'Filtrar historial de cajas', '筛选纸箱历史'],
+    ['Retired evidence', 'Evidencia retirada', '已退役证据'],
+    ['Confirmed facts', 'Datos confirmados', '已确认事实'],
+    ['Source evidence', 'Evidencia de origen', '来源证据'],
+    ['{0} evidence records', '{0} registros de evidencia', '{0} 条证据记录'],
+    ['Review purchase evidence', 'Revisar evidencia de compra', '核对采购证据'],
+    [
+      'Original source date: {0}',
+      'Fecha original de la fuente: {0}',
+      '原始来源日期：{0}',
+    ],
+    [
+      'Resolved original purchase date',
+      'Fecha de compra original resuelta',
+      '已核定的原始采购日期',
+    ],
+    [
+      'Resolve original purchase date',
+      'Resolver fecha de compra original',
+      '核定原始采购日期',
+    ],
+    [
+      'Resolve only a missing or ambiguous original purchase date. Source evidence remains unchanged.',
+      'Resuelve solo una fecha original ausente o ambigua. La evidencia de origen se conserva.',
+      '仅核定缺失或有歧义的原始采购日期，保留来源证据。',
+    ],
+    ['Eligible goods', 'Mercancía elegible', '符合条件的货物'],
+    ['Non-goods', 'No es mercancía', '非货物'],
+    ['Fee', 'Cargo', '费用'],
+    ['Payment only', 'Solo pago', '仅付款'],
+    ['Canceled quantity', 'Cantidad cancelada', '已取消数量'],
+    ['Inventory disposition', 'Disposición de inventario', '库存处置'],
+    ['Evidence reason', 'Motivo documentado', '证据理由'],
+    [
+      'Save inventory evidence',
+      'Guardar evidencia de inventario',
+      '保存库存证据',
+    ],
+    [
+      'Only documented non-goods, fees, payment-only rows or canceled quantities reduce eligible inventory. Container selection never excludes goods.',
+      'Solo no mercancía, cargos, pagos o cantidades canceladas documentados reducen el inventario elegible. La selección de contenedor no excluye mercancía.',
+      '只有有据可查的非货物、费用、仅付款行或取消数量会减少符合条件的库存。选择货柜不会排除货物。',
+    ],
+    [
+      'Recovered unsaved evidence. Review it against the saved values before saving.',
+      'Evidencia sin guardar recuperada. Revísala frente a los valores guardados antes de guardar.',
+      '已恢复未保存证据，保存前请与已保存值核对。',
+    ],
+    [
+      'Document the reason for the inventory disposition.',
+      'Documenta el motivo de la disposición de inventario.',
+      '请记录库存处置理由。',
+    ],
+    [
+      'Canceled quantity must be a positive whole number.',
+      'La cantidad cancelada debe ser un entero positivo.',
+      '取消数量必须为正整数。',
+    ],
     [
       'Partial selection — this is not the complete container manifest.',
       'Selección parcial — no es el manifiesto completo del contenedor.',

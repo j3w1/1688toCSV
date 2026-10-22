@@ -15,7 +15,81 @@ import { openPackingExportDialog } from '../src/packing-export-dialog.js'
 import {
   mountOrderCartonGrid,
   createPackingReportIntakeController,
+  cartonHistoryRows,
+  mountCartonHistory,
 } from '../src/order-carton-grid.js'
+import {
+  syntheticOrder,
+  syntheticBatch,
+} from './fixtures/container-fixture.mjs'
+
+test('carton history retains current, retired, legacy and prior revisions across complete order scope', () => {
+  const a = syntheticOrder('1001'),
+    b = syntheticOrder('1002'),
+    c = syntheticOrder('1003'),
+    current = syntheticBatch('1001'),
+    retired = syntheticBatch('1002', 1, '10', {
+      deletedAt: '2026-10-20T00:00:00Z',
+    }),
+    prior = {
+      ...current,
+      revision: 0,
+      updatedAt: '2026-09-20T00:00:00Z',
+      weight: '7.25',
+      weightBasis: 'batch',
+    },
+    legacy = {
+      ...syntheticBatch('1002'),
+      id: 'cross-order',
+      orderId: undefined,
+      contents: [
+        { orderId: '1001', entryId: '2001', quantity: '20' },
+        { orderId: '1002', entryId: '2001', quantity: '10' },
+      ],
+    },
+    state = {
+      records: [a, b, c],
+      batches: [current, retired, legacy],
+      cartonHistory: [{ batch: prior }, { batch: current }],
+    },
+    before = structuredClone(state),
+    all = cartonHistoryRows(state)
+  assert.equal(all.length, 5)
+  assert.equal(new Set(all.map((row) => row.key)).size, 5)
+  assert.equal(
+    all.find((row) => row.batch?.deletedAt).state,
+    'Retired evidence'
+  )
+  assert.equal(
+    all.find((row) => row.batch?.id === 'cross-order').state,
+    'Needs review'
+  )
+  assert.equal(all.find((row) => row.batch?.revision === 0).weight, '7.25')
+  assert.equal(
+    all.find((row) => row.order === '1003').state,
+    'Awaiting packing data'
+  )
+  assert.equal(
+    cartonHistoryRows(state, [{ accountId: 'local', orderId: '1001' }]).length,
+    3
+  )
+  assert.deepEqual(state, before)
+})
+
+test('carton history scopes account identities and never turns combined volume or unknown measurements into per-box totals', () => {
+  const batch = syntheticBatch('1001', 4, '100', {
+      suppliedCbm: '0.12',
+      volumeBasis: 'batch',
+    }),
+    other = { ...batch, accountId: 'other', id: 'other-account' },
+    rows = cartonHistoryRows({ records: [], batches: [batch, other] }, [
+      { accountId: 'local', orderId: '1001' },
+    ])
+  assert.equal(rows.length, 1)
+  assert.equal(rows[0].volume, '0.12')
+  assert.equal(rows[0].weight, null)
+  assert.equal(rows[0].count, 4)
+})
 
 function dom(context) {
   const { document, window } = parseHTML(
@@ -91,6 +165,49 @@ function dom(context) {
 }
 
 const ref = { accountId: 'local', orderId: '10001' }
+test('all-orders and narrowed carton history share a bounded searchable table and inspect without selecting or mutating', async (context) => {
+  const { document, window } = dom(context),
+    host = document.getElementById('host'),
+    records = [syntheticOrder('1001'), syntheticOrder('1002')],
+    batches = Array.from({ length: 140 }, (_, index) =>
+      syntheticBatch(index < 70 ? '1001' : '1002', 1, '1', {
+        id: `retained-${index}`,
+        cartonNumber: String(index + 1),
+      })
+    ),
+    state = { records, batches },
+    calls = [],
+    repository = {
+      async getOperationalState(args) {
+        calls.push(args)
+        return structuredClone(state)
+      },
+    },
+    history = await mountCartonHistory(host, { repository })
+  assert.equal(history.rows().length, 140)
+  assert.ok(host.querySelectorAll('[data-history-key]').length <= 100)
+  assert.equal(host.querySelector('table').getAttribute('aria-rowcount'), '141')
+  const search = host.querySelector('input')
+  search.value = 'retained-139'
+  search.dispatchEvent(new window.Event('input'))
+  // Supplier labels, rather than internal IDs, own the visible filter.
+  search.value = '140'
+  search.dispatchEvent(new window.Event('input'))
+  assert.equal(host.querySelectorAll('[data-history-key]').length, 1)
+  host.querySelector('[data-history-key]').click()
+  assert.ok(document.querySelector('[data-action="inspect-carton-history"]'))
+  assert.equal(document.querySelectorAll('input[type="checkbox"]').length, 0)
+  assert.deepEqual(calls, [{}])
+  history.destroy()
+  const narrowed = await mountCartonHistory(host, {
+    repository,
+    orderRefs: [{ accountId: 'local', orderId: '1001' }],
+  })
+  assert.equal(narrowed.rows().length, 70)
+  assert.equal(host.querySelector('table').dataset.action, 'carton-history')
+  assert.deepEqual(state.batches, batches)
+  narrowed.destroy()
+})
 function view(id = 'c1', revision = 1) {
   return {
     container: { id, name: 'Synthetic October', revision },

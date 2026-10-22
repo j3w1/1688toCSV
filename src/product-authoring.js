@@ -662,8 +662,24 @@ export async function createProductAuthoring({
       )
       content.append(card)
     }
-    for (const issue of review.issues || [])
+    for (const issue of review.issues || []) {
       content.append(el('p', uiMessage(issue.message || issue)))
+      const ref = orderRefs.find(
+        (ref) => !issue.orderId || ref.orderId === issue.orderId
+      )
+      if (ref) {
+        const resolve = button('Review purchase evidence', async () => {
+          modal.close()
+          await openInventoryRecovery({
+            ...ref,
+            entryId: refs.find((entry) => entry.orderId === ref.orderId)
+              ?.entryId,
+          })
+        })
+        resolve.dataset.action = 'review-purchase-evidence'
+        content.append(resolve)
+      }
+    }
     const cancel = el('button', uiMessage('Cancel')),
       commit = el('button', uiMessage('Assign purchase codes'), 'primary')
     commit.dataset.action = 'assign-purchase-codes'
@@ -696,6 +712,204 @@ export async function createProductAuthoring({
       media.forget(modal)
       modal.remove()
     }
+    document.body.append(modal)
+    modal.showModal()
+  }
+  async function openInventoryRecovery(ref) {
+    await flushSaves()
+    const context = await repository.getOrderReconciliation({
+        accountId: ref.accountId || 'local',
+        orderId: ref.orderId,
+      }),
+      record = context.record,
+      item =
+        record.snapshot.items.find((item) => item.entryId === ref.entryId) ||
+        record.snapshot.items[0]
+    if (!item) throw new Error('The target source row is unavailable.')
+    const identity = {
+        accountId: record.accountId || record.snapshot.accountId || 'local',
+        orderId: record.snapshot.orderId,
+      },
+      recoveryKey = `1688-orders-evidence-draft:${JSON.stringify([identity.accountId, identity.orderId, item.entryId])}`,
+      previous = clone(record.inventoryDispositions?.[item.entryId] || null),
+      modal = el('dialog', undefined, 'product-authoring-dialog'),
+      status = el('p'),
+      source = el('p'),
+      date = el('input'),
+      kind = el('select'),
+      quantity = el('input'),
+      reason = el('textarea'),
+      saveDate = el('button', uiMessage('Resolve original purchase date')),
+      save = el('button', uiMessage('Save inventory evidence')),
+      close = el('button', uiMessage('Close'))
+    modal.dataset.action = 'review-purchase-evidence'
+    modal.append(
+      el('h2', uiMessage('Review purchase evidence')),
+      el('p', item.description || item.title)
+    )
+    bindText(
+      source,
+      uiMessage('Original source date: {0}', {
+        0: record.snapshot.purchasedAt || '—',
+      })
+    )
+    modal.append(source)
+    const label = (text, input) => {
+      const node = el('label', uiMessage(text))
+      node.append(input)
+      modal.append(node)
+    }
+    date.type = 'date'
+    date.value =
+      record.purchaseDateResolution?.date ||
+      context.resolvedPurchaseDate?.date ||
+      context.resolvedPurchaseDate ||
+      ''
+    label('Resolved original purchase date', date)
+    modal.append(
+      saveDate,
+      el(
+        'p',
+        uiMessage(
+          'Resolve only a missing or ambiguous original purchase date. Source evidence remains unchanged.'
+        )
+      )
+    )
+    for (const [value, title] of [
+      ['goods', 'Eligible goods'],
+      ['non-goods', 'Non-goods'],
+      ['fee', 'Fee'],
+      ['payment-only', 'Payment only'],
+      ['canceled', 'Canceled quantity'],
+    ])
+      kind.append(new Option(uiMessage(title), value))
+    kind.value = previous?.kind || 'goods'
+    quantity.type = 'text'
+    quantity.inputMode = 'numeric'
+    quantity.value = previous?.quantity || ''
+    reason.value = previous?.reason || ''
+    label('Inventory disposition', kind)
+    label('Canceled quantity', quantity)
+    label('Evidence reason', reason)
+    modal.append(
+      el(
+        'p',
+        uiMessage(
+          'Only documented non-goods, fees, payment-only rows or canceled quantities reduce eligible inventory. Container selection never excludes goods.'
+        )
+      )
+    )
+    try {
+      const recovered = JSON.parse(localStorage.getItem(recoveryKey) || 'null')
+      if (recovered) {
+        date.value = recovered.date || date.value
+        if (recovered.kind) kind.value = recovered.kind
+        if (recovered.quantity !== undefined)
+          quantity.value = recovered.quantity
+        if (recovered.reason !== undefined) reason.value = recovered.reason
+        bindText(
+          status,
+          uiMessage(
+            'Recovered unsaved evidence. Review it against the saved values before saving.'
+          )
+        )
+      }
+    } catch {
+      /* Invalid local recovery never replaces persisted evidence. */
+    }
+    const retain = () =>
+      localStorage.setItem(
+        recoveryKey,
+        JSON.stringify({
+          date: date.value,
+          kind: kind.value,
+          quantity: quantity.value,
+          reason: reason.value,
+        })
+      )
+    const controls = [date, kind, quantity, reason, saveDate, save, close]
+    const busy = (value) =>
+      controls.forEach((control) => (control.disabled = value))
+    let saving = false
+    async function commit(run, domain = 'disposition') {
+      if (saving) return
+      saving = true
+      retain()
+      busy(true)
+      try {
+        await run()
+        const recovered = JSON.parse(localStorage.getItem(recoveryKey) || '{}')
+        if (domain === 'date') delete recovered.date
+        else {
+          delete recovered.kind
+          delete recovered.quantity
+          delete recovered.reason
+        }
+        if (Object.keys(recovered).length)
+          localStorage.setItem(recoveryKey, JSON.stringify(recovered))
+        else localStorage.removeItem(recoveryKey)
+        await reload()
+        await changed({ reload: true })
+        modal.close('saved')
+      } catch (error) {
+        bindText(status, uiMessage(error.message))
+      } finally {
+        saving = false
+        busy(false)
+      }
+    }
+    const update = () => {
+      quantity.hidden = kind.value !== 'canceled'
+      retain()
+    }
+    kind.onchange = update
+    for (const input of [date, quantity, reason]) input.oninput = retain
+    quantity.hidden = kind.value !== 'canceled'
+    saveDate.dataset.action = 'resolve-purchase-date'
+    saveDate.onclick = () =>
+      void commit(
+        () =>
+          repository.resolvePurchaseDate({
+            ...identity,
+            date: date.value,
+            expectedObservedAt: record.snapshot.observedAt,
+          }),
+        'date'
+      )
+    save.dataset.action = 'save-inventory-disposition'
+    save.onclick = () =>
+      void commit(async () => {
+        if (kind.value !== 'goods' && !reason.value.trim())
+          throw new Error('Document the reason for the inventory disposition.')
+        if (
+          kind.value === 'canceled' &&
+          !/^[1-9]\d*$/.test(quantity.value.trim())
+        )
+          throw new Error('Canceled quantity must be a positive whole number.')
+        await repository.setInventoryDispositions({
+          ...identity,
+          entries: {
+            [item.entryId]:
+              kind.value === 'goods'
+                ? null
+                : {
+                    kind: kind.value,
+                    reason: reason.value.trim(),
+                    ...(kind.value === 'canceled'
+                      ? { quantity: quantity.value.trim() }
+                      : {}),
+                  },
+          },
+          expectedValues: { [item.entryId]: previous },
+        })
+      })
+    close.onclick = () => modal.close()
+    modal.oncancel = (event) => {
+      if (saving) event.preventDefault()
+    }
+    modal.onclose = () => modal.remove()
+    status.setAttribute('role', 'status')
+    modal.append(status, save, close)
     document.body.append(modal)
     modal.showModal()
   }
@@ -1095,6 +1309,11 @@ export async function createProductAuthoring({
     const edit = button('Edit product', () => openEditor(row))
     edit.dataset.action = 'edit-order-product'
     bar.append(edit)
+    const evidence = button('Review purchase evidence', () =>
+      openInventoryRecovery(row)
+    )
+    evidence.dataset.action = 'review-purchase-evidence'
+    bar.append(evidence)
     host.append(bar)
     capacityHost.append(button('Reconcile cartons', () => onCartons?.(row)))
     if (measurementHosts)
@@ -1875,6 +2094,7 @@ export async function createProductAuthoring({
     preparedRows,
     project: preparedRows,
     openEditor,
+    openInventoryRecovery,
     reviewCodes,
     groupProducts,
     flush: flushSaves,

@@ -1,6 +1,7 @@
 import { element as el, copyTextButton } from './ui.js'
 import { message as m, bindText, bindAttribute } from './i18n.js'
 import { createVirtualTable } from './virtual-table.js'
+import { cartonBatchMetrics } from './carton-batches.js'
 
 const clone = (value) => structuredClone(value)
 export const sourceKey = ({ accountId = 'local', orderId, entryId }) =>
@@ -27,6 +28,254 @@ export const CARTON_GRID_COLUMNS = [
   { key: 'count', label: 'Carton count', readonly: true },
   { key: 'provenance', label: 'Evidence', readonly: true },
 ]
+
+/** Display retained evidence, including retired and review-held records. Never infer stock. */
+export function cartonHistoryRows(state, orderRefs = []) {
+  const key = ({ accountId = 'local', orderId }) =>
+    JSON.stringify([accountId, orderId])
+  const scope = new Set(orderRefs.map(key))
+  const records = new Map(
+    (state.records || []).map((record) => [
+      key({
+        accountId: record.accountId || record.snapshot.accountId || 'local',
+        orderId: record.snapshot.orderId,
+      }),
+      record,
+    ])
+  )
+  const covered = new Set()
+  const rows = []
+  const evidence = [
+    ...(state.batches || []),
+    ...(state.cartonHistory || []).map(
+      (entry) => entry.batch || entry.after || entry
+    ),
+  ]
+  const seenEvidence = new Set()
+  for (const batch of evidence) {
+    const evidenceKey = JSON.stringify([
+      batch.accountId || 'local',
+      batch.id,
+      batch.revision,
+      batch.updatedAt,
+      batch.deletedAt,
+    ])
+    if (seenEvidence.has(evidenceKey)) continue
+    seenEvidence.add(evidenceKey)
+    const orderIds = [
+      ...new Set(
+        [
+          batch.orderId,
+          ...(batch.contents || []).map((part) => part.orderId),
+          ...(batch.groups || []).map((part) => part.orderId),
+          batch.mark?.orderId,
+        ].filter(Boolean)
+      ),
+    ]
+    const refs = orderIds.map((orderId) => ({
+      accountId: batch.accountId || 'local',
+      orderId,
+    }))
+    if (scope.size && !refs.some((ref) => scope.has(key(ref)))) continue
+    refs.forEach((ref) => covered.add(key(ref)))
+    const record = refs.length === 1 ? records.get(key(refs[0])) : undefined
+    let metrics
+    try {
+      metrics = cartonBatchMetrics(batch)
+    } catch {
+      /* Retain malformed legacy evidence for review. */
+    }
+    rows.push({
+      key: JSON.stringify([
+        'batch',
+        batch.accountId || 'local',
+        batch.id,
+        batch.revision,
+        batch.updatedAt,
+        batch.deletedAt,
+      ]),
+      batch: clone(batch),
+      refs,
+      record,
+      label: batch.cartonNumber || batch.supplierLabel || batch.id,
+      internal:
+        batch.labelOrigin === 'internal' ||
+        (!batch.cartonNumber && !batch.supplierLabel),
+      supplier: record?.snapshot.sellerName || '',
+      order: orderIds.join(' · '),
+      contents: (batch.contents || [])
+        .map((part) => `${part.entryId}: ${part.quantity}`)
+        .join(' · '),
+      count: batch.count,
+      dimensions:
+        batch.len && batch.wid && batch.ht
+          ? `${batch.len}×${batch.wid}×${batch.ht}`
+          : '',
+      weight: metrics?.totalWeight || null,
+      volume:
+        batch.volumeBasis === 'batch' && !batch.len
+          ? batch.suppliedCbm || null
+          : metrics?.totalVolume || null,
+      state: batch.deletedAt
+        ? 'Retired evidence'
+        : batch.needsReview || batch.legacyReview || refs.length !== 1
+          ? 'Needs review'
+          : 'Confirmed facts',
+    })
+  }
+  for (const [identity, record] of records) {
+    if (covered.has(identity) || (scope.size && !scope.has(identity))) continue
+    const [accountId, orderId] = JSON.parse(identity)
+    rows.push({
+      key: JSON.stringify(['pending', accountId, orderId]),
+      refs: [{ accountId, orderId }],
+      record,
+      label: '—',
+      supplier: record.snapshot.sellerName,
+      order: orderId,
+      state: 'Awaiting packing data',
+    })
+  }
+  return rows
+}
+
+/** All Orders and an individual order use this same virtual evidence table. */
+export async function mountCartonHistory(
+  host,
+  {
+    repository,
+    orderRefs = [],
+    onOrder = () => {},
+    onInspect = () => {},
+    isCurrent = () => true,
+  }
+) {
+  let destroyed = false
+  const state = await repository.getOperationalState({})
+  if (!isCurrent()) return { destroy() {} }
+  const rows = cartonHistoryRows(state, orderRefs)
+  const search = el('input'),
+    count = el('p'),
+    scroller = el('div', undefined, 'smart-grid-scroll'),
+    table = el('table'),
+    head = el('thead'),
+    heading = el('tr'),
+    body = el('tbody')
+  search.type = 'search'
+  bindAttribute(search, 'aria-label', m('Filter carton history'))
+  table.dataset.action = 'carton-history'
+  bindAttribute(table, 'aria-label', m('Carton history'))
+  for (const title of [
+    'Supplier',
+    'Order',
+    'Carton reference',
+    'Contents',
+    'Carton count',
+    'Dimensions (cm)',
+    'Weight (kg)',
+    'Volume (m³)',
+    'Evidence',
+  ])
+    heading.append(el('th', m(title)))
+  head.append(heading)
+  table.append(head, body)
+  scroller.append(table)
+  host.replaceChildren(search, count, scroller)
+  const virtual = createVirtualTable({
+    scroller,
+    body,
+    limit: 100,
+    render(entries) {
+      return entries.map(({ row }) => {
+        const tr = el('tr')
+        tr.dataset.historyKey = row.key
+        tr.tabIndex = 0
+        for (const value of [
+          row.supplier,
+          row.order,
+          row.label,
+          row.contents || m('Unknown contents'),
+          row.count ?? '—',
+          row.dimensions || '—',
+          row.weight ?? '—',
+          row.volume ?? '—',
+        ])
+          tr.append(el('td', value))
+        const evidence = el('td', m(row.state))
+        if (row.internal) evidence.append(el('small', m('Internal reference')))
+        if (row.batch?.unresolvedContents?.length)
+          evidence.append(el('small', m('Unresolved contents')))
+        tr.append(evidence)
+        const inspect = () => {
+          if (!row.batch && row.refs.length === 1) return onOrder(row.refs[0])
+          const modal = el(
+              'dialog',
+              undefined,
+              'order-carton-details product-authoring-dialog'
+            ),
+            close = el('button', m('Close'))
+          modal.dataset.action = 'inspect-carton-history'
+          modal.append(
+            el('h2', row.label),
+            el('p', m(row.state)),
+            el('p', row.contents || m('Unknown contents'))
+          )
+          const facts = el('pre')
+          facts.textContent = JSON.stringify(row.batch, null, 2)
+          const disclosure = el('details')
+          disclosure.append(el('summary', m('Source evidence')), facts)
+          modal.append(disclosure)
+          for (const ref of row.refs) {
+            const edit = el(
+              'button',
+              `${m('Reconcile cartons')} · ${ref.orderId}`
+            )
+            edit.dataset.action = 'open-order-cartons'
+            edit.onclick = () => {
+              modal.close()
+              onOrder({ ...ref, cartonId: row.batch.id })
+            }
+            modal.append(edit)
+          }
+          close.onclick = () => modal.close()
+          modal.append(close)
+          modal.onclose = () => modal.remove()
+          document.body.append(modal)
+          modal.showModal()
+          onInspect(row)
+        }
+        tr.onclick = inspect
+        tr.onkeydown = (event) => {
+          if (event.key === 'Enter' && !event.isComposing) {
+            event.preventDefault()
+            inspect()
+          }
+        }
+        return tr
+      })
+    },
+  })
+  const render = () => {
+    if (destroyed) return
+    const query = search.value.toLowerCase(),
+      visible = rows.filter((row) =>
+        `${row.supplier} ${row.order} ${row.label} ${row.contents || ''}`
+          .toLowerCase()
+          .includes(query)
+      )
+    bindText(count, m('{0} evidence records', { 0: visible.length }))
+    virtual.setItems(visible.map((row) => ({ key: row.key, row })))
+  }
+  search.oninput = render
+  render()
+  return {
+    destroy() {
+      destroyed = true
+      virtual.destroy()
+    },
+    rows: () => clone(rows),
+  }
+}
 
 /** The captured logical keys, never mounted row positions, own a paste. */
 export function captureGridTarget({
