@@ -1,5 +1,9 @@
 import { test, expect } from './extension-fixture.mjs'
 import { createDemoRecords } from '../../preview/library-fixture.js'
+import {
+  assignSelectedPurchaseCodes,
+  editOrderProduct,
+} from './smart-workspace-helpers.mjs'
 
 async function openWorkspace(extension, { twoOrders = false } = {}) {
   const records = await extension.inspector.evaluate(
@@ -57,15 +61,15 @@ test('language toggle translates interface and color hints, persists, and preser
   await expect(page.locator('.product-color-hint').first()).toHaveText('Gray')
   await page.locator('#language-toggle [data-language=es]').click()
   await expect(page.locator('html')).toHaveAttribute('lang', 'es')
-  await expect(page.locator('#prepare-orders')).toHaveText(
-    'Preparar lista de empaque'
+  await expect(page.locator('#review-purchase-codes')).toHaveText(
+    'Revisar códigos del mes de compra'
   )
   await expect(page.locator('.product-color-hint').first()).toHaveText('Gris')
   await expect(page.locator('.order-section-store .order-seller')).toHaveText(
     'Photo'
   )
   await expect(page.locator('.product-title').first()).toHaveText('合成玻璃罐')
-  await page.locator('.product-title').first().dblclick()
+  await page.locator('.product-title').first().click()
   const original = page.locator('.product-details-dialog')
   await expect(original).toBeVisible()
   await expect(
@@ -77,12 +81,14 @@ test('language toggle translates interface and color hints, persists, and preser
   await expect(
     page.locator('#language-toggle [data-language=es]')
   ).toHaveAttribute('aria-pressed', 'true')
-  await expect(page.locator('#prepare-orders')).toHaveText(
-    'Preparar lista de empaque'
+  await expect(page.locator('#review-purchase-codes')).toHaveText(
+    'Revisar códigos del mes de compra'
   )
   await page.locator('#language-toggle [data-language=zh]').click()
   await expect(page.locator('html')).toHaveAttribute('lang', 'zh-CN')
-  await expect(page.locator('#prepare-orders')).toHaveText('准备装箱清单')
+  await expect(page.locator('#review-purchase-codes')).toHaveText(
+    '核对采购月份编码'
+  )
   await expect(page.locator('.product-color-hint').first()).toHaveText('灰色')
   await expect(page.locator('.order-section-store .order-seller')).toHaveText(
     'Photo'
@@ -90,7 +96,7 @@ test('language toggle translates interface and color hints, persists, and preser
 })
 
 for (const language of ['en', 'es', 'zh']) {
-  test(`product selection stays in place and double-click opens originals in ${language}`, async ({
+  test(`explicit product selection stays in place while click inspects originals in ${language}`, async ({
     extension,
   }) => {
     const { page } = await openWorkspace(extension)
@@ -113,25 +119,30 @@ for (const language of ['en', 'es', 'zh']) {
       if (font)
         await page.addStyleTag({ content: `body { font-family: ${font}; }` })
       await row.focus()
-      await row.press('Escape')
+      await page.keyboard.press('ControlOrMeta+d')
       await title.scrollIntoViewIfNeeded()
-      const before = await layout()
-      await title.click()
+      const before = await layout(),
+        checkbox = row.getByRole('checkbox')
+      await checkbox.check()
       await expect(row).toHaveAttribute('aria-selected', 'true')
       expect(await layout(), `selection at ${width}px`).toEqual(before)
       await title.click()
+      const inspect = page.locator('.product-details-dialog')
+      await expect(inspect).toBeVisible()
+      await expect(row).toHaveAttribute('aria-selected', 'true')
+      await page.keyboard.press('Escape')
+      await checkbox.uncheck()
       await expect(row).toHaveAttribute('aria-selected', 'false')
       expect(await layout(), `deselection at ${width}px`).toEqual(before)
-      // Exercise Select All from the row focused by the actual click handler.
-      await expect(row).toBeFocused()
+      await row.focus()
       await page.keyboard.press('ControlOrMeta+a')
       await expect(
         page.locator('#sheet-body tr[aria-selected="true"]')
       ).toHaveCount(3)
       expect(await layout(), `select all at ${width}px`).toEqual(before)
-      await row.press('Escape')
+      await page.keyboard.press('ControlOrMeta+d')
       expect(await layout(), `clear all at ${width}px`).toEqual(before)
-      await title.dblclick()
+      await title.click()
       const original = page.locator('.product-details-dialog')
       await expect(original).toBeVisible()
       await expect(
@@ -152,8 +163,7 @@ test('source identities copy directly and the card store name opens details with
     'clipboard-write',
   ])
   const rows = page.locator('#sheet-body tr[data-selection-key]')
-  await rows.first().focus()
-  await page.keyboard.press('Space')
+  await rows.first().getByRole('checkbox').check()
   const before = await rows.first().boundingBox()
   const header = page.locator('.order-section-band')
   const number = header.locator('.order-section-number')
@@ -248,7 +258,7 @@ test('order metadata appears once per section and identical delivery statuses us
     ).toBe(
       await saved.evaluate((node) => getComputedStyle(node).backgroundColor)
     )
-    await updated.locator('.row-number').click()
+    await updated.getByRole('checkbox').click()
     await page.mouse.move(0, 0)
     await expect(updated).toHaveAttribute('aria-selected', 'true')
     await expect(updated.locator('.row-number')).toHaveCSS('box-shadow', 'none')
@@ -262,63 +272,45 @@ test('order metadata appears once per section and identical delivery statuses us
     ).not.toBe(
       await saved.evaluate((node) => getComputedStyle(node).backgroundColor)
     )
-    await updated.locator('.row-number').click()
+    await updated.getByRole('checkbox').click()
     await expect(updated).toHaveAttribute('aria-selected', 'false')
   }
 })
 
-test('switching languages keeps packing edits mounted and preserves pending authored names', async ({
+test('switching languages keeps Orders authoring mounted and preserves pending source names', async ({
   extension,
 }) => {
   const { page } = await openWorkspace(extension)
-  await page.locator('#sheet-body tr[data-selection-key]').first().focus()
-  await page.keyboard.press('Control+a')
-  await page.locator('#prepare-orders').click()
-  const view = page.locator('#packing-view')
-  const review = page.getByRole('dialog', {
-    name: /^(Assign product codes\?|Move selected products to this packing month\?)$/,
-  })
-  await expect
-    .poll(async () => (await view.isVisible()) || (await review.isVisible()))
-    .toBe(true)
-  if (await review.isVisible())
-    await review
-      .getByRole('button', {
-        name: /^(Assign codes|Change codes) and prepare$/,
-      })
-      .click()
-  await expect(view).toBeVisible()
-  await expect(view.locator('.preparation-save-status')).toHaveText(
-    'Saved automatically'
-  )
-  const now = new Date('2026-10-15T04:10:00Z')
+  await page.locator('#select-rows').click()
+  await assignSelectedPurchaseCodes(page)
+  const view = await editOrderProduct(page, 0),
+    now = new Date('2026-10-15T04:10:00Z')
   await page.clock.install({ time: new Date(now.getTime() - 60000) })
   await page.clock.pauseAt(now)
-  const name = view.getByLabel('Spanish short name', { exact: true }).first()
+  const name = view.locator('[data-authoring-field="spanish-name"]')
   await name.fill('NOMBRE SIN GUARDAR')
   await name.evaluate((node) => {
     window.languageDraftNode = node
   })
   const code = await view
-    .getByLabel('Product code', { exact: true })
-    .first()
+    .getByRole('textbox', { name: 'Product code', exact: true })
     .inputValue()
-  await page.locator('#language-toggle [data-language=zh]').click()
-  await expect(
-    view.getByLabel('西班牙语短名称', { exact: true }).first()
-  ).toHaveValue('NOMBRE SIN GUARDAR')
+  await view.locator('[data-language="zh"]').click()
+  await expect(name).toHaveValue('NOMBRE SIN GUARDAR')
   expect(await page.evaluate(() => window.languageDraftNode.isConnected)).toBe(
     true
   )
   await expect(
-    view.getByLabel('商品货号', { exact: true }).first()
+    view.getByRole('textbox', { name: '商品货号', exact: true })
   ).toHaveValue(code)
-  await page.locator('#language-toggle [data-language=es]').click()
+  await view.locator('[data-language="es"]').click()
+  await expect(name).toHaveValue('NOMBRE SIN GUARDAR')
+  await expect(view.locator('[data-language="es"]')).toHaveAttribute(
+    'aria-pressed',
+    'true'
+  )
   await expect(
-    view.getByLabel('Nombre corto en español', { exact: true }).first()
-  ).toHaveValue('NOMBRE SIN GUARDAR')
-  await expect(
-    view.getByRole('button', { name: 'Copiar imagen de Excel', exact: true })
+    view.getByRole('button', { name: 'Código de barras', exact: true })
   ).toBeVisible()
 })
 

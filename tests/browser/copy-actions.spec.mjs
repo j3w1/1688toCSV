@@ -1,6 +1,7 @@
 import { test, expect } from './extension-fixture.mjs'
 import { createDemoRecords } from '../../preview/library-fixture.js'
 import { revealCopyActions } from './copy-actions-helpers.mjs'
+import { assignSelectedPurchaseCodes } from './smart-workspace-helpers.mjs'
 
 async function openLibrary(extension, { fallback = false } = {}) {
   const [record] = await extension.inspector.evaluate(
@@ -155,12 +156,14 @@ for (const fallback of [false, true])
     await expect(page.locator('#include-headers')).toBeChecked()
   })
 
-test('packing copy formats remain selection-only and Escape dismisses them before leaving packing', async ({
+test('Orders copy formats retain selection, popup language and pending native clipboard writes without changing workspace', async ({
   extension,
 }) => {
-  const { page, record } = await openLibrary(extension)
-  const ordersPanel = page.locator('#orders-copy-actions .copy-actions-panel')
-  await expect(ordersPanel.locator('.copy-format-heading')).toHaveText([
+  const { page, record } = await openLibrary(extension),
+    view = page.locator('#orders-view'),
+    panel = page.locator('#orders-copy-actions .copy-actions-panel'),
+    trigger = page.locator('#orders-copy-actions .copy-actions-trigger')
+  await expect(panel.locator('.copy-format-heading')).toHaveText([
     'Products',
     'Packing',
     'Labels & codes',
@@ -169,93 +172,35 @@ test('packing copy formats remain selection-only and Escape dismisses them befor
   for (const id of ['copy-barcodes', 'copy-carton-marks'])
     await expect(page.locator(`#${id}`)).toBeDisabled()
   await page.locator('#select-rows').click()
-  await page.locator('#prepare-orders').click()
-  await page
-    .getByRole('button', { name: 'Assign codes and prepare', exact: true })
-    .click()
-  const view = page.locator('#packing-view')
-  await expect(view).toBeVisible()
-  await view
-    .getByRole('button', { name: 'Clear selection', exact: true })
-    .click()
-  const trigger = view.getByRole('button', {
-    name: 'More copy formats',
-    exact: true,
-  })
-  const panel = view.getByRole('group', {
-    name: 'Copy formats',
-    exact: true,
-    includeHidden: true,
-  })
-  await expect(panel.locator('.copy-format-heading')).toHaveText([
-    'Products',
-    'Packing',
-    'Labels & codes',
-    'Options',
-    'Backup',
-  ])
-  await expect(trigger).toBeEnabled()
-  await expect(panel).toBeHidden()
-  for (const name of [
-    'Copy values',
-    'Copy images',
-    'Copy to Excel',
-    'Copy columns',
-    'Copy group codes',
-    'Copy barcode images',
-    'Copy carton marks',
-  ])
-    await expect(
-      panel.getByRole('button', { name, exact: true, includeHidden: true })
-    ).toBeDisabled()
-  await expect(
-    panel.getByRole('button', {
-      name: 'Back up packing',
-      exact: true,
-      includeHidden: true,
-    })
-  ).toBeEnabled()
+  await assignSelectedPurchaseCodes(page)
+  await page.locator('#clear-rows').click()
+  await expect(page.locator('#selection-summary')).toContainText(
+    'all filtered rows will copy'
+  )
+  await expect(page.locator('#backup-packing')).toBeEnabled()
   await revealCopyActions(page)
   await expect(panel).toBeVisible()
   await page.keyboard.press('Escape')
   await expect(panel).toBeHidden()
   await expect(view).toBeVisible()
-  await view.locator('.group-select').first().click()
-  await expect(trigger).toBeEnabled()
+  await page
+    .locator('#sheet-body tr[data-selection-key]')
+    .first()
+    .getByRole('checkbox')
+    .check()
   await revealCopyActions(page)
-  await expect(panel).toBeVisible()
   await page.screenshot({
-    path: test.info().outputPath('copy-menu-preparation-wide.png'),
+    path: test.info().outputPath('copy-menu-orders-wide.png'),
   })
-  const exportPacking = view.locator(
-    '.packing-selection-toolbar [data-action="export-packing-list"]'
+  await expect(view.locator('[data-action="export-packing-list"]')).toHaveCount(
+    0
   )
-  await expect(exportPacking).toBeEnabled()
-  await expect(
-    panel.locator('[data-action="export-packing-list"]')
-  ).toHaveCount(0)
-  const exportBounds = await exportPacking.boundingBox()
-  expect(exportBounds.height).toBeLessThanOrEqual(42)
-  expect(exportBounds.y + exportBounds.height).toBeLessThanOrEqual(900)
-  expect(
-    await exportPacking.evaluate((button) => {
-      const text = [...button.childNodes].find(
-        (node) => node.nodeType === Node.TEXT_NODE && node.textContent.trim()
-      )
-      const range = document.createRange()
-      range.selectNode(text)
-      return range.getClientRects().length
-    })
-  ).toBe(1)
   await extension.context.grantPermissions([
     'clipboard-read',
     'clipboard-write',
   ])
   await panel.getByLabel('Headers', { exact: true }).check()
-  const copyValues = panel
-    .getByRole('group', { name: 'Products', exact: true })
-    .getByRole('button')
-    .first()
+  const copyValues = page.locator('#copy-values')
   await expect(copyValues).toHaveAccessibleName('Copy values')
   await copyValues.click()
   await expect(copyValues).toHaveClass(/copied/)
@@ -268,7 +213,7 @@ test('packing copy formats remain selection-only and Escape dismisses them befor
   await expect(panel).toBeHidden()
   await expect(view).toBeVisible()
   await revealCopyActions(page)
-  await panel.getByRole('button', { name: 'Copy columns', exact: true }).click()
+  await page.locator('#copy-preparation').click()
   const dialog = page.locator('.preparation-column-dialog')
   await expect(dialog).toBeVisible()
   const languageBefore = await page.evaluate(() => ({
@@ -313,19 +258,19 @@ test('packing copy formats remain selection-only and Escape dismisses them befor
   await page.keyboard.press('Escape')
   await expect(dialog).toBeHidden()
   await expect(view).toBeVisible()
-  await view
-    .getByLabel('Show packing orders', { exact: true })
-    .selectOption({ index: 1 })
-  await expect(panel).toHaveCount(1)
-  await view.getByRole('button', { name: 'Select all', exact: true }).click()
-  await expect(trigger).toBeEnabled()
+  await page.setViewportSize({ width: 390, height: 740 })
   await revealCopyActions(page)
-  await expect(panel).toBeVisible()
+  await page.screenshot({
+    path: test.info().outputPath('copy-menu-orders-narrow.png'),
+  })
+  const bounds = await panel.boundingBox()
+  expect(bounds.x).toBeGreaterThanOrEqual(0)
+  expect(bounds.y).toBeGreaterThanOrEqual(0)
+  expect(bounds.x + bounds.width).toBeLessThanOrEqual(390)
+  expect(bounds.y + bounds.height).toBeLessThanOrEqual(740)
   await page.keyboard.press('Escape')
-  await expect(panel).toBeHidden()
   await expect(view).toBeVisible()
-  await page.keyboard.press('Escape')
-  await expect(view).toBeHidden()
   for (const id of ['copy-barcodes', 'copy-carton-marks'])
     await expect(page.locator(`#${id}`)).toBeEnabled()
+  expect(extension.unexpectedRequests).toEqual([])
 })
