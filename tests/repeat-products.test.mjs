@@ -38,6 +38,7 @@ function fixture(quantities = ['3', '27']) {
         sellerName: 'Synthetic repeat supplier',
         sellerMemberLogin: 'synthetic-repeat',
         observedAt: '2026-10-01T00:00:00.000Z',
+        purchasedAt: '2026-10-01T00:00:00+08:00',
         status: 'Completed',
         items: [
           {
@@ -162,7 +163,7 @@ test('a reviewed repeat shares the original code and canonical reservation while
   assert.deepEqual(data.preparations, original.preparations)
 })
 
-test('only complete matching variants from the same known store, account and packing month are candidates', () => {
+test('only complete matching variants from the same known store/account with valid issued identities are candidates', () => {
   const data = fixture()
   assert.equal(
     repeatProductCandidates({ source: data.ref(1), ...data }).length,
