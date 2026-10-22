@@ -1,5 +1,10 @@
 import { readFile } from 'node:fs/promises'
 import { test, expect } from './extension-fixture.mjs'
+import {
+  assignSelectedPurchaseCodes,
+  editOrderProduct,
+  closeOrderProduct,
+} from './smart-workspace-helpers.mjs'
 import { createDemoRecords } from '../../preview/library-fixture.js'
 import { otherOrderSnapshot } from '../../src/other-orders.js'
 import { readBackupFile } from '../../src/backup-file.js'
@@ -141,29 +146,15 @@ test('manual other-source order follows packing, labels, carton marks and full/s
   const row = page.locator('#sheet-body tr[data-selection-key]').first()
   await row.focus()
   await row.press('Control+a')
-  await page.locator('#packing-month').fill('2026-10')
-  await action(page, 'prepare-packing-list').click()
-  await action(page, 'review-proceed').click()
-  await expect(page.locator('#packing-view')).toBeVisible()
-  await expect(page.locator('.packing-order-number')).toContainText(
-    'EXT-MANUAL-1'
-  )
-  await expect(
-    page.getByRole('button', { name: 'Open selected order', exact: true })
-  ).toBeDisabled()
-  const names = page.locator('#packing-view .group-name-editor')
-  for (let i = 0; i < (await names.count()); i++)
-    if (!(await names.nth(i).inputValue()))
-      await names.nth(i).fill('FLORERO SINTETICO')
-  const categories = page.locator(
-    '#packing-view [data-packing-field="category"]'
-  )
-  for (let i = 0; i < (await categories.count()); i++)
-    if (!(await categories.nth(i).inputValue()))
-      await categories.nth(i).fill('花瓶')
-  await expect(page.locator('.preparation-save-status')).toHaveText(
-    'Saved automatically'
-  )
+  await assignSelectedPurchaseCodes(page)
+  await expect(page.locator('#orders-view')).toBeVisible()
+  await expect(page.locator('#sheet-body')).toContainText('EXT-MANUAL-1')
+  await expect(page.locator('#sheet-body .order-source-link')).toHaveCount(0)
+  const editor = await editOrderProduct(page, 0, {
+    'Spanish name': 'FLORERO SINTETICO',
+    'Chinese category': '花瓶',
+  })
+  await closeOrderProduct(editor)
   await action(page, 'select-all-rows').click()
   await action(page, 'open-print-menu').click()
   await action(page, 'print-labels').click()
@@ -189,10 +180,7 @@ test('manual other-source order follows packing, labels, carton marks and full/s
   await action(page, 'close-print-dialog').click()
   const complete = await orders(extension)
   expect(complete.preparations).toHaveLength(1)
-  await action(page, 'open-copy-menu').click()
-  await page
-    .getByRole('button', { name: 'Back up packing', exact: true })
-    .click()
+  await action(page, 'backup-packing').click()
   const backupFiles = await downloaded(extension, 5)
   const scoped = await readBackupFile(
     new Blob([await readFile(backupFiles[4].filename)])

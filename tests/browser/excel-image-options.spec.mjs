@@ -1,5 +1,10 @@
 import { test, expect } from './extension-fixture.mjs'
 import { createDemoRecords } from '../../preview/library-fixture.js'
+import {
+  assignSelectedPurchaseCodes,
+  loadedSourceContainer,
+  openContainerOutput,
+} from './smart-workspace-helpers.mjs'
 
 for (const mode of ['light', 'dark'])
   test(`Products and Packing export light badge colors in ${mode} workspace and copy the exact preview PNG`, async ({
@@ -228,12 +233,12 @@ for (const mode of ['light', 'dark'])
     const first = page.locator('#sheet-body tr[data-selection-key]').first()
     await first.focus()
     await first.press('Control+a')
-    await page.locator('#prepare-orders').click()
-    await page
-      .getByRole('button', { name: 'Assign codes and prepare', exact: true })
-      .click()
-    const packing = page.locator('#packing-view')
-    await expect(packing.locator('.variants tbody tr')).toHaveCount(3)
+    await assignSelectedPurchaseCodes(page)
+    const id = await loadedSourceContainer(extension, [
+        { accountId: 'local', orderId: record.snapshot.orderId },
+      ]),
+      packing = await openContainerOutput(page, id)
+    await expect(packing.locator('tr[data-container-row]')).toHaveCount(3)
     await page.evaluate(() => {
       window.badgeText = []
     })
@@ -543,12 +548,12 @@ test('store and order details toggle regenerates the raster and persists across 
   const first = page.locator('#sheet-body tr[data-selection-key]').first()
   await first.focus()
   await first.press('Control+a')
-  await page.locator('#prepare-orders').click()
-  await page
-    .getByRole('button', { name: 'Assign codes and prepare', exact: true })
-    .click()
-  const packing = page.locator('#packing-view')
-  await expect(packing.locator('.variants tbody tr')).toHaveCount(3)
+  await assignSelectedPurchaseCodes(page)
+  const id = await loadedSourceContainer(extension, [
+      { accountId: 'local', orderId: record.snapshot.orderId },
+    ]),
+    packing = await openContainerOutput(page, id)
+  await expect(packing.locator('tr[data-container-row]')).toHaveCount(3)
   await page.evaluate(() => {
     window.excelIdentityText = []
   })
@@ -817,14 +822,12 @@ test('image columns reorder, persist across copying and reload, and use the sele
   const first = page.locator('#sheet-body tr[data-selection-key]').first()
   await first.focus()
   await first.press('Control+a')
-  await page.locator('#prepare-orders').click()
-  await page
-    .getByRole('button', { name: 'Assign codes and prepare', exact: true })
-    .click()
-  const packing = page.locator('#packing-view')
-  await expect(packing).toBeVisible()
-  await expect(packing.locator('.preparation-group')).toHaveCount(1)
-  await expect(packing.locator('.variants tbody tr')).toHaveCount(3)
+  await assignSelectedPurchaseCodes(page)
+  const id = await loadedSourceContainer(extension, [
+      { accountId: 'local', orderId: record.snapshot.orderId },
+    ]),
+    packing = await openContainerOutput(page, id)
+  await expect(packing.locator('tr[data-container-row]')).toHaveCount(3)
   await packing
     .getByRole('button', { name: 'Copy Excel image', exact: true })
     .click()
