@@ -1156,6 +1156,51 @@ test('purchase evidence recovery retains invalid work, submits prior disposition
   ])
   assert.deepEqual(source.snapshot, before)
 })
+test('purchase evidence refresh retry never repeats a committed mutation after a failed read', async (testContext) => {
+  const { document } = authoringEnvironment(testContext),
+    record = syntheticOrder('1001')
+  let writes = 0,
+    failRead = true
+  const authoring = await createProductAuthoring({
+    repository: {
+      listPreparations: async () => [],
+      getPackingPreferences: async () => validatePackingPreferences({}),
+      getOrderReconciliation: async () => ({ record, revisions: {} }),
+      setInventoryDispositions: async () => {
+        writes++
+        return { record }
+      },
+    },
+    getRecords: () => [record],
+    changed: async () => {
+      if (failRead) throw new Error('Synthetic refresh unavailable')
+    },
+  })
+  await authoring.openInventoryRecovery({
+    accountId: 'local',
+    orderId: '1001',
+    entryId: '2001',
+  })
+  const modal = document.querySelector(
+      '[data-action="review-purchase-evidence"]'
+    ),
+    save = modal.querySelector('[data-action="save-inventory-disposition"]')
+  save.click()
+  await new Promise((resolve) => setTimeout(resolve, 0))
+  assert.equal(writes, 1)
+  assert.equal(save.disabled, true)
+  assert.match(
+    modal.querySelector('[role="status"]').textContent,
+    /refresh unavailable/
+  )
+  failRead = false
+  modal.querySelector('[data-action="retry-evidence-refresh"]').click()
+  await new Promise((resolve) => setTimeout(resolve, 0))
+  assert.equal(writes, 1)
+  assert.equal(modal.isConnected, false)
+  authoring.dispose()
+})
+
 test('all-orders and narrowed carton history share a bounded searchable table and inspect without selecting or mutating', async (context) => {
   const { document, window } = dom(context),
     host = document.getElementById('host'),

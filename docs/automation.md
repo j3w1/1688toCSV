@@ -84,6 +84,7 @@ Click/Enter inspects an item; native checkboxes select. Source text and IDs rema
 | `order-carton-history`       | Show the same retained evidence table for the current reconciliation order.                            |
 | `inspect-carton-history`     | Inspect original/current/retired carton evidence without selecting inventory.                          |
 | `review-purchase-evidence`   | Review original date/supplier facts and explicit inventory dispositions, retaining unfinished input.   |
+| `retry-evidence-refresh`     | Retry the view refresh after committed purchase evidence; never repeat its successful mutation.        |
 | `resolve-purchase-date`      | Save an authored original-date resolution with the observed source revision guard.                     |
 | `resolve-purchase-supplier`  | Save an operator-confirmed supplier identity; source evidence and issued codes remain guarded.         |
 | `save-inventory-disposition` | Save documented non-goods/fee/payment-only/canceled evidence or an explicit guarded clear.             |
@@ -155,6 +156,8 @@ Retired public actions are `packing-month`, `prepare-packing-list`, `review-proc
 Export preferences retain advanced columns/layout. Default sheets are Packing list, Cartons and Se quedó. **Include detailed automation JSON** starts false for each export and requires a deliberate checkbox choice. It contains full costs, charge reasons and source identifiers for the complete revision regardless of visible Excel columns. Display choices do not redact JSON. Draft exports are labelled; amended/history output identifies its revision and uses snapshot prices/names/photos.
 
 ## Order report intake and exceptional cartons
+
+`retry-evidence-refresh` refreshes the Orders view after a purchase-evidence mutation committed but its subsequent read failed. It never repeats the already committed mutation.
 
 | `data-action`                    | Behavior                                                                                                                                                                                                     |
 | -------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |

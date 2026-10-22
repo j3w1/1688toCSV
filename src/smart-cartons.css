@@ -214,6 +214,13 @@
 .product-authoring-fields :is(input, textarea) {
   inline-size: 100%;
 }
+@media (pointer: coarse) {
+  .product-authoring-dialog :is(button, input, select),
+  .smart-grid-tools button,
+  .smart-grid-scroll input:not([type='checkbox']) {
+    min-block-size: 44px;
+  }
+}
 .product-authoring-dialog > .preparation-photo {
   max-inline-size: 8rem;
 }

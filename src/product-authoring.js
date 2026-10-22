@@ -1114,13 +1114,37 @@ export async function createProductAuthoring({
     const busy = (value) =>
       controls.forEach((control) => (control.disabled = value))
     let saving = false
+    let committed = false
+    const retryRefresh = el('button', uiMessage('Retry'))
+    retryRefresh.hidden = true
+    retryRefresh.dataset.action = 'retry-evidence-refresh'
+    const finishRefresh = async () => {
+      await reload()
+      await changed({ reload: true })
+      modal.close('saved')
+    }
+    retryRefresh.onclick = () =>
+      void (async () => {
+        if (saving) return
+        saving = true
+        retryRefresh.disabled = true
+        try {
+          await finishRefresh()
+        } catch (error) {
+          bindText(status, uiMessage(error.message))
+        } finally {
+          saving = false
+          retryRefresh.disabled = false
+        }
+      })()
     async function commit(run, domain = 'disposition') {
-      if (saving) return
+      if (saving || committed) return
       saving = true
       retain()
       busy(true)
       try {
         await run()
+        committed = true
         const recovered = JSON.parse(localStorage.getItem(recoveryKey) || '{}')
         if (domain === 'date') delete recovered.date
         else if (domain === 'supplier') delete recovered.supplier
@@ -1132,14 +1156,15 @@ export async function createProductAuthoring({
         if (Object.keys(recovered).length)
           localStorage.setItem(recoveryKey, JSON.stringify(recovered))
         else localStorage.removeItem(recoveryKey)
-        await reload()
-        await changed({ reload: true })
-        modal.close('saved')
+        await finishRefresh()
       } catch (error) {
         bindText(status, uiMessage(error.message))
+        retryRefresh.hidden = !committed
       } finally {
         saving = false
         busy(false)
+        if (committed)
+          save.disabled = saveDate.disabled = saveSupplier.disabled = true
       }
     }
     const update = () => {
@@ -1208,7 +1233,7 @@ export async function createProductAuthoring({
     }
     modal.onclose = () => modal.remove()
     status.setAttribute('role', 'status')
-    modal.append(status, save, close)
+    modal.append(status, retryRefresh, save, close)
     if (context.preparation?.groups.some((group) => group.baseCode)) {
       const legacy = button('Review legacy supplier identity', async () => {
         const review = await repository.reviewLegacySupplierIdentity({
