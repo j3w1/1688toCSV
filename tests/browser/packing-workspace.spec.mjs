@@ -1554,7 +1554,7 @@ test('Pcs/box-only order proposes 45+45 and prefills 10 once, confirms once and 
     page = await openSmartLibrary(extension),
     before = await packingBackup(extension)
   const grid = await openOrderReconciliation(page, ref),
-    row = productGridRow(grid, { ...ref, entryId: 'entry-0' })
+    row = productGridRow(grid, { ...ref, entryId: '2001' })
   await row.locator('[data-grid-column="capacity"]').fill('45')
   await row.locator('[data-grid-column="capacity"]').press('Tab')
   await expect(row.locator('[data-column="proposedCount"]')).toHaveText('2')
