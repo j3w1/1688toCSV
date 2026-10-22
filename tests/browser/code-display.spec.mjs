@@ -416,10 +416,12 @@ test('composed packing codes share an ink baseline with editable suffixes and ke
       context.drawImage(image, 0, 0)
       return bounds.map(({ band, regions }) =>
         regions.map((region) => {
+          // Sample fully inside the badge. Fractional font metrics can leave
+          // white page pixels in an outward-rounded boundary row.
           const x = Math.ceil(region.x),
-            y = Math.floor(band.y)
+            y = Math.ceil(band.y)
           const width = Math.max(1, Math.floor(region.x + region.width) - x)
-          const height = Math.ceil(band.y + band.height) - y
+          const height = Math.floor(band.y + band.height) - y
           const pixels = context.getImageData(x, y, width, height).data
           const rows = []
           for (let row = 0; row < height; row++)

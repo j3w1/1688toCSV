@@ -1429,6 +1429,12 @@ function planCartonWorksheet(rows, options) {
     records = [],
     included = new Set(rows.map((row) => productIdentity(row))),
     sourceById = new Map(rows.map((row) => [productIdentity(row), row])),
+    orderReferences = new Map(
+      rows.map((row) => [
+        JSON.stringify([row.accountId || 'local', String(row.orderId)]),
+        row.orderReference,
+      ])
+    ),
     productReferences = new Map(),
     add = (kind, height, cells = []) => {
       const row = { number: sheetRows.length + 1, kind, height, cells }
@@ -1539,7 +1545,17 @@ function planCartonWorksheet(rows, options) {
               productIdentity(content, batch.accountId || 'local')
             ),
             code = content.barcode || source?.barcode || content.entryId,
-            order = String(source?.orderReference || content.orderId)
+            order = String(
+              content.orderReference ||
+                source?.orderReference ||
+                orderReferences.get(
+                  JSON.stringify([
+                    batch.accountId || 'local',
+                    String(content.orderId),
+                  ])
+                ) ||
+                content.orderId
+            )
           return `${code} × ${content.quantity} · ${words[language][2]} ${order}`
         })
         .join('\n'),

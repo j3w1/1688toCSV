@@ -592,6 +592,9 @@ export function cartonBatchProjection(batches, records, preparations) {
           ...item,
           ...product,
           ...allocation,
+          ...(record?.snapshot.source === 'other'
+            ? { orderReference: record.snapshot.reference }
+            : {}),
           barcode: product?.barcode || '',
           description: item?.description || product?.description || '',
           sourceQuantity: item?.quantity || '',

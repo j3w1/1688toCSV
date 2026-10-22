@@ -901,6 +901,7 @@ tbody tr:hover {
 }
 #sheet-body .pack-size-cell input {
   inline-size: 10ch;
+  max-inline-size: 70px;
   min-block-size: 26px;
   padding: 2px 3px;
   border: 1px solid transparent;

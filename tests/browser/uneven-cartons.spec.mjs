@@ -142,19 +142,25 @@ test('uneven numbered cartons retain exact supplier measurements through the wor
   const sourceRow = page.locator('#sheet-body tr[data-selection-key]')
   await expect(sourceRow).toHaveCount(1)
   await expect(
-    sourceRow.getByRole('button', { name: 'Pcs/box', exact: true })
-  ).toHaveText('Varies')
+    sourceRow.getByRole('spinbutton', { name: 'Pcs/box', exact: true })
+  ).toBeEditable()
+  await expect(sourceRow.locator('.carton-recorded-context')).toContainText(
+    'Varies · 6 recorded cartons'
+  )
   await page.locator('#view-packing').click()
   const packing = page.locator('#packing-view')
   await expect(packing).toBeVisible()
   await expect(packing.locator('.preparation-group')).toHaveCount(1)
   await expect(packing.locator('.variants tbody tr')).toHaveCount(1)
   await expect(
-    packing.getByRole('button', { name: 'Pcs/box', exact: true })
-  ).toHaveText('Varies')
+    packing.getByRole('spinbutton', { name: 'Pcs/box', exact: true })
+  ).toBeEditable()
+  await expect(packing.locator('.carton-recorded-context')).toContainText(
+    'Varies · 6 recorded cartons'
+  )
   await expect(packing.locator('.packing-carton-chip')).toHaveCount(6)
   await expect(packing.locator('.packing-group-cartons')).toContainText(
-    '6 batches · 6 cartons'
+    '6 recorded cartons'
   )
   for (const [index, carton] of cartons.entries())
     await expect(

@@ -91,8 +91,17 @@ async function spreadsheetPacking(extension, kind) {
   await expect(packing.getByAltText('Barcode preview')).toHaveCount(3, {
     timeout: 20_000,
   })
-  for (const preview of await packing.getByAltText('Barcode preview').all())
-    await expect(preview).toBeVisible()
+  for (const button of await packing
+    .getByRole('button', { name: 'Edit barcode', exact: true })
+    .all()) {
+    // Only previews within the packing scroller are rendered.
+    await button.scrollIntoViewIfNeeded()
+    const preview = button.getByAltText('Barcode preview')
+    await expect(preview).toBeVisible({ timeout: 20_000 })
+    await expect
+      .poll(() => preview.evaluate((image) => image.naturalWidth))
+      .toBeGreaterThan(0)
+  }
   return { page, packing, descriptions, snapshot: built.snapshot }
 }
 

@@ -1374,10 +1374,10 @@ export async function startPackingWorkspace({
       '.packing-group-cartons-summary'
     )) {
       const draft = drafts.find(
-        (entry) => entry.orderId === summary.dataset.orderId
+        (entry) => entry.orderId === summary.dataset.cartonOrderId
       )
       const group = draft?.groups.find(
-        (entry) => entry.id === summary.dataset.groupId
+        (entry) => entry.id === summary.dataset.cartonGroupId
       )
       if (group) bindText(summary, groupCartonSummary(draft, group))
     }
@@ -1397,8 +1397,8 @@ export async function startPackingWorkspace({
       groupCartonSummary(draft, group),
       'packing-group-cartons-summary'
     )
-    summary.dataset.orderId = draft.orderId
-    summary.dataset.groupId = group.id
+    summary.dataset.cartonOrderId = draft.orderId
+    summary.dataset.cartonGroupId = group.id
     host.append(edit, summary)
     const groups = new Set(
       group.variants.flatMap((variant) => variant.entryIds)

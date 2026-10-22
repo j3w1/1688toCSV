@@ -205,6 +205,12 @@ test('150 pieces at 10 per box immediately show 15 calculated cartons and retain
   await expect(page.locator('.packing-group-cartons-summary')).toContainText(
     '15 calculated cartons'
   )
+  const groupId = await page
+    .locator('.preparation-group')
+    .getAttribute('data-group-id')
+  await expect(
+    page.locator(`#packing-view [data-group-id="${groupId}"]`)
+  ).toHaveCount(1)
   await page.screenshot({ path: testInfo.outputPath('capacity-150-at-10.png') })
   await page.locator('[data-language="es"]').click()
   await visibleSummary(packed, '15 cajas calculadas')

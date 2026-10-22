@@ -73,7 +73,7 @@ const status = (page) => page.locator('#workspace-status')
 
 test('an agent prepares, exports and prints through stable data-action controls', async ({
   extension,
-}) => {
+}, testInfo) => {
   const page = await open(extension)
   await expect(status(page)).toHaveAttribute('data-status', 'idle')
   // Older months start collapsed; the current month's two orders are listed.
@@ -173,7 +173,10 @@ test('an agent prepares, exports and prints through stable data-action controls'
   )
   expect(summaryFile.filename).toBe(xlsx.filename.replace(/\.xlsx$/, '.json'))
   const workbook = await readFile(xlsx.filename)
-  await writeFile('work/packing-workbook-synthetic.xlsx', workbook)
+  await writeFile(
+    testInfo.outputPath('packing-workbook-synthetic.xlsx'),
+    workbook
+  )
   expect(workbook.subarray(0, 2).toString('latin1')).toBe('PK')
   expect(workbook.toString('latin1')).toContain('xl/worksheets/sheet1.xml')
   expect(workbook.toString('latin1')).toContain('xl/drawings/drawing1.xml')

@@ -106,7 +106,12 @@ test('one group with three selected variants shows every full code inline and As
     path: 'work/adaptive-assignment-real-three-variants.png',
   })
   await review.locator('[data-action="review-assign-only"]').click()
+  await expect(review).toHaveCount(0)
   await expect(view).toBeHidden()
+  // The review closes before the asynchronous assignment transaction starts.
+  await expect
+    .poll(async () => (await backup(extension)).preparations.length)
+    .toBe(1)
   const after = await backup(extension)
   expect(after.orders).toEqual(before.orders)
   expect(after.preparations).toHaveLength(1)

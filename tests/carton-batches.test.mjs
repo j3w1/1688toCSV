@@ -95,6 +95,22 @@ test('mixed carton quantities do not invent per-carton product contents and phys
   assert.equal(projected[0].unitsPerCarton, undefined)
 })
 
+test('carton projections resolve external purchase references without persisting them in physical records', () => {
+  const { batch, records, preparations } = fixture()
+  records[0].snapshot.source = 'other'
+  records[0].snapshot.reference = 'EXT-SUPPLIER-1001'
+  delete records[0].snapshot.sellerMemberLogin
+  const before = structuredClone(batch)
+  const [projected] = cartonBatchProjection([batch], records, preparations)
+  assert.ok(
+    projected.contents.every(
+      (item) => item.orderReference === 'EXT-SUPPLIER-1001'
+    )
+  )
+  assert.ok(projected.contents.every((item) => item.orderId === '1001'))
+  assert.deepEqual(batch, before)
+})
+
 test('six numbered cartons preserve unequal actual contents, weight and native volume without inferred capacity', () => {
   const { batch, records, preparations } = fixture(),
     actual = [

@@ -87,6 +87,37 @@ test('carton contents display an external supplier reference while retaining the
   assert.equal(external[0].orderId, 'order-1')
 })
 
+test('partial carton context retains references for omitted same-order and foreign purchase contents', () => {
+  const selected = [
+    { ...rows[0], source: 'other', orderReference: 'EXT-SELECTED' },
+  ]
+  const physical = batch({
+    contents: [
+      ...batch().contents,
+      {
+        orderId: 'omitted-order',
+        entryId: 'foreign-product',
+        quantity: '5',
+        barcode: 'CE26101002',
+        orderReference: 'EXT-OMITTED',
+      },
+    ],
+  })
+  const before = structuredClone(physical)
+  const plan = planPackingWorkbook(
+    selected,
+    options({ cartonBatches: [physical] })
+  )
+  const cartons = plan.sheets[1]
+  const context = cartons.rows.find((row) => row.kind === 'context')
+  const contents = field(cartons, context, 'contents').value
+  assert.equal((contents.match(/Order EXT-SELECTED/g) || []).length, 3)
+  assert.match(contents, /CE26101002 × 5 · Order EXT-OMITTED/)
+  assert.doesNotMatch(contents, /Order (?:order-1|omitted-order)/)
+  assert.equal(cartons.rows.filter((row) => row.kind === 'carton').length, 0)
+  assert.deepEqual(physical, before)
+})
+
 test('shared S/M/L packing keeps purchases separate and owns physical totals on Cartons only', async () => {
   const plan = planPackingWorkbook(rows, options()),
     cartons = plan.sheets[1]
