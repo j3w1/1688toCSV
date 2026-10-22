@@ -137,12 +137,30 @@ export function installWorkspaceShortcuts(doc) {
       event.isComposing ||
       event.repeat ||
       event.getModifierState?.('AltGraph') ||
-      doc.querySelector('dialog[open]') ||
       event.target.closest?.(
         'input:not([type="checkbox"]):not([type="radio"]):not([type="button"]):not([type="submit"]):not([type="reset"]), textarea, select, [contenteditable]:not([contenteditable="false"]), [role="textbox"], [role="combobox"]'
       )
     )
       return
+    const dialog = [...doc.querySelectorAll('dialog[open]')].at(-1)
+    if (dialog) {
+      const command = commands.find(
+        (item) =>
+          ['undo', 'redo'].includes(item.id) &&
+          item.keys.some((chord) => matches(event, chord))
+      )
+      if (!command) return
+      const target = [...dialog.querySelectorAll('button')].find(
+        (button) =>
+          commandFor(button)?.id === command.id &&
+          !button.disabled &&
+          !button.closest('[hidden],[inert]')
+      )
+      if (!target) return
+      event.preventDefault()
+      target.click()
+      return
+    }
     const view =
       doc.getElementById('packing-view')?.hidden === false
         ? 'packing'

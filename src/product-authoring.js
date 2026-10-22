@@ -23,6 +23,7 @@ import {
   setVariantMaterial,
   validatePreparationSuffixEdits,
   setGroupSizeMode,
+  regeneratePreparationCode,
 } from './packing-model.js'
 import { acknowledgePreparation, samePreparation } from './preparation-save.js'
 import {
@@ -72,6 +73,7 @@ import {
   regroupSelection,
   groupingAvailability,
   groupingReviewChanges,
+  unusedSuffix,
 } from './packing-grouping.js'
 import {
   reviewPackingChanges,
@@ -220,10 +222,29 @@ export async function createProductAuthoring({
     membership = new Map(),
     suggestions = new Map(),
     generation = 0,
+    loadedContext,
     editor
   const sessions = new Map(),
     cartonFields = new Map()
-  const history = createPreparationHistory()
+  const histories = new Map()
+  function history() {
+    const key = getContextContainerId() || 'orders'
+    if (!histories.has(key)) histories.set(key, createPreparationHistory())
+    return histories.get(key)
+  }
+  const sessionKey = (ref, contextContainerId = getContextContainerId()) =>
+    JSON.stringify([
+      contextContainerId || null,
+      ref.accountId || 'local',
+      ref.orderId,
+    ])
+  const amendmentOptions = () =>
+    getContextContainerId()
+      ? { contextContainerId: getContextContainerId() }
+      : {}
+  async function ensureContext() {
+    if (loadedContext !== getContextContainerId()) await reload()
+  }
   const channel = globalThis.BroadcastChannel
     ? new BroadcastChannel('1688-preparation')
     : null
@@ -273,10 +294,11 @@ export async function createProductAuthoring({
   async function reload() {
     const version = ++generation
     const [list, prefs] = await Promise.all([
-      repository.listPreparations(),
+      repository.listPreparations(amendmentOptions()),
       repository.getPackingPreferences(),
     ])
     if (version !== generation) return
+    loadedContext = getContextContainerId()
     preparations = new Map(list.map((prep) => [orderKey(prep), prep]))
     preferences = prefs
     configureColorVocabulary(preferences.colorVocabulary)
@@ -285,8 +307,15 @@ export async function createProductAuthoring({
     rebuild()
     for (const session of sessions.values()) {
       const latest = preparations.get(orderKey(session.draft))
-      if (!session.dirty && !session.mounted && latest)
+      if (
+        !session.dirty &&
+        !session.mounted &&
+        latest &&
+        session.contextContainerId === getContextContainerId()
+      ) {
         session.draft = structuredClone(latest)
+        session.saved = structuredClone(latest)
+      }
     }
   }
   function preparedRows(rows) {
@@ -415,14 +444,14 @@ export async function createProductAuthoring({
     getPhotoItems: getSelectedRows,
     onPhotoEdit,
   })
-  function recoveryKey(ref) {
-    return `1688-orders-authoring-draft:${orderKey(ref)}`
+  function recoveryKey(ref, contextContainerId = getContextContainerId()) {
+    return `1688-orders-authoring-draft:${orderKey(ref)}${contextContainerId ? `:amendment:${contextContainerId}` : ''}`
   }
   function retain(session) {
     // Recovery UI state is not inventory. Only the repository accepts facts.
     try {
       localStorage.setItem(
-        recoveryKey(session.draft),
+        recoveryKey(session.draft, session.contextContainerId),
         JSON.stringify(session.draft)
       )
     } catch (error) {
@@ -433,10 +462,10 @@ export async function createProductAuthoring({
     }
   }
   function getSession(ref) {
-    const key = orderKey(ref)
+    const key = sessionKey(ref)
     let session = sessions.get(key)
     if (!session) {
-      const saved = preparations.get(key)
+      const saved = preparations.get(orderKey(ref))
       if (!saved) throw new Error('Review product codes in Orders first.')
       let draft = structuredClone(saved)
       try {
@@ -450,6 +479,8 @@ export async function createProductAuthoring({
       } catch {}
       session = {
         draft,
+        saved: structuredClone(saved),
+        contextContainerId: getContextContainerId(),
         dirty: !samePreparation(draft, saved),
         generation: 0,
         work: null,
@@ -472,7 +503,7 @@ export async function createProductAuthoring({
         'Review the recovered draft against the newer saved revision before saving.'
       )
     const submitted = structuredClone(session.draft),
-      before = preparations.get(orderKey(submitted))
+      before = session.saved || preparations.get(orderKey(submitted))
     if (before && before.revision !== submitted.revision) {
       session.stale = true
       throw new Error(
@@ -495,6 +526,9 @@ export async function createProductAuthoring({
     const version = session.generation
     session.notify?.('Saving…')
     session.work = repository.savePreparations([submitted], {
+      ...(session.contextContainerId
+        ? { contextContainerId: session.contextContainerId }
+        : {}),
       expectedRevisions: [submitted.revision],
       expectedSnapshots: [
         {
@@ -507,14 +541,19 @@ export async function createProductAuthoring({
     try {
       const [result] = await session.work
       acknowledgePreparation(session.draft, submitted, result)
-      preparations.set(orderKey(result), result)
-      rebuild()
+      session.saved = structuredClone(result)
+      if (session.contextContainerId === getContextContainerId()) {
+        preparations.set(orderKey(result), result)
+        rebuild()
+      }
       session.dirty = session.generation !== version
       session.error = null
       session.notify?.(session.dirty ? 'Pending changes' : 'Saved')
       if (!session.dirty) {
         try {
-          localStorage.removeItem(recoveryKey(result))
+          localStorage.removeItem(
+            recoveryKey(result, session.contextContainerId)
+          )
         } catch {}
       } else retain(session)
       channel?.postMessage('changed')
@@ -531,13 +570,17 @@ export async function createProductAuthoring({
   }
   async function flushSaves() {
     for (const controller of cartonFields.values()) await controller.flush()
-    for (const session of sessions.values()) await flushSession(session)
+    for (const session of sessions.values()) {
+      if (session.contextContainerId === getContextContainerId())
+        await flushSession(session)
+      else clearTimeout(session.timer)
+    }
   }
   function editSession(session, change, mergeKey = null) {
     const before = preparationHistorySnapshot(session.draft)
     change(session.draft)
     if (before === preparationHistorySnapshot(session.draft)) return
-    history.record(
+    history().record(
       orderKey(session.draft),
       before,
       preparationHistorySnapshot(session.draft),
@@ -554,15 +597,19 @@ export async function createProductAuthoring({
         void flushSession(session).catch((error) => {
           session.error = error
           session.notify?.(error.message)
-          feedback(error.message, true)
+          if (!session.notify) feedback(error.message, true)
         }),
       800
     )
   }
   async function reviewRecovered(session) {
-    const latest = (await repository.listPreparations()).find(
-      (draft) => orderKey(draft) === orderKey(session.draft)
-    )
+    const latest = (
+      await repository.listPreparations(
+        session.contextContainerId
+          ? { contextContainerId: session.contextContainerId }
+          : {}
+      )
+    ).find((draft) => orderKey(draft) === orderKey(session.draft))
     if (!latest) throw new Error('This edit session is no longer available.')
     const rows = (draft) =>
       new Map(
@@ -607,10 +654,11 @@ export async function createProductAuthoring({
     })
     if (!choice) return false
     preparations.set(orderKey(latest), latest)
+    session.saved = structuredClone(latest)
     if (choice === 'saved') {
       session.draft = structuredClone(latest)
       session.dirty = false
-      localStorage.removeItem(recoveryKey(latest))
+      localStorage.removeItem(recoveryKey(latest, session.contextContainerId))
     } else {
       session.draft.revision = latest.revision
       session.draft.updatedAt = latest.updatedAt
@@ -623,7 +671,7 @@ export async function createProductAuthoring({
   }
   async function travel(direction) {
     await flushSaves()
-    const result = history.peek(direction)
+    const result = history().peek(direction)
     if (!result) return
     const entries = result.changes || [result]
     const before = entries.map((entry) => preparations.get(entry.orderId))
@@ -641,7 +689,7 @@ export async function createProductAuthoring({
     const submitted = new Map(
       before.map((draft) => [
         orderKey(draft),
-        structuredClone(sessions.get(orderKey(draft))?.draft || draft),
+        structuredClone(sessions.get(sessionKey(draft))?.draft || draft),
       ])
     )
     controls.forEach((control) => {
@@ -649,15 +697,17 @@ export async function createProductAuthoring({
     })
     try {
       const results = await repository.savePreparations(candidates, {
+        ...amendmentOptions(),
         expectedRevisions: before.map((draft) => draft.revision),
         suffixBaselines: candidates,
         preserveNaming: true,
       })
-      history[direction]()
+      history()[direction]()
       for (const saved of results) {
         preparations.set(orderKey(saved), saved)
-        const session = sessions.get(orderKey(saved))
+        const session = sessions.get(sessionKey(saved))
         if (session) {
+          session.saved = structuredClone(saved)
           acknowledgePreparation(
             session.draft,
             submitted.get(orderKey(saved)),
@@ -1228,8 +1278,13 @@ export async function createProductAuthoring({
     modal.showModal()
   }
   async function openEditor(ref) {
+    await ensureContext()
     for (const session of sessions.values())
-      if (!session.stale) await flushSession(session)
+      if (
+        !session.stale &&
+        session.contextContainerId === getContextContainerId()
+      )
+        await flushSession(session)
     const match = membership.get(entryKey(ref))
     if (!match) return reviewCodes([ref])
     const session = getSession(match.prep)
@@ -1256,7 +1311,56 @@ export async function createProductAuthoring({
     modal.append(el('p', row.description || row.title))
     if (ref.thumbnail) modal.append(media.photo(ref))
     const fields = []
-    session.notify = (message) => bindText(status, uiMessage(message))
+    let resolveControl
+    status.id = `orders-authoring-status-${crypto.randomUUID()}`
+    session.notify = (message) => {
+      bindText(status, uiMessage(message))
+      if (!session.error) {
+        for (const field of fields) {
+          field.input.removeAttribute('aria-invalid')
+          field.input.removeAttribute('aria-errormessage')
+        }
+        clearErrorNotices(modal)
+        if (resolveControl) resolveControl.hidden = true
+        return
+      }
+      const issue = session.error.packingIssue,
+        fieldName =
+          issue?.field === 'variant'
+            ? 'Variant ending'
+            : issue?.field === 'size'
+              ? 'Size ending'
+              : 'Product code',
+        field = fields.find((field) => field.label === fieldName)
+      if (field) {
+        field.input.setAttribute('aria-invalid', 'true')
+        field.input.setAttribute('aria-errormessage', status.id)
+      }
+      const conflict = Boolean(
+        session.error.conflict || /CE\d{8}/.test(session.error.message)
+      )
+      if (resolveControl) resolveControl.hidden = !conflict
+      showErrorNotice(session.error, {
+        scope: modal,
+        key: 'authoring',
+        detail: uiMessage('Your edits are still here.'),
+        deduplicate: true,
+        context: {
+          orderId: ref.orderId,
+          seller: ref.sellerName,
+          code: group.baseCode,
+          thumbnail: ref.thumbnail ? () => loadImage(ref.thumbnail) : undefined,
+        },
+        ...(conflict
+          ? {
+              action: {
+                label: uiMessage('Resolve code'),
+                onClick: () => resolveControl?.click(),
+              },
+            }
+          : {}),
+      })
+    }
     session.notify(session.dirty ? 'Pending changes' : 'Saved')
     const add = (label, value, change, multiline = false) => {
       const control = inlineField(
@@ -1274,6 +1378,7 @@ export async function createProductAuthoring({
         multiline
       )
       fields.push({
+        label,
         input: control.querySelector('input,textarea'),
         read: () => value,
       })
@@ -1283,7 +1388,7 @@ export async function createProductAuthoring({
       content.append(control)
       control
         .querySelector('input,textarea')
-        .addEventListener('blur', () => history.breakGroup())
+        .addEventListener('blur', () => history().breakGroup())
     }
     add(
       'Spanish name',
@@ -1469,12 +1574,16 @@ export async function createProductAuthoring({
         onError: (error) => bindText(status, uiMessage(error.message)),
       })
     const resolve = button('Resolve code conflict', async () => {
-      const result = await resolveCodeConflict(session.draft, session.error)
+      const result = await resolveCodeConflict(session.draft, session.error, {
+        groupId: group.id,
+        variantId: variant.id,
+      })
       if (result) {
         modal.close()
         await openEditor(ref)
       }
     })
+    resolveControl = resolve
     resolve.hidden = true
     tools.append(resolve)
     const recovered = button('Review recovered product edits', async () => {
@@ -1490,10 +1599,11 @@ export async function createProductAuthoring({
         await flushSession(session)
         modal.close()
       } catch (error) {
-        bindText(status, uiMessage(error.message))
+        session.error = error
+        session.notify(error.message)
         resolve.hidden = !error.conflict && !/CE\d{8}/.test(error.message)
         recovered.hidden = !session.stale
-        content.querySelector('input')?.focus()
+        content.querySelector('[aria-invalid="true"]')?.focus()
       }
     }
     close.onclick = () => void finish()
@@ -1527,6 +1637,7 @@ export async function createProductAuthoring({
     modal.showModal()
   }
   async function openLabel(ref, kind = 'barcode') {
+    await ensureContext()
     await flushSaves()
     const match = membership.get(entryKey(ref))
     if (!match) throw new Error('Review product codes in Orders first.')
@@ -1582,15 +1693,20 @@ export async function createProductAuthoring({
       model: model(),
       settings: settings(),
       logoUrl: logoUrl(),
-      onValidate: (next) => repository.previewPreparations([candidate(next)]),
+      onValidate: (next) =>
+        repository.previewPreparations([candidate(next)], amendmentOptions()),
       onResolve: async (error, next) => {
-        const result = await resolveCodeConflict(candidate(next), error)
+        const result = await resolveCodeConflict(candidate(next), error, {
+          groupId: match.group.id,
+          variantId: match.variant.id,
+        })
         if (!result) return null
         prep = result
         return model()
       },
       onCommit: async (next) => {
         const [result] = await repository.savePreparations([candidate(next)], {
+          ...amendmentOptions(),
           expectedRevisions: [prep.revision],
         })
         prep = result
@@ -1664,6 +1780,7 @@ export async function createProductAuthoring({
         cell.append(el('span', '—'))
   }
   async function groupProducts(rows) {
+    await ensureContext()
     await flushSaves()
     const chosen = new Set(rows.map(entryKey)),
       selected = new Map()
@@ -1707,7 +1824,10 @@ export async function createProductAuthoring({
         })
         // Existing guarded preview/save rejects sealed/physical incompatibility;
         // grouping never changes container membership or destroys cartons.
-        const preview = await repository.previewPreparations(candidates)
+        const preview = await repository.previewPreparations(
+          candidates,
+          amendmentOptions()
+        )
         const prepared = Array.isArray(preview)
           ? preview
           : preview.preparations || candidates
@@ -1727,9 +1847,10 @@ export async function createProductAuthoring({
           preparations.get(orderKey(candidate))
         )
         const results = await repository.savePreparations(prepared, {
+          ...amendmentOptions(),
           expectedRevisions: before.map((draft) => draft.revision),
         })
-        history.recordBatch(
+        history().recordBatch(
           results.map((result, index) => ({
             orderId: orderKey(result),
             before: preparationHistorySnapshot(before[index]),
@@ -1738,7 +1859,7 @@ export async function createProductAuthoring({
         )
         for (const result of results) {
           preparations.set(orderKey(result), result)
-          sessions.delete(orderKey(result))
+          sessions.delete(sessionKey(result))
         }
         rebuild()
         await changed()
@@ -1755,7 +1876,7 @@ export async function createProductAuthoring({
     document.body.append(modal)
     modal.showModal()
   }
-  async function resolveCodeConflict(candidate, error) {
+  async function resolveCodeConflict(candidate, error, target = {}) {
     const code =
       error?.conflict?.code || error?.message?.match(/CE\d{8}[A-Z0-9]*/)?.[0]
     if (!code) throw error
@@ -1791,39 +1912,153 @@ export async function createProductAuthoring({
         )
       )
     )
-    for (const proposal of proposals.values()) {
-      const section = el('section')
-      section.append(
-        el('h3', recordFor(proposal)?.snapshot.sellerName || proposal.orderId),
-        el('small', proposal.orderId)
-      )
+    const requested =
+        error.conflict?.requestedOwner || error.packingIssue || target,
+      editedGroupId =
+        target.groupId ||
+        requested.groupId ||
+        candidate.groups.find((group) => group.baseCode === code.slice(0, 10))
+          ?.id,
+      editedVariantId = requested.variantId || target.variantId,
+      variantConflict = code.length > 10 && editedVariantId,
+      controls = []
+    for (const proposal of proposals.values())
       for (const group of proposal.groups) {
-        section.append(
-          inlineField('Product code', group.baseCode, (value) => {
-            group.baseCode = value.toUpperCase()
-          })
+        const edited =
+          orderKey(proposal) === orderKey(candidate) &&
+          group.id === editedGroupId
+        if (
+          !edited &&
+          !(ownership.owners || []).some(
+            (owner) =>
+              orderKey(owner) === orderKey(proposal) &&
+              (owner.currentGroupId || owner.groupId) === group.id
+          )
         )
-        for (const variant of group.variants) {
-          const row = el('div')
-          row.append(
-            el(
-              'span',
-              variant.spanishName || group.spanishName || variant.variant
+          continue
+        const section = el(
+            'article',
+            undefined,
+            `packing-review-item ${edited ? 'conflict-edit-card' : 'conflict-owner-card'}`
+          ),
+          detail = el('div'),
+          source = recordFor(proposal),
+          item = source?.snapshot.items.find((item) =>
+            group.variants.some((variant) =>
+              variant.entryIds.includes(item.entryId)
             )
           )
-          row.append(
-            inlineField('Variant ending', variant.variantSuffix, (value) => {
-              variant.variantSuffix = value.toUpperCase()
-            }),
-            inlineField('Size ending', variant.sizeSuffix, (value) => {
-              variant.sizeSuffix = value.toUpperCase()
-            })
+        if (item) section.append(media.photo(item))
+        detail.append(
+          el('strong', group.spanishName || group.title || proposal.orderId),
+          el(
+            'small',
+            `${source?.snapshot.sellerName || ''} · ${proposal.orderId}`
           )
-          section.append(row)
+        )
+        const add = (label, value, change, key, read) => {
+          const field = inlineField(label, value, change),
+            input = field.querySelector('input')
+          input.dataset.codePart = key
+          decorateCodeInput(input)
+          detail.append(field)
+          controls.push({ input, read })
+        }
+        add(
+          'Product code',
+          group.baseCode,
+          (value) => {
+            group.baseCode = value.toUpperCase()
+          },
+          'baseCode',
+          () => group.baseCode
+        )
+        for (const variant of group.variants) {
+          add(
+            'Variant ending',
+            variant.variantSuffix,
+            (value) => {
+              variant.variantSuffix = value.toUpperCase()
+            },
+            'variantSuffix',
+            () => variant.variantSuffix
+          )
+          add(
+            'Size ending',
+            variant.sizeSuffix,
+            (value) => {
+              variant.sizeSuffix = value.toUpperCase()
+            },
+            'sizeSuffix',
+            () => variant.sizeSuffix
+          )
+        }
+        section.append(detail)
+        content.append(section)
+      }
+    const next = button(
+      variantConflict
+        ? 'Use next available variant code'
+        : 'Use next available code',
+      async () => {
+        const elements = [...modal.querySelectorAll('input,button')]
+        elements.forEach((control) => {
+          control.disabled = true
+        })
+        try {
+          const draft = proposals.get(orderKey(candidate)),
+            group = draft.groups.find((group) => group.id === editedGroupId)
+          if (variantConflict) {
+            const variant = group.variants.find(
+                (variant) => variant.id === editedVariantId
+              ),
+              used = new Set(
+                group.variants
+                  .filter((entry) => entry.id !== variant.id)
+                  .map((entry) => entry.variantSuffix + entry.sizeSuffix)
+              )
+            for (const value of await repository.getReservedBarcodes(
+              group.baseCode,
+              { accountId: candidate.accountId }
+            ))
+              used.add(value.slice(group.baseCode.length))
+            variant.variantSuffix = unusedSuffix(
+              used,
+              variant.sizeSuffix,
+              preferences.sizeVocabulary
+            )
+          } else {
+            const [preview] = await repository.previewPreparations(
+              [regeneratePreparationCode(draft, group.id)],
+              {
+                preserveNaming: true,
+                ...amendmentOptions(),
+                suffixBaselines: [preparations.get(orderKey(draft))],
+              }
+            )
+            const proposed = preview.groups.find(
+              (entry) => entry.id === group.id
+            )
+            group.baseCode = proposed.baseCode
+          }
+          for (const control of controls) {
+            control.input.value = control.read()
+            refreshCodeInput(control.input)
+          }
+          bindText(
+            status,
+            uiMessage(
+              'A free code is proposed below. Review the changes and choose Apply corrections.'
+            )
+          )
+        } finally {
+          elements.forEach((control) => {
+            control.disabled = false
+          })
         }
       }
-      content.append(section)
-    }
+    )
+    actions.append(next)
     status.setAttribute('role', 'status')
     cancel.onclick = () => modal.close()
     let result = null
@@ -1835,14 +2070,15 @@ export async function createProductAuthoring({
         })
         try {
           const values = [...proposals.values()]
-          await repository.previewPreparations(values)
+          await repository.previewPreparations(values, amendmentOptions())
           const before = values.map((value) =>
             preparations.get(orderKey(value))
           )
           const results = await repository.savePreparations(values, {
+            ...amendmentOptions(),
             expectedRevisions: values.map((value) => value.revision),
           })
-          history.recordBatch(
+          history().recordBatch(
             results.map((value, index) => ({
               orderId: orderKey(value),
               before: preparationHistorySnapshot(before[index]),
@@ -1851,8 +2087,9 @@ export async function createProductAuthoring({
           )
           for (const value of results) {
             preparations.set(orderKey(value), value)
-            const session = sessions.get(orderKey(value))
+            const session = sessions.get(sessionKey(value))
             if (session) {
+              session.saved = structuredClone(value)
               acknowledgePreparation(
                 session.draft,
                 proposals.get(orderKey(value)),

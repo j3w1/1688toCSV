@@ -27,6 +27,7 @@ import { applyCartonUnitException } from '../src/carton-batches.js'
 import {
   syntheticOrder,
   syntheticBatch,
+  syntheticManifest,
 } from './fixtures/container-fixture.mjs'
 
 test('carton history retains current, retired, legacy and prior revisions across complete order scope', () => {
@@ -296,6 +297,7 @@ function dom(context) {
       unobserve() {}
       disconnect() {}
     },
+    MutationObserver: window.MutationObserver,
     requestAnimationFrame: (fn) => setTimeout(fn, 0),
     cancelAnimationFrame: clearTimeout,
   })) {
@@ -354,6 +356,189 @@ function dom(context) {
 }
 
 const ref = { accountId: 'local', orderId: '10001' }
+function authoringEnvironment(context) {
+  const environment = dom(context),
+    values = new Map()
+  const canvasContext =
+    environment.window.HTMLCanvasElement.prototype.getContext
+  environment.window.HTMLCanvasElement.prototype.getContext = () => ({
+    measureText: (value) => ({ width: String(value).length * 7 }),
+  })
+  context.after(() => {
+    environment.window.HTMLCanvasElement.prototype.getContext = canvasContext
+  })
+  const settings = environment.document.createElement('button')
+  settings.id = 'packing-settings'
+  environment.document.body.append(settings)
+  for (const [key, value] of Object.entries({
+    getComputedStyle: () => ({
+      fontWeight: '400',
+      fontSize: '14px',
+      fontFamily: 'sans-serif',
+    }),
+    BroadcastChannel: undefined,
+    localStorage: {
+      getItem: (key) => values.get(key) || null,
+      setItem: (key, value) => values.set(key, value),
+      removeItem: (key) => values.delete(key),
+    },
+  })) {
+    const previous = Object.getOwnPropertyDescriptor(globalThis, key)
+    Object.defineProperty(globalThis, key, { value, configurable: true })
+    context.after(() =>
+      previous
+        ? Object.defineProperty(globalThis, key, previous)
+        : delete globalThis[key]
+    )
+  }
+  return { ...environment, values }
+}
+
+test('Orders authoring isolates staged amendment saves, recovery and Undo from effective source preparation', async (context) => {
+  const { document, window } = authoringEnvironment(context),
+    manifest = syntheticManifest(),
+    record = manifest.orders[0].record,
+    original = { ...manifest.orders[0].preparation, revision: 1 },
+    writes = []
+  let active = 'c1'
+  const effective = structuredClone(original),
+    staged = structuredClone({ ...original, revision: 7 })
+  staged.groups[0].variants[0].spanishName = 'AMEND BEFORE'
+  const saved = { normal: effective, c1: staged },
+    repository = {
+      async listPreparations(options = {}) {
+        return [structuredClone(saved[options.contextContainerId || 'normal'])]
+      },
+      async getPackingPreferences() {
+        return validatePackingPreferences({})
+      },
+      async savePreparations(values, options) {
+        writes.push({
+          values: structuredClone(values),
+          options: structuredClone(options),
+        })
+        const name = options.contextContainerId || 'normal'
+        assert.equal(options.expectedRevisions[0], saved[name].revision)
+        saved[name] = {
+          ...structuredClone(values[0]),
+          revision: saved[name].revision + 1,
+        }
+        return [structuredClone(saved[name])]
+      },
+    },
+    authoring = await createProductAuthoring({
+      repository,
+      getRecords: () => [record],
+      getContextContainerId: () => active,
+    })
+  const sourceRef = { accountId: 'local', orderId: '1001', entryId: '2001' },
+    open = async () => {
+      await authoring.openEditor(sourceRef)
+      return document.querySelector('dialog[data-action="edit-order-product"]')
+    },
+    close = (modal) => modal.close()
+  let modal = await open(),
+    input = modal.querySelector('[data-authoring-field="spanish-name"]')
+  input.value = 'NEW AMENDMENT'
+  input.dispatchEvent(new window.Event('input'))
+  await authoring.flush()
+  assert.equal(writes[0].options.contextContainerId, 'c1')
+  assert.equal(saved.normal.groups[0].variants[0].spanishName, undefined)
+  close(modal)
+  active = undefined
+  await authoring.reload()
+  modal = await open()
+  assert.notEqual(
+    modal.querySelector('[data-authoring-field="spanish-name"]').value,
+    'NEW AMENDMENT'
+  )
+  await authoring.undo()
+  assert.equal(writes.length, 1)
+  input = modal.querySelector('[data-authoring-field="spanish-name"]')
+  input.value = 'NORMAL EDIT'
+  input.dispatchEvent(new window.Event('input'))
+  await authoring.flush()
+  close(modal)
+  active = 'c1'
+  await authoring.reload()
+  modal = await open()
+  assert.equal(
+    modal.querySelector('[data-authoring-field="spanish-name"]').value,
+    'NEW AMENDMENT'
+  )
+  await authoring.undo()
+  assert.equal(saved.c1.groups[0].variants[0].spanishName, 'AMEND BEFORE')
+  assert.equal(saved.normal.groups[0].variants[0].spanishName, 'NORMAL EDIT')
+  assert.deepEqual(record.snapshot, manifest.orders[0].record.snapshot)
+  close(modal)
+  authoring.dispose()
+})
+
+test('failed authoring save keeps the mounted raw code, error relation and recovery; a corrected retry clears its error', async (context) => {
+  const { document, window, values } = authoringEnvironment(context),
+    manifest = syntheticManifest(),
+    record = manifest.orders[0].record
+  let saved = { ...manifest.orders[0].preparation, revision: 1 },
+    fail = true
+  const repository = {
+    async listPreparations() {
+      return [structuredClone(saved)]
+    },
+    async getPackingPreferences() {
+      return validatePackingPreferences({})
+    },
+    async savePreparations(values) {
+      if (fail)
+        throw Object.assign(new Error('CE26090102 is already reserved'), {
+          conflict: { code: 'CE26090102' },
+        })
+      saved = { ...structuredClone(values[0]), revision: saved.revision + 1 }
+      return [saved]
+    },
+  }
+  const authoring = await createProductAuthoring({
+    repository,
+    getRecords: () => [record],
+  })
+  await authoring.openEditor({
+    accountId: 'local',
+    orderId: '1001',
+    entryId: '2001',
+  })
+  const modal = document.querySelector(
+      'dialog[data-action="edit-order-product"]'
+    ),
+    input = modal.querySelector('[data-authoring-field="product-code"]')
+  input.value = 'CE26090102'
+  input.dispatchEvent(new window.Event('input'))
+  await assert.rejects(authoring.flush(), /already reserved/)
+  assert.equal(input.value, 'CE26090102')
+  assert.equal(input.getAttribute('aria-invalid'), 'true')
+  assert.ok(
+    document
+      .getElementById(input.getAttribute('aria-errormessage'))
+      .textContent.includes('CE26090102')
+  )
+  assert.ok(modal.querySelector('.error-notice'))
+  assert.ok(
+    [...values.entries()].some(
+      ([key, value]) =>
+        key.includes('authoring-draft') && value.includes('CE26090102')
+    )
+  )
+  fail = false
+  input.value = 'CE26090101'
+  input.dispatchEvent(new window.Event('input'))
+  await authoring.flush()
+  assert.equal(input.getAttribute('aria-invalid'), null)
+  assert.equal(modal.querySelector('.error-notice'), null)
+  assert.equal(
+    modal.querySelector('[data-authoring-field="product-code"]'),
+    input
+  )
+  modal.close()
+  authoring.dispose()
+})
 function exceptionSessionFixture(options = {}) {
   const record = syntheticOrder('1001'),
     batch = syntheticBatch('1001', 5, '100', {

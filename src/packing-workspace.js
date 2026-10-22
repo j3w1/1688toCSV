@@ -52,12 +52,12 @@ export async function startPackingWorkspace({
     modules,
     cartonHistory,
     cartonScope = '',
-    cartonVersion = 0
+    cartonVersion = 0,
+    containers
   const sessions = new Map()
   let backlogVersion = 0,
     backlogScope = ''
   const failure = (error) => {
-    feedback(error.message, true)
     showErrorNotice(error)
   }
   async function modulesForOrders() {
@@ -89,7 +89,7 @@ export async function startPackingWorkspace({
         view: 'loading',
       }).catch(failure),
     getContextContainerId: () =>
-      containers.controller.view()?.container.amendment
+      containers?.controller.view()?.container.amendment
         ? returnTo?.containerId
         : undefined,
   })
@@ -115,7 +115,7 @@ export async function startPackingWorkspace({
       fileName: (...args) => modules.fileName(...args),
     },
   })
-  const containers = createContainerWorkspace({
+  containers = createContainerWorkspace({
     host: $('container-content'),
     repository,
     output: {
@@ -173,6 +173,7 @@ export async function startPackingWorkspace({
   }
   async function showOrders(view = ordersView) {
     await flush()
+    await authoring.reload()
     workspace = 'orders'
     ordersView = view
     paint()

@@ -1,5 +1,12 @@
 import { test, expect } from './extension-fixture.mjs'
 import { createDemoRecords } from '../../preview/library-fixture.js'
+import {
+  assignSelectedPurchaseCodes,
+  editOrderProduct,
+  closeOrderProduct,
+  libraryBackup,
+} from './smart-workspace-helpers.mjs'
+import { revealCopyActions } from './copy-actions-helpers.mjs'
 
 async function openPacking(extension, theme = 'dark') {
   const [record] = await extension.inspector.evaluate(
@@ -39,19 +46,8 @@ async function openPacking(extension, theme = 'dark') {
   await expect(rows).toHaveCount(3)
   await rows.first().focus()
   await page.keyboard.press('Control+a')
-  await page
-    .getByRole('button', { name: 'Prepare packing list', exact: true })
-    .click()
-  const review = page.getByRole('dialog', {
-    name: 'Assign product codes?',
-    exact: true,
-  })
-  await expect(review).toBeVisible()
-  await review
-    .getByRole('button', { name: 'Assign codes and prepare', exact: true })
-    .click()
-  const view = page.locator('#packing-view')
-  await expect(view.locator('.preparation-group')).toHaveCount(2)
+  await assignSelectedPurchaseCodes(page)
+  const view = await editOrderProduct(page, 0)
   return { page, view }
 }
 
@@ -100,14 +96,10 @@ for (const theme of ['light', 'dark']) {
     extension,
   }) => {
     const { page, view } = await openPacking(extension, theme)
-    const groups = view.locator('.preparation-group')
-    const code = groups.first().getByLabel('Product code', { exact: true })
+    const code = view.getByLabel('Product code', { exact: true })
     const original = await code.inputValue()
-    const conflicting = await groups
-      .nth(1)
-      .getByLabel('Product code', { exact: true })
-      .inputValue()
-    const before = await preparations(extension)
+    const before = await preparations(extension),
+      conflicting = before[0].groups[1].baseCode
     await code.fill(conflicting)
     const notice = view.locator('.error-notice')
     await expect(notice).toBeVisible()
@@ -123,9 +115,9 @@ for (const theme of ['light', 'dark']) {
     )
     for (const ratio of await noticeContrast(notice))
       expect(ratio).toBeGreaterThanOrEqual(4.5)
-    await expect(view.locator('.preparation-save-status')).toContainText(
-      'Not saved'
-    )
+    await expect(
+      view.locator('[role="status"]:not(.copy-text-feedback)').first()
+    ).toContainText(/already|reserved|conflict/i)
     expect(await preparations(extension)).toEqual(before)
     await notice
       .getByRole('button', { name: 'Dismiss error', exact: true })
@@ -135,12 +127,11 @@ for (const theme of ['light', 'dark']) {
     await expect(code).toHaveAttribute('aria-invalid', 'true')
     await code.fill(original)
     await expect(code).not.toHaveAttribute('aria-invalid', 'true')
-    await expect(view.locator('.preparation-save-status')).toHaveText(
-      'Saved automatically'
+    await expect(view.locator('[id^="orders-authoring-status-"]')).toHaveText(
+      'Saved'
     )
     await expect(notice).toHaveCount(0)
-    await view.page().locator('#view-orders').click()
-    await expect(view).toBeHidden()
+    await closeOrderProduct(view)
     await expect(page.locator('.error-notice')).toHaveCount(0)
   })
 }
@@ -149,14 +140,10 @@ test('the error popup opens the existing visual code resolver and clears after s
   extension,
 }) => {
   const { page, view } = await openPacking(extension)
-  const groups = view.locator('.preparation-group')
-  const code = groups.first().getByLabel('Product code', { exact: true })
-  const editedGroupId = await groups.first().getAttribute('data-group-id')
-  const before = await preparations(extension)
-  const conflicting = await groups
-    .nth(1)
-    .getByLabel('Product code', { exact: true })
-    .inputValue()
+  const code = view.getByLabel('Product code', { exact: true }),
+    before = await preparations(extension),
+    editedGroupId = before[0].groups[0].id,
+    conflicting = before[0].groups[1].baseCode
   await code.fill(conflicting)
   await view
     .locator('.error-notice')
@@ -186,9 +173,11 @@ test('the error popup opens the existing visual code resolver and clears after s
     .click()
   await expect(resolver).toBeHidden()
   await expect(code).not.toHaveValue(conflicting)
-  await expect(view.locator('.preparation-save-status')).toHaveText(
-    'Saved automatically'
-  )
+  await expect(
+    page.locator(
+      'dialog[data-action="edit-order-product"] [id^="orders-authoring-status-"]'
+    )
+  ).toHaveText('Saved')
   await expect(page.locator('.error-notice')).toHaveCount(0)
   const after = await preparations(extension)
   const saved = after.find((entry) => entry.orderId === before[0].orderId)
@@ -206,53 +195,53 @@ test('the error popup opens the existing visual code resolver and clears after s
   )
 })
 
-test('operation errors are nonmodal and dismiss before leaving the current view', async ({
+test('operation errors remain nonmodal, allocate nothing and dismiss before leaving Orders', async ({
   extension,
 }) => {
   const { page, view } = await openPacking(extension)
-  await view.page().locator('#view-orders').click()
-  await page.getByLabel('Packing month', { exact: true }).fill('')
-  await page
-    .getByRole('button', { name: 'Prepare packing list', exact: true })
-    .click()
+  await closeOrderProduct(view)
+  await page.locator('#clear-rows').click()
+  const before = await libraryBackup(extension)
+  await page.locator('#review-purchase-codes').click()
   await expect(page.locator('.error-notice')).toContainText(
-    'Choose a packing month'
+    'Select product rows to review codes.'
   )
   await expect(page.locator('dialog[open]')).toHaveCount(0)
   await expect(page.locator('#feedback')).toBeEmpty()
   await page.keyboard.press('Escape')
   await expect(page.locator('.error-notice')).toHaveCount(0)
   await expect(page.locator('#orders-view')).toBeVisible()
-  await page
-    .getByRole('button', { name: 'Prepare packing list', exact: true })
-    .click()
+  await page.locator('#review-purchase-codes').click()
   await expect(page.locator('.error-notice')).toContainText(
-    'Choose a packing month'
+    'Select product rows to review codes.'
   )
+  expect((await libraryBackup(extension)).preparations).toEqual(
+    before.preparations
+  )
+  expect((await libraryBackup(extension)).orders).toEqual(before.orders)
 })
 
-test('Escape dismisses an open copy menu before the underlying error notice', async ({
+test('Escape dismisses an open source-copy menu before an underlying operation error without changing source data', async ({
   extension,
 }) => {
   const { page, view } = await openPacking(extension)
-  const code = view
-    .locator('.preparation-group')
-    .first()
-    .getByLabel('Product code', { exact: true })
-  await code.fill('INVALID')
-  const notice = view.locator('.error-notice')
+  await closeOrderProduct(view)
+  await page.locator('#clear-rows').click()
+  const before = await libraryBackup(extension)
+  await page.locator('#review-purchase-codes').click()
+  const notice = page.locator('#orders-view .error-notice')
   await expect(notice).toBeVisible()
-  await view
-    .getByRole('button', { name: 'More copy formats', exact: true })
-    .click()
-  const panel = view.getByRole('group', { name: 'Copy formats', exact: true })
+  await revealCopyActions(page)
+  const panel = page.locator('#orders-copy-actions .copy-actions-panel')
   await expect(panel).toBeVisible()
   await page.keyboard.press('Escape')
   await expect(panel).toBeHidden()
   await expect(notice).toBeVisible()
-  await expect(view).toBeVisible()
+  await expect(page.locator('#orders-view')).toBeVisible()
   await page.keyboard.press('Escape')
   await expect(notice).toHaveCount(0)
-  await expect(code).toHaveValue('INVALID')
-  await expect(view).toBeVisible()
+  expect((await libraryBackup(extension)).orders).toEqual(before.orders)
+  expect((await libraryBackup(extension)).issuedCodes).toEqual(
+    before.issuedCodes
+  )
 })
