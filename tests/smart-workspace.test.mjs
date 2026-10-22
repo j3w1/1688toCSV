@@ -12,10 +12,89 @@ import {
 import { parseHTML } from 'linkedom'
 import { openProductDetails } from '../src/product-details.js'
 import { openPackingExportDialog } from '../src/packing-export-dialog.js'
+import { createProductAuthoring } from '../src/product-authoring.js'
+import { validatePackingPreferences } from '../src/packing-model.js'
 import {
   mountOrderCartonGrid,
   createPackingReportIntakeController,
+  cartonHistoryRows,
+  mountCartonHistory,
+  createOrderCartonSession,
 } from '../src/order-carton-grid.js'
+import * as actualPlanner from '../src/carton-reconciliation.js'
+import { applyCartonUnitException } from '../src/carton-batches.js'
+import {
+  syntheticOrder,
+  syntheticBatch,
+} from './fixtures/container-fixture.mjs'
+
+test('carton history retains current, retired, legacy and prior revisions across complete order scope', () => {
+  const a = syntheticOrder('1001'),
+    b = syntheticOrder('1002'),
+    c = syntheticOrder('1003'),
+    current = syntheticBatch('1001'),
+    retired = syntheticBatch('1002', 1, '10', {
+      deletedAt: '2026-10-20T00:00:00Z',
+    }),
+    prior = {
+      ...current,
+      revision: 0,
+      updatedAt: '2026-09-20T00:00:00Z',
+      weight: '7.25',
+      weightBasis: 'batch',
+    },
+    legacy = {
+      ...syntheticBatch('1002'),
+      id: 'cross-order',
+      orderId: undefined,
+      contents: [
+        { orderId: '1001', entryId: '2001', quantity: '20' },
+        { orderId: '1002', entryId: '2001', quantity: '10' },
+      ],
+    },
+    state = {
+      records: [a, b, c],
+      batches: [current, retired, legacy],
+      cartonHistory: [{ batch: prior }, { batch: current }],
+    },
+    before = structuredClone(state),
+    all = cartonHistoryRows(state)
+  assert.equal(all.length, 5)
+  assert.equal(new Set(all.map((row) => row.key)).size, 5)
+  assert.equal(
+    all.find((row) => row.batch?.deletedAt).state,
+    'Retired evidence'
+  )
+  assert.equal(
+    all.find((row) => row.batch?.id === 'cross-order').state,
+    'Needs review'
+  )
+  assert.equal(all.find((row) => row.batch?.revision === 0).weight, '7.25')
+  assert.equal(
+    all.find((row) => row.order === '1003').state,
+    'Awaiting packing data'
+  )
+  assert.equal(
+    cartonHistoryRows(state, [{ accountId: 'local', orderId: '1001' }]).length,
+    3
+  )
+  assert.deepEqual(state, before)
+})
+
+test('carton history scopes account identities and never turns combined volume or unknown measurements into per-box totals', () => {
+  const batch = syntheticBatch('1001', 4, '100', {
+      suppliedCbm: '0.12',
+      volumeBasis: 'batch',
+    }),
+    other = { ...batch, accountId: 'other', id: 'other-account' },
+    rows = cartonHistoryRows({ records: [], batches: [batch, other] }, [
+      { accountId: 'local', orderId: '1001' },
+    ])
+  assert.equal(rows.length, 1)
+  assert.equal(rows[0].volume, '0.12')
+  assert.equal(rows[0].weight, null)
+  assert.equal(rows[0].count, 4)
+})
 
 function dom(context) {
   const { document, window } = parseHTML(
@@ -32,6 +111,11 @@ function dom(context) {
       return option
     },
     ResizeObserver: class {
+      observe() {}
+      unobserve() {}
+      disconnect() {}
+    },
+    IntersectionObserver: class {
       observe() {}
       unobserve() {}
       disconnect() {}
@@ -55,8 +139,11 @@ function dom(context) {
   Object.defineProperty(selectPrototype, 'value', {
     ...selectValue,
     set(value) {
-      for (const option of this.querySelectorAll('option'))
-        option.selected = option.value === String(value)
+      const options = [...this.querySelectorAll('option')]
+      for (const option of options) option.removeAttribute('selected')
+      options
+        .find((option) => option.value === String(value))
+        ?.setAttribute('selected', '')
     },
     configurable: true,
   })
@@ -91,6 +178,302 @@ function dom(context) {
 }
 
 const ref = { accountId: 'local', orderId: '10001' }
+function exceptionSessionFixture(options = {}) {
+  const record = syntheticOrder('1001'),
+    batch = syntheticBatch('1001', 5, '100', {
+      weight: '2.5',
+      len: '50',
+      wid: '40',
+      ht: '30',
+    }),
+    context = {
+      record,
+      preparation: { groups: [] },
+      batches: [batch],
+      reports: [],
+      draft: null,
+      projection: {},
+      revisions: { source: 'source-1', cartons: { [batch.id]: 1 } },
+    },
+    drafts = [],
+    confirmed = [],
+    reads = []
+  let draftRevision = 0
+  const repository = {
+    async getOrderReconciliation(args) {
+      reads.push(args)
+      return structuredClone(context)
+    },
+    async saveOrderCartonDraft(args) {
+      drafts.push(structuredClone(args))
+      return { revision: ++draftRevision }
+    },
+    async confirmOrderCartons(args) {
+      confirmed.push(structuredClone(args))
+      return {}
+    },
+  }
+  return {
+    record,
+    batch,
+    drafts,
+    confirmed,
+    reads,
+    create: () =>
+      createOrderCartonSession({
+        repository,
+        orderRef: { accountId: 'local', orderId: '1001' },
+        planner: actualPlanner,
+        ...options,
+      }),
+  }
+}
+
+test('confirmed entitlement exception uses the real domain helper and one order confirm while preserving untouched physical identities', async (context) => {
+  const fixture = exceptionSessionFixture({
+      getContextContainerId: () => 'amendment-container',
+    }),
+    session = await fixture.create()
+  context.after(() => session.dispose())
+  const before = structuredClone(fixture.record.snapshot),
+    units = session.unitEntitlements(fixture.batch.id)
+  assert.equal(units.length, 5)
+  assert.equal(units[3].contents[0].quantity, '20')
+  await session.stageUnitFacts({
+    batchId: fixture.batch.id,
+    index: 3,
+    contents: [{ orderId: '1001', entryId: '2001', quantity: '17' }],
+  })
+  assert.equal(session.projection().unassignedPieces, '3')
+  const staged = fixture.drafts.at(-1).draft.plannerDraft.cartons[0]
+  assert.equal(staged.contents[0].quantity, '97')
+  assert.equal(staged.packingBasis, 'aggregate')
+  assert.equal(staged.unitContents[0][0].quantity, '20')
+  assert.equal(staged.unitContents[3][0].quantity, '17')
+  assert.equal(staged.unitMeasurements[0].weight, '2.5')
+  assert.equal(staged.unitMeasurements[3].weight, '')
+  assert.deepEqual(
+    session.unitEntitlements(fixture.batch.id).map((unit) => unit.id),
+    units.map((unit) => unit.id)
+  )
+  await session.undo()
+  assert.equal(session.projection().unassignedPieces, '0')
+  await session.redo()
+  assert.equal(session.projection().unassignedPieces, '3')
+  await session.confirm()
+  assert.equal(fixture.confirmed.length, 1)
+  assert.equal(
+    fixture.confirmed[0].draft.contextContainerId,
+    'amendment-container'
+  )
+  assert.equal(fixture.confirmed[0].draft.cartons[0].baseRevision, 1)
+  assert.deepEqual(fixture.confirmed[0].expectedRevisions, {
+    source: 'source-1',
+    cartons: { [fixture.batch.id]: 1 },
+  })
+  assert.deepEqual(fixture.record.snapshot, before)
+  assert.equal(fixture.reads[0].contextContainerId, 'amendment-container')
+})
+
+test('invalid entitlement raw facts survive recovery and block confirmation without partial physical writes', async (context) => {
+  const fixture = exceptionSessionFixture(),
+    session = await fixture.create()
+  context.after(() => session.dispose())
+  const value = {
+    contents: [{ orderId: '1001', entryId: '2001', quantity: 'invalid' }],
+    measurements: {},
+  }
+  session.retainUnitDraft(fixture.batch.id, 2, value)
+  await session.flush()
+  await assert.rejects(
+    session.stageUnitFacts({ batchId: fixture.batch.id, index: 2, ...value }),
+    /positive whole/
+  )
+  await assert.rejects(session.confirm(), /pending carton exception/)
+  assert.equal(fixture.confirmed.length, 0)
+  assert.equal(
+    session.unitDraft(fixture.batch.id, 2).contents[0].quantity,
+    'invalid'
+  )
+  assert.match(JSON.stringify(fixture.drafts.at(-1).draft.rawCells), /invalid/)
+  assert.equal(fixture.drafts.at(-1).draft.plannerDraft.cartons.length, 0)
+})
+
+test('a delayed unit exception result cannot replace newer raw facts', async (context) => {
+  let release
+  const wait = new Promise((resolve) => {
+      release = resolve
+    }),
+    fixture = exceptionSessionFixture({
+      applyUnitException: async (input) => {
+        await wait
+        return applyCartonUnitException(input)
+      },
+    }),
+    session = await fixture.create()
+  context.after(() => session.dispose())
+  const old = session.stageUnitFacts({
+    batchId: fixture.batch.id,
+    index: 1,
+    contents: [{ orderId: '1001', entryId: '2001', quantity: '18' }],
+  })
+  session.retainUnitDraft(fixture.batch.id, 1, {
+    contents: [{ orderId: '1001', entryId: '2001', quantity: 'new raw text' }],
+  })
+  release()
+  await assert.rejects(old, /draft changed/)
+  assert.equal(
+    session.unitDraft(fixture.batch.id, 1).contents[0].quantity,
+    'new raw text'
+  )
+  assert.equal(fixture.confirmed.length, 0)
+  assert.equal(session.projection().unassignedPieces, '0')
+})
+test('purchase evidence recovery retains invalid work, submits prior disposition guards and never edits source snapshots', async (context) => {
+  const { document, window } = dom(context),
+    values = new Map(),
+    source = syntheticOrder('1001'),
+    before = structuredClone(source.snapshot),
+    calls = []
+  document.body.append(document.createElement('button'))
+  document.body.lastElementChild.id = 'packing-settings'
+  const globals = {
+    localStorage: {
+      getItem: (key) => values.get(key) || null,
+      setItem: (key, value) => values.set(key, value),
+      removeItem: (key) => values.delete(key),
+    },
+    BroadcastChannel: undefined,
+  }
+  for (const [key, value] of Object.entries(globals)) {
+    const previous = Object.getOwnPropertyDescriptor(globalThis, key)
+    Object.defineProperty(globalThis, key, { value, configurable: true })
+    context.after(() =>
+      previous
+        ? Object.defineProperty(globalThis, key, previous)
+        : delete globalThis[key]
+    )
+  }
+  source.inventoryDispositions = {
+    2001: {
+      kind: 'canceled',
+      quantity: '3',
+      reason: 'Earlier documented cancellation',
+    },
+  }
+  const repository = {
+    listPreparations: async () => [],
+    getPackingPreferences: async () => validatePackingPreferences({}),
+    getOrderReconciliation: async () => ({
+      record: structuredClone(source),
+      revisions: {},
+    }),
+    setInventoryDispositions: async (args) => {
+      calls.push(structuredClone(args))
+      source.inventoryDispositions['2001'] = args.entries['2001']
+      return { record: source }
+    },
+  }
+  const authoring = await createProductAuthoring({
+    repository,
+    getRecords: () => [source],
+  })
+  context.after(() => authoring.dispose())
+  await authoring.openInventoryRecovery({
+    accountId: 'local',
+    orderId: '1001',
+    entryId: '2001',
+  })
+  let modal = document.querySelector(
+      'dialog[data-action="review-purchase-evidence"]'
+    ),
+    fields = modal.querySelectorAll('input'),
+    reason = modal.querySelector('textarea')
+  fields[fields.length - 1].value = 'not whole'
+  fields[fields.length - 1].dispatchEvent(new window.Event('input'))
+  modal.querySelector('[data-action="save-inventory-disposition"]').click()
+  await new Promise((resolve) => setTimeout(resolve, 0))
+  assert.equal(calls.length, 0)
+  assert.match(
+    modal.querySelector('[role="status"]').textContent,
+    /positive whole/
+  )
+  modal.close()
+  await authoring.openInventoryRecovery({
+    accountId: 'local',
+    orderId: '1001',
+    entryId: '2001',
+  })
+  modal = document.querySelector(
+    'dialog[data-action="review-purchase-evidence"]'
+  )
+  assert.equal([...modal.querySelectorAll('input')].at(-1).value, 'not whole')
+  const kind = modal.querySelector('select')
+  kind.value = 'goods'
+  kind.dispatchEvent(new window.Event('change'))
+  reason = modal.querySelector('textarea')
+  reason.value = 'Retained raw annotation'
+  modal.querySelector('[data-action="save-inventory-disposition"]').click()
+  await new Promise((resolve) => setTimeout(resolve, 0))
+  assert.deepEqual(calls, [
+    {
+      accountId: 'local',
+      orderId: '1001',
+      entries: { 2001: null },
+      expectedValues: {
+        2001: {
+          kind: 'canceled',
+          quantity: '3',
+          reason: 'Earlier documented cancellation',
+        },
+      },
+    },
+  ])
+  assert.deepEqual(source.snapshot, before)
+})
+test('all-orders and narrowed carton history share a bounded searchable table and inspect without selecting or mutating', async (context) => {
+  const { document, window } = dom(context),
+    host = document.getElementById('host'),
+    records = [syntheticOrder('1001'), syntheticOrder('1002')],
+    batches = Array.from({ length: 140 }, (_, index) =>
+      syntheticBatch(index < 70 ? '1001' : '1002', 1, '1', {
+        id: `retained-${index}`,
+        cartonNumber: String(index + 1),
+      })
+    ),
+    state = { records, batches },
+    calls = [],
+    repository = {
+      async getOperationalState(args) {
+        calls.push(args)
+        return structuredClone(state)
+      },
+    },
+    history = await mountCartonHistory(host, { repository })
+  assert.equal(history.rows().length, 140)
+  assert.ok(host.querySelectorAll('[data-history-key]').length <= 100)
+  assert.equal(host.querySelector('table').getAttribute('aria-rowcount'), '141')
+  const search = host.querySelector('input')
+  search.value = 'retained-139'
+  search.dispatchEvent(new window.Event('input'))
+  // Supplier labels, rather than internal IDs, own the visible filter.
+  search.value = '140'
+  search.dispatchEvent(new window.Event('input'))
+  assert.equal(host.querySelectorAll('[data-history-key]').length, 1)
+  host.querySelector('[data-history-key]').click()
+  assert.ok(document.querySelector('[data-action="inspect-carton-history"]'))
+  assert.equal(document.querySelectorAll('input[type="checkbox"]').length, 0)
+  assert.deepEqual(calls, [{}])
+  history.destroy()
+  const narrowed = await mountCartonHistory(host, {
+    repository,
+    orderRefs: [{ accountId: 'local', orderId: '1001' }],
+  })
+  assert.equal(narrowed.rows().length, 70)
+  assert.equal(host.querySelector('table').dataset.action, 'carton-history')
+  assert.deepEqual(state.batches, batches)
+  narrowed.destroy()
+})
 function view(id = 'c1', revision = 1) {
   return {
     container: { id, name: 'Synthetic October', revision },

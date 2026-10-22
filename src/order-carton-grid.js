@@ -1,6 +1,8 @@
 import { element as el, copyTextButton } from './ui.js'
 import { message as m, bindText, bindAttribute } from './i18n.js'
 import { createVirtualTable } from './virtual-table.js'
+import { cartonBatchMetrics } from './carton-batches.js'
+import { physicalUnits } from './inventory-model.js'
 
 const clone = (value) => structuredClone(value)
 export const sourceKey = ({ accountId = 'local', orderId, entryId }) =>
@@ -27,6 +29,254 @@ export const CARTON_GRID_COLUMNS = [
   { key: 'count', label: 'Carton count', readonly: true },
   { key: 'provenance', label: 'Evidence', readonly: true },
 ]
+
+/** Display retained evidence, including retired and review-held records. Never infer stock. */
+export function cartonHistoryRows(state, orderRefs = []) {
+  const key = ({ accountId = 'local', orderId }) =>
+    JSON.stringify([accountId, orderId])
+  const scope = new Set(orderRefs.map(key))
+  const records = new Map(
+    (state.records || []).map((record) => [
+      key({
+        accountId: record.accountId || record.snapshot.accountId || 'local',
+        orderId: record.snapshot.orderId,
+      }),
+      record,
+    ])
+  )
+  const covered = new Set()
+  const rows = []
+  const evidence = [
+    ...(state.batches || []),
+    ...(state.cartonHistory || []).map(
+      (entry) => entry.batch || entry.after || entry
+    ),
+  ]
+  const seenEvidence = new Set()
+  for (const batch of evidence) {
+    const evidenceKey = JSON.stringify([
+      batch.accountId || 'local',
+      batch.id,
+      batch.revision,
+      batch.updatedAt,
+      batch.deletedAt,
+    ])
+    if (seenEvidence.has(evidenceKey)) continue
+    seenEvidence.add(evidenceKey)
+    const orderIds = [
+      ...new Set(
+        [
+          batch.orderId,
+          ...(batch.contents || []).map((part) => part.orderId),
+          ...(batch.groups || []).map((part) => part.orderId),
+          batch.mark?.orderId,
+        ].filter(Boolean)
+      ),
+    ]
+    const refs = orderIds.map((orderId) => ({
+      accountId: batch.accountId || 'local',
+      orderId,
+    }))
+    if (scope.size && !refs.some((ref) => scope.has(key(ref)))) continue
+    refs.forEach((ref) => covered.add(key(ref)))
+    const record = refs.length === 1 ? records.get(key(refs[0])) : undefined
+    let metrics
+    try {
+      metrics = cartonBatchMetrics(batch)
+    } catch {
+      /* Retain malformed legacy evidence for review. */
+    }
+    rows.push({
+      key: JSON.stringify([
+        'batch',
+        batch.accountId || 'local',
+        batch.id,
+        batch.revision,
+        batch.updatedAt,
+        batch.deletedAt,
+      ]),
+      batch: clone(batch),
+      refs,
+      record,
+      label: batch.cartonNumber || batch.supplierLabel || batch.id,
+      internal:
+        batch.labelOrigin === 'internal' ||
+        (!batch.cartonNumber && !batch.supplierLabel),
+      supplier: record?.snapshot.sellerName || '',
+      order: orderIds.join(' · '),
+      contents: (batch.contents || [])
+        .map((part) => `${part.entryId}: ${part.quantity}`)
+        .join(' · '),
+      count: batch.count,
+      dimensions:
+        batch.len && batch.wid && batch.ht
+          ? `${batch.len}×${batch.wid}×${batch.ht}`
+          : '',
+      weight: metrics?.totalWeight || null,
+      volume:
+        batch.volumeBasis === 'batch' && !batch.len
+          ? batch.suppliedCbm || null
+          : metrics?.totalVolume || null,
+      state: batch.deletedAt
+        ? 'Retired evidence'
+        : batch.needsReview || batch.legacyReview || refs.length !== 1
+          ? 'Needs review'
+          : 'Confirmed facts',
+    })
+  }
+  for (const [identity, record] of records) {
+    if (covered.has(identity) || (scope.size && !scope.has(identity))) continue
+    const [accountId, orderId] = JSON.parse(identity)
+    rows.push({
+      key: JSON.stringify(['pending', accountId, orderId]),
+      refs: [{ accountId, orderId }],
+      record,
+      label: '—',
+      supplier: record.snapshot.sellerName,
+      order: orderId,
+      state: 'Awaiting packing data',
+    })
+  }
+  return rows
+}
+
+/** All Orders and an individual order use this same virtual evidence table. */
+export async function mountCartonHistory(
+  host,
+  {
+    repository,
+    orderRefs = [],
+    onOrder = () => {},
+    onInspect = () => {},
+    isCurrent = () => true,
+  }
+) {
+  let destroyed = false
+  const state = await repository.getOperationalState({})
+  if (!isCurrent()) return { destroy() {} }
+  const rows = cartonHistoryRows(state, orderRefs)
+  const search = el('input'),
+    count = el('p'),
+    scroller = el('div', undefined, 'smart-grid-scroll'),
+    table = el('table'),
+    head = el('thead'),
+    heading = el('tr'),
+    body = el('tbody')
+  search.type = 'search'
+  bindAttribute(search, 'aria-label', m('Filter carton history'))
+  table.dataset.action = 'carton-history'
+  bindAttribute(table, 'aria-label', m('Carton history'))
+  for (const title of [
+    'Supplier',
+    'Order',
+    'Carton reference',
+    'Contents',
+    'Carton count',
+    'Dimensions (cm)',
+    'Weight (kg)',
+    'Volume (m³)',
+    'Evidence',
+  ])
+    heading.append(el('th', m(title)))
+  head.append(heading)
+  table.append(head, body)
+  scroller.append(table)
+  host.replaceChildren(search, count, scroller)
+  const virtual = createVirtualTable({
+    scroller,
+    body,
+    limit: 100,
+    render(entries) {
+      return entries.map(({ row }) => {
+        const tr = el('tr')
+        tr.dataset.historyKey = row.key
+        tr.tabIndex = 0
+        for (const value of [
+          row.supplier,
+          row.order,
+          row.label,
+          row.contents || m('Unknown contents'),
+          row.count ?? '—',
+          row.dimensions || '—',
+          row.weight ?? '—',
+          row.volume ?? '—',
+        ])
+          tr.append(el('td', value))
+        const evidence = el('td', m(row.state))
+        if (row.internal) evidence.append(el('small', m('Internal reference')))
+        if (row.batch?.unresolvedContents?.length)
+          evidence.append(el('small', m('Unresolved contents')))
+        tr.append(evidence)
+        const inspect = () => {
+          if (!row.batch && row.refs.length === 1) return onOrder(row.refs[0])
+          const modal = el(
+              'dialog',
+              undefined,
+              'order-carton-details product-authoring-dialog'
+            ),
+            close = el('button', m('Close'))
+          modal.dataset.action = 'inspect-carton-history'
+          modal.append(
+            el('h2', row.label),
+            el('p', m(row.state)),
+            el('p', row.contents || m('Unknown contents'))
+          )
+          const facts = el('pre')
+          facts.textContent = JSON.stringify(row.batch, null, 2)
+          const disclosure = el('details')
+          disclosure.append(el('summary', m('Source evidence')), facts)
+          modal.append(disclosure)
+          for (const ref of row.refs) {
+            const edit = el(
+              'button',
+              `${m('Reconcile cartons')} · ${ref.orderId}`
+            )
+            edit.dataset.action = 'open-order-cartons'
+            edit.onclick = () => {
+              modal.close()
+              onOrder({ ...ref, cartonId: row.batch.id })
+            }
+            modal.append(edit)
+          }
+          close.onclick = () => modal.close()
+          modal.append(close)
+          modal.onclose = () => modal.remove()
+          document.body.append(modal)
+          modal.showModal()
+          onInspect(row)
+        }
+        tr.onclick = inspect
+        tr.onkeydown = (event) => {
+          if (event.key === 'Enter' && !event.isComposing) {
+            event.preventDefault()
+            inspect()
+          }
+        }
+        return tr
+      })
+    },
+  })
+  const render = () => {
+    if (destroyed) return
+    const query = search.value.toLowerCase(),
+      visible = rows.filter((row) =>
+        `${row.supplier} ${row.order} ${row.label} ${row.contents || ''}`
+          .toLowerCase()
+          .includes(query)
+      )
+    bindText(count, m('{0} evidence records', { 0: visible.length }))
+    virtual.setItems(visible.map((row) => ({ key: row.key, row })))
+  }
+  search.oninput = render
+  render()
+  return {
+    destroy() {
+      destroyed = true
+      virtual.destroy()
+    },
+    rows: () => clone(rows),
+  }
+}
 
 /** The captured logical keys, never mounted row positions, own a paste. */
 export function captureGridTarget({
@@ -482,8 +732,17 @@ export async function createOrderCartonSession({
   orderRef,
   planner,
   onError = () => {},
+  getContextContainerId = () => undefined,
+  applyUnitException = async (input) =>
+    (await import('./carton-batches.js')).applyCartonUnitException(input),
 }) {
-  let context = await repository.getOrderReconciliation(orderRef)
+  const repositoryRef = () => ({
+    ...orderRef,
+    ...(getContextContainerId()
+      ? { contextContainerId: getContextContainerId() }
+      : {}),
+  })
+  let context = await repository.getOrderReconciliation(repositoryRef())
   const restored = context.draft?.value || context.draft || {}
   let expectedDraftRevision = context.draft?.revision ?? 0
   let domainDraft =
@@ -814,6 +1073,71 @@ export async function createOrderCartonSession({
   const session = {
     orderRef,
     record: () => clone(context.record),
+    unitEntitlements(batchId) {
+      const batch =
+        domainDraft.cartons.find((batch) => batch.id === batchId) ||
+        context.batches.find((batch) => batch.id === batchId)
+      if (!batch) throw new Error('The target carton is unavailable.')
+      return physicalUnits(batch)
+    },
+    unitDraft(batchId, index) {
+      const value =
+        raw.state().rawCells[JSON.stringify([batchId, `unit:${index}`])]
+      return value ? JSON.parse(value) : null
+    },
+    retainUnitDraft(batchId, index, value) {
+      raw.edit(
+        {
+          [JSON.stringify([batchId, `unit:${index}`])]: JSON.stringify({
+            ...value,
+            reviewed: false,
+          }),
+        },
+        { history: false }
+      )
+      void raw.flush().catch(onError)
+    },
+    async stageUnitFacts({ batchId, index, contents, measurements }) {
+      const submittedGeneration = raw.state().generation
+      if (contents?.some((part) => !/^[1-9]\d*$/.test(part.quantity)))
+        throw new Error('Carton contents require positive whole quantities.')
+      const batch =
+        domainDraft.cartons.find((batch) => batch.id === batchId) ||
+        context.batches.find((batch) => batch.id === batchId)
+      if (!batch) throw new Error('The target carton is unavailable.')
+      const after = await applyUnitException({
+        batch: clone(batch),
+        index,
+        contents,
+        measurements,
+        expectedRevision: batch.baseRevision ?? batch.revision,
+      })
+      if (raw.state().generation !== submittedGeneration)
+        throw new Error(
+          'The carton draft changed. Review the current exception again.'
+        )
+      const next = clone(domainDraft),
+        position = next.cartons.findIndex((batch) => batch.id === batchId)
+      if (position < 0) next.cartons.push(after)
+      else next.cartons[position] = after
+      history = {
+        past: [...history.past, clone(history.present)],
+        present: next,
+        future: [],
+      }
+      domainDraft = next
+      raw.edit({
+        [JSON.stringify([batchId, `unit:${index}`])]: JSON.stringify({
+          contents,
+          measurements,
+          reviewed: true,
+        }),
+      })
+      remember('arrangement')
+      arrangementDirty = true
+      await raw.flush()
+      notify()
+    },
     projection,
     rawCell,
     state() {
@@ -952,6 +1276,13 @@ export async function createOrderCartonSession({
       confirmWork = (async () => {
         for (const [encoded, value] of Object.entries(raw.state().rawCells)) {
           const [key, column] = JSON.parse(encoded)
+          if (column.startsWith('unit:')) {
+            if (!JSON.parse(value).reviewed)
+              throw new Error(
+                'Review the pending carton exception before confirming. The complete draft is retained.'
+              )
+            continue
+          }
           if (column !== 'capacity')
             await session.commitCell(key, column, value)
         }
@@ -963,6 +1294,9 @@ export async function createOrderCartonSession({
           throw new Error(
             'Resolve the order reconciliation issues before confirming.'
           )
+        const contextContainerId = getContextContainerId()
+        if (contextContainerId)
+          input.draft.contextContainerId = contextContainerId
         const signature = JSON.stringify([input.draft, context.revisions])
         if (confirmIntent?.signature !== signature)
           confirmIntent = { signature, intentId: crypto.randomUUID() }
@@ -972,7 +1306,7 @@ export async function createOrderCartonSession({
           expectedRevisions: context.revisions,
           intentId: confirmIntent.intentId,
         })
-        context = await repository.getOrderReconciliation(orderRef)
+        context = await repository.getOrderReconciliation(repositoryRef())
         expectedDraftRevision = context.draft?.revision ?? 0
         if (raw.clearAcknowledged(generation)) {
           domainDraft = planner.createReconciliationDraft(context)
@@ -1314,6 +1648,14 @@ export function mountOrderCartonGrid(
         input.oninput = () => {
           if (!composing) {
             session.editCell(row.key, column.key, input.value)
+            try {
+              numericCell(input.value, column)
+              input.removeAttribute('aria-invalid')
+              bindText(status, m('Pending changes'))
+            } catch (error) {
+              input.setAttribute('aria-invalid', 'true')
+              bindText(status, m(error.message))
+            }
             renderSummary()
           }
         }
@@ -1407,6 +1749,175 @@ export function mountOrderCartonGrid(
       fields.append(label)
     }
     modal.append(fields)
+    let flushUnit = async () => {}
+    if (
+      row.count > 1 &&
+      row.draftKind !== 'proposal' &&
+      row.kind !== 'capacity' &&
+      session.unitEntitlements
+    ) {
+      const units = session.unitEntitlements(row.key),
+        section = el('section', undefined, 'carton-unit-exception'),
+        picker = el('select'),
+        unitFields = el('div'),
+        evidence = el('p'),
+        caption = el('label', m('Physical carton entitlement'))
+      picker.dataset.action = 'choose-carton-entitlement'
+      caption.append(picker)
+      section.append(
+        el('h3', m('Exceptional carton contents')),
+        caption,
+        evidence,
+        unitFields,
+        el(
+          'p',
+          m(
+            'Known facts are prefilled. Unknown aggregate contents stay blank; untouched cartons are never divided by an average. Changed contents require new weight evidence.'
+          )
+        )
+      )
+      for (const unit of units)
+        picker.append(
+          new Option(`${unit.reference} · ${unit.id}`, String(unit.index))
+        )
+      let selected = units[0],
+        dirty = false,
+        contentInputs = [],
+        measurementInputs = [],
+        restoring = false,
+        contentsChanged = false
+      const pending = units.find(
+        (unit) => session.unitDraft?.(row.key, unit.index)?.reviewed === false
+      )
+      if (pending) selected = pending
+      picker.value = String(selected.index)
+      function inputValue() {
+        return {
+          ...(contentsChanged
+            ? {
+                contents: contentInputs
+                  .filter(({ input }) => input.value.trim())
+                  .map(({ entryId, input }) => ({
+                    orderId: session.orderRef.orderId,
+                    entryId,
+                    quantity: input.value.trim(),
+                  })),
+              }
+            : {}),
+          measurements: Object.fromEntries(
+            measurementInputs
+              .filter(({ changed }) => changed)
+              .map(({ key, input }) => [key, input.value.trim()])
+          ),
+        }
+      }
+      const retain = () => {
+        if (restoring) return
+        dirty = true
+        session.retainUnitDraft(row.key, selected.index, inputValue())
+      }
+      function renderUnit() {
+        restoring = true
+        contentInputs = []
+        measurementInputs = []
+        const recovered = session.unitDraft?.(row.key, selected.index),
+          known = recovered?.contents ?? selected.contents
+        contentsChanged = recovered?.contents !== undefined
+        bindText(
+          evidence,
+          m(known === null ? 'Unknown contents' : 'Confirmed facts')
+        )
+        unitFields.replaceChildren()
+        for (const product of session.projection().products) {
+          const label = el('label', `${product.code} · ${product.entryId}`),
+            input = el('input')
+          input.type = 'text'
+          input.inputMode = 'numeric'
+          input.value =
+            known?.find((part) => part.entryId === product.entryId)?.quantity ||
+            ''
+          input.dataset.entryId = product.entryId
+          let composing = false
+          input.oncompositionstart = () => {
+            composing = true
+          }
+          input.oncompositionend = () => {
+            composing = false
+            contentsChanged = true
+            retain()
+          }
+          input.oninput = () => {
+            if (!composing) {
+              contentsChanged = true
+              retain()
+            }
+          }
+          label.append(input)
+          unitFields.append(label)
+          contentInputs.push({ entryId: product.entryId, input })
+        }
+        for (const [key, title] of [
+          ['len', 'Length (cm)'],
+          ['wid', 'Width (cm)'],
+          ['ht', 'Height (cm)'],
+          ['weight', 'Weight (kg)'],
+          ['suppliedCbm', 'Supplied volume (m³)'],
+        ]) {
+          const label = el('label', m(title)),
+            input = el('input'),
+            model = {
+              key,
+              input,
+              changed: Object.hasOwn(recovered?.measurements || {}, key),
+            }
+          input.type = 'text'
+          input.inputMode = 'decimal'
+          input.value = recovered?.measurements?.[key] ?? selected[key] ?? ''
+          input.dataset.unitMeasurement = key
+          input.oninput = () => {
+            model.changed = true
+            retain()
+          }
+          label.append(input)
+          unitFields.append(label)
+          measurementInputs.push(model)
+        }
+        dirty = recovered?.reviewed === false
+        restoring = false
+      }
+      flushUnit = async () => {
+        if (!dirty) return
+        const value = inputValue()
+        if (value.contents?.some((part) => !/^[1-9]\d*$/.test(part.quantity)))
+          throw new Error('Carton contents require positive whole quantities.')
+        await session.stageUnitFacts({
+          batchId: row.key,
+          index: selected.index,
+          ...value,
+        })
+        dirty = false
+      }
+      picker.onchange = () => {
+        const next = picker.value
+        picker.disabled = true
+        void flushUnit()
+          .then(() => {
+            selected = session
+              .unitEntitlements(row.key)
+              .find((unit) => String(unit.index) === next)
+            renderUnit()
+          })
+          .catch((error) => {
+            picker.value = String(selected.index)
+            bindText(status, m(error.message))
+          })
+          .finally(() => {
+            picker.disabled = false
+          })
+      }
+      renderUnit()
+      modal.append(section)
+    }
     if (row.count === 1) {
       for (const part of row.contentEntries) {
         const section = el('section'),
@@ -1452,8 +1963,8 @@ export function mountOrderCartonGrid(
       }
     }
     const finish = () =>
-      void session
-        .flush()
+      void flushUnit()
+        .then(() => session.flush())
         .then(() => modal.close())
         .catch((error) => bindText(status, m(error.message)))
     close.onclick = finish
@@ -1698,9 +2209,14 @@ export async function createPackingReportIntakeController({
   orderRef,
   createClient,
   onChange = () => {},
+  contextContainerId,
 }) {
+  const contextRef = {
+    ...orderRef,
+    ...(contextContainerId ? { contextContainerId } : {}),
+  }
   const client = createClient(),
-    context = await repository.getPackingReportContext(orderRef)
+    context = await repository.getPackingReportContext(contextRef)
   let state = {
       context,
       source: null,
@@ -1880,7 +2396,7 @@ export async function createPackingReportIntakeController({
       if (!state.analysis)
         throw new Error('Review the local report before saving facts.')
       const generation = state.generation,
-        current = await repository.getPackingReportContext(orderRef)
+        current = await repository.getPackingReportContext(contextRef)
       check(generation)
       const prior =
         current.previousReports?.find(
@@ -1945,7 +2461,7 @@ export async function createPackingReportIntakeController({
       if (state.intent?.signature !== signature)
         state.intent = { signature, intentId: crypto.randomUUID() }
       commitWork = repository.commitPackingReportUpdate({
-        ...orderRef,
+        ...contextRef,
         plan,
         expectedRevisions: plan.expectedRevisions,
         intentId: state.intent.intentId,
@@ -1979,6 +2495,7 @@ export async function openPackingReportIntake({
   createClient,
   onSaved = () => {},
   onAmend = () => {},
+  contextContainerId,
 }) {
   const modal = el('dialog', undefined, 'packing-report-intake'),
     fieldset = el('fieldset'),
@@ -2092,6 +2609,7 @@ export async function openPackingReportIntake({
   controller = await createPackingReportIntakeController({
     repository,
     orderRef,
+    contextContainerId,
     createClient,
     onChange: render,
   })

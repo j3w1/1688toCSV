@@ -170,3 +170,93 @@ export async function createSmartContainer(extension, orderRefs) {
     return container.id
   }, orderRefs)
 }
+
+export async function libraryBackup(extension) {
+  const result = await extension.inspector.evaluate(() =>
+    chrome.runtime.sendMessage({ type: 'BACKUP_EXPORT' })
+  )
+  expect(result.ok, result.error).toBe(true)
+  return result.data
+}
+
+/** Real operator code review; no shipment month or hidden preparation screen. */
+export async function assignSelectedPurchaseCodes(page) {
+  await page.locator('#review-purchase-codes').click()
+  const review = page.locator('dialog[data-action="purchase-code-review"]')
+  await expect(review).toBeVisible()
+  await review.locator('[data-action="assign-purchase-codes"]').click()
+  await expect(review).toBeHidden()
+  await expect(page.locator('#orders-view')).toBeVisible()
+}
+
+export async function editOrderProduct(page, row = 0, values = {}) {
+  const target =
+    typeof row === 'number'
+      ? page.locator('#sheet-body tr[data-selection-key]').nth(row)
+      : row.locator
+        ? row
+        : page.locator(
+            `#sheet-body tr[data-selection-key=${JSON.stringify(JSON.stringify([row.accountId || 'local', row.orderId, row.entryId]))}]`
+          )
+  await target.locator('[data-action="edit-order-product"]').click()
+  const editor = page.locator('dialog[data-action="edit-order-product"]')
+  await expect(editor).toBeVisible()
+  for (const [label, value] of Object.entries(values))
+    await editor.getByRole('textbox', { name: label, exact: true }).fill(value)
+  return editor
+}
+
+export async function closeOrderProduct(editor) {
+  await editor.getByRole('button', { name: 'Close', exact: true }).click()
+  await expect(editor).toBeHidden()
+}
+
+export async function openOrderReconciliation(page, ref, kind = 'products') {
+  const identity = JSON.stringify([ref.accountId || 'local', ref.orderId])
+  await page
+    .locator(
+      `.order-card[data-order-key=${JSON.stringify(identity)}] [data-action="open-order-cartons"]`
+    )
+    .click()
+  const grid = page.locator('#orders-cartons-view')
+  await expect(
+    grid.locator('[data-action="confirm-order-cartons"]')
+  ).toBeVisible()
+  if (kind === 'cartons')
+    await grid.locator('[data-action="reconciliation-cartons"]').click()
+  return grid
+}
+
+export const productGridRow = (grid, ref) =>
+  grid.locator(
+    `[data-grid-key=${JSON.stringify(JSON.stringify([ref.accountId || 'local', ref.orderId, ref.entryId]))}]`
+  )
+
+export async function realOrderContext(extension, ref) {
+  return extension.inspector.evaluate(
+    async (ref) => (await window.testRepository).getOrderReconciliation(ref),
+    ref
+  )
+}
+
+export async function shareOrderBarcode(page, indices = [0, 1]) {
+  await page.locator('#clear-rows').click()
+  const rows = page.locator('#sheet-body tr[data-selection-key]')
+  for (const index of indices)
+    await rows.nth(index).getByRole('checkbox').check()
+  await page.locator('#group-order-products').click()
+  const tools = page.locator('.orders-grouping-dialog')
+  await tools
+    .getByRole('button', { name: 'Share one barcode', exact: true })
+    .click()
+  const review = page.getByRole('dialog', {
+    name: 'Review product grouping',
+    exact: true,
+  })
+  await expect(review).toBeVisible()
+  await review
+    .getByRole('button', { name: 'Apply changes', exact: true })
+    .click()
+  await expect(review).toBeHidden()
+  await expect(tools).toBeHidden()
+}

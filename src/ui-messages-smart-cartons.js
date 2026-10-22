@@ -2,6 +2,111 @@
 export const SMART_CARTON_MESSAGES = Object.fromEntries(
   [
     [
+      'Resolve supplier identity',
+      'Resolver identidad del proveedor',
+      '核定供应商身份',
+    ],
+    [
+      'Original supplier identity: {0}',
+      'Identidad original del proveedor: {0}',
+      '原始供应商身份：{0}',
+    ],
+    [
+      'Authored supplier identity',
+      'Identidad del proveedor documentada',
+      '手动记录的供应商身份',
+    ],
+    [
+      'Operator-confirmed supplier identity is retained with provenance. An unambiguous source identity takes priority; disagreements require review.',
+      'La identidad confirmada por el operador conserva su procedencia. Una identidad de origen inequívoca tiene prioridad; las discrepancias requieren revisión.',
+      '保留操作员确认的供应商身份及其来源。明确的原始身份优先，差异需要核对。',
+    ],
+    ['Physical carton entitlement', 'Identidad física de caja', '实体纸箱身份'],
+    [
+      'Exceptional carton contents',
+      'Contenido excepcional de caja',
+      '纸箱内容例外',
+    ],
+    [
+      'Known facts are prefilled. Unknown aggregate contents stay blank; untouched cartons are never divided by an average. Changed contents require new weight evidence.',
+      'Los datos conocidos ya están completos. El contenido agregado desconocido queda en blanco; no se divide por promedios. Cambiar el contenido requiere nueva evidencia del peso.',
+      '已知事实已预填。未知的汇总内容留空，未修改纸箱不会按平均数拆分。内容改变后需要新的重量证据。',
+    ],
+    [
+      'Review the pending carton exception before confirming. The complete draft is retained.',
+      'Revisa la excepción de caja pendiente antes de confirmar. Se conserva el borrador completo.',
+      '确认前请核对待处理的纸箱例外，完整草稿已保留。',
+    ],
+    [
+      'The carton draft changed. Review the current exception again.',
+      'El borrador de cajas cambió. Revisa la excepción actual otra vez.',
+      '纸箱草稿已变化，请重新核对当前例外。',
+    ],
+    [
+      'Carton contents require positive whole quantities.',
+      'El contenido de las cajas requiere cantidades enteras positivas.',
+      '纸箱内容数量必须为正整数。',
+    ],
+    ['Carton history', 'Historial de cajas', '纸箱历史'],
+    ['Filter carton history', 'Filtrar historial de cajas', '筛选纸箱历史'],
+    ['Retired evidence', 'Evidencia retirada', '已退役证据'],
+    ['Confirmed facts', 'Datos confirmados', '已确认事实'],
+    ['Source evidence', 'Evidencia de origen', '来源证据'],
+    ['{0} evidence records', '{0} registros de evidencia', '{0} 条证据记录'],
+    ['Review purchase evidence', 'Revisar evidencia de compra', '核对采购证据'],
+    [
+      'Original source date: {0}',
+      'Fecha original de la fuente: {0}',
+      '原始来源日期：{0}',
+    ],
+    [
+      'Resolved original purchase date',
+      'Fecha de compra original resuelta',
+      '已核定的原始采购日期',
+    ],
+    [
+      'Resolve original purchase date',
+      'Resolver fecha de compra original',
+      '核定原始采购日期',
+    ],
+    [
+      'Resolve only a missing or ambiguous original purchase date. Source evidence remains unchanged.',
+      'Resuelve solo una fecha original ausente o ambigua. La evidencia de origen se conserva.',
+      '仅核定缺失或有歧义的原始采购日期，保留来源证据。',
+    ],
+    ['Eligible goods', 'Mercancía elegible', '符合条件的货物'],
+    ['Non-goods', 'No es mercancía', '非货物'],
+    ['Fee', 'Cargo', '费用'],
+    ['Payment only', 'Solo pago', '仅付款'],
+    ['Canceled quantity', 'Cantidad cancelada', '已取消数量'],
+    ['Inventory disposition', 'Disposición de inventario', '库存处置'],
+    ['Evidence reason', 'Motivo documentado', '证据理由'],
+    [
+      'Save inventory evidence',
+      'Guardar evidencia de inventario',
+      '保存库存证据',
+    ],
+    [
+      'Only documented non-goods, fees, payment-only rows or canceled quantities reduce eligible inventory. Container selection never excludes goods.',
+      'Solo no mercancía, cargos, pagos o cantidades canceladas documentados reducen el inventario elegible. La selección de contenedor no excluye mercancía.',
+      '只有有据可查的非货物、费用、仅付款行或取消数量会减少符合条件的库存。选择货柜不会排除货物。',
+    ],
+    [
+      'Recovered unsaved evidence. Review it against the saved values before saving.',
+      'Evidencia sin guardar recuperada. Revísala frente a los valores guardados antes de guardar.',
+      '已恢复未保存证据，保存前请与已保存值核对。',
+    ],
+    [
+      'Document the reason for the inventory disposition.',
+      'Documenta el motivo de la disposición de inventario.',
+      '请记录库存处置理由。',
+    ],
+    [
+      'Canceled quantity must be a positive whole number.',
+      'La cantidad cancelada debe ser un entero positivo.',
+      '取消数量必须为正整数。',
+    ],
+    [
       'Partial selection — this is not the complete container manifest.',
       'Selección parcial — no es el manifiesto completo del contenedor.',
       '部分选择 — 不是此货柜的完整清单。',

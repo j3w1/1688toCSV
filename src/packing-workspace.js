@@ -7,6 +7,7 @@ import {
 import {
   createOrderCartonSession,
   mountOrderCartonGrid,
+  mountCartonHistory,
   openPackingReportIntake,
 } from './order-carton-grid.js'
 import { element as el, copied } from './ui.js'
@@ -46,7 +47,10 @@ export async function startPackingWorkspace({
     backlog,
     activeSession,
     currentOrder,
-    modules
+    modules,
+    cartonHistory,
+    cartonScope = '',
+    cartonVersion = 0
   const sessions = new Map()
   let backlogVersion = 0,
     backlogScope = ''
@@ -172,7 +176,8 @@ export async function startPackingWorkspace({
       if (refs.length !== 1) {
         currentOrder = undefined
         grid?.destroy()
-        showOrderChoices()
+        activeSession = undefined
+        await showCartonHistory()
       }
     }
     rememberRoute({
@@ -209,34 +214,24 @@ export async function startPackingWorkspace({
     } else await containers.reload()
     rememberRoute({ ...containers.route(), workspace: 'packing' })
   }
-  function showOrderChoices() {
-    const host = $('orders-cartons-view')
-    host.replaceChildren(el('h2', m('Choose an order to reconcile')))
-    const refs = new Set(
-      getSelectedOrders().map((ref) =>
-        JSON.stringify([ref.accountId || 'local', ref.orderId])
-      )
-    )
-    for (const record of getRecords().filter(
-      (record) =>
-        !refs.size ||
-        refs.has(
-          JSON.stringify([record.accountId || 'local', record.snapshot.orderId])
-        )
-    )) {
-      const button = el(
-        'button',
-        `${record.snapshot.sellerName} · ${record.snapshot.orderId}`
-      )
-      button.dataset.action = 'open-order-cartons'
-      button.dataset.orderId = record.snapshot.orderId
-      button.onclick = () =>
-        void openOrder({
-          accountId: record.accountId || 'local',
-          orderId: record.snapshot.orderId,
-        }).catch(failure)
-      host.append(button)
-    }
+  async function showCartonHistory(
+    host = $('orders-cartons-view'),
+    refs = getSelectedOrders()
+  ) {
+    const version = ++cartonVersion
+    cartonScope = JSON.stringify(refs)
+    cartonHistory?.destroy()
+    const next = await mountCartonHistory(host, {
+      repository,
+      orderRefs: refs,
+      onOrder: (ref) => void openOrder(ref).catch(failure),
+      isCurrent: () =>
+        version === cartonVersion &&
+        workspace === 'orders' &&
+        ordersView === 'cartons',
+    })
+    if (version === cartonVersion) cartonHistory = next
+    else next.destroy()
   }
   async function openOrder(ref) {
     if (opening) return
@@ -248,7 +243,14 @@ export async function startPackingWorkspace({
         orderId: ref.orderId,
       }
       if (!orderRef.orderId) throw new Error('Choose an order to reconcile.')
-      const key = JSON.stringify([orderRef.accountId, orderRef.orderId])
+      const amendmentId =
+        containers.controller.view()?.container.amendment &&
+        returnTo?.containerId
+      const key = JSON.stringify([
+        orderRef.accountId,
+        orderRef.orderId,
+        amendmentId || null,
+      ])
       let session = sessions.get(key)
       if (!session) {
         session = await createOrderCartonSession({
@@ -256,12 +258,15 @@ export async function startPackingWorkspace({
           orderRef,
           planner: await modulesForOrders(),
           onError: failure,
+          getContextContainerId: () => amendmentId,
         })
         sessions.set(key, session)
       }
       grid?.destroy()
+      cartonHistory?.destroy()
       activeSession = session
       currentOrder = orderRef
+      cartonScope = JSON.stringify(getSelectedOrders())
       workspace = 'orders'
       ordersView = 'cartons'
       paint()
@@ -273,8 +278,9 @@ export async function startPackingWorkspace({
         ),
         productView = el('button', m('Product calculations')),
         cartonView = el('button', m('Physical cartons')),
+        historyView = el('button', m('Carton history')),
         mount = el('div')
-      heading.append(title, productView, cartonView)
+      heading.append(title, productView, cartonView, historyView)
       const record =
         getRecords().find(
           (record) =>
@@ -291,6 +297,7 @@ export async function startPackingWorkspace({
             await openPackingReportIntake({
               repository,
               orderRef,
+              contextContainerId: amendmentId,
               createClient: createPackingReportClient,
               onSaved: async () => {
                 grid?.destroy()
@@ -311,6 +318,8 @@ export async function startPackingWorkspace({
       }
       host.replaceChildren(heading, mount)
       function mountGrid(kind) {
+        cartonVersion++
+        cartonHistory?.destroy()
         grid?.destroy()
         grid = mountOrderCartonGrid(mount, {
           session,
@@ -326,6 +335,11 @@ export async function startPackingWorkspace({
       cartonView.dataset.action = 'reconciliation-cartons'
       productView.onclick = () => mountGrid('products')
       cartonView.onclick = () => mountGrid('cartons')
+      historyView.dataset.action = 'order-carton-history'
+      historyView.onclick = () => {
+        grid?.destroy()
+        void showCartonHistory(mount, [orderRef]).catch(failure)
+      }
       mountGrid(ref.cartonId ? 'cartons' : 'products')
       if (ref.entryId)
         grid.reveal(
@@ -434,6 +448,7 @@ export async function startPackingWorkspace({
     'pagehide',
     () => {
       grid?.destroy()
+      cartonHistory?.destroy()
       backlog?.destroy()
       for (const session of sessions.values()) session.dispose()
       containers.dispose()
@@ -477,9 +492,17 @@ export async function startPackingWorkspace({
         await refreshBacklog()
       }
       if (workspace === 'orders' && ordersView === 'cartons' && !currentOrder)
-        showOrderChoices()
+        await showCartonHistory()
     },
     updateActions() {
+      if (
+        workspace === 'orders' &&
+        ordersView === 'cartons' &&
+        JSON.stringify(getSelectedOrders()) !== cartonScope
+      ) {
+        cartonScope = JSON.stringify(getSelectedOrders())
+        void showOrders('cartons').catch(failure)
+      }
       if (
         workspace === 'orders' &&
         ordersView === 'backlog' &&
