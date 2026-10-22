@@ -6,6 +6,8 @@ import {
   t,
   getLocale,
   getLanguage,
+  setLanguage,
+  onLanguageChange,
 } from './i18n.js'
 import {
   element as el,
@@ -162,6 +164,33 @@ function showError(message) {
 }
 function dialog(target) {
   if (!target.open) target.showModal()
+}
+function authoringLanguages(modal) {
+  const controls = el('div', undefined, 'authoring-languages')
+  controls.setAttribute('role', 'group')
+  bindAttribute(controls, 'aria-label', uiMessage('Language'))
+  for (const [language, title] of [
+    ['en', 'EN'],
+    ['es', 'ES'],
+    ['zh', '中文'],
+  ]) {
+    const button = el('button', title)
+    button.type = 'button'
+    button.dataset.language = language
+    button.onclick = () => setLanguage(language)
+    controls.append(button)
+  }
+  const paint = () => {
+    for (const button of controls.children)
+      button.setAttribute(
+        'aria-pressed',
+        String(button.dataset.language === getLanguage())
+      )
+  }
+  const stop = onLanguageChange(paint)
+  modal.addEventListener('close', stop, { once: true })
+  paint()
+  modal.append(controls)
 }
 const blobData = (blob) =>
   new Promise((resolve, reject) => {
@@ -674,6 +703,29 @@ export async function createProductAuthoring({
         el('p', row.name || row.description || row.entryId || row.orderId),
         el('code', row.after || row.code || row.baseCode || '—', 'ce-code')
       )
+      if (row.supplierIdentity) {
+        const identity = row.supplierIdentity
+        card.append(
+          el(
+            'p',
+            uiMessage(
+              identity.provenance === 'manual-confirmed'
+                ? 'Operator-confirmed supplier identity'
+                : 'Original source supplier identity'
+            )
+          ),
+          el('code', identity.sellerId || '—')
+        )
+        if (identity.conflict)
+          card.append(
+            el(
+              'p',
+              uiMessage(
+                'Supplier identities disagree. Review the source and authored evidence before assigning or linking codes.'
+              )
+            )
+          )
+      }
       content.append(card)
     }
     for (const issue of review.issues || []) {
@@ -772,6 +824,12 @@ export async function createProductAuthoring({
       })
     )
     modal.append(source)
+    if (record.supplierIdentityResolution)
+      modal.append(
+        el('p', uiMessage('Operator-confirmed supplier identity')),
+        el('code', record.supplierIdentityResolution.sellerId || '—'),
+        el('time', record.supplierIdentityResolution.updatedAt || '')
+      )
     const label = (text, input) => {
       const node = el('label', uiMessage(text))
       node.append(input)
@@ -1000,6 +1058,7 @@ export async function createProductAuthoring({
       redo = el('button', uiMessage('Redo'))
     modal.dataset.action = 'edit-order-product'
     modal.append(el('h2', uiMessage('Edit product in Orders')))
+    authoringLanguages(modal)
     const row = preparedRows([ref])[0]
     modal.append(el('p', row.description || row.title))
     if (ref.thumbnail) modal.append(media.photo(ref))
@@ -1025,6 +1084,9 @@ export async function createProductAuthoring({
         input: control.querySelector('input,textarea'),
         read: () => value,
       })
+      control.querySelector('input,textarea').dataset.authoringField = label
+        .toLowerCase()
+        .replaceAll(' ', '-')
       content.append(control)
       control
         .querySelector('input,textarea')
@@ -1072,53 +1134,56 @@ export async function createProductAuthoring({
     for (const [title, mode] of [
       ['Automatic sizes', 'automatic'],
       ['No size difference', 'none'],
-    ])
-      tools.append(
-        button(title, async () => {
-          await flushSession(session)
-          const candidate = setGroupSizeMode(session.draft, group.id, mode, {
-            snapshot: recordFor(ref)?.snapshot,
-            sizeVocabulary: preferences.sizeVocabulary,
-          })
-          const next = candidate.groups.find((entry) => entry.id === group.id)
-          const changes = group.variants
-            .map((variant) => {
-              const changed = next.variants.find(
-                (entry) => entry.id === variant.id
-              )
-              return {
-                name:
-                  variant.variant || variant.spanishName || group.spanishName,
-                before:
-                  group.baseCode + variant.variantSuffix + variant.sizeSuffix,
-                after:
-                  next.baseCode + changed.variantSuffix + changed.sizeSuffix,
-              }
-            })
-            .filter((row) => row.before !== row.after)
-          if (
-            changes.length &&
-            !(await reviewPackingChanges({
-              title: uiMessage('Change size handling?'),
-              explanation: uiMessage(
-                mode === 'none'
-                  ? 'These variants have no size difference. Remove only their size endings and keep their variant letters, source descriptions and other products unchanged. This choice is remembered for this product.'
-                  : 'Use automatic size recognition for this product again. Blank size endings will be checked against its source descriptions; unclear sizes remain for review.'
-              ),
-              changes,
-              proceed: uiMessage('Apply size handling'),
-              media,
-            }))
-          )
-            return
-          editSession(session, () => {
-            session.draft = candidate
-          })
-          await flushSession(session)
-          modal.close()
-          await openEditor(ref)
+    ]) {
+      const control = button(title, async () => {
+        await flushSession(session)
+        const candidate = setGroupSizeMode(session.draft, group.id, mode, {
+          snapshot: recordFor(ref)?.snapshot,
+          sizeVocabulary: preferences.sizeVocabulary,
         })
+        const next = candidate.groups.find((entry) => entry.id === group.id)
+        const changes = group.variants
+          .map((variant) => {
+            const changed = next.variants.find(
+              (entry) => entry.id === variant.id
+            )
+            return {
+              name: variant.variant || variant.spanishName || group.spanishName,
+              before:
+                group.baseCode + variant.variantSuffix + variant.sizeSuffix,
+              after: next.baseCode + changed.variantSuffix + changed.sizeSuffix,
+            }
+          })
+          .filter((row) => row.before !== row.after)
+        if (
+          changes.length &&
+          !(await reviewPackingChanges({
+            title: uiMessage('Change size handling?'),
+            explanation: uiMessage(
+              mode === 'none'
+                ? 'These variants have no size difference. Remove only their size endings and keep their variant letters, source descriptions and other products unchanged. This choice is remembered for this product.'
+                : 'Use automatic size recognition for this product again. Blank size endings will be checked against its source descriptions; unclear sizes remain for review.'
+            ),
+            changes,
+            proceed: uiMessage('Apply size handling'),
+            media,
+          }))
+        )
+          return
+        editSession(session, () => {
+          session.draft = candidate
+        })
+        await flushSession(session)
+        modal.close()
+        await openEditor(ref)
+      })
+      control.dataset.sizeMode = mode
+      control.setAttribute(
+        'aria-pressed',
+        String((group.sizeMode || 'automatic') === mode)
       )
+      tools.append(control)
+    }
     const priceSuggestions = suggestPriceSizeMappings(
       group,
       recordFor(ref)?.snapshot,
@@ -1133,6 +1198,9 @@ export async function createProductAuthoring({
                 (entry) => entry.id === variantId
               )
               return {
+                photo: recordFor(ref)?.snapshot.items.find((item) =>
+                  variant.entryIds.includes(item.entryId)
+                ),
                 name: variant.variant || variant.size,
                 before:
                   group.baseCode + variant.variantSuffix + variant.sizeSuffix,
@@ -1310,6 +1378,7 @@ export async function createProductAuthoring({
           )
         variant.variantSuffix = next.variantSuffix
         variant.sizeSuffix = next.sizeSuffix
+        if (next.sizeSuffix) delete group.sizeMode
         variant.needsSizeMapping = next.needsSizeMapping
         variant.spanishName = next.spanishName.toUpperCase()
       }
@@ -1386,8 +1455,8 @@ export async function createProductAuthoring({
         ['Carton mark', 'mark'],
       ]) {
         const label = button(title, () => openLabel(row, kind))
-        label.dataset.action =
-          kind === 'barcode' ? 'edit-order-barcode' : 'edit-order-carton-mark'
+        if (kind === 'barcode') label.dataset.action = 'edit-order-barcode'
+        else label.dataset.action = 'edit-order-carton-mark'
         bar.append(label)
       }
     const evidence = button('Review purchase evidence', () =>

@@ -12,7 +12,8 @@ import {
 } from './order-carton-grid.js'
 import { element as el, copied } from './ui.js'
 import { message as m, bindText } from './i18n.js'
-import { readBackupFile } from './backup-file.js'
+import { readBackupFile, downloadBackup } from './backup-file.js'
+import { groupPackingMonth } from './packing-model.js'
 import { showErrorNotice } from './error-notice.js'
 import { validateBackup } from './database.js'
 import { reviewPackingChanges } from './packing-review.js'
@@ -402,6 +403,73 @@ export async function startPackingWorkspace({
       )
     })().catch(failure)
   const restoreFile = $('restore-packing-file')
+  $('backup-packing').onclick = () =>
+    void (async () => {
+      const rows = structuredClone(getRows()),
+        selection = new Map()
+      if (!rows.length) throw new Error('Select product rows to back up.')
+      await flush()
+      for (const row of rows) {
+        const accountId = row.accountId || row.record?.accountId || 'local',
+          key = JSON.stringify([accountId, row.orderId])
+        if (!selection.has(key))
+          selection.set(key, { accountId, orderId: row.orderId, entryIds: [] })
+        selection.get(key).entryIds.push(row.entryId)
+      }
+      const preparations = await repository.listPreparations(),
+        months = new Set()
+      for (const order of selection.values()) {
+        const preparation = preparations.find(
+            (prep) =>
+              prep.orderId === order.orderId &&
+              (prep.accountId || 'local') === order.accountId
+          ),
+          ids = new Set(order.entryIds)
+        if (
+          !preparation ||
+          order.entryIds.some(
+            (id) =>
+              !preparation.groups.some((group) =>
+                group.variants.some((variant) => variant.entryIds.includes(id))
+              )
+          )
+        )
+          throw new Error('Review product codes in Orders first.')
+        for (const group of preparation.groups)
+          if (
+            group.variants.some((variant) =>
+              variant.entryIds.some((id) => ids.has(id))
+            )
+          )
+            months.add(groupPackingMonth(preparation, group))
+      }
+      const scope = {
+          orders: [...selection.values()],
+          months: [...months].sort(),
+        },
+        backup = await repository.exportBackup({ packingScope: scope })
+      if (
+        backup.omittedCartonBatchIds?.length &&
+        !(await reviewPackingChanges({
+          title: m('Review scoped backup'),
+          explanation: m(
+            'Some carton evidence includes unselected source products. This scoped backup omits those physical records; a full library backup retains them.'
+          ),
+          changes: backup.omittedCartonBatchIds.map((id) => ({
+            name: id,
+            before: m('Physical carton evidence'),
+            after: m('Omitted from this scoped backup'),
+          })),
+          proceed: m('Back up selection'),
+        }))
+      )
+        return
+      await downloadBackup(
+        backup,
+        `1688-packing-${scope.months.length === 1 ? scope.months[0] : 'mixed-months'}`
+      )
+      feedback(m('Packing backup saved'))
+    })().catch(failure)
   $('restore-packing').onclick = () => restoreFile.click()
   restoreFile.onchange = () =>
     void (async () => {
