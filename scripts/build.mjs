@@ -28,6 +28,7 @@ await build({
     background: 'src/background.js',
     library: 'src/library.js',
     'store-workbook-worker': 'src/store-workbook-worker.js',
+    'packing-report-worker': 'src/packing-report-worker.js',
   },
   outdir: output,
   bundle: true,
@@ -61,6 +62,7 @@ for (const resource of [
   'packing-review.css',
   'label-editor.css',
   'shell.css',
+  'smart-cartons.css',
   'theme.js',
 ])
   await cp(path.join(root, 'src', resource), path.join(output, resource))
@@ -70,6 +72,7 @@ await writeFile(
 )
 const resources = [
   'store-workbook-worker.js',
+  'packing-report-worker.js',
   'store-import.css',
   'order-charges.css',
   'operations.css',
@@ -93,6 +96,7 @@ const resources = [
   'packing-review.css',
   'label-editor.css',
   'shell.css',
+  'smart-cartons.css',
   'assets/casa-elida.png',
 ]
 for (const resource of resources) await readFile(path.join(output, resource))
