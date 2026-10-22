@@ -12,6 +12,46 @@ import {
   validatePackingReportReview,
   reportCandidateSemantic,
 } from './packing-report-model.js'
+import {
+  validateCartonBatch,
+  assertSingleOrderCarton,
+} from './carton-batches.js'
+
+const manualFields = [
+  'len',
+  'wid',
+  'ht',
+  'weight',
+  'weightBasis',
+  'suppliedCbm',
+  'volumeBasis',
+  'contents',
+  'unresolvedContents',
+  'mark',
+  'cartonNumber',
+  'notes',
+  'packingBasis',
+  'contentsUnknown',
+  'unitContents',
+  'unitMeasurements',
+  'sourceFacts',
+  'cartonHistory',
+]
+const unitDependencies = {
+  unitContents: ['count', 'contents', 'unresolvedContents', 'packingBasis'],
+  unitMeasurements: [
+    'count',
+    'contents',
+    'unresolvedContents',
+    'len',
+    'wid',
+    'ht',
+    'weight',
+    'weightBasis',
+    'suppliedCbm',
+    'volumeBasis',
+  ],
+}
 
 const semantic = (row, mapping = true) =>
   reportCandidateSemantic(row.candidate || row, { mapping })
@@ -162,6 +202,13 @@ function validatePayloadBatches(batches, report) {
     typeof value === 'string' && /^[1-9]\d{0,29}$/.test(value)
   for (const batch of batches) {
     if (
+      !['exact', 'uniform', 'aggregate'].includes(batch.packingBasis) ||
+      (batch.packingBasis === 'exact' && batch.count !== 1) ||
+      (batch.contentsUnknown !== undefined &&
+        typeof batch.contentsUnknown !== 'boolean')
+    )
+      throw new Error('Invalid packing evidence basis')
+    if (
       batch.orderId !== report.orderKey.orderId ||
       batch.accountId !== report.orderKey.accountId ||
       (batch.count !== null &&
@@ -206,6 +253,23 @@ function validatePayloadBatches(batches, report) {
       (batch.mark && batch.mark.orderId !== batch.orderId)
     )
       throw new Error('Invalid measurement/mark ownership')
+    if (
+      batch.unitContents ||
+      batch.unitMeasurements ||
+      batch.sourceFacts ||
+      batch.cartonHistory
+    ) {
+      // Validate shared physical proof without inventing a supplier identity.
+      // The repository supplies and validates the actual order's store at commit.
+      const normalized = validateCartonBatch({
+        ...batch,
+        storeId: batch.storeId || 'report-validation',
+      })
+      assertSingleOrderCarton(normalized)
+      for (const contents of Object.values(normalized.unitContents || {}))
+        if (contents.some((item) => !ids.has(item.entryId)))
+          throw new Error('Indexed contents reference another product')
+    }
   }
 }
 
@@ -682,20 +746,7 @@ export function planPackingReportUpdate({
           .flatMap((fact) => Object.keys(fact.fields || {}))
       )
       const inferred = {}
-      for (const field of [
-        'len',
-        'wid',
-        'ht',
-        'weight',
-        'weightBasis',
-        'suppliedCbm',
-        'volumeBasis',
-        'contents',
-        'unresolvedContents',
-        'mark',
-        'cartonNumber',
-        'notes',
-      ])
+      for (const field of manualFields)
         if (
           !explicitFields.has(field) &&
           current[field] !== undefined &&
@@ -710,40 +761,34 @@ export function planPackingReportUpdate({
           revision: current.revision,
         })
     }
+    const incomingFacts = clone(batch)
     for (const manual of retainedManualFacts.filter(
       (fact) => (fact.batchId || fact.id) === id
     )) {
       for (const [field, value] of Object.entries(manual.fields || {})) {
-        if (
-          ![
-            'len',
-            'wid',
-            'ht',
-            'weight',
-            'weightBasis',
-            'suppliedCbm',
-            'volumeBasis',
-            'contents',
-            'unresolvedContents',
-            'mark',
-            'cartonNumber',
-            'notes',
-          ].includes(field)
-        ) {
+        if (!manualFields.includes(field)) {
           issues.push(
             issue('invalidManualField', 'error', { batchId: id, field }, {})
           )
           continue
         }
         const incomingValue = batch[field]
+        const dependentChange =
+          old &&
+          unitDependencies[field]?.some(
+            (dependency) =>
+              canonical(previousBatch[dependency]) !==
+              canonical(incomingFacts[dependency])
+          )
         batch[field] = clone(value)
         if (
-          canonical(value) !== canonical(incomingValue) &&
-          old &&
-          incomingValue !== undefined &&
-          incomingValue !== '' &&
-          incomingValue !== null &&
-          canonical(previousBatch[field]) !== canonical(incomingValue)
+          dependentChange ||
+          (canonical(value) !== canonical(incomingValue) &&
+            old &&
+            incomingValue !== undefined &&
+            incomingValue !== '' &&
+            incomingValue !== null &&
+            canonical(previousBatch[field]) !== canonical(incomingValue))
         ) {
           fieldDiff.push({
             batchId: id,
