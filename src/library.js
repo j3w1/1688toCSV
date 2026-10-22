@@ -2012,13 +2012,18 @@ export async function startLibrary(
         description,
         priceCell,
         discount,
-        node(
-          'td',
-          Number(row.quantity).toLocaleString(getLocale(), {
-            maximumFractionDigits: 4,
-          }),
-          'numeric quantity-cell'
-        ),
+        (() => {
+          const cell = node('td', undefined, 'numeric quantity-cell'),
+            value = /^\d+$/.test(row.quantity)
+              ? BigInt(row.quantity).toLocaleString(getLocale())
+              : Number(row.quantity).toLocaleString(getLocale(), {
+                  maximumFractionDigits: 4,
+                })
+          const copy = copyTextButton(row.quantity, { label: 'Copy quantity' })
+          copy.firstChild.textContent = value
+          cell.append(copy)
+          return cell
+        })(),
         capacity,
         weight,
         volume

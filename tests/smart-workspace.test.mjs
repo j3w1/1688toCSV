@@ -12,6 +12,8 @@ import {
 import { parseHTML } from 'linkedom'
 import { openProductDetails } from '../src/product-details.js'
 import { openPackingExportDialog } from '../src/packing-export-dialog.js'
+import { createProductAuthoring } from '../src/product-authoring.js'
+import { validatePackingPreferences } from '../src/packing-model.js'
 import {
   mountOrderCartonGrid,
   createPackingReportIntakeController,
@@ -110,6 +112,11 @@ function dom(context) {
       unobserve() {}
       disconnect() {}
     },
+    IntersectionObserver: class {
+      observe() {}
+      unobserve() {}
+      disconnect() {}
+    },
     requestAnimationFrame: (fn) => setTimeout(fn, 0),
     cancelAnimationFrame: clearTimeout,
   })) {
@@ -129,8 +136,11 @@ function dom(context) {
   Object.defineProperty(selectPrototype, 'value', {
     ...selectValue,
     set(value) {
-      for (const option of this.querySelectorAll('option'))
-        option.selected = option.value === String(value)
+      const options = [...this.querySelectorAll('option')]
+      for (const option of options) option.removeAttribute('selected')
+      options
+        .find((option) => option.value === String(value))
+        ?.setAttribute('selected', '')
     },
     configurable: true,
   })
@@ -165,6 +175,108 @@ function dom(context) {
 }
 
 const ref = { accountId: 'local', orderId: '10001' }
+test('purchase evidence recovery retains invalid work, submits prior disposition guards and never edits source snapshots', async (context) => {
+  const { document, window } = dom(context),
+    values = new Map(),
+    source = syntheticOrder('1001'),
+    before = structuredClone(source.snapshot),
+    calls = []
+  document.body.append(document.createElement('button'))
+  document.body.lastElementChild.id = 'packing-settings'
+  const globals = {
+    localStorage: {
+      getItem: (key) => values.get(key) || null,
+      setItem: (key, value) => values.set(key, value),
+      removeItem: (key) => values.delete(key),
+    },
+    BroadcastChannel: undefined,
+  }
+  for (const [key, value] of Object.entries(globals)) {
+    const previous = Object.getOwnPropertyDescriptor(globalThis, key)
+    Object.defineProperty(globalThis, key, { value, configurable: true })
+    context.after(() =>
+      previous
+        ? Object.defineProperty(globalThis, key, previous)
+        : delete globalThis[key]
+    )
+  }
+  source.inventoryDispositions = {
+    2001: {
+      kind: 'canceled',
+      quantity: '3',
+      reason: 'Earlier documented cancellation',
+    },
+  }
+  const repository = {
+    listPreparations: async () => [],
+    getPackingPreferences: async () => validatePackingPreferences({}),
+    getOrderReconciliation: async () => ({
+      record: structuredClone(source),
+      revisions: {},
+    }),
+    setInventoryDispositions: async (args) => {
+      calls.push(structuredClone(args))
+      source.inventoryDispositions['2001'] = args.entries['2001']
+      return { record: source }
+    },
+  }
+  const authoring = await createProductAuthoring({
+    repository,
+    getRecords: () => [source],
+  })
+  context.after(() => authoring.dispose())
+  await authoring.openInventoryRecovery({
+    accountId: 'local',
+    orderId: '1001',
+    entryId: '2001',
+  })
+  let modal = document.querySelector(
+      'dialog[data-action="review-purchase-evidence"]'
+    ),
+    fields = modal.querySelectorAll('input'),
+    reason = modal.querySelector('textarea')
+  fields[fields.length - 1].value = 'not whole'
+  fields[fields.length - 1].dispatchEvent(new window.Event('input'))
+  modal.querySelector('[data-action="save-inventory-disposition"]').click()
+  await new Promise((resolve) => setTimeout(resolve, 0))
+  assert.equal(calls.length, 0)
+  assert.match(
+    modal.querySelector('[role="status"]').textContent,
+    /positive whole/
+  )
+  modal.close()
+  await authoring.openInventoryRecovery({
+    accountId: 'local',
+    orderId: '1001',
+    entryId: '2001',
+  })
+  modal = document.querySelector(
+    'dialog[data-action="review-purchase-evidence"]'
+  )
+  assert.equal([...modal.querySelectorAll('input')].at(-1).value, 'not whole')
+  const kind = modal.querySelector('select')
+  kind.value = 'goods'
+  kind.dispatchEvent(new window.Event('change'))
+  reason = modal.querySelector('textarea')
+  reason.value = 'Retained raw annotation'
+  modal.querySelector('[data-action="save-inventory-disposition"]').click()
+  await new Promise((resolve) => setTimeout(resolve, 0))
+  assert.deepEqual(calls, [
+    {
+      accountId: 'local',
+      orderId: '1001',
+      entries: { 2001: null },
+      expectedValues: {
+        2001: {
+          kind: 'canceled',
+          quantity: '3',
+          reason: 'Earlier documented cancellation',
+        },
+      },
+    },
+  ])
+  assert.deepEqual(source.snapshot, before)
+})
 test('all-orders and narrowed carton history share a bounded searchable table and inspect without selecting or mutating', async (context) => {
   const { document, window } = dom(context),
     host = document.getElementById('host'),

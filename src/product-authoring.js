@@ -148,7 +148,7 @@ function button(text, handler, className) {
   }
   if (buttonIcons[source]) decorateIcon(result, buttonIcons[source])
   result.addEventListener('click', async () => {
-    clearErrorNotice()
+    clearErrorNotices(document)
     try {
       await handler(result)
     } catch (error) {
@@ -655,7 +655,21 @@ export async function createProductAuthoring({
     )
     for (const row of review.changes || review.assignments || []) {
       const card = el('article')
-      if (row.photo) card.append(media.photo(row.photo))
+      card.dataset.orderId = row.orderId || ''
+      card.dataset.entryId = row.entryId || ''
+      if (row.photo)
+        card.append(
+          media.photo(
+            typeof row.photo === 'string'
+              ? {
+                  thumbnail: row.photo,
+                  description: row.name || row.description || '',
+                  orderId: row.orderId,
+                  entryId: row.entryId,
+                }
+              : row.photo
+          )
+        )
       card.append(
         el('p', row.name || row.description || row.entryId || row.orderId),
         el('code', row.after || row.code || row.baseCode || '—', 'ce-code')
@@ -731,15 +745,19 @@ export async function createProductAuthoring({
         orderId: record.snapshot.orderId,
       },
       recoveryKey = `1688-orders-evidence-draft:${JSON.stringify([identity.accountId, identity.orderId, item.entryId])}`,
-      previous = clone(record.inventoryDispositions?.[item.entryId] || null),
+      previous = structuredClone(
+        record.inventoryDispositions?.[item.entryId] || null
+      ),
       modal = el('dialog', undefined, 'product-authoring-dialog'),
       status = el('p'),
       source = el('p'),
       date = el('input'),
+      supplier = el('input'),
       kind = el('select'),
       quantity = el('input'),
       reason = el('textarea'),
       saveDate = el('button', uiMessage('Resolve original purchase date')),
+      saveSupplier = el('button', uiMessage('Resolve supplier identity')),
       save = el('button', uiMessage('Save inventory evidence')),
       close = el('button', uiMessage('Close'))
     modal.dataset.action = 'review-purchase-evidence'
@@ -759,6 +777,26 @@ export async function createProductAuthoring({
       node.append(input)
       modal.append(node)
     }
+    supplier.type = 'text'
+    supplier.value = record.supplierIdentityResolution?.sellerId || ''
+    modal.append(
+      el(
+        'p',
+        uiMessage('Original supplier identity: {0}', {
+          0: record.snapshot.sellerMemberLogin || '—',
+        })
+      )
+    )
+    label('Authored supplier identity', supplier)
+    modal.append(
+      saveSupplier,
+      el(
+        'p',
+        uiMessage(
+          'Operator-confirmed supplier identity is retained with provenance. An unambiguous source identity takes priority; disagreements require review.'
+        )
+      )
+    )
     date.type = 'date'
     date.value =
       record.purchaseDateResolution?.date ||
@@ -803,6 +841,7 @@ export async function createProductAuthoring({
       const recovered = JSON.parse(localStorage.getItem(recoveryKey) || 'null')
       if (recovered) {
         date.value = recovered.date || date.value
+        supplier.value = recovered.supplier ?? supplier.value
         if (recovered.kind) kind.value = recovered.kind
         if (recovered.quantity !== undefined)
           quantity.value = recovered.quantity
@@ -822,12 +861,23 @@ export async function createProductAuthoring({
         recoveryKey,
         JSON.stringify({
           date: date.value,
+          supplier: supplier.value,
           kind: kind.value,
           quantity: quantity.value,
           reason: reason.value,
         })
       )
-    const controls = [date, kind, quantity, reason, saveDate, save, close]
+    const controls = [
+      date,
+      supplier,
+      kind,
+      quantity,
+      reason,
+      saveDate,
+      saveSupplier,
+      save,
+      close,
+    ]
     const busy = (value) =>
       controls.forEach((control) => (control.disabled = value))
     let saving = false
@@ -840,6 +890,7 @@ export async function createProductAuthoring({
         await run()
         const recovered = JSON.parse(localStorage.getItem(recoveryKey) || '{}')
         if (domain === 'date') delete recovered.date
+        else if (domain === 'supplier') delete recovered.supplier
         else {
           delete recovered.kind
           delete recovered.quantity
@@ -863,9 +914,21 @@ export async function createProductAuthoring({
       retain()
     }
     kind.onchange = update
-    for (const input of [date, quantity, reason]) input.oninput = retain
+    for (const input of [date, supplier, quantity, reason])
+      input.oninput = retain
     quantity.hidden = kind.value !== 'canceled'
     saveDate.dataset.action = 'resolve-purchase-date'
+    saveSupplier.dataset.action = 'resolve-purchase-supplier'
+    saveSupplier.onclick = () =>
+      void commit(
+        () =>
+          repository.resolvePurchaseSupplier({
+            ...identity,
+            sellerId: supplier.value.trim(),
+            expectedObservedAt: record.snapshot.observedAt,
+          }),
+        'supplier'
+      )
     saveDate.onclick = () =>
       void commit(
         () =>
@@ -994,6 +1057,14 @@ export async function createProductAuthoring({
         delete group.sizeMode
       }
     })
+    add(
+      'Product variant',
+      variant.variant || '',
+      (value) => {
+        variant.variant = value
+      },
+      true
+    )
     for (const input of content.querySelectorAll('input'))
       if (/code|ending/i.test(input.closest('label').textContent))
         decorateCodeInput(input)
@@ -1309,6 +1380,16 @@ export async function createProductAuthoring({
     const edit = button('Edit product', () => openEditor(row))
     edit.dataset.action = 'edit-order-product'
     bar.append(edit)
+    if (projected.barcode)
+      for (const [title, kind] of [
+        ['Barcode', 'barcode'],
+        ['Carton mark', 'mark'],
+      ]) {
+        const label = button(title, () => openLabel(row, kind))
+        label.dataset.action =
+          kind === 'barcode' ? 'edit-order-barcode' : 'edit-order-carton-mark'
+        bar.append(label)
+      }
     const evidence = button('Review purchase evidence', () =>
       openInventoryRecovery(row)
     )

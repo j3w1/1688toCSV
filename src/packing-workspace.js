@@ -243,7 +243,14 @@ export async function startPackingWorkspace({
         orderId: ref.orderId,
       }
       if (!orderRef.orderId) throw new Error('Choose an order to reconcile.')
-      const key = JSON.stringify([orderRef.accountId, orderRef.orderId])
+      const amendmentId =
+        containers.controller.view()?.container.amendment &&
+        returnTo?.containerId
+      const key = JSON.stringify([
+        orderRef.accountId,
+        orderRef.orderId,
+        amendmentId || null,
+      ])
       let session = sessions.get(key)
       if (!session) {
         session = await createOrderCartonSession({
@@ -251,6 +258,7 @@ export async function startPackingWorkspace({
           orderRef,
           planner: await modulesForOrders(),
           onError: failure,
+          getContextContainerId: () => amendmentId,
         })
         sessions.set(key, session)
       }
@@ -289,6 +297,7 @@ export async function startPackingWorkspace({
             await openPackingReportIntake({
               repository,
               orderRef,
+              contextContainerId: amendmentId,
               createClient: createPackingReportClient,
               onSaved: async () => {
                 grid?.destroy()

@@ -1,6 +1,52 @@
 // UI text only. Supplier/source strings never pass through this catalog.
 export const SMART_CARTON_MESSAGES = Object.fromEntries(
   [
+    [
+      'Resolve supplier identity',
+      'Resolver identidad del proveedor',
+      '核定供应商身份',
+    ],
+    [
+      'Original supplier identity: {0}',
+      'Identidad original del proveedor: {0}',
+      '原始供应商身份：{0}',
+    ],
+    [
+      'Authored supplier identity',
+      'Identidad del proveedor documentada',
+      '手动记录的供应商身份',
+    ],
+    [
+      'Operator-confirmed supplier identity is retained with provenance. An unambiguous source identity takes priority; disagreements require review.',
+      'La identidad confirmada por el operador conserva su procedencia. Una identidad de origen inequívoca tiene prioridad; las discrepancias requieren revisión.',
+      '保留操作员确认的供应商身份及其来源。明确的原始身份优先，差异需要核对。',
+    ],
+    ['Physical carton entitlement', 'Identidad física de caja', '实体纸箱身份'],
+    [
+      'Exceptional carton contents',
+      'Contenido excepcional de caja',
+      '纸箱内容例外',
+    ],
+    [
+      'Known facts are prefilled. Unknown aggregate contents stay blank; untouched cartons are never divided by an average. Changed contents require new weight evidence.',
+      'Los datos conocidos ya están completos. El contenido agregado desconocido queda en blanco; no se divide por promedios. Cambiar el contenido requiere nueva evidencia del peso.',
+      '已知事实已预填。未知的汇总内容留空，未修改纸箱不会按平均数拆分。内容改变后需要新的重量证据。',
+    ],
+    [
+      'Review the pending carton exception before confirming. The complete draft is retained.',
+      'Revisa la excepción de caja pendiente antes de confirmar. Se conserva el borrador completo.',
+      '确认前请核对待处理的纸箱例外，完整草稿已保留。',
+    ],
+    [
+      'The carton draft changed. Review the current exception again.',
+      'El borrador de cajas cambió. Revisa la excepción actual otra vez.',
+      '纸箱草稿已变化，请重新核对当前例外。',
+    ],
+    [
+      'Carton contents require positive whole quantities.',
+      'El contenido de las cajas requiere cantidades enteras positivas.',
+      '纸箱内容数量必须为正整数。',
+    ],
     ['Carton history', 'Historial de cajas', '纸箱历史'],
     ['Filter carton history', 'Filtrar historial de cajas', '筛选纸箱历史'],
     ['Retired evidence', 'Evidencia retirada', '已退役证据'],
