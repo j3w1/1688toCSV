@@ -660,6 +660,17 @@ export function analyzePackingReport({
           },
         ])
       )
+    // A formula/error cell is selected evidence even when its display is blank.
+    // Check mapped roles before optional defaults and note/total shortcuts.
+    const invalidCaches = columns
+      .filter((column) => column.role !== 'ignore')
+      .map((column) => rowCells.find((cell) => cell.col === column.header.col))
+      .filter((cell) => cell?.error || (cell?.formula && cell.raw == null))
+    if (invalidCaches.length) {
+      for (const cell of invalidCaches)
+        addIssue('formulaCache', 'error', cell, {}, [cellRef(cell)])
+      continue
+    }
     if (!rowCells.some(present)) continue
     if (
       rowCells.filter(present).length === 1 &&
