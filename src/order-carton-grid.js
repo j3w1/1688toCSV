@@ -1448,11 +1448,14 @@ export async function createOrderCartonSession({
       const next = clone(domainDraft)
       for (const [id, values] of measurements) {
         const existing =
-          context.batches.find((entry) => entry.id === id) ||
           domainDraft.cartons.find((entry) => entry.id === id) ||
+          context.batches.find((entry) => entry.id === id) ||
           planner
             .reconcileOrder(contextInput())
-            .cartons.find((entry) => entry.id === id)
+            .cartons.find((entry) => entry.id === id) ||
+          planner
+            .reconcileOrder(contextInput())
+            .proposals.find((entry) => entry.id === id)
         if (!existing) throw new Error('The target carton is unavailable.')
         const original = context.batches.some((entry) => entry.id === id)
         const override = {
@@ -1491,6 +1494,9 @@ export async function createOrderCartonSession({
       future: [],
     }
     if (!mergePrevious) remember(measurements.size ? 'arrangement' : 'capacity')
+    // Raw input may have been acknowledged before its parsed physical override
+    // was staged. Persist the complete planner/history envelope too.
+    raw.edit({}, { history: false })
     await raw.flush()
   }
   function currentCapacityValues() {
@@ -1849,20 +1855,25 @@ export async function createOrderCartonSession({
     },
     commitCell(key, column, value) {
       if (column === 'capacity') return flush()
-      cellWork = (async () => {
-        const descriptor = CARTON_GRID_COLUMNS.find(
-          (entry) => entry.key === column
-        )
-        await raw.flush()
-        const parsed = numericCell(value, descriptor)
-        await stageCells([{ key, column, raw: value, value: parsed }], {
-          rawAlreadyStaged: true,
-          mergePrevious: true,
-        })
-        notify()
-      })()
-      return cellWork.finally(() => {
-        cellWork = undefined
+      const previous = cellWork,
+        current = (async () => {
+          if (previous) await previous.catch(() => {})
+          const descriptor = CARTON_GRID_COLUMNS.find(
+            (entry) => entry.key === column
+          )
+          await raw.flush()
+          const currentRaw = raw.state().rawCells[JSON.stringify([key, column])]
+          if (currentRaw !== undefined && currentRaw !== value) return
+          const parsed = numericCell(value, descriptor)
+          await stageCells([{ key, column, raw: value, value: parsed }], {
+            rawAlreadyStaged: true,
+            mergePrevious: true,
+          })
+          notify()
+        })()
+      cellWork = current
+      return current.finally(() => {
+        if (cellWork === current) cellWork = undefined
       })
     },
     async command(command) {

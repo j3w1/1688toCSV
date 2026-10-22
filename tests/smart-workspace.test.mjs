@@ -911,6 +911,46 @@ test('intentional blank Spanish names and pending size mappings remain label blo
   authoring.dispose()
 })
 
+test('measurements on calculated capacity proposals stay in the same draft until one physical confirmation', async (testContext) => {
+  const fixture = exceptionSessionFixture()
+  fixture.context.batches = []
+  fixture.context.record.unitsPerCarton = { 2001: '50' }
+  const session = await fixture.create()
+  testContext.after(() => session.dispose())
+  const proposed = session.projection().cartons[0]
+  assert.equal(proposed.count, 2)
+  session.editCell(proposed.key, 'dimensions', '50×50×50')
+  await session.commitCell(proposed.key, 'dimensions', '50×50×50')
+  session.editCell(proposed.key, 'weight', '9.5')
+  await session.commitCell(proposed.key, 'weight', '9.5')
+  assert.equal(fixture.confirmed.length, 0)
+  const staged = fixture.drafts.at(-1).draft.plannerDraft.cartons[0]
+  assert.equal(staged.count, 2)
+  assert.equal(staged.weight, '9.5')
+  assert.equal(staged.len, '50')
+  await session.confirm()
+  assert.equal(fixture.confirmed.length, 1)
+  assert.equal(fixture.confirmed[0].draft.cartons[0].weight, '9.5')
+})
+
+test('successive measurements on a confirmed carton retain all previously staged fields in durable recovery', async (testContext) => {
+  const fixture = exceptionSessionFixture(),
+    session = await fixture.create()
+  testContext.after(() => session.dispose())
+  session.editCell(fixture.batch.id, 'dimensions', '80.125×50×30')
+  await session.commitCell(fixture.batch.id, 'dimensions', '80.125×50×30')
+  session.editCell(fixture.batch.id, 'weight', '30.750000000000000001')
+  await session.commitCell(fixture.batch.id, 'weight', '30.750000000000000001')
+  const staged = fixture.drafts.at(-1).draft.plannerDraft.cartons[0]
+  assert.equal(staged.len, '80.125')
+  assert.equal(staged.wid, '50')
+  assert.equal(staged.ht, '30')
+  assert.equal(staged.weight, '30.750000000000000001')
+  assert.deepEqual(staged.contents, fixture.batch.contents)
+  assert.equal(fixture.batch.len, '50')
+  assert.equal(fixture.confirmed.length, 0)
+})
+
 test('independent same-order marks and literal carton references stage without changing contents, measurements or source history', async (testContext) => {
   const fixture = exceptionSessionFixture(),
     before = structuredClone(fixture.batch)

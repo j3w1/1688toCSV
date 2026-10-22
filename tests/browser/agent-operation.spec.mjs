@@ -3,6 +3,10 @@ import { basename } from 'node:path'
 import * as XLSX from 'xlsx'
 import { test, expect } from './extension-fixture.mjs'
 import { createDemoRecords } from '../../preview/library-fixture.js'
+import {
+  createContainerThroughUI,
+  sealContainerThroughUI,
+} from './smart-workspace-helpers.mjs'
 
 // An automation agent drives the workspace through stable data-action names
 // only (docs/automation.md). Synthetic orders, temporary profile.
@@ -71,23 +75,22 @@ async function downloads(extension, count) {
 const action = (page, name) => page.locator(`[data-action="${name}"]:visible`)
 const status = (page) => page.locator('#workspace-status')
 
-test('an agent prepares, exports and prints through stable data-action controls', async ({
+test('an agent authors Orders, confirms one physical arrangement, seals a named container and exports/prints through stable actions', async ({
   extension,
 }, testInfo) => {
   const page = await open(extension)
   await expect(status(page)).toHaveAttribute('data-status', 'idle')
   // Older months start collapsed; the current month's two orders are listed.
   await expect(page.locator('[data-action="choose-order"]')).toHaveCount(2)
-  // Choose one order, select its products and prepare them.
-  await page.locator('#packing-month').fill('2026-10')
-  await page.locator('#packing-month').blur()
-  // Choose an order by focusing its card and pressing Space (the card's
-  // links and copy buttons are separate controls).
+  const before = await extension.inspector.evaluate(() =>
+      chrome.runtime.sendMessage({ type: 'BACKUP_EXPORT' })
+    ),
+    orderId = '900000000000000003',
+    ref = { accountId: 'local', orderId }
   const card = page.locator(
-    '[data-action="choose-order"][data-order-id="900000000000000003"]'
+    `[data-action="choose-order"][data-order-id="${orderId}"]`
   )
-  await card.focus()
-  await card.press(' ')
+  await card.locator('input[type="checkbox"]').check()
   await expect(card).toHaveAttribute('aria-selected', 'true')
   const rows = page.locator('#sheet-body tr[data-selection-key]')
   await expect(rows).toHaveCount(3)
@@ -95,73 +98,93 @@ test('an agent prepares, exports and prints through stable data-action controls'
   await expect(
     page.locator('#sheet-body tr[aria-selected="true"]')
   ).toHaveCount(3)
-  await action(page, 'prepare-packing-list').click()
-  await expect(page.locator('[data-action="review-cancel"]')).toBeVisible()
-  await expect(page.locator('[data-action="review-assign-only"]')).toBeVisible()
-  await page.locator('[data-action="review-proceed"]').click()
-  await expect(page.locator('#packing-view')).toBeVisible()
-  await expect(page.locator('#view-packing')).toHaveAttribute(
-    'aria-current',
-    'page'
+  await action(page, 'review-purchase-codes').click()
+  const codes = page.locator('[data-action="purchase-code-review"]')
+  await expect(
+    codes.locator('[data-action="assign-purchase-codes"]')
+  ).toBeEnabled()
+  await codes.locator('[data-action="assign-purchase-codes"]').click()
+  await expect(codes).toBeHidden()
+  for (let index = 0; index < 3; index++) {
+    await rows.nth(index).locator('[data-action="edit-order-product"]').click()
+    const editor = page.locator('dialog[data-action="edit-order-product"]')
+    await editor
+      .locator('[data-authoring-field="spanish-name"]')
+      .fill(`PRODUCTO ${index + 1}`)
+    await editor
+      .locator('[data-authoring-field="chinese-category"]')
+      .fill('测试')
+    await editor.getByRole('button', { name: 'Close', exact: true }).click()
+    await expect(editor).toBeHidden()
+  }
+  await card.locator('[data-action="open-order-cartons"]').click()
+  const grid = page.locator('#orders-cartons-view'),
+    capacities = grid.locator('[data-grid-column="capacity"]')
+  await capacities.first().fill('1.5')
+  await capacities.first().blur()
+  await expect(capacities.first()).toHaveAttribute('aria-invalid', 'true')
+  await capacities.first().fill('10')
+  await capacities.first().blur()
+  await expect(capacities.first()).not.toHaveAttribute('aria-invalid')
+  await action(page, 'select-grid-rows').click()
+  await grid
+    .getByRole('textbox', {
+      name: 'Paste carton or capacity cells',
+      exact: true,
+    })
+    .fill('10\n24\n80')
+  await action(page, 'preview-carton-paste').click()
+  await page
+    .locator('.grid-paste-preview [data-action="apply-carton-paste"]')
+    .click()
+  await expect(page.locator('.grid-paste-preview')).toBeHidden()
+  await action(page, 'reconciliation-cartons').click()
+  await expect(grid.locator('tr[data-grid-key]')).toHaveCount(3)
+  for (const [column, value] of [
+    ['dimensions', '50×50×50'],
+    ['weight', '9.5'],
+  ]) {
+    const first = grid.locator(`[data-grid-column="${column}"]`).first()
+    await first.fill(value)
+    await first.blur()
+    await action(page, 'select-grid-rows').click()
+    await first.focus()
+    await action(page, 'fill-grid-range').click()
+    await page
+      .locator('.grid-paste-preview [data-action="apply-carton-paste"]')
+      .click()
+    await expect(page.locator('.grid-paste-preview')).toBeHidden()
+  }
+  await action(page, 'confirm-order-cartons').click()
+  await expect
+    .poll(async () =>
+      (
+        await extension.inspector.evaluate(
+          async (ref) =>
+            (await window.testRepository).getOrderReconciliation(ref),
+          ref
+        )
+      ).batches.reduce((n, batch) => n + batch.count, 0)
+    )
+    .toBe(6)
+  const containerId = await createContainerThroughUI(
+    page,
+    [ref],
+    'Synthetic agent November'
   )
-  // Labels need names and categories; synthetic products may lack them.
-  const names = page.locator('#packing-view .group-name-editor')
-  for (let index = 0; index < (await names.count()); index++)
-    if (!(await names.nth(index).inputValue()))
-      await names.nth(index).fill(`PRODUCTO ${index + 1}`)
-  const categories = page.locator(
-    '#packing-view .preparation-group [data-packing-field="category"]'
-  )
-  for (let index = 0; index < (await categories.count()); index++)
-    if (!(await categories.nth(index).inputValue()))
-      await categories.nth(index).fill('测试')
-  await expect(page.locator('.preparation-save-status')).toHaveText(
-    'Saved automatically'
-  )
-
+  await sealContainerThroughUI(page)
+  const view = page.locator('#packing-view')
   for (const name of [
     'clear-selection',
-    'open-grouping-menu',
     'open-print-menu',
+    'export-packing-list',
   ])
     await expect(action(page, name)).toHaveCount(1)
-  // Physical carton totals belong to the batch, not the product rows.
-  await page.locator('.packing-group-cartons-edit').first().click()
-  const cartonsDialog = page.getByRole('dialog', {
-      name: 'Carton batches',
-      exact: true,
-    }),
-    cartonCount = cartonsDialog.locator('input[name="count"]')
-  await cartonsDialog
-    .getByRole('button', { name: 'Batch', exact: true })
-    .click()
-  await cartonCount.fill('1.5')
-  await cartonsDialog
-    .getByRole('button', { name: 'Apply carton contents', exact: true })
-    .click()
-  await expect(cartonCount).toHaveAttribute('aria-invalid', 'true')
-  await cartonCount.fill('6')
-  await expect(cartonCount).not.toHaveAttribute('aria-invalid')
   await expect(
-    cartonsDialog.locator('input[name="cbm"], input[name="suppliedCbm"]')
+    view.locator(
+      '[data-action="open-grouping-menu"],[data-action="organize-packing"],[data-grid-column="capacity"]'
+    )
   ).toHaveCount(0)
-  for (const key of ['len', 'wid', 'ht'])
-    await cartonsDialog.locator(`input[name="${key}"]`).fill('50')
-  await cartonsDialog.locator('input[name="weight"]').fill('9.5')
-  await cartonsDialog
-    .getByRole('button', { name: 'Apply carton contents', exact: true })
-    .click()
-  await expect(cartonsDialog.locator('.carton-batch-status')).toHaveText(
-    'Saved'
-  )
-  await expect(cartonsDialog.locator('.carton-batch-summary')).toContainText(
-    '0.125 m³'
-  )
-  await cartonsDialog.getByLabel('Received boxes', { exact: true }).fill('6')
-  await cartonsDialog.getByLabel('Loaded boxes', { exact: true }).fill('0')
-  // Closing flushes confirmations even while their quiet autosave timer is pending.
-  await cartonsDialog.getByRole('button', { name: 'Done', exact: true }).click()
-  await expect(cartonsDialog).toHaveCount(0)
   // Export the whole packing list: .xlsx plus its JSON summary.
   await action(page, 'export-packing-list').click()
   await page
@@ -224,7 +247,9 @@ test('an agent prepares, exports and prints through stable data-action controls'
   expect(summary).toMatchObject({
     format: '1688-export-summary',
     kind: 'packing-list',
-    totals: { orders: 1, products: 3 },
+    version: 3,
+    scope: 'container-revision',
+    containerId,
   })
   expect(summary.files).toEqual([
     basename(xlsx.filename),
@@ -233,24 +258,26 @@ test('an agent prepares, exports and prints through stable data-action controls'
   expect(summary.products[0]).toMatchObject({
     packingMonth: '2026-10',
   })
-  expect(summary.cartonBatches).toHaveLength(1)
-  expect(summary.cartonBatches[0]).toMatchObject({
-    count: 6,
-    received: 6,
-    loaded: 0,
-    weightBasis: 'carton',
-    weight: '9.5',
-    len: '50',
-    wid: '50',
-    ht: '50',
-    volumePerCarton: '0.125',
-    totalWeight: '57',
-    totalVolume: '0.75',
-    loadedWeight: '0',
-    loadedVolume: '0',
-    month: '2026-10',
-    includedInTotals: true,
-  })
+  expect(summary.products).toHaveLength(3)
+  expect(summary.cartonBatches).toHaveLength(3)
+  expect(summary.cartonBatches.reduce((n, batch) => n + batch.count, 0)).toBe(6)
+  for (const batch of summary.cartonBatches)
+    expect(batch).toMatchObject({
+      weightBasis: 'carton',
+      weight: '9.5',
+      len: '50',
+      wid: '50',
+      ht: '50',
+      month: '2026-10',
+    })
+  expect(summary.cartons).toHaveLength(6)
+  expect(summary.cartons.every((carton) => carton.state === 'loaded')).toBe(
+    true
+  )
+  expect(JSON.stringify(summary.totals)).toContain('57')
+  expect(JSON.stringify(summary.totals)).toContain('0.75')
+  expect(summary.revisionId).toBeTruthy()
+  expect(basename(xlsx.filename)).toContain(containerId)
   for (const product of summary.products)
     for (const field of [
       'receivedBoxes',
@@ -260,7 +287,7 @@ test('an agent prepares, exports and prints through stable data-action controls'
     ])
       expect(product).not.toHaveProperty(field)
   const exportedWorkbook = XLSX.read(workbook, { type: 'buffer' }),
-    table = XLSX.utils.sheet_to_json(exportedWorkbook.Sheets.Products, {
+    table = XLSX.utils.sheet_to_json(exportedWorkbook.Sheets['Packing list'], {
       header: 1,
       defval: '',
     }),
@@ -268,31 +295,44 @@ test('an agent prepares, exports and prints through stable data-action controls'
       header: 1,
       defval: '',
     })
-  expect(exportedWorkbook.SheetNames).toEqual(['Products', 'Cartons'])
-  expect(table[4]).not.toContain('Loaded boxes')
-  expect(table[4].join(' ')).not.toMatch(/Payments|Deposits|Balance/)
-  const headings = table[4]
+  expect(exportedWorkbook.SheetNames).toEqual([
+    'Packing list',
+    'Cartons',
+    'Se quedó',
+  ])
+  const headings = table.find(
+    (row) => row.includes('Code') && row.includes('Cartons')
+  )
+  expect(headings).not.toContain('Loaded boxes')
+  expect(headings.join(' ')).not.toMatch(/Payments|Deposits|Balance/)
   const exported = table.find(
-    (row) => row[headings.indexOf('Code')] === summary.products[0].code
+    (row) => row[headings.indexOf('Code')] === summary.products[0].barcode
   )
   expect(headings).not.toContain('Store')
   expect(headings[headings.indexOf('Code') + 1]).toBe('Carton mark')
-  expect(exported[headings.indexOf('Cartons')]).toContain('C001')
-  const cartonHeadings = cartonTable[4],
-    exportedCartons = cartonTable.find((row) => row[0] === 'C001')
-  expect(exportedCartons[cartonHeadings.indexOf('Loaded')]).toBe(0)
-  expect(exportedCartons[cartonHeadings.indexOf('Received')]).toBe(6)
-  expect(exportedCartons[cartonHeadings.indexOf('Loaded kg')]).toBe(0)
-  expect(exportedCartons[cartonHeadings.indexOf('Loaded m³')]).toBe(0)
+  expect(String(exported[headings.indexOf('Cartons')])).not.toBe('')
+  for (const product of summary.products)
+    expect(product.sourceUnitPrice).toBeTruthy()
   expect(
-    await page
-      .locator('.packing-order-sections')
-      .evaluate((node) => node.scrollWidth - node.clientWidth)
+    await view
+      .locator('.smart-grid-scroll')
+      .evaluate((node) => node.clientWidth)
+  ).toBeGreaterThan(0)
+  expect(
+    await page.evaluate(() => document.documentElement.scrollWidth - innerWidth)
   ).toBeLessThanOrEqual(1)
   await page.screenshot({ path: 'work/packing-export-workspace.png' })
-  expect(summary.orders).toEqual([
-    { orderId: '900000000000000003', seller: expect.any(String) },
-  ])
+  expect(summary.orders).toHaveLength(1)
+  expect(summary.orders[0].orderId).toBe(orderId)
+  const after = await extension.inspector.evaluate(() =>
+    chrome.runtime.sendMessage({ type: 'BACKUP_EXPORT' })
+  )
+  expect(after.data.orders.map((record) => record.snapshot)).toEqual(
+    before.data.orders.map((record) => record.snapshot)
+  )
+  expect(after.data.orders.map((record) => record.productPhotos)).toEqual(
+    before.data.orders.map((record) => record.productPhotos)
+  )
   await expect(status(page)).toHaveAttribute('data-status', 'export-finished')
   await expect(status(page)).toContainText(summary.files[0])
 
@@ -386,10 +426,15 @@ test('an agent prepares, exports and prints through stable data-action controls'
     'view-packing',
     'open-activity',
     'print-recent',
-    'packing-month',
     'restore-packing',
   ])
     await expect(page.locator(`[data-action="${name}"]`).first()).toBeAttached()
+  for (const name of [
+    'packing-month',
+    'prepare-packing-list',
+    'organize-packing',
+  ])
+    await expect(page.locator(`[data-action="${name}"]`)).toHaveCount(0)
   await action(page, 'view-orders').click()
   await expect(page.locator('#orders-view')).toBeVisible()
   expect(extension.unexpectedRequests).toEqual([])
