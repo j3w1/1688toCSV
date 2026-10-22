@@ -1,0 +1,825 @@
+import {
+  physicalUnits,
+  batchOrderIds,
+  batchNeedsLegacyReview,
+  orderKey,
+  productKey,
+  sourceRevision,
+  wholeUnits,
+  stableValue,
+  inventoryError,
+  eligibleOrderItems,
+  effectiveShipments,
+  committedCartonOwners,
+  reservedOrderOwners,
+  decimalTotal,
+} from './inventory-model.js'
+import { cartonBatchMetrics } from './carton-batches.js'
+import { shipmentMoney } from './shipment-money.js'
+import { validatePackingPreferences, barcodeValue } from './packing-model.js'
+import { moneyToCents, centsToMoney } from './money.js'
+
+const clone = (value) => structuredClone(value)
+export function orderScopeState(state, reference) {
+  const key = orderKey(reference),
+    record = state.records.find((record) => orderKey(record) === key)
+  if (!record)
+    throw inventoryError(
+      'ORDER_MISSING',
+      'This purchase is no longer in the library.',
+      reference
+    )
+  return {
+    record,
+    preparation:
+      state.preparations.find((prep) => orderKey(prep) === key) || null,
+    batches: state.batches.filter(
+      (batch) =>
+        batch.accountId === (reference.accountId || 'local') &&
+        batchOrderIds(batch).includes(reference.orderId)
+    ),
+  }
+}
+export function reconciliationRevisions(state, reference) {
+  const { record, preparation, batches } = orderScopeState(state, reference)
+  return {
+    source: sourceRevision(record, preparation),
+    observedAt: record.snapshot.observedAt,
+    preparation: preparation?.revision || 0,
+    cartons: Object.fromEntries(
+      batches.map((batch) => [batch.id, batch.revision])
+    ),
+    reports: Object.fromEntries(
+      (state.reports || [])
+        .filter(
+          (report) =>
+            orderKey(report.orderKey || report) === orderKey(reference)
+        )
+        .map((report) => [report.id, report.revision])
+    ),
+  }
+}
+export function assertReconciliationRevisions(state, reference, expected) {
+  if (
+    !expected ||
+    stableValue(expected) !==
+      stableValue(reconciliationRevisions(state, reference))
+  )
+    throw inventoryError(
+      'ORDER_REVISION_CONFLICT',
+      'This source, preparation, report or carton list changed. Keep the draft and reload its context.',
+      reference
+    )
+}
+export function captureContainerOrder(
+  state,
+  reference,
+  containerId,
+  { reserveRemainder = true } = {}
+) {
+  const accountId = reference.accountId || 'local',
+    orderId = reference.orderId
+  const owner = reservedOrderOwners(state.containers || [], {
+    exceptContainerId: containerId,
+  }).get(orderKey({ accountId, orderId }))
+  if (owner && reserveRemainder)
+    throw inventoryError(
+      'ORDER_RESERVED',
+      'This order remainder is reserved by another container.',
+      { ...owner, orderId }
+    )
+  const { record, preparation, batches } = orderScopeState(state, {
+    accountId,
+    orderId,
+  })
+  const committed = committedCartonOwners(state.containers || [], {
+    exceptContainerId: containerId,
+  })
+  const previous = new Map()
+  for (const { manifest } of effectiveShipments(state.containers || [], {
+    exceptContainerId: containerId,
+  }))
+    for (const row of manifest.products || [])
+      if (orderKey(row) === orderKey({ accountId, orderId }))
+        previous.set(
+          row.entryId,
+          (previous.get(row.entryId) || 0n) + wholeUnits(row.quantity)
+        )
+  const availableBefore = eligibleOrderItems(record, state.records).map(
+    (row) => ({
+      entryId: row.entryId,
+      quantity:
+        row.eligible === null
+          ? null
+          : String(BigInt(row.eligible) - (previous.get(row.entryId) || 0n)),
+    })
+  )
+  const cartons = [],
+    warnings = []
+  for (const batch of batches.filter((batch) => !batch.deletedAt)) {
+    if (batchNeedsLegacyReview(batch)) {
+      warnings.push({
+        code: 'LEGACY_REVIEW',
+        batchId: batch.id,
+        message:
+          'Historical loading or cross-order evidence needs explicit resolution.',
+      })
+      continue
+    }
+    if (batch.count === null) {
+      warnings.push({ code: 'CARTON_COUNT_UNKNOWN', batchId: batch.id })
+      continue
+    }
+    for (const unit of physicalUnits(batch))
+      if (!committed.has(unit.id))
+        cartons.push({ ...unit, count: 1, state: 'unconfirmed' })
+  }
+  return {
+    accountId,
+    orderId,
+    reserveRemainder,
+    record: clone(record),
+    preparation: clone(preparation),
+    batches: clone(batches),
+    cartons,
+    availableBefore,
+    revisions: reconciliationRevisions(state, { accountId, orderId }),
+    warnings,
+  }
+}
+export function cartonMeasurementTotals(cartons, batches) {
+  const totalCount = cartons.length
+  function metric(field) {
+    const amounts = [],
+      missing = []
+    let knownCount = 0
+    const byBatch = new Map()
+    for (const unit of cartons) {
+      if (!byBatch.has(unit.batchId)) byBatch.set(unit.batchId, [])
+      byBatch.get(unit.batchId).push(unit)
+    }
+    for (const [batchId, units] of byBatch) {
+      const batch = batches.find((batch) => batch.id === batchId)
+      const combined =
+        field === 'weight'
+          ? batch?.weightBasis === 'batch'
+            ? batch.weight
+            : ''
+          : batch?.volumeBasis === 'batch' && !batch.len
+            ? batch.suppliedCbm
+            : ''
+      if (
+        units.every(
+          (unit) =>
+            unit[field] !== null &&
+            unit[field] !== undefined &&
+            unit[field] !== ''
+        )
+      ) {
+        amounts.push(...units.map((unit) => unit[field]))
+        knownCount += units.length
+      } else if (
+        batch &&
+        units.length === batch.count &&
+        combined !== '' &&
+        combined !== undefined &&
+        combined !== null
+      ) {
+        amounts.push(combined)
+        knownCount += units.length
+      } else
+        for (const unit of units) {
+          if (
+            unit[field] !== null &&
+            unit[field] !== undefined &&
+            unit[field] !== ''
+          ) {
+            amounts.push(unit[field])
+            knownCount++
+          } else missing.push(unit.id)
+        }
+    }
+    return {
+      knownCount,
+      missingCount: totalCount - knownCount,
+      totalCount,
+      complete: knownCount === totalCount,
+      knownSubtotal: amounts.length
+        ? decimalTotal(amounts)
+        : totalCount === 0
+          ? '0'
+          : null,
+      missing,
+    }
+  }
+  const weightCoverage = metric('weight'),
+    volumeCoverage = metric('volume')
+  return {
+    cartons: totalCount,
+    weight: weightCoverage.knownSubtotal,
+    volume: volumeCoverage.knownSubtotal,
+    weightCoverage,
+    volumeCoverage,
+  }
+}
+function knownLoadedContents(member, loaded, reports) {
+  const contents = [],
+    issues = [],
+    coveredUnits = new Set()
+  const activeBatches = member.batches.filter((batch) => !batch.deletedAt)
+  // Established explicit set product coverage applies only when every retained
+  // physical entitlement in that set loads. No purchase-total equality inference.
+  for (const report of reports || []) {
+    const claim =
+      report.coverage?.completeSetCoverage || report.completeSetCoverage
+    if (!claim || !['reported', 'owner-confirmed'].includes(claim.provenance))
+      continue
+    const batchIds = claim.batchIds || []
+    if (!batchIds.length) continue
+    const units = activeBatches
+      .filter((batch) => batchIds.includes(batch.id))
+      .flatMap((batch) => (batch.count === null ? [] : physicalUnits(batch)))
+    if (
+      batchIds.some((id) => !activeBatches.some((batch) => batch.id === id)) ||
+      !units.length ||
+      units.some((unit) => !loaded.some((selected) => selected.id === unit.id))
+    )
+      continue
+    for (const item of claim.contents || [])
+      contents.push({
+        orderId: member.orderId,
+        entryId: item.entryId,
+        quantity: item.quantity,
+        coverageBatchIds: batchIds,
+      })
+    units.forEach((unit) => coveredUnits.add(unit.id))
+  }
+  for (const batch of activeBatches) {
+    const units = loaded.filter(
+      (unit) => unit.batchId === batch.id && !coveredUnits.has(unit.id)
+    )
+    if (!units.length) continue
+    if (units.every((unit) => unit.contents !== null)) {
+      units.forEach((unit) =>
+        contents.push(
+          ...unit.contents.map((item) => ({ ...item, cartonId: unit.id }))
+        )
+      )
+      continue
+    }
+    if (
+      units.length === batch.count &&
+      !batch.contentsUnknown &&
+      !(batch.unresolvedContents || []).length
+    ) {
+      contents.push(
+        ...batch.contents.map((item) => ({
+          ...item,
+          coverageBatchIds: [batch.id],
+        }))
+      )
+      continue
+    }
+    issues.push({
+      code: 'LOADED_CONTENTS_UNKNOWN',
+      batchId: batch.id,
+      orderId: member.orderId,
+      message:
+        'Establish exact loaded product quantities or explicit complete-set coverage before sealing.',
+    })
+  }
+  return { contents, issues }
+}
+function groupFor(preparation, entryId) {
+  const group = preparation?.groups.find((group) =>
+    group.variants.some((variant) => variant.entryIds.includes(entryId))
+  )
+  const variant = group?.variants.find((variant) =>
+    variant.entryIds.includes(entryId)
+  )
+  let barcode = ''
+  try {
+    if (group && variant) barcode = barcodeValue(group, variant)
+  } catch {}
+  return { group, variant, barcode }
+}
+function measurementShares(total, rows) {
+  if (total === null) return new Map()
+  const [whole, fraction = ''] = total.split('.'),
+    scale = Math.max(6, fraction.length),
+    units = BigInt(whole + fraction.padEnd(scale, '0'))
+  const denominator = rows.reduce(
+    (sum, row) => sum + wholeUnits(row.quantity),
+    0n
+  )
+  if (!denominator) return new Map()
+  const shares = rows.map((row, index) => ({
+    row,
+    index,
+    units: (units * wholeUnits(row.quantity)) / denominator,
+    remainder: (units * wholeUnits(row.quantity)) % denominator,
+  }))
+  let left = units - shares.reduce((sum, row) => sum + row.units, 0n)
+  for (const row of [...shares].sort((a, b) =>
+    a.remainder === b.remainder
+      ? a.index - b.index
+      : a.remainder > b.remainder
+        ? -1
+        : 1
+  )) {
+    if (!left) break
+    row.units++
+    left--
+  }
+  return new Map(
+    shares.map(({ row, units }) => {
+      const text = String(units).padStart(scale + 1, '0')
+      return [
+        row.entryId,
+        `${text.slice(0, -scale)}.${text.slice(-scale)}`.replace(
+          /\.?0+$/,
+          ''
+        ) || '0',
+      ]
+    })
+  )
+}
+function buildProductRows(member, contents, cartons, prior, state) {
+  const quantities = {}
+  for (const item of contents)
+    quantities[item.entryId] = String(
+      BigInt(quantities[item.entryId] || '0') + wholeUnits(item.quantity)
+    )
+  const money = new Map(
+    shipmentMoney(member.record, quantities, prior, state.records).map(
+      (row) => [row.entryId, row]
+    )
+  )
+  const rows = []
+  for (const [entryId, quantity] of Object.entries(quantities)) {
+    const item = member.record.snapshot.items.find(
+      (item) => item.entryId === entryId
+    )
+    if (!item)
+      throw inventoryError(
+        'SHIPMENT_PRODUCT_MISSING',
+        'Loaded products are not in the captured source.',
+        { entryId }
+      )
+    const { group, variant, barcode } = groupFor(member.preparation, entryId)
+    const actual = cartons.filter((unit) =>
+        unit.contents?.some((row) => row.entryId === entryId)
+      ),
+      setIds = new Set(
+        contents
+          .filter((row) => row.entryId === entryId)
+          .flatMap((row) => row.coverageBatchIds || [])
+      )
+    const relevant = cartons.filter(
+        (unit) => actual.includes(unit) || setIds.has(unit.batchId)
+      ),
+      knownParticipation = setIds.size === 0
+    const additive = actual.filter((unit) => {
+      const marked =
+        member.preparation?.groups
+          .find((group) => group.id === unit.mark?.groupId)
+          ?.variants.flatMap((variant) => variant.entryIds) || []
+      const owner =
+        unit.contents.find((row) => marked.includes(row.entryId)) ||
+        [...unit.contents].sort((a, b) => a.entryId.localeCompare(b.entryId))[0]
+      return owner?.entryId === entryId
+    }).length
+    const before = member.availableBefore.find(
+      (row) => row.entryId === entryId
+    )?.quantity
+    rows.push({
+      accountId: member.accountId,
+      orderId: member.orderId,
+      entryId,
+      sellerName: member.record.snapshot.sellerName,
+      sellerMemberLogin: member.record.snapshot.sellerMemberLogin,
+      orderReference: member.record.snapshot.reference || member.orderId,
+      source: member.record.snapshot.source || '1688',
+      title: item.title,
+      description: item.description,
+      spanishName: group?.spanishName || '',
+      category: group?.category || '',
+      material: group?.material || '',
+      size: variant?.sizeSuffix || '',
+      baseCode: group?.baseCode || '',
+      barcode,
+      packingMonth: group?.month || member.preparation?.month || '',
+      thumbnail: item.thumbnail,
+      photos: clone(item.photos || [item.thumbnail].filter(Boolean)),
+      quantity,
+      loadedQuantity: quantity,
+      purchasedQuantity: item.quantity,
+      availableBeforeQuantity: before,
+      remainingQuantity:
+        before === null
+          ? null
+          : String(BigInt(before || '0') - BigInt(quantity)),
+      ...money.get(entryId),
+      cartons: knownParticipation ? String(additive) : '',
+      containingCartonCount: knownParticipation ? actual.length : null,
+      additiveCartonCount: knownParticipation ? additive : null,
+      cartonReferences: relevant.map((unit) => unit.id),
+      cartonReferenceText: relevant.map((unit) => unit.reference).join(', '),
+      cartonMarkCode: actual[0]?.markCode || '',
+      allocatedWeight: null,
+      allocatedVolume: null,
+      measurementAllocationBasis: 'allocated',
+      record: clone(member.record),
+      preparation: clone(member.preparation),
+      group: clone(group),
+      variant: clone(variant),
+    })
+  }
+  // Allocate each measured physical scope once, including full aggregate totals.
+  for (const batch of member.batches) {
+    const selected = cartons.filter((unit) => unit.batchId === batch.id)
+    if (!selected.length) continue
+    const measurement = cartonMeasurementTotals(selected, [batch]),
+      parts = []
+    for (const row of rows) {
+      const explicit = contents.filter(
+        (part) =>
+          part.entryId === row.entryId &&
+          (part.cartonId
+            ? selected.some((unit) => unit.id === part.cartonId)
+            : part.coverageBatchIds?.includes(batch.id))
+      )
+      // A multi-batch unresolved coverage has no exact product-to-batch split.
+      if (explicit.some((part) => part.coverageBatchIds?.length > 1)) continue
+      const quantity = explicit.reduce(
+        (sum, part) => sum + wholeUnits(part.quantity),
+        0n
+      )
+      if (quantity)
+        parts.push({ entryId: row.entryId, quantity: String(quantity) })
+    }
+    const weights = measurementShares(measurement.weight, parts),
+      volumes = measurementShares(measurement.volume, parts)
+    for (const row of rows) {
+      if (weights.has(row.entryId))
+        row.allocatedWeight = decimalTotal([
+          row.allocatedWeight || '0',
+          weights.get(row.entryId),
+        ])
+      if (volumes.has(row.entryId))
+        row.allocatedVolume = decimalTotal([
+          row.allocatedVolume || '0',
+          volumes.get(row.entryId),
+        ])
+    }
+  }
+  return rows
+}
+function summary(products, cartons, batches, orders) {
+  const totals = {
+    orders,
+    products: products.length,
+    quantity: String(
+      products.reduce((sum, row) => sum + wholeUnits(row.quantity), 0n)
+    ),
+    ...cartonMeasurementTotals(cartons, batches),
+  }
+  for (const field of [
+    'sourceAmount',
+    'merchandiseValue',
+    'effectiveAmount',
+    'additionalCharge',
+    'featureCharge',
+    'linkedPaymentCharge',
+    'freightAllocated',
+  ])
+    totals[field] = centsToMoney(
+      products.reduce(
+        (sum, row) => sum + moneyToCents(row[field] || '0.00'),
+        0n
+      )
+    )
+  return totals
+}
+export function projectContainer(
+  state,
+  container,
+  { revisionId, preferences, media, now } = {}
+) {
+  if (revisionId) {
+    const revision = container.revisions?.find(
+      (revision) => revision.revisionId === revisionId
+    )
+    if (!revision)
+      throw inventoryError(
+        'REVISION_MISSING',
+        'This historical container revision is missing.'
+      )
+    return clone(revision)
+  }
+  const issues = [],
+    warnings = [],
+    orders = [],
+    products = [],
+    cartons = [],
+    leftProducts = [],
+    leftCartons = [],
+    unprepared = [],
+    batches = []
+  const committed = committedCartonOwners(state.containers || [], {
+      exceptContainerId: container.id,
+    }),
+    reserved = reservedOrderOwners(state.containers || [], {
+      exceptContainerId: container.id,
+    })
+  const draft = container.draft
+  if (!draft) {
+    const revision = container.revisions?.find(
+      (revision) => revision.revisionId === container.effectiveRevisionId
+    )
+    if (revision) return clone(revision)
+    throw inventoryError(
+      'CONTAINER_NOT_EDITABLE',
+      'This container has no active draft.'
+    )
+  }
+  for (const member of draft.orders) {
+    const live = state.records.find(
+        (record) => orderKey(record) === orderKey(member)
+      ),
+      prep = state.preparations.find(
+        (prep) => orderKey(prep) === orderKey(member)
+      )
+    if (!live || sourceRevision(live, prep) !== member.revisions.source)
+      issues.push({
+        code: 'SOURCE_STALE',
+        orderId: member.orderId,
+        message:
+          'The included source or preparation changed. Review availability.',
+      })
+    for (const batch of member.batches)
+      if (
+        state.batches.find((value) => value.id === batch.id)?.revision !==
+        batch.revision
+      )
+        issues.push({
+          code: 'CARTON_STALE',
+          batchId: batch.id,
+          orderId: member.orderId,
+        })
+    warnings.push(...(member.warnings || []))
+    const own = member.cartons.map((unit) => {
+      const group = member.preparation?.groups.find(
+        (group) => group.id === unit.mark?.groupId
+      )
+      return {
+        ...clone(unit),
+        state: draft.decisions[unit.id] || 'unconfirmed',
+        record: clone(member.record),
+        preparation: clone(member.preparation),
+        markCode: group?.baseCode || '',
+      }
+    })
+    const loaded = own.filter((unit) => unit.state === 'loaded'),
+      left = own.filter((unit) => unit.state === 'left-behind')
+    for (const unit of own) {
+      if (unit.state === 'unconfirmed')
+        issues.push({
+          code: 'LOADING_UNCONFIRMED',
+          cartonId: unit.id,
+          orderId: member.orderId,
+        })
+      if (unit.state === 'loaded' && committed.has(unit.id))
+        issues.push({
+          code: 'CARTON_COMMITTED',
+          cartonId: unit.id,
+          ...committed.get(unit.id),
+        })
+    }
+    if (loaded.length && reserved.has(orderKey(member)))
+      issues.push({
+        code: 'ORDER_RESERVED',
+        orderId: member.orderId,
+        ...reserved.get(orderKey(member)),
+      })
+    const interpretation = knownLoadedContents(member, loaded, state.reports)
+    issues.push(...interpretation.issues)
+    const previous = {}
+    for (const { manifest } of effectiveShipments(state.containers || [], {
+      exceptContainerId: container.id,
+    }))
+      for (const row of manifest.products || [])
+        if (orderKey(row) === orderKey(member))
+          previous[row.entryId] = String(
+            BigInt(previous[row.entryId] || '0') + wholeUnits(row.quantity)
+          )
+    let rows = []
+    try {
+      rows = buildProductRows(
+        member,
+        interpretation.contents,
+        loaded,
+        previous,
+        state
+      )
+    } catch (error) {
+      issues.push({
+        code: error.code || 'LOADED_QUANTITY_INVALID',
+        orderId: member.orderId,
+        message: error.message,
+      })
+    }
+    for (const row of rows) {
+      const available = member.availableBefore.find(
+        (item) => item.entryId === row.entryId
+      )?.quantity
+      if (
+        available === null ||
+        wholeUnits(row.quantity) > BigInt(available || '0')
+      )
+        issues.push({
+          code: 'LOADED_OVERALLOCATION',
+          orderId: member.orderId,
+          entryId: row.entryId,
+        })
+    }
+    // Left-behind quantities include unprepared remainder but only from included orders.
+    const remainingContents = []
+    for (const available of member.availableBefore) {
+      if (available.quantity === null) continue
+      const loadedQuantity =
+        rows.find((row) => row.entryId === available.entryId)?.quantity || '0'
+      const quantity = BigInt(available.quantity) - BigInt(loadedQuantity)
+      if (quantity > 0n)
+        remainingContents.push({
+          orderId: member.orderId,
+          entryId: available.entryId,
+          quantity: String(quantity),
+          coverageBatchIds: [],
+        })
+    }
+    let leftRows = []
+    try {
+      leftRows = buildProductRows(
+        member,
+        remainingContents,
+        left,
+        Object.fromEntries(
+          member.availableBefore.map((row) => [
+            row.entryId,
+            String(
+              BigInt(previous[row.entryId] || '0') +
+                BigInt(
+                  rows.find((value) => value.entryId === row.entryId)
+                    ?.quantity || '0'
+                )
+            ),
+          ])
+        ),
+        state
+      )
+    } catch (error) {
+      issues.push({ code: 'REMAINING_VALUE_INVALID', message: error.message })
+    }
+    leftRows.forEach((row) => {
+      row.loadedQuantity = '0'
+    })
+    for (const row of leftRows)
+      if (
+        !left.some((unit) =>
+          unit.contents?.some((item) => item.entryId === row.entryId)
+        )
+      )
+        unprepared.push({
+          accountId: member.accountId,
+          orderId: member.orderId,
+          entryId: row.entryId,
+          quantity: row.quantity,
+          reason: 'Awaiting packing data',
+        })
+    for (const unit of own) {
+      const members = own.filter((member) => member.batchId === unit.batchId)
+      const same =
+        members.every((member) => member.contents !== null) &&
+        new Set(
+          members.map((member) =>
+            stableValue({
+              contents: member.contents,
+              weight: member.weight,
+              volume: member.volume,
+              len: member.len,
+              wid: member.wid,
+              ht: member.ht,
+            })
+          )
+        ).size === 1
+      unit.interchangeable = same
+      unit.canSelectCount = same
+    }
+    orders.push({
+      accountId: member.accountId,
+      orderId: member.orderId,
+      record: clone(member.record),
+      preparation: clone(member.preparation),
+      cartons: own,
+      products: rows,
+      availableBeforeQuantity: String(
+        member.availableBefore.reduce(
+          (sum, row) => sum + BigInt(row.quantity || '0'),
+          0n
+        )
+      ),
+      loadedQuantity: String(
+        rows.reduce((sum, row) => sum + BigInt(row.quantity), 0n)
+      ),
+      remainingQuantity: String(
+        remainingContents.reduce((sum, row) => sum + BigInt(row.quantity), 0n)
+      ),
+    })
+    products.push(...rows)
+    cartons.push(...own)
+    leftProducts.push(...leftRows)
+    leftCartons.push(...left)
+    batches.push(...member.batches)
+  }
+  const loaded = cartons.filter((unit) => unit.state === 'loaded'),
+    totals = summary(products, loaded, batches, orders.length)
+  if (!totals.weightCoverage.complete)
+    warnings.push({ code: 'WEIGHT_INCOMPLETE', ...totals.weightCoverage })
+  if (!totals.volumeCoverage.complete)
+    warnings.push({ code: 'VOLUME_INCOMPLETE', ...totals.volumeCoverage })
+  return {
+    format: '1688-container-manifest',
+    version: 1,
+    container: {
+      id: container.id,
+      accountId: container.accountId,
+      name: container.name,
+      period: container.period,
+      loadingDate: container.loadingDate,
+      revision: container.revision,
+      amendment: container.amendment,
+    },
+    revisionId: null,
+    revision: container.revision,
+    draft: true,
+    status: container.status,
+    orders,
+    products,
+    cartons,
+    batches,
+    leftBehind: {
+      products: leftProducts,
+      cartons: leftCartons,
+      unprepared,
+      totals: summary(leftProducts, leftCartons, batches, orders.length),
+    },
+    totals,
+    preferences: clone(
+      preferences || state.preferences || validatePackingPreferences({})
+    ),
+    media: clone(media || { imageRefs: [] }),
+    warnings,
+    issues,
+    readiness: { ready: issues.length === 0, issues, warnings },
+  }
+}
+export function validateContainerRecord(value) {
+  if (
+    !value ||
+    typeof value.id !== 'string' ||
+    !value.id ||
+    typeof value.accountId !== 'string' ||
+    !['draft', 'sealed', 'amending', 'canceled'].includes(value.status) ||
+    !Number.isSafeInteger(value.revision) ||
+    value.revision < 1 ||
+    !Array.isArray(value.revisions)
+  )
+    throw inventoryError('INVALID_CONTAINER', 'Invalid container record.')
+  if (
+    value.effectiveRevisionId &&
+    !value.revisions.some(
+      (revision) => revision.revisionId === value.effectiveRevisionId
+    )
+  )
+    throw inventoryError(
+      'INVALID_CONTAINER',
+      'The effective shipment revision is missing.'
+    )
+  const ids = new Set()
+  for (const revision of value.revisions) {
+    if (
+      ids.has(revision.revisionId) ||
+      revision.draft !== false ||
+      revision.container?.id !== value.id ||
+      !Array.isArray(revision.products) ||
+      !Array.isArray(revision.cartons)
+    )
+      throw inventoryError(
+        'INVALID_CONTAINER',
+        'Invalid immutable manifest history.'
+      )
+    ids.add(revision.revisionId)
+  }
+  return clone(value)
+}

@@ -931,3 +931,49 @@ test('older-month active allocations consume the same purchased pieces until exp
     '30'
   )
 })
+
+test('a uniform unit exception preserves untouched proven units, source totals, identity and stale measurement coverage', async () => {
+  const { applyCartonUnitException } = await import('../src/carton-batches.js')
+  const { syntheticBatch } = await import('./fixtures/container-fixture.mjs')
+  const { physicalUnits } = await import('../src/inventory-model.js')
+  const before = syntheticBatch('1001', 3, '30', {
+    weight: '2',
+    entitlementIndices: [0, 4, 9],
+  })
+  const result = applyCartonUnitException({
+    batch: before,
+    index: 4,
+    contents: [{ orderId: '1001', entryId: '2001', quantity: '12' }],
+  })
+  assert.equal(result.packingBasis, 'aggregate')
+  assert.equal(result.contents[0].quantity, '32')
+  assert.equal(result.sourceFacts.contents[0].quantity, '30')
+  assert.deepEqual(result.entitlementIndices, [0, 4, 9])
+  assert.equal(result.unitContents[0][0].quantity, '10')
+  assert.equal(result.unitContents[9][0].quantity, '10')
+  assert.equal(physicalUnits(result)[1].weight, null)
+  assert.equal(physicalUnits(result)[0].weight, '2')
+  assert.equal(result.cartonHistory.length, 1)
+  const aggregate = syntheticBatch('1001', 3, '30', {
+    packingBasis: 'aggregate',
+    weight: '6',
+    weightBasis: 'batch',
+  })
+  const refined = applyCartonUnitException({
+    batch: aggregate,
+    index: 1,
+    contents: [{ orderId: '1001', entryId: '2001', quantity: '12' }],
+  })
+  assert.equal(physicalUnits(refined)[0].contents, null)
+  assert.equal(refined.contents[0].quantity, '30')
+  assert.equal(refined.weight, '6')
+  assert.throws(
+    () =>
+      applyCartonUnitException({
+        batch: before,
+        index: 4,
+        expectedRevision: 0,
+      }),
+    { code: 'CARTON_BATCH_CONFLICT' }
+  )
+})

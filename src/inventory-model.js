@@ -108,7 +108,8 @@ export function eligibleOrderItems(record, records = [record]) {
     const legacyExclusion =
       record.packingExcludedEntryIds?.includes(item.entryId) &&
       !disposition &&
-      !paymentOnly.has(item.entryId)
+      !paymentOnly.has(item.entryId) &&
+      !record.inventoryDispositionClears?.includes(item.entryId)
     if (legacyExclusion)
       issues.push(
         'Review the legacy packing exclusion; it is not evidence that these goods shipped or were canceled.'
@@ -187,7 +188,8 @@ export function physicalUnits(batch) {
     )
   return Array.from({ length: batch.count }, (_, position) => {
     const index = batch.entitlementIndices?.[position] ?? position
-    const known = batch.unitContents?.[index]
+    const known = batch.unitContents?.[index],
+      measurement = batch.unitMeasurements?.[index] || {}
     return {
       id: physicalUnitId(batch.id, index),
       cartonId: physicalUnitId(batch.id, index),
@@ -217,20 +219,26 @@ export function physicalUnits(batch) {
             })),
       unresolvedContents: structuredClone(batch.unresolvedContents || []),
       weight:
-        batch.weightBasis === 'batch' && batch.count !== 1
-          ? null
-          : batch.weight === '' || batch.weight === undefined
+        measurement.weight !== undefined
+          ? cartonDecimal(measurement.weight) || null
+          : batch.weightBasis === 'batch' && batch.count !== 1
             ? null
-            : cartonDecimal(batch.weight),
-      volume:
-        batch.volumeBasis === 'batch' && !batch.len && batch.count !== 1
-          ? null
-          : metrics.volumePerCarton === ''
+            : batch.weight === '' || batch.weight === undefined
+              ? null
+              : cartonDecimal(batch.weight),
+      volume: measurement.len
+        ? cartonBatchMetrics({ ...batch, ...measurement, count: 1 })
+            .volumePerCarton
+        : measurement.suppliedCbm !== undefined
+          ? cartonDecimal(measurement.suppliedCbm) || null
+          : batch.volumeBasis === 'batch' && !batch.len && batch.count !== 1
             ? null
-            : metrics.volumePerCarton,
-      len: batch.len || '',
-      wid: batch.wid || '',
-      ht: batch.ht || '',
+            : metrics.volumePerCarton === ''
+              ? null
+              : metrics.volumePerCarton,
+      len: measurement.len ?? batch.len ?? '',
+      wid: measurement.wid ?? batch.wid ?? '',
+      ht: measurement.ht ?? batch.ht ?? '',
       mark: batch.mark,
       needsReview: !!batch.needsReview || batchNeedsLegacyReview(batch),
     }
@@ -346,7 +354,18 @@ export function assertOrderCartonConservation(
         capacities.get(item.entryId) - wholeUnits(item.quantity)
       )
     }
-    for (const claim of batch.unresolvedContents || []) claims.push(claim)
+    for (const claim of batch.unresolvedContents || []) {
+      const entryIds = claim.entryIds?.length
+        ? claim.entryIds
+        : [...capacities.keys()]
+      if (entryIds.some((id) => !capacities.has(id)))
+        throw inventoryError(
+          'CARTON_SOURCE_MISSING',
+          'Unresolved content candidates belong to another purchase.',
+          { batchId: batch.id }
+        )
+      if (claim.quantity !== null) claims.push({ ...claim, entryIds })
+    }
   }
   if (!unresolvedCoverageFeasible(capacities, claims))
     throw inventoryError(
@@ -404,6 +423,7 @@ export function reservedOrderOwners(containers, { exceptContainerId } = {}) {
     )
       continue
     for (const member of container.draft?.orders || []) {
+      if (member.reserveRemainder === false) continue
       const key = orderKey(member)
       if (owners.has(key))
         throw inventoryError(
@@ -519,12 +539,21 @@ export function projectBacklog(
             0n
           ) +
         (batch.unresolvedContents || []).reduce(
-          (total, claim) => total + wholeUnits(claim.quantity),
+          (total, claim) =>
+            total + (claim.quantity === null ? 0n : wholeUnits(claim.quantity)),
           0n
         ),
       0n
     )
-    if (packed < eligible || own.some((batch) => batch.needsReview))
+    if (
+      packed < eligible ||
+      own.some(
+        (batch) =>
+          batch.needsReview ||
+          batch.contentsUnknown ||
+          batch.unresolvedContents?.some((claim) => claim.quantity === null)
+      )
+    )
       countKnown = false
     const status = !quantityKnown
       ? 'needs-review'

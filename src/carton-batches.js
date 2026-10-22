@@ -273,6 +273,11 @@ export function validateCartonBatch(input) {
         )
       result.entitlementIndices = [...input.entitlementIndices]
     }
+    if (input.baseRevision !== undefined) {
+      if (!Number.isSafeInteger(input.baseRevision) || input.baseRevision < 0)
+        throw new Error('Invalid carton exception baseline')
+      result.baseRevision = input.baseRevision
+    }
     if (input.unitContents !== undefined) {
       if (
         !input.unitContents ||
@@ -345,6 +350,39 @@ export function validateCartonBatch(input) {
           )
       }
     }
+    if (input.unitMeasurements !== undefined) {
+      if (
+        !input.unitMeasurements ||
+        typeof input.unitMeasurements !== 'object' ||
+        Array.isArray(input.unitMeasurements)
+      )
+        throw new Error(
+          'Use stable entitlement indices for physical measurements'
+        )
+      result.unitMeasurements = {}
+      for (const [index, value] of Object.entries(input.unitMeasurements)) {
+        if (
+          !/^\d+$/.test(index) ||
+          !(
+            result.entitlementIndices ||
+            Array.from({ length: result.count || 0 }, (_, i) => i)
+          ).includes(Number(index)) ||
+          !value ||
+          typeof value !== 'object'
+        )
+          throw new Error('Choose an existing entitlement for measurements')
+        const measurements = {}
+        for (const field of ['len', 'wid', 'ht', 'weight', 'suppliedCbm'])
+          if (Object.hasOwn(value, field))
+            measurements[field] = cartonDecimal(value[field], {
+              positive: ['len', 'wid', 'ht'].includes(field),
+            })
+        const dims = ['len', 'wid', 'ht'].filter((field) => measurements[field])
+        if (dims.length && dims.length !== 3)
+          throw new Error('Enter all three per-carton dimensions')
+        result.unitMeasurements[index] = measurements
+      }
+    }
     for (const field of [
       'reportRef',
       'provenance',
@@ -352,6 +390,7 @@ export function validateCartonBatch(input) {
       'legacyResolution',
       'sourceFacts',
       'manualFacts',
+      'cartonHistory',
     ]) {
       if (input[field] === undefined) continue
       const encoded = JSON.stringify(input[field])
@@ -1259,4 +1298,100 @@ export function assertCartonBatchEvidence(
       throw new Error(
         'Carton contents exceed the purchased quantity in source evidence'
       )
+}
+
+/** One reviewed physical exception; never divide genuine aggregate evidence. */
+export function applyCartonUnitException({
+  batch,
+  index,
+  contents,
+  measurements,
+  expectedRevision = batch.revision,
+} = {}) {
+  if (batch.revision !== expectedRevision)
+    throw Object.assign(
+      new Error(
+        'This carton set changed. Retain the exception draft and reload.'
+      ),
+      { code: 'CARTON_BATCH_CONFLICT' }
+    )
+  const current = validateCartonBatch(batch),
+    indices =
+      current.entitlementIndices ||
+      Array.from({ length: current.count || 0 }, (_, index) => index)
+  if (!indices.includes(index))
+    throw new Error('Choose an existing retained physical entitlement')
+  const next = structuredClone(current),
+    original = structuredClone(current)
+  delete original.cartonHistory
+  next.sourceFacts ||= structuredClone(
+    current.sourceFacts || {
+      contents: current.contents,
+      count: current.count,
+      packingBasis: current.packingBasis,
+      weight: current.weight,
+      weightBasis: current.weightBasis,
+      suppliedCbm: current.suppliedCbm,
+      volumeBasis: current.volumeBasis,
+    }
+  )
+  next.cartonHistory = [...(current.cartonHistory || []), original]
+  next.unitContents = { ...(current.unitContents || {}) }
+  next.unitMeasurements = structuredClone(current.unitMeasurements || {})
+  if (current.packingBasis === 'uniform') {
+    for (const member of indices) {
+      next.unitContents[member] ||= current.contents.map((row) => ({
+        ...row,
+        quantity: String(BigInt(row.quantity) / BigInt(current.count)),
+      }))
+      next.unitMeasurements[member] ||= {
+        ...(current.len
+          ? { len: current.len, wid: current.wid, ht: current.ht }
+          : {}),
+        ...(current.weightBasis === 'carton' && current.weight !== ''
+          ? { weight: current.weight }
+          : {}),
+        ...(current.volumeBasis === 'carton' && current.suppliedCbm !== ''
+          ? { suppliedCbm: current.suppliedCbm }
+          : {}),
+      }
+    }
+  }
+  const previousContents = next.unitContents[index]
+  if (contents !== undefined) {
+    next.unitContents[index] = structuredClone(contents)
+    if (
+      previousContents &&
+      JSON.stringify(previousContents) !== JSON.stringify(contents)
+    ) {
+      next.unitMeasurements[index] = {
+        ...(next.unitMeasurements[index] || {}),
+        weight: '',
+      }
+      if (next.weightBasis === 'batch') next.weight = ''
+    }
+  }
+  if (measurements !== undefined)
+    next.unitMeasurements[index] = {
+      ...(next.unitMeasurements[index] || {}),
+      ...structuredClone(measurements),
+    }
+  if (current.packingBasis === 'uniform' || current.packingBasis === 'exact') {
+    const quantities = new Map()
+    for (const member of indices)
+      for (const row of next.unitContents[member] || current.contents)
+        quantities.set(
+          row.entryId,
+          (quantities.get(row.entryId) || 0n) + BigInt(row.quantity)
+        )
+    next.contents = [...quantities].map(([entryId, quantity]) => ({
+      orderId: current.orderId,
+      entryId,
+      quantity: String(quantity),
+    }))
+    next.packingBasis = current.count === 1 ? 'exact' : 'aggregate'
+    next.contentsUnknown = false
+  }
+  next.baseRevision = current.baseRevision ?? current.revision
+  return validateCartonBatch(next)
 }
