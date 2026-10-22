@@ -68,6 +68,7 @@ test('stable container ordering survives reload and copy without rewriting codes
     'clipboard-write',
   ])
   for (const row of await rows.all()) await row.getByRole('checkbox').check()
+  await revealCopyActions(page)
   await view.locator('[data-action="copy-values"]').click()
   await expect(view.locator('[data-action="copy-values"]')).toContainText(
     'Copied'
@@ -86,6 +87,17 @@ test('stable container ordering survives reload and copy without rewriting codes
     ])
     expect(values[index].slice(2)).toEqual(['2.00', '100', '0.00'])
   }
+  await revealCopyActions(page)
+  const groupCopy = view.getByRole('button', {
+    name: 'Copy group codes',
+    exact: true,
+  })
+  await groupCopy.click()
+  await expect(groupCopy).toContainText('Copied')
+  expect(
+    (await page.evaluate(() => navigator.clipboard.readText())).split('\r\n')
+  ).toEqual([...new Set(frozen.products.map((product) => product.baseCode))])
+  await revealCopyActions(page)
   await view.getByRole('button', { name: 'Copy columns', exact: true }).click()
   const picker = page.locator('.preparation-column-dialog')
   await picker
