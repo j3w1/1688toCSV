@@ -1237,6 +1237,15 @@ test('typed packing archives retain reviewed legacy owner equivalence and source
       .supplierCodeIdentityReview,
     s.records[0].supplierCodeIdentityReview
   )
+  assert.equal(
+    restored.orders.find((record) => record.snapshot.orderId === '101')
+      .supplierCodeIdentityReviewUpdatedAt,
+    s.records[0].supplierCodeIdentityReviewUpdatedAt
+  )
+  assert.deepEqual(
+    restored.orders.map((record) => record.snapshot.purchasedAt),
+    s.records.slice(0, 2).map((record) => record.snapshot.purchasedAt)
+  )
   assert.deepEqual(
     restored.orders.map((record) => record.snapshot.items[0].price),
     ['2.00', '3.00']
