@@ -25,6 +25,8 @@ Changes to an arrangement use **Confirm order cartons** once for the order. An e
 
 Open a carton row to correct its literal supplier reference or choose an independent mark from that purchase's product codes. Closing this panel stages the change; it does not copy contents, weight or loading decisions into another carton. For confirmed sets, the entitlement picker exposes only retained physical units and supported facts. Drafts from an older amendment require explicit review before recovery, and a delayed save keeps its original amendment token.
 
+Recovery also compares the order revision captured with the draft. If another tab has changed it, the saved facts stay visible and **Review recovered carton draft** retains the earlier raw values for comparison. Choose **Use these reviewed edits** to recover them under current validation, or **Keep saved version** to keep the current facts. Focusing a field or reopening the table does not erase that pending review.
+
 ## 1688 packing reports
 
 **Paste or import carton list** augments the existing 1688 purchase. Paste table cells or choose a local XLSX/XLS workbook. The original text/bytes are retained locally before cancellable parsing. A compact review asks only for ambiguous worksheet/header/number/unit/basis/range/code meanings; known facts fill the preview automatically. China purchase-marker rules remain unchanged.

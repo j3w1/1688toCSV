@@ -10,7 +10,7 @@ const descriptions = new Map(
 const stableDescriptions = new Map([
   [
     'review-recovered-carton-draft',
-    'This draft belongs to an earlier amendment. Review every retained value against the current order before using it. Physical identities and revision checks still apply.',
+    'This draft uses an earlier order revision or amendment. Review every retained value against the current order before using it. Physical identities and revision checks still apply.',
   ],
   [
     'review-recovered-carton-report',

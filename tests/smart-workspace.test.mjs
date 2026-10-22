@@ -954,6 +954,64 @@ test('acknowledged capacity edits refresh live scalar values while a new edit re
   assert.equal(session.rawCell(key, 'capacity'), '45')
 })
 
+test('reloading a draft after a foreign physical revision requires review and preserves the old raw values across later recovery writes', async (testContext) => {
+  const { document } = dom(testContext),
+    fixture = exceptionSessionFixture(),
+    original = structuredClone(fixture.record.snapshot),
+    save = fixture.repository.saveOrderCartonDraft
+  fixture.repository.saveOrderCartonDraft = async (args) => {
+    const result = await save(args)
+    fixture.context.draft = {
+      id: 'cartons:["local","1001"]',
+      revision: result.revision,
+      updatedAt: '2026-10-22T12:00:00.000Z',
+      value: structuredClone(args.draft),
+    }
+    return result
+  }
+  let session = await fixture.create()
+  session.editCell(fixture.batch.id, 'weight', '-')
+  await assert.rejects(
+    session.flush(),
+    /Enter a nonnegative decimal or leave the measurement unknown/
+  )
+  session.dispose()
+  fixture.context.batches[0].weight = '6'
+  fixture.context.batches[0].revision = 2
+  fixture.context.revisions.cartons[fixture.batch.id] = 2
+  session = await fixture.create()
+  assert.equal(session.rawCell(fixture.batch.id, 'weight'), '6')
+  assert.equal(session.recoveredDrafts().length, 1)
+  assert.ok(
+    Object.values(session.recoveredDrafts()[0].value.rawCells).includes('-')
+  )
+  session.setActiveCell(fixture.batch.id, 'weight')
+  await session.flush()
+  session.dispose()
+  session = await fixture.create()
+  assert.equal(session.recoveredDrafts().length, 1)
+  const grid = mountOrderCartonGrid(document.getElementById('host'), {
+    session,
+    kind: 'cartons',
+  })
+  document
+    .querySelector('[data-action="review-recovered-carton-draft"]')
+    .click()
+  await new Promise((resolve) => setTimeout(resolve, 0))
+  const review = document.querySelector('.packing-change-dialog')
+  assert.match(review.textContent, /earlier order revision or amendment/)
+  ;[...review.querySelectorAll('button')]
+    .find((button) => button.textContent === 'Keep saved version')
+    .click()
+  await new Promise((resolve) => setTimeout(resolve, 0))
+  assert.equal(session.rawCell(fixture.batch.id, 'weight'), '6')
+  assert.equal(fixture.context.batches[0].weight, '6')
+  assert.equal(fixture.confirmed.length, 0)
+  assert.deepEqual(fixture.record.snapshot, original)
+  grid.destroy()
+  session.dispose()
+})
+
 test('intentional blank Spanish names and pending size mappings remain label blockers in Orders output', async (testContext) => {
   authoringEnvironment(testContext)
   const manifest = syntheticManifest(),
