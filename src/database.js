@@ -1,4 +1,9 @@
 import {
+  validateInventoryDispositions,
+  resolvedPurchaseDate,
+  mergeInventoryMetadata,
+} from './order-eligibility.js'
+import {
   otherOrderSnapshot,
   validateOtherPhoto,
   validateOtherSnapshotPhotos,
@@ -617,6 +622,84 @@ function validateRecord(input, sourceSnapshots = []) {
     if (currentIds.has(id))
       throw new Error('A removed row is still present in the order')
   }
+  if (input.supplierIdentityResolution !== undefined) {
+    const value = input.supplierIdentityResolution
+    if (
+      typeof value.sellerId !== 'string' ||
+      !value.sellerId.trim() ||
+      value.sellerId.length > 160 ||
+      /[\u0000-\u001f]/.test(value.sellerId)
+    )
+      throw new Error('Invalid authored supplier identity')
+    record.supplierIdentityResolution = {
+      sellerId: value.sellerId,
+      provenance: 'manual-confirmed',
+      updatedAt: date(
+        value.updatedAt,
+        'Supplier identity resolution updatedAt'
+      ),
+      ...(value.reason
+        ? { reason: string(value.reason, 'Supplier resolution reason') }
+        : {}),
+    }
+  }
+  if (input.supplierIdentityResolutionUpdatedAt !== undefined)
+    record.supplierIdentityResolutionUpdatedAt = date(
+      input.supplierIdentityResolutionUpdatedAt,
+      'Supplier identity clock'
+    )
+  if (input.supplierCodeIdentityReview !== undefined) {
+    object(
+      input.supplierCodeIdentityReview,
+      'Reviewed legacy supplier equivalence'
+    )
+    record.supplierCodeIdentityReview = structuredClone(
+      input.supplierCodeIdentityReview
+    )
+  }
+  if (input.supplierCodeIdentityReviewUpdatedAt !== undefined)
+    record.supplierCodeIdentityReviewUpdatedAt = date(
+      input.supplierCodeIdentityReviewUpdatedAt,
+      'Legacy supplier review clock'
+    )
+  if (input.inventoryMetadataHistory !== undefined) {
+    if (!Array.isArray(input.inventoryMetadataHistory))
+      throw new Error('Inventory metadata history must be an array')
+    record.inventoryMetadataHistory = structuredClone(
+      input.inventoryMetadataHistory
+    )
+  }
+  if (input.inventoryDispositions !== undefined)
+    record.inventoryDispositions = validateInventoryDispositions(
+      input.inventoryDispositions,
+      record
+    )
+  if (input.inventoryDispositionsUpdatedAt !== undefined)
+    record.inventoryDispositionsUpdatedAt = date(
+      input.inventoryDispositionsUpdatedAt,
+      'Inventory dispositions updatedAt'
+    )
+  if (input.inventoryDispositionClears !== undefined)
+    record.inventoryDispositionClears = strings(
+      input.inventoryDispositionClears,
+      'Inventory disposition clears'
+    )
+  if (input.purchaseDateResolution !== undefined) {
+    const value = input.purchaseDateResolution
+    record.purchaseDateResolution = {
+      date: resolvedPurchaseDate(value.date),
+      provenance: 'manual-confirmed',
+      updatedAt: date(value.updatedAt, 'Purchase date resolution updatedAt'),
+      ...(value.reason
+        ? { reason: string(value.reason, 'Purchase date reason') }
+        : {}),
+    }
+  }
+  if (input.purchaseDateResolutionUpdatedAt !== undefined)
+    record.purchaseDateResolutionUpdatedAt = date(
+      input.purchaseDateResolutionUpdatedAt,
+      'Purchase date clock'
+    )
   return record
 }
 
@@ -760,6 +843,18 @@ function reconcile(snapshot, previous) {
 
 /** Partial packing imports preserve known entries without claiming unknown clears. */
 export function mergeProductAnnotations(previous, incoming, next = previous) {
+  next = mergeInventoryMetadata(previous, incoming, next)
+  if (
+    (incoming.inventoryDispositionsUpdatedAt || '') >=
+      (previous.inventoryDispositionsUpdatedAt || '') &&
+    incoming.inventoryDispositionsUpdatedAt
+  )
+    next = {
+      ...next,
+      inventoryDispositionClears: structuredClone(
+        incoming.inventoryDispositionClears || []
+      ),
+    }
   for (const [field, clock, partial, kind] of productAnnotationFields) {
     const previousClock = previous[clock] || ''
     const incomingClock = incoming[clock] || ''

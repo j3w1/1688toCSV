@@ -67,6 +67,8 @@ export function mergeInventoryMetadata(previous, incoming, next = previous) {
   for (const [field, clock] of [
     ['inventoryDispositions', 'inventoryDispositionsUpdatedAt'],
     ['purchaseDateResolution', 'purchaseDateResolutionUpdatedAt'],
+    ['supplierIdentityResolution', 'supplierIdentityResolutionUpdatedAt'],
+    ['supplierCodeIdentityReview', 'supplierCodeIdentityReviewUpdatedAt'],
   ]) {
     const oldClock = previous[clock] || '',
       newClock = incoming[clock] || ''
@@ -84,6 +86,14 @@ export function mergeInventoryMetadata(previous, incoming, next = previous) {
       ...result,
       [field]: structuredClone(incoming[field]),
       [clock]: newClock,
+      inventoryMetadataHistory: [
+        ...new Map(
+          [
+            ...(previous.inventoryMetadataHistory || []),
+            ...(incoming.inventoryMetadataHistory || []),
+          ].map((entry) => [stableValue(entry), entry])
+        ).values(),
+      ],
     }
   }
   return result

@@ -38,6 +38,9 @@ export function sourceRevision(record, preparation) {
     unitsPerCarton: record.unitsPerCarton,
     inventoryDispositions: record.inventoryDispositions,
     purchaseDateResolution: record.purchaseDateResolution,
+    supplierIdentityResolution: record.supplierIdentityResolution,
+    supplierCodeIdentityReview: record.supplierCodeIdentityReview,
+    inventoryDispositionClears: record.inventoryDispositionClears,
     productWorkflow: record.productWorkflow,
     additionalCharges: record.additionalCharges,
     paymentLinks: record.paymentLinks,
@@ -120,6 +123,8 @@ export function eligibleOrderItems(record, records = [record]) {
       purchased: purchased === null ? null : String(purchased),
       eligible: purchased === null ? null : String(purchased - excluded),
       excluded: String(excluded),
+      dispositionKind: disposition?.kind || null,
+      paymentOnly: paymentOnly.has(item.entryId),
       reason:
         disposition?.reason ||
         (paymentOnly.has(item.entryId) ? 'Reviewed payment source' : ''),

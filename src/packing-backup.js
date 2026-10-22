@@ -494,7 +494,13 @@ export function createPackingBackup(backup, selection) {
       )
     ),
     history = cartonSourceHistory(backup, cartonBatches, selectedOrders)
-  const state = activePackingState(preparations)
+  const state = activePackingState(
+    preparations,
+    [],
+    (backup.issuedCodes || []).filter(
+      (entry) => entry.sharedProductId || (entry.members || []).length > 1
+    )
+  )
   const urls = collectImageReferences({
     orders: selectedOrders.map(({ snapshot }) => ({
       snapshot: {
