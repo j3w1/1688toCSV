@@ -277,7 +277,28 @@ test('packing copy formats remain selection-only and Escape dismisses them befor
   }))
   await dialog.locator('.popup-language-toggle [data-language="es"]').click()
   await expect(dialog).toHaveAttribute('lang', 'es')
-  await dialog.locator('button.primary').click()
+  // Hold the native write so the previous English copy remains readable until
+  // this action completes. Clicking alone does not await its async handler.
+  await page.evaluate(() => {
+    const write = navigator.clipboard.write.bind(navigator.clipboard)
+    navigator.clipboard.write = async (...args) => {
+      navigator.clipboard.write = write
+      await new Promise((resolve) => {
+        window.releaseColumnCopy = resolve
+      })
+      await write(...args)
+    }
+  })
+  const copyColumns = dialog.locator('button.primary')
+  await copyColumns.click()
+  await expect(copyColumns).toHaveAttribute('aria-busy', 'true')
+  await expect(copyColumns).not.toHaveClass(/copied/)
+  expect(await page.evaluate(() => navigator.clipboard.readText())).toBe(copied)
+  await page.evaluate(() => {
+    window.releaseColumnCopy()
+    delete window.releaseColumnCopy
+  })
+  await expect(copyColumns).toHaveClass(/copied/)
   const spanish = await page.evaluate(() => navigator.clipboard.readText())
   expect(spanish.split('\r\n')[0]).toContain('Cantidad')
   expect(
