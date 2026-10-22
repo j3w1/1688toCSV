@@ -50,6 +50,12 @@ async function databasePage(extension) {
       name: `packing-restore-${crypto.randomUUID()}`,
     })
     await library.saveSnapshot(source)
+    await library.resolvePurchaseDate({
+      accountId: source.accountId,
+      orderId: source.orderId,
+      date: '2026-10-01',
+      expectedObservedAt: source.observedAt,
+    })
     await library.savePreparation(model.createPreparation(source, '2026-10'))
     window.original = await library.exportBackup()
     window.scope = {
@@ -184,7 +190,26 @@ test('same-revision monthly packing restores combine disjoint products and remai
         'CE2611'
       )
     }
-    await library.savePreparation(prepared)
+    // Restore an explicit pre-SEAL mixed-month archive; a current v5 authoring
+    // save cannot create a shipment-month code rewrite.
+    const prior = await library.exportBackup(),
+      state = model.activePackingState([prepared], { orders: prior.orders })
+    library.close()
+    window.library = await openDatabase({
+      name: `legacy-monthly-backup-${crypto.randomUUID()}`,
+    })
+    await library.restoreBackup({
+      format: '1688-order-library',
+      version: 4,
+      exportedAt: prior.exportedAt,
+      orders: prior.orders,
+      history: prior.history,
+      images: prior.images,
+      preparations: [prepared],
+      allocations: state.allocations,
+      issuedCodes: state.issuedCodes,
+      cartonBatches: [],
+    })
     const complete = await library.exportBackup()
     const october = createPackingBackup(complete, {
       months: ['2026-10'],
@@ -437,6 +462,12 @@ test('contradictory overlapping same-time packing restore rolls back preceding p
     other.orderId = '1002'
     other.sourceUrl = other.sourceUrl.replace('1001', '1002')
     await library.saveSnapshot(other)
+    await library.resolvePurchaseDate({
+      accountId: other.accountId,
+      orderId: other.orderId,
+      date: '2026-10-01',
+      expectedObservedAt: other.observedAt,
+    })
     await library.savePreparation(model.createPreparation(other, '2026-10'))
     const combined = createPackingBackup(await library.exportBackup(), {
       months: ['2026-10'],

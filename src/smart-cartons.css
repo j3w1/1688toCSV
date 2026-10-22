@@ -92,6 +92,9 @@
 .smart-grid-scroll td small {
   display: block;
 }
+.smart-grid-scroll [data-column='code'] .ce-code {
+  --ce-code-size: 16px;
+}
 .container-workspace #container-content {
   flex: 1 1 0;
   min-inline-size: 0;
@@ -210,6 +213,13 @@
 }
 .product-authoring-fields :is(input, textarea) {
   inline-size: 100%;
+}
+@media (pointer: coarse) {
+  .product-authoring-dialog :is(button, input, select),
+  .smart-grid-tools button,
+  .smart-grid-scroll input:not([type='checkbox']) {
+    min-block-size: 44px;
+  }
 }
 .product-authoring-dialog > .preparation-photo {
   max-inline-size: 8rem;

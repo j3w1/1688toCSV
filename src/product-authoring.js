@@ -1114,13 +1114,37 @@ export async function createProductAuthoring({
     const busy = (value) =>
       controls.forEach((control) => (control.disabled = value))
     let saving = false
+    let committed = false
+    const retryRefresh = el('button', uiMessage('Retry'))
+    retryRefresh.hidden = true
+    retryRefresh.dataset.action = 'retry-evidence-refresh'
+    const finishRefresh = async () => {
+      await reload()
+      await changed({ reload: true })
+      modal.close('saved')
+    }
+    retryRefresh.onclick = () =>
+      void (async () => {
+        if (saving) return
+        saving = true
+        retryRefresh.disabled = true
+        try {
+          await finishRefresh()
+        } catch (error) {
+          bindText(status, uiMessage(error.message))
+        } finally {
+          saving = false
+          retryRefresh.disabled = false
+        }
+      })()
     async function commit(run, domain = 'disposition') {
-      if (saving) return
+      if (saving || committed) return
       saving = true
       retain()
       busy(true)
       try {
         await run()
+        committed = true
         const recovered = JSON.parse(localStorage.getItem(recoveryKey) || '{}')
         if (domain === 'date') delete recovered.date
         else if (domain === 'supplier') delete recovered.supplier
@@ -1132,14 +1156,15 @@ export async function createProductAuthoring({
         if (Object.keys(recovered).length)
           localStorage.setItem(recoveryKey, JSON.stringify(recovered))
         else localStorage.removeItem(recoveryKey)
-        await reload()
-        await changed({ reload: true })
-        modal.close('saved')
+        await finishRefresh()
       } catch (error) {
         bindText(status, uiMessage(error.message))
+        retryRefresh.hidden = !committed
       } finally {
         saving = false
         busy(false)
+        if (committed)
+          save.disabled = saveDate.disabled = saveSupplier.disabled = true
       }
     }
     const update = () => {
@@ -1208,7 +1233,7 @@ export async function createProductAuthoring({
     }
     modal.onclose = () => modal.remove()
     status.setAttribute('role', 'status')
-    modal.append(status, save, close)
+    modal.append(status, retryRefresh, save, close)
     if (context.preparation?.groups.some((group) => group.baseCode)) {
       const legacy = button('Review legacy supplier identity', async () => {
         const review = await repository.reviewLegacySupplierIdentity({
@@ -1344,6 +1369,22 @@ export async function createProductAuthoring({
     authoringLanguages(modal)
     const row = preparedRows([ref])[0]
     modal.append(el('p', row.description || row.title))
+    const sourceFacts = el('div', undefined, 'product-authoring-source-facts')
+    for (const [value, label] of [
+      [variant.variant, 'Copy value'],
+      [variant.size, 'Copy size'],
+      [
+        recordFor(ref)?.snapshot.items.find(
+          (item) => item.entryId === ref.entryId
+        )?.quantity,
+        'Copy quantity',
+      ],
+    ])
+      if (value !== undefined && value !== '')
+        sourceFacts.append(
+          copyTextButton(String(value), { label: uiMessage(label) })
+        )
+    modal.append(sourceFacts)
     if (ref.thumbnail) modal.append(media.photo(ref))
     const fields = []
     let resolveControl
@@ -1855,6 +1896,20 @@ export async function createProductAuthoring({
         entry.variants.push(match.variant)
     }
     const entries = [...selected.values()]
+    const baselines = new Map(
+        entries.map((entry) => [
+          orderKey(entry.draft),
+          structuredClone(entry.draft),
+        ])
+      ),
+      groupingContext = {
+        ...amendmentOptions(entries[0]?.draft),
+        expectedSnapshots: [...baselines.values()].map((draft) => ({
+          accountId: draft.accountId,
+          orderId: draft.orderId,
+          observedAt: recordFor(draft)?.snapshot.observedAt,
+        })),
+      }
     for (const entry of entries)
       entry.complete = entry.group.variants
         .flatMap((variant) => variant.entryIds)
@@ -1879,7 +1934,7 @@ export async function createProductAuthoring({
         // grouping never changes container membership or destroys cartons.
         const preview = await repository.previewPreparations(
           candidates,
-          amendmentOptions(candidates[0])
+          groupingContext
         )
         const prepared = Array.isArray(preview)
           ? preview
@@ -1897,10 +1952,10 @@ export async function createProductAuthoring({
         )
           return
         const before = prepared.map((candidate) =>
-          preparations.get(orderKey(candidate))
+          baselines.get(orderKey(candidate))
         )
         const results = await repository.savePreparations(prepared, {
-          ...amendmentOptions(prepared[0]),
+          ...groupingContext,
           expectedRevisions: before.map((draft) => draft.revision),
         })
         history().recordBatch(
@@ -1930,6 +1985,7 @@ export async function createProductAuthoring({
     modal.showModal()
   }
   async function resolveCodeConflict(candidate, error, target = {}) {
+    const conflictContext = amendmentOptions(candidate)
     const code =
       error?.conflict?.code || error?.message?.match(/CE\d{8}[A-Z0-9]*/)?.[0]
     if (!code) throw error
@@ -1945,6 +2001,13 @@ export async function createProductAuthoring({
       if (saved && !proposals.has(key))
         proposals.set(key, structuredClone(saved))
     }
+    conflictContext.expectedSnapshots = [...proposals.values()].map(
+      (draft) => ({
+        accountId: draft.accountId,
+        orderId: draft.orderId,
+        observedAt: recordFor(draft)?.snapshot.observedAt,
+      })
+    )
     const modal = el(
         'dialog',
         undefined,
@@ -2128,7 +2191,7 @@ export async function createProductAuthoring({
               [regeneratePreparationCode(draft, group.id)],
               {
                 preserveNaming: true,
-                ...amendmentOptions(draft),
+                ...conflictContext,
                 suffixBaselines: [preparations.get(orderKey(draft))],
               }
             )
@@ -2184,15 +2247,12 @@ export async function createProductAuthoring({
         })
         try {
           const values = [...proposals.values()]
-          await repository.previewPreparations(
-            values,
-            amendmentOptions(values[0])
-          )
+          await repository.previewPreparations(values, conflictContext)
           const before = values.map((value) =>
             preparations.get(orderKey(value))
           )
           const results = await repository.savePreparations(values, {
-            ...amendmentOptions(values[0]),
+            ...conflictContext,
             expectedRevisions: values.map((value) => value.revision),
           })
           history().recordBatch(

@@ -547,6 +547,79 @@ test('canceled amendment saves retain their captured epoch and recovered values 
   modal.close()
 })
 
+test('a grouping review keeps its original source/revision/amendment guards when a newer read arrives before confirmation', async (testContext) => {
+  const { document } = authoringEnvironment(testContext),
+    manifest = syntheticManifest(),
+    record = structuredClone(manifest.orders[0].record),
+    preparation = {
+      ...structuredClone(manifest.orders[0].preparation),
+      revision: 1,
+      amendmentContext: { containerId: 'c1', epoch: 'first' },
+    },
+    next = structuredClone(preparation.groups[0]),
+    writes = []
+  record.snapshot.items.push({
+    ...structuredClone(record.snapshot.items[0]),
+    entryId: '2002',
+  })
+  next.id = 'second-group'
+  next.baseCode = 'CE26090102'
+  next.variants[0].id = 'second-variant'
+  next.variants[0].entryIds = ['2002']
+  preparation.groups.push(next)
+  const originalSource = record.snapshot.observedAt
+  const authoring = await createProductAuthoring({
+    repository: {
+      listPreparations: async () => [structuredClone(preparation)],
+      getPackingPreferences: async () => validatePackingPreferences({}),
+      getReservedBarcodes: async () => [],
+      previewPreparations: async (values) => structuredClone(values),
+      savePreparations: async (values, options) => {
+        writes.push(structuredClone({ values, options }))
+        throw new Error('Synthetic stale grouping rejected')
+      },
+    },
+    getRecords: () => [record],
+    getContextContainerId: () => 'c1',
+  })
+  await authoring.groupProducts(
+    record.snapshot.items.map((item) => ({
+      ...item,
+      accountId: 'local',
+      orderId: '1001',
+    }))
+  )
+  ;[...document.querySelectorAll('.orders-grouping-dialog button')]
+    .find((button) => button.textContent === 'Merge products')
+    .click()
+  await new Promise((resolve) => setTimeout(resolve, 0))
+  const review = document.querySelector('.packing-change-dialog')
+  assert.ok(review)
+  preparation.revision = 2
+  preparation.amendmentContext = { containerId: 'c1', epoch: 'reopened' }
+  record.snapshot.observedAt = '2026-10-23T12:00:00.000Z'
+  await authoring.reload()
+  ;[...review.querySelectorAll('button')]
+    .find((button) => button.textContent === 'Apply changes')
+    .click()
+  await new Promise((resolve) => setTimeout(resolve, 0))
+  assert.equal(writes.length, 1)
+  assert.deepEqual(writes[0].options.expectedRevisions, [1])
+  assert.deepEqual(writes[0].options.expectedAmendment, {
+    containerId: 'c1',
+    epoch: 'first',
+  })
+  assert.equal(
+    writes[0].options.expectedSnapshots[0].observedAt,
+    originalSource
+  )
+  assert.match(
+    document.querySelector('.error-notice').textContent,
+    /stale grouping rejected/
+  )
+  authoring.dispose()
+})
+
 test('failed authoring save keeps the mounted raw code, error relation and recovery; a corrected retry clears its error', async (context) => {
   const { document, window, values } = authoringEnvironment(context),
     manifest = syntheticManifest(),
@@ -815,6 +888,71 @@ test('a failed draft repository write survives reload in tab-local recovery with
   session.dispose()
 })
 
+test('acknowledged capacity edits refresh live scalar values while a new edit retains the original concurrent-write guard', async (testContext) => {
+  const record = syntheticOrder('1001'),
+    context = {
+      record,
+      preparation: { groups: [] },
+      batches: [],
+      reports: [],
+      draft: null,
+      revisions: { capacity: 0 },
+    },
+    ref = { accountId: 'local', orderId: '1001' },
+    key = JSON.stringify(['local', '1001', '2001']),
+    writes = []
+  let draftRevision = 0
+  const session = await createOrderCartonSession({
+    repository: {
+      getOrderReconciliation: async () => structuredClone(context),
+      saveOrderCartonDraft: async (args) => {
+        context.draft = {
+          revision: ++draftRevision,
+          value: structuredClone(args.draft),
+        }
+        return { revision: draftRevision }
+      },
+      updateOrderCapacities: async (args) => {
+        writes.push(structuredClone(args))
+        for (const entryId of Object.keys(args.values))
+          if (
+            (context.record.unitsPerCarton?.[entryId] ?? null) !==
+            args.expectedValues[entryId]
+          )
+            throw new Error('The capacity changed in another tab')
+        context.record.unitsPerCarton = {
+          ...context.record.unitsPerCarton,
+          ...args.values,
+        }
+        context.revisions.capacity++
+        return {
+          record: structuredClone(context.record),
+          revisions: structuredClone(context.revisions),
+        }
+      },
+    },
+    orderRef: ref,
+    planner: actualPlanner,
+  })
+  testContext.after(() => session.dispose())
+  session.editCell(key, 'capacity', '10')
+  await session.flush()
+  assert.equal(
+    session.state().rawCells[JSON.stringify([key, 'capacity'])],
+    undefined
+  )
+  context.record.unitsPerCarton['2001'] = '20'
+  context.revisions.capacity++
+  await session.refresh()
+  assert.equal(session.rawCell(key, 'capacity'), '20')
+  assert.equal(session.projection().products[0].proposedCount, 5)
+  session.editCell(key, 'capacity', '45')
+  await assert.rejects(session.flush(), /changed in another tab/)
+  assert.equal(writes.at(-1).expectedValues['2001'], '10')
+  assert.equal(context.record.unitsPerCarton['2001'], '20')
+  assert.equal(session.rawCell(key, 'capacity'), '45')
+})
+
 test('intentional blank Spanish names and pending size mappings remain label blockers in Orders output', async (testContext) => {
   authoringEnvironment(testContext)
   const manifest = syntheticManifest(),
@@ -844,6 +982,89 @@ test('intentional blank Spanish names and pending size mappings remain label blo
     /Map this variant size/
   )
   authoring.dispose()
+})
+
+test('measurements on calculated capacity proposals stay in the same draft until one physical confirmation', async (testContext) => {
+  const fixture = exceptionSessionFixture()
+  fixture.context.batches = []
+  fixture.context.record.unitsPerCarton = { 2001: '50' }
+  const session = await fixture.create()
+  testContext.after(() => session.dispose())
+  const proposed = session.projection().cartons[0]
+  assert.equal(proposed.count, 2)
+  session.editCell(proposed.key, 'dimensions', '50×50×50')
+  await session.commitCell(proposed.key, 'dimensions', '50×50×50')
+  session.editCell(proposed.key, 'weight', '9.5')
+  await session.commitCell(proposed.key, 'weight', '9.5')
+  assert.equal(fixture.confirmed.length, 0)
+  const staged = fixture.drafts.at(-1).draft.plannerDraft.cartons[0]
+  assert.equal(staged.count, 2)
+  assert.equal(staged.weight, '9.5')
+  assert.equal(staged.len, '50')
+  await session.confirm()
+  assert.equal(fixture.confirmed.length, 1)
+  assert.equal(fixture.confirmed[0].draft.cartons[0].weight, '9.5')
+})
+
+test('successive measurements on a confirmed carton retain all previously staged fields in durable recovery', async (testContext) => {
+  const fixture = exceptionSessionFixture(),
+    session = await fixture.create()
+  testContext.after(() => session.dispose())
+  session.editCell(fixture.batch.id, 'dimensions', '80.125×50×30')
+  await session.commitCell(fixture.batch.id, 'dimensions', '80.125×50×30')
+  session.editCell(fixture.batch.id, 'weight', '30.750000000000000001')
+  await session.commitCell(fixture.batch.id, 'weight', '30.750000000000000001')
+  const staged = fixture.drafts.at(-1).draft.plannerDraft.cartons[0]
+  assert.equal(staged.len, '80.125')
+  assert.equal(staged.wid, '50')
+  assert.equal(staged.ht, '30')
+  assert.equal(staged.weight, '30.750000000000000001')
+  assert.deepEqual(staged.contents, fixture.batch.contents)
+  assert.equal(fixture.batch.len, '50')
+  assert.equal(fixture.confirmed.length, 0)
+})
+
+test('independent same-order marks and literal carton references stage without changing contents, measurements or source history', async (testContext) => {
+  const fixture = exceptionSessionFixture(),
+    before = structuredClone(fixture.batch)
+  fixture.context.preparation.groups = [
+    { id: 'g1', baseCode: 'CE26090101', variants: [] },
+    { id: 'g2', baseCode: 'CE26090102', variants: [] },
+  ]
+  const session = await fixture.create()
+  testContext.after(() => session.dispose())
+  await assert.rejects(
+    session.stageCartonIdentity({
+      batchId: fixture.batch.id,
+      cartonNumber: '001',
+      markGroupId: 'other-order',
+    }),
+    /must belong/
+  )
+  assert.equal(fixture.drafts.length, 0)
+  await session.stageCartonIdentity({
+    batchId: fixture.batch.id,
+    cartonNumber: '001',
+    markGroupId: 'g2',
+  })
+  assert.equal(fixture.confirmed.length, 0)
+  const staged = fixture.drafts.at(-1).draft.plannerDraft.cartons[0]
+  assert.deepEqual(staged.mark, { orderId: '1001', groupId: 'g2' })
+  assert.equal(staged.cartonNumber, '001')
+  for (const key of [
+    'id',
+    'count',
+    'contents',
+    'len',
+    'wid',
+    'ht',
+    'weight',
+    'weightBasis',
+  ])
+    assert.deepEqual(staged[key], before[key])
+  await session.confirm()
+  assert.equal(fixture.confirmed.length, 1)
+  assert.deepEqual(fixture.batch, before)
 })
 
 test('confirmed entitlement exception uses the real domain helper and one order confirm while preserving untouched physical identities', async (context) => {
@@ -1048,6 +1269,51 @@ test('purchase evidence recovery retains invalid work, submits prior disposition
   ])
   assert.deepEqual(source.snapshot, before)
 })
+test('purchase evidence refresh retry never repeats a committed mutation after a failed read', async (testContext) => {
+  const { document } = authoringEnvironment(testContext),
+    record = syntheticOrder('1001')
+  let writes = 0,
+    failRead = true
+  const authoring = await createProductAuthoring({
+    repository: {
+      listPreparations: async () => [],
+      getPackingPreferences: async () => validatePackingPreferences({}),
+      getOrderReconciliation: async () => ({ record, revisions: {} }),
+      setInventoryDispositions: async () => {
+        writes++
+        return { record }
+      },
+    },
+    getRecords: () => [record],
+    changed: async () => {
+      if (failRead) throw new Error('Synthetic refresh unavailable')
+    },
+  })
+  await authoring.openInventoryRecovery({
+    accountId: 'local',
+    orderId: '1001',
+    entryId: '2001',
+  })
+  const modal = document.querySelector(
+      '[data-action="review-purchase-evidence"]'
+    ),
+    save = modal.querySelector('[data-action="save-inventory-disposition"]')
+  save.click()
+  await new Promise((resolve) => setTimeout(resolve, 0))
+  assert.equal(writes, 1)
+  assert.equal(save.disabled, true)
+  assert.match(
+    modal.querySelector('[role="status"]').textContent,
+    /refresh unavailable/
+  )
+  failRead = false
+  modal.querySelector('[data-action="retry-evidence-refresh"]').click()
+  await new Promise((resolve) => setTimeout(resolve, 0))
+  assert.equal(writes, 1)
+  assert.equal(modal.isConnected, false)
+  authoring.dispose()
+})
+
 test('all-orders and narrowed carton history share a bounded searchable table and inspect without selecting or mutating', async (context) => {
   const { document, window } = dom(context),
     host = document.getElementById('host'),

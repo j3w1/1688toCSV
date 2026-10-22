@@ -39,53 +39,74 @@ function snapshots() {
   })
 }
 
-async function seed(extension) {
+async function seed(extension, { markOnly = false } = {}) {
   const page = await extension.context.newPage()
   await page.goto(`${extension.origin}/unsupported`)
-  await page.evaluate(async (sources) => {
-    const { openDatabase } = await import('/src/database.js')
-    const { createPreparation } = await import('/src/packing-model.js')
-    window.lib = await openDatabase({
-      name: `scoped-cartons-${crypto.randomUUID()}`,
-    })
-    for (const source of sources) await lib.saveSnapshot(source)
-    const preps = await lib.savePreparations(
-      sources.map((source) => createPreparation(source, '2026-10'))
-    )
-    const refs = preps.map((prep) => ({
-      accountId: 'local',
-      orderId: prep.orderId,
-      groupId: prep.groups[0].id,
-    }))
-    await lib.linkRepeatProduct(
-      await lib.previewRepeatProductLink({ source: refs[1], target: refs[0] })
-    )
-    await lib.saveCartonBatch(
-      {
-        id: 'synthetic-cross-purchase-carton',
+  await page.evaluate(
+    async ({ sources, markOnly }) => {
+      const { openDatabase } = await import('/src/database.js')
+      const { createPreparation } = await import('/src/packing-model.js')
+      window.lib = await openDatabase({
+        name: `scoped-cartons-${crypto.randomUUID()}`,
+      })
+      for (const source of sources) await lib.saveSnapshot(source)
+      const preps = await lib.savePreparations(
+        sources.map((source) => createPreparation(source, '2026-10'))
+      )
+      const refs = preps.map((prep) => ({
         accountId: 'local',
-        month: '2026-10',
-        storeId: '["1688","synthetic-scoped-cartons"]',
-        groups: refs.map(({ orderId, groupId }) => ({ orderId, groupId })),
-        mark: { orderId: refs[0].orderId, groupId: refs[0].groupId },
-        contents: sources.map((source) => ({
-          orderId: source.orderId,
-          entryId: '1',
-          quantity: source.items[0].quantity,
-        })),
-        cartonNumber: '1',
-        count: 1,
-        len: '40',
-        wid: '30',
-        ht: '25',
-        weightBasis: 'carton',
-        weight: '9.5',
-        received: 1,
-        loaded: 0,
-      },
-      { expectedRevision: 0 }
-    )
-  }, snapshots())
+        orderId: prep.orderId,
+        groupId: prep.groups[0].id,
+      }))
+      await lib.linkRepeatProduct(
+        await lib.previewRepeatProductLink({ source: refs[1], target: refs[0] })
+      )
+      const original = await lib.exportBackup(),
+        carton = {
+          id: 'synthetic-cross-purchase-carton',
+          accountId: 'local',
+          month: '2026-10',
+          storeId: '["1688","synthetic-scoped-cartons"]',
+          groups: refs
+            .filter((ref) => !markOnly || ref.orderId === '9702')
+            .map(({ orderId, groupId }) => ({ orderId, groupId })),
+          mark: { orderId: refs[0].orderId, groupId: refs[0].groupId },
+          contents: sources
+            .filter((source) => !markOnly || source.orderId === '9702')
+            .map((source) => ({
+              orderId: source.orderId,
+              entryId: '1',
+              quantity: source.items[0].quantity,
+            })),
+          cartonNumber: '1',
+          count: 1,
+          len: '40',
+          wid: '30',
+          ht: '25',
+          weightBasis: 'carton',
+          weight: '9.5',
+          received: 1,
+          loaded: 0,
+          revision: 1,
+          updatedAt: '2026-10-15T00:00:00.000Z',
+        }
+      // Cross-purchase cartons are retained legacy archive evidence, never a
+      // permitted new physical write in the one-purchase carton model.
+      await lib.restoreBackup({
+        format: '1688-order-library',
+        version: 4,
+        exportedAt: original.exportedAt,
+        orders: original.orders,
+        history: original.history,
+        images: original.images,
+        preparations: original.preparations,
+        allocations: original.allocations,
+        issuedCodes: original.issuedCodes,
+        cartonBatches: [carton],
+      })
+    },
+    { sources: snapshots(), markOnly }
+  )
   return page
 }
 
@@ -140,18 +161,9 @@ test('atomic scoped export reports a cross-purchase carton before clipping its m
 test('a scoped carton-mark owner also reports omitted cartons when it contributes no pieces', async ({
   extension,
 }) => {
-  const page = await seed(extension)
+  const page = await seed(extension, { markOnly: true })
   const result = await page.evaluate(async () => {
     const { validateBackup } = await import('/src/database.js')
-    const [batch] = await lib.listCartonBatches()
-    await lib.saveCartonBatch(
-      {
-        ...batch,
-        groups: batch.groups.filter((group) => group.orderId === '9702'),
-        contents: batch.contents.filter((item) => item.orderId === '9702'),
-      },
-      { expectedRevision: batch.revision }
-    )
     const partial = await lib.exportBackup({
       orderIds: ['9701'],
       packingScope: {
@@ -181,18 +193,20 @@ test('Back up packing downloads one purchase and explains its omitted shared car
   const page = await extension.context.newPage()
   await page.clock.setFixedTime(new Date('2026-10-15T04:00:00Z'))
   await page.goto(`${extension.extensionBaseUrl}/library.html`)
-  const row = page.locator('#sheet-body tr[data-selection-key="9701/1"]')
+  const row = page.locator(
+    `#sheet-body tr[data-selection-key=${JSON.stringify(JSON.stringify(['local', '9701', '1']))}]`
+  )
   await expect(row).toBeVisible()
-  await row.click()
-  await page.locator('[data-action="prepare-packing-list"]').click()
-  await expect(page.locator('#packing-view')).toBeVisible()
-  await page.locator('#packing-view [data-action="open-copy-menu"]').click()
+  await row.getByRole('checkbox').check()
+  await page.locator('#orders-view [data-action="open-copy-menu"]').click()
   await page
     .getByRole('button', { name: 'Back up packing', exact: true })
     .click()
-  await expect(page.locator('#feedback')).toContainText(
-    '1 partial carton batches omitted'
-  )
+  const review = page.locator('.packing-change-dialog')
+  await expect(review).toContainText('carton')
+  await review
+    .getByRole('button', { name: 'Back up selection', exact: true })
+    .click()
   await expect
     .poll(async () => {
       const files = await extension.inspector.evaluate(() =>

@@ -23,6 +23,8 @@ The order table retains exact cartons, explicitly confirmed uniform sets and gen
 
 Changes to an arrangement use **Confirm order cartons** once for the order. An exceptional contents/measurement edit stays in this same draft and revision context. Failed validation/save retains raw cells and alignment, including invalid values, for recovery. Confirmed facts keep stable IDs; historically used corrections require container amendment.
 
+Open a carton row to correct its literal supplier reference or choose an independent mark from that purchase's product codes. Closing this panel stages the change; it does not copy contents, weight or loading decisions into another carton. For confirmed sets, the entitlement picker exposes only retained physical units and supported facts. Drafts from an older amendment require explicit review before recovery, and a delayed save keeps its original amendment token.
+
 ## 1688 packing reports
 
 **Paste or import carton list** augments the existing 1688 purchase. Paste table cells or choose a local XLSX/XLS workbook. The original text/bytes are retained locally before cancellable parsing. A compact review asks only for ambiguous worksheet/header/number/unit/basis/range/code meanings; known facts fill the preview automatically. China purchase-marker rules remain unchanged.
