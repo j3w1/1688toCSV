@@ -51,6 +51,50 @@ export function purchaseMonthForCodes(record) {
   return date?.slice(0, 7) ?? null
 }
 
+/** Authored identity fills missing evidence; it cannot replace an unambiguous source. */
+export function purchaseSupplierForCodes(record) {
+  const snapshot = record.snapshot ?? record,
+    spreadsheet = snapshot.sourceType === 'spreadsheet'
+  const value = (value) =>
+    typeof value === 'string' && value.trim() ? value.trim() : null
+  const sourceStore = spreadsheet
+    ? value(snapshot.store?.key)
+    : snapshot.sellerUnavailable
+      ? null
+      : value(snapshot.sellerMemberLogin)
+  const sourceSellerId = sourceStore
+    ? spreadsheet
+      ? (value(snapshot.sellerMemberLogin) ?? `store:${sourceStore}`)
+      : sourceStore
+    : null
+  const resolution = record.supplierIdentityResolution
+  const resolvedSellerId =
+    resolution?.provenance === 'manual-confirmed' &&
+    calendarDate(resolution.updatedAt)
+      ? value(resolution.sellerId)
+      : null
+  const sellerId = sourceSellerId ?? resolvedSellerId
+  return {
+    sellerId,
+    storeId: sellerId
+      ? JSON.stringify([
+          spreadsheet ? 'spreadsheet' : '1688',
+          sourceStore ?? sellerId,
+        ])
+      : null,
+    provenance: sourceSellerId
+      ? 'source'
+      : resolvedSellerId
+        ? 'manual-confirmed'
+        : null,
+    conflict: Boolean(
+      sourceSellerId && resolvedSellerId && sourceSellerId !== resolvedSellerId
+    ),
+    sourceSellerId,
+    resolvedSellerId,
+  }
+}
+
 /** Existing current issued prefixes are compatibility evidence, not migration targets. */
 export function assertPurchaseCodeMonths({
   records,
@@ -604,20 +648,44 @@ export function planPurchaseCodeReview(
           variant.entryIds.some((entryId) => ids.has(entryId))
         )
     )
-    const month = purchaseMonthForCodes(record)
+    const month = purchaseMonthForCodes(record),
+      supplier = purchaseSupplierForCodes(record)
+    if (supplier.conflict) {
+      problem(
+        'SUPPLIER_IDENTITY_CONFLICT',
+        'The original supplier identity disagrees with its authored resolution. Review the purchase evidence.',
+        { orderId: record.snapshot.orderId }
+      )
+      continue
+    }
     if (
-      (missing.length || unallocated) &&
-      (record.snapshot.sellerUnavailable ||
-        (!record.snapshot.sellerMemberLogin &&
-          record.snapshot.source !== 'other' &&
-          !record.snapshot.store?.key))
+      old?.groups.some((group) => group.baseCode) &&
+      supplier.sellerId &&
+      old.sellerId !== supplier.sellerId
     ) {
+      problem(
+        'LEGACY_SUPPLIER_IDENTITY_REVIEW_REQUIRED',
+        'Review the existing legacy supplier code identity before linking or assigning new codes. Issued codes and their owner remain unchanged.',
+        {
+          orderId: record.snapshot.orderId,
+          legacyOwnerSellerId: old.sellerId,
+          supplierIdentity: supplier,
+        }
+      )
+      continue
+    }
+    if ((missing.length || unallocated) && !supplier.sellerId) {
       problem(
         'SELLER_IDENTITY_REQUIRED',
         'Resolve the original supplier identity before generating new codes.',
         { orderId: record.snapshot.orderId }
       )
       continue
+    }
+    const codeSnapshot = {
+      ...record.snapshot,
+      sellerMemberLogin: supplier.sellerId ?? record.snapshot.sellerMemberLogin,
+      sellerUnavailable: !supplier.sellerId,
     }
     if ((missing.length || unallocated) && !month) {
       problem(
@@ -630,26 +698,29 @@ export function planPurchaseCodeReview(
     let draft = old
       ? clone(old)
       : createPreparation(
-          { ...record.snapshot, items: [] },
+          { ...codeSnapshot, items: [] },
           month,
           state.preferences?.vocabulary,
           state.preferences?.sizeVocabulary
         )
     if (missing.length) {
       const added = createPreparation(
-        { ...record.snapshot, items: missing },
+        { ...codeSnapshot, items: missing },
         month,
         state.preferences?.vocabulary,
         state.preferences?.sizeVocabulary
       )
       draft.groups.push(...added.groups.map((group) => ({ ...group, month })))
     }
+    if (!old?.groups.some((group) => group.baseCode) && supplier.sellerId)
+      draft.sellerId = supplier.sellerId
     for (const group of draft.groups) if (!group.baseCode) group.month = month
     expectedSnapshots.push({
       accountId: record.snapshot.accountId || 'local',
       orderId: record.snapshot.orderId,
       observedAt: record.snapshot.observedAt,
       sourceRevision: sourceRevision(record, old),
+      supplierIdentity: purchaseSupplierForCodes(record),
     })
     drafts.push(validatePreparation(draft))
   }
@@ -724,6 +795,7 @@ export function planPurchaseCodeReview(
             purchaseMonth: purchaseMonthForCodes(record),
             quantity: String(item.quantity),
             price: item.price,
+            supplierIdentity: purchaseSupplierForCodes(record),
           })
           if (variant.needsSizeMapping)
             problem(

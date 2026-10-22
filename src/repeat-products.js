@@ -11,6 +11,7 @@ import { featureSignature } from './product-features.js'
 import {
   assertRepeatCodeEligibility,
   purchaseMonthForCodes,
+  purchaseSupplierForCodes,
 } from './purchase-codes.js'
 import { sourceRevision } from './inventory-model.js'
 
@@ -39,12 +40,9 @@ const variantFeatures = (variant, record) =>
   ].sort()
 
 /** Names can change; only a known source identity proves a shared store. */
-export function repeatProductStoreIdentity(snapshot) {
-  const spreadsheet = snapshot.sourceType === 'spreadsheet'
-  const value = spreadsheet ? snapshot.store?.key : snapshot.sellerMemberLogin
-  return typeof value === 'string' && value.trim()
-    ? JSON.stringify([spreadsheet ? 'spreadsheet' : '1688', value.trim()])
-    : null
+export function repeatProductStoreIdentity(record) {
+  const identity = purchaseSupplierForCodes(record)
+  return identity.conflict ? null : identity.storeId
 }
 
 function locate(reference, preparations, records) {
@@ -166,16 +164,28 @@ function matchedVariants(source, target) {
 function assertCompatible(source, target, preparations, locks) {
   if (key(source.preparation) === key(target.preparation))
     throw new Error('Choose a product from another purchase order.')
-  const sourceStore = repeatProductStoreIdentity(source.record.snapshot)
-  const targetStore = repeatProductStoreIdentity(target.record.snapshot)
+  const sourceStore = repeatProductStoreIdentity(source.record)
+  const targetStore = repeatProductStoreIdentity(target.record)
   if (
     !sourceStore ||
     sourceStore !== targetStore ||
-    source.preparation.accountId !== target.preparation.accountId ||
-    source.preparation.sellerId !== target.preparation.sellerId
+    source.preparation.accountId !== target.preparation.accountId
   )
     throw new Error(
       'Repeat purchases must belong to the same known store and buyer account.'
+    )
+  if (
+    [source, target].some(
+      (value) =>
+        value.preparation.sellerId !==
+        purchaseSupplierForCodes(value.record).sellerId
+    )
+  )
+    throw Object.assign(
+      new Error(
+        'Review the existing legacy supplier code identity before linking or assigning new codes. Issued codes and their owner remain unchanged.'
+      ),
+      { code: 'LEGACY_SUPPLIER_IDENTITY_REVIEW_REQUIRED' }
     )
   assertRepeatCodeEligibility({
     references: [source, target].map((value) => ({
@@ -339,6 +349,7 @@ function snapshotsFor(values) {
     orderId: record.snapshot.orderId,
     observedAt: record.snapshot.observedAt,
     sourceRevision: sourceRevision(record, preparation),
+    supplierIdentity: purchaseSupplierForCodes(record),
     productFeatures: Object.fromEntries(
       group.variants
         .flatMap((variant) => variant.entryIds)
@@ -363,7 +374,7 @@ export function planSharedProductLink({
   const to = locate(target, preparations, records)
   const matches = assertCompatible(from, to, preparations, locks)
   const sharedProductId = to.group.sharedProductId || newId()
-  const sharedStoreId = repeatProductStoreIdentity(to.record.snapshot)
+  const sharedStoreId = repeatProductStoreIdentity(to.record)
   const original = structuredClone(to.preparation)
   const repeated = structuredClone(from.preparation)
   const originalGroup = original.groups.find(
@@ -576,7 +587,7 @@ export function validateSharedProducts(
   for (const preparation of preparations)
     for (const group of preparation.groups) {
       if (!group.sharedProductId) continue
-      const source = records?.get(key(preparation))?.snapshot
+      const source = records?.get(key(preparation))
       if (
         records &&
         (!source ||
