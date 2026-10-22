@@ -623,3 +623,29 @@ test('mapping correction cannot silently overwrite indexed physical contents wit
     { orderId: '1688', entryId: 'A', quantity: '9' },
   ])
 })
+
+test('manual report decisions cannot clear immutable original carton evidence or reconciliation history', () => {
+  const prior = accepted(['001\tC\t10\t5'])
+  const changed = applyCartonUnitException({
+    batch: { ...prior.physicalFacts[0], storeId: 'synthetic-factory' },
+    index: 0,
+    measurements: { weight: '5.25' },
+  })
+  const interpretedReport = report(['001\tC\t10\t6'], { revision: 1 })
+  for (const fields of [{ sourceFacts: null }, { cartonHistory: [] }]) {
+    const plan = planPackingReportUpdate({
+      ...prior,
+      physicalFacts: [changed],
+      interpretedReport,
+      manualFacts: [{ batchId: 'box-a', fields }],
+      explicitMatches: {
+        manualConflicts: ['box-a:weight', 'box-a:unitMeasurements'],
+      },
+    })
+    assert.equal(plan.status, 'review-required')
+    assert.equal(plan.commitPayload, undefined)
+    assert(plan.issues.some((issue) => issue.code === 'invalidManualField'))
+  }
+  assert.equal(changed.cartonHistory.length, 1)
+  assert.equal(changed.sourceFacts.weight, '5')
+})
