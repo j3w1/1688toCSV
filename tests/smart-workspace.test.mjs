@@ -19,7 +19,10 @@ import {
   createPackingReportIntakeController,
   cartonHistoryRows,
   mountCartonHistory,
+  createOrderCartonSession,
 } from '../src/order-carton-grid.js'
+import * as actualPlanner from '../src/carton-reconciliation.js'
+import { applyCartonUnitException } from '../src/carton-batches.js'
 import {
   syntheticOrder,
   syntheticBatch,
@@ -175,6 +178,157 @@ function dom(context) {
 }
 
 const ref = { accountId: 'local', orderId: '10001' }
+function exceptionSessionFixture(options = {}) {
+  const record = syntheticOrder('1001'),
+    batch = syntheticBatch('1001', 5, '100', {
+      weight: '2.5',
+      len: '50',
+      wid: '40',
+      ht: '30',
+    }),
+    context = {
+      record,
+      preparation: { groups: [] },
+      batches: [batch],
+      reports: [],
+      draft: null,
+      projection: {},
+      revisions: { source: 'source-1', cartons: { [batch.id]: 1 } },
+    },
+    drafts = [],
+    confirmed = [],
+    reads = []
+  let draftRevision = 0
+  const repository = {
+    async getOrderReconciliation(args) {
+      reads.push(args)
+      return structuredClone(context)
+    },
+    async saveOrderCartonDraft(args) {
+      drafts.push(structuredClone(args))
+      return { revision: ++draftRevision }
+    },
+    async confirmOrderCartons(args) {
+      confirmed.push(structuredClone(args))
+      return {}
+    },
+  }
+  return {
+    record,
+    batch,
+    drafts,
+    confirmed,
+    reads,
+    create: () =>
+      createOrderCartonSession({
+        repository,
+        orderRef: { accountId: 'local', orderId: '1001' },
+        planner: actualPlanner,
+        ...options,
+      }),
+  }
+}
+
+test('confirmed entitlement exception uses the real domain helper and one order confirm while preserving untouched physical identities', async (context) => {
+  const fixture = exceptionSessionFixture({
+      getContextContainerId: () => 'amendment-container',
+    }),
+    session = await fixture.create()
+  context.after(() => session.dispose())
+  const before = structuredClone(fixture.record.snapshot),
+    units = session.unitEntitlements(fixture.batch.id)
+  assert.equal(units.length, 5)
+  assert.equal(units[3].contents[0].quantity, '20')
+  await session.stageUnitFacts({
+    batchId: fixture.batch.id,
+    index: 3,
+    contents: [{ orderId: '1001', entryId: '2001', quantity: '17' }],
+  })
+  assert.equal(session.projection().unassignedPieces, '3')
+  const staged = fixture.drafts.at(-1).draft.plannerDraft.cartons[0]
+  assert.equal(staged.contents[0].quantity, '97')
+  assert.equal(staged.packingBasis, 'aggregate')
+  assert.equal(staged.unitContents[0][0].quantity, '20')
+  assert.equal(staged.unitContents[3][0].quantity, '17')
+  assert.equal(staged.unitMeasurements[0].weight, '2.5')
+  assert.equal(staged.unitMeasurements[3].weight, '')
+  assert.deepEqual(
+    session.unitEntitlements(fixture.batch.id).map((unit) => unit.id),
+    units.map((unit) => unit.id)
+  )
+  await session.undo()
+  assert.equal(session.projection().unassignedPieces, '0')
+  await session.redo()
+  assert.equal(session.projection().unassignedPieces, '3')
+  await session.confirm()
+  assert.equal(fixture.confirmed.length, 1)
+  assert.equal(
+    fixture.confirmed[0].draft.contextContainerId,
+    'amendment-container'
+  )
+  assert.equal(fixture.confirmed[0].draft.cartons[0].baseRevision, 1)
+  assert.deepEqual(fixture.confirmed[0].expectedRevisions, {
+    source: 'source-1',
+    cartons: { [fixture.batch.id]: 1 },
+  })
+  assert.deepEqual(fixture.record.snapshot, before)
+  assert.equal(fixture.reads[0].contextContainerId, 'amendment-container')
+})
+
+test('invalid entitlement raw facts survive recovery and block confirmation without partial physical writes', async (context) => {
+  const fixture = exceptionSessionFixture(),
+    session = await fixture.create()
+  context.after(() => session.dispose())
+  const value = {
+    contents: [{ orderId: '1001', entryId: '2001', quantity: 'invalid' }],
+    measurements: {},
+  }
+  session.retainUnitDraft(fixture.batch.id, 2, value)
+  await session.flush()
+  await assert.rejects(
+    session.stageUnitFacts({ batchId: fixture.batch.id, index: 2, ...value }),
+    /positive whole/
+  )
+  await assert.rejects(session.confirm(), /pending carton exception/)
+  assert.equal(fixture.confirmed.length, 0)
+  assert.equal(
+    session.unitDraft(fixture.batch.id, 2).contents[0].quantity,
+    'invalid'
+  )
+  assert.match(JSON.stringify(fixture.drafts.at(-1).draft.rawCells), /invalid/)
+  assert.equal(fixture.drafts.at(-1).draft.plannerDraft.cartons.length, 0)
+})
+
+test('a delayed unit exception result cannot replace newer raw facts', async (context) => {
+  let release
+  const wait = new Promise((resolve) => {
+      release = resolve
+    }),
+    fixture = exceptionSessionFixture({
+      applyUnitException: async (input) => {
+        await wait
+        return applyCartonUnitException(input)
+      },
+    }),
+    session = await fixture.create()
+  context.after(() => session.dispose())
+  const old = session.stageUnitFacts({
+    batchId: fixture.batch.id,
+    index: 1,
+    contents: [{ orderId: '1001', entryId: '2001', quantity: '18' }],
+  })
+  session.retainUnitDraft(fixture.batch.id, 1, {
+    contents: [{ orderId: '1001', entryId: '2001', quantity: 'new raw text' }],
+  })
+  release()
+  await assert.rejects(old, /draft changed/)
+  assert.equal(
+    session.unitDraft(fixture.batch.id, 1).contents[0].quantity,
+    'new raw text'
+  )
+  assert.equal(fixture.confirmed.length, 0)
+  assert.equal(session.projection().unassignedPieces, '0')
+})
 test('purchase evidence recovery retains invalid work, submits prior disposition guards and never edits source snapshots', async (context) => {
   const { document, window } = dom(context),
     values = new Map(),

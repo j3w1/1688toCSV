@@ -1099,6 +1099,8 @@ export async function createOrderCartonSession({
     },
     async stageUnitFacts({ batchId, index, contents, measurements }) {
       const submittedGeneration = raw.state().generation
+      if (contents?.some((part) => !/^[1-9]\d*$/.test(part.quantity)))
+        throw new Error('Carton contents require positive whole quantities.')
       const batch =
         domainDraft.cartons.find((batch) => batch.id === batchId) ||
         context.batches.find((batch) => batch.id === batchId)
