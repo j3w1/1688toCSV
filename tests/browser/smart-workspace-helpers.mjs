@@ -227,7 +227,7 @@ export async function closeOrderProduct(editor) {
   await expect(editor).toBeHidden()
 }
 
-export async function openOrderReconciliation(page, ref, kind = 'products') {
+export async function revealOrderCard(page, ref) {
   const identity = JSON.stringify([ref.accountId || 'local', ref.orderId])
   const card = page.locator(
       `.order-card[data-order-key=${JSON.stringify(identity)}]`
@@ -240,6 +240,12 @@ export async function openOrderReconciliation(page, ref, kind = 'products') {
   // visible. Expanding leaves filters and explicit source selection intact.
   for (let index = 0; index < count && !(await card.count()); index++)
     await collapsed.first().click()
+  await expect(card).toBeVisible()
+  return card
+}
+
+export async function openOrderReconciliation(page, ref, kind = 'products') {
+  const card = await revealOrderCard(page, ref)
   await card.locator('[data-action="open-order-cartons"]').click()
   const grid = page.locator('#orders-cartons-view')
   await expect(
