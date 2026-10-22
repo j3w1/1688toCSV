@@ -69,17 +69,31 @@ export function outputLabelModels(context, kind = 'barcode') {
   for (const row of context.products) {
     const code = kind === 'mark' ? row.markCode || row.baseCode : row.barcode
     const category = row.chineseCategory || row.category || row.mark?.category
-    if (!code) throw new Error('Review product codes in Orders first.')
+    const refuse = (message, field) => {
+      throw Object.assign(new Error(message), {
+        packingIssue: {
+          accountId: row.accountId || 'local',
+          orderId: row.orderId,
+          entryId: row.entryId,
+          groupId: row.groupId,
+          variantId: row.variantId,
+          field,
+        },
+      })
+    }
+    if (!code) refuse('Review product codes in Orders first.', 'code')
     if (kind === 'mark' && !category?.trim())
-      throw new Error(
-        'Add a Chinese category in Orders before generating this carton mark.'
+      refuse(
+        'Add a Chinese category in Orders before generating this carton mark.',
+        'category'
       )
     if (kind !== 'mark' && !row.spanishName?.trim())
-      throw new Error(
-        'Add a Spanish name in Orders before generating this barcode.'
+      refuse(
+        'Add a Spanish name in Orders before generating this barcode.',
+        'name'
       )
     if (row.needsSizeMapping)
-      throw new Error('Map this variant size before generating labels')
+      refuse('Map this variant size before generating labels', 'size')
     const existing = models.get(code)
     const quantity =
       kind === 'mark' ? (row.cartonId ? '1' : null) : row.quantity
@@ -182,7 +196,65 @@ export function createProductOutput({
   headers = () => true,
   feedback = () => {},
   workbookAdapter,
+  editInOrders = (ref) => authoring.openEditor(ref),
 }) {
+  function labelFailure(error, context, ref) {
+    if (error.name === 'AbortError') return error
+    const issue = error.packingIssue || { ...ref, field: error.labelField },
+      row = context.products.find(
+        (row) =>
+          (row.accountId || 'local') === (issue.accountId || 'local') &&
+          row.orderId === issue.orderId &&
+          (issue.entryId
+            ? row.entryId === issue.entryId
+            : issue.entryIds?.includes(row.entryId))
+      )
+    error.packingIssue = { ...issue, entryId: issue.entryId || row?.entryId }
+    error.noticeOptions = {
+      ...error.noticeOptions,
+      context: {
+        seller: row?.sellerName || row?.record?.snapshot.sellerName,
+        orderId: issue.orderId,
+        code: row?.barcode || row?.baseCode,
+        variant: row?.variant || row?.description,
+        thumbnail: row?.thumbnail ? () => loadImage(row.thumbnail) : undefined,
+      },
+      action: {
+        label: m('Edit in Orders'),
+        onClick: () => {
+          for (const dialog of document.querySelectorAll(
+            'dialog.image-copy-dialog[open],dialog.print-dialog[open]'
+          ))
+            dialog.close()
+          return editInOrders(
+            error.packingIssue,
+            context.kind === 'container-revision'
+              ? {
+                  containerId: context.containerId,
+                  revisionId: context.revisionId,
+                  view: 'packing-list',
+                }
+              : undefined
+          )
+        },
+      },
+    }
+    return error
+  }
+  function labelModels(context, kind) {
+    try {
+      return outputLabelModels(context, kind)
+    } catch (error) {
+      throw labelFailure(error, context)
+    }
+  }
+  async function renderOutputLabel(context, item, options) {
+    try {
+      return await renderLabel({ ...item.model, ...options })
+    } catch (error) {
+      throw labelFailure(error, context, item.ref)
+    }
+  }
   function settings(context) {
     const prefs =
       context.preferences ||
@@ -259,7 +331,7 @@ export function createProductOutput({
       context.kind === 'container-revision' && workbookAdapter?.printRows
         ? { ...context, products: workbookAdapter.printRows(context, { kind }) }
         : context
-    const items = outputLabelModels(printContext, kind),
+    const items = labelModels(printContext, kind),
       frozenSettings = settings(context),
       frozenLogo = logo(context)
     if (!items.length) throw new Error('No active labels to copy.')
@@ -291,8 +363,7 @@ export function createProductOutput({
             onProgress(
               m('Preparing {0} of {1}', { 0: index + 1, 1: end - start })
             )
-            const result = await renderLabel({
-              ...item.model,
+            const result = await renderOutputLabel(printContext, item, {
               settings: frozenSettings,
               logoUrl: frozenLogo,
               signal,
@@ -321,7 +392,7 @@ export function createProductOutput({
       context.kind === 'container-revision' && workbookAdapter?.printRows
         ? { ...context, products: workbookAdapter.printRows(context, { kind }) }
         : context
-    const items = outputLabelModels(printContext, kind)
+    const items = labelModels(printContext, kind)
     for (const item of items) {
       if (
         item.quantity !== '' &&
@@ -332,6 +403,12 @@ export function createProductOutput({
           'This label quantity exceeds the supported print range.'
         )
       if (item.quantity !== '') item.quantity = Number(item.quantity)
+      // Validate artwork with the actual renderer before the print dialog takes
+      // over errors; the failing source retains its Orders recovery route.
+      await renderOutputLabel(printContext, item, {
+        settings: { ...settings(context), dpi: 150 },
+        logoUrl: logo(context),
+      })
     }
     if (!items.length) throw new Error('No active labels to copy.')
     const dialog = openPrintDialog({

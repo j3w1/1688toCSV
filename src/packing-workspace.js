@@ -99,6 +99,7 @@ export async function startPackingWorkspace({
     loadImage,
     headers,
     feedback,
+    editInOrders,
     workbookAdapter: {
       plan: (...args) => {
         if (!modules)
@@ -272,6 +273,7 @@ export async function startPackingWorkspace({
         orderRef.accountId,
         orderRef.orderId,
         amendmentId || null,
+        containers.controller.view()?.container.amendment?.epoch || null,
       ])
       let session = sessions.get(key)
       if (!session) {

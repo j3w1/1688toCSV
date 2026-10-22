@@ -1669,6 +1669,18 @@ export async function createProductAuthoring({
     }
     document.body.append(modal)
     modal.showModal()
+    if (ref.field) {
+      const title = {
+        category: 'Chinese category',
+        name: 'Spanish name',
+        variant: 'Variant ending',
+        size: 'Size ending',
+        code: 'Product code',
+      }[ref.field]
+      const target = fields.find((field) => field.label === title)?.input
+      target?.focus()
+      target?.select()
+    }
   }
   async function openLabel(ref, kind = 'barcode') {
     await ensureContext()

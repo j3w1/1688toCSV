@@ -1,6 +1,36 @@
 // UI text only. Supplier/source strings never pass through this catalog.
 export const SMART_CARTON_MESSAGES = Object.fromEntries(
   [
+    [
+      'Recovered carton draft',
+      'Borrador de cajas recuperado',
+      '已恢复的装箱草稿',
+    ],
+    [
+      'Review recovered carton draft',
+      'Revisar borrador de cajas recuperado',
+      '核对已恢复的装箱草稿',
+    ],
+    [
+      'Review recovered carton report',
+      'Revisar informe de cajas recuperado',
+      '核对已恢复的装箱报告',
+    ],
+    [
+      'This draft belongs to an earlier amendment. Review every retained value against the current order before using it. Physical identities and revision checks still apply.',
+      'Este borrador pertenece a una enmienda anterior. Revisa cada valor guardado frente al pedido actual antes de usarlo. Se mantienen las identidades físicas y las comprobaciones de revisión.',
+      '此草稿属于以前的修订。使用前请逐项对照当前订单核对保留值。仍须验证实体纸箱身份与版本。',
+    ],
+    [
+      'This report draft belongs to an earlier amendment. Review its original source and decisions before using it in the current review.',
+      'Este borrador de informe pertenece a una enmienda anterior. Revisa su origen y decisiones antes de usarlo en la revisión actual.',
+      '此报告草稿属于以前的修订。用于当前核对前，请检查原始来源及决定。',
+    ],
+    [
+      'The recovered draft is no longer available.',
+      'El borrador recuperado ya no está disponible.',
+      '已恢复的草稿已不可用。',
+    ],
     ['{0} pieces in {1}', '{0} unidades en {1}', '{1} 中有 {0} 件'],
     [
       '{0} pieces in {1} cartons; per-carton contents unknown',

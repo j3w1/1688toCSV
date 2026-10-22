@@ -694,6 +694,87 @@ test('physical recovery and one-order confirmation carry the originally captured
   assert.deepEqual(fixture.confirmed[0].draft.amendmentContext, token)
 })
 
+test('older physical drafts stay separate until review and retain invalid cells under the deliberately reviewed current epoch', async (testContext) => {
+  const { document } = dom(testContext),
+    fixture = exceptionSessionFixture({ getContextContainerId: () => 'c1' }),
+    oldToken = { containerId: 'c1', epoch: 'first' },
+    currentToken = { containerId: 'c1', epoch: 'reopened' },
+    cell = JSON.stringify([
+      JSON.stringify(['local', '1001', '2001']),
+      'capacity',
+    ]),
+    old = {
+      revision: 4,
+      amendmentContext: oldToken,
+      updatedAt: '2026-10-22T12:00:00Z',
+      value: {
+        version: 1,
+        amendmentContext: oldToken,
+        plannerDraft: actualPlanner.createReconciliationDraft(fixture.context),
+        rawCells: { [cell]: 'invalid retained quantity' },
+        generation: 2,
+      },
+    },
+    original = structuredClone(old)
+  fixture.context.amendmentContext = currentToken
+  fixture.context.revisions.amendmentContext = currentToken
+  fixture.context.recoveredDrafts = [old]
+  const session = await fixture.create(),
+    grid = mountOrderCartonGrid(document.getElementById('host'), { session })
+  testContext.after(() => session.dispose())
+  assert.equal(session.state().rawCells[cell], undefined)
+  document
+    .querySelector('[data-action="review-recovered-carton-draft"]')
+    .click()
+  await new Promise((resolve) => setTimeout(resolve, 0))
+  const review = document.querySelector('.packing-change-dialog')
+  assert.match(review.textContent, /invalid retained quantity/)
+  assert.equal(fixture.drafts.length, 0)
+  ;[...review.querySelectorAll('button')]
+    .find((button) => button.textContent === 'Use these reviewed edits')
+    .click()
+  await new Promise((resolve) => setTimeout(resolve, 0))
+  assert.equal(session.state().rawCells[cell], 'invalid retained quantity')
+  assert.deepEqual(fixture.drafts.at(-1).expectedAmendment, currentToken)
+  assert.deepEqual(fixture.drafts.at(-1).draft.amendmentContext, currentToken)
+  assert.deepEqual(old, original)
+  await assert.rejects(session.confirm(), /whole/)
+  assert.equal(fixture.confirmed.length, 0)
+  grid.destroy()
+})
+
+test('label validation identifies the exact source and field instead of losing the affected product', () => {
+  const product = {
+    accountId: 'local',
+    orderId: '1001',
+    entryId: '2001',
+    groupId: 'g1',
+    variantId: 'v1',
+    barcode: 'CE26090101',
+    baseCode: 'CE26090101',
+    spanishName: 'SYNTHETIC',
+    chineseCategory: '',
+  }
+  assert.throws(
+    () => outputLabelModels({ products: [product] }, 'mark'),
+    (error) => {
+      assert.equal(error.packingIssue.orderId, '1001')
+      assert.equal(error.packingIssue.entryId, '2001')
+      assert.equal(error.packingIssue.field, 'category')
+      return true
+    }
+  )
+  assert.throws(
+    () =>
+      outputLabelModels({ products: [{ ...product, needsSizeMapping: true }] }),
+    (error) => {
+      assert.equal(error.packingIssue.entryId, '2001')
+      assert.equal(error.packingIssue.field, 'size')
+      return true
+    }
+  )
+})
+
 test('confirmed entitlement exception uses the real domain helper and one order confirm while preserving untouched physical identities', async (context) => {
   const fixture = exceptionSessionFixture({
       getContextContainerId: () => 'amendment-container',
@@ -1475,6 +1556,7 @@ function reportFixture() {
   })
   return {
     calls,
+    context,
     repository,
     createClient,
     holdParse() {
@@ -1491,6 +1573,50 @@ function reportFixture() {
     },
   }
 }
+
+test('report recovery isolates canceled epochs while retaining exact text and scoped decisions for explicit reuse', async (testContext) => {
+  authoringEnvironment(testContext)
+  const fixture = reportFixture(),
+    token = { containerId: 'c1', epoch: 'first' }
+  fixture.context.expectedRevisions.amendmentContext = token
+  const options = { ...fixture, orderRef: ref, contextContainerId: 'c1' },
+    first = await createPackingReportIntakeController(options),
+    text = '箱号\t货号\t装箱数\r\n001\t0007\t13\r\n',
+    request = { id: 'meaning', scope: { header: '装箱数' } }
+  await first.read({ text })
+  first.choose(request, 'per-carton')
+  fixture.context.expectedRevisions.amendmentContext = {
+    containerId: 'c1',
+    epoch: 'reopened',
+  }
+  const reopened = await createPackingReportIntakeController(options)
+  assert.equal(reopened.state().text, undefined)
+  assert.equal(reopened.state().source, null)
+  assert.equal(reopened.state().recoveredDrafts[0].text, text)
+  assert.deepEqual(reopened.state().recoveredDrafts[0].amendmentContext, token)
+  reopened.inputText('new draft must not erase older source')
+  const again = await createPackingReportIntakeController(options),
+    old = again.state().recoveredDrafts[0]
+  assert.equal(old.text, text)
+  again.recoverReviewed(old)
+  assert.equal(again.state().text, text)
+  assert.deepEqual(again.state().decisions.meaning, {
+    scope: request.scope,
+    value: 'per-carton',
+  })
+  assert.equal(again.state().plan, null)
+  await again.updateReview()
+  await again.plan()
+  await again.commit()
+  assert.equal(
+    fixture.calls.filter((call) => call.operation === 'commit').length,
+    1
+  )
+  assert.equal(
+    fixture.calls.at(-1).input.expectedRevisions.amendmentContext.epoch,
+    'reopened'
+  )
+})
 
 test('report UI persists original source before parser transfer and commits only a ready explicit review', async () => {
   const fixture = reportFixture(),
