@@ -2,6 +2,7 @@ import test from 'node:test'
 import assert from 'node:assert/strict'
 import {
   purchaseMonthForCodes,
+  purchaseSupplierForCodes,
   planPurchaseCodeReview,
   assertPurchaseCodeMonths,
   assertConsumedCodeChanges,
@@ -625,4 +626,289 @@ test('repeat repository checks current locks and exact source revisions again be
   stored.shipmentLocks = consumptionLocksForManifest(manifest(s), s)
   await assert.rejects(() => repository.linkRepeatProduct(plan), /consumed/)
   assert.equal(saves, previewSaves)
+})
+
+test('reviewed supplier resolution fills missing identity with provenance, preserves source and reveals source disagreement', () => {
+  const source = records(['2026-09'])[0]
+  delete source.snapshot.sellerMemberLogin
+  source.snapshot.sellerUnavailable = true
+  const original = structuredClone(source.snapshot)
+  assert.equal(purchaseSupplierForCodes(source).sellerId, null)
+  source.supplierIdentityResolution = {
+    sellerId: 'factory-id',
+    provenance: 'manual-confirmed',
+    updatedAt: '2026-11-01T00:00:00Z',
+    reason: 'Reviewed supplier evidence',
+  }
+  const resolved = purchaseSupplierForCodes(source)
+  assert.equal(resolved.sellerId, 'factory-id')
+  assert.equal(resolved.storeId, JSON.stringify(['1688', 'factory-id']))
+  assert.equal(resolved.provenance, 'manual-confirmed')
+  const review = planPurchaseCodeReview(
+    { records: [source], preparations: [] },
+    selection(source)
+  )
+  assert.deepEqual(review.issues, [])
+  assert.equal(review.plan.preparations[0].sellerId, 'factory-id')
+  assert.equal(
+    review.changes[0].supplierIdentity.provenance,
+    'manual-confirmed'
+  )
+  assert.deepEqual(source.snapshot, original)
+  source.snapshot.sellerUnavailable = false
+  source.snapshot.sellerMemberLogin = 'actual-source-seller'
+  assert.equal(
+    purchaseSupplierForCodes(source).sellerId,
+    'actual-source-seller'
+  )
+  assert.equal(purchaseSupplierForCodes(source).provenance, 'source')
+  assert.equal(purchaseSupplierForCodes(source).conflict, true)
+  assert.ok(
+    planPurchaseCodeReview(
+      { records: [source], preparations: [] },
+      selection(source)
+    ).issues.some((issue) => issue.code === 'SUPPLIER_IDENTITY_CONFLICT')
+  )
+})
+
+test('resolved same-store source can link without source mutation while display-name equality alone cannot', () => {
+  const source = records(['2026-09', '2026-10'])
+  delete source[1].snapshot.sellerMemberLogin
+  source[1].snapshot.sellerUnavailable = true
+  const noResolution = planPurchaseCodeReview(
+    { records: source, preparations: [] },
+    {
+      orderRefs: source.map((record) => ({
+        accountId: 'local',
+        orderId: record.snapshot.orderId,
+      })),
+    }
+  )
+  assert.ok(
+    noResolution.issues.some(
+      (issue) => issue.code === 'SELLER_IDENTITY_REQUIRED'
+    )
+  )
+  source[1].supplierIdentityResolution = {
+    sellerId: 'factory-id',
+    provenance: 'manual-confirmed',
+    updatedAt: '2026-11-01T00:00:00Z',
+  }
+  const review = planPurchaseCodeReview(
+    { records: source, preparations: [] },
+    {
+      orderRefs: source.map((record) => ({
+        accountId: 'local',
+        orderId: record.snapshot.orderId,
+      })),
+    }
+  )
+  assert.deepEqual(review.issues, [])
+  const s = { records: source, preparations: review.plan.preparations }
+  assert.doesNotThrow(() =>
+    planSharedProductLink({ source: ref(s, 1), target: ref(s, 0), ...s })
+  )
+  source[1].supplierIdentityResolution.sellerId = 'different-reviewed-id'
+  assert.equal(repeatProductCandidates({ source: ref(s, 1), ...s }).length, 0)
+})
+
+test('partial purchase review preserves unselected old identities and adds only selected new source rows', () => {
+  const s = state(['2026-09']),
+    existing = structuredClone(s.preparations[0].groups[0])
+  s.records[0].snapshot.items.push(
+    { ...s.records[0].snapshot.items[0], entryId: '2', title: 'Plate' },
+    { ...s.records[0].snapshot.items[0], entryId: '3', title: 'Fork' }
+  )
+  const review = planPurchaseCodeReview(s, {
+    orderRefs: [{ accountId: 'local', orderId: '101' }],
+    entryRefs: [{ accountId: 'local', orderId: '101', entryId: '2' }],
+  })
+  assert.deepEqual(review.issues, [])
+  assert.deepEqual(
+    review.changes.map((row) => row.entryId),
+    ['2']
+  )
+  assert.deepEqual(
+    review.plan.preparations[0].groups.find(
+      (group) => group.id === existing.id
+    ),
+    existing
+  )
+  assert.ok(
+    review.plan.preparations[0].groups.some((group) =>
+      group.variants.some((variant) => variant.entryIds.includes('2'))
+    )
+  )
+  assert.ok(
+    !review.plan.preparations[0].groups.some((group) =>
+      group.variants.some((variant) => variant.entryIds.includes('3'))
+    )
+  )
+})
+
+test('positive order consumption exists without prepared codes and an unchanged unresolved group remains valid evidence', () => {
+  const blank = consumptionLocksForManifest(
+    {
+      container: { id: 'C' },
+      revisionId: 'C/r1',
+      sealedAt: '2026-11-20T12:00:00Z',
+      draft: false,
+      status: 'sealed',
+      cartons: [
+        {
+          id: 'unit',
+          orderId: '101',
+          accountId: 'local',
+          count: 1,
+          state: 'loaded',
+        },
+      ],
+      products: [],
+      leftBehind: { products: [] },
+    },
+    { preparations: [] }
+  )
+  assert.equal(blank.length, 1)
+  assert.equal(blank[0].kind, 'code-consumption')
+  assert.deepEqual(blank[0].lineages, [])
+  const s = state()
+  assert.throws(
+    () =>
+      assertRepeatCodeEligibility({
+        references: [ref(s, 0)],
+        preparations: s.preparations,
+        locks: blank,
+      }),
+    /consumed/
+  )
+  const unknown = structuredClone(s.preparations[0].groups[0])
+  unknown.id = 'unresolved'
+  unknown.baseCode = 'CE26090109'
+  unknown.variants[0].id = 'unresolved-variant'
+  unknown.variants[0].entryIds = ['2']
+  unknown.variants[0].needsSizeMapping = true
+  s.preparations[0].groups.push(unknown)
+  s.records[0].snapshot.items.push({
+    ...s.records[0].snapshot.items[0],
+    entryId: '2',
+  })
+  const locks = consumptionLocksForManifest(manifest(s), s)
+  assert.doesNotThrow(() =>
+    assertConsumedCodeChanges({
+      previous: s.preparations,
+      preparations: s.preparations,
+      locks,
+    })
+  )
+})
+
+test('supplier resolution drift is rejected by repeat wrapper even before its source observation changes', async () => {
+  const s = state(),
+    stored = {
+      orders: s.records,
+      preparations: s.preparations,
+      cartonBatches: [],
+      shipmentLocks: [],
+    }
+  let saved = 0
+  const repository = createRepeatProductsRepository({
+    read: async (stores, callback) =>
+      callback({
+        objectStore: (name) => ({
+          getAll: () => structuredClone(stored[name]),
+        }),
+      }),
+    requested: async (value) => value,
+    savePreparations: async (values) => {
+      saved++
+      return values
+    },
+  })
+  const plan = await repository.previewRepeatProductLink({
+    source: ref(s, 1),
+    target: ref(s, 0),
+  })
+  stored.orders[1].supplierIdentityResolution = {
+    sellerId: 'wrong',
+    provenance: 'manual-confirmed',
+    updatedAt: '2026-11-01T00:00:00Z',
+  }
+  const count = saved
+  await assert.rejects(
+    () => repository.linkRepeatProduct(plan),
+    /source order or preparation changed/
+  )
+  assert.equal(saved, count)
+})
+
+test('calendar property: all source months in the supported century ignore offset-induced neighbouring UTC days', () => {
+  let count = 0
+  for (let year = 2000; year <= 2099; year++)
+    for (let month = 1; month <= 12; month++) {
+      const m = String(month).padStart(2, '0'),
+        last = new Date(Date.UTC(year, month, 0)).getUTCDate()
+      for (const [day, time] of [
+        [1, '00:01:00+14:00'],
+        [last, '23:59:00-12:00'],
+      ]) {
+        assert.equal(
+          purchaseMonthForCodes({
+            purchasedAt: `${year}-${m}-${String(day).padStart(2, '0')}T${time}`,
+          }),
+          `${year}-${m}`
+        )
+        count++
+      }
+    }
+  assert.equal(count, 2400)
+})
+
+test('unreviewed legacy display-owner/canonical supplier mismatch holds linking and preserves codes, owner and history', () => {
+  const s = state()
+  s.preparations[0].sellerId = 'Legacy displayed owner'
+  for (const allocation of s.allocations.filter(
+    (value) => value.month === '2026-09'
+  ))
+    for (const group of allocation.groups)
+      group.sellerId = 'Legacy displayed owner'
+  for (const reservation of s.issuedCodes.filter(
+    (value) => value.month === '2026-09'
+  ))
+    reservation.sellerId = 'Legacy displayed owner'
+  const locks = consumptionLocksForManifest(manifest(s, { loaded: false }), s)
+  const original = structuredClone({ ...s, locks })
+  const review = planPurchaseCodeReview(
+    { ...s, locks },
+    selection(s.records[0])
+  )
+  assert.ok(
+    review.issues.some(
+      (issue) => issue.code === 'LEGACY_SUPPLIER_IDENTITY_REVIEW_REQUIRED'
+    )
+  )
+  assert.equal(review.plan.preparations.length, 0)
+  assert.throws(
+    () =>
+      planSharedProductLink({
+        source: ref(s, 1),
+        target: ref(s, 0),
+        ...s,
+        locks,
+      }),
+    /legacy supplier code identity/
+  )
+  assert.equal(
+    repeatProductCandidates({ source: ref(s, 1), ...s, locks }).some(
+      (candidate) => candidate.orderId === '101'
+    ),
+    false
+  )
+  assert.equal(s.preparations[0].groups[0].baseCode, 'CE26090101')
+  assert.equal(
+    s.issuedCodes.find(
+      (value) => value.code === 'CE26090101' && value.kind === 'base'
+    ).sellerId,
+    'Legacy displayed owner'
+  )
+  assert.deepEqual({ ...s, locks }, original)
 })
