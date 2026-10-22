@@ -620,7 +620,7 @@ test('one source product can be split among carton types but quantities cannot b
   )
 })
 
-test('mixed purchases require explicit repeat linking, matching store and matching month', () => {
+test('linked purchases never share physical carton ownership, even in the same store and month', () => {
   const { batch, records, preparations } = fixture()
   records.push({
     snapshot: {
@@ -650,12 +650,22 @@ test('mixed purchases require explicit repeat linking, matching store and matchi
       { orderId: '1002', entryId: '4', quantity: '27' },
     ],
   }
-  assertCartonBatchContext(mixed, records, preparations, [mixed])
+  assert.throws(
+    () => assertCartonBatchContext(mixed, records, preparations, [mixed]),
+    /only one purchase order/
+  )
   assert.equal(cartonBatchMetrics(mixed).quantity, '90')
+  const separate = {
+    ...batch,
+    id: 'other-purchase-carton',
+    groups: [{ orderId: '1002', groupId: 'group-2' }],
+    contents: [{ orderId: '1002', entryId: '4', quantity: '27' }],
+  }
+  assertCartonBatchContext(separate, records, preparations, [batch, separate])
   delete preparations[1].groups[0].sharedProductId
   assert.throws(
     () => assertCartonBatchContext(mixed, records, preparations, [mixed]),
-    /eligible carton scope|exceed/
+    /only one purchase order/
   )
   preparations[1].groups[0].sharedProductId = 'repeat-1'
   preparations[1].month = '2026-11'

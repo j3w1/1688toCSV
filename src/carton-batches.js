@@ -2,6 +2,7 @@ import { groupPackingMonth, barcodeValue } from './packing-model.js'
 import { repeatProductStoreIdentity } from './repeat-products.js'
 import { productCartonDetails } from './carton-details.js'
 import { cartonBreakdown } from './carton-packing.js'
+import { unresolvedCoverageFeasible } from './carton-reconciliation.js'
 
 const sourceKey = (orderId, entryId) => JSON.stringify([orderId, entryId])
 const referenceKey = (reference) =>
@@ -75,22 +76,33 @@ export function validateCartonBatch(input) {
     throw new Error('Choose a carton batch')
   const id = text(input.id, 'Carton batch ID'),
     accountId = text(input.accountId || 'local', 'Account')
-  if (!/^\d{4}-(?:0[1-9]|1[0-2])$/.test(input.month))
+  const modern =
+    input.orderId !== undefined ||
+    input.packingBasis !== undefined ||
+    input.unresolvedContents !== undefined
+  if (
+    (!modern || input.month !== undefined) &&
+    !/^\d{4}-(?:0[1-9]|1[0-2])$/.test(input.month)
+  )
     throw new Error('Choose a packing month')
-  if (!Array.isArray(input.groups) || !input.groups.length)
+  if (
+    (!modern || input.groups !== undefined) &&
+    (!Array.isArray(input.groups) || (!modern && !input.groups.length))
+  )
     throw new Error('Choose a code group')
-  const groups = input.groups.map((group) => ({
+  const groups = (input.groups || []).map((group) => ({
     orderId: text(group.orderId, 'Purchase'),
     groupId: text(group.groupId, 'Code group'),
   }))
   if (new Set(groups.map(referenceKey)).size !== groups.length)
     throw new Error('Choose each code group once')
   if (
-    !Array.isArray(input.contents) ||
-    (!input.contents.length && !input.deletedAt)
+    (!modern || input.contents !== undefined) &&
+    (!Array.isArray(input.contents) ||
+      (!modern && !input.contents.length && !input.deletedAt))
   )
     throw new Error('Choose carton contents')
-  const contents = input.contents.map((item) => {
+  const contents = (input.contents || []).map((item) => {
     const quantity = String(item.quantity)
     if (!/^[1-9]\d*$/.test(quantity) || quantity.length > 30)
       throw new Error('Carton contents must contain positive whole quantities')
@@ -127,7 +139,7 @@ export function validateCartonBatch(input) {
   const result = {
     id,
     accountId,
-    month: input.month,
+    ...(input.month === undefined ? {} : { month: input.month }),
     storeId: text(input.storeId, 'Store identity'),
     groups,
     contents,
@@ -142,6 +154,223 @@ export function validateCartonBatch(input) {
     updatedAt: input.updatedAt
       ? new Date(input.updatedAt).toISOString()
       : '1970-01-01T00:00:00.000Z',
+  }
+  if (modern) {
+    const owners = [
+      ...new Set(
+        [
+          input.orderId,
+          ...contents.map((item) => item.orderId),
+          ...groups.map((group) => group.orderId),
+        ].filter(Boolean)
+      ),
+    ]
+    result.orderId = text(
+      input.orderId || (owners.length === 1 ? owners[0] : ''),
+      'Carton purchase'
+    )
+    const basis =
+      input.packingBasis ?? (result.count === 1 ? 'exact' : 'aggregate')
+    if (
+      !['exact', 'uniform', 'aggregate'].includes(basis) ||
+      (basis === 'exact' && result.count !== 1)
+    )
+      throw new Error(
+        'Choose supported exact, uniform or aggregate carton evidence'
+      )
+    if (
+      basis === 'uniform' &&
+      (result.count === null ||
+        result.count < 1 ||
+        contents.some((item) => BigInt(item.quantity) % BigInt(result.count)))
+    )
+      throw new Error(
+        'Uniform carton contents require explicitly equal whole quantities'
+      )
+    result.packingBasis = basis
+    if (
+      input.volumeBasis !== undefined &&
+      !['carton', 'batch'].includes(input.volumeBasis)
+    )
+      throw new Error('Choose per-carton or combined volume')
+    result.volumeBasis = input.volumeBasis ?? 'carton'
+    if (
+      input.unresolvedContents !== undefined &&
+      !Array.isArray(input.unresolvedContents)
+    )
+      throw new Error('Unresolved carton contents must be an array')
+    result.unresolvedContents = (input.unresolvedContents || []).map(
+      (claim) => {
+        if (!claim || typeof claim !== 'object' || Array.isArray(claim))
+          throw new Error('Choose unresolved content evidence')
+        if (
+          claim.entryIds !== undefined &&
+          (!Array.isArray(claim.entryIds) ||
+            claim.entryIds.some((id) => typeof id !== 'string' || !id))
+        )
+          throw new Error(
+            'Unresolved content candidates must be source product IDs'
+          )
+        const quantity =
+          claim.quantity == null || claim.quantity === ''
+            ? null
+            : String(claim.quantity)
+        if (
+          quantity !== null &&
+          (!/^[1-9]\d*$/.test(quantity) || quantity.length > 30)
+        )
+          throw new Error(
+            'Unresolved contents require positive whole quantities or an explicit unknown'
+          )
+        if (
+          claim.supplierCode !== undefined &&
+          (typeof claim.supplierCode !== 'string' ||
+            claim.supplierCode.length > 512 ||
+            /[\u0000-\u001f\u007f]/.test(claim.supplierCode))
+        )
+          throw new Error(
+            'Supplier product identifiers must be bounded single-line text'
+          )
+        if (claim.orderId !== undefined && claim.orderId !== result.orderId)
+          throw new Error(
+            'A carton can contain products from only one purchase order.'
+          )
+        return {
+          ...(claim.groupId
+            ? { groupId: text(claim.groupId, 'Unresolved group') }
+            : {}),
+          entryIds: [...new Set(claim.entryIds || [])],
+          quantity,
+          ...(claim.supplierCode === undefined
+            ? {}
+            : { supplierCode: String(claim.supplierCode) }),
+        }
+      }
+    )
+    result.contentsUnknown =
+      !!input.contentsUnknown ||
+      (!contents.length && !result.unresolvedContents.length) ||
+      result.unresolvedContents.some((claim) => claim.quantity === null)
+    if (
+      input.labelOrigin !== undefined &&
+      !['reported', 'internal'].includes(input.labelOrigin)
+    )
+      throw new Error('Choose the carton reference provenance')
+    result.labelOrigin =
+      input.labelOrigin || (input.cartonNumber ? 'reported' : 'internal')
+    if (input.entitlementIndices !== undefined) {
+      if (
+        !Array.isArray(input.entitlementIndices) ||
+        input.entitlementIndices.length !== result.count ||
+        input.entitlementIndices.some(
+          (value) => !Number.isSafeInteger(value) || value < 0
+        ) ||
+        new Set(input.entitlementIndices).size !==
+          input.entitlementIndices.length
+      )
+        throw new Error(
+          'Carton entitlement indices must retain distinct stable identities'
+        )
+      result.entitlementIndices = [...input.entitlementIndices]
+    }
+    if (input.unitContents !== undefined) {
+      if (
+        !input.unitContents ||
+        typeof input.unitContents !== 'object' ||
+        Array.isArray(input.unitContents)
+      )
+        throw new Error(
+          'Per-carton contents must use stable entitlement indices'
+        )
+      result.unitContents = {}
+      const allocated = new Map()
+      for (const [index, rows] of Object.entries(input.unitContents)) {
+        if (
+          !/^\d+$/.test(index) ||
+          !Number.isSafeInteger(Number(index)) ||
+          (result.entitlementIndices
+            ? !result.entitlementIndices.includes(Number(index))
+            : Number(index) >= (result.count || 0)) ||
+          !Array.isArray(rows)
+        )
+          throw new Error(
+            'Choose an existing physical entitlement for known contents'
+          )
+        const seen = new Set()
+        result.unitContents[index] = rows.map((row) => {
+          if (!row || row.orderId !== result.orderId || seen.has(row.entryId))
+            throw new Error(
+              'Per-carton contents must belong to this purchase once'
+            )
+          seen.add(row.entryId)
+          const quantity = String(row.quantity)
+          if (!/^[1-9]\d*$/.test(quantity) || quantity.length > 30)
+            throw new Error(
+              'Per-carton contents require positive whole quantities'
+            )
+          allocated.set(
+            row.entryId,
+            (allocated.get(row.entryId) || 0n) + BigInt(quantity)
+          )
+          return {
+            orderId: result.orderId,
+            entryId: text(row.entryId, 'Product'),
+            quantity,
+          }
+        })
+      }
+      for (const [entryId, quantity] of allocated) {
+        const total = contents.find((row) => row.entryId === entryId)
+        if (total && quantity > BigInt(total.quantity))
+          throw new Error(
+            'Individual carton contents exceed the retained aggregate product total'
+          )
+      }
+      if (result.unresolvedContents.every((claim) => claim.quantity !== null)) {
+        const declared =
+          contents.reduce((sum, row) => sum + BigInt(row.quantity), 0n) +
+          result.unresolvedContents.reduce(
+            (sum, claim) => sum + BigInt(claim.quantity),
+            0n
+          )
+        if (
+          !result.contentsUnknown &&
+          [...allocated.values()].reduce(
+            (sum, quantity) => sum + quantity,
+            0n
+          ) > declared
+        )
+          throw new Error(
+            'Individual carton contents exceed the reported set quantity'
+          )
+      }
+    }
+    for (const field of [
+      'reportRef',
+      'provenance',
+      'legacyReview',
+      'legacyResolution',
+      'sourceFacts',
+      'manualFacts',
+    ]) {
+      if (input[field] === undefined) continue
+      const encoded = JSON.stringify(input[field])
+      if (encoded === undefined || encoded.length > 262144)
+        throw new Error(
+          'Carton evidence metadata exceeds the supported bound; retain the source asset separately'
+        )
+      result[field] = JSON.parse(encoded)
+    }
+    for (const field of ['supplierMark', 'markCode'])
+      if (input[field] !== undefined) {
+        if (
+          typeof input[field] !== 'string' ||
+          input[field].length > 512 ||
+          /[\u0000-\u001f\u007f]/.test(input[field])
+        )
+          throw new Error('Carton marks must be bounded single-line text')
+        result[field] = input[field]
+      }
   }
   if (input.mark !== undefined) {
     if (
@@ -186,7 +415,118 @@ export function validateCartonBatch(input) {
   return result
 }
 
-/** Own-order groups can share cartons; other purchases enter only through explicit repeat links. */
+/** Current writes never combine source purchases, even when code identities are linked. */
+export function assertSingleOrderCarton(batch) {
+  if (batch.deletedAt) return batch.orderId
+  const owners = [
+    ...new Set(
+      [
+        batch.orderId,
+        ...(batch.contents || []).map((row) => row.orderId),
+        ...(batch.groups || []).map((row) => row.orderId),
+        batch.mark?.orderId,
+      ].filter(Boolean)
+    ),
+  ]
+  if (owners.length !== 1)
+    throw Object.assign(
+      new Error('A carton can contain products from only one purchase order.'),
+      { code: 'CARTON_OWNERSHIP', cartonId: batch.id }
+    )
+  return owners[0]
+}
+
+function modernCartonIssues(batch, records, preparations, batches) {
+  const issues = [],
+    orderId = batch.orderId,
+    accountId = batch.accountId || 'local'
+  const record = records.find(
+    ({ snapshot }) =>
+      (snapshot.accountId || 'local') === accountId &&
+      snapshot.orderId === orderId
+  )
+  if (!record)
+    return ['The carton purchase is no longer available. Review these cartons.']
+  const storeId =
+    repeatProductStoreIdentity(record.snapshot) ||
+    `order:${accountId}/${orderId}`
+  if (batch.storeId !== storeId)
+    issues.push('Carton store identity differs from its source purchase.')
+  const preparation = preparations.find(
+    (value) => value.accountId === accountId && value.orderId === orderId
+  )
+  const groups = new Map(
+    (preparation?.groups || []).map((group) => [group.id, group])
+  )
+  if (
+    (batch.groups || []).some(
+      (group) => group.orderId !== orderId || !groups.has(group.groupId)
+    )
+  )
+    issues.push(
+      'The carton code group is no longer available in this purchase.'
+    )
+  if (
+    batch.mark &&
+    (batch.mark.orderId !== orderId ||
+      !groups.get(batch.mark.groupId)?.baseCode)
+  )
+    issues.push(
+      'The carton mark does not belong to this purchase’s valid mark context.'
+    )
+  const quantities = Object.fromEntries(
+    record.snapshot.items.map((item) => [
+      item.entryId,
+      /^\d+$/.test(item.quantity) ? item.quantity : null,
+    ])
+  )
+  const claims = []
+  for (const current of [
+    ...batches.filter((other) => other.id !== batch.id),
+    batch,
+  ]) {
+    if (current.deletedAt || (current.accountId || 'local') !== accountId)
+      continue
+    for (const item of current.contents || []) {
+      if (item.orderId !== orderId) continue
+      if (!(item.entryId in quantities) || quantities[item.entryId] === null) {
+        issues.push(
+          'Carton contents reference missing or non-whole source quantities.'
+        )
+        continue
+      }
+      quantities[item.entryId] = String(
+        BigInt(quantities[item.entryId]) - BigInt(item.quantity)
+      )
+    }
+    if (current.orderId === orderId)
+      for (const claim of current.unresolvedContents || []) {
+        const candidates = claim.entryIds?.length
+          ? claim.entryIds
+          : groups
+              .get(claim.groupId)
+              ?.variants.flatMap((variant) => variant.entryIds) ||
+            Object.keys(quantities)
+        if (candidates.some((entryId) => !(entryId in quantities)))
+          issues.push(
+            'Unresolved contents reference a product outside this purchase.'
+          )
+        claims.push({ quantity: claim.quantity, entryIds: candidates })
+      }
+  }
+  if (
+    Object.values(quantities).some(
+      (value) => value !== null && BigInt(value) < 0n
+    ) ||
+    unresolvedCoverageFeasible(quantities, claims) === false
+  )
+    issues.push(
+      'Confirmed and unresolved carton contents exceed the eligible purchase quantities.'
+    )
+  return [...new Set(issues)]
+}
+
+/** Compatibility scope for legacy prepared evidence; current writes have one owner. */
 export function cartonBatchScope(records, preparations, reference) {
   const accountId = reference.accountId || 'local'
   const preparation = preparations.find(
@@ -511,6 +851,13 @@ export function cartonBatchMetrics(batch) {
 
 export function cartonBatchIssues(batch, records, preparations, batches = []) {
   if (batch.deletedAt) return []
+  try {
+    assertSingleOrderCarton(batch)
+  } catch (error) {
+    return [error.message]
+  }
+  if (batch.orderId)
+    return modernCartonIssues(batch, records, preparations, batches)
   const issues = []
   const scope = contextScope(batch, records, preparations)
   if (!scope)

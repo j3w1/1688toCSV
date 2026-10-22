@@ -5,6 +5,7 @@ import {
   mergeCartonBatchRecords,
   cartonBatchIssues,
   assertCartonBatchEvidence,
+  assertSingleOrderCarton,
 } from './carton-batches.js'
 
 /** The collection owns physical cartons across purchases; order annotations are source evidence. */
@@ -117,6 +118,7 @@ export function createCartonBatchesRepository({
       history: loaded.history,
     })
     for (const batch of result) {
+      assertSingleOrderCarton(batch)
       if (allowReview && batch.needsReview) continue
       assertCartonBatchContext(
         batch,
