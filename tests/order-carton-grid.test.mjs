@@ -1,6 +1,59 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
+
+test('packing patterns never multiply aggregate totals and retain known uneven or shared references', () => {
+  const aggregate = {
+    entryId: 'a',
+    pattern: [{ cartonId: 'batch', count: 4, quantity: '40', perCarton: null }],
+    sharedReferences: [],
+  }
+  assert.match(formatOrderPackingPattern(aggregate), /40 pieces in 4 cartons/)
+  assert.doesNotMatch(formatOrderPackingPattern(aggregate), /4 × 40/)
+  const shared = {
+    entryId: 'a',
+    pattern: [
+      {
+        cartonId: 'shared',
+        count: 1,
+        quantity: '20',
+        perCarton: '20',
+        shared: true,
+      },
+    ],
+    sharedReferences: [
+      { id: 'shared', cartonNumber: '12', quantity: '20', totalPieces: '92' },
+    ],
+  }
+  assert.match(
+    formatOrderPackingPattern(shared),
+    /20 of this product · 92 total in shared 12/
+  )
+  const uneven = {
+      entryId: 'a',
+      pattern: [{ cartonId: 'set', count: 2, quantity: '25', perCarton: null }],
+    },
+    batch = {
+      id: 'set',
+      orderId: 'o',
+      count: 2,
+      packingBasis: 'aggregate',
+      contents: [{ orderId: 'o', entryId: 'a', quantity: '25' }],
+      unitContents: {
+        0: [{ orderId: 'o', entryId: 'a', quantity: '13' }],
+        1: [{ orderId: 'o', entryId: 'a', quantity: '12' }],
+      },
+      weight: '',
+      len: '',
+      wid: '',
+      ht: '',
+    }
+  const pattern = formatOrderPackingPattern(uneven, [batch])
+  assert.match(pattern, /13 pieces in/)
+  assert.match(pattern, /12 pieces in/)
+  assert.doesNotMatch(pattern, /unknown|2 × 25/)
+})
 import {
+  formatOrderPackingPattern,
   captureGridTarget,
   assertGridTarget,
   parseGridCells,
@@ -157,6 +210,10 @@ test('dimension and numeric validation preserve exact decimals and reject partia
   const invalid = await planGridPaste('60x50\t-1\tguess', target, { rows })
   assert.equal(invalid.valid, false)
   assert.equal(invalid.errors.length, 3)
+  const zero = await planGridPaste('60x50x40\t0\t0', target, { rows })
+  assert.equal(zero.valid, true)
+  assert.equal(zero.changes[1].value, '0')
+  assert.equal(zero.changes[2].value, '0')
 })
 
 test('changed view, sort, generation or order invalidates a captured target', () => {

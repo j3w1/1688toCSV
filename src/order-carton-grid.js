@@ -30,6 +30,52 @@ export const CARTON_GRID_COLUMNS = [
   { key: 'provenance', label: 'Evidence', readonly: true },
 ]
 
+/** Quantity is the whole set total unless the planner explicitly supplies perCarton. */
+export function formatOrderPackingPattern(product, cartons = []) {
+  return (product.pattern || [])
+    .map((part) => {
+      const carton = cartons.find((carton) => carton.id === part.cartonId),
+        shared = product.sharedReferences?.find(
+          (entry) => entry.id === part.cartonId
+        ),
+        reference =
+          carton?.cartonNumber ||
+          shared?.cartonNumber ||
+          `${m('Internal reference')} ${part.cartonId}`
+      if (part.perCarton == null && carton?.unitContents) {
+        const units = physicalUnits(carton)
+        if (units.length && units.every((unit) => unit.contents !== null))
+          return units
+            .flatMap((unit) =>
+              unit.contents
+                .filter((entry) => entry.entryId === product.entryId)
+                .map((entry) =>
+                  String(
+                    m('{0} pieces in {1}', {
+                      0: entry.quantity,
+                      1: unit.reference,
+                    })
+                  )
+                )
+            )
+            .join(' + ')
+      }
+      const pattern =
+        part.perCarton != null
+          ? `${part.count ?? 1} × ${part.perCarton}`
+          : String(
+              m('{0} pieces in {1} cartons; per-carton contents unknown', {
+                0: part.quantity ?? '—',
+                1: part.count ?? '—',
+              })
+            )
+      return shared
+        ? `${pattern} · ${m('{0} of this product · {1} total in shared {2}', { 0: shared.quantity ?? '—', 1: shared.totalPieces ?? '—', 2: reference })}`
+        : pattern
+    })
+    .join(' + ')
+}
+
 /** Display retained evidence, including retired and review-held records. Never infer stock. */
 export function cartonHistoryRows(state, orderRefs = []) {
   const key = ({ accountId = 'local', orderId }) =>
@@ -680,9 +726,9 @@ function numericCell(raw, column) {
       ])
     )
   }
-  if (!/^\d+(?:[.,]\d+)?$/.test(value) || !/[1-9]/.test(value))
+  if (!/^\d+(?:[.,]\d+)?$/.test(value))
     throw new Error(
-      'Enter a positive decimal or leave the measurement unknown.'
+      'Enter a nonnegative decimal or leave the measurement unknown.'
     )
   return value.replace(',', '.')
 }
@@ -1167,12 +1213,8 @@ export async function createOrderCartonSession({
         capacity: product.rawCapacity ?? product.capacity,
         proposedCount: product.fullCartons,
         unassigned: product.unassignedPieces,
-        pattern: product.pattern
-          .map(
-            (part) =>
-              `${part.count ?? 1} × ${part.perCarton ?? part.quantity ?? '?'}${part.shared ? ` · ${part.cartonId}` : ''}`
-          )
-          .join(' + '),
+        pattern: formatOrderPackingPattern(product, plan.cartons),
+        patternLabel: () => formatOrderPackingPattern(product, plan.cartons),
         source: item,
         states: product.states,
         issues: product.issues,
@@ -1868,6 +1910,17 @@ export function mountOrderCartonGrid(
             })
         else photo.disabled = true
       } else if (column.readonly) {
+        if (column.key === 'pattern' && row.patternLabel) {
+          const readout = el('span', undefined, 'pattern-readout'),
+            copy = el('button', m('Copy value'))
+          td.patternLabel = row.patternLabel
+          bindText(readout, () => td.patternLabel())
+          copy.onclick = () =>
+            void navigator.clipboard.writeText(td.patternLabel()).catch(onError)
+          td.append(readout, copy)
+          tr.append(td)
+          continue
+        }
         const labels = {
           uniform: 'Uniform',
           uneven: 'Uneven',
@@ -2496,6 +2549,17 @@ export function mountOrderCartonGrid(
         'pattern',
       ]) {
         const td = element.querySelector(`[data-column="${key}"]`)
+        if (
+          key === 'pattern' &&
+          td?.querySelector('.pattern-readout') &&
+          row.patternLabel
+        ) {
+          td.patternLabel = row.patternLabel
+          bindText(td.querySelector('.pattern-readout'), () =>
+            td.patternLabel()
+          )
+          continue
+        }
         if (td?.firstElementChild)
           td.firstElementChild.replaceWith(
             copyTextButton(String(row[key] ?? '—'), { label: m('Copy value') })
