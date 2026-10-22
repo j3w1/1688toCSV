@@ -202,10 +202,49 @@ export function physicalUnits(batch) {
       accountId: batch.accountId || 'local',
       orderId: batch.orderId || batchOrderIds(batch)[0],
       index,
-      reference: batch.cartonNumber || `Internal ${batch.id} / ${index + 1}`,
-      labelOrigin: batch.cartonNumber
-        ? batch.labelOrigin || 'reported'
-        : 'internal',
+      reference:
+        batch.unitLabels?.[index] ||
+        batch.cartonNumber ||
+        `Internal ${batch.id} / ${index + 1}`,
+      labelOrigin: batch.unitLabels?.[index]
+        ? 'reported'
+        : batch.cartonNumber
+          ? batch.labelOrigin || 'reported'
+          : 'internal',
+      quantity: known
+        ? String(known.reduce((sum, row) => sum + wholeUnits(row.quantity), 0n))
+        : basis === 'uniform' &&
+            !batch.contentsUnknown &&
+            !batch.unresolvedContents?.length
+          ? String(
+              (batch.contents || []).reduce(
+                (sum, row) => sum + wholeUnits(row.quantity),
+                0n
+              ) / BigInt(batch.count)
+            )
+          : batch.count === 1 &&
+              !batch.contentsUnknown &&
+              (batch.unresolvedContents || []).every(
+                (claim) => claim.quantity !== null
+              )
+            ? String(
+                [
+                  ...(batch.contents || []),
+                  ...(batch.unresolvedContents || []),
+                ].reduce((sum, row) => sum + wholeUnits(row.quantity), 0n)
+              )
+            : batch.provenance?.contentClaims?.length &&
+                batch.provenance.contentClaims.every(
+                  (claim) =>
+                    claim.basis === 'per-carton' && claim.quantity !== null
+                )
+              ? String(
+                  batch.provenance.contentClaims.reduce(
+                    (sum, row) => sum + wholeUnits(row.quantity),
+                    0n
+                  )
+                )
+              : null,
       packingBasis: basis,
       batchCount: batch.count,
       revision: batch.revision,
@@ -251,7 +290,9 @@ export function physicalUnits(batch) {
 }
 
 /** Exact feasibility only. Its arbitrary flow is never returned as physical contents. */
-export function unresolvedCoverageFeasible(capacities, claims) {
+export function unresolvedCoverageFeasible(capacities, claims, minimums = []) {
+  if (minimums.length)
+    return coverageWithUnitMinimums(capacities, claims, minimums)
   const entries = [...capacities.keys()],
     source = 0,
     firstClaim = 1,
@@ -323,7 +364,8 @@ export function assertOrderCartonConservation(
       entry.eligible === null ? 0n : BigInt(entry.eligible),
     ])
   )
-  const claims = []
+  const claims = [],
+    minimums = []
   for (const batch of batches) {
     if (
       batch.deletedAt ||
@@ -359,6 +401,36 @@ export function assertOrderCartonConservation(
         capacities.get(item.entryId) - wholeUnits(item.quantity)
       )
     }
+    const units = new Map()
+    for (const rows of Object.values(batch.unitContents || {}))
+      for (const row of rows) {
+        if (row.orderId !== orderId || !capacities.has(row.entryId))
+          throw inventoryError(
+            'CARTON_SOURCE_MISSING',
+            'Known physical unit contents belong to another purchase.'
+          )
+        units.set(
+          row.entryId,
+          (units.get(row.entryId) || 0n) + wholeUnits(row.quantity)
+        )
+      }
+    for (const [entryId, quantity] of units) {
+      const covered = (batch.contents || [])
+        .filter((row) => row.entryId === entryId && row.orderId === orderId)
+        .reduce((sum, row) => sum + wholeUnits(row.quantity), 0n)
+      if (quantity > covered)
+        minimums.push({
+          batchId: batch.id,
+          entryId,
+          quantity: String(quantity - covered),
+        })
+    }
+    if (batch.contentsUnknown && !(batch.unresolvedContents || []).length)
+      claims.push({
+        batchId: batch.id,
+        entryIds: [...capacities.keys()],
+        quantity: null,
+      })
     for (const claim of batch.unresolvedContents || []) {
       const entryIds = claim.entryIds?.length
         ? claim.entryIds
@@ -369,10 +441,18 @@ export function assertOrderCartonConservation(
           'Unresolved content candidates belong to another purchase.',
           { batchId: batch.id }
         )
-      if (claim.quantity !== null) claims.push({ ...claim, entryIds })
+      claims.push({ ...claim, entryIds, batchId: batch.id })
     }
   }
-  if (!unresolvedCoverageFeasible(capacities, claims))
+  if (
+    !unresolvedCoverageFeasible(
+      capacities,
+      minimums.length
+        ? claims
+        : claims.filter((claim) => claim.quantity !== null),
+      minimums
+    )
+  )
     throw inventoryError(
       'CARTON_OVERALLOCATION',
       'Confirmed and unresolved carton contents exceed the eligible purchase quantities.',
@@ -630,4 +710,113 @@ export function projectBacklog(
       order.issues.map((message) => ({ orderId: order.orderId, message }))
     ),
   }
+}
+
+/** Feasibility circulation: known unit facts impose minima, never a saved split. */
+function coverageWithUnitMinimums(capacities, claims, minimums) {
+  const source = 0,
+    sink = 1,
+    graph = [[], []],
+    balance = [0n, 0n],
+    node = () => {
+      graph.push([])
+      balance.push(0n)
+      return graph.length - 1
+    }
+  const entries = new Map(
+    [...capacities].map(([id, capacity]) => [id, { node: node(), capacity }])
+  )
+  if ([...capacities.values()].some((quantity) => quantity < 0n)) return false
+  const total = [...capacities.values()].reduce(
+      (sum, value) => sum + value,
+      0n
+    ),
+    batchEntries = new Map()
+  const edge = (from, to, capacity) => {
+    const a = { to, capacity, reverse: graph[to].length },
+      b = { to: from, capacity: 0n, reverse: graph[from].length }
+    graph[from].push(a)
+    graph[to].push(b)
+  }
+  const bounded = (from, to, lower, upper) => {
+    if (lower > upper) return false
+    edge(from, to, upper - lower)
+    balance[from] -= lower
+    balance[to] += lower
+    return true
+  }
+  const batchNode = (batchId, entryId) => {
+    const key = JSON.stringify([batchId, entryId])
+    if (!batchEntries.has(key))
+      batchEntries.set(key, { node: node(), batchId, entryId })
+    return batchEntries.get(key).node
+  }
+  if (
+    claims.reduce((sum, claim) => sum + (claim.entryIds?.length || 0), 0) >
+    1000000
+  )
+    throw inventoryError(
+      'COVERAGE_LIMIT',
+      'Review this bounded coverage set before confirming it.'
+    )
+  for (const claim of claims) {
+    const q = claim.quantity === null ? null : wholeUnits(claim.quantity),
+      id = node()
+    if (!bounded(source, id, q || 0n, q === null ? total : q)) return false
+    for (const entryId of new Set(claim.entryIds || []))
+      if (entries.has(entryId))
+        edge(id, batchNode(claim.batchId, entryId), q === null ? total : q)
+  }
+  for (const minimum of minimums) batchNode(minimum.batchId, minimum.entryId)
+  for (const value of batchEntries.values()) {
+    const minimum = minimums
+        .filter(
+          (row) =>
+            row.batchId === value.batchId && row.entryId === value.entryId
+        )
+        .reduce((sum, row) => sum + wholeUnits(row.quantity), 0n),
+      entry = entries.get(value.entryId)
+    if (!entry || !bounded(value.node, entry.node, minimum, total)) return false
+  }
+  for (const entry of entries.values()) edge(entry.node, sink, entry.capacity)
+  edge(sink, source, total)
+  const superSource = node(),
+    superSink = node()
+  let required = 0n
+  for (let index = 0; index < superSource; index++) {
+    if (balance[index] > 0n) {
+      edge(superSource, index, balance[index])
+      required += balance[index]
+    } else if (balance[index] < 0n) edge(index, superSink, -balance[index])
+  }
+  let flow = 0n
+  while (flow < required) {
+    const paths = Array(graph.length).fill(null),
+      queue = [superSource]
+    paths[superSource] = [-1, -1]
+    for (let at = 0; at < queue.length && !paths[superSink]; at++)
+      graph[queue[at]].forEach((edge, index) => {
+        if (edge.capacity > 0n && !paths[edge.to]) {
+          paths[edge.to] = [queue[at], index]
+          queue.push(edge.to)
+        }
+      })
+    if (!paths[superSink]) return false
+    let amount = required - flow
+    for (let at = superSink; at !== superSource; ) {
+      const [from, index] = paths[at]
+      if (graph[from][index].capacity < amount)
+        amount = graph[from][index].capacity
+      at = from
+    }
+    for (let at = superSink; at !== superSource; ) {
+      const [from, index] = paths[at],
+        link = graph[from][index]
+      link.capacity -= amount
+      graph[at][link.reverse].capacity += amount
+      at = from
+    }
+    flow += amount
+  }
+  return true
 }

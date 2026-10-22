@@ -309,3 +309,61 @@ test('reviewed entitlement indices and unit facts retain identity without distri
     /distinct stable/
   )
 })
+
+test('known per-unit variant facts constrain unresolved group feasibility without saving an arbitrary split', () => {
+  const record = syntheticOrder('1001', '10')
+  record.snapshot.items.push({
+    ...record.snapshot.items[0],
+    entryId: '2002',
+    quantity: '5',
+  })
+  const batch = syntheticBatch('1001', 2, '10', {
+    packingBasis: 'aggregate',
+    contents: [],
+    unresolvedContents: [{ entryIds: ['2001', '2002'], quantity: '10' }],
+    unitContents: { 0: [{ orderId: '1001', entryId: '2002', quantity: '6' }] },
+  })
+  assert.throws(() => assertOrderCartonConservation(record, [batch]), {
+    code: 'CARTON_OVERALLOCATION',
+  })
+  batch.unitContents[0][0].quantity = '5'
+  assert.doesNotThrow(() => assertOrderCartonConservation(record, [batch]))
+  assert.throws(
+    () =>
+      assertOrderCartonConservation(record, [
+        batch,
+        syntheticBatch('1001', 1, '1', {
+          id: 'other',
+          contents: [{ orderId: '1001', entryId: '2002', quantity: '1' }],
+        }),
+      ]),
+    { code: 'CARTON_OVERALLOCATION' }
+  )
+  batch.unresolvedContents[0].entryIds = ['2001']
+  assert.throws(() => assertOrderCartonConservation(record, [batch]), {
+    code: 'CARTON_OVERALLOCATION',
+  })
+})
+
+test('reported unit labels preserve padded numbers and explicit per-carton group pieces remain known without variant allocation', () => {
+  const batch = syntheticBatch('1001', 3, '27', {
+    packingBasis: 'aggregate',
+    contents: [],
+    unitLabels: { 0: '001', 1: '002', 2: '003' },
+    unresolvedContents: [{ entryIds: ['2001'], quantity: '27' }],
+    provenance: { contentClaims: [{ quantity: '9', basis: 'per-carton' }] },
+  })
+  const units = physicalUnits(batch)
+  assert.deepEqual(
+    units.map((unit) => unit.reference),
+    ['001', '002', '003']
+  )
+  assert(
+    units.every(
+      (unit) =>
+        unit.labelOrigin === 'reported' &&
+        unit.quantity === '9' &&
+        unit.contents === null
+    )
+  )
+})

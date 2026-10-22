@@ -463,6 +463,141 @@ export function createPackingBackup(backup, selection) {
   const selected = new Map(
     scope.orders.map((order) => [key(order), order.entryIds])
   )
+  if (backup.version >= 5) {
+    const related =
+      (backup.containers || []).some((container) =>
+        [
+          ...(container.draft?.orders || []),
+          ...(container.revisions || []).flatMap(
+            (revision) => revision.orders || []
+          ),
+        ].some((order) => selected.has(key(order)))
+      ) ||
+      (backup.packingReports || []).some((report) =>
+        selected.has(key(report.orderKey))
+      ) ||
+      (backup.orderCartonDrafts || []).some((draft) =>
+        selected.has(key(draft))
+      ) ||
+      (backup.shipmentLocks || []).some((lock) => selected.has(key(lock)))
+    if (related) {
+      const required = new Set(selected.keys())
+      for (const order of scope.orders) {
+        const source = backup.orders.find(
+          (record) => key(record.snapshot) === key(order)
+        )
+        if (
+          source.snapshot.items.some(
+            (item) => !order.entryIds.includes(item.entryId)
+          )
+        )
+          throw Object.assign(
+            new Error(
+              'Review a complete-order backup scope to retain physical cartons, reports and historical shipment evidence.'
+            ),
+            {
+              code: 'PACKING_BACKUP_DEPENDENCY_REVIEW',
+              requiredOrderRefs: scope.orders.map(({ accountId, orderId }) => ({
+                accountId,
+                orderId,
+              })),
+            }
+          )
+      }
+      let changed = true
+      while (changed) {
+        changed = false
+        const retain = (reference) => {
+          const id = key(reference)
+          if (!required.has(id)) {
+            required.add(id)
+            changed = true
+          }
+        }
+        for (const container of backup.containers || []) {
+          const references = [
+            ...(container.draft?.orders || []),
+            ...(container.revisions || []).flatMap(
+              (revision) => revision.orders || []
+            ),
+          ]
+          if (references.some((order) => required.has(key(order))))
+            references.forEach(retain)
+        }
+        for (const lock of backup.shipmentLocks || [])
+          if (required.has(key(lock)))
+            for (const lineage of lock.lineages || [])
+              for (const member of lineage.members || []) retain(member)
+      }
+      const orders = backup.orders.filter((record) =>
+          required.has(key(record.snapshot))
+        ),
+        history = backup.history.filter((record) =>
+          required.has(key(record.snapshot))
+        ),
+        preparations = backup.preparations.filter((prep) =>
+          required.has(key(prep))
+        )
+      const containers = (backup.containers || []).filter((container) =>
+        [
+          ...(container.draft?.orders || []),
+          ...(container.revisions || []).flatMap(
+            (revision) => revision.orders || []
+          ),
+        ].some((order) => required.has(key(order)))
+      )
+      const packingReports = (backup.packingReports || []).filter((report) =>
+          required.has(key(report.orderKey))
+        ),
+        reportSources = (backup.reportSources || []).filter((source) =>
+          source.owners?.some((owner) => required.has(key(owner)))
+        )
+      const result = {
+        ...structuredClone(backup),
+        orders,
+        history,
+        preparations,
+        cartonBatches: structuredClone(
+          (backup.cartonBatches || []).filter(
+            (batch) =>
+              required.has(key(batch)) ||
+              batch.contents?.some((row) =>
+                required.has(key({ ...row, accountId: batch.accountId }))
+              )
+          )
+        ),
+        containers: structuredClone(containers),
+        packingReports: structuredClone(packingReports),
+        reportSources: structuredClone(reportSources),
+        orderCartonDrafts: structuredClone(
+          (backup.orderCartonDrafts || []).filter((draft) =>
+            required.has(key(draft))
+          )
+        ),
+        shipmentLocks: structuredClone(
+          (backup.shipmentLocks || []).filter((lock) => required.has(key(lock)))
+        ),
+        operationIntents: [],
+        packingPreferences: packingPreferences(
+          backup.packingPreferences,
+          orders
+        ),
+        requestedPackingScope: scope,
+      }
+      delete result.packingScope
+      const refs = collectImageReferences({
+        ...result,
+        issuedCodes: backup.issuedCodes,
+      })
+      result.images = structuredClone(
+        (backup.images || []).filter((image) =>
+          refs.has(imageCacheKey(image.url))
+        )
+      )
+      return result
+    }
+  }
+
   const selectedOrders = backup.orders
     .filter((order) => selected.has(key(order.snapshot)))
     .map((order) =>
@@ -517,7 +652,17 @@ export function createPackingBackup(backup, selection) {
     if (localImageReference.test(url)) urls.add(url)
   return {
     format: '1688-order-library',
-    version: 4,
+    version: backup.version >= 5 ? 5 : 4,
+    ...(backup.version >= 5
+      ? {
+          containers: [],
+          packingReports: [],
+          reportSources: [],
+          orderCartonDrafts: [],
+          shipmentLocks: [],
+          operationIntents: [],
+        }
+      : {}),
     exportedAt: backup.exportedAt,
     orders,
     // Physical allocations can predate reduced current purchase quantities.

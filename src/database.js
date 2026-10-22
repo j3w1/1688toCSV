@@ -1,3 +1,22 @@
+import * as purchaseCodes from './purchase-codes.js'
+import {
+  createContainerRepository,
+  OPERATIONAL_STORES,
+} from './container-repository.js'
+import {
+  createCartonReportRepository,
+  validateReportAsset,
+  encodeReportAsset,
+  validateOperationalBackup,
+} from './carton-report-repository.js'
+import { validateContainerRecord } from './container-model.js'
+import {
+  sourceRevision,
+  orderKey,
+  stableValue,
+  batchOrderIds,
+  batchNeedsLegacyReview,
+} from './inventory-model.js'
 import {
   validateInventoryDispositions,
   resolvedPurchaseDate,
@@ -943,7 +962,10 @@ async function transaction(database, stores, mode, run) {
 
 export function validateBackup(input) {
   object(input, 'Backup')
-  if (input.format !== BACKUP_FORMAT || ![1, 2, 3, 4].includes(input.version))
+  if (
+    input.format !== BACKUP_FORMAT ||
+    ![1, 2, 3, 4, 5].includes(input.version)
+  )
     throw new Error('Unsupported order-library backup')
   date(input.exportedAt, 'exportedAt')
   if (!Array.isArray(input.orders) || !Array.isArray(input.history))
@@ -1079,11 +1101,27 @@ export function validateBackup(input) {
   const inPackingScope = (record) =>
     !scopedOrderKeys ||
     scopedOrderKeys.has(JSON.stringify(keyFor(record.snapshot)))
-  if (input.version === 4 && !Array.isArray(input.cartonBatches))
+  if (input.version >= 4 && !Array.isArray(input.cartonBatches))
     throw new Error('Backup cartonBatches must be an array')
   const cartonBatches = (
     input.cartonBatches ?? createLegacyCartonBatches(orders, preparations)
-  ).map(validateCartonBatch)
+  ).map((batch) =>
+    validateCartonBatch(
+      input.version < 5 && batchNeedsLegacyReview(batch)
+        ? {
+            ...batch,
+            needsReview: true,
+            legacyReview: {
+              kind:
+                batchOrderIds(batch).length !== 1
+                  ? 'cross-order'
+                  : 'legacy-loading',
+              reason: 'Retained historical evidence requires explicit review.',
+            },
+          }
+        : batch
+    )
+  )
   if (
     new Set(cartonBatches.map((batch) => batch.id)).size !==
     cartonBatches.length
@@ -1146,6 +1184,7 @@ export function validateBackup(input) {
     packingPreferences,
     packingScope,
     cartonBatches,
+    ...validateOperationalBackup(input),
   }
 }
 
@@ -1180,7 +1219,7 @@ function validatePreparationMembership(preparation, order, history) {
 /** Extension-origin IndexedDB is the only durable store for orders and import jobs. */
 export async function openDatabase({ name = '1688-order-library' } = {}) {
   const database = await new Promise((resolve, reject) => {
-    const request = globalThis.indexedDB.open(name, 4)
+    const request = globalThis.indexedDB.open(name, 5)
     let blocked = false
     request.onupgradeneeded = (event) => {
       const db = request.result
@@ -1246,6 +1285,63 @@ export async function openDatabase({ name = '1688-order-library' } = {}) {
             }
           })
       }
+      if (event.oldVersion < 5) {
+        for (const store of [
+          'containers',
+          'packingReports',
+          'packingReportSources',
+          'orderCartonDrafts',
+          'shipmentLocks',
+          'operationIntents',
+        ])
+          db.createObjectStore(store, {
+            keyPath: store === 'packingReportSources' ? 'rawAssetRef' : 'id',
+          })
+        const tx = request.transaction
+        const cursor = tx.objectStore('cartonBatches').openCursor()
+        cursor.onsuccess = () => {
+          const entry = cursor.result
+          if (!entry) return
+          const batch = entry.value,
+            owners = batchOrderIds(batch)
+          const review = owners.length !== 1 || Number(batch.loaded || 0) > 0
+          const next = {
+            ...batch,
+            ...(owners.length === 1
+              ? {
+                  orderId: owners[0],
+                  packingBasis:
+                    batch.packingBasis ||
+                    (batch.count === 1 ? 'exact' : 'aggregate'),
+                  unresolvedContents: batch.unresolvedContents || [],
+                  volumeBasis: batch.volumeBasis || 'carton',
+                }
+              : {}),
+            ...(review
+              ? {
+                  needsReview: true,
+                  legacyReview: {
+                    kind:
+                      owners.length !== 1 ? 'cross-order' : 'legacy-loading',
+                    reason:
+                      'Review retained historical physical evidence; no shipment was invented.',
+                  },
+                }
+              : {}),
+          }
+          if (
+            Number.isSafeInteger(batch.count) &&
+            batch.count >= 0 &&
+            batch.count <= 10000
+          )
+            next.entitlementIndices ||= Array.from(
+              { length: batch.count },
+              (_, index) => index
+            )
+          entry.update(next)
+          entry.continue()
+        }
+      }
     }
     request.onsuccess = () => {
       if (blocked) request.result.close()
@@ -1262,13 +1358,82 @@ export async function openDatabase({ name = '1688-order-library' } = {}) {
     }
   })
   database.onversionchange = () => database.close()
-  const read = (stores, run) => transaction(database, stores, 'readonly', run)
-  const write = (stores, run) => transaction(database, stores, 'readwrite', run)
+  const read = (stores, run) =>
+    transaction(
+      database,
+      [...new Set([...stores, ...OPERATIONAL_STORES])],
+      'readonly',
+      run
+    )
+  const write = (stores, run) =>
+    transaction(
+      database,
+      [...new Set([...stores, ...OPERATIONAL_STORES])],
+      'readwrite',
+      run
+    )
+  let containerRepository
   const cartonBatchesRepository = createCartonBatchesRepository({
     read,
     write,
     requested,
     nextEditTimestamp,
+    guardChanges: async (tx, changes) =>
+      containerRepository.guardChanges(
+        await containerRepository.state(tx),
+        changes
+      ),
+  })
+  containerRepository = createContainerRepository({
+    read,
+    write,
+    requested,
+    nextEditTimestamp,
+    codeHooks: {
+      ...purchaseCodes,
+      async commitPreparedState(tx, effective, previous) {
+        purchaseCodes.assertConsumedCodeChanges({
+          previous: previous.preparations,
+          preparations: effective.preparations,
+          locks: previous.locks,
+          amendment: true,
+        })
+        purchaseCodes.assertPurchaseCodeMonths({
+          records: effective.records,
+          previous: previous.preparations,
+          preparations: effective.preparations,
+        })
+        validateSharedProducts(effective.preparations, {
+          orders: effective.records,
+          issuedCodes: previous.issuedCodes,
+        })
+        const next = activePackingState(
+          effective.preparations,
+          previous.allocations,
+          previous.issuedCodes,
+          {
+            historicalReservations: purchaseCodes.historicalCodeReservations(
+              effective.locks
+            ),
+            supplierIdentityEquivalences:
+              purchaseCodes.supplierCodeIdentityEquivalences(effective.records),
+          }
+        )
+        tx.objectStore('packingAllocations').clear()
+        tx.objectStore('issuedCodes').clear()
+        for (const value of next.allocations)
+          tx.objectStore('packingAllocations').put(value)
+        for (const value of next.issuedCodes)
+          tx.objectStore('issuedCodes').put(value)
+      },
+    },
+  })
+  const reportRepository = createCartonReportRepository({
+    read,
+    write,
+    requested,
+    nextEditTimestamp,
+    containerRepository,
   })
 
   async function replaceActiveCodes(
@@ -1283,7 +1448,12 @@ export async function openDatabase({ name = '1688-order-library' } = {}) {
       [
         ...incomingEvidence,
         ...(await requested(tx.objectStore('issuedCodes').getAll())),
-      ]
+      ],
+      {
+        historicalReservations: purchaseCodes.historicalCodeReservations(
+          await requested(tx.objectStore('shipmentLocks').getAll())
+        ),
+      }
     )
     tx.objectStore('issuedCodes').clear()
     tx.objectStore('packingAllocations').clear()
@@ -1566,7 +1736,10 @@ export async function openDatabase({ name = '1688-order-library' } = {}) {
       suffixBaselines = [],
       expectedSnapshots = [],
       allowSharedProductEdits = false,
-    } = {}
+      contextContainerId,
+      expectedAmendment,
+    } = {},
+    txOverride
   ) {
     if (!Array.isArray(inputs) || !inputs.length)
       throw new Error('Choose at least one order to prepare')
@@ -1653,7 +1826,9 @@ export async function openDatabase({ name = '1688-order-library' } = {}) {
     }
     const previousOrderIds = checkpointScope(capturePrevious, 'capturePrevious')
     const defaultOrderIds = checkpointScope(resetDefaults, 'resetDefaults')
-    return (preview ? read : write)(
+    return (
+      txOverride ? (_stores, run) => run(txOverride) : preview ? read : write
+    )(
       [
         'orders',
         'history',
@@ -1674,12 +1849,56 @@ export async function openDatabase({ name = '1688-order-library' } = {}) {
         let issuedCodes = await requested(
           tx.objectStore('issuedCodes').getAll()
         )
-        const previousPreparations = await requested(store.getAll())
+        const rawState = contextContainerId
+          ? await containerRepository.state(tx)
+          : null
+        const proof =
+          expectedAmendment ||
+          inputs[0]?.amendmentContext ||
+          expectedSnapshots[0]?.amendmentContext
+        const activeContext = contextContainerId
+          ? containerRepository.amendmentFor(rawState, {
+              contextContainerId,
+              expectedAmendment: proof,
+            })
+          : null
+        if (activeContext)
+          for (const draft of drafts)
+            containerRepository.amendmentFor(rawState, {
+              ...draft,
+              contextContainerId,
+              expectedAmendment: proof,
+            })
+        const stagedState = activeContext
+          ? containerRepository.overlay(rawState, activeContext)
+          : null
+        const previousPreparations =
+          stagedState?.preparations || (await requested(store.getAll()))
         for (const expected of expectedSnapshots) {
-          const order = await requested(
-            tx.objectStore('orders').get([expected.accountId, expected.orderId])
+          const order = stagedState
+            ? stagedState.records.find(
+                (record) =>
+                  record.snapshot.accountId === expected.accountId &&
+                  record.snapshot.orderId === expected.orderId
+              )
+            : await requested(
+                tx
+                  .objectStore('orders')
+                  .get([expected.accountId, expected.orderId])
+              )
+          if (
+            !order ||
+            order.snapshot.observedAt !== expected.observedAt ||
+            (expected.sourceRevision &&
+              sourceRevision(
+                order,
+                previousPreparations.find(
+                  (prep) =>
+                    prep.accountId === expected.accountId &&
+                    prep.orderId === expected.orderId
+                )
+              ) !== expected.sourceRevision)
           )
-          if (!order || order.snapshot.observedAt !== expected.observedAt)
             throw new Error(
               'The source order changed. Review the linked products again.'
             )
@@ -1707,7 +1926,9 @@ export async function openDatabase({ name = '1688-order-library' } = {}) {
             entry,
           ])
         )
-        const orders = await requested(tx.objectStore('orders').getAll())
+        const orders =
+          stagedState?.records ||
+          (await requested(tx.objectStore('orders').getAll()))
         const ordersByKey = new Map(
           orders.map((order) => [
             JSON.stringify([order.snapshot.accountId, order.snapshot.orderId]),
@@ -1752,6 +1973,20 @@ export async function openDatabase({ name = '1688-order-library' } = {}) {
           ],
           { orders }
         )
+        const locks = await requested(tx.objectStore('shipmentLocks').getAll())
+        purchaseCodes.assertPurchaseCodeMonths({
+          records: orders,
+          previous: previousPreparations,
+          preparations: drafts,
+        })
+        purchaseCodes.assertConsumedCodeChanges({
+          previous: previousPreparations,
+          preparations: drafts,
+          locks,
+          amendment: !!activeContext,
+        })
+        const historicalReservations =
+          purchaseCodes.historicalCodeReservations(locks)
         // Reserve the complete final set of explicit codes before allocating blanks.
         // This makes swaps and bulk edits atomic and ignores retired assignments.
         const current = activePackingState(
@@ -1768,7 +2003,12 @@ export async function openDatabase({ name = '1688-order-library' } = {}) {
             })),
           ],
           allocations,
-          issuedCodes
+          issuedCodes,
+          {
+            historicalReservations,
+            supplierIdentityEquivalences:
+              purchaseCodes.supplierCodeIdentityEquivalences(orders),
+          }
         )
         allocations = current.allocations
         issuedCodes = current.issuedCodes
@@ -1806,7 +2046,12 @@ export async function openDatabase({ name = '1688-order-library' } = {}) {
             preserveNaming ? draft : recordNamingEdits(draft, previous),
             allocations,
             issuedCodes,
-            { snapshot: order.snapshot }
+            {
+              snapshot: order.snapshot,
+              historicalReservations,
+              supplierIdentityEquivalences:
+                purchaseCodes.supplierCodeIdentityEquivalences(orders),
+            }
           )
           const preparation = {
             ...result.preparation,
@@ -1871,6 +2116,112 @@ export async function openDatabase({ name = '1688-order-library' } = {}) {
           throw error
         }
         // No writes occur until every draft, reservation and physical batch has been checked.
+        if (!preview && activeContext) {
+          const original = new Map(
+            rawState.preparations.map((prep) => [
+              JSON.stringify([prep.accountId, prep.orderId]),
+              prep,
+            ])
+          )
+          activeContext.draft.preparationChanges = [
+            ...(activeContext.draft.preparationChanges || []).filter(
+              (change) =>
+                !selectedKeys.has(
+                  JSON.stringify([change.after.accountId, change.after.orderId])
+                )
+            ),
+            ...results.map((after) => ({
+              after,
+              expectedRevision:
+                original.get(JSON.stringify([after.accountId, after.orderId]))
+                  ?.revision || 0,
+            })),
+          ]
+          for (const result of measurementResults)
+            if (result.changed) {
+              const before = rawState.records.find(
+                  (record) =>
+                    record.snapshot.accountId ===
+                      result.order.snapshot.accountId &&
+                    record.snapshot.orderId === result.order.snapshot.orderId
+                ),
+                prep = rawState.preparations.find(
+                  (prep) =>
+                    prep.accountId === before.snapshot.accountId &&
+                    prep.orderId === before.snapshot.orderId
+                )
+              activeContext.draft.orderChanges = [
+                ...(activeContext.draft.orderChanges || []).filter(
+                  (change) =>
+                    change.after.snapshot.orderId !== before.snapshot.orderId ||
+                    change.after.snapshot.accountId !==
+                      before.snapshot.accountId
+                ),
+                {
+                  after: result.order,
+                  expectedSource: sourceRevision(before, prep),
+                },
+              ]
+            }
+          let effective = containerRepository.overlay(rawState, activeContext)
+          for (const owner of [
+            ...new Set(
+              cartonBatchChanges.map(
+                (change) => (change.after || change.batch).orderId
+              )
+            ),
+          ]) {
+            const group = cartonBatchChanges.filter(
+                (change) => (change.after || change.batch).orderId === owner
+              ),
+              reference = { accountId: drafts[0].accountId, orderId: owner }
+            containerRepository.amendmentFor(
+              rawState,
+              { ...reference, contextContainerId, expectedAmendment: proof },
+              { physical: true }
+            )
+            const changes = containerRepository.normalizedChanges(
+              effective,
+              reference,
+              group,
+              { contextContainerId }
+            )
+            containerRepository.validateChanges(effective, reference, changes, {
+              contextContainerId,
+            })
+            activeContext.draft.cartonChanges = [
+              ...(activeContext.draft.cartonChanges || []).filter(
+                (change) =>
+                  !changes.some((value) => value.after.id === change.after.id)
+              ),
+              ...changes.map((change) => ({
+                ...change,
+                expectedRevision:
+                  rawState.batches.find((batch) => batch.id === change.after.id)
+                    ?.revision || 0,
+              })),
+            ]
+            effective = containerRepository.overlay(rawState, activeContext)
+          }
+          for (const member of activeContext.draft.orders)
+            if (
+              selectedKeys.has(
+                JSON.stringify([member.accountId, member.orderId])
+              )
+            )
+              containerRepository.refreshedMember(
+                rawState,
+                activeContext,
+                member
+              )
+          activeContext.revision++
+          activeContext.updatedAt = nextEditTimestamp(activeContext.updatedAt)
+          tx.objectStore('containers').put(activeContext)
+          return results.map((result) => ({
+            ...result,
+            amendmentContext: containerRepository.amendmentToken(activeContext),
+          }))
+        }
         if (!preview) {
           if (cartonBatchChanges.length)
             await cartonBatchesRepository.apply(tx, cartonBatchChanges, {
@@ -1894,7 +2245,154 @@ export async function openDatabase({ name = '1688-order-library' } = {}) {
   }
 
   return {
+    ...containerRepository.api,
+    ...reportRepository.api,
     ...cartonBatchesRepository.api,
+    reviewLegacySupplierIdentity(input) {
+      return read(OPERATIONAL_STORES, async (tx) => {
+        const current = await containerRepository.state(tx),
+          container = input.contextContainerId
+            ? current.containers.find(
+                (value) => value.id === input.contextContainerId
+              )
+            : null
+        if (input.contextContainerId && !container?.amendment)
+          throw Object.assign(
+            new Error('This amendment is no longer active.'),
+            { code: 'AMENDMENT_CONTEXT_CONFLICT' }
+          )
+        const state = container
+          ? containerRepository.overlay(current, container)
+          : current
+        const relatedLocks = state.locks.filter(
+          (lock) =>
+            lock.kind === 'code-consumption' &&
+            (orderKey(lock) === orderKey(input) ||
+              lock.lineages.some((lineage) =>
+                lineage.members.some(
+                  (member) => orderKey(member) === orderKey(input)
+                )
+              ))
+        )
+        state.affectedShipmentRevisions = [
+          ...new Map(
+            [
+              ...state.containers.flatMap((owner) =>
+                (owner.revisions || [])
+                  .filter((revision) =>
+                    revision.orders.some(
+                      (order) => orderKey(order) === orderKey(input)
+                    )
+                  )
+                  .map((revision) => ({
+                    containerId: owner.id,
+                    revisionId: revision.revisionId,
+                    orderId: input.orderId,
+                  }))
+              ),
+              ...relatedLocks.map((lock) => ({
+                containerId: lock.firstContainerId,
+                revisionId: lock.firstRevisionId,
+                orderId: input.orderId,
+              })),
+            ].map((value) => [JSON.stringify(value), value])
+          ).values(),
+        ]
+        const review = purchaseCodes.planLegacySupplierIdentityReview(
+          state,
+          input
+        )
+        return {
+          ...review,
+          ...(container
+            ? {
+                amendmentContext: containerRepository.amendmentToken(container),
+              }
+            : {}),
+        }
+      })
+    },
+    confirmLegacySupplierIdentity(input) {
+      return containerRepository.mutate(
+        'confirmLegacySupplierIdentity',
+        input,
+        async (tx, loaded) => {
+          const plan = input.plan?.plan || input.plan,
+            reference = { accountId: plan?.accountId, orderId: plan?.orderId }
+          return containerRepository.saveOrderMetadata(
+            tx,
+            loaded,
+            { ...input, ...reference },
+            'supplierCodeIdentityReview',
+            (record, effective) => {
+              const fresh = purchaseCodes.planLegacySupplierIdentityReview(
+                effective,
+                reference
+              )
+              if (
+                stableValue(
+                  input.expectedRevisions || fresh.expectedRevisions
+                ) !== stableValue(fresh.expectedRevisions)
+              )
+                throw Object.assign(
+                  new Error(
+                    'The preparation changed during the legacy identity review.'
+                  ),
+                  { code: 'PACKING_REVISION_CONFLICT' }
+                )
+              const after = purchaseCodes.applyLegacySupplierIdentityReview({
+                state: effective,
+                plan,
+                confirmed: true,
+                reason: input.reason,
+                amendment: !!input.contextContainerId,
+                updatedAt: nextEditTimestamp(
+                  record.supplierCodeIdentityReviewUpdatedAt
+                ),
+              })
+              after.supplierCodeIdentityReviewUpdatedAt =
+                after.supplierCodeIdentityReview.updatedAt
+              return after
+            }
+          )
+        }
+      )
+    },
+    reviewPurchaseCodes(selection) {
+      return read(OPERATIONAL_STORES, async (tx) =>
+        purchaseCodes.planPurchaseCodeReview(
+          await containerRepository.state(tx),
+          selection
+        )
+      )
+    },
+    assignPurchaseCodes(input) {
+      return containerRepository.mutate(
+        'assignPurchaseCodes',
+        input,
+        async (tx, loaded) => {
+          const plan = input.plan
+          if (
+            !plan ||
+            !Array.isArray(plan.preparations) ||
+            plan.issues?.some((issue) => issue.severity === 'error')
+          )
+            throw new Error(
+              'Review valid purchase code assignments before committing.'
+            )
+          return savePreparations(
+            plan.preparations,
+            {
+              expectedRevisions:
+                input.expectedRevisions || plan.expectedRevisions,
+              expectedSnapshots: plan.expectedSnapshots,
+            },
+            tx
+          )
+        }
+      )
+    },
+
     ...createOperationsRepository({
       read,
       write,
@@ -1943,6 +2441,8 @@ export async function openDatabase({ name = '1688-order-library' } = {}) {
         )
         for (const image of images) tx.objectStore('images').put(image)
         orders.add(record)
+        for (const batch of sourceSpreadsheetBatches(record))
+          tx.objectStore('cartonBatches').add(batch)
         return record
       })
     },
@@ -2516,6 +3016,24 @@ export async function openDatabase({ name = '1688-order-library' } = {}) {
         async (tx) => {
           const allOrders = await requested(tx.objectStore('orders').getAll())
           const removed = new Set(ids)
+          const shipments = await requested(
+            tx.objectStore('containers').getAll()
+          )
+          if (
+            shipments.some(
+              (container) =>
+                container.accountId === accountId &&
+                [
+                  ...(container.draft?.orders || []),
+                  ...(container.revisions || []).flatMap(
+                    (revision) => revision.orders || []
+                  ),
+                ].some((order) => removed.has(order.orderId))
+            )
+          )
+            throw new Error(
+              'Historical shipments require these source purchases and originals; they cannot be deleted.'
+            )
           const cartonBatches = await requested(
             tx.objectStore('cartonBatches').getAll()
           )
@@ -2587,6 +3105,9 @@ export async function openDatabase({ name = '1688-order-library' } = {}) {
               orders: await requested(tx.objectStore('orders').getAll()),
               history: await requested(tx.objectStore('history').getAll()),
               issuedCodes: activeCodes.issuedCodes,
+              containers: await requested(
+                tx.objectStore('containers').getAll()
+              ),
             })
             for (const photo of candidates)
               if (!retained.has(photo)) tx.objectStore('images').delete(photo)
@@ -2635,6 +3156,31 @@ export async function openDatabase({ name = '1688-order-library' } = {}) {
           const preferences = await requested(
             tx.objectStore('packingPreferences').get('packing')
           )
+          const operationalContainers = await requested(
+            tx.objectStore('containers').getAll()
+          )
+          if (includedIds) {
+            let changed = true
+            while (changed) {
+              changed = false
+              for (const container of operationalContainers.filter(
+                (container) => container.accountId === accountId
+              )) {
+                const refs = [
+                  ...(container.draft?.orders || []),
+                  ...(container.revisions || []).flatMap(
+                    (revision) => revision.orders || []
+                  ),
+                ]
+                if (refs.some((order) => includedIds.has(order.orderId)))
+                  for (const order of refs)
+                    if (!includedIds.has(order.orderId)) {
+                      includedIds.add(order.orderId)
+                      changed = true
+                    }
+              }
+            }
+          }
           if (includedIds) {
             const dependencies = paymentSourceDependencies(
               orders,
@@ -2661,7 +3207,7 @@ export async function openDatabase({ name = '1688-order-library' } = {}) {
           }
           const backup = {
             format: BACKUP_FORMAT,
-            version: 4,
+            version: 5,
             exportedAt: new Date().toISOString(),
             orders,
             history,
@@ -2678,6 +3224,7 @@ export async function openDatabase({ name = '1688-order-library' } = {}) {
               ? { value: preferences.value, updatedAt: preferences.updatedAt }
               : null,
           }
+          Object.assign(backup, await reportRepository.exportOperational(tx))
           const photoUrls = collectImageReferences(backup)
           const imageStore = tx.objectStore('images')
           const imageKeys = await requested(imageStore.getAllKeys())
@@ -2702,6 +3249,8 @@ export async function openDatabase({ name = '1688-order-library' } = {}) {
       // Validate every record before opening a write transaction. A malformed
       // trailing record must never leave a partially restored library.
       const backup = validateBackup(input)
+      for (const asset of backup.reportSources || [])
+        await validateReportAsset(asset)
       for (const record of [...backup.orders, ...backup.history])
         await validateOtherSnapshotPhotos(record.snapshot)
       return write(
@@ -2854,6 +3403,24 @@ export async function openDatabase({ name = '1688-order-library' } = {}) {
             const key = [...keyFor(record.snapshot), record.snapshot.observedAt]
             if (!(await requested(history.getKey(key)))) history.put(record)
           }
+          const existingPhysical = await requested(
+            tx.objectStore('cartonBatches').getAll()
+          )
+          if (
+            (backup.cartonBatches || []).some(
+              (batch) =>
+                !batch.deletedAt &&
+                existingPhysical.some(
+                  (local) => local.id === batch.id && local.deletedAt
+                )
+            )
+          )
+            throw Object.assign(
+              new Error(
+                'Restore conflicts with a retained carton deletion; review it explicitly.'
+              ),
+              { code: 'RESTORE_CARTON_TOMBSTONE' }
+            )
           await cartonBatchesRepository.restore(tx, backup.cartonBatches || [])
           await shareRestoredWechat(tx)
           const mergedOrders = await requested(orders.getAll())
@@ -2943,23 +3510,49 @@ export async function openDatabase({ name = '1688-order-library' } = {}) {
           // catalog that originally suggested them. Preserve that saved artwork.
           if (!backup.packingScope)
             await refreshNames(tx, preferences, { replaceAutomatic: true })
+          await reportRepository.restoreOperational(tx, backup)
           return { imported, updated }
         }
       )
     },
 
-    async getPreparation(orderId, { accountId = 'local' } = {}) {
-      return read(['preparations'], (tx) =>
-        requested(tx.objectStore('preparations').get([accountId, orderId]))
-      )
-    },
-
-    async listPreparations({ accountId = 'local' } = {}) {
-      return read(['preparations'], (tx) =>
-        requested(
-          tx.objectStore('preparations').index('account').getAll(accountId)
+    async getPreparation(
+      orderId,
+      { accountId = 'local', contextContainerId } = {}
+    ) {
+      if (!contextContainerId)
+        return read(['preparations'], (tx) =>
+          requested(tx.objectStore('preparations').get([accountId, orderId]))
         )
-      )
+      return read(OPERATIONAL_STORES, async (tx) => {
+        const context = await containerRepository.context(
+          tx,
+          { accountId, orderId },
+          { contextContainerId }
+        )
+        return context.preparation
+      })
+    },
+    async listPreparations({ accountId = 'local', contextContainerId } = {}) {
+      return read(OPERATIONAL_STORES, async (tx) => {
+        if (!contextContainerId)
+          return requested(
+            tx.objectStore('preparations').index('account').getAll(accountId)
+          )
+        const loaded = await containerRepository.state(tx),
+          container = loaded.containers.find(
+            (value) => value.id === contextContainerId
+          )
+        if (!container?.amendment)
+          throw new Error('This amendment is no longer active.')
+        return containerRepository
+          .overlay(loaded, container)
+          .preparations.filter((prep) => prep.accountId === accountId)
+          .map((prep) => ({
+            ...prep,
+            amendmentContext: containerRepository.amendmentToken(container),
+          }))
+      })
     },
 
     async getReservedBarcodes(baseCode, { accountId = 'local' } = {}) {
@@ -3133,7 +3726,9 @@ export async function openDatabase({ name = '1688-order-library' } = {}) {
       )[0]
     },
 
-    savePreparations,
+    savePreparations(inputs, options) {
+      return savePreparations(inputs, options)
+    },
 
     async previewPreparations(inputs, options = {}) {
       return savePreparations(inputs, { ...options, preview: true })
@@ -3328,3 +3923,45 @@ import {
   validatePreparationSuffixEdits,
   validatePreparationReservations,
 } from './packing-model.js'
+
+function sourceSpreadsheetBatches(record) {
+  const snapshot = record.snapshot
+  if (snapshot.sourceType !== 'spreadsheet') return []
+  return (snapshot.spreadsheet.rows || [])
+    .filter((row) => row.boxes)
+    .map((row) => {
+      const items = snapshot.items.filter((item) => item.sourceRow === row.row),
+        count = Number(row.boxes)
+      return validateCartonBatch({
+        id: `source:${snapshot.accountId}/${snapshot.orderId}/${row.row}`,
+        accountId: snapshot.accountId,
+        orderId: snapshot.orderId,
+        storeId: repeatProductStoreIdentity(snapshot),
+        groups: [],
+        contents: items.map((item) => ({
+          orderId: snapshot.orderId,
+          entryId: item.entryId,
+          quantity: item.quantity,
+        })),
+        count,
+        packingBasis:
+          count === 1
+            ? 'exact'
+            : items.length === 1 && row.perbox
+              ? 'uniform'
+              : 'aggregate',
+        unresolvedContents: [],
+        len: row.len || '',
+        wid: row.wid || '',
+        ht: row.ht || '',
+        weight: row.kg || '',
+        weightBasis: 'carton',
+        suppliedCbm: row.cbm || '',
+        volumeBasis: 'carton',
+        labelOrigin: 'internal',
+        provenance: { kind: 'supplier-source', row: row.row },
+        revision: 1,
+        updatedAt: snapshot.observedAt,
+      })
+    })
+}
