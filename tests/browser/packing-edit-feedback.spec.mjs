@@ -751,3 +751,63 @@ test('a delayed real label render cannot restore a conflicting preview and rever
   expect(after.issuedCodes).toEqual(before.issuedCodes)
   expect(after.orders).toEqual(before.orders)
 })
+
+test('an unrelated unresolved size cannot block atomic recovery of a newly mapped barcode collision', async ({
+  extension,
+}) => {
+  const { page, view } = await openPacking(extension)
+  await closeOrderProduct(view)
+  const initial = await backup(extension),
+    ref = {
+      accountId: initial.preparations[0].accountId,
+      orderId: initial.preparations[0].orderId,
+    }
+  await extension.inspector.evaluate(async (ref) => {
+    const repository = await window.testRepository,
+      context = await repository.getOrderReconciliation(ref),
+      preparation = structuredClone(context.preparation)
+    preparation.groups[1].variants[0].needsSizeMapping = true
+    preparation.groups[1].variants[0].size = '未确定的独立尺寸'
+    await repository.savePreparations([preparation], {
+      expectedRevisions: [preparation.revision],
+    })
+  }, ref)
+  await page.reload()
+  const before = await backup(extension),
+    group = before.preparations[0].groups[0],
+    owner = group.variants[1]
+  const product = await editOrderProduct(page, 0, {
+    'Variant ending': owner.variantSuffix,
+    'Size ending': owner.sizeSuffix,
+  })
+  await expect(product.locator('[aria-invalid="true"]')).not.toHaveCount(0)
+  await product
+    .getByRole('button', { name: 'Resolve code conflict', exact: true })
+    .click()
+  const resolver = page.locator('.code-conflict-dialog')
+  await resolver
+    .getByRole('button', {
+      name: 'Use next available variant code',
+      exact: true,
+    })
+    .click()
+  expect((await backup(extension)).preparations).toEqual(before.preparations)
+  await resolver
+    .getByRole('button', { name: 'Apply corrections', exact: true })
+    .click()
+  await expect(resolver).toBeHidden()
+  const after = await backup(extension),
+    variants = after.preparations[0].groups[0].variants
+  expect(
+    new Set(
+      variants.map(
+        (variant) => group.baseCode + variant.variantSuffix + variant.sizeSuffix
+      )
+    ).size
+  ).toBe(2)
+  expect(after.preparations[0].groups[0].baseCode).toBe(group.baseCode)
+  expect(after.preparations[0].groups[1]).toEqual(
+    before.preparations[0].groups[1]
+  )
+  expect(after.orders).toEqual(before.orders)
+})

@@ -67,6 +67,9 @@ test('Orders category typing and code roundtrips remain undoable after every aut
     .toBe('CE26099999')
   await editor(page)
     .getByRole('textbox', { name: 'Product code', exact: true })
+    .press('Tab')
+  await editor(page)
+    .getByRole('textbox', { name: 'Product code', exact: true })
     .fill(before.preparations[0].groups[0].baseCode)
   await expect
     .poll(
@@ -74,6 +77,9 @@ test('Orders category typing and code roundtrips remain undoable after every aut
         (await libraryBackup(extension)).preparations[0].groups[0].baseCode
     )
     .toBe(before.preparations[0].groups[0].baseCode)
+  await editor(page)
+    .getByRole('textbox', { name: 'Product code', exact: true })
+    .press('Tab')
   await travel(page, 'Undo')
   await expect(
     editor(page).getByRole('textbox', { name: 'Product code', exact: true })
