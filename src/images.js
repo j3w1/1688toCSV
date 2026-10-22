@@ -58,6 +58,9 @@ export function collectImageReferences({
   orders = [],
   history = [],
   issuedCodes = [],
+  containers = [],
+  packingReports = [],
+  orderCartonDrafts = [],
 } = {}) {
   const urls = new Set()
   const add = (url) => {
@@ -74,6 +77,19 @@ export function collectImageReferences({
   for (const code of issuedCodes)
     for (const owner of [code, ...(code.members || [])])
       for (const url of owner.ownerSnapshot?.photos || []) add(url)
+  const visit = (value) => {
+    if (typeof value === 'string') {
+      if (
+        /^local-image:|^data:image\/|^https:\/\/[^/]*alicdn\.com\//i.test(value)
+      )
+        add(value)
+    } else if (Array.isArray(value)) value.forEach(visit)
+    else if (value && typeof value === 'object')
+      Object.values(value).forEach(visit)
+  }
+  visit(containers)
+  visit(packingReports)
+  visit(orderCartonDrafts)
   return urls
 }
 

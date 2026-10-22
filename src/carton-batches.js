@@ -278,6 +278,34 @@ export function validateCartonBatch(input) {
         throw new Error('Invalid carton exception baseline')
       result.baseRevision = input.baseRevision
     }
+    if (input.unitLabels !== undefined) {
+      if (
+        !input.unitLabels ||
+        typeof input.unitLabels !== 'object' ||
+        Array.isArray(input.unitLabels)
+      )
+        throw new Error(
+          'Use retained entitlement indices for reported carton labels'
+        )
+      result.unitLabels = {}
+      for (const [index, label] of Object.entries(input.unitLabels)) {
+        if (
+          !/^\d+$/.test(index) ||
+          !(
+            result.entitlementIndices ||
+            Array.from({ length: result.count || 0 }, (_, i) => i)
+          ).includes(Number(index)) ||
+          typeof label !== 'string' ||
+          !label.trim() ||
+          Array.from(label).length > 512 ||
+          /[\u0000-\u001f\u007f]/.test(label)
+        )
+          throw new Error(
+            'Choose a bounded reported label for an existing entitlement'
+          )
+        result.unitLabels[index] = label
+      }
+    }
     if (input.unitContents !== undefined) {
       if (
         !input.unitContents ||
@@ -428,11 +456,11 @@ export function validateCartonBatch(input) {
       throw new Error('Carton number must be text')
     const cartonNumber = input.cartonNumber.trim()
     if (
-      Array.from(cartonNumber).length > 40 ||
+      Array.from(cartonNumber).length > (modern ? 512 : 40) ||
       /[\u0000-\u001f\u007f]/.test(cartonNumber)
     )
       throw new Error(
-        'Use a carton number up to 40 characters without line breaks'
+        `Use a carton number up to ${modern ? 512 : 40} characters without line breaks`
       )
     if (cartonNumber) {
       if (result.count !== 1)
@@ -450,6 +478,15 @@ export function validateCartonBatch(input) {
       throw new Error('Invalid carton migration provenance')
     result.legacyKeys = [...new Set(input.legacyKeys)]
   }
+  if (!modern)
+    for (const field of [
+      'legacyReview',
+      'legacyResolution',
+      'sourceFacts',
+      'cartonHistory',
+    ])
+      if (input[field] !== undefined)
+        result[field] = structuredClone(input[field])
   if (input.needsReview) result.needsReview = true
   return result
 }
@@ -487,8 +524,7 @@ function modernCartonIssues(batch, records, preparations, batches) {
   if (!record)
     return ['The carton purchase is no longer available. Review these cartons.']
   const storeId =
-    repeatProductStoreIdentity(record.snapshot) ||
-    `order:${accountId}/${orderId}`
+    repeatProductStoreIdentity(record) || `order:${accountId}/${orderId}`
   if (batch.storeId !== storeId)
     issues.push('Carton store identity differs from its source purchase.')
   const preparation = preparations.find(
@@ -499,7 +535,14 @@ function modernCartonIssues(batch, records, preparations, batches) {
   )
   if (
     (batch.groups || []).some(
-      (group) => group.orderId !== orderId || !groups.has(group.groupId)
+      (group) =>
+        group.orderId !== orderId ||
+        (!groups.has(group.groupId) &&
+          !record.snapshot.items.some(
+            (item) =>
+              `source:${item.sourceGroup || item.productNumber || item.entryId}` ===
+              group.groupId
+          ))
     )
   )
     issues.push(
@@ -1357,6 +1400,26 @@ export function applyCartonUnitException({
       }
     }
   }
+  if (
+    contents !== undefined &&
+    (!Array.isArray(contents) ||
+      new Set(contents.map((row) => row?.entryId)).size !== contents.length ||
+      contents.some(
+        (row) =>
+          !row ||
+          row.orderId !== current.orderId ||
+          typeof row.entryId !== 'string' ||
+          !row.entryId ||
+          typeof row.quantity !== 'string' ||
+          !/^([1-9]\d{0,29})$/.test(row.quantity)
+      ))
+  )
+    throw Object.assign(
+      new Error(
+        'Per-carton contents require distinct purchase products and positive whole quantities.'
+      ),
+      { code: 'CARTON_UNIT_CONTENTS' }
+    )
   const previousContents = next.unitContents[index]
   if (contents !== undefined) {
     next.unitContents[index] = structuredClone(contents)
@@ -1371,6 +1434,20 @@ export function applyCartonUnitException({
       if (next.weightBasis === 'batch') next.weight = ''
     }
   }
+  if (
+    measurements &&
+    Object.hasOwn(measurements, 'weight') &&
+    current.weightBasis === 'batch'
+  )
+    next.weight = ''
+  if (
+    measurements &&
+    ['len', 'wid', 'ht', 'suppliedCbm'].some((field) =>
+      Object.hasOwn(measurements, field)
+    ) &&
+    current.volumeBasis === 'batch'
+  )
+    next.suppliedCbm = ''
   if (measurements !== undefined)
     next.unitMeasurements[index] = {
       ...(next.unitMeasurements[index] || {}),

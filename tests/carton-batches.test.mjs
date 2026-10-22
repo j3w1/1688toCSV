@@ -977,3 +977,45 @@ test('a uniform unit exception preserves untouched proven units, source totals, 
     { code: 'CARTON_BATCH_CONFLICT' }
   )
 })
+
+test('combined measurement correction retires current combined totals while retaining original evidence and precise invalid drafts', async () => {
+  const { applyCartonUnitException } = await import('../src/carton-batches.js'),
+    { syntheticBatch } = await import('./fixtures/container-fixture.mjs')
+  const batch = syntheticBatch('1001', 3, '30', {
+    packingBasis: 'aggregate',
+    weight: '9',
+    weightBasis: 'batch',
+    suppliedCbm: '0.3',
+    volumeBasis: 'batch',
+  })
+  const next = applyCartonUnitException({
+    batch,
+    index: 1,
+    measurements: { weight: '2.5', suppliedCbm: '0.08' },
+  })
+  assert.equal(next.weight, '')
+  assert.equal(next.suppliedCbm, '')
+  assert.equal(next.sourceFacts.weight, '9')
+  assert.equal(next.sourceFacts.suppliedCbm, '0.3')
+  assert.equal(next.unitMeasurements[1].weight, '2.5')
+  assert.throws(
+    () =>
+      applyCartonUnitException({
+        batch,
+        index: 1,
+        contents: [{ orderId: '1001', entryId: '2001', quantity: 'invalid' }],
+      }),
+    { code: 'CARTON_UNIT_CONTENTS' }
+  )
+  assert.equal(batch.weight, '9')
+})
+
+test('modern reported identifiers retain long textual zeros while legacy number bounds stay compatible', async () => {
+  const { syntheticBatch } = await import('./fixtures/container-fixture.mjs')
+  const label = '0'.repeat(100) + 'ABC'
+  assert.equal(
+    validateCartonBatch(syntheticBatch('1001', 1, '1', { cartonNumber: label }))
+      .cartonNumber,
+    label
+  )
+})

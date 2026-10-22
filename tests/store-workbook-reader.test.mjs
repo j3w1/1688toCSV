@@ -294,17 +294,27 @@ test('rich report decode retains an actual uncached formula and enforces the she
       .replace('<f>2+2</f><v>4</v>', '<f>2+2</f>')
   )
   part.size = part.content.length
-  const decoded = await readStoreWorkbook(
-    CFB.write(archive, { type: 'array', fileType: 'zip' }),
-    { reportEvidence: true }
-  )
-  const formula = decoded.sheets[0].rows
-    .find((row) => row.row === 2)
-    .cells.find((cell) => cell.col === 3)
-  assert.equal(formula.formula, '2+2')
-  assert.equal(formula.value, null)
-  assert.equal(formula.formulaCachePresent, false)
-  assert.equal(formula.display, '')
+  for (const reportEvidence of [false, true]) {
+    const decoded = await readStoreWorkbook(
+      CFB.write(archive, { type: 'array', fileType: 'zip' }),
+      { reportEvidence }
+    )
+    const formula = decoded.sheets[0].rows
+      .find((row) => row.row === 2)
+      .cells.find((cell) => cell.col === 3)
+    assert.equal(formula.formula, '2+2')
+    assert.equal(formula.value, null)
+    if (reportEvidence) {
+      assert.equal(formula.formulaCachePresent, false)
+      assert.equal(formula.display, '')
+    } else
+      assert.deepEqual(Object.keys(formula).sort(), [
+        'address',
+        'col',
+        'formula',
+        'value',
+      ])
+  }
   const workbook = utils.book_new()
   for (let index = 0; index < 21; index++)
     utils.book_append_sheet(
@@ -318,4 +328,92 @@ test('rich report decode retains an actual uncached formula and enforces the she
     }),
     /sheet limit/
   )
+})
+
+test('actual missing XLSX cache blocks both report and China paths; explicit zero and normal cached values retain exact default shape', async () => {
+  const { analyzeStoreSheet } = await import('../src/store-workbook-model.js')
+  const { adaptPackingReportWorkbook } =
+    await import('../src/packing-report-cells.js')
+  const { analyzePackingReport } =
+    await import('../src/packing-report-model.js')
+  const workbook = utils.book_new(),
+    sheet = utils.aoa_to_sheet([
+      ['pic', 'group', 'boxes', 'perbox', 'price'],
+      ['', 1, 1, 10, 2],
+      [],
+      ['total', 20, 'total'],
+    ])
+  sheet.C2 = { t: 'n', v: 1, f: '1+0' }
+  utils.book_append_sheet(workbook, sheet, 'Marked')
+  const archive = CFB.read(
+    new Uint8Array(write(workbook, { type: 'array', bookType: 'xlsx' })),
+    { type: 'array' }
+  )
+  const part =
+    archive.FileIndex[
+      archive.FullPaths.indexOf('Root Entry/xl/worksheets/sheet1.xml')
+    ]
+  const xml = new TextDecoder().decode(part.content)
+  assert.match(xml, /<f>1\+0<\/f><v>1<\/v>/)
+  part.content = text.encode(xml.replace('<f>1+0</f><v>1</v>', '<f>1+0</f>'))
+  part.size = part.content.length
+  const uncached = CFB.write(archive, { type: 'array', fileType: 'zip' })
+  const china = await readStoreWorkbook(uncached, { filename: '1234.xlsx' })
+  assert(
+    analyzeStoreSheet(china, 'Marked').issues.some(
+      (issue) =>
+        issue.severity === 'error' &&
+        /formula|cache/i.test(issue.code + ' ' + issue.message)
+    )
+  )
+  const rich = await readStoreWorkbook(uncached, {
+    filename: '1234.xlsx',
+    reportEvidence: true,
+  })
+  const source = adaptPackingReportWorkbook({
+    workbook: rich,
+    sourceId: 'S',
+    rawAssetRef: 'local-report:S',
+    rawDigest: 'digest',
+  })
+  const analysis = analyzePackingReport({
+    source,
+    context: {
+      accountId: 'local',
+      orderId: '1001',
+      sourceRevision: 1,
+      products: [
+        {
+          entryId: '2001',
+          groupId: 'G',
+          purchased: '10',
+          ceCodes: [],
+          supplierCodes: ['1'],
+        },
+      ],
+    },
+    selection: {
+      headerRow: 1,
+      fromRow: 2,
+      toRow: 2,
+      columns: {
+        1: 'ignore',
+        2: 'code',
+        3: 'count',
+        4: 'quantity',
+        5: 'ignore',
+      },
+    },
+  })
+  assert(analysis.issues.some((issue) => issue.code === 'formulaCache'))
+  for (const value of [0, 1]) {
+    sheet.C2 = { t: 'n', v: value, f: '1-1' }
+    const decoded = await readStoreWorkbook(
+      write(workbook, { type: 'array', bookType: 'xlsx' })
+    )
+    assert.deepEqual(
+      decoded.sheets[0].rows[1].cells.find((cell) => cell.col === 3),
+      { col: 3, address: 'C2', value, formula: '1-1' }
+    )
+  }
 })

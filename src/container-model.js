@@ -1,3 +1,4 @@
+import { purchaseSupplierForCodes } from './purchase-codes.js'
 import {
   physicalUnits,
   batchOrderIds,
@@ -60,10 +61,23 @@ export function reconciliationRevisions(state, reference) {
   }
 }
 export function assertReconciliationRevisions(state, reference, expected) {
+  const { amendmentContext, ...base } = expected || {}
+  if (amendmentContext) {
+    const container = state.containers.find(
+      (container) => container.id === amendmentContext.containerId
+    )
+    if (
+      !container?.amendment ||
+      container.amendment.epoch !== amendmentContext.epoch
+    )
+      throw inventoryError(
+        'AMENDMENT_CONTEXT_CONFLICT',
+        'This amendment ended or changed; retain the draft.'
+      )
+  }
   if (
     !expected ||
-    stableValue(expected) !==
-      stableValue(reconciliationRevisions(state, reference))
+    stableValue(base) !== stableValue(reconciliationRevisions(state, reference))
   )
     throw inventoryError(
       'ORDER_REVISION_CONFLICT',
@@ -109,7 +123,16 @@ export function captureContainerOrder(
     (row) => ({
       entryId: row.entryId,
       quantity:
-        row.eligible === null
+        row.eligible === null ||
+        row.legacyExclusion ||
+        batches.some(
+          (batch) =>
+            batchNeedsLegacyReview(batch) &&
+            (batch.contents.some(
+              (item) => item.entryId === row.entryId && item.orderId === orderId
+            ) ||
+              !batch.contents.length)
+        )
           ? null
           : String(BigInt(row.eligible) - (previous.get(row.entryId) || 0n)),
     })
@@ -344,16 +367,29 @@ function measurementShares(total, rows) {
     })
   )
 }
-function buildProductRows(member, contents, cartons, prior, state) {
+function buildProductRows(
+  member,
+  contents,
+  cartons,
+  prior,
+  state,
+  occupiedIntervals = {},
+  financialRows = null
+) {
   const quantities = {}
   for (const item of contents)
     quantities[item.entryId] = String(
       BigInt(quantities[item.entryId] || '0') + wholeUnits(item.quantity)
     )
   const money = new Map(
-    shipmentMoney(member.record, quantities, prior, state.records).map(
-      (row) => [row.entryId, row]
-    )
+    shipmentMoney(
+      member.record,
+      quantities,
+      prior,
+      state.records,
+      occupiedIntervals,
+      financialRows
+    ).map((row) => [row.entryId, row])
   )
   const rows = []
   for (const [entryId, quantity] of Object.entries(quantities)) {
@@ -397,6 +433,7 @@ function buildProductRows(member, contents, cartons, prior, state) {
       orderId: member.orderId,
       entryId,
       sellerName: member.record.snapshot.sellerName,
+      supplierIdentity: purchaseSupplierForCodes(member.record),
       sellerMemberLogin: member.record.snapshot.sellerMemberLogin,
       orderReference: member.record.snapshot.reference || member.orderId,
       source: member.record.snapshot.source || '1688',
@@ -429,10 +466,10 @@ function buildProductRows(member, contents, cartons, prior, state) {
       allocatedWeight: null,
       allocatedVolume: null,
       measurementAllocationBasis: 'allocated',
-      record: clone(member.record),
-      preparation: clone(member.preparation),
-      group: clone(group),
-      variant: clone(variant),
+      record: member.record,
+      preparation: member.preparation,
+      group,
+      variant,
     })
   }
   // Allocate each measured physical scope once, including full aggregate totals.
@@ -544,6 +581,12 @@ export function projectContainer(
     )
   }
   for (const member of draft.orders) {
+    if (member.availabilityPending)
+      issues.push({
+        code: 'AVAILABILITY_STALE',
+        orderId: member.orderId,
+        message: 'Review newly changed physical membership before sealing.',
+      })
     const live = state.records.find(
         (record) => orderKey(record) === orderKey(member)
       ),
@@ -575,8 +618,8 @@ export function projectContainer(
       return {
         ...clone(unit),
         state: draft.decisions[unit.id] || 'unconfirmed',
-        record: clone(member.record),
-        preparation: clone(member.preparation),
+        record: member.record,
+        preparation: member.preparation,
         markCode: group?.baseCode || '',
       }
     })
@@ -604,15 +647,25 @@ export function projectContainer(
       })
     const interpretation = knownLoadedContents(member, loaded, state.reports)
     issues.push(...interpretation.issues)
-    const previous = {}
+    const previous = {},
+      occupiedIntervals = {},
+      financialRows = []
     for (const { manifest } of effectiveShipments(state.containers || [], {
       exceptContainerId: container.id,
     }))
       for (const row of manifest.products || [])
-        if (orderKey(row) === orderKey(member))
+        if (orderKey(row) === orderKey(member)) {
           previous[row.entryId] = String(
             BigInt(previous[row.entryId] || '0') + wholeUnits(row.quantity)
           )
+          financialRows.push(row)
+          occupiedIntervals[row.entryId] ||= []
+          occupiedIntervals[row.entryId].push(
+            ...(row.valuation?.intervals || [
+              { from: row.valuation?.from || '0', quantity: row.quantity },
+            ])
+          )
+        }
     let rows = []
     try {
       rows = buildProductRows(
@@ -620,7 +673,9 @@ export function projectContainer(
         interpretation.contents,
         loaded,
         previous,
-        state
+        state,
+        occupiedIntervals,
+        financialRows
       )
     } catch (error) {
       issues.push({
@@ -658,6 +713,11 @@ export function projectContainer(
           coverageBatchIds: [],
         })
     }
+    const leftIntervals = structuredClone(occupiedIntervals)
+    for (const row of rows) {
+      leftIntervals[row.entryId] ||= []
+      leftIntervals[row.entryId].push(...(row.valuation?.intervals || []))
+    }
     let leftRows = []
     try {
       leftRows = buildProductRows(
@@ -676,7 +736,9 @@ export function projectContainer(
             ),
           ])
         ),
-        state
+        state,
+        leftIntervals,
+        [...financialRows, ...rows]
       )
     } catch (error) {
       issues.push({ code: 'REMAINING_VALUE_INVALID', message: error.message })
@@ -719,8 +781,17 @@ export function projectContainer(
     orders.push({
       accountId: member.accountId,
       orderId: member.orderId,
-      record: clone(member.record),
-      preparation: clone(member.preparation),
+      record: member.record,
+      preparation: member.preparation,
+      supplierIdentity: purchaseSupplierForCodes(member.record),
+      availableBefore: clone(member.availableBefore),
+      batches: clone(member.batches),
+      sourceReports: clone(
+        (state.reports || []).filter(
+          (report) => orderKey(report.orderKey || report) === orderKey(member)
+        )
+      ),
+      revisions: clone(member.revisions),
       cartons: own,
       products: rows,
       availableBeforeQuantity: String(
@@ -819,7 +890,177 @@ export function validateContainerRecord(value) {
         'INVALID_CONTAINER',
         'Invalid immutable manifest history.'
       )
+    assertManifestEvidence(revision)
     ids.add(revision.revisionId)
   }
   return clone(value)
+}
+
+/** Restorable manifests must prove physical/product correspondence, not just totals. */
+export function assertManifestEvidence(manifest) {
+  if (
+    manifest?.format !== '1688-container-manifest' ||
+    manifest.version !== 1 ||
+    manifest.draft !== false ||
+    !Array.isArray(manifest.orders) ||
+    !Array.isArray(manifest.products) ||
+    !Array.isArray(manifest.cartons) ||
+    !Array.isArray(manifest.batches)
+  )
+    throw inventoryError(
+      'INVALID_MANIFEST',
+      'A sealed manifest must retain complete frozen evidence.'
+    )
+  const batches = new Map(manifest.batches.map((batch) => [batch.id, batch])),
+    units = new Map(),
+    expected = new Map(),
+    actual = new Map(),
+    seen = new Set()
+  for (const unit of manifest.cartons) {
+    const batch = batches.get(unit.batchId)
+    if (
+      !batch ||
+      batch.deletedAt ||
+      batchOrderIds(batch).length !== 1 ||
+      unit.state !== 'loaded' ||
+      seen.has(unit.id)
+    )
+      throw inventoryError(
+        'INVALID_MANIFEST',
+        'A sealed physical carton is missing, duplicated or belongs to several orders.'
+      )
+    seen.add(unit.id)
+    if (!units.has(batch.id)) units.set(batch.id, physicalUnits(batch))
+    const source = units.get(batch.id).find((value) => value.id === unit.id)
+    const meaning = (value) =>
+      value &&
+      stableValue({
+        id: value.id,
+        batchId: value.batchId,
+        index: value.index,
+        accountId: value.accountId,
+        orderId: value.orderId,
+        contents: value.contents,
+        weight: value.weight,
+        volume: value.volume,
+        len: value.len,
+        wid: value.wid,
+        ht: value.ht,
+        mark: value.mark,
+      })
+    if (!source || meaning(source) !== meaning(unit))
+      throw inventoryError(
+        'INVALID_MANIFEST',
+        'A sealed carton differs from its frozen physical entitlement.',
+        { cartonId: unit.id }
+      )
+  }
+  for (const order of manifest.orders) {
+    if (
+      order.record?.snapshot?.orderId !== order.orderId ||
+      (order.record.snapshot.accountId || 'local') !==
+        (order.accountId || 'local')
+    )
+      throw inventoryError(
+        'INVALID_MANIFEST',
+        'A frozen source belongs to another purchase.'
+      )
+    const selected = manifest.cartons.filter(
+        (unit) => orderKey(unit) === orderKey(order)
+      ),
+      member = {
+        ...order,
+        batches:
+          order.batches ||
+          manifest.batches.filter(
+            (batch) =>
+              batchOrderIds(batch).includes(order.orderId) &&
+              batch.accountId === (order.accountId || 'local')
+          ),
+      }
+    const interpreted = knownLoadedContents(
+      member,
+      selected,
+      order.sourceReports || manifest.reportSnapshots || []
+    )
+    if (interpreted.issues.length)
+      throw inventoryError(
+        'INVALID_MANIFEST',
+        'Loaded quantities cannot be established from the frozen physical evidence.',
+        { issues: interpreted.issues }
+      )
+    for (const row of interpreted.contents) {
+      const key = productKey(order.accountId, order.orderId, row.entryId)
+      expected.set(key, (expected.get(key) || 0n) + wholeUnits(row.quantity))
+    }
+    const sourceIds = new Set(
+      order.record.snapshot.items.map((item) => item.entryId)
+    )
+    if (interpreted.contents.some((row) => !sourceIds.has(row.entryId)))
+      throw inventoryError(
+        'INVALID_MANIFEST',
+        'A loaded product is missing from its frozen source.'
+      )
+  }
+  for (const row of manifest.products) {
+    const key = productKey(row.accountId, row.orderId, row.entryId)
+    if (
+      actual.has(key) ||
+      !manifest.orders.some((order) => orderKey(order) === orderKey(row))
+    )
+      throw inventoryError(
+        'INVALID_MANIFEST',
+        'Manifest financial rows have duplicate or foreign purchase ownership.'
+      )
+    actual.set(key, wholeUnits(row.quantity))
+  }
+  if (
+    stableValue(
+      [...expected]
+        .filter(([, quantity]) => quantity > 0n)
+        .map(([key, quantity]) => [key, String(quantity)])
+        .sort()
+    ) !==
+    stableValue(
+      [...actual].map(([key, quantity]) => [key, String(quantity)]).sort()
+    )
+  )
+    throw inventoryError(
+      'INVALID_MANIFEST',
+      'Manifest products differ from frozen loaded physical contents.'
+    )
+  const cartonIds = new Set(manifest.cartons.map((unit) => unit.id)),
+    left = manifest.leftBehind?.cartons || []
+  if (
+    left.some(
+      (unit) =>
+        cartonIds.has(unit.id) ||
+        unit.state !== 'left-behind' ||
+        !manifest.orders.some((order) => orderKey(order) === orderKey(unit))
+    )
+  )
+    throw inventoryError(
+      'INVALID_MANIFEST',
+      'Historical left-behind cartons overlap loading or belong to untouched purchases.'
+    )
+  for (const row of manifest.leftBehind?.products || [])
+    if (!manifest.orders.some((order) => orderKey(order) === orderKey(row)))
+      throw inventoryError(
+        'INVALID_MANIFEST',
+        'Historical left-behind products belong to an untouched purchase.'
+      )
+  const physical = cartonMeasurementTotals(manifest.cartons, manifest.batches)
+  if (
+    manifest.totals.cartons !== physical.cartons ||
+    manifest.totals.weight !== physical.weight ||
+    manifest.totals.volume !== physical.volume ||
+    String(manifest.totals.quantity) !==
+      String([...actual.values()].reduce((sum, quantity) => sum + quantity, 0n))
+  )
+    throw inventoryError(
+      'INVALID_MANIFEST',
+      'Frozen physical/product totals do not reconcile.'
+    )
+  validatePackingPreferences(manifest.preferences)
+  return true
 }

@@ -423,9 +423,7 @@ export async function readStoreWorkbook(
   })
   if (bounds && workbook.SheetNames.length > bounds.sheets)
     throw new Error('Report sheet limit exceeded')
-  const evidenceParts = reportEvidence
-    ? archiveParts(CFB.read(raw, { type: 'array' }))
-    : null
+  const evidenceParts = archiveParts(CFB.read(raw, { type: 'array' }))
   const formulaCaches =
     evidenceParts && raw[0] === 0x50
       ? reportFormulaCaches(evidenceParts)

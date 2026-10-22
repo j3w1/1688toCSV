@@ -14,6 +14,7 @@ export function createCartonBatchesRepository({
   write,
   requested,
   nextEditTimestamp,
+  guardChanges = async () => {},
 }) {
   const stores = ['orders', 'history', 'preparations', 'cartonBatches']
   async function state(tx) {
@@ -114,6 +115,10 @@ export function createCartonBatchesRepository({
       next.set(batch.id, batch)
       result.push(batch)
     }
+    await guardChanges(
+      tx,
+      result.map((batch) => ({ after: batch }))
+    )
     assertCartonBatchEvidence([...next.values()], records || loaded.records, {
       history: loaded.history,
     })
@@ -134,6 +139,15 @@ export function createCartonBatchesRepository({
     const store = tx.objectStore('cartonBatches'),
       previous = await requested(store.getAll())
     const merged = mergeCartonBatchRecords(previous, incoming)
+    await guardChanges(
+      tx,
+      merged
+        .filter((batch) => {
+          const before = previous.find((old) => old.id === batch.id)
+          return before && JSON.stringify(before) !== JSON.stringify(batch)
+        })
+        .map((after) => ({ after }))
+    )
     const loaded = await state(tx)
     assertCartonBatchEvidence(merged, loaded.records, {
       history: loaded.history,
