@@ -125,7 +125,7 @@ test('identity checks refuse another extension or a changed key, also for rollba
   )
   assert.throws(
     () => checkIdentity(installedOf(other), installed),
-    /not the 1688toPL/
+    /not the configured extension/
   )
   assert.throws(
     () => checkIdentity(installedOf(keyed), installed),
@@ -146,14 +146,51 @@ test('identity checks refuse another extension or a changed key, also for rollba
 test('the brand rename and rollback retain the installed extension key', () => {
   const before = { name: '1688toCSV', key: 'ABC' },
     after = { name: '1688toPL', key: 'ABC' }
-  assert.doesNotThrow(() => checkIdentity(after, before))
-  assert.doesNotThrow(() => checkIdentity(before, after))
+  const reviewed = { compatibleNames: ['1688toCSV', '1688toPL'] }
+  assert.throws(() => checkIdentity(after, before), /not the configured/)
+  assert.doesNotThrow(() => checkIdentity(after, before, reviewed))
+  assert.doesNotThrow(() => checkIdentity(before, after, reviewed))
   assert.throws(
-    () => checkIdentity({ ...after, key: null }, before),
+    () => checkIdentity({ ...after, key: null }, before, reviewed),
     /could change the extension id/
   )
   assert.throws(
     () => checkIdentity(after, { ...before, name: 'Other' }),
-    /not the 1688toPL/
+    /not the configured extension/
   )
+})
+
+test('recovery refuses another target or journal paths outside staging without changing files', async (t) => {
+  const { root, installDir, stagingDir } = await setup()
+  t.after(() => rm(root, { recursive: true, force: true }))
+  const protectedFile = path.join(root, 'retained-synthetic.txt')
+  await writeFile(protectedFile, 'retain')
+  const journal = stagingPaths(stagingDir).journal
+  await writeFile(
+    journal,
+    JSON.stringify({
+      installDir: path.join(root, 'different'),
+      swap: path.join(stagingDir, 'swap'),
+    })
+  )
+  await assert.rejects(
+    recoverStaging({ installDir, stagingDir }),
+    /another installDir/
+  )
+  await writeFile(
+    journal,
+    JSON.stringify({ installDir, candidate: protectedFile })
+  )
+  await assert.rejects(
+    recoverStaging({ installDir, stagingDir }),
+    /outside stagingDir/
+  )
+  assert.equal(await readFile(protectedFile, 'utf8'), 'retain')
+  assert.equal(await version(installDir), 'old')
+  await writeFile(journal, '{invalid')
+  await assert.rejects(
+    recoverStaging({ installDir, stagingDir }),
+    /journal is unreadable/
+  )
+  assert.equal(await readFile(journal, 'utf8'), '{invalid')
 })

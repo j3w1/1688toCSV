@@ -1,5 +1,4 @@
 import { defineConfig } from '@playwright/test'
-import { availableParallelism } from 'node:os'
 
 export default defineConfig({
   testDir: './tests/browser',
@@ -7,7 +6,9 @@ export default defineConfig({
   // Every test owns its browser profile, extension copy, server and downloads.
   // Test-level parallelism also lets CI shards divide the largest spec files.
   fullyParallel: true,
-  workers: process.env.CI ? 2 : Math.min(4, availableParallelism()),
+  // Browser profiles are isolated; the OS clipboard is shared. CI shards use
+  // independent runners, each with one serialized worker.
+  workers: 1,
   forbidOnly: Boolean(process.env.CI),
   retries: 0,
   timeout: 30_000,

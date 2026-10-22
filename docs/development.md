@@ -2,30 +2,36 @@
 
 [Documentation](README.md) · [Agent instructions](../AGENTS.md) · [Data contracts](data-model.md)
 
-Use Node.js 24, PowerShell and native Windows runtimes on the local host. Edit source, build explicitly and test the generated **dist** extension. The root manifest is source; there is no watch mode. Remote Linux work remains separate from local Windows execution.
+Use Node.js 24 and the host's native shell. On Windows use PowerShell and Windows-native Node; WSL is not required. Edit source, build explicitly and test the generated **dist** extension. The root manifest is source; there is no watch mode. The project `.npmrc` opts into only URL dependencies declared by this package (`allow-remote=root`), including the integrity-pinned SheetJS tarball; npm 12 otherwise refuses URL dependencies. No host npm configuration change is needed.
 
 ## Local development
 
-The owner's [local-first delivery rule](../AGENTS.md#delivery-local-first) controls push, merge and deployment. `npm run try` runs units, creates a development build, stages complete `dist`, reloads the registered CE Dev Browser extension, checks every database store count and reopens the workspace closed by reload. Load once per ready batch, preserving installed path, manifest key, ID and library.
+The owner's [local-first delivery rule](../AGENTS.md#delivery-local-first) controls push, merge and deployment. `npm run try` runs units and creates a development build on any supported host. With a configured local trial target, it stages the complete build, reloads the same registered extension, checks every database store count and reopens its workspace. With no target config, checks/build still run, it prints **no local trial target: nothing loaded**, emits a `localTrial` summary with `loaded:false`, and exits successfully. This is local build evidence, not an installed trial. `--dry-run` never reads target configuration or contacts a browser.
 
-Machine configuration belongs outside Git at `~/.config/1688topl/try.json`, with legacy `~/.config/1688tocsv/try.json` accepted as a fallback. Required fields are `installDir` (registered `dist`), `extensionId`, `browserMcp` (server command) and `stagingDir` (same filesystem). Keep an existing registered path even if it contains the previous project name. Do not move its storage or register another ID merely to match repository branding.
+Configuration belongs outside Git. Discovery uses `--config FILE`, then `LOCAL_TRIAL_CONFIG`, then `$XDG_CONFIG_HOME/<package-name>/try.json` (or `~/.config/<package-name>/try.json`). For this package the default is `~/.config/1688topl/try.json`; the old `1688tocsv` directory remains a fallback with a deprecation message. An explicit missing file is a missing target, not permission to use a different config. Invalid config is reported as an error without loading.
 
-| Command                               | Purpose                                                                         |
-| ------------------------------------- | ------------------------------------------------------------------------------- |
-| `npm run try`                         | Unit tests, development build, installed staging/reload and count comparison.   |
-| `npm run try -- --quick`              | Same load loop without unit tests; reuse valid test evidence.                   |
-| `npm run try -- --smoke`              | Add the packaged browser smoke subset.                                          |
-| `npm run try -- --dry-run`            | Build without installed staging.                                                |
-| `npm run try -- --rollback`           | Restore the previously staged build.                                            |
-| `npm run verify`                      | Source/docs checks, units, production rebuild and isolated Chromium tests.      |
-| `npm run build` / `npm run build:dev` | One production/development build into dist.                                     |
-| `npm run test:browser`                | Test the current packaged build with synthetic pages.                           |
-| `npm run test:excel`                  | Native Windows Excel check with disposable workbooks and clipboard restoration. |
-| `npm run preview`                     | Synthetic preview; `/library.html` opens the workspace.                         |
-| `npm run screenshots`                 | Refresh documented workspace/label/settings images with synthetic data.         |
-| `npm run check:docs`                  | Check local targets, required screenshots and package commands.                 |
+Supply the actual machine's absolute `installDir`, absolute disjoint `stagingDir` on the same filesystem, registered `extensionId`, and `browserMcp` command/argument array. The install folder can have any name and must remain outside the active checkout. Resolved paths are checked, including symlinks; the loop never stages into its own source or a nested install/staging folder. Keep an existing registered path even if it contains an older project name.
 
-The installed loop refuses an unregistered/wrong folder, running import, incompatible identity or changed library counts. A supported rename can migrate display branding while retaining key/path/ID. Do not reset, import or restore the owner's library for tests. Honor tool-policy refusals and report the blocked installed step separately from local test success.
+`browserMcp` is a machine-provided browser MCP command. CE Dev Browser is one example. The command must support its browser guide/lease, registered-extension list/reload, tabs, snapshot and read-only evaluation tools; the repository assumes no executable location or installed browser. Refusals stop the loop rather than select another transport. The database name and reviewed compatible display names come from `package.json`'s `localTrial` metadata, with optional target overrides. Copying the loop to another extension requires that extension's own metadata, not a machine-specific edit to the script. A display-name transition still checks the unchanged key and registered path/ID.
+
+First installation is separate: build, use the host's supported browser installation flow with an explicitly chosen stable folder, confirm its new ID/registration, and open the workspace to initialize that new library. Only then configure a reload target. The reload loop refuses an unregistered/disabled extension or missing database and never creates, resets, imports or restores a library. When a managed browser supplies an install target, its machine config can point to that target; no target is assumed before it exists.
+
+| Command                               | Purpose                                                                                                     |
+| ------------------------------------- | ----------------------------------------------------------------------------------------------------------- |
+| `npm run try`                         | Unit tests and development build; configured staging/reload/count comparison, or explicit no-target result. |
+| `npm run try -- --quick`              | Same load loop without unit tests; reuse valid test evidence.                                               |
+| `npm run try -- --smoke`              | Add the packaged browser smoke subset.                                                                      |
+| `npm run try -- --dry-run`            | Build without installed staging.                                                                            |
+| `npm run try -- --rollback`           | Restore the previously staged build.                                                                        |
+| `npm run verify`                      | Source/docs checks, units, production rebuild and isolated Chromium tests.                                  |
+| `npm run build` / `npm run build:dev` | One production/development build into dist.                                                                 |
+| `npm run test:browser`                | Test the current packaged build with synthetic pages.                                                       |
+| `npm run test:excel`                  | Native Windows Excel check with disposable workbooks and clipboard restoration.                             |
+| `npm run preview`                     | Synthetic preview; `/library.html` opens the workspace.                                                     |
+| `npm run screenshots`                 | Refresh documented workspace/label/settings images with synthetic data.                                     |
+| `npm run check:docs`                  | Check local targets, required screenshots and package commands.                                             |
+
+The installed loop refuses an unregistered/wrong folder, running import, incompatible identity or changed library counts. It preserves an interrupted staging journal and rollback build, refuses recovery paths outside staging or bound to another target, and reports uncertain reloads with `loaded:null` rather than inventing a result. A supported rename can migrate display branding while retaining key/path/ID. Do not reset, import or restore an owner's library for tests. Report a blocked installed step separately from local test success.
 
 [CI](../.github/workflows/ci.yml) routes documentation-only changes to docs checks and code changes to full verification; mixed changes get both. The stable `required` job rejects failures, cancellations and unexpected skips. Run full verification once at final deploy, and locally when build/test/CI machinery changes. Documentation-only work does not require reloading the installed extension.
 
@@ -86,7 +92,7 @@ node --test --test-concurrency=2 tests/*.test.mjs
 npm run test:browser -- --workers=1
 ```
 
-Do not run clipboard suites/native Excel concurrently. Playwright clicks do not await clipboard completion: wait for the completed Copied state before native readback. For held database writes, use the fieldset's native disabled property as the persistence barrier; Playwright's enabled matcher ignores disabled fieldsets. Wait for old dialog removal and current controls before advancing. Preserve substantive layout, selection, exact-image and financial assertions when correcting fixtures.
+These limits are defaults: `npm test` uses unit concurrency 2 and Playwright uses one worker because the OS clipboard is shared even across isolated profiles. CI retains four independent runner shards, each serialized. Do not run competing clipboard suites/native Excel concurrently. Playwright clicks do not await clipboard completion: wait for the completed Copied state before native readback. For held database writes, use the fieldset's native disabled property as the persistence barrier; Playwright's enabled matcher ignores disabled fieldsets. Wait for old dialog removal and current controls before advancing. Preserve substantive layout, selection, exact-image and financial assertions when correcting fixtures.
 
 Packaged tests use a temporary manifest with reserved test domains/localhost and inspection permissions. Remote requests are blocked; these permissions do not ship. Coverage includes real extraction, IndexedDB, download contents, clipboard completion, delayed saves, large logical lists and retries. It does not prove live layouts or installed-owner acceptance. Private offline replays use inert captures in ignored `work/` and remain distinct evidence.
 
