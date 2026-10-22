@@ -102,6 +102,15 @@
   grid-template-rows: minmax(0, 1fr);
   gap: 1rem;
 }
+.container-product-photo .product-photo-button,
+.container-product-photo img {
+  inline-size: 74px;
+  block-size: 74px;
+  object-fit: cover;
+}
+.container-product-photo .product-photo-button {
+  padding: 0;
+}
 .container-main {
   min-inline-size: 0;
   min-block-size: 0;

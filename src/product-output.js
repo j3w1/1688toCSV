@@ -234,12 +234,12 @@ export function createProductOutput({
     )
     return result
   }
-  async function ordersContext(rows) {
+  async function ordersContext(rows, { labels = false } = {}) {
     // Capture references before a delayed authoring flush; selection may change.
     const captured = structuredClone(rows)
     await authoring.flush()
     return captureOrdersOutput(
-      authoring.preparedRows(captured),
+      authoring.preparedRows(labels ? authoring.labelRows(captured) : captured),
       authoring.getPreferences()
     )
   }
@@ -252,7 +252,9 @@ export function createProductOutput({
     )
   }
   async function copyLabels(kind, source) {
-    const context = Array.isArray(source) ? await ordersContext(source) : source
+    const context = Array.isArray(source)
+      ? await ordersContext(source, { labels: true })
+      : source
     const printContext =
       context.kind === 'container-revision' && workbookAdapter?.printRows
         ? { ...context, products: workbookAdapter.printRows(context, { kind }) }
@@ -312,7 +314,9 @@ export function createProductOutput({
     )
   }
   async function printLabels(kind, source) {
-    const context = Array.isArray(source) ? await ordersContext(source) : source
+    const context = Array.isArray(source)
+      ? await ordersContext(source, { labels: true })
+      : source
     const printContext =
       context.kind === 'container-revision' && workbookAdapter?.printRows
         ? { ...context, products: workbookAdapter.printRows(context, { kind }) }

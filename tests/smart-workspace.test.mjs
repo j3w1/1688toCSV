@@ -20,6 +20,7 @@ import {
   cartonHistoryRows,
   mountCartonHistory,
   createOrderCartonSession,
+  openLegacyCartonReview,
 } from '../src/order-carton-grid.js'
 import * as actualPlanner from '../src/carton-reconciliation.js'
 import { applyCartonUnitException } from '../src/carton-batches.js'
@@ -94,6 +95,181 @@ test('carton history scopes account identities and never turns combined volume o
   assert.equal(rows[0].volume, '0.12')
   assert.equal(rows[0].weight, null)
   assert.equal(rows[0].count, 4)
+})
+
+test('legacy loaded evidence stays held until a reason and explicit not-shipped attestation are confirmed', async (context) => {
+  const { document, window } = dom(context),
+    record = syntheticOrder('1001'),
+    original = syntheticBatch('1001', 5, '100', { loaded: 2 }),
+    calls = []
+  let batch = structuredClone(original)
+  const repository = {
+    async getOperationalState() {
+      return { records: [record], batches: [structuredClone(batch)] }
+    },
+    async reviewLegacyCarton() {
+      return {
+        batch: structuredClone(batch),
+        orderContexts: [{ accountId: 'local', orderId: '1001', record }],
+        expectedOrderRevisions: {
+          '["local","1001"]': { source: 'original-source' },
+        },
+      }
+    },
+    async resolveLegacyCarton(args) {
+      calls.push(args)
+      batch = {
+        ...batch,
+        legacyResolution: { resolution: args.resolution, reason: args.reason },
+      }
+      return batch
+    },
+  }
+  const history = await mountCartonHistory(document.getElementById('host'), {
+    repository,
+  })
+  assert.equal(history.rows()[0].state, 'Needs review')
+  document.querySelector('[data-history-key]').click()
+  document.querySelector('[data-action="review-legacy-carton"]').click()
+  await new Promise((resolve) => setTimeout(resolve, 0))
+  const modal = document.querySelector('[data-action="legacy-carton-review"]'),
+    save = modal.querySelector('[data-action="resolve-legacy-carton"]')
+  save.click()
+  await new Promise((resolve) => setTimeout(resolve, 0))
+  assert.equal(calls.length, 0)
+  assert.match(
+    modal.querySelector('[role="status"]').textContent,
+    /document a reason/
+  )
+  modal.querySelector('textarea').value =
+    'Synthetic evidence reviewed; goods never left warehouse'
+  modal.querySelector('textarea').dispatchEvent(new window.Event('input'))
+  modal.querySelector('input[type="checkbox"]').checked = true
+  modal.querySelector('select').value = 'not-shipped'
+  modal.querySelector('select').dispatchEvent(new window.Event('change'))
+  save.click()
+  await new Promise((resolve) => setTimeout(resolve, 0))
+  assert.equal(calls.length, 1)
+  assert.equal(calls[0].resolution, 'not-shipped')
+  assert.equal(calls[0].batchId, original.id)
+  assert.equal(calls[0].expectedRevision, original.revision)
+  assert.equal(calls[0].attestNotShipped, true)
+  assert.equal(batch.loaded, 2)
+  assert.deepEqual(batch.contents, original.contents)
+  assert.equal(history.rows()[0].state, 'Confirmed facts')
+  modal.close()
+  history.destroy()
+})
+
+test('cross-order legacy owner correction sends supported contents for one explicitly chosen purchase and preserves original evidence', async (context) => {
+  const { document, window } = dom(context),
+    original = syntheticBatch('1001', 2, '30', {
+      orderId: undefined,
+      contents: [
+        { orderId: '1001', entryId: '2001', quantity: '20' },
+        { orderId: '1002', entryId: '2001', quantity: '10' },
+      ],
+      weight: '7.25',
+      weightBasis: 'batch',
+    }),
+    before = structuredClone(original),
+    writes = [],
+    contexts = ['1001', '1002'].map((orderId) => ({
+      accountId: 'local',
+      orderId,
+      record: syntheticOrder(orderId),
+    }))
+  const modal = await openLegacyCartonReview({
+    repository: {
+      async reviewLegacyCarton() {
+        return {
+          batch: original,
+          orderContexts: contexts,
+          expectedOrderRevisions: { a: { source: 'a' }, b: { source: 'b' } },
+        }
+      },
+      async resolveLegacyCarton(args) {
+        writes.push(args)
+      },
+    },
+    batch: original,
+  })
+  const selects = modal.querySelectorAll('select')
+  selects[0].value = 'owner-corrected'
+  selects[0].dispatchEvent(new window.Event('change'))
+  selects[1].value = JSON.stringify(['local', '1002'])
+  selects[1].dispatchEvent(new window.Event('change'))
+  assert.equal(modal.querySelector('[data-legacy-entry-id="2001"]').value, '10')
+  modal.querySelector('textarea').value =
+    'Reviewed original supplier evidence establishes actual owner'
+  modal.querySelector('input[type="checkbox"]').checked = true
+  modal.querySelector('[data-action="resolve-legacy-carton"]').click()
+  await new Promise((resolve) => setTimeout(resolve, 0))
+  assert.equal(writes.length, 1)
+  assert.deepEqual(writes[0].ownerRef, { accountId: 'local', orderId: '1002' })
+  assert.deepEqual(writes[0].contents, [
+    { orderId: '1002', entryId: '2001', quantity: '10' },
+  ])
+  assert.deepEqual(writes[0].expectedOrderRevisions, {
+    a: { source: 'a' },
+    b: { source: 'b' },
+  })
+  assert.equal(writes[0].resolution, 'owner-corrected')
+  assert.equal(writes[0].batchId, original.id)
+  assert.equal(writes[0].attestNotShipped, true)
+  assert.equal(writes[0].attestRepacked, undefined)
+  assert.deepEqual(original, before)
+})
+
+test('cross-order repack retirement requires actual physical repack attestation and never supplies automatic replacement cartons', async (context) => {
+  const { window } = dom(context),
+    original = syntheticBatch('1001', 2, '30'),
+    writes = [],
+    contexts = ['1001', '1002'].map((orderId) => ({
+      accountId: 'local',
+      orderId,
+      record: syntheticOrder(orderId),
+    })),
+    modal = await openLegacyCartonReview({
+      repository: {
+        async reviewLegacyCarton() {
+          return {
+            batch: original,
+            orderContexts: contexts,
+            expectedOrderRevisions: {},
+          }
+        },
+        async resolveLegacyCarton(args) {
+          writes.push(args)
+        },
+      },
+      batch: original,
+    })
+  modal.querySelector('select').value = 'retired-after-repack'
+  modal.querySelector('select').dispatchEvent(new window.Event('change'))
+  modal.querySelector('textarea').value =
+    'Two original sources physically repacked after review'
+  const checks = modal.querySelectorAll('input[type="checkbox"]')
+  checks[0].checked = true
+  modal.querySelector('[data-action="resolve-legacy-carton"]').click()
+  await new Promise((resolve) => setTimeout(resolve, 0))
+  assert.equal(writes.length, 0)
+  assert.match(
+    modal.querySelector('[role="status"]').textContent,
+    /already happened/
+  )
+  checks[1].checked = true
+  modal.querySelector('[data-action="resolve-legacy-carton"]').click()
+  await new Promise((resolve) => setTimeout(resolve, 0))
+  assert.equal(writes.length, 1)
+  assert.equal(writes[0].resolution, 'retired-after-repack')
+  assert.equal(writes[0].attestNotShipped, true)
+  assert.equal(writes[0].attestRepacked, true)
+  assert.equal(writes[0].contents, undefined)
+  assert.equal(writes[0].ownerRef, undefined)
+  assert.equal(writes[0].replacementCartons, undefined)
+  assert.equal(modal.querySelectorAll('button').length, 3)
+  modal.close()
 })
 
 function dom(context) {

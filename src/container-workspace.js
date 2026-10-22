@@ -1,6 +1,8 @@
 import { element as el, copyTextButton } from './ui.js'
 import { message as m, bindText, bindAttribute, getLocale } from './i18n.js'
 import { createVirtualTable } from './virtual-table.js'
+import { photoCopyTile } from './photo-copy.js'
+import { copySingleImage } from './clipboard.js'
 
 const clone = (value) => structuredClone(value)
 const orderRef = (order) => ({
@@ -236,6 +238,7 @@ export function createContainerWorkspace({
   output,
   inspectProduct,
   editInOrders,
+  loadImage = async (url) => url,
   onRoute = () => {},
   onError = () => {},
 }) {
@@ -670,7 +673,7 @@ export function createContainerWorkspace({
           ? view.leftBehind.products
           : view.products
     const kind = currentView === 'loading' ? 'carton' : 'product'
-    allRows = source.map((row, index) => ({
+    allRows = source.map((row) => ({
       key:
         kind === 'carton'
           ? idFor(row)
@@ -678,7 +681,6 @@ export function createContainerWorkspace({
               row.accountId || 'local',
               row.orderId,
               row.entryId,
-              row.id || index,
             ]),
       source: row,
       kind,
@@ -716,6 +718,7 @@ export function createContainerWorkspace({
         ]
       : [
           'Select',
+          'Photo',
           'Code',
           'Description',
           'Purchased',
@@ -802,6 +805,33 @@ export function createContainerWorkspace({
     }
     selection.append(check)
     tr.append(selection)
+    if (row.kind === 'product') {
+      const cell = el('td', undefined, 'container-product-photo'),
+        photo = el('button', undefined, 'product-photo-button'),
+        image = el('img')
+      photo.type = 'button'
+      image.width = image.height = 74
+      image.alt = source.title || source.description || ''
+      photo.append(image)
+      photo.disabled = !source.thumbnail
+      photo.onclick = () => inspect()
+      cell.append(
+        photoCopyTile(
+          photo,
+          async () => copySingleImage(await loadImage(source.thumbnail)),
+          { disabled: !source.thumbnail }
+        )
+      )
+      if (source.thumbnail)
+        void loadImage(source.thumbnail)
+          .then((url) => {
+            if (image.isConnected) image.src = url
+          })
+          .catch(() => {
+            photo.disabled = true
+          })
+      tr.append(cell)
+    }
     const values =
       row.kind === 'carton'
         ? [
