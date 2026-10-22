@@ -395,8 +395,8 @@ test('one product in different physical marks shows explicit references and supp
   assert.ok(requests.slice(1).every(({ limits }) => limits.mark))
 })
 
-test('only exact identical single-carton records yield numeric capacity; aggregate divisibility is not uniform evidence', () => {
-  const source = { ...rows[0], quantity: '28', unitsPerCarton: '14' },
+test('identical exact cartons or explicit matching aggregate capacity stay numeric; unspecified aggregate divisibility does not', () => {
+  const source = { ...rows[0], quantity: '28', unitsPerCarton: '' },
     exact = [1, 2].map((number) =>
       batch({
         id: `uniform-${number}`,
@@ -440,6 +440,86 @@ test('only exact identical single-carton records yield numeric capacity; aggrega
       field(
         localized,
         localized.rows.find((row) => row.kind === 'product'),
+        'unitsPerCarton'
+      ).value,
+      expected
+    )
+  }
+})
+
+test('Products retains 10 pcs per box for 150 pieces across 15 explicitly matching cartons', async () => {
+  const source = {
+      ...rows[0],
+      quantity: '150',
+      unitsPerCarton: '10',
+      effectiveAmount: '1500.00',
+    },
+    physical = batch({
+      count: 15,
+      received: 4,
+      loaded: 0,
+      contents: [{ ...batch().contents[0], quantity: '150' }],
+    }),
+    settings = options({ cartonBatches: [physical] }),
+    plan = planPackingWorkbook([source], settings),
+    product = plan.rows.find((row) => row.kind === 'product'),
+    cartons = plan.sheets[1],
+    carton = cartons.rows.find((row) => row.kind === 'carton')
+  assert.equal(field(plan, product, 'unitsPerCarton').value, '10')
+  assert.equal(field(plan, product, 'unitsPerCarton').type, 'number')
+  assert.equal(field(cartons, carton, 'count').value, '15')
+  assert.equal(field(cartons, carton, 'received').value, '4')
+  assert.equal(field(cartons, carton, 'loaded').value, '0')
+  const workbook = read(await createPackingWorkbook([source], settings), {
+    type: 'array',
+  })
+  assert.equal(workbook.Sheets.Products.I7.v, 10)
+  assert.equal(workbook.Sheets.Products.I7.t, 'n')
+  assert.equal(workbook.Sheets.Cartons.D7.v, 15)
+  assert.equal(workbook.Sheets.Cartons.E7.v, 4)
+  assert.equal(workbook.Sheets.Cartons.F7.v, 0)
+  for (const [sourceChanges, batchChanges, expected] of [
+    [{ unitsPerCarton: '' }, {}, 'Batch'],
+    [{ unitsPerCarton: '12' }, {}, 'Batch'],
+    [{ quantity: '160' }, {}, 'Batch'],
+    [{}, { count: 14 }, 'Batch'],
+    [{}, { count: null }, ''],
+  ]) {
+    const candidate = planPackingWorkbook(
+      [{ ...source, ...sourceChanges }],
+      options({ cartonBatches: [{ ...physical, ...batchChanges }] })
+    )
+    assert.equal(
+      field(
+        candidate,
+        candidate.rows.find((row) => row.kind === 'product'),
+        'unitsPerCarton'
+      ).value,
+      expected
+    )
+  }
+})
+
+test('Products leaves partial identical exact allocations blank and lets full exact contents override defaults', () => {
+  const source = { ...rows[0], quantity: '30', unitsPerCarton: '10' },
+    exact = (quantity) =>
+      batch({
+        count: 1,
+        contents: [{ ...batch().contents[0], quantity }],
+      })
+  for (const [physical, expected] of [
+    [[exact('10')], ''],
+    [[exact('30')], '30'],
+    [[exact('13'), { ...exact('17'), id: 'uneven-2' }], 'Varies'],
+  ]) {
+    const candidate = planPackingWorkbook(
+      [source],
+      options({ cartonBatches: physical })
+    )
+    assert.equal(
+      field(
+        candidate,
+        candidate.rows.find((row) => row.kind === 'product'),
         'unitsPerCarton'
       ).value,
       expected

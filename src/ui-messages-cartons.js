@@ -1,4 +1,27 @@
 export const CARTON_MESSAGES = {
+  '{0} · {1}': { zh: '{0} · {1}', es: '{0} · {1}' },
+  '{0} calculated cartons': {
+    zh: '计算箱数：{0}',
+    es: '{0} cajas calculadas',
+  },
+  '{0} full cartons + {1} loose units': {
+    zh: '{0} 个整箱 + {1} 件散货',
+    es: '{0} cajas completas + {1} unidades sueltas',
+  },
+  '{0} calculated cartons · {1} recorded cartons': {
+    zh: '计算箱数：{0} · 已记录箱数：{1}',
+    es: '{0} cajas calculadas · {1} cajas registradas',
+  },
+  '{0} recorded cartons': {
+    zh: '已记录箱数：{0}',
+    es: '{0} cajas registradas',
+  },
+  'Recorded cartons': { zh: '已记录纸箱', es: 'Cajas registradas' },
+  'Pieces per full carton. Calculates cartons automatically; recorded cartons stay unchanged.':
+    {
+      zh: '每个整箱的件数。自动计算箱数，不更改已记录的纸箱。',
+      es: 'Unidades por caja completa. Calcula las cajas sin cambiar las registradas.',
+    },
   'Edit Pcs/box in Orders': {
     zh: '在订单中编辑每箱件数',
     es: 'Editar unidades por caja en Pedidos',

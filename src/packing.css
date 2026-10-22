@@ -2657,6 +2657,53 @@ html:has(body.packing-active) {
 .carton-capacity-readout small {
   font-size: 10px;
 }
+.carton-capacity-cell {
+  min-inline-size: 0;
+  max-inline-size: 100%;
+}
+.carton-capacity:has(> .carton-capacity-summary) {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  inline-size: 100%;
+  gap: 2px;
+  margin: 0;
+}
+.carton-capacity:has(> .carton-capacity-summary) > input {
+  inline-size: 100%;
+  min-inline-size: 0;
+  text-align: end;
+}
+.carton-capacity-summary {
+  grid-column: 1 / -1;
+  max-inline-size: 100%;
+  color: var(--muted);
+  line-height: 1.25;
+  overflow-wrap: anywhere;
+  text-align: end;
+}
+.carton-recorded-context .carton-batch-readout {
+  max-inline-size: 100%;
+  min-block-size: 0;
+  margin: 3px 0 0;
+  padding: 1px 2px;
+  font-size: 10px;
+  line-height: 1.25;
+  white-space: normal;
+  overflow-wrap: anywhere;
+}
+.variant-numeric-row .carton-capacity-cell {
+  inline-size: 100%;
+}
+.variant-numeric-row .carton-capacity {
+  font-size: 12px;
+}
+.variant-numeric-row .carton-capacity input {
+  min-block-size: 26px;
+  padding: 2px 3px;
+}
+.carton-capacity [hidden] {
+  display: none;
+}
 .carton-capacity-status {
   font-size: 10px;
 }

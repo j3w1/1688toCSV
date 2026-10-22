@@ -36,12 +36,12 @@ async function prepare(extension) {
   await expect(page.locator('#packing-view')).toBeVisible()
   return { page, record }
 }
-const readout = (page, entryId) =>
+const packingCapacity = (page, entryId) =>
   page.locator(
-    `.variant-numeric-row[data-entry-id="${entryId}"] .carton-capacity-readout`
+    `.variant-numeric-row[data-entry-id="${entryId}"] .carton-capacity`
   )
 
-test('the empty capacity action saves pending packing edits and focuses its exact Orders source field', async ({
+test('inline packing capacity edits preserve pending names and save to the exact Orders source with localized units', async ({
   extension,
 }) => {
   const { page, record } = await prepare(extension),
@@ -50,26 +50,37 @@ test('the empty capacity action saves pending packing edits and focuses its exac
     name = packing
       .locator('.group-fields input[data-packing-field="name"]')
       .first()
-  await name.fill('PENDING CAPACITY NAVIGATION')
-  await readout(page, item.entryId)
-    .getByRole('button', { name: 'Edit Pcs/box in Orders', exact: true })
-    .click()
-  await expect(page.locator('#orders-view')).toBeVisible()
+  await page.locator('#view-orders').click()
   const row = page.locator(
       `#sheet-body tr[data-selection-key="${record.snapshot.orderId}/${item.entryId}"]`
     ),
     capacity = row.locator('.pack-size-cell input[type="number"]')
-  await expect(capacity).toBeFocused()
-  await expect(capacity).toHaveValue('')
-  await expect(row.locator('.carton-capacity-unit')).toBeHidden()
+  const emptyHeight = (await row.boundingBox()).height
+  await page.locator('#view-packing').click()
+  await name.fill('PENDING CAPACITY NAVIGATION')
+  const inline = packingCapacity(page, item.entryId)
+  const inlineInput = inline.getByRole('spinbutton', {
+    name: 'Pcs/box',
+    exact: true,
+  })
+  await expect(inlineInput).toHaveValue('')
+  await expect(inline.locator('.carton-capacity-unit')).toBeHidden()
+  await inlineInput.fill('12')
+  await inlineInput.press('Enter')
+  await expect(inline.locator('.carton-capacity-status')).toHaveText('Saved')
+  await expect(inline.locator('.carton-capacity-summary')).toHaveText(
+    '6 full cartons + 8 loose units'
+  )
+  await expect(inline.locator('.carton-capacity-summary')).toBeVisible()
+  await expect(packing).toBeVisible()
+  await expect(name).toHaveValue('PENDING CAPACITY NAVIGATION')
+  await page.locator('#view-orders').click()
+  await expect(page.locator('#orders-view')).toBeVisible()
+  await expect(capacity).toHaveValue('12')
   await expect(capacity).toHaveCSS('text-align', 'end')
   await expect(
     page.locator('#sheet-body tr[aria-selected="true"]')
   ).toHaveCount(3)
-  const emptyHeight = (await row.boundingBox()).height
-  await capacity.fill('12')
-  await capacity.press('Enter')
-  await expect(row.locator('.carton-capacity-status')).toHaveText('Saved')
   await expect(row.locator('.carton-capacity-unit')).toBeVisible()
   for (const [language, unit] of [
     ['es', '/ctn'],
@@ -85,11 +96,10 @@ test('the empty capacity action saves pending packing edits and focuses its exac
   await expect(packing).toBeVisible()
   await expect(
     packing.getByRole('spinbutton', { name: 'Pcs/box', exact: true })
-  ).toHaveCount(0)
-  await expect(readout(page, item.entryId)).toContainText('12')
-  await expect(
-    readout(page, item.entryId).locator('.carton-capacity-unit')
-  ).toHaveText('/box')
+  ).toHaveCount(3)
+  await expect(inlineInput).toHaveValue('12')
+  await expect(inlineInput).toBeEditable()
+  await expect(inline.locator('.carton-capacity-unit')).toHaveText('/box')
   await expect(packing.locator('.variant-numeric-row').first()).toHaveCSS(
     'text-align',
     'end'
@@ -103,7 +113,7 @@ test('the empty capacity action saves pending packing edits and focuses its exac
   expect(backup.data.cartonBatches).toEqual([])
 })
 
-test('a filtered-out source uses its existing Orders controller without changing filters or selection', async ({
+test('inline packing edits reach a filtered-out source without changing Orders filters or selection and retain invalid drafts', async ({
   extension,
 }, testInfo) => {
   const { page, record } = await prepare(extension),
@@ -121,33 +131,32 @@ test('a filtered-out source uses its existing Orders controller without changing
   await selected.press('Space')
   await expect(selected).toHaveAttribute('aria-selected', 'true')
   await page.locator('#view-packing').click()
-  await readout(page, item.entryId)
-    .getByRole('button', { name: 'Edit Pcs/box in Orders', exact: true })
-    .click()
-  const dialog = page.getByRole('dialog', {
-      name: 'Edit Pcs/box in Orders',
-      exact: true,
-    }),
-    capacity = dialog.getByRole('spinbutton', { name: 'Pcs/box', exact: true })
-  await expect(dialog).toBeVisible()
-  await expect(page.locator('#orders-view')).toBeVisible()
-  await expect(capacity).toBeFocused()
-  await expect(dialog).toContainText(item.description)
-  await expect(dialog.locator('.ce-code')).toBeVisible()
-  await expect(page.locator('#search')).toHaveValue(search)
+  const inline = packingCapacity(page, item.entryId),
+    capacity = inline.getByRole('spinbutton', { name: 'Pcs/box', exact: true })
+  await expect(capacity).toBeEditable()
   await capacity.fill('0')
-  await dialog.getByRole('button', { name: 'Close', exact: true }).click()
-  await expect(dialog).toBeVisible()
-  await expect(capacity).toBeFocused()
-  await expect(dialog.locator('.carton-capacity-error')).toContainText(
+  await capacity.press('Enter')
+  await expect(page.locator('#packing-view')).toBeVisible()
+  await expect(capacity).toHaveValue('0')
+  await expect(capacity).toHaveAttribute('aria-invalid', 'true')
+  await expect(inline.locator('.carton-capacity-status')).toContainText(
     'positive whole number'
   )
+  const invalid = await extension.inspector.evaluate(() =>
+    chrome.runtime.sendMessage({ type: 'BACKUP_EXPORT' })
+  )
+  expect(invalid.data.orders[0].unitsPerCarton?.[item.entryId]).toBeUndefined()
   await capacity.fill('8')
   await page.screenshot({
     path: testInfo.outputPath('capacity-source-editor.png'),
   })
-  await dialog.getByRole('button', { name: 'Close', exact: true }).click()
-  await expect(dialog).toHaveCount(0)
+  await capacity.press('Enter')
+  await expect(inline.locator('.carton-capacity-status')).toHaveText('Saved')
+  await expect(inline.locator('.carton-capacity-summary')).toHaveText(
+    '10 calculated cartons'
+  )
+  await page.locator('#view-orders').click()
+  await expect(page.locator('#orders-view')).toBeVisible()
   await expect(page.locator('#search')).toHaveValue(search)
   await expect(page.locator('#sheet-body tr[data-selection-key]')).toHaveCount(
     1
@@ -156,7 +165,7 @@ test('a filtered-out source uses its existing Orders controller without changing
     page.locator('#sheet-body tr[aria-selected="true"]')
   ).toHaveCount(1)
   await page.locator('#view-packing').click()
-  await expect(readout(page, item.entryId)).toContainText('8')
+  await expect(capacity).toHaveValue('8')
   const saved = await extension.inspector.evaluate(() =>
     chrome.runtime.sendMessage({ type: 'BACKUP_EXPORT' })
   )

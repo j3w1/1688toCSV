@@ -1,7 +1,7 @@
 import { test, expect } from './extension-fixture.mjs'
 import { createDemoRecords } from '../../preview/library-fixture.js'
 
-test('capacities autosave before assignment, copy in preparation and require review for leftover carton marks', async ({
+test('capacities autosave before assignment, remain editable in preparation and require review for leftover carton marks', async ({
   extension,
 }) => {
   const [record] = await extension.inspector.evaluate(
@@ -110,7 +110,7 @@ test('capacities autosave before assignment, copy in preparation and require rev
   await capacity(1).fill('10')
   await capacity(1).press('Enter')
   await expect(rows.nth(1).locator('.carton-capacity-summary')).toHaveText(
-    '2 full cartons + 4 loose units · Review packing'
+    '2 full cartons + 4 loose units'
   )
   await expect(rows.nth(1).locator('.carton-capacity-status')).toHaveText(
     'Saved'
@@ -146,21 +146,23 @@ test('capacities autosave before assignment, copy in preparation and require rev
   )
   await expect(
     packing.getByRole('spinbutton', { name: 'Pcs/box', exact: true })
-  ).toHaveCount(0)
-  await expect(packing.locator('.carton-capacity-readout')).toHaveCount(3)
+  ).toHaveCount(3)
+  await expect(packing.locator('.carton-capacity')).toHaveCount(3)
+  await expect(packing.locator('.carton-capacity-summary').first()).toHaveText(
+    '4 calculated cartons'
+  )
   await expect(
-    packing.locator('.carton-capacity-readout').first()
-  ).toContainText('4 full cartons')
+    packing.getByRole('spinbutton', { name: 'Pcs/box', exact: true }).first()
+  ).toHaveValue('10')
+  await expect(
+    packing.getByRole('spinbutton', { name: 'Pcs/box', exact: true }).first()
+  ).toBeEditable()
   await page.evaluate(() => {
     navigator.clipboard.writeText = async (text) => {
       window.capacityCopied = text
     }
   })
   const first = packing.locator('.variants tbody tr').first()
-  await first
-    .getByRole('button', { name: 'Copy Pcs/box: 10', exact: true })
-    .click()
-  await expect.poll(() => page.evaluate(() => window.capacityCopied)).toBe('10')
   await first
     .getByRole('button', { name: 'Copy value: White', exact: true })
     .click()
@@ -363,8 +365,8 @@ test('capacity changes refresh an already open preparation and its next print co
     .getByRole('button', { name: 'Assign codes and prepare', exact: true })
     .click()
   const packing = viewer.locator('#packing-view')
-  await expect(packing.locator('.carton-capacity-readout')).toContainText(
-    '4 full cartons'
+  await expect(packing.locator('.carton-capacity-summary')).toHaveText(
+    '4 calculated cartons'
   )
   const editor = await extension.context.newPage()
   await editor.clock.setFixedTime(new Date('2026-10-15T04:00:00Z'))
@@ -379,8 +381,8 @@ test('capacity changes refresh an already open preparation and its next print co
   await expect(editor.locator('.carton-capacity-status').first()).toHaveText(
     'Saved'
   )
-  await expect(packing.locator('.carton-capacity-readout')).toContainText(
-    '2 full cartons'
+  await expect(packing.locator('.carton-capacity-summary')).toHaveText(
+    '2 calculated cartons'
   )
   const saved = await extension.inspector.evaluate(() =>
     chrome.runtime.sendMessage({ type: 'BACKUP_EXPORT' })

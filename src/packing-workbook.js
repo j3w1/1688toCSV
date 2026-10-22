@@ -1,6 +1,6 @@
 import { columnName, createZip } from './xlsx-writer.js'
 import { excelImagePalette } from './excel-image-style.js'
-import { cartonBatchMetrics } from './carton-batches.js'
+import { cartonBatchMetrics, cartonProductPacking } from './carton-batches.js'
 
 const encoder = new TextEncoder()
 const XML_HEADER = '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>'
@@ -1242,45 +1242,21 @@ const productIdentity = (row, accountId = row.accountId || 'local') =>
   JSON.stringify([accountId, String(row.orderId), String(row.entryId)])
 
 function productCapacity(row, batches) {
-  const relevant = batches.filter(
-    (batch) =>
-      !batch.deletedAt &&
-      batch.month === row.packingMonth &&
-      batch.contents?.some(
-        (content) =>
-          productIdentity(content, batch.accountId || 'local') ===
-          productIdentity(row)
-      )
+  const packing = cartonProductPacking(
+    {
+      accountId: row.accountId || 'local',
+      orderId: row.orderId,
+      entryId: row.entryId,
+      month: row.packingMonth,
+      quantity: row.quantity,
+      unitsPerCarton: row.unitsPerCarton,
+    },
+    batches
   )
-  if (!relevant.length) return { value: row.unitsPerCarton ?? '' }
-  if (relevant.some((batch) => batch.needsReview)) return { status: 'review' }
-  if (relevant.some((batch) => batch.contents.length > 1))
-    return { status: 'shared' }
-  if (
-    relevant.some(
-      (batch) => Number.isSafeInteger(batch.count) && batch.count > 1
-    )
-  )
-    return { status: 'batchContents' }
-  const capacities = relevant.map((batch) => {
-    if (batch.count !== 1) return ''
-    const quantity = String(batch.contents[0].quantity)
-    return /^\d+$/.test(quantity) ? quantity : ''
-  })
-  if (capacities.some((value) => value === ''))
-    return relevant.every(
-      (batch) => Number.isSafeInteger(batch.count) && batch.count > 0
-    )
-      ? { status: 'varies' }
-      : { value: '' }
-  if (capacities.some((value) => value !== capacities[0]))
-    return { status: 'varies' }
-  const allocated = relevant.reduce(
-    (total, batch) => total + BigInt(batch.contents[0].quantity),
-    0n
-  )
-  if (String(allocated) !== String(row.quantity)) return { value: '' }
-  return { value: capacities[0] }
+  if (!packing.batches.length) return { value: row.unitsPerCarton ?? '' }
+  return packing.capacityStatus
+    ? { status: packing.capacityStatus }
+    : { value: packing.uniformCapacity }
 }
 
 function productCartonReferenceText(row, references, language) {

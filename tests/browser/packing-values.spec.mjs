@@ -188,7 +188,7 @@ test('packing rows show exact source unit prices and quantities as read-only fac
   expect(extension.unexpectedRequests).toEqual([])
 })
 
-test('preparation keeps facts compact and read-only beside a visible label editor at wide and narrow widths', async ({
+test('preparation keeps source facts read-only and capacity editable beside a visible label editor at wide and narrow widths', async ({
   extension,
 }) => {
   const { page, view } = await openPacking(extension, undefined, [10, 8, 10])
@@ -196,10 +196,19 @@ test('preparation keeps facts compact and read-only beside a visible label edito
   const group = view.locator('.preparation-group').first()
   const cartons = group.locator(':scope > .packing-group-cartons')
   const facts = row.locator('.variant-numeric-row')
-  const capacity = facts.locator('.carton-capacity-readout')
-  await expect(capacity).toContainText('10')
-  await expect(capacity).toContainText('4 full cartons')
-  await expect(capacity.locator('input, textarea')).toHaveCount(0)
+  const capacity = facts.getByRole('spinbutton', {
+    name: 'Pcs/box',
+    exact: true,
+  })
+  await expect(capacity).toHaveValue('10')
+  await expect(capacity).toBeEditable()
+  await expect(facts.locator('.carton-capacity-summary')).toHaveText(
+    '4 calculated cartons'
+  )
+  await expect(facts.locator('.carton-capacity-summary')).toBeVisible()
+  await expect(
+    row.locator('.variant-order-facts input, .variant-source-attributes input')
+  ).toHaveCount(0)
   await expect(
     row.locator('.variant-source-attributes .product-attributes')
   ).toBeVisible()
@@ -215,8 +224,12 @@ test('preparation keeps facts compact and read-only beside a visible label edito
 
   await page.setViewportSize({ width: 1440, height: 1000 })
   const quantityBox = await row.locator('.variant-quantity').boundingBox()
-  const packBox = await capacity.boundingBox()
-  expect(Math.abs(packBox.y - quantityBox.y)).toBeLessThanOrEqual(5)
+  const packBox = await facts.locator('.carton-capacity').boundingBox()
+  expect(
+    Math.abs(
+      packBox.y + packBox.height / 2 - quantityBox.y - quantityBox.height / 2
+    )
+  ).toBeLessThanOrEqual(5)
   expect(packBox.x).toBeGreaterThan(quantityBox.x + quantityBox.width)
   const rowBounds = await row.boundingBox()
   expect(rowBounds.height).toBeLessThanOrEqual(148)
@@ -247,7 +260,7 @@ test('preparation keeps facts compact and read-only beside a visible label edito
       '.reorder-handle, .packing-item-actions, .packing-remove-button'
     )
   ).toHaveCount(0)
-  await expect(cartons).toContainText('Set up cartons')
+  await expect(cartons).toContainText('7 calculated cartons')
   await expect(
     cartons.getByRole('button', { name: 'Cartons', exact: true })
   ).toBeVisible()

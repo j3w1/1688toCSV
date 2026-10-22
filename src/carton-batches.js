@@ -369,7 +369,7 @@ export function cartonBatchRemaining(scope, batches, editingId) {
 
 /** Product rows link to physical cartons without spreading shared counts or averaging contents. */
 export function cartonProductPacking(
-  { accountId = 'local', orderId, entryId, month },
+  { accountId = 'local', orderId, entryId, month, quantity, unitsPerCarton },
   batches
 ) {
   const relevant = batches.filter(
@@ -395,15 +395,65 @@ export function cartonProductPacking(
       const total = values.reduce((sum, batch) => sum + BigInt(batch.count), 0n)
       return total <= BigInt(Number.MAX_SAFE_INTEGER) ? Number(total) : ''
     },
+    declaredCapacity = /^[1-9]\d*$/.test(String(unitsPerCarton))
+      ? BigInt(unitsPerCarton)
+      : 0n,
     capacities = relevant.map((batch) => {
       if (
         batch.contents.length !== 1 ||
         !Number.isSafeInteger(batch.count) ||
-        batch.count !== 1
+        batch.count < 1
       )
         return ''
-      return String(BigInt(batch.contents[0].quantity))
-    })
+      const contents = BigInt(batch.contents[0].quantity)
+      if (batch.count === 1) return String(contents)
+      // A saved capacity is an explicit packing declaration, not a quotient
+      // inferred from aggregate contents that may have been packed unevenly.
+      return declaredCapacity &&
+        contents === declaredCapacity * BigInt(batch.count)
+        ? String(declaredCapacity)
+        : ''
+    }),
+    identicalCapacity =
+      capacities.length &&
+      capacities.every((value) => value !== '' && value === capacities[0]),
+    complete =
+      quantity === undefined ||
+      (/^\d+$/.test(String(quantity)) &&
+        relevant.reduce(
+          (total, batch) =>
+            total +
+            batch.contents.reduce(
+              (sum, content) =>
+                content.orderId === orderId && content.entryId === entryId
+                  ? sum + BigInt(content.quantity)
+                  : sum,
+              0n
+            ),
+          0n
+        ) === BigInt(quantity)),
+    uniformCapacity =
+      !needsReview && complete && identicalCapacity ? capacities[0] : ''
+  let capacityStatus = ''
+  if (needsReview) capacityStatus = 'review'
+  else if (relevant.some((batch) => batch.contents.length > 1))
+    capacityStatus = 'shared'
+  else if (!uniformCapacity) {
+    if (
+      relevant.some(
+        (batch) => Number.isSafeInteger(batch.count) && batch.count > 1
+      )
+    )
+      capacityStatus = 'batchContents'
+    else if (
+      !identicalCapacity &&
+      relevant.length &&
+      relevant.every(
+        (batch) => Number.isSafeInteger(batch.count) && batch.count > 0
+      )
+    )
+      capacityStatus = 'varies'
+  }
   return {
     batches: relevant,
     cartons: sumCounts(relevant),
@@ -411,12 +461,8 @@ export function cartonProductPacking(
       relevant.filter((batch) => batch.contents.length > 1),
       0
     ),
-    uniformCapacity:
-      !needsReview &&
-      capacities.length &&
-      capacities.every((value) => value !== '' && value === capacities[0])
-        ? capacities[0]
-        : '',
+    uniformCapacity,
+    capacityStatus,
     needsReview,
   }
 }

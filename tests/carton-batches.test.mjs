@@ -245,6 +245,111 @@ test('a numeric capacity requires uniform known single-carton contents instead o
   )
 })
 
+test('an explicit capacity remains numeric for fully covered matching aggregate cartons without rewriting physical records', () => {
+  const { batch } = fixture(),
+    reference = {
+      orderId: '1001',
+      entryId: '2',
+      month: '2026-10',
+      quantity: '150',
+      unitsPerCarton: '10',
+    },
+    aggregate = {
+      ...batch,
+      count: 15,
+      received: 4,
+      loaded: 0,
+      contents: [{ orderId: '1001', entryId: '2', quantity: '150' }],
+    },
+    original = structuredClone(aggregate),
+    packing = cartonProductPacking(reference, [aggregate])
+  assert.equal(packing.uniformCapacity, '10')
+  assert.equal(packing.capacityStatus, '')
+  assert.equal(packing.cartons, 15)
+  assert.deepEqual(aggregate, original)
+  for (const [changes, physical, expected] of [
+    [{ unitsPerCarton: undefined }, aggregate, 'batchContents'],
+    [{ unitsPerCarton: '' }, aggregate, 'batchContents'],
+    [{ unitsPerCarton: '0' }, aggregate, 'batchContents'],
+    [{ unitsPerCarton: '12' }, aggregate, 'batchContents'],
+    [{}, { ...aggregate, count: 14 }, 'batchContents'],
+    [{ quantity: '160' }, aggregate, 'batchContents'],
+    [{ quantity: '140' }, aggregate, 'batchContents'],
+    [{}, { ...aggregate, needsReview: true }, 'review'],
+    [{}, { ...aggregate, issues: ['Review allocation'] }, 'review'],
+    [
+      {},
+      {
+        ...aggregate,
+        contents: [
+          { orderId: '1001', entryId: '2', quantity: '150' },
+          { orderId: '1001', entryId: '3', quantity: '30' },
+        ],
+      },
+      'shared',
+    ],
+  ]) {
+    const result = cartonProductPacking({ ...reference, ...changes }, [
+      physical,
+    ])
+    assert.equal(result.uniformCapacity, '')
+    assert.equal(result.capacityStatus, expected)
+  }
+})
+
+test('capacity projection preserves exact carton evidence and requires full source-line coverage when given', () => {
+  const { batch } = fixture(),
+    reference = {
+      orderId: '1001',
+      entryId: '2',
+      month: '2026-10',
+      quantity: '30',
+      unitsPerCarton: '10',
+    },
+    exact = (id, quantity, count = 1) => ({
+      ...batch,
+      id,
+      count,
+      contents: [{ orderId: '1001', entryId: '2', quantity }],
+    }),
+    complete = [exact('one', '10'), exact('aggregate', '20', 2)]
+  assert.equal(cartonProductPacking(reference, complete).uniformCapacity, '10')
+  const partial = cartonProductPacking(reference, [exact('one', '10')])
+  assert.equal(partial.uniformCapacity, '')
+  assert.equal(partial.capacityStatus, '')
+  assert.equal(partial.cartons, 1)
+  assert.equal(
+    cartonProductPacking(reference, [exact('one', '30')]).uniformCapacity,
+    '30'
+  )
+  const uneven = cartonProductPacking(reference, [
+    exact('one', '13'),
+    exact('two', '17'),
+  ])
+  assert.equal(uneven.uniformCapacity, '')
+  assert.equal(uneven.capacityStatus, 'varies')
+  assert.equal(
+    cartonProductPacking(
+      { ...reference, quantity: '90071992547409931234567890' },
+      [
+        exact('big-one', '45035996273704965617283945'),
+        exact('big-two', '45035996273704965617283945'),
+      ]
+    ).uniformCapacity,
+    '45035996273704965617283945'
+  )
+  assert.equal(
+    cartonProductPacking(
+      { ...reference, quantity: '90071992547409931234567891' },
+      [
+        exact('big-one', '45035996273704965617283945'),
+        exact('big-two', '45035996273704965617283945'),
+      ]
+    ).uniformCapacity,
+    ''
+  )
+})
+
 test('numbered cartons require one physical carton and keep a trimmed human-readable number', () => {
   const { batch } = fixture(),
     numbered = validateCartonBatch({

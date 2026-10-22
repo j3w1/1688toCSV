@@ -300,10 +300,14 @@ test('prepared tables keep carton data once per group and compact product quanti
     for (const [row, capacity] of [
       [
         rows.first(),
-        rows.first().getByRole('button', { name: 'Pcs/box', exact: true }),
+        rows.first().getByRole('spinbutton', { name: 'Pcs/box', exact: true }),
       ],
-      [rows.nth(1), rows.nth(1).locator('.carton-capacity-readout')],
+      [
+        rows.nth(1),
+        rows.nth(1).getByRole('spinbutton', { name: 'Pcs/box', exact: true }),
+      ],
     ]) {
+      await expect(capacity).toBeEditable()
       await expect(
         row.getByRole('textbox', { name: 'Volume (m³/box)', exact: true })
       ).toHaveCount(0)

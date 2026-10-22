@@ -9,6 +9,38 @@ import {
 import { createLanguageScope, getLanguage, setLanguage } from '../src/i18n.js'
 
 const tick = () => new Promise((resolve) => setImmediate(resolve))
+
+test('capacity edits immediately expose calculated cartons and loose pieces before saving', (t) => {
+  const { document, window } = fixture(t)
+  t.mock.timers.enable({ apis: ['setTimeout'] })
+  const host = document.createElement('main'),
+    saves = [],
+    previews = []
+  document.body.append(host)
+  const editor = mountCartonCapacity(host, {
+    quantity: '150',
+    value: null,
+    onSave: async (value) => saves.push(value),
+    onPreview: (result) => previews.push(result),
+  })
+  const summary = host.querySelector('.carton-capacity-summary')
+  assert.equal(summary.hidden, true)
+  editor.input.value = '10'
+  editor.input.dispatchEvent(new window.Event('input'))
+  assert.equal(summary.localName, 'output')
+  assert.equal(summary.getAttribute('for'), editor.input.id)
+  assert.equal(summary.getAttribute('aria-live'), 'polite')
+  assert.equal(summary.classList.contains('sr-only'), false)
+  assert.equal(summary.hidden, false)
+  assert.equal(summary.textContent, '15 calculated cartons')
+  assert.equal(previews.at(-1).fullCartons, 15)
+  assert.deepEqual(saves, [])
+  editor.update({ quantity: '155', value: null })
+  assert.equal(editor.input.value, '10')
+  assert.equal(summary.textContent, '15 full cartons + 5 loose units')
+  assert.deepEqual(saves, [])
+})
+
 function fixture(t) {
   const { document, window } = parseHTML('<html><body></body></html>'),
     create = document.createElement.bind(document)

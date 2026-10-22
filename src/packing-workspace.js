@@ -46,8 +46,9 @@ import { mountMaterialVocabulary } from './material-vocabulary-settings.js'
 import { openStoreSpreadsheetGuide } from './store-spreadsheet-guide.js'
 import {
   mountCartonCapacity,
-  cartonCapacityReadout,
+  calculatedCartonMessage,
 } from './carton-packing-ui.js'
+import { cartonBreakdown } from './carton-packing.js'
 import { mountCartonMeasurement } from './carton-measurements-ui.js'
 import { openCartonBatchEditor } from './carton-batches-ui.js'
 import { planCartonBatchChanges } from './carton-batch-changes.js'
@@ -1317,12 +1318,70 @@ export async function startPackingWorkspace({
       batches.length && batches.every((batch) => batch.count !== null)
         ? batches.reduce((sum, batch) => sum + batch.count, 0)
         : null
-    return batches.length
-      ? uiMessage('{0} batches · {1} cartons', {
-          0: batches.length,
+    const record = getRecords().find(
+      (entry) =>
+        entry.snapshot.orderId === draft.orderId &&
+        (entry.snapshot.accountId || 'local') === (draft.accountId || 'local')
+    )
+    const planned = (record?.snapshot.items || [])
+      .filter((item) => keys.has(item.entryId))
+      .map((item) => {
+        const key = `${draft.accountId || 'local'}/${draft.orderId}/${item.entryId}`
+        const editor = cartonFields.get(
+          `${key}/${$('packing-view').hidden ? 'orders' : 'packing'}`
+        )
+        return cartonBreakdown(
+          item.quantity,
+          editor ? editor.input.value : record.unitsPerCarton?.[item.entryId]
+        )
+      })
+    if (
+      planned.length &&
+      planned.every((entry) => entry.status !== 'unknown')
+    ) {
+      const full = planned.reduce(
+        (sum, entry) => sum + BigInt(entry.fullCartons),
+        0n
+      )
+      const loose = planned.reduce(
+        (sum, entry) => sum + BigInt(entry.remainder),
+        0n
+      )
+      if (loose === 0n && batches.length)
+        return uiMessage('{0} calculated cartons · {1} recorded cartons', {
+          0: String(full),
           1: count ?? '—',
         })
+      const calculation = calculatedCartonMessage({
+        status: loose ? 'partial' : 'exact',
+        fullCartons: String(full),
+        remainder: String(loose),
+      })
+      return batches.length
+        ? uiMessage('{0} · {1}', {
+            0: calculation,
+            1: uiMessage('{0} recorded cartons', { 0: count ?? '—' }),
+          })
+        : calculation
+    }
+    return batches.length
+      ? uiMessage('{0} recorded cartons', { 0: count ?? '—' })
       : uiMessage('Set up cartons')
+  }
+  function refreshCartonSummaries() {
+    for (const summary of $('packing-view').querySelectorAll(
+      '.packing-group-cartons-summary'
+    )) {
+      const draft = drafts.find(
+        (entry) => entry.orderId === summary.dataset.orderId
+      )
+      const group = draft?.groups.find(
+        (entry) => entry.id === summary.dataset.groupId
+      )
+      if (group) bindText(summary, groupCartonSummary(draft, group))
+    }
+    for (const context of document.querySelectorAll('.carton-recorded-context'))
+      context.refreshCartons?.()
   }
   function groupCartonControl(draft, group) {
     const host = el('section', undefined, 'packing-group-cartons')
@@ -1332,7 +1391,13 @@ export async function startPackingWorkspace({
       'packing-group-cartons-edit'
     )
     decorateIcon(edit, 'carton')
-    const summary = el('span', groupCartonSummary(draft, group))
+    const summary = el(
+      'span',
+      groupCartonSummary(draft, group),
+      'packing-group-cartons-summary'
+    )
+    summary.dataset.orderId = draft.orderId
+    summary.dataset.groupId = group.id
     host.append(edit, summary)
     const groups = new Set(
       group.variants.flatMap((variant) => variant.entryIds)
@@ -1528,28 +1593,43 @@ export async function startPackingWorkspace({
     }
   }
   function physicalCapacityReadout(item, prep, group) {
+    const record = packingRecord({ ...item, orderId: prep.orderId })
     const packing = cartonProductPacking(
       {
         accountId: prep.accountId,
         orderId: prep.orderId,
         entryId: item.entryId,
         month: groupPackingMonth(prep, group),
+        quantity: item.quantity,
+        unitsPerCarton: record?.unitsPerCarton?.[item.entryId],
       },
       physicalBatches
     )
     if (!packing.batches.length) return null
     const shared = packing.batches.some((batch) => batch.contents.length > 1)
-    const text = packing.needsReview
+    const status = packing.needsReview
       ? uiMessage('Review cartons')
       : packing.uniformCapacity
-        ? `${packing.uniformCapacity}${t('/box')}`
-        : uiMessage(shared ? 'Shared' : 'Varies')
+        ? ''
+        : uiMessage(
+            shared
+              ? 'Shared'
+              : packing.batches.some((batch) => batch.count !== 1)
+                ? 'Batch'
+                : 'Varies'
+          )
+    const recorded = uiMessage('{0} recorded cartons', {
+      0: packing.cartons === '' ? '—' : packing.cartons,
+    })
+    const text = status
+      ? uiMessage('{0} · {1}', { 0: status, 1: recorded })
+      : recorded
     const control = button(
       text,
       () => editCartonBatches(prep, group),
       'carton-batch-readout'
     )
-    bindAttribute(control, 'aria-label', uiMessage('Pcs/box'))
+    bindAttribute(control, 'aria-label', uiMessage('Recorded cartons'))
     preparationHelp(
       control,
       () =>
@@ -2921,9 +3001,10 @@ export async function startPackingWorkspace({
         (!row.record || record.accountId === row.record.accountId)
     )
   }
-  function cartonCapacityEditor(row) {
+  function cartonCapacityEditor(row, view = 'orders') {
     const record = packingRecord(row),
-      key = `${record?.snapshot.accountId || 'local'}/${row.orderId}/${row.entryId}`,
+      productKey = `${record?.snapshot.accountId || 'local'}/${row.orderId}/${row.entryId}`,
+      key = `${productKey}/${view}`,
       existing = cartonFields.get(key)
     if (existing) {
       existing.update({
@@ -2935,6 +3016,7 @@ export async function startPackingWorkspace({
     const carton = mountCartonCapacity(el('div'), {
       quantity: row.quantity,
       value: record?.unitsPerCarton?.[row.entryId],
+      onPreview: refreshCartonSummaries,
       onSave: async (value) => {
         const saved = await repository.setUnitsPerCarton(
           row.orderId,
@@ -2950,11 +3032,32 @@ export async function startPackingWorkspace({
           currentRecord,
           mergeProductAnnotations(currentRecord, saved)
         )
+        for (const otherView of ['orders', 'packing'])
+          if (otherView !== view)
+            cartonFields
+              .get(`${productKey}/${otherView}`)
+              ?.update({ quantity: row.quantity, value })
+        refreshCartonSummaries()
         channel?.postMessage('carton-capacity')
       },
     })
     cartonFields.set(key, carton)
     return carton
+  }
+  function cartonCapacityCell(row, prep, group, view = 'orders') {
+    const cell = el('div', undefined, 'carton-capacity-cell')
+    cell.append(cartonCapacityEditor(row, view).control)
+    if (prep && group) {
+      const context = el('div', undefined, 'carton-recorded-context')
+      context.refreshCartons = () => {
+        const control = physicalCapacityReadout(row, prep, group)
+        context.replaceChildren(...(control ? [control] : []))
+        context.hidden = !control
+      }
+      context.refreshCartons()
+      cell.append(context)
+    }
+    return cell
   }
   let linkedPaymentRecords,
     linkedPaymentRows = new Set()
@@ -7017,7 +7120,6 @@ export async function startPackingWorkspace({
         const cartonRecord = getRecords().find(
           (record) => record.snapshot.orderId === draft.orderId
         )
-        const cartonUnits = cartonRecord?.unitsPerCarton || {}
         const measurementCell = el('td', undefined, 'variant-carton-columns')
         const numericHeader = el('div', undefined, 'variant-numeric-header')
         for (const label of ['Quantity', 'Pcs/box'])
@@ -7035,55 +7137,14 @@ export async function startPackingWorkspace({
             BigInt(item.quantity).toLocaleString(getLocale())
           )
           quantityValue.firstChild.replaceWith(quantityDisplay)
-          const physicalCapacity = physicalCapacityReadout(item, draft, group)
-          if (physicalCapacity) {
-            measurements.append(quantityValue, physicalCapacity)
-            measurementCell.append(measurements)
-            continue
-          }
-          const capacity = cartonCapacityReadout(
-            item,
-            cartonUnits[item.entryId],
-            {
-              onEdit:
-                onEditCartonCapacity && cartonRecord
-                  ? async () => {
-                      const live = getRecords().find(
-                        (record) =>
-                          record.snapshot.orderId === draft.orderId &&
-                          record.snapshot.accountId ===
-                            cartonRecord.snapshot.accountId
-                      )
-                      if (
-                        !live?.snapshot.items.some(
-                          (source) => source.entryId === item.entryId
-                        )
-                      )
-                        throw new Error('Source product unavailable in Orders.')
-                      if (await showOrders())
-                        await onEditCartonCapacity({
-                          orderId: draft.orderId,
-                          entryId: item.entryId,
-                          accountId: cartonRecord.snapshot.accountId || 'local',
-                        })
-                    }
-                  : undefined,
-              onError: (error) => showError(error.message),
-            }
+          const capacity = cartonCapacityCell(
+            { ...item, orderId: draft.orderId },
+            draft,
+            group,
+            'packing'
           )
-          capacity.firstChild.classList.add('sr-only')
-          capacity.querySelector('small')?.classList.add('sr-only')
           measurements.append(quantityValue, capacity)
           measurementCell.append(measurements)
-          const carton = productCartonDetails(item, cartonRecord)
-          if (carton.boxes !== undefined)
-            capacity.append(
-              el(
-                'small',
-                uiMessage('{0} full cartons', { 0: carton.boxes }),
-                'sr-only'
-              )
-            )
         }
         if (source?.sourceType === 'spreadsheet') attributes.append(factsLine)
         else description.append(factsLine)
@@ -8872,9 +8933,9 @@ export async function startPackingWorkspace({
       host.append(bar)
       const record = packingRecord(row)
       if (measurementHosts) mountMeasurements(measurementHosts, row, record)
-      const physicalCapacity =
-        matched && physicalCapacityReadout(row, matched.prep, matched.group)
-      capacityHost.append(physicalCapacity || cartonCapacityEditor(row).control)
+      capacityHost.append(
+        cartonCapacityCell(row, matched?.prep, matched?.group)
+      )
     },
   }
 }

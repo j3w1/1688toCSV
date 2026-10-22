@@ -193,7 +193,7 @@ test('group carton editor saves S/M/L in one six-carton batch and exports each p
   await dialog.getByRole('button', { name: 'Done', exact: true }).click()
   await expect(dialog).toHaveCount(0)
   await expect(packing.locator('.packing-group-cartons')).toContainText(
-    '1 batches · 6 cartons'
+    '6 recorded cartons'
   )
   await expect(
     packing.locator('.variant-measurement-cell input[name="cbm"]')
@@ -537,20 +537,27 @@ test('numbered cartons keep exact cross-code contents and an independent mark, w
   ).toEqual(['1', '2'])
   await dialog.getByRole('button', { name: 'Done', exact: true }).click()
   await expect(dialog).toHaveCount(0)
+  const smallPacking = packing.locator(
+    `.variant-numeric-row[data-entry-id="${small.entryId}"]`
+  )
   await expect(
-    packing
-      .locator(`.variant-numeric-row[data-entry-id="${small.entryId}"]`)
-      .getByRole('button', { name: 'Pcs/box', exact: true })
-  ).toHaveText('Varies')
+    smallPacking.getByRole('spinbutton', { name: 'Pcs/box', exact: true })
+  ).toBeEditable()
+  await expect(
+    smallPacking.getByRole('button', { name: 'Recorded cartons', exact: true })
+  ).toHaveText('Varies · 2 recorded cartons')
   await page.locator('#view-orders').click()
+  const smallSource = page
+    .locator(`#sheet-body tr[data-selection-key]`)
+    .filter({
+      has: page.locator(`.row-code-copy`, { hasText: 'CE26101001S' }),
+    })
   await expect(
-    page
-      .locator(`#sheet-body tr[data-selection-key]`)
-      .filter({
-        has: page.locator(`.row-code-copy`, { hasText: 'CE26101001S' }),
-      })
-      .getByRole('button', { name: 'Pcs/box', exact: true })
-  ).toHaveText('Varies')
+    smallSource.getByRole('spinbutton', { name: 'Pcs/box', exact: true })
+  ).toBeEditable()
+  await expect(
+    smallSource.getByRole('button', { name: 'Recorded cartons', exact: true })
+  ).toHaveText('Varies · 2 recorded cartons')
   await page.locator('#view-packing').click()
   await packing.getByRole('button', { name: 'Select all', exact: true }).click()
   await packing.locator('[data-action="open-print-menu"]').click()

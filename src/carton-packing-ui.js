@@ -15,8 +15,21 @@ export function cartonBreakdownMessage(result) {
   return message('{0} full cartons', { 0: result.fullCartons })
 }
 
+export function calculatedCartonMessage(result) {
+  if (result.status === 'unknown') return message('Carton count unknown')
+  if (result.status === 'partial')
+    return message('{0} full cartons + {1} loose units', {
+      0: result.fullCartons,
+      1: result.remainder,
+    })
+  return message('{0} calculated cartons', { 0: result.fullCartons })
+}
+
 /** Capacity belongs to a source product, including products not yet prepared. */
-export function mountCartonCapacity(host, { quantity, value, onSave }) {
+export function mountCartonCapacity(
+  host,
+  { quantity, value, onSave, onPreview }
+) {
   const control = el('div', undefined, 'carton-capacity')
   const label = el('label', message('Pcs/box'), 'sr-only')
   const input = el('input')
@@ -31,8 +44,10 @@ export function mountCartonCapacity(host, { quantity, value, onSave }) {
   input.value = value ?? ''
   bindAttribute(input, 'placeholder', '—')
   label.htmlFor = input.id
-  const summary = el('span', undefined, 'carton-capacity-summary sr-only')
+  const summary = el('output', undefined, 'carton-capacity-summary')
   summary.id = `${input.id}-summary`
+  summary.setAttribute('for', input.id)
+  summary.setAttribute('aria-live', 'polite')
   const status = el('span', undefined, 'carton-capacity-status sr-only')
   status.setAttribute('role', 'status')
   status.id = `${input.id}-status`
@@ -40,7 +55,7 @@ export function mountCartonCapacity(host, { quantity, value, onSave }) {
   preparationHelp(
     input,
     message(
-      'Units per full carton. Blank: unknown. Saves automatically; review loose units.'
+      'Pieces per full carton. Calculates cartons automatically; recorded cartons stay unchanged.'
     )
   )
   control.append(label, input, unit, summary, status)
@@ -68,10 +83,9 @@ export function mountCartonCapacity(host, { quantity, value, onSave }) {
     }
     summary.hidden = capacity === null
     unit.hidden = capacity === null
-    bindText(
-      summary,
-      cartonBreakdownMessage(cartonBreakdown(quantity, capacity))
-    )
+    const result = cartonBreakdown(quantity, capacity)
+    bindText(summary, calculatedCartonMessage(result))
+    onPreview?.(result)
   }
   const failure = (error) => {
     input.setAttribute('aria-invalid', 'true')

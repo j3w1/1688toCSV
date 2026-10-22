@@ -895,7 +895,7 @@ tbody tr:hover {
 }
 #sheet-body .pack-size-cell .carton-capacity {
   position: relative;
-  display: inline-flex;
+  display: grid;
   margin: 0;
   vertical-align: middle;
 }
@@ -917,7 +917,7 @@ tbody tr:hover {
   .pack-size-cell
   .carton-capacity:has(> .carton-capacity-unit:not([hidden]))
   > input {
-  inline-size: calc(10ch - 26px);
+  inline-size: 100%;
 }
 #sheet-body .pack-size-cell input::-webkit-inner-spin-button,
 #sheet-body .pack-size-cell input::-webkit-outer-spin-button {
