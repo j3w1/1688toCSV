@@ -2,28 +2,28 @@
 
 [Documentation](README.md)
 
-Hover or focus a control to see its current explanation and shortcut. Workspace shortcuts act on enabled controls outside text fields and pause in dialogs; preparation shortcuts retain the same reviews as clicking. Browser Copy/Paste, Find, Print, Save and Reload are not reassigned.
+Focus a control for its explanation. Workspace accelerators invoke enabled controls outside text fields and pause in dialogs. Browser Copy/Paste, Find, Print, Save and Reload retain their normal behavior. Critical controls also work with touch and require no hover or drag.
 
-| Shortcut                        | Action                                                                                                                                                                  |
-| ------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Ctrl+A / Ctrl+D                 | Select/clear the active Orders or Products list; in Packing, the complete displayed scope including offscreen products. In Organize, its separate management selection. |
-| Shift-click / Ctrl-click        | Select a range / add or remove one row.                                                                                                                                 |
-| Arrows / Home / End             | Navigate logical rows through continuous lists.                                                                                                                         |
-| Enter on order/product          | Open details.                                                                                                                                                           |
-| Ctrl+Enter                      | Prepare packing list from Orders, including assignment review.                                                                                                          |
-| Alt+Shift+C                     | Open Copy menu.                                                                                                                                                         |
-| Alt+Shift+E                     | Open Excel-image preview.                                                                                                                                               |
-| Alt+Shift+F / Alt+Shift+R       | Focus product / order search in Orders.                                                                                                                                 |
-| Alt+Shift+S / Alt+Shift+T       | Open Settings / Activity.                                                                                                                                               |
-| Alt+Shift+I                     | Restore packing from Orders.                                                                                                                                            |
-| Alt+Shift+B                     | Back up the whole open preparation.                                                                                                                                     |
-| Alt+Shift+O                     | Return from Packing to Orders after saving.                                                                                                                             |
-| Alt+Shift+A / Alt+Shift+G       | Arrange in Organize / Grouping in Packing.                                                                                                                              |
-| Ctrl+Z / Ctrl+Y or Ctrl+Shift+Z | Undo/redo preparation edits outside editors.                                                                                                                            |
-| Escape                          | Close the current popup; leave Organize for normal packing, or return from Packing after successful autosave. Invalid edits remain open.                                |
+| Shortcut                               | Action                                                             |
+| -------------------------------------- | ------------------------------------------------------------------ |
+| Click / Enter on a product or carton   | Inspect details.                                                   |
+| Native checkbox / Space                | Select explicitly without opening details.                         |
+| Ctrl+A / Ctrl+D                        | Select/clear the complete filtered Orders or Products scope.       |
+| Shift-click checkbox                   | Select a logical range.                                            |
+| Tab / Shift+Tab in the carton grid     | Next/previous editable cell; reveal its logical row.               |
+| Enter / Shift+Enter in the carton grid | Next/previous row in the same editable column.                     |
+| Ctrl+Z / Ctrl+Y or Ctrl+Shift+Z        | Active grid/loading session Undo/Redo outside native editors.      |
+| Alt+Shift+C / Alt+Shift+E              | Copy menu / Excel-image preview when available.                    |
+| Alt+Shift+F / Alt+Shift+R              | Product / order search in Orders.                                  |
+| Alt+Shift+S / Alt+Shift+T              | Settings / Activity.                                               |
+| Alt+Shift+I                            | Restore historical packing archive from Orders.                    |
+| Alt+Shift+O                            | Orders from Packing after pending saves finish.                    |
+| Escape                                 | Close the active popup; invalid pending authoring stays available. |
 
-In searches/tag pickers, arrows choose suggestions, Enter accepts and Escape dismisses; IME composition retains normal input. Tab/Shift+Tab reaches offscreen Settings rules and reveals them automatically.
+Prepare/Ctrl+Enter and Packing Arrange/Grouping accelerators are retired. Product grouping and editing belong in Orders. Container inclusion selects whole orders; display selections never limit a manifest.
 
-In the photo viewer, **←/→** browse products, **↑/↓** zoom, with **Page Up/Page Down** and **+/−** alternatives. Each product starts fitted; fullscreen is retained. In the annotation editor, arrows fine-tune the selected dot/label, Shift moves farther and Delete removes a tag. Reorder handles use Up/Down; Move up/down buttons are available too.
+Search/tag picker arrows choose suggestions; Enter accepts and Escape dismisses. IME composition retains native input and does not navigate or save incomplete composition. Settings Tab reveals offscreen rules without losing draft values.
 
-In print previews, arrows pan, **+/−** zoom and **0** fits when the preview has focus. Assignment overview arrows move among comparison cards; Escape closes the full comparison. Text fields, native selects and open dialogs retain their own keyboard behavior.
+Photo viewer: left/right browse, up/down zoom, Page Up/Page Down and +/− alternatives. The annotation editor's arrows fine-tune a dot/label, Shift moves farther, Delete removes a selected tag. Editing is available in Orders; Packing views/copies revision media.
+
+Print preview arrows pan, +/− zoom and 0 fits when focused. These interactions do not change export dimensions. Native selects, text fields and dialogs retain their own keyboard behavior.

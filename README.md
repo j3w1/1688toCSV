@@ -1,8 +1,8 @@
 # 1688toPL
 
-Turn 1688 purchases and supplier spreadsheets into packing lists, product barcodes and carton marks. Keep orders and photos in your browser, prepare them in one workspace, then copy into Excel or download an editable workbook.
+Turn 1688 purchases and supplier spreadsheets into packing lists, product barcodes and carton marks. Keep orders and photos in your browser, edit them in Orders and load named containers in Packing, then copy into Excel or download an editable workbook.
 
-<a href="screenshots/order-library-dark.png"><img src="screenshots/order-library-dark.png" alt="Orders workspace with synthetic products, purchase-month filters and the Prepare packing list action" width="800" /></a>
+<a href="screenshots/order-library-dark.png"><img src="screenshots/order-library-dark.png" alt="Orders workspace with synthetic products and purchase-month filters" width="800" /></a>
 
 ## Install or update
 
@@ -28,30 +28,33 @@ Click the **1688toPL** extension icon to open the workspace, then choose a sourc
 
 <a href="screenshots/store-spreadsheet-import.png"><img src="screenshots/store-spreadsheet-import.png" alt="Supplier spreadsheet review with product photos and the Setup, Markers and Checks guide" width="800" /></a>
 
-## 2. Prepare a packing list
+## 2. Prepare products and cartons in Orders
 
-1. In **Orders**, filter purchase months, choose orders and select product rows. **Ctrl+A** selects the full filtered product list.
-2. Set **Packing month** in the bottom action bar. It controls your product-code month independently of the purchase date.
-3. Choose **Prepare packing list**, review the photos and proposed codes, then **Assign codes and prepare**. **Assign only** saves eligible assignments while keeping you in Orders.
-4. Review names, materials and variant/size endings. Changes save automatically. Use **Organize** to arrange or remove products, and **Undo / Redo** to correct edits.
+Click a product to inspect its original source. Use its checkbox for selection. **Products**, **Cartons** and **Backlog** share the same order context; All Orders retains purchase history.
 
-Enter **Pcs/box** beside Quantity for immediate carton planning: **150 pieces ÷ 10 = 15 calculated cartons**. Use **Cartons** only when recording physical contents, measurements and received/loaded counts. See [packing and codes](docs/packing.md) and [cartons](docs/cartons.md).
+- Select products and choose **Review purchase-month codes**. New codes use each purchase's original calendar month. Review reserves nothing; **Assign purchase codes** commits the reviewed assignments.
+- **Edit product** opens naming, material, code and label controls in Orders. Photos/tags, supplier operations, WeChat and source financial details remain here.
+- For a 1688 purchase, **Paste or import carton list** adds a supplier report to that existing order, with one scoped review and retained original source.
+- **Reconcile cartons** opens one order table. Enter or paste Pcs/box, preview keyed/visible-row alignment, fill a range and use Tab/Enter. Derived quantities stay read-only. Capacity edits propose cartons; **Confirm order cartons** records the arrangement once for the order.
+- Remainder actions prefill the actual unassigned pieces. For `100 at 45`, the table proposes two cartons and retains 10; choose a separate box or a same-order destination.
 
-<a href="screenshots/preparation.png"><img src="screenshots/preparation.png" alt="Prepared products with editable names, codes, photos, carton marks and bottom export controls" width="800" /></a>
+[Cartons](docs/cartons.md) explains exact facts, aggregate evidence, unknowns and draft recovery. [Packing and codes](docs/packing.md) explains product ownership and code review.
 
-## 3. Copy, export or print
+## 3. Load a container, then copy, export or print
 
-- **Excel image** copies a table picture. **Copy…** offers values, separate photos, chosen columns, barcodes and carton marks. In each image preview, choose **Copy current batch**, paste into Excel and return for the next batch.
-- **Export packing list** downloads an editable workbook with **Products** and **Cartons** sheets. Choose all packing products or your selection, then columns and layout. **Include detailed automation JSON** starts off; enabling it adds full costs, reasons and source identifiers independently of the workbook columns.
-- **Print…** creates label or carton-mark PDFs. Print at **100% / Actual size** and use the calibration sheet before relying on physical dimensions.
+Open **Packing**, create or choose a named container, and include whole orders from current Backlog. Inclusion reserves eligible remainder and starts cartons **Unconfirmed**. Use **Mark all loaded**, then choose the actual boxes left behind. Loading derives product quantities; it requires no repeated product-quantity entry.
 
-Read [Excel and export options](docs/exports.md), [printing](docs/printing.md) or the [keyboard shortcuts](docs/keyboard-shortcuts.md).
+**Review & seal** checks the complete container. Packing list and **Se quedó** are read-only revision views. **Edit in Orders** retains a return route; source/carton changes require reviewed availability or amendment. Backlog is the current global remainder, while Se quedó preserves that container's historical result.
 
-<a href="screenshots/packing-export.png"><img src="screenshots/packing-export.png" alt="Packing export with Products and Cartons columns, product scope and an unchecked detailed automation JSON option" width="800" /></a>
+- **Excel image** and **Copy…** retain values, photos, chosen columns, barcodes and carton marks. A preview changes no data; use **Copy current batch** to write to the clipboard.
+- **Export packing list** captures the complete loaded revision, regardless of selected/filtered display rows. Default sheets are **Packing list**, **Cartons** and **Se quedó**. Advanced columns/layout remain optional. **Include detailed automation JSON** starts off for each export and discloses full costs, reasons and source identifiers independently of workbook columns.
+- **Print…** produces label or carton-mark PDFs. Packing reprints revision data; label editing belongs in Orders. Print at **100% / Actual size** and calibrate before relying on physical dimensions.
+
+Read [exports](docs/exports.md), [printing](docs/printing.md), [agent controls](docs/automation.md) or [keyboard shortcuts](docs/keyboard-shortcuts.md).
 
 ## 4. Back up your work
 
-Use **Copy… → Back up packing** for the whole open preparation, or **Settings → Data → Back up** for the complete library. Both download lossless **`.json.gz`** files. Restore accepts these directly and older `.json` backups.
+Use **Settings → Data → Back up** for the complete library as a lossless **`.json.gz`** archive. Restore accepts archives and older `.json` backups. **Restore packing** continues to accept historical scoped packing archives without reopening the retired preparation screen.
 
 Keep a full backup before moving computers, uninstalling or clearing the browser profile. Use one buyer account per library. [Backup and restore](docs/data-and-backups.md) explains scope, photos, merge rules and recovery.
 

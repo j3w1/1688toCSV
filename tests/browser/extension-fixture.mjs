@@ -14,6 +14,7 @@ import {
 import { tmpdir } from 'node:os'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
+import { build } from 'esbuild'
 import { buildOrderFixture } from '../fixtures/order-fixture.mjs'
 
 const repository = fileURLToPath(new URL('../../', import.meta.url))
@@ -23,6 +24,7 @@ async function startFixtureServer() {
   const server = createServer(async (request, response) => {
     const pathname = new URL(request.url, 'http://127.0.0.1').pathname
     if (
+      /^\/src\/[a-z][a-z0-9-]*\.js$/.test(pathname) ||
       [
         '/src/database.js',
         '/src/store-order.js',
@@ -100,6 +102,24 @@ async function startFixtureServer() {
 
 async function prepareExtension(directory, importFlow) {
   await cp(path.join(repository, 'dist'), directory, { recursive: true })
+  // Disposable inspector only: tests call the same public repository/planner
+  // as the packaged UI. No direct IndexedDB writes or alternate inventory.
+  const harness = await build({
+    absWorkingDir: repository,
+    stdin: {
+      contents:
+        "import {openDatabase} from './src/database.js'; import * as planner from './src/carton-reconciliation.js'; window.testRepository=openDatabase(); window.testPlanner=planner;",
+      resolveDir: repository,
+    },
+    bundle: true,
+    write: false,
+    format: 'iife',
+    target: 'chrome120',
+  })
+  await writeFile(
+    path.join(directory, 'test-repository.js'),
+    harness.outputFiles[0].contents
+  )
   const manifestPath = path.join(directory, 'manifest.json')
   const manifest = JSON.parse(await readFile(manifestPath, 'utf8'))
   // Additional test-only inspection and reinjection permissions.
@@ -156,7 +176,7 @@ async function prepareExtension(directory, importFlow) {
   await writeFile(manifestPath, JSON.stringify(manifest, null, 2))
   await writeFile(
     path.join(directory, 'inspector.html'),
-    '<!doctype html><html lang="en"><title>Test inspector</title><body></body></html>'
+    '<!doctype html><html lang="en"><title>Test inspector</title><script src="test-repository.js"></script><body></body></html>'
   )
   return extensionId
 }

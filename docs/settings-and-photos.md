@@ -40,9 +40,9 @@ Set background/text colors per mode, choose **Randomize colors**, or **Auto** fo
 
 ## Product photos
 
-Click a photo to view its original, zoom around the pointer, drag to pan, double-click to zoom, use Fit/100% or fullscreen, and browse Previous/Next. Orders browses the full filtered product list; Packing follows arranged displayed products. Viewing and copying leave selection intact. The small photo-copy control copies without opening the viewer.
+Click a photo to view its original, zoom around the pointer, drag to pan, double-click to zoom, use Fit/100% or fullscreen, and browse Previous/Next. Orders browses the full filtered product list; Packing views the selected immutable container revision. Viewing and copying leave selection intact. The small photo-copy control copies without opening the viewer.
 
-**Edit photo** retains all originals while saving a square composition. Fit/crop, scale, position and background preserve proportions. Cancel leaves the saved version unchanged. A product gallery keeps full assigned-code/source context visible as you browse. Refresh retains edits while the original source photo remains unchanged.
+In Orders, **Edit photo** retains all originals while saving a square composition. Fit/crop, scale, position and background preserve proportions. Cancel leaves the saved version unchanged. A product gallery keeps full assigned-code/source context visible as you browse. Refresh retains edits while the original source photo remains unchanged.
 
 Use A–E and size buttons to compose tags such as AS/BL, or type a custom code. Click the product in the photo to place a tag; its badge starts in the nearest corner with its full footprint inside the canvas. Drag the dot and label independently. Arrows fine-tune, Shift moves farther; edit/trash controls rename/remove a selected tag. Tags also accept one-line free text up to 64 characters, preserving case and punctuation, such as `大盘 · 8.5"` or `Small / blue`. They never change the actual barcode.
 
@@ -51,5 +51,7 @@ Tags use black leaders, white-center black dots and rounded black badges with bo
 **Add size tag** immediately saves the recognized original source size, with its label bottom-right and pointer 75% across/50% down. It retains composition and existing tags; use Edit photo to adjust later. Missing recognition and duplicate size text disable it with an explanation. Assigned barcode endings do not supply source size.
 
 Transforming a photo keeps tag points attached to its source product. Adjust a crop that hides a point before saving. **Save photo** commits composition/tags for thumbnails and photo copies; originals and galleries remain available and survive backups. Deleting an order removes its unreferenced local originals while retaining photos owned by other orders/history. [Backup selection](data-and-backups.md#photos-and-file-size) covers remote originals too.
+
+Packing omits photo/tag mutation controls and offers **Edit in Orders** with a retained container return route. Sealed reprints use historical media rather than current photo edits.
 
 Original product details also exposes source descriptions/attributes, photos and exact numeric values for copying. Display translations and recognized helpers do not rewrite source-value exports.

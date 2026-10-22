@@ -3,12 +3,6 @@ import { actionHelp } from './workspace-action-help.js'
 import { preparationShortcut } from './preparation-help.js'
 
 const commands = [
-  {
-    id: 'prepare',
-    elementId: 'prepare-orders',
-    keys: ['Control+Enter', 'Meta+Enter'],
-    view: 'orders',
-  },
   { id: 'copy', labels: ['More copy formats'], keys: ['Alt+Shift+C'] },
   { id: 'excel-image', labels: ['Copy Excel image'], keys: ['Alt+Shift+E'] },
   {
@@ -35,34 +29,14 @@ const commands = [
   },
   { id: 'orders', labels: ['Orders'], keys: ['Alt+Shift+O'], view: 'packing' },
   {
-    id: 'arrange',
-    labels: ['Arrange packing'],
-    keys: ['Alt+Shift+A'],
-    view: 'packing',
-  },
-  {
-    id: 'grouping',
-    labels: ['Grouping tools'],
-    keys: ['Alt+Shift+G'],
-    view: 'packing',
-  },
-  {
-    id: 'backup',
-    labels: ['Back up packing'],
-    keys: ['Alt+Shift+B'],
-    view: 'packing',
-  },
-  {
     id: 'undo',
     labels: ['Undo'],
     keys: ['Control+Z', 'Meta+Z'],
-    view: 'packing',
   },
   {
     id: 'redo',
     labels: ['Redo'],
     keys: ['Control+Y', 'Control+Shift+Z', 'Meta+Shift+Z'],
-    view: 'packing',
   },
   // Selection stays with the existing controller, which remembers whether the
   // user last operated on orders, products or packing groups.
@@ -92,7 +66,7 @@ function commandFor(target) {
   return commands.find((command) =>
     command.elementId
       ? command.elementId === target.id
-      : command.labels.includes(label)
+      : command.labels?.includes(label)
   )
 }
 

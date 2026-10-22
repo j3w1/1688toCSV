@@ -7,6 +7,40 @@ const descriptions = new Map(
     actions.map((action) => [action, text])
   )
 )
+const stableDescriptions = new Map([
+  [
+    'review-purchase-codes',
+    'Review codes in Orders using each original purchase month. No codes are reserved until assignment.',
+  ],
+  [
+    'include-container-orders',
+    'Reserve the current eligible remainder of whole orders. Loading decisions remain unconfirmed.',
+  ],
+  [
+    'preview-carton-paste',
+    'Preview every source key and value before changing the draft. Changed filters or edits invalidate this alignment.',
+  ],
+  [
+    'confirm-order-cartons',
+    'Confirm the physical arrangement once for this order. Capacity-only edits remain proposals until confirmation.',
+  ],
+  [
+    'mark-all-loaded',
+    'Mark all included logical cartons loaded, including rows outside the current display filter.',
+  ],
+  [
+    'review-container-seal',
+    'Check quantities, exclusivity and current evidence before sealing this complete container revision.',
+  ],
+  [
+    'export-packing-list',
+    'Export the full container revision. Display filters and product selections do not reduce its membership.',
+  ],
+  [
+    'edit-in-orders',
+    'Open the corresponding source in Orders and retain the container return route.',
+  ],
+])
 const installed = new WeakSet()
 const source = (value) => (isMessage(value) ? value.source : value)
 
@@ -18,7 +52,8 @@ export function actionHelp(target, { replace = false } = {}) {
     target.getAttribute('data-i18n-aria-label') ||
     source(textMessage(target)) ||
     target.getAttribute('data-i18n')
-  const text = descriptions.get(label)
+  const text =
+    stableDescriptions.get(target.dataset.action) || descriptions.get(label)
   if (text) preparationHelp(target, message(text))
   return target
 }
