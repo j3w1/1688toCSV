@@ -352,6 +352,9 @@ function snapshotsFor(values) {
     observedAt: record.snapshot.observedAt,
     sourceRevision: sourceRevision(record, preparation),
     supplierIdentity: purchaseSupplierForCodes(record),
+    codeIdentityReview: structuredClone(
+      record.supplierCodeIdentityReview ?? null
+    ),
     productFeatures: Object.fromEntries(
       group.variants
         .flatMap((variant) => variant.entryIds)
