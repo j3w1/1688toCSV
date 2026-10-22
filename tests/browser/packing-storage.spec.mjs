@@ -1,4 +1,8 @@
 import { test, expect } from './extension-fixture.mjs'
+import {
+  editOrderProduct,
+  closeOrderProduct,
+} from './smart-workspace-helpers.mjs'
 
 function snapshot(orderId) {
   return {
@@ -850,7 +854,8 @@ test('scoped packing restore preserves saved automatic label values and arrangem
     '全局',
     '全局',
   ])
-  // Exercise the packaged workspace startup and ordinary Prepare entry path.
+  // Restored names remain visible in the contextual Orders editor after startup
+  // and reload, without reopening the retired preparation screen.
   const uiBackup = structuredClone(result.scoped)
   for (const { snapshot } of uiBackup.orders)
     for (const item of snapshot.items) item.thumbnail = ''
@@ -867,15 +872,24 @@ test('scoped packing restore preserves saved automatic label values and arrangem
   await workspace.goto(`${extension.extensionBaseUrl}/library.html`)
   for (let opening = 0; opening < 2; opening++) {
     if (opening) await workspace.reload()
-    await workspace.locator('#prepare-orders').click()
-    await expect(workspace.locator('#packing-view')).toBeVisible()
-    await expect
-      .poll(() =>
-        workspace
-          .locator('.group-name-editor')
-          .evaluateAll((inputs) => inputs.map((input) => input.value))
+    const names = []
+    for (const group of result.expected.groups) {
+      const editor = await editOrderProduct(workspace, {
+        accountId: result.expected.accountId,
+        orderId: result.expected.orderId,
+        entryId: group.variants[0].entryIds[0],
+      })
+      names.push(
+        await editor
+          .locator('[data-authoring-field="spanish-name"]')
+          .inputValue()
       )
-      .toEqual(result.expected.groups.map((group) => group.spanishName))
+      await closeOrderProduct(editor)
+    }
+    expect(names).toEqual(
+      result.expected.groups.map((group) => group.spanishName)
+    )
+    await expect(workspace.locator('#packing-view')).toBeHidden()
     const backup = await extension.inspector.evaluate(() =>
       chrome.runtime.sendMessage({ type: 'BACKUP_EXPORT' })
     )
