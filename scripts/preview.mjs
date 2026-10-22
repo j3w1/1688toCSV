@@ -30,10 +30,22 @@ export async function startPreview({ port = 0 } = {}) {
     format: 'iife',
     target: 'chrome120',
   })
+  const reportWorker = await build({
+    absWorkingDir: root,
+    entryPoints: ['src/packing-report-worker.js'],
+    bundle: true,
+    write: false,
+    format: 'iife',
+    target: 'chrome120',
+  })
   const assets = new Map([
     [
       '/store-workbook-worker.js',
       ['text/javascript', workbookWorker.outputFiles[0].contents],
+    ],
+    [
+      '/packing-report-worker.js',
+      ['text/javascript', reportWorker.outputFiles[0].contents],
     ],
     [
       '/icons/icon48.png',
@@ -110,6 +122,7 @@ export async function startPreview({ port = 0 } = {}) {
     'appearance-settings.css',
     'packing-review.css',
     'shell.css',
+    'smart-cartons.css',
   ])
     assets.set(`/${css}`, [
       'text/css',

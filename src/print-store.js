@@ -51,12 +51,34 @@ function cleanPreset(input) {
 /** Where a product lives: its order, group and (for labels) variant ids. */
 function cleanRef(ref) {
   const text = (value) =>
-    typeof value === 'string' && value && value.length <= 200 ? value : null
-  if (!ref || !text(ref.orderId) || !text(ref.groupId)) return null
+    typeof value === 'string' &&
+    value &&
+    value.length <= 512 &&
+    !/[\u0000-\u001f\u007f]/.test(value)
+      ? value
+      : null
+  if (!ref || !text(ref.orderId)) return null
+  const historical =
+    ref.containerId !== undefined || ref.revisionId !== undefined
+  if (historical && (!text(ref.containerId) || !text(ref.revisionId)))
+    return null
+  for (const key of ['accountId', 'cartonId', 'entryId'])
+    if (ref[key] !== undefined && !text(ref[key])) return null
+  if (
+    !text(ref.groupId) &&
+    !(historical && (text(ref.cartonId) || text(ref.entryId)))
+  )
+    return null
   return {
     orderId: ref.orderId,
-    groupId: ref.groupId,
+    ...(text(ref.groupId) ? { groupId: ref.groupId } : {}),
     variantId: text(ref.variantId),
+    ...(text(ref.accountId) ? { accountId: ref.accountId } : {}),
+    ...(historical
+      ? { containerId: ref.containerId, revisionId: ref.revisionId }
+      : {}),
+    ...(text(ref.cartonId) ? { cartonId: ref.cartonId } : {}),
+    ...(text(ref.entryId) ? { entryId: ref.entryId } : {}),
     ...(Array.isArray(ref.entryIds) &&
     ref.entryIds.length &&
     ref.entryIds.length <= 10000 &&
@@ -74,7 +96,25 @@ function cleanRef(ref) {
   }
 }
 export const refKey = (ref) =>
-  ref ? `${ref.orderId}/${ref.groupId}/${ref.variantId ?? ''}` : ''
+  !ref
+    ? ''
+    : ref.containerId ||
+        ref.revisionId ||
+        ref.cartonId ||
+        (ref.accountId && ref.accountId !== 'local')
+      ? JSON.stringify([
+          ref.accountId || 'local',
+          ref.orderId,
+          ref.groupId || '',
+          ref.variantId || '',
+          ref.containerId || '',
+          ref.revisionId || '',
+          ref.cartonId || '',
+          ref.entryId || '',
+          [...(ref.entryIds || [])].sort(),
+          [...(ref.cartonBatchIds || [])].sort(),
+        ])
+      : `${ref.orderId}/${ref.groupId}/${ref.variantId ?? ''}`
 
 function cleanRefs(value) {
   if (
@@ -94,7 +134,9 @@ function cleanJob(input) {
     !Array.isArray(input.products) ||
     input.products.length > RECENT_PRODUCT_LIMIT ||
     input.products.some(
-      (product) => product?.refs !== undefined && !cleanRefs(product.refs)
+      (product) =>
+        (product?.refs !== undefined && !cleanRefs(product.refs)) ||
+        (product?.ref !== undefined && !cleanRef(product.ref))
     )
   )
     return null

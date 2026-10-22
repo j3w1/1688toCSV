@@ -6,6 +6,7 @@ import {
   PRINT_KEYS,
   RECENT_LIMIT,
   RECENT_PRODUCT_LIMIT,
+  refKey,
 } from '../src/print-store.js'
 
 function memoryStorage() {
@@ -16,6 +17,100 @@ function memoryStorage() {
     values,
   }
 }
+
+test('historical print jobs retain account/container/revision/carton identity and never resolve to another revision or live data', () => {
+  const storage = memoryStorage(),
+    store = createPrintStore(storage)
+  const ref = {
+    accountId: 'local',
+    orderId: '101',
+    groupId: 'g',
+    variantId: null,
+    containerId: 'container-a',
+    revisionId: 'container-a/r1',
+    cartonId: 'unit:a:1',
+  }
+  const job = store.recordJob({
+    kind: 'marks',
+    products: [{ code: 'CE26090101', quantity: 1, refs: [ref] }],
+  })
+  assert.deepEqual(createPrintStore(storage).recentJobs()[0].products[0].refs, [
+    ref,
+  ])
+  const exact = { key: 'physical-one', code: 'CE26090101', refs: [ref] }
+  assert.equal(restoreJob(job, [exact]).items.length, 1)
+  assert.equal(
+    restoreJob(job, [
+      { ...exact, refs: [{ ...ref, revisionId: 'container-a/r2' }] },
+    ]).missing.length,
+    1
+  )
+  assert.equal(
+    restoreJob(job, [
+      { ...exact, refs: [{ orderId: '101', groupId: 'g', variantId: null }] },
+    ]).missing.length,
+    1
+  )
+  assert.notEqual(refKey(ref), refKey({ ...ref, accountId: 'another-account' }))
+  const next = { ...ref, cartonId: 'unit:a:2' }
+  assert.equal(
+    store.recordJob({
+      kind: 'marks',
+      products: [{ code: 'CE26090101', quantity: 2, refs: [ref, next] }],
+    }).products[0].refs.length,
+    2
+  )
+  const productRef = { ...ref, cartonId: undefined, entryIds: ['line-a'] }
+  delete productRef.cartonId
+  assert.equal(
+    store.recordJob({
+      kind: 'labels',
+      products: [
+        {
+          code: 'CE26090101',
+          quantity: 2,
+          refs: [productRef, { ...productRef, entryIds: ['line-b'] }],
+        },
+      ],
+    }).products[0].refs.length,
+    2
+  )
+})
+
+test('incomplete or unbounded historical print refs are rejected whole instead of silently becoming live source refs', () => {
+  const store = createPrintStore(memoryStorage())
+  for (const ref of [
+    { orderId: '101', groupId: 'g', containerId: 'a' },
+    { orderId: '101', groupId: 'g', revisionId: 'a/r1' },
+    {
+      orderId: '101',
+      groupId: 'g',
+      containerId: 'a',
+      revisionId: 'x'.repeat(513),
+    },
+  ])
+    assert.equal(
+      store.recordJob({
+        kind: 'marks',
+        products: [{ code: 'CE26090101', quantity: 1, ref }],
+      }),
+      null
+    )
+  const ref = {
+    accountId: 'local',
+    orderId: '101',
+    containerId: 'a',
+    revisionId: 'a/r1',
+    cartonId: 'unit:a:1',
+  }
+  assert.deepEqual(
+    store.recordJob({
+      kind: 'marks',
+      products: [{ code: 'SUPPLIER-001', quantity: 1, refs: [ref] }],
+    }).products[0].refs[0],
+    { ...ref, variantId: null }
+  )
+})
 
 test('recent physical marks retain numbered carton identities even when their contents use another code group', () => {
   const storage = memoryStorage(),
