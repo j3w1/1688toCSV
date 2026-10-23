@@ -170,6 +170,27 @@ export async function makeOrderCartonPrintRef(
       (!refText(amendment.containerId) || !refText(amendment.epoch)))
   )
     throw physicalRefError()
+  const supersession = [
+    ...(batch.physicalMarkSupersessions || []),
+    ...(batch.physicalMark?.supersededAliases || []),
+  ].find((entry) => entry.code === batch.physicalMark?.code)
+  if (
+    role === 'recorded' &&
+    (batch.physicalMarkRelabelOnly === true || supersession)
+  ) {
+    const conflicts = supersession?.conflicts || [],
+      conflict = conflicts.find((entry) => entry.containerId) || conflicts[0],
+      code = batch.physicalMark?.code || '',
+      message = conflict?.containerId
+        ? `The recorded mark ${code} belongs to shipment ${conflict.containerId} (revision ${conflict.revisionId || '—'}). Print the current product mark and confirm physical relabeling.`
+        : conflict?.orderId
+          ? `The recorded mark ${code} belongs to purchase ${conflict.orderId}. Print the current product mark and confirm physical relabeling.`
+          : 'The recorded carton mark is superseded. Print the current product mark and confirm physical relabeling.'
+    throw Object.assign(new Error(message), {
+      code: 'PHYSICAL_MARK_RELABEL_REQUIRED',
+      detail: { code, conflicts: structuredClone(conflicts) },
+    })
+  }
   const owner = context.preparation?.groups.find(
       (group) =>
         group.id ===
@@ -248,7 +269,8 @@ export async function assertOrderCartonPrintRef(ref, context) {
       index: cleaned.index,
       productGroupId: cleaned.productGroupId,
     })
-  } catch {
+  } catch (error) {
+    if (error.code === 'PHYSICAL_MARK_RELABEL_REQUIRED') throw error
     throw physicalRefError()
   }
   if (refKey(cleaned) !== refKey(expected)) throw physicalRefError()
