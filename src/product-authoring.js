@@ -1009,6 +1009,7 @@ export async function createProductAuthoring({
       )
     const label = (text, input) => {
       const node = el('label', uiMessage(text))
+      bindAttribute(input, 'aria-label', uiMessage(text))
       node.append(input)
       modal.append(node)
     }
