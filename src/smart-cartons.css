@@ -273,6 +273,19 @@
   background: var(--surface);
   padding-block: 0.65rem;
 }
+@media (max-width: 760px) {
+  .action-bar .selection-totals-grid dd {
+    /* Reserve the same number/scroll surface for zero and full selections.
+       Long exact amounts scroll locally without moving the product table. */
+    block-size: 2.7em;
+    overflow-x: auto;
+    overflow-y: hidden;
+  }
+  .action-bar .selection-totals-grid .selection-total-value {
+    white-space: nowrap;
+    overflow-wrap: normal;
+  }
+}
 .authoring-languages {
   display: flex;
   gap: 0.4rem;
