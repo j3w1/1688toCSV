@@ -14,6 +14,7 @@ async function prepare(extension) {
   const [record] = await extension.inspector.evaluate(
     `(${createDemoRecords.toString()})(document)`
   )
+  record.snapshot.sellerMemberLogin = 'synthetic-capacity-navigation'
   const result = await extension.inspector.evaluate(
     (record) =>
       chrome.runtime.sendMessage({

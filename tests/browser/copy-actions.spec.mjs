@@ -78,7 +78,7 @@ for (const fallback of [false, true])
     const { page, record } = await openLibrary(extension, { fallback })
     await page.setViewportSize({ width: 390, height: 740 })
     const order = await page
-      .locator('.sheet-pane')
+      .locator('#orders-products-view')
       .evaluate((pane) =>
         [...pane.children]
           .filter((node) =>
@@ -133,9 +133,10 @@ for (const fallback of [false, true])
     await page.mouse.click(2, 2)
     await expect(panel).toBeHidden()
     await page
-      .locator('#sheet-body tr[data-selection-key] .row-number')
+      .locator('#sheet-body tr[data-selection-key]')
       .first()
-      .click()
+      .getByRole('checkbox')
+      .check()
     await extension.context.grantPermissions([
       'clipboard-read',
       'clipboard-write',

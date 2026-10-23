@@ -230,9 +230,7 @@ for (const mode of ['light', 'dark'])
     await page.locator('meta[name="color-scheme"]').evaluate((meta, mode) => {
       meta.content = mode
     }, mode)
-    const first = page.locator('#sheet-body tr[data-selection-key]').first()
-    await first.focus()
-    await first.press('Control+a')
+    await page.locator('#select-rows').click()
     await assignSelectedPurchaseCodes(page)
     const id = await loadedSourceContainer(extension, [
         { accountId: 'local', orderId: record.snapshot.orderId },
@@ -545,9 +543,7 @@ test('store and order details toggle regenerates the raster and persists across 
   await expect(toggle).not.toBeChecked()
   await assertIdentity(false)
   await dialog.getByRole('button', { name: 'Done', exact: true }).click()
-  const first = page.locator('#sheet-body tr[data-selection-key]').first()
-  await first.focus()
-  await first.press('Control+a')
+  await page.locator('#select-rows').click()
   await assignSelectedPurchaseCodes(page)
   const id = await loadedSourceContainer(extension, [
       { accountId: 'local', orderId: record.snapshot.orderId },
@@ -819,9 +815,7 @@ test('image columns reorder, persist across copying and reload, and use the sele
     )
   ).toEqual(preference)
   await page.locator('#language-toggle [data-language="en"]').click()
-  const first = page.locator('#sheet-body tr[data-selection-key]').first()
-  await first.focus()
-  await first.press('Control+a')
+  await page.locator('#select-rows').click()
   await assignSelectedPurchaseCodes(page)
   const id = await loadedSourceContainer(extension, [
       { accountId: 'local', orderId: record.snapshot.orderId },
