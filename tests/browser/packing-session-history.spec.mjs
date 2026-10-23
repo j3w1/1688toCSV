@@ -10,6 +10,7 @@ import {
   sealContainerThroughUI,
   openOrderReconciliation,
   realOrderContext,
+  clearOrderProductSelection,
 } from './smart-workspace-helpers.mjs'
 
 async function setup(extension, { count = 1, physical = false } = {}) {
@@ -131,7 +132,25 @@ test('confirmed size handling and saved suffix edits undo and redo without chang
 test('source-row grouping is one Undo step and code owners follow only current assignments', async ({
   extension,
 }) => {
-  const { page, before } = await setup(extension)
+  const { page, before: initial } = await setup(extension)
+  await clearOrderProductSelection(page)
+  const rows = page.locator('#sheet-body tr[data-selection-key]')
+  for (const index of [0, 1])
+    await rows.nth(index).getByRole('checkbox').check()
+  await page.locator('#group-order-products').click()
+  const tools = page.locator('.orders-grouping-dialog')
+  await tools
+    .getByRole('button', { name: 'Merge products', exact: true })
+    .click()
+  await page
+    .getByRole('dialog', { name: 'Review product grouping', exact: true })
+    .getByRole('button', { name: 'Apply changes', exact: true })
+    .click()
+  await expect(tools).toBeHidden()
+  const before = await libraryBackup(extension)
+  expect(before.preparations[0].groups).toHaveLength(1)
+  expect(before.preparations[0].groups[0].variants).toHaveLength(2)
+  expect(before.orders).toEqual(initial.orders)
   await shareOrderBarcode(page)
   const grouped = await libraryBackup(extension)
   expect(grouped.preparations[0].groups[0].variants[0].entryIds).toEqual([
@@ -140,16 +159,20 @@ test('source-row grouping is one Undo step and code owners follow only current a
   ])
   await editOrderProduct(page, 0)
   await travel(page, 'Undo')
-  expect(groups(await libraryBackup(extension))).toEqual(groups(before))
+  await expect
+    .poll(async () => groups(await libraryBackup(extension)))
+    .toEqual(groups(before))
   await travel(page, 'Redo')
-  const redone = await libraryBackup(extension)
-  expect(groups(redone)).toEqual(groups(grouped))
+  await expect
+    .poll(async () => groups(await libraryBackup(extension)))
+    .toEqual(groups(grouped))
+  const persisted = await libraryBackup(extension)
   const owners = (data) =>
     data.issuedCodes
       .map(({ ownerSnapshot, ...owner }) => owner)
       .sort((a, b) => a.code.localeCompare(b.code))
-  expect(owners(redone)).toEqual(owners(grouped))
-  expect(redone.orders).toEqual(before.orders)
+  expect(owners(persisted)).toEqual(owners(grouped))
+  expect(persisted.orders).toEqual(before.orders)
 })
 
 test('history follows edits across Orders while an unselected purchase retains its exact saved revision', async ({
@@ -172,18 +195,26 @@ test('history follows edits across Orders while an unselected purchase retains i
   )
   await editOrderProduct(page, { ...refs[0], entryId: '2001' })
   await travel(page, 'Undo')
-  expect(
-    (await libraryBackup(extension)).preparations.find(
-      (prep) => prep.orderId === refs[1].orderId
-    ).groups
-  ).toEqual(
-    before.preparations.find((prep) => prep.orderId === refs[1].orderId).groups
-  )
+  await expect
+    .poll(
+      async () =>
+        (await libraryBackup(extension)).preparations.find(
+          (prep) => prep.orderId === refs[1].orderId
+        ).groups
+    )
+    .toEqual(
+      before.preparations.find((prep) => prep.orderId === refs[1].orderId)
+        .groups
+    )
   await travel(page, 'Undo')
-  expect(groups(await libraryBackup(extension))).toEqual(groups(before))
+  await expect
+    .poll(async () => groups(await libraryBackup(extension)))
+    .toEqual(groups(before))
   await travel(page, 'Redo')
   await travel(page, 'Redo')
-  expect(groups(await libraryBackup(extension))).toEqual(groups(after))
+  await expect
+    .poll(async () => groups(await libraryBackup(extension)))
+    .toEqual(groups(after))
 })
 
 test('an earlier pending save cannot erase newer typing or its compound history', async ({
@@ -245,9 +276,29 @@ test('Undo after a different tab edits the owner rejects without overwriting its
   )
   const newer = await libraryBackup(extension)
   await local.getByRole('button', { name: 'Undo', exact: true }).click()
-  await expect(local.getByRole('status')).toContainText(
-    /changed|another tab|revision/i
-  )
+  try {
+    await expect(local.getByRole('status')).toContainText(
+      /changed|another tab|revision/i
+    )
+  } finally {
+    console.log(
+      'External history rejection readback:',
+      JSON.stringify({
+        expected: newer.preparations.map(({ orderId, revision, groups }) => ({
+          orderId,
+          revision,
+          categories: groups.map((group) => group.category),
+        })),
+        actual: (await libraryBackup(extension)).preparations.map(
+          ({ orderId, revision, groups }) => ({
+            orderId,
+            revision,
+            categories: groups.map((group) => group.category),
+          })
+        ),
+      })
+    )
+  }
   expect((await libraryBackup(extension)).preparations).toEqual(
     newer.preparations
   )
@@ -454,7 +505,22 @@ test('legacy suffixes survive valid Orders edits, Undo/Redo and whole-order excl
 }) => {
   const { page, refs } = await setup(extension)
   const legacy = await libraryBackup(extension)
-  legacy.preparations[0].groups[0].variants[0].sizeSuffix = 'A'
+  const group = legacy.preparations[0].groups[0],
+    variant = group.variants[0],
+    reservation = legacy.issuedCodes.find(
+      (owner) =>
+        owner.kind === 'barcode' &&
+        owner.accountId === legacy.preparations[0].accountId &&
+        owner.orderId === legacy.preparations[0].orderId &&
+        owner.groupId === group.id &&
+        owner.variantId === variant.id
+    )
+  expect(reservation).toBeTruthy()
+  expect(reservation.code).toBe(
+    group.baseCode + variant.variantSuffix + variant.sizeSuffix
+  )
+  variant.sizeSuffix = 'A'
+  reservation.code = group.baseCode + variant.variantSuffix + 'A'
   legacy.preparations[0].updatedAt = '2099-01-01T00:00:00Z'
   const restored = await extension.inspector.evaluate(
     (backup) => chrome.runtime.sendMessage({ type: 'BACKUP_RESTORE', backup }),

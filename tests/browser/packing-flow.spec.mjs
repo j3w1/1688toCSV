@@ -82,9 +82,22 @@ async function openLibrary(extension, count = 1) {
     localStorage.setItem('1688-library-purchase-months', '[]')
   )
   await page.goto(`${extension.extensionBaseUrl}/library.html`)
-  await expect(page.locator('#sheet-body tr[data-selection-key]')).toHaveCount(
-    3 * count
+  const expectedKeys = records.flatMap((record) =>
+    record.snapshot.items.map((item) =>
+      JSON.stringify([
+        record.accountId || record.snapshot.accountId || 'local',
+        record.snapshot.orderId,
+        item.entryId,
+      ])
+    )
   )
+  const sourceRows = page.locator('#sheet-body tr[data-selection-key]')
+  await expect(sourceRows).toHaveCount(expectedKeys.length)
+  expect(
+    await sourceRows.evaluateAll((nodes) =>
+      nodes.map((node) => node.dataset.selectionKey).sort()
+    )
+  ).toEqual(expectedKeys.sort())
   return { page, records, view: page.locator('#packing-view') }
 }
 
@@ -454,7 +467,13 @@ test('Ctrl+A reviews all selected purchase months, Cancel reserves nothing and a
 }) => {
   const { page, records } = await openLibrary(extension, 3)
   await selectAllProducts(page)
-  await expect(page.locator('#selection-summary')).toContainText('9 selected')
+  const sourceCount = records.reduce(
+    (count, record) => count + record.snapshot.items.length,
+    0
+  )
+  await expect(page.locator('#selection-summary')).toContainText(
+    `${sourceCount} selected`
+  )
   const before = await backup(extension)
   await page.locator('#review-purchase-codes').click()
   const review = page.locator('dialog[data-action="purchase-code-review"]')
@@ -527,6 +546,7 @@ test('splitting one selected source row reviews only that membership and retains
     .getByRole('button', { name: 'Apply changes', exact: true })
     .click()
   await expect(review).toBeHidden()
+  await expect(page.locator('.orders-grouping-dialog')).toBeHidden()
   const after = await backup(extension)
   const groupFor = (entryId) =>
     after.preparations[0].groups.find((group) =>
@@ -722,8 +742,9 @@ test('mixed valid and unidentified-supplier code review blocks every write and p
   extension,
 }) => {
   const records = await seedOrders(extension, 2)
-  records[1].snapshot.sellerMemberLogin = ''
-  records[1].snapshot.sellerName = ''
+  delete records[1].snapshot.sellerMemberLogin
+  records[1].snapshot.sellerName = 'Seller unavailable'
+  records[1].snapshot.sellerUnavailable = true
   records[1].snapshot.observedAt = '2099-01-01T00:00:00Z'
   const restored = await extension.inspector.evaluate(
     (orders) =>
