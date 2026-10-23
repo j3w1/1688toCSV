@@ -167,7 +167,10 @@ for (const theme of ['dark', 'light']) {
   })
 }
 
-async function openPacking(extension, { orderCount = 1 } = {}) {
+async function openPacking(
+  extension,
+  { orderCount = 1, openEditor = true } = {}
+) {
   const [record] = await extension.inspector.evaluate(
     `(${createDemoRecords.toString()})(document)`
   )
@@ -216,7 +219,13 @@ async function openPacking(extension, { orderCount = 1 } = {}) {
   await rows.first().focus()
   await page.keyboard.press('Control+a')
   await assignSelectedPurchaseCodes(page)
-  const view = await editOrderProduct(page, 0)
+  const view = openEditor
+    ? await editOrderProduct(page, {
+        accountId: records[0].accountId || 'local',
+        orderId: records[0].snapshot.orderId,
+        entryId: records[0].snapshot.items[0].entryId,
+      })
+    : page.locator('#orders-view')
   return { page, view, record: records[0], records }
 }
 
@@ -524,10 +533,10 @@ test('correcting a code retains raw pending fields and Cancel leaves the resolve
 test('packing backup includes hidden/offscreen Orders and restore rejects a full-library file without mutation', async ({
   extension,
 }) => {
-  const { page, view, records } = await openPacking(extension, {
+  const { page, records } = await openPacking(extension, {
     orderCount: 40,
+    openEditor: false,
   })
-  await closeOrderProduct(view)
   const before = await backup(extension)
   await page.locator('#search').fill('no matching products')
   // Scoped backup is defined by saved preparations, never by display rows.

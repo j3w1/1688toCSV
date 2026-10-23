@@ -261,10 +261,14 @@ test('removing an included order preserves its authored history and does not res
     physical: true,
   })
   await closeOrderProduct(
-    await editOrderProduct(page, 0, {
-      'Product code': 'CE26099999',
-      'Spanish name': 'KEPT NAME',
-    })
+    await editOrderProduct(
+      page,
+      { ...refs[0], entryId: '2001' },
+      {
+        'Product code': 'CE26099999',
+        'Spanish name': 'KEPT NAME',
+      }
+    )
   )
   const authored = await libraryBackup(extension),
     id = await createContainerThroughUI(page, refs)
@@ -281,7 +285,7 @@ test('removing an included order preserves its authored history and does not res
   expect(after.issuedCodes).toEqual(authored.issuedCodes)
   expect(after.orders).toEqual(before.orders)
   await page.locator('#view-orders').click()
-  await editOrderProduct(page, 0)
+  await editOrderProduct(page, { ...refs[0], entryId: '2001' })
   await travel(page, 'Undo')
   expect(
     (await libraryBackup(extension)).preparations[0].groups[0].variants[0]
