@@ -344,7 +344,13 @@ export async function createContainerThroughUI(
   name = 'Synthetic October container'
 ) {
   await page.locator('#view-packing').click()
-  const workspace = page.locator('#packing-view')
+  const workspace = page.locator('#packing-view'),
+    selector = workspace.locator('[data-action="choose-container"]'),
+    previousIds = new Set(
+      await selector
+        .locator('option')
+        .evaluateAll((options) => options.map((option) => option.value))
+    )
   await workspace.locator('[data-action="create-container"]').click()
   const prompt = page.locator('dialog[open]').last()
   await prompt
@@ -354,8 +360,13 @@ export async function createContainerThroughUI(
     .getByRole('button', { name: 'Create container', exact: true })
     .click()
   await expect(prompt).toBeHidden()
-  const selector = workspace.locator('[data-action="choose-container"]')
-  await expect(selector).not.toHaveValue('')
+  await expect
+    .poll(async () => {
+      const id = await selector.inputValue()
+      return Boolean(id && !previousIds.has(id))
+    })
+    .toBe(true)
+  await expect(selector.locator('option:checked')).toHaveText(name)
   const id = await selector.inputValue()
   await workspace.locator('[data-action="include-container-orders"]').click()
   const include = page.locator('.container-inclusion-dialog')

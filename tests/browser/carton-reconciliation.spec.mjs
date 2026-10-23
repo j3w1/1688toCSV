@@ -407,6 +407,11 @@ async function exportAliasMark(
   await expect(print.getByLabel(/^Quantity for /)).toHaveCount(1)
   await expect(print.getByLabel(/^Quantity for /)).toHaveValue('6')
   await print.locator('[data-action="export-pdf"]').click()
+  // PDF encoding is asynchronous; use its actual completion before checking
+  // both downloaded artifacts, rather than the default five-second poll alone.
+  await expect(print.locator('[data-action="export-pdf"]')).toBeEnabled({
+    timeout: 20_000,
+  })
   let pdf, summaryFile
   await expect
     .poll(async () => {
