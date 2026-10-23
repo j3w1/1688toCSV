@@ -196,7 +196,7 @@ test('uneven numbered cartons retain exact supplier measurements through the wor
       `${carton.len}×${carton.wid}×${carton.ht}`
     )
     await expect(row.locator('[data-grid-column="weight"]')).toHaveValue(
-      carton.weight
+      batches[index].weight
     )
     await expect(row.locator('[data-column="count"]')).toHaveText('1')
   }
