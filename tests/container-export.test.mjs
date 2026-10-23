@@ -70,6 +70,24 @@ test('Cartons retains trusted editable dimension formulas with exact caches, cus
   )
 })
 
+test('historical frozen volumes that disagree with dimensions retain literal caches instead of recalculating a different shipment', async () => {
+  const manifest = syntheticManifest()
+  manifest.cartons[1].volume = '0.3'
+  manifest.totals.volume = '0.425'
+  const original = structuredClone(manifest)
+  const cartonColumns = ['batch', 'len', 'wid', 'ht', 'totalVolume']
+  const sheet = planContainerWorkbook(manifest, { cartonColumns }).sheets[1]
+  const workbook = read(
+    await createContainerWorkbook(manifest, { cartonColumns }),
+    { type: 'array' }
+  ).Sheets.Cartons
+  assert.equal(workbook[`E${sheet.records[1].row}`].f, undefined)
+  assert.equal(workbook[`E${sheet.records[1].row}`].v, 0.3)
+  assert.equal(workbook[`E${sheet.totalRow}`].f, undefined)
+  assert.equal(workbook[`E${sheet.totalRow}`].v, 0.425)
+  assert.deepEqual(manifest, original)
+})
+
 const PHOTO =
   'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO2WZ4kAAAAASUVORK5CYII='
 const coverage = (knownCount, missingCount, knownSubtotal) => ({

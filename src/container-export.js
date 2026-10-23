@@ -14,7 +14,14 @@ import {
 } from './export-summary.js'
 import { excelImagePalette } from './excel-image-style.js'
 import { columnName } from './xlsx-writer.js'
-import { exactDecimal, exactWhole, addExact } from './carton-arithmetic.js'
+import {
+  exactDecimal,
+  exactWhole,
+  addExact,
+  multiplyExact,
+  dividePowerOfTen,
+  compareExact,
+} from './carton-arithmetic.js'
 import { productFeatures } from './product-features.js'
 
 const clone = (value) => structuredClone(value)
@@ -49,6 +56,8 @@ const strings = {
     suppliedVolume: 'Supplied volume',
     volumeDiscrepancy: (measured, supplied) =>
       `Measured volume ${measured} m³ is used; supplied volume ${supplied} m³ is retained.`,
+    unitVolumeAdvice: (index) =>
+      `Carton ${index + 1}: measure this carton separately to review the different supplier volume.`,
     warning: 'Warning',
     note: 'Complete loaded scope of this container revision. Source purchase rows remain separate; physical cartons and measurements count once on Cartons.',
     cartonNote:
@@ -91,6 +100,8 @@ const strings = {
     suppliedVolume: 'Volumen declarado',
     volumeDiscrepancy: (measured, supplied) =>
       `Se usa el volumen medido de ${measured} m³; se conserva el volumen declarado de ${supplied} m³.`,
+    unitVolumeAdvice: (index) =>
+      `Caja ${index + 1}: mide esta caja por separado para revisar el volumen diferente del proveedor.`,
     warning: 'Advertencia',
     note: 'Alcance cargado completo de esta revisión. Cada compra mantiene sus filas; cajas y medidas físicas se cuentan una sola vez en Cajas.',
     cartonNote:
@@ -133,6 +144,8 @@ const strings = {
     suppliedVolume: '申报体积',
     volumeDiscrepancy: (measured, supplied) =>
       `采用实测体积 ${measured} m³；保留申报体积 ${supplied} m³。`,
+    unitVolumeAdvice: (index) =>
+      `第 ${index + 1} 箱：请单独测量此箱，以核实供应商提供的不同体积。`,
     warning: '提示',
     note: '本货柜修订的全部已装货物。采购明细分开列示；实物纸箱及测量合计仅在纸箱表计算一次。',
     cartonNote:
@@ -954,8 +967,14 @@ function physicalWorksheet(manifest, options) {
     )
     if (
       dimensionColumns.every((index) => index >= 0) &&
-      ['len', 'wid', 'ht'].every((key) => excelNumeric(carton[key])) &&
-      excelNumeric(carton.volume)
+      ['len', 'wid', 'ht'].every(
+        (key) => excelNumeric(carton[key]) && compareExact(carton[key], '0') > 0
+      ) &&
+      excelNumeric(carton.volume) &&
+      compareExact(
+        dividePowerOfTen(multiplyExact(carton.len, carton.wid, carton.ht), 6),
+        carton.volume
+      ) === 0
     ) {
       const refs = dimensionColumns.map(
         (index) => `${columnName(index)}${row.number}`
@@ -1053,6 +1072,9 @@ function physicalWorksheet(manifest, options) {
                   warning.suppliedVolume
                 )
               : warning.message,
+            warning.unitIndex !== undefined && warning.dimensionSource === 'set'
+              ? options.words.unitVolumeAdvice(warning.unitIndex)
+              : '',
             warning.cartonId,
             warning.batchId,
             warning.orderId,
@@ -1284,6 +1306,8 @@ export function createContainerSummary(
             'usedVolumeBasis',
             'suppliedCbm',
             'suppliedVolumeBasis',
+            'unitIndex',
+            'dimensionSource',
           ])
     ),
   }

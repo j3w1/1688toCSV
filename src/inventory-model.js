@@ -181,8 +181,7 @@ export function physicalUnits(batch) {
       'This carton set needs review before individual loading; its reported total is retained.',
       { batchId: batch.id, count: batch.count }
     )
-  const basis = batchPackingBasis(batch),
-    metrics = cartonBatchMetrics(batch)
+  const basis = batchPackingBasis(batch)
   if (
     basis === 'uniform' &&
     (batch.contents || []).some(
@@ -197,7 +196,19 @@ export function physicalUnits(batch) {
   return Array.from({ length: batch.count }, (_, position) => {
     const index = batch.entitlementIndices?.[position] ?? position
     const known = batch.unitContents?.[index],
-      measurement = batch.unitMeasurements?.[index] || {}
+      measurement = batch.unitMeasurements?.[index] || {},
+      dimensions = Object.fromEntries(
+        ['len', 'wid', 'ht'].map((field) => [
+          field,
+          measurement[field] ?? batch[field] ?? '',
+        ])
+      ),
+      unitMetrics = cartonBatchMetrics({
+        ...batch,
+        ...measurement,
+        ...dimensions,
+        count: 1,
+      })
     return {
       id: physicalUnitId(batch.id, index),
       cartonId: physicalUnitId(batch.id, index),
@@ -273,19 +284,16 @@ export function physicalUnits(batch) {
             : batch.weight === '' || batch.weight === undefined
               ? null
               : cartonDecimal(batch.weight),
-      volume: measurement.len
-        ? cartonBatchMetrics({ ...batch, ...measurement, count: 1 })
-            .volumePerCarton
+      volume: Object.values(dimensions).every(Boolean)
+        ? unitMetrics.volumePerCarton
         : measurement.suppliedCbm !== undefined
           ? cartonDecimal(measurement.suppliedCbm) || null
           : batch.volumeBasis === 'batch' && !batch.len && batch.count !== 1
             ? null
-            : metrics.volumePerCarton === ''
+            : unitMetrics.volumePerCarton === ''
               ? null
-              : metrics.volumePerCarton,
-      len: measurement.len ?? batch.len ?? '',
-      wid: measurement.wid ?? batch.wid ?? '',
-      ht: measurement.ht ?? batch.ht ?? '',
+              : unitMetrics.volumePerCarton,
+      ...dimensions,
       mark: cartonBatchMark(batch),
       needsReview: !!batch.needsReview || batchNeedsLegacyReview(batch),
     }

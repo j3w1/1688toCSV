@@ -19,6 +19,48 @@ import {
   syntheticBatch,
 } from './fixtures/container-fixture.mjs'
 
+test('confirmed inherited dimensions outrank unit supplied CBM while explicit unit dimensions win and unknown combined facts stay unknown', () => {
+  const batch = syntheticBatch('1001', 2, '100', {
+    packingBasis: 'aggregate',
+    len: '50',
+    wid: '50',
+    ht: '50',
+    unitMeasurements: { 1: { suppliedCbm: '0.3' } },
+  })
+  const original = structuredClone(batch)
+  assert.deepEqual(
+    physicalUnits(batch).map((unit) => unit.volume),
+    ['0.125', '0.125']
+  )
+  batch.unitMeasurements[1] = {
+    suppliedCbm: '0.3',
+    len: '60',
+    wid: '50',
+    ht: '100',
+  }
+  assert.deepEqual(
+    physicalUnits(batch).map((unit) => unit.volume),
+    ['0.125', '0.3']
+  )
+  batch.unitMeasurements[1] = { len: '', wid: '', ht: '', suppliedCbm: '0.3' }
+  assert.deepEqual(
+    physicalUnits(batch).map((unit) => unit.volume),
+    ['0.125', '0.3']
+  )
+  Object.assign(batch, {
+    len: '',
+    wid: '',
+    ht: '',
+    suppliedCbm: '0.6',
+    volumeBasis: 'batch',
+  })
+  assert.deepEqual(
+    physicalUnits(batch).map((unit) => unit.volume),
+    [null, '0.3']
+  )
+  assert.deepEqual(original.unitMeasurements, { 1: { suppliedCbm: '0.3' } })
+})
+
 test('global Backlog includes untouched/new orders, excludes only effective shipments and keeps left-behind history separate', () => {
   const records = [
     syntheticOrder('1001', '27'),

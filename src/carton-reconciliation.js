@@ -17,6 +17,31 @@ const sum = (values) =>
 const unique = (values) => [...new Set(values)]
 const issue = (issues, code, details = {}) =>
   issues.push({ code, severity: 'error', ...details })
+const volumeDiscrepancyMessage = (warning) =>
+  `Measured volume ${warning.dimensionVolume} m³ is used; supplied volume ${warning.suppliedVolume} m³ is retained.` +
+  (warning.unitIndex !== undefined && warning.dimensionSource === 'set'
+    ? ` Carton ${warning.unitIndex + 1}: measure this carton separately to review the different supplier volume.`
+    : '')
+function volumeDiscrepancy(issues, batch, dimensionVolume, suppliedVolume) {
+  if (
+    dimensionVolume === null ||
+    suppliedVolume === null ||
+    compareExact(dimensionVolume, suppliedVolume) === 0
+  )
+    return
+  issue(issues, 'volume-discrepancy', {
+    severity: 'warning',
+    cartonId: batch.id,
+    dimensionVolume,
+    suppliedVolume,
+    usedVolume: dimensionVolume,
+    usedVolumeBasis: 'measured',
+    suppliedCbm: exactDecimal(batch.suppliedCbm),
+    suppliedVolumeBasis: batch.volumeBasis ?? 'carton',
+    count: batch.count,
+    message: volumeDiscrepancyMessage({ dimensionVolume, suppliedVolume }),
+  })
+}
 const safeCount = (value) => {
   if (missing(value)) return null
   const text = exactWhole(value)
@@ -127,6 +152,16 @@ function measurement(batch, field, issues) {
 
 /** Full-set facts only. Combined totals never become invented per-unit facts. */
 function cartonMeasurements(batch, issues) {
+  for (const [field, basis] of [
+    ['weightBasis', batch.weightBasis],
+    ['volumeBasis', batch.volumeBasis],
+  ])
+    if (basis !== undefined && !['carton', 'batch'].includes(basis))
+      issue(issues, 'invalid-measurement-basis', {
+        cartonId: batch.id,
+        field,
+        value: basis,
+      })
   if (batch.unitMeasurements && batch.count !== null) {
     const { unitMeasurements, ...base } = batch
     const indices = batch.entitlementIndices || null
@@ -143,15 +178,46 @@ function cartonMeasurements(batch, issues) {
       volumeBasis: 'carton',
     }
     const unchangedCount = batch.count - overrides.length
-    const measurements = overrides.map(([, values]) => ({
-      count: 1,
-      ...cartonMeasurements({ ...unit, ...values }, issues),
-    }))
-    if (unchangedCount)
+    const measurements = overrides.map(([index, values]) => {
+      const localIssues = [],
+        measured = cartonMeasurements({ ...unit, ...values }, localIssues)
+      for (const warning of localIssues) {
+        warning.unitIndex = Number(index)
+        if (warning.code === 'volume-discrepancy') {
+          warning.dimensionSource = ['len', 'wid', 'ht'].every(
+            (field) => values[field]
+          )
+            ? 'unit'
+            : 'set'
+          warning.message = volumeDiscrepancyMessage(warning)
+        }
+      }
+      issues.push(...localIssues)
+      return { count: 1, ...measured }
+    })
+    if (unchangedCount) {
+      const localIssues = [],
+        measured = cartonMeasurements(unit, localIssues)
+      for (const warning of localIssues)
+        if (warning.code === 'volume-discrepancy') {
+          for (const field of [
+            'dimensionVolume',
+            'suppliedVolume',
+            'usedVolume',
+          ])
+            warning[field] = multiplyExact(
+              warning[field],
+              String(unchangedCount)
+            )
+          warning.count = unchangedCount
+          warning.message = volumeDiscrepancyMessage(warning)
+        }
+      issues.push(...localIssues)
       measurements.push({
         count: unchangedCount,
-        ...cartonMeasurements(unit, issues),
+        ...measured,
       })
+    }
     const metric = (field) => {
       const known = measurements.filter((row) => row[field] !== null)
       const knownCount = known.reduce((total, row) => total + row.count, 0)
@@ -177,6 +243,16 @@ function cartonMeasurements(batch, issues) {
     }
     const weight = metric('totalWeight'),
       volume = metric('totalVolume')
+    if (
+      batch.volumeBasis === 'batch' &&
+      measurements.every((row) => row.dimensionVolume !== null)
+    )
+      volumeDiscrepancy(
+        issues,
+        batch,
+        volume.total,
+        measurement(batch, 'suppliedCbm', issues)
+      )
     return {
       totalWeight: weight.total,
       totalVolume: volume.total,
@@ -204,16 +280,6 @@ function cartonMeasurements(batch, issues) {
   )
     ? dividePowerOfTen(multiplyExact(...dimensions), 6)
     : null
-  for (const [field, basis] of [
-    ['weightBasis', batch.weightBasis],
-    ['volumeBasis', batch.volumeBasis],
-  ])
-    if (basis !== undefined && !['carton', 'batch'].includes(basis))
-      issue(issues, 'invalid-measurement-basis', {
-        cartonId: batch.id,
-        field,
-        value: basis,
-      })
   const totalFor = (value, basis) =>
     value === null || !['carton', 'batch'].includes(basis)
       ? null
@@ -225,23 +291,7 @@ function cartonMeasurements(batch, issues) {
   const totalWeight = totalFor(weight, batch.weightBasis ?? 'carton')
   const dimensionTotal = totalFor(dimensionVolume, 'carton')
   const suppliedTotal = totalFor(suppliedVolume, batch.volumeBasis ?? 'carton')
-  if (
-    dimensionTotal !== null &&
-    suppliedTotal !== null &&
-    compareExact(dimensionTotal, suppliedTotal)
-  )
-    issue(issues, 'volume-discrepancy', {
-      severity: 'warning',
-      cartonId: batch.id,
-      dimensionVolume: dimensionTotal,
-      suppliedVolume: suppliedTotal,
-      usedVolume: dimensionTotal,
-      usedVolumeBasis: 'measured',
-      suppliedCbm: suppliedVolume,
-      suppliedVolumeBasis: batch.volumeBasis ?? 'carton',
-      count: batch.count,
-      message: `Measured volume ${dimensionTotal} m³ is used; supplied volume ${suppliedTotal} m³ is retained.`,
-    })
+  volumeDiscrepancy(issues, batch, dimensionTotal, suppliedTotal)
   return {
     totalWeight,
     totalVolume: dimensionTotal ?? suppliedTotal,

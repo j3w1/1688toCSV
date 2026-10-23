@@ -12,6 +12,174 @@ import {
 import { createContainerSummary } from '../src/container-export.js'
 import { planContainerWorkbook } from '../src/container-export.js'
 
+test('native aggregate unit CBM exceptions use confirmed dimensions consistently through reconciliation, seal, JSON, XLSX and restore', async () => {
+  const browser = await databaseBrowser()
+  try {
+    for (const scenario of [
+      'inherited',
+      'unit-dimensions',
+      'combined-supply',
+    ]) {
+      const result = await browser.page.evaluate(async (scenario) => {
+        const {
+          openDatabase,
+          fixture: { syntheticOrder, syntheticBatch, syntheticManifest },
+        } = modules
+        const db = await openDatabase({
+          name: `synthetic-unit-cbm-${scenario}`,
+        })
+        const batch = syntheticBatch('1001', 2, '100', {
+          packingBasis: 'aggregate',
+          len: '50',
+          wid: '50',
+          ht: '50',
+          ...(scenario === 'combined-supply'
+            ? { suppliedCbm: '0.4', volumeBasis: 'batch' }
+            : {}),
+        })
+        await db.restoreBackup({
+          format: '1688-order-library',
+          version: 4,
+          exportedAt: new Date().toISOString(),
+          orders: [syntheticOrder()],
+          history: [],
+          images: [],
+          preparations: [],
+          allocations: [],
+          issuedCodes: [],
+          packingPreferences: null,
+          cartonBatches: [batch],
+        })
+        await db.savePreparations([syntheticManifest().orders[0].preparation], {
+          expectedRevisions: [0],
+          preserveNaming: true,
+        })
+        const before = await db.getOrderReconciliation({ orderId: '1001' })
+        const edited = {
+          ...before.batches[0],
+          unitMeasurements: {
+            1: {
+              suppliedCbm: '0.3',
+              ...(scenario === 'unit-dimensions'
+                ? { len: '60', wid: '50', ht: '100' }
+                : {}),
+            },
+          },
+        }
+        const confirmed = await db.confirmOrderCartons({
+          orderId: '1001',
+          expectedRevisions: before.revisions,
+          draft: { cartons: [edited] },
+        })
+        const container = await db.createContainer({
+          name: `Unit CBM ${scenario}`,
+        })
+        let view = await db.includeContainerOrders({
+          id: container.id,
+          expectedRevision: container.revision,
+          orderRefs: [{ orderId: '1001' }],
+        })
+        view = await db.markContainerLoaded({
+          id: container.id,
+          expectedRevision: view.container.revision,
+        })
+        const review = await db.reviewContainerSeal({
+          id: container.id,
+          expectedRevision: view.container.revision,
+        })
+        if (!review.ready) throw new Error(JSON.stringify(review.issues))
+        const manifest = await db.sealContainer({
+          id: container.id,
+          expectedRevision: view.container.revision,
+          reviewToken: review.reviewToken,
+        })
+        const backup = await db.exportBackup({})
+        const restoredDb = await openDatabase({
+          name: `synthetic-unit-cbm-${scenario}-restored`,
+        })
+        await restoredDb.restoreBackup(backup)
+        const restored = await restoredDb.getContainerManifest({
+          id: container.id,
+        })
+        db.close()
+        restoredDb.close()
+        return {
+          confirmed,
+          review,
+          manifest,
+          backupBatch: backup.cartonBatches[0],
+          restored,
+        }
+      }, scenario)
+      const expected = scenario === 'unit-dimensions' ? '0.425' : '0.25'
+      assert.equal(result.manifest.totals.volume, expected)
+      assert.deepEqual(
+        result.manifest.cartons.map((unit) => unit.volume),
+        ['0.125', scenario === 'unit-dimensions' ? '0.3' : '0.125']
+      )
+      assert.equal(result.backupBatch.unitMeasurements[1].suppliedCbm, '0.3')
+      const summary = createContainerSummary(result.manifest, {
+        file: 'units.xlsx',
+      })
+      assert.equal(summary.totals.volume, expected)
+      assert.deepEqual(
+        summary.cartons.map((unit) => unit.volume),
+        result.manifest.cartons.map((unit) => unit.volume)
+      )
+      const warning = summary.warnings.find(
+        (warning) => warning.unitIndex === 1
+      )
+      if (scenario === 'unit-dimensions') assert.equal(warning, undefined)
+      else {
+        assert.equal(warning.usedVolume, '0.125')
+        assert.equal(warning.suppliedVolume, '0.3')
+        assert.equal(warning.dimensionSource, 'set')
+        assert.equal(warning.unitIndex, 1)
+        assert.match(
+          warning.message,
+          /Carton 2: measure this carton separately/
+        )
+        assert.deepEqual(
+          result.review.warnings.find((warning) => warning.unitIndex === 1),
+          warning
+        )
+      }
+      if (scenario === 'combined-supply')
+        assert.ok(
+          summary.warnings.some(
+            (warning) =>
+              warning.usedVolume === '0.25' &&
+              warning.suppliedVolume === '0.4' &&
+              warning.suppliedVolumeBasis === 'batch'
+          )
+        )
+      const cartonColumns = ['batch', 'len', 'wid', 'ht', 'totalVolume']
+      const sheet = planContainerWorkbook(result.manifest, { cartonColumns })
+        .sheets[1]
+      const bytes = await createContainerWorkbook(result.manifest, {
+        cartonColumns,
+      })
+      const archive = CFB.read(bytes, { type: 'array' })
+      const xml = new TextDecoder().decode(
+        archive.FileIndex.find((value) => value.name === 'sheet2.xml').content
+      )
+      for (const { carton, row } of sheet.records) {
+        assert.match(
+          sheet.rows[row - 1].cells[4].formula,
+          /B\d+\*C\d+\*D\d+\/1000000/
+        )
+        assert.equal(sheet.rows[row - 1].cells[4].value, carton.volume)
+        assert.ok(xml.includes(`<v>${carton.volume}</v>`))
+      }
+      if (scenario !== 'unit-dimensions')
+        assert.match(xml, /Carton 2: measure this carton separately/)
+      assert.deepEqual(result.restored, result.manifest)
+    }
+  } finally {
+    await browser.close()
+  }
+})
+
 test('native measured CBM warnings survive confirmation, seal review, frozen exports and backup while quantity contradictions still block', async () => {
   const browser = await databaseBrowser()
   try {
