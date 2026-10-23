@@ -189,6 +189,14 @@ test('an agent authors Orders, confirms one physical arrangement, seals a named 
       ).batches.reduce((n, batch) => n + batch.count, 0)
     )
     .toBe(6)
+  const confirmedPhysicalIds = await extension.inspector.evaluate(
+    async (ref) =>
+      (await (await window.testRepository).getOrderReconciliation(ref)).batches
+        .filter((batch) => !batch.deletedAt)
+        .map((batch) => batch.id)
+        .sort(),
+    ref
+  )
   const containerId = await createContainerThroughUI(
     page,
     [ref],
@@ -329,23 +337,31 @@ test('an agent authors Orders, confirms one physical arrangement, seals a named 
     basename(summaryFile.filename),
   ])
   expect(summary.container.name).toBe('Synthetic agent November')
+  expect(summary.container.period || '').toBe('')
   for (const product of summary.products) {
     expect(product.packingMonth).toBe('2026-10')
     expect(product.barcode).toMatch(/^CE2610/)
   }
   expect(summary.products).toHaveLength(3)
   expect(summary.cartonBatches).toHaveLength(3)
+  expect(summary.cartonBatches.map((batch) => batch.id).sort()).toEqual(
+    confirmedPhysicalIds
+  )
   expect(summary.cartonBatches.reduce((n, batch) => n + batch.count, 0)).toBe(6)
   for (const batch of summary.cartonBatches)
     expect(batch).toMatchObject({
+      accountId: 'local',
+      orderId,
       weightBasis: 'carton',
       weight: '9.5',
       len: '50',
       wid: '50',
       ht: '50',
     })
-  for (const batch of summary.cartonBatches)
+  for (const batch of summary.cartonBatches) {
     expect(batch.contents.every((part) => part.orderId === orderId)).toBe(true)
+    expect(batch).not.toHaveProperty('month')
+  }
   expect(summary.cartons).toHaveLength(6)
   expect(summary.cartons.every((carton) => carton.state === 'loaded')).toBe(
     true

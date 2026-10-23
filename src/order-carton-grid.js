@@ -719,7 +719,7 @@ function numericCell(raw, column) {
   const value = raw.trim()
   if (!value) return null
   if (column.type === 'whole') {
-    if (!/^[1-9]\d*$/.test(value))
+    if (!/^\d+$/.test(value) || BigInt(value) === 0n)
       throw new Error('Pcs/box must be a positive whole number')
     return BigInt(value).toString()
   }
