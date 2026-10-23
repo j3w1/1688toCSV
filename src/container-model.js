@@ -495,16 +495,20 @@ function buildProductRows(
     ).map((row) => [row.entryId, row])
   )
   const rows = []
-  for (const [entryId, quantity] of Object.entries(quantities)) {
-    const item = member.record.snapshot.items.find(
-      (item) => item.entryId === entryId
-    )
-    if (!item)
+  const sourceItems = new Map(
+    member.record.snapshot.items.map((item) => [item.entryId, item])
+  )
+  for (const entryId of Object.keys(quantities))
+    if (!sourceItems.has(entryId))
       throw inventoryError(
         'SHIPMENT_PRODUCT_MISSING',
         'Loaded products are not in the captured source.',
         { entryId }
       )
+  for (const item of member.record.snapshot.items) {
+    const entryId = item.entryId
+    if (!Object.hasOwn(quantities, entryId)) continue
+    const quantity = quantities[entryId]
     const { group, variant, barcode } = groupFor(member.preparation, entryId)
     const actual = cartons.filter((unit) =>
         unit.contents?.some((row) => row.entryId === entryId)
