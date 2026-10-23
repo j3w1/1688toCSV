@@ -904,7 +904,10 @@ test('empty library gives a starting action and narrow widths contain table over
       )
       .toBeLessThanOrEqual(1)
     for (const selector of ['.orders-pane', '.sheet-pane']) {
-      const bounds = await page.locator(selector).boundingBox()
+      const bounds = await page
+        .locator('#orders-view')
+        .locator(selector)
+        .boundingBox()
       expect(bounds.height).toBeGreaterThan(0)
       expect(bounds.y).toBeGreaterThanOrEqual(0)
       expect(bounds.y + bounds.height).toBeLessThanOrEqual(viewport.height)
