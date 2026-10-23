@@ -2887,10 +2887,34 @@ export function mountOrderCartonGrid(
   )
   // Raw/invalid drafts live in the keyed session; mounting every dirty row
   // would defeat virtualization after a large paste. The table pins focus.
+  function renderCells(
+    projection = session.projection(),
+    state = session.state()
+  ) {
+    return {
+      rawCells: state.rawCells,
+      rows: new Map(
+        [...(projection.products || []), ...(projection.cartons || [])].map(
+          (row) => [row.key, row]
+        )
+      ),
+    }
+  }
+  function renderedCell(frame, key, column) {
+    // Custom sessions may expose only the original rawCell interface.
+    if (frame.rawCells === undefined) return session.rawCell(key, column)
+    const value = frame.rawCells[JSON.stringify([key, column])]
+    return value !== undefined ? value : (frame.rows.get(key)?.[column] ?? '')
+  }
   const grid = createVirtualTable({
     scroller,
     body,
-    render: (entries) => entries.map(({ row }) => renderRow(row)),
+    render: (entries) => {
+      // Scrolling can render after a new acknowledgement: capture fresh values
+      // once for this batch instead of reconciling the whole order per input.
+      const cells = renderCells()
+      return entries.map(({ row }) => renderRow(row, cells))
+    },
     paint: paintSelection,
     limit: 100,
   })
@@ -2916,7 +2940,7 @@ export function mountOrderCartonGrid(
       tr.querySelector('input[type="checkbox"]').checked = isSelected
     }
   }
-  function renderRow(row) {
+  function renderRow(row, cells) {
     const tr = el('tr')
     tr.dataset.gridKey = row.key
     tr.tabIndex = 0
@@ -3107,7 +3131,7 @@ export function mountOrderCartonGrid(
         input.type = 'text'
         input.inputMode = column.type === 'whole' ? 'numeric' : 'decimal'
         input.value =
-          session.rawCell(row.key, column.key) ?? row[column.key] ?? ''
+          renderedCell(cells, row.key, column.key) ?? row[column.key] ?? ''
         try {
           numericCell(input.value, column)
         } catch {
@@ -3590,10 +3614,12 @@ export function mountOrderCartonGrid(
       grid.setItems(visible.map((row) => ({ key: row.key, row })))
       mountedKeys = [...visibleKeys]
     } else {
+      const cells = renderCells(projection, state)
       for (const element of body.querySelectorAll('[data-grid-key]'))
         for (const input of element.querySelectorAll('input[data-grid-column]'))
           if (input !== document.activeElement)
-            input.value = session.rawCell(
+            input.value = renderedCell(
+              cells,
               element.dataset.gridKey,
               input.dataset.gridColumn
             )

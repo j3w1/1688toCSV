@@ -1966,9 +1966,9 @@ export async function createProductAuthoring({
         media,
         beforeOpen: flushSaves,
         onSaved: async () => {
+          dismissEditor()
           await reload()
           await changed({ reload: true })
-          dismissEditor()
         },
         onError: (error) => bindText(status, uiMessage(error.message)),
       })
