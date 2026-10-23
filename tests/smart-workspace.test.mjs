@@ -26,6 +26,7 @@ import {
   openLegacyCartonReview,
   captureGridTarget,
   PRODUCT_GRID_COLUMNS,
+  mountPhysicalMarkChoices,
 } from '../src/order-carton-grid.js'
 import * as actualPlanner from '../src/carton-reconciliation.js'
 import { applyCartonUnitException } from '../src/carton-batches.js'
@@ -34,6 +35,80 @@ import {
   syntheticBatch,
   syntheticManifest,
 } from './fixtures/container-fixture.mjs'
+
+test('physical mark choices require each explicit decision, reason and fresh relabel attestation while retaining IME and live language input', (context) => {
+  const { document, window } = dom(context),
+    host = document.getElementById('host'),
+    apply = document.createElement('button'),
+    reviews = [
+      {
+        id: 'carton-1',
+        resolutionRequired: true,
+        physicalMarkCode: 'CE26090102',
+        currentProductCode: 'CE26090101',
+      },
+    ],
+    original = structuredClone(reviews),
+    updates = [],
+    previous = getLanguage()
+  context.after(() => setLanguage(previous, { persist: false }))
+  setLanguage('en', { persist: false })
+  const stop = mountPhysicalMarkChoices({
+      host,
+      apply,
+      reviews,
+      onChange: (value) => updates.push(value),
+    }),
+    card = host.querySelector('[data-batch-id="carton-1"]'),
+    keep = card.querySelector('[data-choice="keep-recorded-mark"]'),
+    relabel = card.querySelector('[data-choice="relabel-reprint"]'),
+    reason = card.querySelector('textarea'),
+    attestation = card.querySelector('input[type="checkbox"]')
+  assert.equal(apply.disabled, true)
+  assert.equal(keep.name, relabel.name)
+  assert.match(card.textContent, /CE26090102/)
+  assert.match(card.textContent, /CE26090101/)
+  keep.checked = true
+  keep.dispatchEvent(new window.Event('change'))
+  assert.equal(apply.disabled, true)
+  reason.value = 'Confirmed old mark remains on these cartons'
+  reason.dispatchEvent(new window.Event('input'))
+  assert.equal(apply.disabled, false)
+  assert.deepEqual(updates.at(-1).decisions, [
+    {
+      batchId: 'carton-1',
+      choice: 'keep-recorded-mark',
+      reason: reason.value,
+      physicalRelabelConfirmed: false,
+    },
+  ])
+  reason.dispatchEvent(new window.Event('compositionstart'))
+  assert.equal(apply.disabled, true)
+  reason.dispatchEvent(new window.Event('compositionend'))
+  assert.equal(apply.disabled, false)
+  relabel.checked = true
+  relabel.dispatchEvent(new window.Event('change'))
+  assert.equal(keep.checked, false)
+  assert.equal(apply.disabled, true)
+  attestation.checked = true
+  attestation.dispatchEvent(new window.Event('change'))
+  assert.equal(apply.disabled, false)
+  setLanguage('es', { persist: false })
+  assert.match(card.textContent, /marca física registrada/)
+  assert.equal(card.querySelector('textarea'), reason)
+  assert.equal(reason.value, 'Confirmed old mark remains on these cartons')
+  setLanguage('zh', { persist: false })
+  assert.match(card.textContent, /实体箱唛/)
+  keep.checked = true
+  keep.dispatchEvent(new window.Event('change'))
+  relabel.checked = true
+  relabel.dispatchEvent(new window.Event('change'))
+  assert.equal(attestation.checked, false)
+  assert.equal(apply.disabled, true)
+  assert.deepEqual(reviews, original)
+  stop()
+  assert.equal(host.querySelector('.physical-mark-choices'), null)
+})
 
 test('carton history retains current, retired, legacy and prior revisions across complete order scope', () => {
   const a = syntheticOrder('1001'),

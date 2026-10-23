@@ -1,6 +1,48 @@
 // UI text only. Supplier/source strings never pass through this catalog.
 export const SMART_CARTON_MESSAGES = Object.fromEntries(
   [
+    ['Recorded physical mark', 'Marca física registrada', '已记录的实体箱唛'],
+    ['Current product code', 'Código de producto actual', '当前商品编码'],
+    [
+      'Keep the recorded physical mark',
+      'Conservar la marca física registrada',
+      '保留已记录的实体箱唛',
+    ],
+    [
+      'Reprint and relabel with the current product code',
+      'Reimprimir y reetiquetar con el código actual',
+      '按当前商品编码重新打印并更换箱唛',
+    ],
+    [
+      'Reason for this mark decision',
+      'Motivo de esta decisión de marca',
+      '箱唛决定的依据',
+    ],
+    [
+      'I confirm this carton has been physically relabeled.',
+      'Confirmo que esta caja ya fue reetiquetada físicamente.',
+      '我确认已实际更换该纸箱的箱唛。',
+    ],
+    [
+      'A verified seal requires a reviewed physical mark choice.',
+      'Para sellar con verificación debes revisar la decisión sobre la marca física.',
+      '核验封存前，必须核对实体箱唛决定。',
+    ],
+    [
+      'Choose a physical mark decision and enter its reason.',
+      'Elige una decisión sobre la marca y escribe el motivo.',
+      '请选择实体箱唛处理方式并填写依据。',
+    ],
+    [
+      'Confirm physical relabeling before applying this choice.',
+      'Confirma el cambio físico de etiqueta antes de aplicar esta opción.',
+      '应用此选项前，请确认已实际更换箱唛。',
+    ],
+    [
+      'Review this mark decision before applying.',
+      'Revisa esta decisión de marca antes de aplicarla.',
+      '应用前请核对此箱唛决定。',
+    ],
     [
       'Undo the last Orders edit using its captured source and physical revisions.',
       'Deshace la última edición de Pedidos con sus versiones de origen y cajas guardadas.',

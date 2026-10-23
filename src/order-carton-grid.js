@@ -34,6 +34,142 @@ export const CARTON_GRID_COLUMNS = [
   { key: 'provenance', label: 'Evidence', readonly: true },
 ]
 
+/** Explicit Orders decisions; this control never writes or invents mark facts. */
+export function mountPhysicalMarkChoices({ host, apply, reviews, onChange }) {
+  const pending = reviews.filter((row) => row.resolutionRequired)
+  if (!pending.length) {
+    onChange?.({ valid: true, decisions: [] })
+    return () => {}
+  }
+  const section = el('section', undefined, 'physical-mark-choices'),
+    rows = [],
+    composing = new Set()
+  section.append(
+    el('p', m('A verified seal requires a reviewed physical mark choice.'))
+  )
+  for (const review of pending) {
+    const id = review.id || review.batchId,
+      groupName = `physical-mark-${crypto.randomUUID()}`,
+      card = el('fieldset'),
+      reason = el('textarea'),
+      attestation = el(
+        'label',
+        m('I confirm this carton has been physically relabeled.')
+      ),
+      confirmed = el('input'),
+      status = el('p'),
+      choice = []
+    card.dataset.action = 'physical-mark-decision'
+    card.dataset.batchId = id
+    card.append(
+      el(
+        'legend',
+        m('{0}: {1}', {
+          0: m('Carton reference'),
+          1: review.cartonNumber || id,
+        })
+      )
+    )
+    for (const [label, value] of [
+      [
+        'Recorded physical mark',
+        review.physicalMarkCode || review.physicalMark?.code || '—',
+      ],
+      [
+        'Current product code',
+        review.currentProductCode || review.physicalMark?.productCode || '—',
+      ],
+    ]) {
+      const row = el('p'),
+        code = el('code', undefined, 'ce-code')
+      setCodeText(code, value)
+      row.append(el('strong', m(label)), code)
+      card.append(row)
+    }
+    for (const [value, title] of [
+      ['keep-recorded-mark', 'Keep the recorded physical mark'],
+      ['relabel-reprint', 'Reprint and relabel with the current product code'],
+    ]) {
+      const label = el('label', m(title)),
+        input = el('input')
+      input.type = 'radio'
+      input.name = groupName
+      input.value = value
+      input.dataset.action = 'choose-physical-mark'
+      input.dataset.choice = value
+      label.prepend(input)
+      card.append(label)
+      choice.push(input)
+      input.onchange = () => {
+        for (const other of choice) if (other !== input) other.checked = false
+        if (value !== 'relabel-reprint') confirmed.checked = false
+        update()
+      }
+    }
+    reason.maxLength = 2000
+    reason.dataset.action = 'physical-mark-reason'
+    bindAttribute(reason, 'aria-label', m('Reason for this mark decision'))
+    const label = el('label', m('Reason for this mark decision'))
+    label.append(reason)
+    confirmed.type = 'checkbox'
+    confirmed.dataset.action = 'confirm-physical-relabel'
+    confirmed.onchange = update
+    attestation.prepend(confirmed)
+    attestation.hidden = true
+    reason.addEventListener('input', update)
+    reason.addEventListener('compositionstart', () => {
+      composing.add(reason)
+      update()
+    })
+    reason.addEventListener('compositionend', () => {
+      composing.delete(reason)
+      update()
+    })
+    status.setAttribute('role', 'status')
+    card.append(label, attestation, status)
+    section.append(card)
+    rows.push({ id, review, choice, reason, confirmed, attestation, status })
+  }
+  function update() {
+    let valid = !composing.size
+    const decisions = rows.map((row) => {
+      const choice = row.choice.find((input) => input.checked)?.value || '',
+        relabel = choice === 'relabel-reprint',
+        ready = Boolean(
+          choice &&
+          row.reason.value.trim() &&
+          row.reason.value.length <= 2000 &&
+          (row.review.currentProductCode ||
+            row.review.physicalMark?.productCode) &&
+          (!relabel || row.confirmed.checked)
+        )
+      row.attestation.hidden = !relabel
+      valid &&= ready
+      bindText(
+        row.status,
+        m(
+          ready
+            ? 'Review this mark decision before applying.'
+            : relabel && !row.confirmed.checked
+              ? 'Confirm physical relabeling before applying this choice.'
+              : 'Choose a physical mark decision and enter its reason.'
+        )
+      )
+      return {
+        batchId: row.id,
+        choice,
+        reason: row.reason.value,
+        physicalRelabelConfirmed: relabel && row.confirmed.checked,
+      }
+    })
+    apply.disabled = !valid
+    onChange?.({ valid, decisions })
+  }
+  host.append(section)
+  update()
+  return () => section.remove()
+}
+
 /** Quantity is the whole set total unless the planner explicitly supplies perCarton. */
 export function formatOrderPackingPattern(product, cartons = []) {
   return (product.pattern || [])
