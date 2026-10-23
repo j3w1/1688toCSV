@@ -4511,7 +4511,7 @@ test('native repeated temporary supersession names the live holder and requires 
               postEpisodeUndo,
               conflicted,
               released,
-              kept: await context(),
+              kept: lastKept,
               keepError,
               beforeRefusal,
               afterRefusal,
