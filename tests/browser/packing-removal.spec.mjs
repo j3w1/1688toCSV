@@ -224,11 +224,16 @@ test('loading reset is reversible and sealed membership requires amendment inste
   )
   const rejection = await extension.inspector.evaluate(async (id) => {
     const repository = await window.testRepository,
-      view = await repository.getContainerView({ id })
+      view = await repository.getContainerView({ id }),
+      cartonId = view.cartons[0]?.id
+    if (typeof cartonId !== 'string' || !cartonId)
+      throw new Error(
+        'The synthetic sealed fixture needs a physical carton ID.'
+      )
     try {
       await repository.setContainerLoading({
         id,
-        decisions: [{ cartonId: view.cartons[0].id, state: 'unconfirmed' }],
+        decisions: [{ cartonId, state: 'unconfirmed' }],
         expectedRevision: view.container.revision,
         intentId: crypto.randomUUID(),
       })
@@ -237,7 +242,7 @@ test('loading reset is reversible and sealed membership requires amendment inste
       return error.message
     }
   }, id)
-  expect(rejection).toMatch(/sealed|amend|draft|loading/i)
+  expect(rejection).toMatch(/sealed|amend|draft/i)
   expect(
     await extension.inspector.evaluate(
       async (id) => (await window.testRepository).getContainerManifest({ id }),
