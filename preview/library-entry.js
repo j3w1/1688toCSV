@@ -11,6 +11,7 @@ import {
 const records = createDemoRecords(document)
 const repository = await openDatabase()
 for (const record of records) {
+  record.snapshot.sellerMemberLogin ||= `synthetic-preview-${record.snapshot.orderId}`
   for (const item of record.snapshot.items) {
     item.title = item.description.startsWith('Scented')
       ? '合成香薰蜡烛'
