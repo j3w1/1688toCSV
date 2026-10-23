@@ -352,9 +352,16 @@ export async function openPhysicalMarkReview({
       )
     )
   )
-  const source = context.record.snapshot.items.find((item) =>
-    batch.contents.some((part) => part.entryId === item.entryId)
-  )
+  const recordedEntries =
+      batch.physicalMark.artwork?.entryIds ||
+      batch.physicalMark.originalArtwork?.entryIds,
+    source = recordedEntries?.length
+      ? context.record.snapshot.items.find((item) =>
+          recordedEntries.includes(item.entryId)
+        )
+      : context.record.snapshot.items.find((item) =>
+          batch.contents.some((part) => part.entryId === item.entryId)
+        )
   if (source?.thumbnail) {
     const photo = el('img', undefined, 'physical-mark-source-photo')
     photo.width = photo.height = 96
