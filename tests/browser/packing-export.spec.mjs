@@ -15,6 +15,7 @@ test('container export preserves advanced columns/order/layout and exact theme/m
   const [record] = await extension.inspector.evaluate(
     `(${createDemoRecords.toString()})(document)`
   )
+  record.snapshot.sellerMemberLogin = 'synthetic-frozen-export-supplier'
   record.additionalCharges = [
     { id: 'synthetic-handling', reason: 'Internal handling', amount: '12.00' },
   ]
