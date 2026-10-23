@@ -74,12 +74,24 @@ try {
   await expect(page.locator('.container-heading')).toContainText(
     'Synthetic October 2026'
   )
+  await page
+    .locator('.container-order-list [data-action="expand-container-order"]')
+    .first()
+    .click()
+  const firstCarton = page.locator('[data-container-row]').first()
+  await expect(firstCarton).toBeVisible()
   await page.screenshot({ path: 'screenshots/container-loading.png' })
   await page.locator('[data-action="mark-all-loaded"]').click()
   await expect(page.locator('#container-content')).toHaveAttribute(
     'aria-busy',
     'false'
   )
+  await firstCarton
+    .locator('[data-action="set-carton-loading"][data-state="left-behind"]')
+    .click()
+  await expect(
+    firstCarton.getByText('Left behind', { exact: true })
+  ).toBeVisible()
   await page
     .locator('[data-action="container-view"][data-view="packing-list"]')
     .click()

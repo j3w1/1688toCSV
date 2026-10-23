@@ -156,12 +156,56 @@ for (const language of ['en', 'es', 'zh']) {
       })
       return sample.geometry
     }
-    for (const { width, font } of [
+    for (const { width, height = 900, font, initialRows } of [
+      { width: 390, height: 844, initialRows: true },
       ...[1440, 1280, 1000, 390, 375, 360].map((width) => ({ width })),
       // Different font metrics exposed an extra summary line on hosted Linux.
       { width: 375, font: 'Georgia, serif' },
     ]) {
-      await page.setViewportSize({ width, height: 900 })
+      await page.setViewportSize({ width, height })
+      if (initialRows) {
+        const frame = await page.evaluate(() => {
+          const pane = document.querySelector('.sheet-pane'),
+            scroll = document.querySelector('.table-scroll')
+          pane.scrollTop = scroll.scrollTop = 0
+          const p = pane.getBoundingClientRect(),
+            s = scroll.getBoundingClientRect(),
+            r = document
+              .querySelector('#sheet-body tr[data-selection-key]')
+              .getBoundingClientRect(),
+            header = scroll.querySelector('thead').getBoundingClientRect()
+          return {
+            visibleRow: Math.max(
+              0,
+              Math.min(r.bottom, p.bottom, s.bottom, innerHeight) -
+                Math.max(r.top, p.top, s.top + header.height)
+            ),
+            paneHeight: p.height,
+            actionBarHeight: document
+              .querySelector('.action-bar')
+              .getBoundingClientRect().height,
+          }
+        })
+        await test.info().attach('initial-phone-source-visibility', {
+          body: Buffer.from(JSON.stringify(frame, null, 2)),
+          contentType: 'application/json',
+        })
+        expect(frame.visibleRow).toBeGreaterThanOrEqual(48)
+        for (const selector of [
+          '#review-purchase-codes',
+          '#include-orders',
+          '#backup-packing',
+        ]) {
+          const action = page.locator(selector)
+          await action.focus()
+          const box = await action.boundingBox()
+          expect(box.x).toBeGreaterThanOrEqual(0)
+          expect(box.x + box.width).toBeLessThanOrEqual(width)
+          expect(box.y).toBeGreaterThanOrEqual(0)
+          expect(box.y + box.height).toBeLessThanOrEqual(height)
+          await expect(action).toBeFocused()
+        }
+      }
       if (font)
         await page.addStyleTag({ content: `body { font-family: ${font}; }` })
       await row.focus()
