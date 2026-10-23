@@ -163,6 +163,23 @@ export function captureContainerOrder(
   )
   const cartons = [],
     warnings = []
+  for (const variant of (preparation?.groups || []).flatMap(
+    (group) => group.variants
+  ))
+    if (variant.needsSizeMapping)
+      for (const entryId of variant.entryIds)
+        if (
+          availableBefore.some(
+            (row) => row.entryId === entryId && row.quantity !== '0'
+          )
+        )
+          warnings.push({
+            code: 'SIZE_MAPPING_REQUIRED',
+            severity: 'warning',
+            orderId,
+            entryId,
+            message: 'Map this variant size before generating labels',
+          })
   for (const batch of batches.filter((batch) => !batch.deletedAt)) {
     if (batchNeedsLegacyReview(batch)) {
       warnings.push({

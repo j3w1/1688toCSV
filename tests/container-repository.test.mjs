@@ -4,6 +4,175 @@ import { CFB } from 'xlsx'
 import { createContainerWorkbook } from '../src/container-export.js'
 import { SYNTHETIC_PHOTO } from './fixtures/container-fixture.mjs'
 import { databaseBrowser } from './fixtures/database-browser.mjs'
+import { setGroupSizeMode, barcodeValue } from '../src/packing-model.js'
+import { createContainerSummary } from '../src/container-export.js'
+
+test('native base identity remains stable while unresolved variant sizes stay warned and unprintable until explicit resolution', async () => {
+  const fixture = await databaseBrowser()
+  try {
+    const pending = await fixture.page.evaluate(async () => {
+      const { openDatabase, fixture: factories } = modules,
+        db = await openDatabase({ name: 'synthetic-pending-size-identity' }),
+        results = []
+      for (const [orderId, sizes] of [
+        ['1001', ['10cm', '20cm']],
+        ['1002', ['待确认尺寸甲', '待确认尺寸乙']],
+      ]) {
+        const record = factories.syntheticOrder(orderId, '1')
+        record.snapshot.items = sizes.map((size, index) => ({
+          ...record.snapshot.items[0],
+          entryId: String(2001 + index),
+          title: '合成玻璃花瓶',
+          description: `合成玻璃花瓶\n颜色：${['金色', '银色'][index]}\n规格：${size}`,
+          skuProperties: [
+            { label: '颜色', value: ['金色', '银色'][index] },
+            { label: '规格', value: size },
+          ],
+          quantity: '1',
+          price: '10.00',
+        }))
+        Object.assign(record.snapshot.totals, {
+          goodsGross: '20.00',
+          goodsNet: '20.00',
+          payable: '20.00',
+        })
+        await db.saveSnapshot(record.snapshot)
+        const review = await db.reviewPurchaseCodes({
+          orderRefs: [{ orderId }],
+        })
+        await db.assignPurchaseCodes({
+          plan: review.plan,
+          expectedRevisions: review.expectedRevisions,
+        })
+        results.push({
+          orderId,
+          review,
+          saved: await db.getPreparation(orderId),
+        })
+      }
+      const preparation = await db.getPreparation('1002'),
+        repeated = await db.reviewPurchaseCodes({
+          orderRefs: [{ orderId: '1002' }],
+        }),
+        backlog = await db.getBacklog({}),
+        reserved = await db.getReservedBarcodes(preparation.groups[0].baseCode),
+        container = await db.createContainer({
+          name: 'Synthetic pending sizes',
+        }),
+        included = await db.includeContainerOrders({
+          id: container.id,
+          orderRefs: [{ orderId: '1002' }],
+          expectedRevision: container.revision,
+        }),
+        manifest = await db.getContainerManifest({ id: container.id }),
+        source = (await db.getOrder('1002')).snapshot
+      await db.cancelContainer({
+        id: container.id,
+        expectedRevision: included.container.revision,
+      })
+      db.close()
+      return {
+        charset: document.characterSet,
+        results,
+        preparation,
+        repeated,
+        backlog,
+        reserved,
+        manifest,
+        source,
+      }
+    })
+    assert.equal(pending.charset, 'UTF-8')
+    assert.deepEqual(
+      pending.results[0].saved.groups[0].variants.map(
+        (variant) => variant.sizeSuffix
+      ),
+      ['S', 'L']
+    )
+    const review = pending.results[1].review
+    assert.ok(review.issues.length)
+    assert.ok(
+      review.issues.every(
+        (issue) =>
+          issue.code === 'PURCHASE_SIZE_REQUIRED' &&
+          issue.severity === 'warning'
+      )
+    )
+    assert.ok(review.changes.every((change) => change.after === ''))
+    assert.ok(
+      pending.repeated.changes.every(
+        (change) => change.before === '' && change.after === ''
+      )
+    )
+    const group = pending.preparation.groups[0],
+      baseCode = group.baseCode
+    assert.match(baseCode, /^CE2609\d{4}$/)
+    for (const variant of group.variants) {
+      assert.equal(variant.needsSizeMapping, true)
+      assert.throws(() => barcodeValue(group, variant), /Map this variant size/)
+      assert.equal(
+        pending.reserved.includes(`${baseCode}${variant.variantSuffix}`),
+        false
+      )
+    }
+    const backlog = pending.backlog.orders.find(
+      (order) => order.orderId === '1002'
+    )
+    assert.deepEqual(backlog.sizeMappingEntryIds, ['2001', '2002'])
+    assert.equal(
+      backlog.warnings.filter(
+        (warning) => warning.code === 'SIZE_MAPPING_REQUIRED'
+      ).length,
+      2
+    )
+    const summary = createContainerSummary(pending.manifest, {
+      file: 'DRAFT-size-review.xlsx',
+    })
+    assert.equal(
+      summary.warnings.filter(
+        (warning) => warning.code === 'SIZE_MAPPING_REQUIRED'
+      ).length,
+      2
+    )
+    const mapped = setGroupSizeMode(pending.preparation, group.id, 'none', {
+      snapshot: pending.source,
+    })
+    const resolved = await fixture.page.evaluate(async (mapped) => {
+      const db = await modules.openDatabase({
+        name: 'synthetic-pending-size-identity',
+      })
+      const [saved] = await db.savePreparations([mapped], {
+          expectedRevisions: [mapped.revision],
+          preserveNaming: true,
+        }),
+        backlog = await db.getBacklog({}),
+        source = (await db.getOrder('1002')).snapshot,
+        reserved = await db.getReservedBarcodes(saved.groups[0].baseCode)
+      db.close()
+      return { saved, backlog, source, reserved }
+    }, mapped)
+    assert.equal(resolved.saved.groups[0].baseCode, baseCode)
+    assert.ok(
+      resolved.saved.groups[0].variants.every(
+        (variant) => !variant.needsSizeMapping
+      )
+    )
+    assert.deepEqual(resolved.source, pending.source)
+    assert.equal(
+      resolved.backlog.orders.find((order) => order.orderId === '1002').warnings
+        .length,
+      0
+    )
+    for (const variant of resolved.saved.groups[0].variants)
+      assert.ok(
+        resolved.reserved.includes(
+          barcodeValue(resolved.saved.groups[0], variant)
+        )
+      )
+  } finally {
+    await fixture.close()
+  }
+})
 
 test('native source refresh and newer legacy restores preserve authored inventory, identity, clears and history', async () => {
   const fixture = await databaseBrowser()

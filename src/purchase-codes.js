@@ -644,8 +644,8 @@ export function planPurchaseCodeReview(
     changes = [],
     drafts = [],
     expectedSnapshots = []
-  const problem = (code, message, detail = {}) =>
-    issues.push({ code, message, severity: 'error', ...detail })
+  const problem = (code, message, detail = {}, severity = 'error') =>
+    issues.push({ code, message, ...detail, severity })
   for (const ref of orderRefs) selected.set(key(ref), new Set())
   for (const ref of entryRefs) {
     const ids = selected.get(key(ref)) ?? new Set()
@@ -855,9 +855,10 @@ export function planPurchaseCodeReview(
             variantId: variant.id,
             photo: clone(item),
             name: item.description ?? item.title,
-            before: oldGroup?.baseCode
-              ? barcodeValue(oldGroup, oldVariant)
-              : '',
+            before:
+              oldGroup?.baseCode && oldVariant && !oldVariant.needsSizeMapping
+                ? barcodeValue(oldGroup, oldVariant)
+                : '',
             after: variant.needsSizeMapping ? '' : barcodeValue(group, variant),
             baseCode: group.baseCode,
             purchaseMonth: purchaseMonthForCodes(record),
@@ -869,7 +870,8 @@ export function planPurchaseCodeReview(
             problem(
               'PURCHASE_SIZE_REQUIRED',
               'Resolve the source size before assigning a barcode.',
-              { orderId: draft.orderId, entryId }
+              { orderId: draft.orderId, entryId },
+              'warning'
             )
         }
   }
