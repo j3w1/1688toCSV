@@ -1,5 +1,6 @@
 import * as purchaseCodes from './purchase-codes.js'
 import { createLibraryChanges } from './library-changes.js'
+import { createMaterialSuggester } from './material-vocabulary.js'
 import {
   createContainerRepository,
   OPERATIONAL_STORES,
@@ -1731,13 +1732,25 @@ export async function openDatabase({ name = '1688-order-library' } = {}) {
     tx,
     preparation,
     suggest,
-    { replaceAutomatic = false } = {}
+    { replaceAutomatic = false, snapshot, materialSuggester } = {}
   ) {
     if (!preparation) return false
-    const refreshed = refreshPreparationNames(preparation, suggest, {
+    let refreshed = refreshPreparationNames(preparation, suggest, {
       replaceAutomatic,
     })
-    if (refreshed === preparation) return false
+    if (snapshot)
+      refreshed = refreshPreparationMaterials(
+        refreshed,
+        snapshot,
+        materialSuggester &&
+          new Map(
+            snapshot.items.map((item) => [
+              item.entryId,
+              materialSuggester(item),
+            ])
+          )
+      )
+    if (JSON.stringify(refreshed) === JSON.stringify(preparation)) return false
     // Invalidate open drafts without promoting derived names over newer
     // authoring in a backup. updatedAt remains the user's edit timestamp.
     tx.objectStore('preparations').put({
@@ -1749,10 +1762,20 @@ export async function openDatabase({ name = '1688-order-library' } = {}) {
 
   async function refreshNames(tx, preferences, options) {
     const suggest = createNameSuggester(preferences.vocabulary)
+    const materialSuggester = createMaterialSuggester(
+      preferences.materialVocabulary
+    )
     let orders = 0
     let preparations = 0
     const store = tx.objectStore('orders')
-    for (const order of await requested(store.getAll())) {
+    const records = await requested(store.getAll())
+    const snapshots = new Map(
+      records.map((record) => [
+        JSON.stringify(keyFor(record.snapshot)),
+        record.snapshot,
+      ])
+    )
+    for (const order of records) {
       const namingSuggestions = orderNamingSuggestions(order.snapshot, suggest)
       if (
         JSON.stringify(order.namingSuggestions) !==
@@ -1765,7 +1788,15 @@ export async function openDatabase({ name = '1688-order-library' } = {}) {
     for (const preparation of await requested(
       tx.objectStore('preparations').getAll()
     ))
-      if (refreshPreparedNames(tx, preparation, suggest, options))
+      if (
+        refreshPreparedNames(tx, preparation, suggest, {
+          ...options,
+          snapshot: snapshots.get(
+            JSON.stringify([preparation.accountId, preparation.orderId])
+          ),
+          materialSuggester,
+        })
+      )
         preparations += 1
     return { orders, preparations }
   }
@@ -1983,6 +2014,9 @@ export async function openDatabase({ name = '1688-order-library' } = {}) {
             order,
           ])
         )
+        const materialSuggester = createMaterialSuggester(
+          preferences?.value.materialVocabulary
+        )
         for (const [index, draft] of drafts.entries()) {
           const previous = previousByKey.get(keys[index])
           if (!allowSharedProductEdits)
@@ -2003,6 +2037,16 @@ export async function openDatabase({ name = '1688-order-library' } = {}) {
             restored: restoredByKey.get(keys[index]),
             sizeVocabulary: preferences?.value.sizeVocabulary,
           })
+          drafts[index] = refreshPreparationMaterials(
+            draft,
+            order.snapshot,
+            new Map(
+              order.snapshot.items.map((item) => [
+                item.entryId,
+                materialSuggester(item),
+              ])
+            )
+          )
         }
         const measurementResults = []
         for (const { orderId, accountId, edits } of measurementBatches)
@@ -2722,7 +2766,13 @@ export async function openDatabase({ name = '1688-order-library' } = {}) {
               await requested(
                 tx.objectStore('preparations').get(keyFor(snapshot))
               ),
-              suggest
+              suggest,
+              {
+                snapshot: result.order.snapshot,
+                materialSuggester: createMaterialSuggester(
+                  preferences.materialVocabulary
+                ),
+              }
             )
           }
           return { changed: result.changed, order: result.order }
@@ -4108,6 +4158,7 @@ import {
 import {
   activePackingState,
   allocatePreparation,
+  refreshPreparationMaterials,
   barcodeValue,
   codeOwnerEvidence,
   codeReservationMembers,

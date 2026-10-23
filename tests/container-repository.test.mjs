@@ -4,8 +4,121 @@ import { CFB } from 'xlsx'
 import { createContainerWorkbook } from '../src/container-export.js'
 import { SYNTHETIC_PHOTO } from './fixtures/container-fixture.mjs'
 import { databaseBrowser } from './fixtures/database-browser.mjs'
-import { setGroupSizeMode, barcodeValue } from '../src/packing-model.js'
+import {
+  setGroupSizeMode,
+  setVariantMaterial,
+  barcodeValue,
+} from '../src/packing-model.js'
 import { createContainerSummary } from '../src/container-export.js'
+
+test('native explicit preparation and material rule saves persist automatic evidence while retaining manual clears and authoring time', async () => {
+  const fixture = await databaseBrowser()
+  try {
+    const original = await fixture.page.evaluate(async () => {
+      const db = await modules.openDatabase({
+          name: 'synthetic-material-persistence',
+        }),
+        record = modules.fixture.syntheticOrder('1001', '1')
+      record.snapshot.items = ['玻璃', '棉', '晶透新材质'].map(
+        (material, index) => ({
+          ...record.snapshot.items[0],
+          entryId: String(2001 + index),
+          title: '合成材质物品',
+          description: `合成材质物品\n材质：${material}`,
+          skuProperties: [{ label: '材质', value: material }],
+          quantity: '1',
+          price: '10.00',
+        })
+      )
+      Object.assign(record.snapshot.totals, {
+        goodsGross: '30.00',
+        goodsNet: '30.00',
+        payable: '30.00',
+      })
+      await db.saveSnapshot(record.snapshot)
+      const review = await db.reviewPurchaseCodes({
+        orderRefs: [{ orderId: '1001' }],
+      })
+      await db.assignPurchaseCodes({
+        plan: review.plan,
+        expectedRevisions: review.expectedRevisions,
+      })
+      const preparation = await db.getPreparation('1001'),
+        source = (await db.getOrder('1001')).snapshot
+      db.close()
+      return { preparation, source }
+    })
+    assert.deepEqual(
+      original.preparation.groups[0].variants.map((variant) => [
+        variant.material,
+        variant.materialSource,
+      ]),
+      [
+        ['玻璃', 'suggested'],
+        ['棉', 'suggested'],
+        ['', 'suggested'],
+      ]
+    )
+    const edited = structuredClone(original.preparation)
+    setVariantMaterial(edited.groups[0].variants[0], 'Owner material wording')
+    setVariantMaterial(edited.groups[0].variants[1], '')
+    const updated = await fixture.page.evaluate(async (edited) => {
+      const db = await modules.openDatabase({
+        name: 'synthetic-material-persistence',
+      })
+      const [before] = await db.savePreparations([edited], {
+          expectedRevisions: [edited.revision],
+          preserveNaming: true,
+        }),
+        prefs = await db.getPackingPreferences()
+      await db.savePackingPreferences({
+        ...prefs,
+        materialVocabulary: [
+          {
+            id: 'glass',
+            aliases: ['玻璃', '晶透新材质'],
+            zh: '晶透玻璃',
+            en: 'Clear crystal',
+            es: 'Cristal claro',
+            parent: '',
+          },
+          {
+            id: 'cotton',
+            aliases: ['棉'],
+            zh: '棉',
+            en: 'Cotton',
+            es: 'Algodón',
+            parent: '',
+          },
+        ],
+      })
+      const after = await db.getPreparation('1001'),
+        source = (await db.getOrder('1001')).snapshot
+      db.close()
+      return { before, after, source }
+    }, edited)
+    assert.deepEqual(
+      updated.after.groups[0].variants.map((variant) => [
+        variant.material,
+        variant.materialSource,
+      ]),
+      [
+        ['Owner material wording', 'manual'],
+        ['', 'manual'],
+        ['晶透玻璃', 'suggested'],
+      ]
+    )
+    assert.equal(updated.after.updatedAt, updated.before.updatedAt)
+    assert.ok(updated.after.revision > updated.before.revision)
+    assert.equal(
+      updated.after.groups[0].baseCode,
+      original.preparation.groups[0].baseCode
+    )
+    assert.deepEqual(updated.source, original.source)
+  } finally {
+    await fixture.close()
+  }
+})
 
 test('native committed metadata notifications isolate databases, skip abort/read echoes and retain stale-write authority after a missed event', async () => {
   const fixture = await databaseBrowser()
