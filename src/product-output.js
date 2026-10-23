@@ -98,7 +98,7 @@ export function outputLabelModels(context, kind = 'barcode') {
         },
       })
     }
-    if (row.needsSizeMapping)
+    if (kind === 'barcode' && row.needsSizeMapping)
       refuse('Map this variant size before generating labels', 'size')
     if (!code) refuse('Review product codes in Orders first.', 'code')
     if (kind === 'mark' && !category?.trim())

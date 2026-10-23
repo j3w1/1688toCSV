@@ -2276,6 +2276,35 @@ test('shared-code labels retain separate source refs and exact source-line quant
   assert.equal(labels[0].refs[0].revisionId, 'c1-r1')
 })
 
+test('pending variant sizes block barcode output while a known base carton mark keeps its own identity', () => {
+  const context = {
+    kind: 'orders-selection',
+    products: [
+      {
+        ...ref,
+        entryId: '2001',
+        groupId: 'g1',
+        variantId: 'v1',
+        baseCode: 'CE26090101',
+        barcode: '',
+        needsSizeMapping: true,
+        chineseCategory: '合成纸箱',
+        spanishName: 'SYNTHETIC',
+        quantity: '100',
+      },
+    ],
+  }
+  assert.throws(
+    () => outputLabelModels(context, 'barcode'),
+    /Map this variant size/
+  )
+  const marks = outputLabelModels(context, 'mark')
+  assert.equal(marks.length, 1)
+  assert.equal(marks[0].code, 'CE26090101')
+  assert.equal(context.products[0].needsSizeMapping, true)
+  assert.equal(context.products[0].barcode, '')
+})
+
 test('active shell removes obsolete workflow actions and Packing authoring dependencies', () => {
   const shell = readFileSync(
       new URL('../src/packing-workspace.js', import.meta.url),
