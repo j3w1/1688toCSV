@@ -6,6 +6,7 @@ import { physicalUnits, batchNeedsLegacyReview } from './inventory-model.js'
 import { reviewPackingChanges } from './packing-review.js'
 import { setCodeText } from './code-display.js'
 import { decorateIcon } from './icons.js'
+import { measurementWarningMessages } from './ui-messages-smart-cartons.js'
 
 const clone = (value) => structuredClone(value)
 export const sourceKey = ({ accountId = 'local', orderId, entryId }) =>
@@ -2964,6 +2965,28 @@ export function mountOrderCartonGrid(
         'Supplied and dimension-derived volumes differ; both are retained.',
     }
     for (const issue of projection.issues || []) {
+      if (issue.code === 'volume-discrepancy') {
+        const notice = el('div', undefined, 'measurement-warning')
+        notice.dataset.issueCode = issue.code
+        notice.dataset.issueSeverity = issue.severity
+        const carton = projection.cartons.find(
+          (row) => row.id === issue.cartonId || row.id === issue.batchId
+        )
+        if (carton)
+          notice.append(
+            el(
+              'strong',
+              m('{0}: {1}', {
+                0: m('Carton reference'),
+                1: carton.label || carton.id,
+              })
+            )
+          )
+        for (const text of measurementWarningMessages(issue, m))
+          notice.append(el('p', text))
+        issuesHost.append(notice)
+        continue
+      }
       const line = el(
         'p',
         m(

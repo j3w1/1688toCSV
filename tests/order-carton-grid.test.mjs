@@ -1,5 +1,35 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
+import { measurementWarningMessages } from '../src/ui-messages-smart-cartons.js'
+import { message, getLanguage, setLanguage } from '../src/i18n.js'
+
+test('measurement notices keep whole-set totals distinct from original supplied basis and translate without rounding', (context) => {
+  const previous = getLanguage()
+  context.after(() => setLanguage(previous, { persist: false }))
+  setLanguage('en', { persist: false })
+  const warning = Object.freeze({
+      dimensionVolume: '0.480750000000000001',
+      usedVolume: '0.480750000000000001',
+      suppliedVolume: '0.84',
+      suppliedCbm: '0.21',
+      suppliedVolumeBasis: 'carton',
+      count: 4,
+    }),
+    notices = measurementWarningMessages(warning, message)
+  assert.match(
+    String(notices[0]),
+    /Measured volume 0\.480750000000000001 m³ is used/
+  )
+  assert.match(String(notices[0]), /supplied volume 0\.84 m³ remains recorded/)
+  assert.match(String(notices[1]), /0\.21 m³ · Per carton · 4 cartons/)
+  setLanguage('es', { persist: false })
+  assert.match(String(notices[0]), /Se usa el volumen medido/)
+  assert.match(String(notices[1]), /Por caja/)
+  setLanguage('zh', { persist: false })
+  assert.match(String(notices[0]), /采用实测体积/)
+  assert.match(String(notices[1]), /每箱/)
+  assert.equal(warning.suppliedCbm, '0.21')
+})
 
 test('packing patterns never multiply aggregate totals and retain known uneven or shared references', () => {
   const aggregate = {

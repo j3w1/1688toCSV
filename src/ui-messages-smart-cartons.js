@@ -2,6 +2,16 @@
 export const SMART_CARTON_MESSAGES = Object.fromEntries(
   [
     [
+      'Measured volume {0} m³ is used; supplied volume {1} m³ remains recorded.',
+      'Se usa el volumen medido de {0} m³; se conserva el volumen aportado de {1} m³.',
+      '采用实测体积 {0} m³；保留供应商提供的体积 {1} m³。',
+    ],
+    [
+      'Supplied evidence: {0} m³ · {1} · {2} cartons.',
+      'Dato aportado: {0} m³ · {1} · {2} cajas.',
+      '供应商原始体积：{0} m³ · {1} · {2} 箱。',
+    ],
+    [
       'The container changed before output was captured. Review the current revision and try again.',
       'El contenedor cambió antes de capturar la salida. Revisa la versión actual e inténtalo de nuevo.',
       '生成输出前货柜已发生变化。请核对当前版本后重试。',
@@ -1142,3 +1152,30 @@ export const SMART_CARTON_MESSAGES = Object.fromEntries(
     ],
   ].map(([source, es, zh]) => [source, { es, zh }])
 )
+
+/** Format authoritative whole-set values; supplied evidence keeps its own basis. */
+export function measurementWarningMessages(warning, message) {
+  const result = [
+    message(
+      'Measured volume {0} m³ is used; supplied volume {1} m³ remains recorded.',
+      {
+        0: warning.usedVolume ?? warning.dimensionVolume ?? '—',
+        1: warning.suppliedVolume ?? '—',
+      }
+    ),
+  ]
+  if (![undefined, null, ''].includes(warning.suppliedCbm))
+    result.push(
+      message('Supplied evidence: {0} m³ · {1} · {2} cartons.', {
+        0: warning.suppliedCbm,
+        1:
+          warning.suppliedVolumeBasis === 'carton'
+            ? message('Per carton')
+            : warning.suppliedVolumeBasis === 'batch'
+              ? message('Combined set')
+              : '—',
+        2: warning.count ?? '—',
+      })
+    )
+  return result
+}
