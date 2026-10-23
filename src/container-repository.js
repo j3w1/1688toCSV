@@ -316,6 +316,7 @@ export function createContainerRepository({
         ])
         shipped.set(key, (shipped.get(key) || 0n) + wholeUnits(row.quantity))
       }
+    const currentProducts = new Set()
     for (const record of state.records) {
       for (const item of eligibleOrderItems(record, state.records)) {
         const key = JSON.stringify([
@@ -323,6 +324,7 @@ export function createContainerRepository({
           record.snapshot.orderId,
           item.entryId,
         ])
+        currentProducts.add(key)
         if (
           item.eligible === null ||
           (shipped.get(key) || 0n) > BigInt(item.eligible)
@@ -333,6 +335,15 @@ export function createContainerRepository({
             { orderId: record.snapshot.orderId, entryId: item.entryId }
           )
       }
+    }
+    for (const [key, quantity] of shipped) {
+      if (quantity === 0n || currentProducts.has(key)) continue
+      const [accountId, orderId, entryId] = JSON.parse(key)
+      fail(
+        'SHIPMENT_SOURCE_MISSING',
+        'An effective shipment still references this source product. Review the shipment before removing the purchase row.',
+        { accountId, orderId, entryId }
+      )
     }
     for (const { manifest } of effectiveShipments(state.containers))
       for (const unit of manifest.cartons || []) {

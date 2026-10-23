@@ -4,6 +4,28 @@ import { createPdf, rgbImage, pdfText } from '../src/pdf-writer.js'
 
 const latin1 = (bytes) => Buffer.from(bytes).toString('latin1')
 
+test('draft PDFs visibly mark every produced page while final output retains its exact original content', () => {
+  for (const draft of [false, true]) {
+    const pdf = createPdf({ title: 'Synthetic carton marks', draft })
+    pdf.page().text('CE26090101', 10, 20)
+    pdf.page().text('CE26090102', 10, 20)
+    const bytes = latin1(pdf.build())
+    assert.match(bytes, /\/Count 2/)
+    assert.match(bytes, /\(CE26090101\) Tj/)
+    assert.match(bytes, /\(CE26090102\) Tj/)
+    assert.equal(
+      (bytes.match(/\(DRAFT - UNSEALED \/ UNVERIFIED\) Tj/g) || []).length,
+      draft ? 2 : 0
+    )
+    assert.match(
+      bytes,
+      draft
+        ? /\/Title \(DRAFT - Synthetic carton marks\)/
+        : /\/Title \(Synthetic carton marks\)/
+    )
+  }
+})
+
 test('PDF metadata preserves Spanish accents and Chinese titles using UTF-16BE strings', () => {
   for (const title of ['CE 标签', 'Calibración CE']) {
     const pdf = createPdf({ title })

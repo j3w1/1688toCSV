@@ -270,7 +270,24 @@ export function printSummary({
   pages,
   perPage,
   exportedAt = new Date().toISOString(),
+  container = null,
 }) {
+  if (container) {
+    const validText = (value) =>
+      typeof value === 'string' &&
+      value.length > 0 &&
+      value.length <= 512 &&
+      !/[\u0000-\u001f\u007f]/.test(value)
+    if (
+      !validText(container.containerId) ||
+      (container.draft === true
+        ? container.revisionId !== null ||
+          !Number.isSafeInteger(container.draftRevision) ||
+          container.draftRevision < 1
+        : !validText(container.revisionId))
+    )
+      throw new Error('Print summary requires the captured container identity')
+  }
   const orders = new Map()
   for (const item of items)
     for (const source of item.orders || [])
@@ -294,6 +311,16 @@ export function printSummary({
     format: SUMMARY_FORMAT,
     version: 1,
     kind: kind === 'marks' ? 'carton-marks' : 'labels',
+    ...(container
+      ? {
+          containerId: container.containerId,
+          revisionId: container.revisionId,
+          draft: container.draft === true,
+          ...(container.draft === true
+            ? { draftRevision: container.draftRevision }
+            : {}),
+        }
+      : {}),
     language,
     exportedAt,
     files: [file, summaryFileName(file)],

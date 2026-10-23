@@ -1809,9 +1809,18 @@ export async function createProductAuthoring({
       onCopy: async (result) => labelClipboard([result]),
     })
     const dialog = $('label-dialog')
+    const closeForm = dialog.querySelector('form[method="dialog"]')
+    const closeWithReview = (event) => {
+      event.preventDefault()
+      // Use the editor's cancel/commit path for Close, just as for backdrop
+      // dismissal. A method=dialog submit would destroy a pending blur save.
+      dialog.requestClose()
+    }
+    closeForm?.addEventListener('submit', closeWithReview)
     dialog.addEventListener(
       'close',
       () => {
+        closeForm?.removeEventListener('submit', closeWithReview)
         editor?.destroy()
         editor = null
       },

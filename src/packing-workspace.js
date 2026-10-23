@@ -293,7 +293,7 @@ export async function startPackingWorkspace({
           getContextContainerId: () => amendmentId,
         })
         sessions.set(key, session)
-      }
+      } else await session.refresh()
       grid?.destroy()
       cartonHistory?.destroy()
       activeSession = session
@@ -302,23 +302,24 @@ export async function startPackingWorkspace({
       workspace = 'orders'
       ordersView = 'cartons'
       paint()
+      const record =
+        getRecords().find(
+          (record) =>
+            record.snapshot.orderId === orderRef.orderId &&
+            (record.accountId || record.snapshot.accountId || 'local') ===
+              orderRef.accountId
+        ) || session.record()
       const host = $('orders-cartons-view'),
         heading = el('div', undefined, 'order-reconciliation-heading'),
         title = el(
           'h2',
-          `${getRecords().find((record) => record.snapshot.orderId === ref.orderId)?.snapshot.sellerName || ''} · ${ref.orderId}`
+          `${record?.snapshot.sellerName || ''} · ${ref.orderId}`
         ),
         productView = el('button', m('Product calculations')),
         cartonView = el('button', m('Physical cartons')),
         historyView = el('button', m('Carton history')),
         mount = el('div')
       heading.append(title, productView, cartonView, historyView)
-      const record =
-        getRecords().find(
-          (record) =>
-            record.snapshot.orderId === ref.orderId &&
-            (record.accountId || 'local') === orderRef.accountId
-        ) || session.record()
       if (record && orderSource(record.snapshot) === '1688') {
         const report = el('button', m('Paste or import carton list'))
         report.dataset.action = 'paste-import-carton-list'
@@ -349,6 +350,10 @@ export async function startPackingWorkspace({
         heading.append(report)
       }
       host.replaceChildren(heading, mount)
+      host.dataset.orderKey = JSON.stringify([
+        orderRef.accountId,
+        orderRef.orderId,
+      ])
       function mountGrid(kind) {
         cartonVersion++
         cartonHistory?.destroy()
@@ -539,7 +544,7 @@ export async function startPackingWorkspace({
         backup = validateBackup(input)
       if (!backup.packingScope)
         throw new Error(
-          'Choose a file created by Back up packing. Use Settings → Data → Restore for a full-library backup.'
+          'This dependency-complete archive includes container history and original media. Restore it through Settings → Data → Restore so those dependencies stay together.'
         )
       if (
         !(await reviewPackingChanges({
@@ -579,30 +584,51 @@ export async function startPackingWorkspace({
       for (const session of sessions.values()) session.dispose()
       containers.dispose()
       authoring.dispose()
+      removeEventListener('hashchange', routeChanged)
     },
     { once: true }
   )
   paint()
-  const hash = new URLSearchParams(location.hash.slice(1))
-  if (hash.get('workspace') === 'packing' && hash.get('containerId'))
-    await showPacking({
-      containerId: hash.get('containerId'),
-      revisionId: hash.get('revisionId') || undefined,
-      view: hash.get('view') || 'loading',
-    })
-  else if (
-    hash.get('workspace') === 'orders' &&
-    hash.get('view') === 'cartons' &&
-    hash.get('orderId')
-  )
-    await openOrder({
-      accountId: hash.get('accountId') || 'local',
-      orderId: hash.get('orderId'),
-    })
-  else if (hash.get('workspace') === 'orders' && hash.get('view') === 'backlog')
-    await showOrders('backlog')
-  else if (hash.get('workspace') === 'orders' && hash.get('view') === 'cartons')
-    await showOrders('cartons')
+  let pendingHash, routeWork
+  async function applyHash(hash) {
+    if (hash.get('workspace') === 'packing')
+      return showPacking({
+        containerId: hash.get('containerId'),
+        revisionId: hash.get('revisionId') || undefined,
+        view: hash.get('view') || 'loading',
+      })
+    if (
+      hash.get('workspace') === 'orders' &&
+      hash.get('view') === 'cartons' &&
+      hash.get('orderId')
+    )
+      return openOrder({
+        accountId: hash.get('accountId') || 'local',
+        orderId: hash.get('orderId'),
+      })
+    return showOrders(
+      ['cartons', 'backlog'].includes(hash.get('view'))
+        ? hash.get('view')
+        : 'products'
+    )
+  }
+  function followHash() {
+    pendingHash = new URLSearchParams(location.hash.slice(1))
+    if (!routeWork)
+      routeWork = (async () => {
+        while (pendingHash) {
+          const hash = pendingHash
+          pendingHash = undefined
+          await applyHash(hash)
+        }
+      })().finally(() => {
+        routeWork = undefined
+      })
+    return routeWork
+  }
+  const routeChanged = () => void followHash().catch(failure)
+  addEventListener('hashchange', routeChanged)
+  await followHash()
   return {
     ...authoring,
     copyLabels: output.copyLabels,

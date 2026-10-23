@@ -1,6 +1,26 @@
 // UI text only. Supplier/source strings never pass through this catalog.
 export const SMART_CARTON_MESSAGES = Object.fromEntries(
   [
+    [
+      'This dependency-complete archive includes container history and original media. Restore it through Settings → Data → Restore so those dependencies stay together.',
+      'Este archivo completo incluye el historial de contenedores y las imágenes originales. Restáuralo mediante Ajustes → Datos → Restaurar para mantener juntas esas dependencias.',
+      '此完整备份包含货柜历史和原始图片。请通过设置 → 数据 → 恢复还原，以保持这些依赖关系完整。',
+    ],
+    [
+      'Use saved loading decisions',
+      'Usar decisiones de carga guardadas',
+      '使用已保存的装柜决定',
+    ],
+    [
+      'Review the pending carton count before sealing. Your value is retained.',
+      'Revisa la cantidad de cajas pendiente antes de sellar. Se conserva tu valor.',
+      '封存前请核对待处理的箱数。输入值已保留。',
+    ],
+    [
+      'Enter a whole carton count from zero up to the displayed maximum, using the current loading view.',
+      'Introduce un número entero de cajas entre cero y el máximo mostrado, usando la vista de carga actual.',
+      '请根据当前装柜视图输入从零到所示上限的整数箱数。',
+    ],
     ['Selected rows: {0}', 'Filas seleccionadas: {0}', '已选行：{0}'],
     ['Per carton', 'Por caja', '每箱'],
     [

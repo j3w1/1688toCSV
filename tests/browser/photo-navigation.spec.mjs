@@ -324,8 +324,7 @@ test('Orders authoring photo identity stays with the clicked order when entry ID
   await expect(image).toHaveAttribute('alt', tableOrder.snapshot.items[0].title)
   await page.keyboard.press('Escape')
   await expect(viewer).toHaveCount(0)
-  await rows.first().focus()
-  await rows.first().press('Control+a')
+  await page.locator('#select-rows').click()
   await assignSelectedPurchaseCodes(page)
   const orderIds = await rows.evaluateAll((elements) => [
     ...new Set(

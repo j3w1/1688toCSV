@@ -120,34 +120,35 @@ For supplier purchases, retain the [marker guide](store-spreadsheets.md) and exi
 
 ## Workspace: Packing list
 
-| `data-action`                   | Behavior                                                                                  |
-| ------------------------------- | ----------------------------------------------------------------------------------------- |
-| `choose-container`              | Select a named container / immutable historical revision.                                 |
-| `choose-container-revision`     | Select a named container / immutable historical revision.                                 |
-| `container-view`                | `data-view` selects `loading`, `packing-list` or `left-behind`.                           |
-| `create-container`              | Create a named draft; its name does not establish a code month.                           |
-| `include-container-orders`      | Reserve complete selected orders' eligible remainder, without loading cartons.            |
-| `confirm-container-orders`      | Reserve complete selected orders' eligible remainder, without loading cartons.            |
-| `expand-container-order`        | Expand/collapse physical references in Loading.                                           |
-| `remove-container-order`        | Release only that draft's order/draft reservations.                                       |
-| `cancel-container`              | Release only that draft's order/draft reservations.                                       |
-| `mark-all-loaded`               | Load the entire included logical scope, regardless of display filters.                    |
-| `set-carton-loading`            | Set one physical reference's `data-state`: loaded, left-behind or unconfirmed.            |
-| `mark-cartons-loaded`           | Apply one decision to explicitly selected actual references.                              |
-| `mark-cartons-left-behind`      | Apply one decision to explicitly selected actual references.                              |
-| `mark-cartons-unconfirmed`      | Apply one decision to explicitly selected actual references.                              |
-| `undo-container-loading`        | Revision-checked loading history.                                                         |
-| `redo-container-loading`        | Revision-checked loading history.                                                         |
-| `review-container-availability` | Explicit before/after refresh of reserved evidence; never silent inclusion.               |
-| `apply-container-availability`  | Explicit before/after refresh of reserved evidence; never silent inclusion.               |
-| `review-container-seal`         | Review readiness and commit the complete frozen revision with its review token.           |
-| `seal-container`                | Review readiness and commit the complete frozen revision with its review token.           |
-| `amend-container`               | Draft a reasoned correction / preserve the prior effective revision.                      |
-| `cancel-container-amendment`    | Draft a reasoned correction / preserve the prior effective revision.                      |
-| `edit-in-orders`                | Edit in Orders with retained container/revision return route.                             |
-| `return-to-container`           | Edit in Orders with retained container/revision return route.                             |
-| `export-packing-list`           | Configure / download the complete revision. Product selection/filtering cannot reduce it. |
-| `download-packing-list`         | Configure / download the complete revision. Product selection/filtering cannot reduce it. |
+| `data-action`                   | Behavior                                                                                                   |
+| ------------------------------- | ---------------------------------------------------------------------------------------------------------- |
+| `choose-container`              | Select a named container / immutable historical revision.                                                  |
+| `choose-container-revision`     | Select a named container / immutable historical revision.                                                  |
+| `container-view`                | `data-view` selects `loading`, `packing-list` or `left-behind`.                                            |
+| `create-container`              | Create a named draft; its name does not establish a code month.                                            |
+| `include-container-orders`      | Reserve complete selected orders' eligible remainder, without loading cartons.                             |
+| `confirm-container-orders`      | Reserve complete selected orders' eligible remainder, without loading cartons.                             |
+| `expand-container-order`        | Expand/collapse physical references in Loading.                                                            |
+| `remove-container-order`        | Release only that draft's order/draft reservations.                                                        |
+| `cancel-container`              | Release only that draft's order/draft reservations.                                                        |
+| `mark-all-loaded`               | Load the entire included logical scope, regardless of display filters.                                     |
+| `set-carton-loading`            | Set one physical reference's `data-state`: loaded, left-behind or unconfirmed.                             |
+| `mark-cartons-loaded`           | Apply one decision to explicitly selected actual references.                                               |
+| `mark-cartons-left-behind`      | Apply one decision to explicitly selected actual references.                                               |
+| `mark-cartons-unconfirmed`      | Apply one decision to explicitly selected actual references.                                               |
+| `undo-container-loading`        | Revision-checked loading history.                                                                          |
+| `redo-container-loading`        | Revision-checked loading history.                                                                          |
+| `review-container-availability` | Explicit before/after refresh of reserved evidence; never silent inclusion.                                |
+| `apply-container-availability`  | Explicit before/after refresh of reserved evidence; never silent inclusion.                                |
+| `review-container-seal`         | Review readiness and commit the complete frozen revision with its review token.                            |
+| `discard-loading-count-drafts`  | Explicitly keep saved loading decisions and discard retained raw count edits for this container/amendment. |
+| `seal-container`                | Review readiness and commit the complete frozen revision with its review token.                            |
+| `amend-container`               | Draft a reasoned correction / preserve the prior effective revision.                                       |
+| `cancel-container-amendment`    | Draft a reasoned correction / preserve the prior effective revision.                                       |
+| `edit-in-orders`                | Edit in Orders with retained container/revision return route.                                              |
+| `return-to-container`           | Edit in Orders with retained container/revision return route.                                              |
+| `export-packing-list`           | Configure / download the complete revision. Product selection/filtering cannot reduce it.                  |
+| `download-packing-list`         | Configure / download the complete revision. Product selection/filtering cannot reduce it.                  |
 
 Packing product/carton/photo views are read-only except loading/amendment. Interchangeable-count input appears only when the domain explicitly permits it; it must never select arbitrary differently measured boxes. Se quedó is that container's historical remainder, while Backlog is current global inventory.
 

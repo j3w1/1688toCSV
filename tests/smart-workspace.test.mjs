@@ -22,6 +22,8 @@ import {
   mountCartonHistory,
   createOrderCartonSession,
   openLegacyCartonReview,
+  captureGridTarget,
+  PRODUCT_GRID_COLUMNS,
 } from '../src/order-carton-grid.js'
 import * as actualPlanner from '../src/carton-reconciliation.js'
 import { applyCartonUnitException } from '../src/carton-batches.js'
@@ -728,6 +730,21 @@ function exceptionSessionFixture(options = {}) {
       confirmed.push(structuredClone(args))
       return {}
     },
+    async updateOrderCapacities({ values, expectedValues }) {
+      record.unitsPerCarton ||= {}
+      for (const [entryId, value] of Object.entries(values)) {
+        assert.equal(
+          record.unitsPerCarton[entryId] ?? null,
+          expectedValues[entryId]
+        )
+        if (value === null) delete record.unitsPerCarton[entryId]
+        else record.unitsPerCarton[entryId] = value
+      }
+      return {
+        record: structuredClone(record),
+        revisions: structuredClone(context.revisions),
+      }
+    },
   }
   return {
     record,
@@ -746,6 +763,35 @@ function exceptionSessionFixture(options = {}) {
       }),
   }
 }
+
+test('compound capacity Undo replays its known baseline even when the retained textarea still needs a new paste preview', async (testContext) => {
+  const fixture = exceptionSessionFixture(),
+    session = await fixture.create(),
+    rows = session.projection().products,
+    state = session.state(),
+    target = captureGridTarget({
+      orderRef: session.orderRef,
+      generation: state.generation,
+      viewVersion: state.viewVersion,
+      visibleKeys: rows.map((row) => row.key),
+      selectedKeys: rows.map((row) => row.key),
+      columns: PRODUCT_GRID_COLUMNS,
+      anchorKey: rows[0].key,
+      anchorColumn: 'capacity',
+    })
+  testContext.after(() => session.dispose())
+  session.retainPasteText('45')
+  const actualTarget = { ...target, generation: session.state().generation }
+  const plan = await session.previewPaste('45', actualTarget, rows)
+  await session.applyPaste(plan, actualTarget)
+  assert.equal(fixture.record.unitsPerCarton['2001'], '45')
+  await session.undo()
+  assert.deepEqual(fixture.record.unitsPerCarton, {})
+  assert.equal(session.state().alignment.requirePreview, true)
+  await session.redo()
+  assert.equal(fixture.record.unitsPerCarton['2001'], '45')
+  assert.equal(fixture.confirmed.length, 0)
+})
 
 test('physical recovery and one-order confirmation carry the originally captured amendment epoch', async (testContext) => {
   const fixture = exceptionSessionFixture({
@@ -1471,6 +1517,7 @@ function setup() {
     fail = false,
     reviewWait
   const repository = {
+    listContainers: async () => [structuredClone(current.container)],
     getContainerView: async ({ id }) =>
       structuredClone({ ...current, container: { ...current.container, id } }),
     getContainerManifest: async () => current,
@@ -1595,6 +1642,62 @@ test('Packing filters only row facts and full logical selection spans the virtua
     host.querySelector('[data-selected-count]').dataset.selectedCount,
     '1'
   )
+  assert.equal(fixture.writes.length, 0)
+  workspace.dispose()
+})
+
+test('a pending container read blocks old-view loading decisions until the selected route has settled', async () => {
+  const fixture = setup(),
+    read = fixture.repository.getContainerView
+  let release
+  const wait = new Promise((resolve) => {
+    release = resolve
+  })
+  fixture.repository.getContainerView = async (args) => {
+    if (args.id === 'c2') await wait
+    return read(args)
+  }
+  await fixture.controller.open('c1')
+  const opening = fixture.controller.open('c2')
+  assert.equal(fixture.controller.busy(), true)
+  await assert.rejects(
+    fixture.controller.markAllLoaded(),
+    /Wait for the current container operation/
+  )
+  assert.equal(fixture.writes.length, 0)
+  release()
+  await opening
+  await fixture.controller.markAllLoaded()
+  assert.equal(fixture.writes[0].args.id, 'c2')
+})
+
+test('direct container routes populate the selector and preserve a historical revision on view refresh', async (testContext) => {
+  const { document } = dom(testContext),
+    fixture = setup(),
+    state = view()
+  state.draft = false
+  state.revisionId = 'c1-r1'
+  state.container.revisions = ['c1-r1']
+  fixture.setView(state)
+  const reads = [],
+    read = fixture.repository.getContainerView
+  fixture.repository.getContainerView = async (args) => {
+    reads.push(args)
+    return read(args)
+  }
+  const workspace = createContainerWorkspace({
+    host: document.getElementById('host'),
+    repository: fixture.repository,
+    output: {},
+  })
+  await workspace.open('c1', 'c1-r1')
+  assert.equal(
+    document.querySelector('[data-action="choose-container"]').value,
+    'c1'
+  )
+  await workspace.reload()
+  assert.equal(reads.at(-1).revisionId, 'c1-r1')
+  assert.equal(workspace.route().revisionId, 'c1-r1')
   assert.equal(fixture.writes.length, 0)
   workspace.dispose()
 })
@@ -1754,6 +1857,57 @@ test('immutable manifest capture retains all rows and historical values despite 
   assert.throws(() => {
     captured.products[0].price = '999'
   }, TypeError)
+})
+
+test('unsealed output captures its actual numeric draft revision without fabricating a sealed identity', () => {
+  const draft = {
+      ...view(),
+      revisionId: null,
+      revision: 4,
+      draft: true,
+      status: 'draft',
+      products: [
+        {
+          ...ref,
+          entryId: '2001',
+          quantity: '20',
+          barcode: 'CE26090101A',
+          baseCode: 'CE26090101',
+          spanishName: 'SYNTHETIC DRAFT',
+          chineseCategory: '合成',
+        },
+      ],
+    },
+    output = captureContainerOutput(draft)
+  assert.equal(output.revisionId, null)
+  assert.equal(output.revision, 4)
+  assert.equal(output.draft, true)
+  const labels = outputLabelModels(output)
+  assert.equal(labels.length, 1)
+  assert.equal(labels[0].quantity, '20')
+  for (const item of labels)
+    for (const ref of item.refs) {
+      assert.equal(ref.containerId, output.containerId)
+      assert.equal(ref.revisionId, null)
+      assert.equal(ref.draft, true)
+      assert.equal(ref.draftRevision, output.revision)
+    }
+  assert.equal(output.containerId, 'c1')
+  draft.products.push({ orderId: 'later', entryId: 'later' })
+  assert.equal(output.products.length, 1)
+  assert.throws(
+    () => captureContainerOutput({ ...draft, draft: false, status: 'sealed' }),
+    /complete container revision/
+  )
+  assert.throws(
+    () =>
+      captureContainerOutput({
+        ...draft,
+        revision: '4',
+        container: { ...draft.container, revision: '4' },
+      }),
+    /complete container revision/
+  )
 })
 
 test('shared-code labels retain separate source refs and exact source-line quantities', () => {
@@ -2291,6 +2445,64 @@ test('zero-loaded container export keeps full-revision scope, three sheets and f
   assert.equal(await opening, false)
 })
 
+test('blank and invalid loading counts remain recoverable UI drafts and never become zero loading decisions', async (testContext) => {
+  const { document, window, values } = authoringEnvironment(testContext),
+    fixture = setup(),
+    state = view()
+  state.cartons = Array.from({ length: 5 }, (_, index) => ({
+    id: `count-${index}`,
+    batchId: 'batch1',
+    accountId: 'local',
+    orderId: '10001',
+    count: 1,
+    state: 'unconfirmed',
+    canSelectCount: index === 0,
+    contents: [],
+  }))
+  fixture.setView(state)
+  const make = async () => {
+    const workspace = createContainerWorkspace({
+      host: document.getElementById('host'),
+      repository: fixture.repository,
+      output: {},
+    })
+    await workspace.open('c1')
+    document
+      .querySelector('.container-order [data-action="expand-container-order"]')
+      .click()
+    await new Promise((resolve) => setTimeout(resolve, 0))
+    return workspace
+  }
+  let workspace = await make(),
+    input = document.querySelector('input[role="spinbutton"]')
+  input.value = '-'
+  input.dispatchEvent(new window.Event('input'))
+  input.dispatchEvent(new window.Event('blur'))
+  await new Promise((resolve) => setTimeout(resolve, 0))
+  assert.equal(fixture.writes.length, 0)
+  assert.equal(input.getAttribute('aria-invalid'), 'true')
+  assert.ok([...values.values()].some((value) => value.includes('"raw":"-"')))
+  workspace.dispose()
+  workspace = await make()
+  input = document.querySelector('input[role="spinbutton"]')
+  assert.equal(input.value, '-')
+  assert.equal(input.getAttribute('aria-invalid'), 'true')
+  input.value = ''
+  input.dispatchEvent(new window.Event('input'))
+  input.dispatchEvent(new window.Event('blur'))
+  await new Promise((resolve) => setTimeout(resolve, 0))
+  assert.equal(fixture.writes.length, 0)
+  input.value = '0'
+  input.dispatchEvent(new window.Event('input'))
+  const enter = new window.Event('keydown')
+  enter.key = 'Enter'
+  input.dispatchEvent(enter)
+  await new Promise((resolve) => setTimeout(resolve, 0))
+  assert.equal(fixture.writes.length, 1)
+  assert.equal(fixture.writes[0].args.leftBehind, 0)
+  workspace.dispose()
+})
+
 test('interchangeable count control uses complete logical set size once and is absent from sealed history', async (context) => {
   let workspace
   context.after(() => workspace?.dispose())
@@ -2322,7 +2534,7 @@ test('interchangeable count control uses complete logical set size once and is a
   await Promise.resolve()
   await Promise.resolve()
   const counts = document.querySelectorAll(
-    '.container-main input[type="number"]'
+    '.container-main input[role="spinbutton"]'
   )
   assert.equal(counts.length, 1)
   assert.equal(counts[0].max, '5')
@@ -2336,7 +2548,8 @@ test('interchangeable count control uses complete logical set size once and is a
   await Promise.resolve()
   await Promise.resolve()
   assert.equal(
-    document.querySelectorAll('.container-main input[type="number"]').length,
+    document.querySelectorAll('.container-main input[role="spinbutton"]')
+      .length,
     0
   )
 })

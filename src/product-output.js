@@ -1,5 +1,11 @@
 import { element as el, copied, pinDialogActions, yieldUI } from './ui.js'
-import { message as m, bindAttribute, getLanguage, t } from './i18n.js'
+import {
+  message as m,
+  bindAttribute,
+  bindText,
+  getLanguage,
+  t,
+} from './i18n.js'
 import { DEFAULT_LABEL_SETTINGS, renderLabel } from './labels.js'
 import { openImageCopyDialog, imageBatchPlans } from './image-copy-dialog.js'
 import {
@@ -13,7 +19,7 @@ import { createPreparationColumnPicker } from './preparation-column-picker.js'
 import { createSizeClassifier } from './size-vocabulary.js'
 import { popupLanguageToggle } from './popup-language-toggle.js'
 import { openPrintDialog, openRecentPrintJobs } from './print-dialog.js'
-import { restoreJob } from './print-store.js'
+import { restoreJob, assertContainerPrintRef } from './print-store.js'
 import { copyExcelImage } from './excel-image-copy.js'
 import { createExcelImageBadges } from './excel-image-badges.js'
 import { resolveOperations } from './operations-workflow.js'
@@ -33,9 +39,12 @@ function freeze(value) {
 
 /** Reject incomplete contexts; a filter/selection is never manifest membership. */
 export function captureContainerOutput(manifest) {
+  const revision = manifest?.revision ?? manifest?.container?.revision,
+    identifiedDraft =
+      manifest?.draft === true && Number.isSafeInteger(revision) && revision > 0
   if (
     !manifest?.container?.id ||
-    !manifest.revisionId ||
+    (!manifest.revisionId && !identifiedDraft) ||
     !Array.isArray(manifest.products) ||
     !Array.isArray(manifest.cartons) ||
     !Array.isArray(manifest.leftBehind?.products) ||
@@ -47,6 +56,7 @@ export function captureContainerOutput(manifest) {
   return freeze(
     structuredClone({
       ...manifest,
+      revision,
       kind: 'container-revision',
       containerId: manifest.container.id,
     })
@@ -113,7 +123,13 @@ export function outputLabelModels(context, kind = 'barcode') {
       entryIds: row.entryId ? [row.entryId] : [],
       ...(row.cartonId ? { cartonId: row.cartonId } : {}),
       ...(context.kind === 'container-revision'
-        ? { containerId: context.containerId, revisionId: context.revisionId }
+        ? {
+            containerId: context.containerId,
+            revisionId: context.revisionId,
+            ...(context.draft
+              ? { draft: true, draftRevision: context.revision }
+              : {}),
+          }
         : {}),
     }
     if (existing) {
@@ -282,8 +298,14 @@ export function createProductOutput({
   function annotateDialog(context, dialog) {
     if (context.kind !== 'container-revision' || !dialog) return
     const note = el('div', undefined, 'container-output-context')
+    const identity = el('p')
+    bindText(
+      identity,
+      () =>
+        `${context.container.name} · ${context.draft ? `${m('DRAFT — unsealed container')} · ${context.revision}` : context.revisionId}`
+    )
     note.append(
-      el('p', `${context.container.name} · ${context.revisionId}`),
+      identity,
       el(
         'p',
         m(
@@ -316,12 +338,15 @@ export function createProductOutput({
     )
   }
   async function containerContext(ref) {
-    return captureContainerOutput(
+    const captured = captureContainerOutput(
       await repository.getContainerManifest({
         id: ref.containerId || ref.id,
         revisionId: ref.revisionId,
       })
     )
+    if (ref.draft !== undefined || ref.revisionId != null)
+      assertContainerPrintRef(ref, captured)
+    return captured
   }
   async function copyLabels(kind, source) {
     const context = Array.isArray(source)
@@ -618,12 +643,12 @@ export function createProductOutput({
             job.products?.flatMap(
               (row) => row.refs || (row.ref ? [row.ref] : [])
             ) || []
-          const containerRef = refs.find(
-            (ref) => ref?.containerId && ref?.revisionId
-          )
+          const containerRef = refs.find((ref) => ref?.containerId)
           const context = containerRef
             ? await containerContext(containerRef)
             : await ordersContext(authoring.rowsForRefs(refs))
+          if (containerRef)
+            for (const ref of refs) assertContainerPrintRef(ref, context)
           const kind = job.kind === 'marks' ? 'mark' : 'barcode'
           const projected =
             context.kind === 'container-revision' && workbookAdapter?.printRows
@@ -637,7 +662,7 @@ export function createProductOutput({
             throw new Error(
               'None of the products in this print job can be found any more.'
             )
-          return openPrintDialog({
+          const dialog = openPrintDialog({
             kind: job.kind,
             items: restored.items,
             problems: [],
@@ -649,6 +674,8 @@ export function createProductOutput({
               changed: restored.changed,
             },
           })
+          annotateDialog(context, dialog)
+          return dialog
         },
       }),
   }

@@ -9,8 +9,11 @@ import {
   captureContainerOrder,
   projectContainer,
   cartonMeasurementTotals,
+  assertManifestEvidence,
 } from '../src/container-model.js'
 import { physicalUnits } from '../src/inventory-model.js'
+import { paymentSourceEvidence } from '../src/payment-links.js'
+import { createContainerSummary } from '../src/container-export.js'
 const base = () => ({
   records: [syntheticOrder()],
   preparations: [],
@@ -33,6 +36,82 @@ function draft(state) {
   ]
   return container
 }
+
+test('frozen loaded and remaining rows retain original photo edits and readable feature/payment reasons without recalculating values', () => {
+  const state = base(),
+    record = state.records[0],
+    fee = syntheticOrder('1002', '1'),
+    edits = {
+      0: {
+        tagScale: 2.75,
+        tags: [
+          {
+            id: 'tag-1',
+            code: 'AX',
+            x: 0.5,
+            y: 0.5,
+            labelX: 0.8,
+            labelY: 0.15,
+          },
+        ],
+      },
+    }
+  record.snapshot.items[0].photoEdits = structuredClone(edits)
+  record.productWorkflow = {
+    2001: { features: { lighting: true, rotation: true } },
+  }
+  record.paymentLinks = [
+    {
+      id: 'synthetic-lighting',
+      sourceOrderId: '1002',
+      amount: '10.00',
+      reason: 'Lighting and rotation service',
+      targetEntryIds: ['2001'],
+      reviewedAt: record.snapshot.observedAt,
+      sourceEvidence: paymentSourceEvidence(fee),
+    },
+  ]
+  state.records.push(fee)
+  const container = draft(state)
+  container.draft.decisions = Object.fromEntries(
+    physicalUnits(state.batches[0]).map((unit, index) => [
+      unit.id,
+      index < 5 ? 'loaded' : 'left-behind',
+    ])
+  )
+  const manifest = projectContainer(state, container),
+    row = manifest.products[0],
+    left = manifest.leftBehind.products[0]
+  assert.deepEqual(row.photoEdits, edits)
+  assert.deepEqual(left.photoEdits, edits)
+  assert.notStrictEqual(row.photoEdits, record.snapshot.items[0].photoEdits)
+  assert.equal(row.productFeatures, 'Lighting · Rotation')
+  assert.equal(row.linkedPaymentReasons, 'Lighting and rotation service')
+  assert.equal(row.sourceAmount, '500.00')
+  assert.equal(row.linkedPaymentCharge, '5.00')
+  assert.equal(row.effectiveAmount, '505.00')
+  const summary = createContainerSummary(
+    {
+      ...manifest,
+      cartons: manifest.cartons.filter((unit) => unit.state === 'loaded'),
+    },
+    { file: 'DRAFT-frozen.xlsx' }
+  )
+  assert.equal(summary.products[0].productFeatures, 'Lighting · Rotation')
+  assert.equal(
+    summary.products[0].linkedPaymentReasons,
+    'Lighting and rotation service'
+  )
+  record.snapshot.items[0].photoEdits[0].tags[0].code = 'CHANGED'
+  record.productWorkflow[2001].features = { lighting: false }
+  record.paymentLinks[0].reason = 'CHANGED'
+  const retained = projectContainer(state, container).products[0]
+  assert.deepEqual(retained.photoEdits, edits)
+  assert.equal(retained.productFeatures, row.productFeatures)
+  assert.equal(retained.linkedPaymentReasons, row.linkedPaymentReasons)
+  assert.equal(retained.effectiveAmount, row.effectiveAmount)
+})
+
 test('inclusion captures whole remainder without loading; logical mark all and exceptions derive products', () => {
   const state = base(),
     container = draft(state)
@@ -373,4 +452,21 @@ test('historical remaining projection separates exact unprepared pieces from kno
   assert.equal(view.leftBehind.totals.weightCoverage.unpreparedQuantity, '70')
   state.records.push(syntheticOrder('1002'))
   assert.equal(projectContainer(state, container).leftBehind.products.length, 1)
+})
+
+test('synthetic manifest fixture uses the authoritative frozen schema and proves physical/product/value/remaining correspondence', () => {
+  const manifest = syntheticManifest()
+  assert.doesNotThrow(() => assertManifestEvidence(manifest))
+  assert.equal(manifest.products[0].quantity, '20')
+  assert.equal(manifest.products[0].effectiveAmount, '200.00')
+  assert.equal(manifest.products[0].sourcePrice, '10.00')
+  assert.equal(manifest.products[0].valuation.sourceNet, '1000.00')
+  assert.equal(
+    manifest.products[0].valuation.budgets.sourceGrossAmount.source,
+    '1000.00'
+  )
+  assert.equal(manifest.leftBehind.products[0].quantity, '80')
+  assert.equal(manifest.leftBehind.totals.weight, '10')
+  assert.equal(manifest.totals.weight, '2.5')
+  assert.equal(manifest.orders[0].sourceReports.length, 0)
 })

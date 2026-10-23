@@ -229,6 +229,9 @@ export async function closeOrderProduct(editor) {
 
 export async function revealOrderCard(page, ref) {
   const identity = JSON.stringify([ref.accountId || 'local', ref.orderId])
+  await expect(
+    page.locator('#order-list .month-toggle,#order-list .order-card').first()
+  ).toBeVisible()
   const card = page.locator(
       `.order-card[data-order-key=${JSON.stringify(identity)}]`
     ),
@@ -245,9 +248,27 @@ export async function revealOrderCard(page, ref) {
 }
 
 export async function openOrderReconciliation(page, ref, kind = 'products') {
-  const card = await revealOrderCard(page, ref)
-  await card.locator('[data-action="open-order-cartons"]').click()
   const grid = page.locator('#orders-cartons-view')
+  const identity = JSON.stringify([ref.accountId || 'local', ref.orderId])
+  await page.waitForFunction((identity) => {
+    const grid = document.getElementById('orders-cartons-view')
+    return (
+      (grid?.dataset.orderKey === identity &&
+        !grid.closest('[hidden]') &&
+        grid.querySelector('[data-action="confirm-order-cartons"]')) ||
+      document.querySelector(
+        '#order-list .month-toggle,#order-list .order-card'
+      )
+    )
+  }, identity)
+  if (
+    !(await grid.isVisible()) ||
+    (await grid.getAttribute('data-order-key')) !== identity ||
+    !(await grid.locator('[data-action="confirm-order-cartons"]').count())
+  ) {
+    const card = await revealOrderCard(page, ref)
+    await card.locator('[data-action="open-order-cartons"]').click()
+  }
   await expect(
     grid.locator('[data-action="confirm-order-cartons"]')
   ).toBeVisible()

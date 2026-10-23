@@ -1559,10 +1559,6 @@ export async function createOrderCartonSession({
       throw new Error(
         'Resolve the invalid paste cells before saving facts. The complete draft is retained.'
       )
-    if (state.alignment?.requirePreview)
-      throw new Error(
-        'Preview the pasted cells before confirming physical facts.'
-      )
     for (const [encoded, value] of Object.entries(state.rawCells)) {
       const [, column] = JSON.parse(encoded)
       const descriptor = [...PRODUCT_GRID_COLUMNS, ...CARTON_GRID_COLUMNS].find(
@@ -1979,6 +1975,11 @@ export async function createOrderCartonSession({
     confirm() {
       if (confirmWork) return confirmWork
       confirmWork = (async () => {
+        await raw.flush()
+        if (raw.state().alignment?.requirePreview)
+          throw new Error(
+            'Preview the pasted cells before confirming physical facts.'
+          )
         for (const [encoded, value] of Object.entries(raw.state().rawCells)) {
           const [key, column] = JSON.parse(encoded)
           if (column.startsWith('unit:') || column === 'identity') {

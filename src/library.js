@@ -90,6 +90,7 @@ const orderSelectionKey = (record) =>
 const storeKeyFor = (order) => storeIdentity(order) || order.orderId
 const headerPreference = '1688-library-include-headers'
 const monthPreference = '1688-library-purchase-months'
+const productsContextPreference = '1688-library-products-context'
 const purchaseDay = (order) => order.purchasedAt?.slice(0, 10) || ''
 const purchaseMonth = (order) => purchaseDay(order).slice(0, 7) || 'unknown'
 const monthLabel = (month) =>
@@ -293,7 +294,20 @@ export async function startLibrary(
   let productKeys = [],
     orderKeys = [],
     orderList
-  let storeFilter = null
+  let savedProductsContext = {}
+  try {
+    const value = JSON.parse(sessionStorage.getItem(productsContextPreference))
+    if (value && typeof value === 'object' && !Array.isArray(value))
+      savedProductsContext = value
+  } catch {}
+  let storeFilter =
+    typeof savedProductsContext.storeFilter === 'string'
+      ? savedProductsContext.storeFilter
+      : null
+  for (const id of ['search', 'order-search', 'date-from', 'date-to'])
+    if (typeof savedProductsContext[id] === 'string')
+      $(id).value = savedProductsContext[id]
+  $('changes-only').checked = savedProductsContext['changes-only'] === true
   let orderTagDefinitions = [],
     productTagDefinitions = [],
     productDetailsEditor,
@@ -352,7 +366,15 @@ export async function startLibrary(
       )
   } catch {}
   const selectedMonths = new Set(savedMonths)
-  const expandedMonths = new Set([currentMonth, ...savedMonths])
+  const expandedMonths = new Set([
+    currentMonth,
+    ...savedMonths,
+    ...(Array.isArray(savedProductsContext.expandedMonths)
+      ? savedProductsContext.expandedMonths.filter((month) =>
+          /^(?:20\d{2}-(?:0[1-9]|1[0-2])|unknown)$/.test(month)
+        )
+      : []),
+  ])
   let monthAnchor = null
   async function editProductPhoto(item, edit) {
     const store = repository || (await openDatabase()),
@@ -382,10 +404,39 @@ export async function startLibrary(
       onEdit: editProductPhoto,
     }
   )
-  const selectedOrders = new Set(),
-    selectedRows = new Set(),
+  const savedSelection = (key) =>
+    Array.isArray(savedProductsContext[key])
+      ? savedProductsContext[key].filter((value) => typeof value === 'string')
+      : []
+  const selectedOrders = new Set(savedSelection('selectedOrders')),
+    selectedRows = new Set(savedSelection('selectedRows')),
     preparedImages = new Map(),
     loadingImages = new Map()
+  function saveProductsContext() {
+    // Per-tab route recovery only; this never edits purchase or carton data.
+    try {
+      sessionStorage.setItem(
+        productsContextPreference,
+        JSON.stringify({
+          ...Object.fromEntries(
+            [
+              'search',
+              'order-search',
+              'date-from',
+              'date-to',
+              'status-filter',
+            ].map((id) => [id, $(id).value])
+          ),
+          'changes-only': $('changes-only').checked,
+          selectedOrders: [...selectedOrders],
+          selectedRows: [...selectedRows],
+          expandedMonths: [...expandedMonths],
+          storeFilter,
+        })
+      )
+    } catch {}
+  }
+  addEventListener('pagehide', saveProductsContext)
   async function editOperations(record, entryId) {
     await packing?.flush()
     const store = repository || (await openDatabase())
@@ -1209,6 +1260,7 @@ export async function startLibrary(
     }
   }
   function updateSelection() {
+    saveProductsContext()
     packing?.updateActions()
     const rows = filteredRows(),
       selected = rows.filter((row) => selectedRows.has(keyFor(row)))
@@ -1593,10 +1645,12 @@ export async function startLibrary(
         const cartons = node('button', uiMessage('Reconcile cartons'))
         cartons.dataset.action = 'open-order-cartons'
         cartons.onclick = () =>
-          packing?.openOrder({
-            accountId: record.accountId || 'local',
-            orderId: order.orderId,
-          })
+          void packing
+            ?.openOrder({
+              accountId: record.accountId || 'local',
+              orderId: order.orderId,
+            })
+            .catch((error) => feedback(error.message, true))
         card.prepend(orderCheck)
         card.append(cartons)
         card.onclick = (event) => {
@@ -2568,7 +2622,9 @@ export async function startLibrary(
         ) || b.snapshot.orderId.localeCompare(a.snapshot.orderId)
     )
     renderMonthOptions()
-    const oldStatus = $('status-filter').value
+    const oldStatus = hasLoadedLibrary
+      ? $('status-filter').value
+      : savedProductsContext['status-filter'] || ''
     $('status-filter').replaceChildren(
       new Option(t('All statuses'), ''),
       ...[...new Set(records.map((record) => record.snapshot.status))]
