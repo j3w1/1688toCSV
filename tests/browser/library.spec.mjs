@@ -641,10 +641,14 @@ test('order cards inspect across their surface and select explicitly without det
   )
   await expect(page.locator('.order-card[aria-selected=true]')).toHaveCount(1)
   await expect(
-    page.locator(`.order-card[data-selection-key="${selectedOrder}"]`)
+    page.locator(
+      `.order-card[data-selection-key=${JSON.stringify(selectedOrder)}]`
+    )
   ).toHaveAttribute('aria-selected', 'true')
   await expect(
-    page.locator(`#sheet-body tr[data-selection-key="${selectedProduct}"]`)
+    page.locator(
+      `#sheet-body tr[data-selection-key=${JSON.stringify(selectedProduct)}]`
+    )
   ).toHaveAttribute('aria-selected', 'true')
   await close.click()
   await expect(detailsButton).toBeFocused()
@@ -1317,7 +1321,7 @@ test('large libraries bound order and product DOM while progress updates avoid r
     .nth(98)
     .getAttribute('data-selection-key')
   const anchorRow = page.locator(
-    `#sheet-body tr[data-selection-key="${anchorKey}"]`
+    `#sheet-body tr[data-selection-key=${JSON.stringify(anchorKey)}]`
   )
   await anchorRow.getByRole('checkbox').click()
   expect(
@@ -1357,11 +1361,13 @@ test('large libraries bound order and product DOM while progress updates avoid r
     .getAttribute('data-selection-key')
   await page
     .locator(
-      `.order-card[data-selection-key="${orderAnchorKey}"] input[type="checkbox"]`
+      `.order-card[data-selection-key=${JSON.stringify(orderAnchorKey)}] input[type="checkbox"]`
     )
     .click()
   await page
-    .locator(`.order-card[data-selection-key="${orderAnchorKey}"]`)
+    .locator(
+      `.order-card[data-selection-key=${JSON.stringify(orderAnchorKey)}]`
+    )
     .focus()
   await page.keyboard.press('ArrowDown')
   await page.keyboard.press('ArrowDown')
