@@ -167,7 +167,12 @@ test('manual other-source order follows packing, labels, carton marks and full/s
     'Chinese category': '花瓶',
   })
   await closeOrderProduct(editor)
-  await action(page, 'select-all-rows').click()
+  // Code assignment keeps this order's one product selected. Select-all is
+  // deliberately disabled when the complete visible scope is already chosen.
+  const product = page.locator('#sheet-body tr[data-selection-key]')
+  await expect(product).toHaveCount(1)
+  await product.getByRole('checkbox').check()
+  await expect(product).toHaveAttribute('aria-selected', 'true')
   await action(page, 'open-print-menu').click()
   await action(page, 'print-labels').click()
   await action(page, 'export-pdf').click()
