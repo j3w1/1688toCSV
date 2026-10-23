@@ -299,6 +299,7 @@ function dom(context) {
       disconnect() {}
     },
     MutationObserver: window.MutationObserver,
+    CSS: { supports: () => false },
     requestAnimationFrame: (fn) => setTimeout(fn, 0),
     cancelAnimationFrame: clearTimeout,
   })) {
@@ -311,6 +312,13 @@ function dom(context) {
     )
   }
   const prototype = Object.getPrototypeOf(document.createElement('dialog'))
+  const matches = window.HTMLElement.prototype.matches
+  window.HTMLElement.prototype.matches = function (selector) {
+    return selector === ':popover-open' ? false : matches.call(this, selector)
+  }
+  context.after(() => {
+    window.HTMLElement.prototype.matches = matches
+  })
   const selectPrototype = Object.getPrototypeOf(
       document.createElement('select')
     ),
@@ -954,6 +962,64 @@ test('acknowledged capacity edits refresh live scalar values while a new edit re
   assert.equal(session.rawCell(key, 'capacity'), '45')
 })
 
+test('reloading a draft after a foreign physical revision requires review and preserves the old raw values across later recovery writes', async (testContext) => {
+  const { document } = dom(testContext),
+    fixture = exceptionSessionFixture(),
+    original = structuredClone(fixture.record.snapshot),
+    save = fixture.repository.saveOrderCartonDraft
+  fixture.repository.saveOrderCartonDraft = async (args) => {
+    const result = await save(args)
+    fixture.context.draft = {
+      id: 'cartons:["local","1001"]',
+      revision: result.revision,
+      updatedAt: '2026-10-22T12:00:00.000Z',
+      value: structuredClone(args.draft),
+    }
+    return result
+  }
+  let session = await fixture.create()
+  session.editCell(fixture.batch.id, 'weight', '-')
+  await assert.rejects(
+    session.flush(),
+    /Enter a nonnegative decimal or leave the measurement unknown/
+  )
+  session.dispose()
+  fixture.context.batches[0].weight = '6'
+  fixture.context.batches[0].revision = 2
+  fixture.context.revisions.cartons[fixture.batch.id] = 2
+  session = await fixture.create()
+  assert.equal(session.rawCell(fixture.batch.id, 'weight'), '6')
+  assert.equal(session.recoveredDrafts().length, 1)
+  assert.ok(
+    Object.values(session.recoveredDrafts()[0].value.rawCells).includes('-')
+  )
+  session.setActiveCell(fixture.batch.id, 'weight')
+  await session.flush()
+  session.dispose()
+  session = await fixture.create()
+  assert.equal(session.recoveredDrafts().length, 1)
+  const grid = mountOrderCartonGrid(document.getElementById('host'), {
+    session,
+    kind: 'cartons',
+  })
+  document
+    .querySelector('[data-action="review-recovered-carton-draft"]')
+    .click()
+  await new Promise((resolve) => setTimeout(resolve, 0))
+  const review = document.querySelector('.packing-change-dialog')
+  assert.match(review.textContent, /earlier order revision or amendment/)
+  ;[...review.querySelectorAll('button')]
+    .find((button) => button.textContent === 'Keep saved version')
+    .click()
+  await new Promise((resolve) => setTimeout(resolve, 0))
+  assert.equal(session.rawCell(fixture.batch.id, 'weight'), '6')
+  assert.equal(fixture.context.batches[0].weight, '6')
+  assert.equal(fixture.confirmed.length, 0)
+  assert.deepEqual(fixture.record.snapshot, original)
+  grid.destroy()
+  session.dispose()
+})
+
 test('intentional blank Spanish names and pending size mappings remain label blockers in Orders output', async (testContext) => {
   authoringEnvironment(testContext)
   const manifest = syntheticManifest(),
@@ -1468,6 +1534,70 @@ function setup() {
     },
   }
 }
+
+test('Packing filters only row facts and full logical selection spans the virtual window without domain writes', async (testContext) => {
+  const { document, window } = dom(testContext),
+    fixture = setup(),
+    state = view(),
+    original = {
+      snapshot: {
+        items: [{ entryId: 'e149', description: 'TARGET ONLY LAST' }],
+      },
+    }
+  state.products = Array.from({ length: 150 }, (_, index) => ({
+    accountId: 'local',
+    orderId: '1001',
+    entryId: `e${index}`,
+    description: index === 149 ? 'TARGET ONLY LAST' : `Other source ${index}`,
+    barcode: `CE2609${String(index).padStart(4, '0')}`,
+    quantity: '10',
+    loadedQuantity: '10',
+    price: '2.00',
+    record: original,
+  }))
+  fixture.setView(state)
+  const host = document.getElementById('host'),
+    workspace = createContainerWorkspace({
+      host,
+      repository: fixture.repository,
+      output: {},
+    })
+  await workspace.open('c1')
+  workspace.show('packing-list')
+  assert.equal(host.querySelectorAll('tr[data-container-row]').length, 100)
+  host.querySelector('[data-action="select-all-rows"]').click()
+  await new Promise((resolve) => setTimeout(resolve, 0))
+  assert.equal(
+    host.querySelector('[data-selected-count]').dataset.selectedCount,
+    '150'
+  )
+  const search = host.querySelector('input[type="search"]')
+  search.value = 'TARGET ONLY LAST'
+  search.dispatchEvent(new window.Event('input'))
+  assert.equal(host.querySelectorAll('tr[data-container-row]').length, 1)
+  assert.equal(
+    host.querySelector('tr[data-container-row]').dataset.containerRow,
+    JSON.stringify(['local', '1001', 'e149'])
+  )
+  assert.equal(
+    host.querySelector('[data-selected-count]').dataset.selectedCount,
+    '150'
+  )
+  host.querySelector('[data-action="clear-selection"]').click()
+  await new Promise((resolve) => setTimeout(resolve, 0))
+  assert.equal(
+    host.querySelector('[data-selected-count]').dataset.selectedCount,
+    '0'
+  )
+  host.querySelector('[data-action="select-all-rows"]').click()
+  await new Promise((resolve) => setTimeout(resolve, 0))
+  assert.equal(
+    host.querySelector('[data-selected-count]').dataset.selectedCount,
+    '1'
+  )
+  assert.equal(fixture.writes.length, 0)
+  workspace.dispose()
+})
 
 test('mark-all-loaded uses complete included order scope regardless mounted or selected rows', async () => {
   const { controller, writes } = setup()

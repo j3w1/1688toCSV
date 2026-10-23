@@ -451,6 +451,15 @@ export function createProductOutput({
         )
       )
     )
+    bindAttribute(
+      modal,
+      'aria-label',
+      m(
+        context.partial
+          ? 'Copy selected product rows'
+          : 'Copy container product rows'
+      )
+    )
     const fields = createPreparationColumnPicker(modal, (columns) => {
       copy.disabled = !columns.length
     })
@@ -482,6 +491,7 @@ export function createProductOutput({
       modal.remove()
     }
     document.body.append(modal)
+    annotateDialog(context, modal)
     modal.showModal()
   }
   async function copy(context, format) {

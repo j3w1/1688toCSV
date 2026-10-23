@@ -1197,6 +1197,36 @@ export async function createOrderCartonSession({
       else context.recoveredDrafts = [...(context.recoveredDrafts || []), local]
     }
   } catch {}
+  let clientRecovered = clone(restored.recoveredDrafts || [])
+  const hasRecoveredEdits =
+    Object.keys(restored.rawCells || {}).length ||
+    Object.keys(restored.plannerDraft?.capacities || {}).length ||
+    restored.plannerDraft?.cartons?.length ||
+    restored.alignment?.text ||
+    restored.history?.commandKinds?.length
+  if (
+    hasRecoveredEdits &&
+    JSON.stringify(restored.basisRevisions || null) !==
+      JSON.stringify(context.revisions || null)
+  ) {
+    const { recoveredDrafts: _older, ...value } = restored
+    clientRecovered.push({
+      id: context.draft?.id || localRecoveryKey || crypto.randomUUID(),
+      revision: expectedDraftRevision,
+      updatedAt: context.draft?.updatedAt || new Date().toISOString(),
+      amendmentContext: value.amendmentContext,
+      value,
+    })
+    restored = {}
+  }
+  context.recoveredDrafts = [
+    ...new Map(
+      [...(context.recoveredDrafts || []), ...clientRecovered].map((entry) => [
+        JSON.stringify(entry),
+        entry,
+      ])
+    ).values(),
+  ]
   let domainDraft =
     restored.plannerDraft || planner.createReconciliationDraft(context)
   let history =
@@ -1230,6 +1260,8 @@ export async function createOrderCartonSession({
           updatedAt: new Date().toISOString(),
           value: {
             ...value,
+            basisRevisions: context.revisions,
+            recoveredDrafts: clientRecovered,
             plannerDraft: domainDraft,
             history: {
               domain: history,
@@ -1259,6 +1291,8 @@ export async function createOrderCartonSession({
         expectedRevision: expectedDraftRevision,
         draft: clone({
           version: 1,
+          basisRevisions: context.revisions,
+          recoveredDrafts: clientRecovered,
           ...(amendmentContext ? { amendmentContext } : {}),
           plannerDraft: domainDraft,
           rawCells: value.rawCells,
@@ -1690,6 +1724,17 @@ export async function createOrderCartonSession({
           String(b.updatedAt || '').localeCompare(String(a.updatedAt || '')) ||
           (b.revision || 0) - (a.revision || 0)
       ),
+    async discardRecovery(envelope) {
+      clientRecovered = clientRecovered.filter(
+        (entry) => JSON.stringify(entry) !== JSON.stringify(envelope)
+      )
+      context.recoveredDrafts = context.recoveredDrafts.filter(
+        (entry) => JSON.stringify(entry) !== JSON.stringify(envelope)
+      )
+      raw.edit({}, { history: false })
+      await raw.flush()
+      notify()
+    },
     async recoverReviewed(envelope) {
       if (
         !(context.recoveredDrafts || []).some(
@@ -1719,10 +1764,13 @@ export async function createOrderCartonSession({
         cursor: value.history?.raw?.cursor || 0,
       })
       arrangementDirty = true
-      await raw.flush()
+      clientRecovered = clientRecovered.filter(
+        (entry) => JSON.stringify(entry) !== JSON.stringify(envelope)
+      )
       context.recoveredDrafts = context.recoveredDrafts.filter(
         (entry) => JSON.stringify(entry) !== JSON.stringify(envelope)
       )
+      await raw.flush()
       notify()
     },
     unitEntitlements(batchId) {
@@ -2074,7 +2122,7 @@ export function mountOrderCartonGrid(
         const accepted = await reviewPackingChanges({
           title: m('Review recovered carton draft'),
           explanation: m(
-            'This draft belongs to an earlier amendment. Review every retained value against the current order before using it. Physical identities and revision checks still apply.'
+            'This draft uses an earlier order revision or amendment. Review every retained value against the current order before using it. Physical identities and revision checks still apply.'
           ),
           changes: [
             {
@@ -2084,9 +2132,11 @@ export function mountOrderCartonGrid(
             },
           ],
           proceed: m('Use these reviewed edits'),
+          alternate: { label: m('Keep saved version'), value: 'saved' },
         })
         if (!accepted) return
-        await session.recoverReviewed(envelope)
+        if (accepted === 'saved') await session.discardRecovery(envelope)
+        else await session.recoverReviewed(envelope)
         choice.hidden = recover.hidden = true
       }
     )

@@ -1,8 +1,9 @@
-import { element as el, copyTextButton } from './ui.js'
+import { element as el, copyTextButton, copied } from './ui.js'
 import { message as m, bindText, bindAttribute, getLocale } from './i18n.js'
 import { createVirtualTable } from './virtual-table.js'
 import { photoCopyTile } from './photo-copy.js'
 import { copySingleImage } from './clipboard.js'
+import { mountProductCopyActions, mountCopyActions } from './copy-actions.js'
 
 const clone = (value) => structuredClone(value)
 const orderRef = (order) => ({
@@ -288,6 +289,8 @@ export function createContainerWorkspace({
     selected = new Set(),
     allRows = [],
     visibleRows = [],
+    matchingKeys = [],
+    selectionBox,
     expandedOrders = new Set(),
     targetOrder,
     lastSelection
@@ -298,7 +301,10 @@ export function createContainerWorkspace({
     const button = el('button', m(title))
     button.type = 'button'
     button.dataset.action = name
-    button.onclick = () => void Promise.resolve().then(run).catch(failure)
+    button.onclick = () =>
+      void Promise.resolve()
+        .then(() => run(button))
+        .catch(failure)
     parent.append(button)
     return button
   }
@@ -369,6 +375,8 @@ export function createContainerWorkspace({
     'redo',
     action(tools, 'Redo', 'redo-container-loading', () => controller.redo())
   )
+  action(tools, 'Select all', 'select-all-rows', () => selectAll())
+  action(tools, 'Clear selection', 'clear-selection', () => clearSelection())
   buttons.set(
     'revalidate',
     action(
@@ -421,21 +429,110 @@ export function createContainerWorkspace({
   action(tools, 'Copy Excel image', 'copy-excel-image', () =>
     capturedCopy('excel-image')
   )
-  action(tools, 'Copy values', 'copy-values', () => capturedCopy('values'))
-  action(tools, 'Print labels', 'print-labels', async () =>
-    output.printLabels('barcode', await selectedOutput())
+  action(tools, 'Copy values', 'copy-values', (target) =>
+    copied(target, () => capturedCopy('values'), { onError: failure })
   )
-  action(tools, 'Print carton marks', 'print-carton-marks', async () =>
-    output.printLabels('mark', await selectedOutput())
+  const copyHost = el('div', undefined, 'container-copy-actions')
+  tools.append(copyHost)
+  const columns = action(
+      copyHost,
+      'Copy columns',
+      'copy-container-columns',
+      () => capturedCopy('columns')
+    ),
+    codes = action(
+      copyHost,
+      'Copy group codes',
+      'copy-group-codes',
+      (target) => {
+        const scope = captureCopyScope()
+        return copied(
+          target,
+          async () => {
+            await controller.flush()
+            const context = await selectedOutput(scope),
+              codes = [
+                ...new Set(
+                  context.products.map((row) => row.baseCode).filter(Boolean)
+                ),
+              ]
+            if (!codes.length)
+              throw new Error('Review product codes in Orders first.')
+            await navigator.clipboard.writeText(codes.join('\r\n'))
+          },
+          { onError: failure }
+        )
+      }
+    ),
+    photos = action(copyHost, 'Copy images', 'copy-container-images', () =>
+      capturedCopy('images')
+    ),
+    cells = action(copyHost, 'Copy to Excel', 'copy-container-cells', () =>
+      capturedCopy('cells')
+    ),
+    barcodes = action(
+      copyHost,
+      'Copy barcode images',
+      'copy-container-barcodes',
+      async () => {
+        const scope = captureCopyScope()
+        await controller.flush()
+        return output.copyLabels('barcode', await selectedOutput(scope))
+      }
+    ),
+    marks = action(
+      copyHost,
+      'Copy carton marks',
+      'copy-container-marks',
+      async () => {
+        const scope = captureCopyScope()
+        await controller.flush()
+        return output.copyLabels('mark', await selectedOutput(scope))
+      }
+    ),
+    copyMenu = mountProductCopyActions(copyHost, {
+      columns,
+      codes,
+      photos,
+      cells,
+      barcodes,
+      marks,
+    })
+  copyMenu.trigger.dataset.action = 'open-copy-menu'
+  const printHost = el('div', undefined, 'container-print-actions')
+  tools.append(printHost)
+  const printButtons = [
+    ['barcode', 'Print labels…', 'print-labels'],
+    ['mark', 'Print carton marks…', 'print-carton-marks'],
+  ].map(([kind, title, name]) =>
+    action(printHost, title, name, async () => {
+      const scope = captureCopyScope()
+      await controller.flush()
+      return output.printLabels(kind, await selectedOutput(scope))
+    })
   )
+  printButtons.push(
+    action(printHost, 'Recent print jobs…', 'print-recent', () =>
+      output.openRecentPrints()
+    )
+  )
+  const printMenu = mountCopyActions(printHost, {
+    label: 'Print…',
+    ariaLabel: 'More print formats',
+    panelLabel: 'Print formats',
+    symbol: 'barcode',
+    groups: [{ label: 'Print', actions: printButtons }],
+  })
+  printMenu.trigger.dataset.action = 'open-print-menu'
   const search = el('input')
+  const selectionCount = el('span', undefined, 'container-selection-count')
   search.type = 'search'
   bindAttribute(search, 'aria-label', m('Filter container display'))
   search.oninput = () => {
     displayFilter = search.value.toLowerCase()
     renderRows()
   }
-  tools.append(search)
+  tools.append(search, selectionCount)
   const virtual = createVirtualTable({
     scroller,
     body,
@@ -454,22 +551,59 @@ export function createContainerWorkspace({
       .filter((row) => selected.has(row.key) && row.kind === 'carton')
       .map((row) => ({ cartonId: idFor(row.source), state }))
   }
-  async function selectedOutput() {
-    const context = await output.containerContext(controller.route())
-    if (!selected.size || currentView === 'loading') return context
-    const keys = new Set(
-      allRows
-        .filter((row) => selected.has(row.key))
-        .map((row) => refKey(row.source) + '/' + row.source.entryId)
-    )
+  function updateSelectionControls() {
+    for (const key of ['loaded', 'left', 'reset'])
+      buttons.get(key).disabled = !selected.size || controller.busy()
+    for (const row of body.querySelectorAll('[data-container-row]')) {
+      const chosen = selected.has(row.dataset.containerRow)
+      const check = row.querySelector('input[type="checkbox"]')
+      if (check) check.checked = chosen
+      row.setAttribute('aria-selected', String(chosen))
+    }
+    if (selectionBox) {
+      const chosen = matchingKeys.filter((key) => selected.has(key)).length
+      selectionBox.checked =
+        matchingKeys.length > 0 && chosen === matchingKeys.length
+      selectionBox.indeterminate = chosen > 0 && chosen < matchingKeys.length
+    }
+    selectionCount.dataset.selectedCount = String(selected.size)
+    selectionCount.dataset.filteredCount = String(matchingKeys.length)
+    bindText(selectionCount, m('Selected rows: {0}', { 0: selected.size }))
+  }
+  function selectAll() {
+    selected = new Set(matchingKeys)
+    updateSelectionControls()
+  }
+  function clearSelection() {
+    selected.clear()
+    updateSelectionControls()
+  }
+  function captureCopyScope() {
+    return {
+      route: clone(controller.route()),
+      partial: selected.size > 0 && currentView !== 'loading',
+      keys: [
+        ...new Set(
+          allRows
+            .filter((row) => selected.has(row.key))
+            .map((row) => refKey(row.source) + '/' + row.source.entryId)
+        ),
+      ],
+    }
+  }
+  async function selectedOutput(scope = captureCopyScope()) {
+    const context = await output.containerContext(scope.route)
+    if (!scope.partial) return context
+    const keys = new Set(scope.keys)
     const products = context.products.filter((row) =>
       keys.has(refKey(row) + '/' + row.entryId)
     )
     return { ...context, products, partial: true }
   }
   async function capturedCopy(format) {
+    const scope = captureCopyScope()
     await controller.flush()
-    return output.copy(await selectedOutput(), format)
+    return output.copy(await selectedOutput(scope), format)
   }
   async function reloadContainers(preferred) {
     const containers = await repository.listContainers({})
@@ -689,8 +823,53 @@ export function createContainerWorkspace({
       ({ source }) =>
         (!targetOrder || refKey(orderRef(source)) === targetOrder) &&
         (!displayFilter ||
-          JSON.stringify(source).toLowerCase().includes(displayFilter))
+          [
+            source.entryId,
+            source.id,
+            source.cartonId,
+            source.batchId,
+            source.reference,
+            source.label,
+            source.cartonNumber,
+            source.markCode,
+            source.barcode,
+            source.baseCode,
+            source.spanishName,
+            source.title,
+            source.description,
+            source.variantDescription,
+            source.sourceSize,
+            source.category,
+            source.material,
+            source.orderReference,
+            source.orderId,
+            source.sellerName,
+            source.pattern,
+            source.cartonReferenceText,
+            source.quantity,
+            source.loadedQuantity,
+            source.remainingQuantity,
+            source.price,
+            source.weight,
+            source.volume,
+            source.len,
+            source.wid,
+            source.ht,
+            source.state,
+            source.contentsText,
+            source.contents
+              ?.map(
+                (part) =>
+                  `${part.entryId} ${part.barcode || ''} ${part.quantity}`
+              )
+              .join(' '),
+          ]
+            .filter((value) => value != null)
+            .join('\n')
+            .toLowerCase()
+            .includes(displayFilter))
     )
+    matchingKeys = matching.map((row) => row.key)
     visibleRows = []
     if (currentView === 'loading') {
       for (const order of view.orders) {
@@ -726,10 +905,21 @@ export function createContainerWorkspace({
           'Remaining',
           'Price',
           'Packing pattern',
-        ])
-      tr.append(el('th', m(label)))
+        ]) {
+      const cell = el('th', m(label))
+      if (label === 'Select') {
+        selectionBox = el('input')
+        selectionBox.type = 'checkbox'
+        bindAttribute(selectionBox, 'aria-label', m('Select all'))
+        selectionBox.onchange = () =>
+          selectionBox.checked ? selectAll() : clearSelection()
+        cell.replaceChildren(selectionBox)
+      }
+      tr.append(cell)
+    }
     head.append(tr)
     virtual.setItems(visibleRows.map((row) => ({ key: row.key, row })))
+    updateSelectionControls()
   }
   function renderRow(row) {
     if (row.kind === 'order') {
@@ -786,9 +976,9 @@ export function createContainerWorkspace({
       if (
         event.shiftKey &&
         lastSelection &&
-        visibleRows.some((item) => item.key === lastSelection)
+        matchingKeys.includes(lastSelection)
       ) {
-        const keys = visibleRows.map((item) => item.key),
+        const keys = matchingKeys,
           a = keys.indexOf(lastSelection),
           b = keys.indexOf(row.key)
         for (const key of keys.slice(Math.min(a, b), Math.max(a, b) + 1))
@@ -796,12 +986,7 @@ export function createContainerWorkspace({
       } else if (check.checked) selected.add(row.key)
       else selected.delete(row.key)
       lastSelection = row.key
-      for (const key of ['loaded', 'left', 'reset'])
-        buttons.get(key).disabled = !selected.size || controller.busy()
-      for (const item of body.querySelectorAll(
-        '[data-container-row] input[type="checkbox"]'
-      ))
-        item.checked = selected.has(item.closest('tr').dataset.containerRow)
+      updateSelectionControls()
     }
     selection.append(check)
     tr.append(selection)
@@ -1203,8 +1388,12 @@ export function createContainerWorkspace({
       view: currentView,
     }),
     controller,
+    selectAll,
+    clearSelection,
     dispose() {
       controller.dispose()
+      copyMenu.destroy()
+      printMenu.destroy()
       virtual.destroy()
       host.replaceChildren()
     },

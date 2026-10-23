@@ -309,6 +309,21 @@ test('invalid physical input survives a broadcast/reload while another tab confi
   expect((await realOrderContext(extension, ref)).record.snapshot).toEqual(
     record.snapshot
   )
+  await page.reload()
+  const recoveredGrid = await openOrderReconciliation(page, ref, 'cartons')
+  await expect(cell(recoveredGrid, 'weight')).toHaveValue('6')
+  await recoveredGrid
+    .locator('[data-action="review-recovered-carton-draft"]')
+    .click()
+  const review = page.locator('.packing-change-dialog')
+  await expect(review).toContainText('earlier order revision or amendment')
+  await expect(review).toContainText('5')
+  expect((await realOrderContext(extension, ref)).batches[0].weight).toBe('6')
+  await review
+    .getByRole('button', { name: 'Keep saved version', exact: true })
+    .click()
+  await expect(review).toBeHidden()
+  await expect(cell(recoveredGrid, 'weight')).toHaveValue('6')
 })
 
 test('an exceptional unit uses a retained entitlement, leaves untouched combined facts unknown and rejects a newer physical revision', async ({

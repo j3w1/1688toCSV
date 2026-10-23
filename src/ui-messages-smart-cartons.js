@@ -1,6 +1,7 @@
 // UI text only. Supplier/source strings never pass through this catalog.
 export const SMART_CARTON_MESSAGES = Object.fromEntries(
   [
+    ['Selected rows: {0}', 'Filas seleccionadas: {0}', '已选行：{0}'],
     ['Per carton', 'Por caja', '每箱'],
     [
       'Keep current carton mark',
@@ -33,9 +34,9 @@ export const SMART_CARTON_MESSAGES = Object.fromEntries(
       '核对已恢复的装箱报告',
     ],
     [
-      'This draft belongs to an earlier amendment. Review every retained value against the current order before using it. Physical identities and revision checks still apply.',
-      'Este borrador pertenece a una enmienda anterior. Revisa cada valor guardado frente al pedido actual antes de usarlo. Se mantienen las identidades físicas y las comprobaciones de revisión.',
-      '此草稿属于以前的修订。使用前请逐项对照当前订单核对保留值。仍须验证实体纸箱身份与版本。',
+      'This draft uses an earlier order revision or amendment. Review every retained value against the current order before using it. Physical identities and revision checks still apply.',
+      'Este borrador usa una revisión del pedido o enmienda anterior. Revisa cada valor guardado frente al pedido actual antes de usarlo. Se mantienen las identidades físicas y las comprobaciones de revisión.',
+      '此草稿使用了以前的订单版本或修订。使用前请逐项对照当前订单核对保留值。仍须验证实体纸箱身份与版本。',
     ],
     [
       'This report draft belongs to an earlier amendment. Review its original source and decisions before using it in the current review.',

@@ -827,3 +827,76 @@ test('numeric equality with purchase totals cannot seal a complete variant-unres
   expect(result.context.batches[0].unresolvedContents[0].quantity).toBe('200')
   expect(result.context.record.snapshot).toEqual(before.record.snapshot)
 })
+
+test('Packing copy completion waits for the real clipboard and retains captured selected source values when display selection changes', async ({
+  extension,
+}) => {
+  const ref = await seedSmartOrder(extension, { count: 2, physical: true }),
+    page = await openSmartLibrary(extension),
+    id = await createContainerThroughUI(
+      page,
+      [ref],
+      'Synthetic clipboard capture'
+    )
+  await sealContainerThroughUI(page)
+  await page
+    .locator('[data-action="container-view"][data-view="packing-list"]')
+    .click()
+  const view = page.locator('#packing-view'),
+    rows = view.locator('tr[data-container-row]'),
+    source = await extension.inspector.evaluate(
+      async (id) => (await window.testRepository).getContainerManifest({ id }),
+      id
+    )
+  await rows.first().getByRole('checkbox').check()
+  await extension.context.grantPermissions([
+    'clipboard-read',
+    'clipboard-write',
+  ])
+  await page.bringToFront()
+  await page.evaluate(async () => {
+    await navigator.clipboard.writeText('SYNTHETIC CLIPBOARD SENTINEL')
+    const write = navigator.clipboard.write.bind(navigator.clipboard)
+    window.clipboardReady = Promise.withResolvers()
+    navigator.clipboard.write = async (items) => {
+      window.capturedPlain = await (await items[0].getType('text/plain')).text()
+      window.nativeCopyStarted = true
+      await window.clipboardReady.promise
+      return write(items)
+    }
+  })
+  const copy = view.locator('[data-action="copy-values"]')
+  await copy.click()
+  await expect
+    .poll(() => page.evaluate(() => window.nativeCopyStarted))
+    .toBe(true)
+  await expect(copy).toHaveAttribute('aria-busy', 'true')
+  await expect(copy).not.toContainText('Copied')
+  expect(await page.evaluate(() => navigator.clipboard.readText())).toBe(
+    'SYNTHETIC CLIPBOARD SENTINEL'
+  )
+  await rows.first().getByRole('checkbox').uncheck()
+  await rows.nth(1).getByRole('checkbox').check()
+  await view
+    .getByRole('searchbox', { name: 'Filter container display', exact: true })
+    .fill('2002')
+  await expect(rows).toHaveCount(1)
+  await page.evaluate(() => window.clipboardReady.resolve())
+  await expect(copy).toContainText('Copied')
+  expect(await page.evaluate(() => navigator.clipboard.readText())).toBe(
+    '\tSynthetic source 1 · 原始文本 1\t2.00\t100\t0.00'
+  )
+  expect(
+    await extension.inspector.evaluate(
+      async (id) => (await window.testRepository).getContainerManifest({ id }),
+      id
+    )
+  ).toEqual(source)
+  await view.locator('[data-action="open-copy-menu"]').click()
+  const codes = view.locator('[data-action="copy-group-codes"]')
+  await codes.click()
+  await expect(codes).toContainText('Copied')
+  expect(await page.evaluate(() => navigator.clipboard.readText())).toBe(
+    'CE26090102'
+  )
+})

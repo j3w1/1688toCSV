@@ -191,6 +191,12 @@ Report originals are saved before worker transfer. Changed source text/file canc
 | `data-action`              | Behavior                                                                                                                                       |
 | -------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------- |
 | `copy-values`              | Copy the captured source/revision rows as values.                                                                                              |
+| `copy-container-columns`   | Choose columns from captured immutable revision rows; explicit Copy writes the clipboard.                                                      |
+| `copy-group-codes`         | Copy unique base codes in captured source/revision order with completion feedback.                                                             |
+| `copy-container-images`    | Open the proven source-photo copy dialog using captured revision photos.                                                                       |
+| `copy-container-cells`     | Copy the captured revision's source cells and photos through the existing dialog.                                                              |
+| `copy-container-barcodes`  | Preview/copy read-only barcode artwork from captured revision settings.                                                                        |
+| `copy-container-marks`     | Preview/copy read-only physical carton marks from captured revision settings.                                                                  |
 | `backup-packing`           | Back up the captured Orders source/preparation scope, original media and supported evidence; explicitly review omitted partial carton records. |
 | `copy-excel-image`         | Prepare an Excel-image preview; explicit Copy writes the clipboard.                                                                            |
 | `resolve-legacy-carton`    | Confirm a documented single-order legacy not-shipped review with the retained batch revision.                                                  |
