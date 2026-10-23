@@ -10,7 +10,7 @@ import {
   sealContainerThroughUI,
   savedBrowserDownload,
 } from './smart-workspace-helpers.mjs'
-import { readFile } from 'node:fs/promises'
+import { readFile, writeFile } from 'node:fs/promises'
 import { basename } from 'node:path'
 import * as XLSX from 'xlsx'
 
@@ -949,6 +949,10 @@ test('unsealed container barcode and mark PDFs visibly retain DRAFT and exact re
       bytes = await readFile(path)
     expect(basename(path)).toMatch(/^DRAFT-.*\.pdf$/)
     expect(bytes.subarray(0, 5).toString('ascii')).toBe('%PDF-')
+    await writeFile(
+      test.info().outputPath(`draft-${kind}-synthetic.pdf`),
+      bytes
+    )
     let summaryFile
     await expect
       .poll(async () => {
@@ -964,6 +968,10 @@ test('unsealed container barcode and mark PDFs visibly retain DRAFT and exact re
       })
       .toBe(true)
     const summary = JSON.parse(await readFile(summaryFile.filename, 'utf8'))
+    await writeFile(
+      test.info().outputPath(`draft-${kind}-synthetic.json`),
+      JSON.stringify(summary, null, 2)
+    )
     expect(summary).toMatchObject({
       kind,
       containerId: id,
