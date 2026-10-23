@@ -230,6 +230,195 @@ test('authoritative relabel-only choices cannot be bypassed by selecting a disab
   stop()
 })
 
+test('superseded mark controls retain exact owner evidence and live input while refusing old-label printing', async (context) => {
+  const { document, window } = dom(context),
+    host = document.getElementById('host'),
+    apply = document.createElement('button'),
+    previous = getLanguage(),
+    review = {
+      id: 'returning-cartons',
+      resolutionRequired: true,
+      physicalMarkCode: 'CE26090102',
+      currentProductCode: 'CE26090104',
+      physicalMarkRelabelOnly: true,
+      physicalMarkResolutionChoices: ['relabel-reprint'],
+      physicalMarkSupersessions: [
+        {
+          code: 'CE26090102',
+          at: '2026-10-23T06:00:00Z',
+          reason: '手工来源 Supplier Ω',
+          conflicts: [
+            {
+              accountId: 'local',
+              orderId: 'sealed-purchase',
+              groupId: 'sealed-owner',
+              kind: 'code-consumption',
+              containerId: 'actual-shipment',
+              revisionId: 'actual-revision',
+              consumedAt: '2026-10-22T01:00:00Z',
+            },
+          ],
+          currentProducts: [
+            {
+              mark: { orderId: 'returning-purchase', groupId: 'fresh-owner' },
+              productCode: 'CE26090104',
+            },
+          ],
+        },
+      ],
+    },
+    original = structuredClone(review),
+    printed = [],
+    stop = mountPhysicalMarkChoices({
+      host,
+      apply,
+      reviews: [review],
+      onPrintMark: async (args) => printed.push(args),
+    }),
+    recorded = host.querySelector('[data-mark-role="recorded"]'),
+    current = host.querySelector('[data-mark-role="current-product"]'),
+    keep = host.querySelector('[data-choice="keep-recorded-mark"]'),
+    relabel = host.querySelector('[data-choice="relabel-reprint"]'),
+    reason = host.querySelector('textarea'),
+    confirmed = host.querySelector('[data-action="confirm-physical-relabel"]'),
+    evidence = host.querySelector('[data-mark-supersession]')
+  context.after(() => setLanguage(previous, { persist: false }))
+  assert.equal(recorded.disabled, true)
+  assert.equal(keep.disabled, true)
+  assert.equal(current.disabled, false)
+  assert.match(evidence.textContent, /actual-shipment.*actual-revision/)
+  assert.match(evidence.textContent, /sealed-purchase \/ sealed-owner/)
+  assert.match(
+    evidence.textContent,
+    /CE26090104.*returning-purchase.*fresh-owner/
+  )
+  recorded.onclick()
+  await Promise.resolve()
+  assert.equal(printed.length, 0)
+  current.click()
+  await new Promise((resolve) => setTimeout(resolve, 0))
+  assert.equal(printed.length, 1)
+  assert.equal(printed[0].role, 'current-product')
+  assert.equal(recorded.disabled, true)
+  relabel.checked = true
+  relabel.dispatchEvent(new window.Event('change'))
+  reason.value = '已核对 original reason Ω'
+  reason.dispatchEvent(new window.Event('input'))
+  confirmed.checked = true
+  confirmed.dispatchEvent(new window.Event('change'))
+  for (const language of ['es', 'zh', 'en']) {
+    setLanguage(language, { persist: false })
+    assert.equal(host.querySelector('textarea'), reason)
+    assert.equal(reason.value, '已核对 original reason Ω')
+    assert.equal(confirmed.checked, true)
+    assert.equal(apply.disabled, false)
+    assert.equal(recorded.disabled, true)
+    assert.match(evidence.textContent, /actual-shipment.*actual-revision/)
+    assert.match(evidence.textContent, /手工来源 Supplier Ω/)
+    if (language === 'es') assert.match(recorded.title, /pertenece al embarque/)
+    if (language === 'zh') assert.match(recorded.title, /属于货柜/)
+  }
+  assert.deepEqual(review, original)
+  stop()
+})
+
+test('saved superseded mark review carries authoritative choices through failed writes and requires fresh physical relabeling', async (context) => {
+  const { document, window } = dom(context),
+    { record, preparation } = syntheticManifest().orders[0],
+    group = preparation.groups[0],
+    batch = syntheticBatch(record.orderId, 2, '100', {
+      id: 'superseded-physical',
+      physicalMark: {
+        code: 'CE26090102',
+        productCode: group.baseCode,
+        resolution: null,
+      },
+      physicalMarkCode: 'CE26090102',
+      currentProductCode: group.baseCode,
+      physicalMarkRelabelOnly: true,
+      physicalMarkResolutionChoices: ['relabel-reprint'],
+      physicalMarkSupersessions: [
+        {
+          code: 'CE26090102',
+          reason: 'Old mark is now reserved by the sealed owner',
+          conflicts: [
+            {
+              accountId: 'local',
+              orderId: 'other-purchase',
+              groupId: 'other-owner',
+              kind: 'code-history',
+              containerId: 'sealed-container',
+              revisionId: 'sealed-revision',
+            },
+          ],
+          currentProducts: [
+            {
+              mark: { orderId: record.orderId, groupId: group.id },
+              productCode: group.baseCode,
+            },
+          ],
+        },
+      ],
+    }),
+    token = {
+      source: 'full-source',
+      preparation: 3,
+      cartons: { [batch.id]: 7 },
+      reports: {},
+    },
+    dto = { record, preparation, batches: [batch], revisions: token },
+    original = structuredClone(dto),
+    calls = [],
+    printed = [],
+    modal = await openPhysicalMarkReview({
+      repository: {
+        getOrderReconciliation: async () => structuredClone(dto),
+        resolveCartonPhysicalMark: async (args) => {
+          calls.push(structuredClone(args))
+          throw new Error('Retained synthetic write failure')
+        },
+      },
+      orderRef: { accountId: 'local', orderId: record.orderId },
+      batchId: batch.id,
+      onPrintMark: async (ref) => printed.push(ref),
+    }),
+    keep = modal.querySelector('[data-choice="keep-recorded-mark"]'),
+    relabel = modal.querySelector('[data-choice="relabel-reprint"]'),
+    reason = modal.querySelector('textarea'),
+    confirmed = modal.querySelector('[data-action="confirm-physical-relabel"]'),
+    recorded = modal.querySelector('[data-mark-role="recorded"]'),
+    save = modal.querySelector('[data-action="save-physical-mark-decision"]')
+  assert.equal(keep.disabled, true)
+  assert.equal(recorded.disabled, true)
+  assert.match(modal.textContent, /sealed-container.*sealed-revision/)
+  assert.doesNotMatch(modal.textContent, /Keep the recorded mark alongside/)
+  recorded.onclick()
+  assert.equal(printed.length, 0)
+  relabel.checked = true
+  relabel.dispatchEvent(new window.Event('change'))
+  reason.value = 'Physical labels checked against the fresh current code'
+  reason.dispatchEvent(new window.Event('input'))
+  assert.equal(save.disabled, true)
+  assert.equal(calls.length, 0)
+  confirmed.checked = true
+  confirmed.dispatchEvent(new window.Event('change'))
+  save.click()
+  await new Promise((resolve) => setTimeout(resolve, 0))
+  assert.equal(calls.length, 1)
+  assert.equal(calls[0].choice, 'relabel-reprint')
+  assert.equal(calls[0].physicalRelabelConfirmed, true)
+  assert.deepEqual(calls[0].expectedRevisions, token)
+  assert.match(modal.textContent, /Retained synthetic write failure/)
+  assert.equal(keep.disabled, true)
+  assert.equal(recorded.disabled, true)
+  assert.equal(reason.value, calls[0].reason)
+  assert.equal(confirmed.checked, true)
+  assert.equal(save.disabled, false)
+  assert.deepEqual(dto, original)
+  modal.close()
+  assert.equal(document.querySelector('dialog'), null)
+})
+
 test('physical mark output uses recorded artwork after its group is gone, counts actual entitlements and rejects stale typed regeneration', async () => {
   const { record, preparation } = syntheticManifest().orders[0],
     group = preparation.groups[0],
