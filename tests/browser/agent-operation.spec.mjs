@@ -441,6 +441,14 @@ test('an agent authors Orders, confirms one physical arrangement, seals a named 
   const labelSummary = JSON.parse(
     await readFile(labelPdf.filename.replace(/\.pdf$/, '.json'), 'utf8')
   )
+  await writeFile(
+    testInfo.outputPath('sealed-labels-synthetic.pdf'),
+    await readFile(labelPdf.filename)
+  )
+  await writeFile(
+    testInfo.outputPath('sealed-labels-synthetic.json'),
+    JSON.stringify(labelSummary, null, 2)
+  )
   expect(labelSummary).toMatchObject({ kind: 'labels', perPage: 70 })
   // Requested labels fill whole pages; spares are shared on the last page.
   expect(labelSummary.pages).toBe(Math.ceil(labelSummary.totals.requested / 70))
@@ -506,6 +514,14 @@ test('an agent authors Orders, confirms one physical arrangement, seals a named 
   )
   const markSummary = JSON.parse(
     await readFile(markPdf.filename.replace(/\.pdf$/, '.json'), 'utf8')
+  )
+  await writeFile(
+    testInfo.outputPath('sealed-marks-synthetic.pdf'),
+    await readFile(markPdf.filename)
+  )
+  await writeFile(
+    testInfo.outputPath('sealed-marks-synthetic.json'),
+    JSON.stringify(markSummary, null, 2)
   )
   expect(markSummary).toMatchObject({ kind: 'carton-marks', perPage: 2 })
   expect(markSummary.orders.map((entry) => entry.orderId)).toEqual([

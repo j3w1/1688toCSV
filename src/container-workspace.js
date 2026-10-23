@@ -1,6 +1,7 @@
 import { element as el, copyTextButton, copied } from './ui.js'
 import { message as m, bindText, bindAttribute, getLocale } from './i18n.js'
 import { createVirtualTable } from './virtual-table.js'
+import { measurementWarningMessages } from './ui-messages-smart-cartons.js'
 import { photoCopyTile } from './photo-copy.js'
 import { copySingleImage } from './clipboard.js'
 import { mountProductCopyActions, mountCopyActions } from './copy-actions.js'
@@ -1571,7 +1572,16 @@ export function createContainerWorkspace({
       ...(review.issues || []),
       ...(review.warnings || []),
     ]) {
-      const row = el('p', m(issue.message || issue))
+      const row =
+        issue.code === 'volume-discrepancy'
+          ? el('div')
+          : el('p', m(issue.message || issue))
+      if (issue.code === 'volume-discrepancy') {
+        row.dataset.issueCode = issue.code
+        row.dataset.issueSeverity = issue.severity
+        for (const text of measurementWarningMessages(issue, m))
+          row.append(el('p', text))
+      }
       if (issue.orderId)
         action(row, 'Edit in Orders', 'edit-in-orders', () => {
           modal.close()

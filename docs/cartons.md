@@ -51,6 +51,8 @@ Dimensions are complete positive Length / Width / Height in centimetres; paste `
 
 Volume from centimetres is `L × W × H ÷ 1,000,000`. Supplied CBM remains separate evidence; discrepancies are disclosed. Product size never becomes carton size. The six uneven synthetic cartons keep 13, 12, 11, 9, 9, 9 pieces; weights 16.75, 14.62, 10.40, 5.63, 5.18, 4.64 kg; and totals 63 pieces, 57.22 kg and 0.461256 m³. Display grouping never replaces those six records with an average.
 
+Known explicit dimensions supply the measured volume used in totals. Reconciliation and seal review show a differing supplied whole-set volume and its original value/basis as retained evidence. Unit or basis ambiguity and quantity/ownership conflicts still require resolution.
+
 Receipts and seller delivery remain independent. Container loading uses physical references and derives product quantities; it has no per-product loaded-quantity or capacity editor. A shared box counts/weighs once. Product participation differs from additive count attribution; mixed kg/CBM allocations are labelled allocated and conserve physical totals.
 
 ## Review and output
