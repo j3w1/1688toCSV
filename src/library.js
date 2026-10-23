@@ -3577,6 +3577,13 @@ export async function startLibrary(
         return typeof result === 'string' ? result : result.dataUrl
       },
     })
+    const stopLibraryChanges = repository?.subscribe?.(() => {
+      // Notifications invalidate reads only. refresh coalesces them and the
+      // active controllers retain dirty drafts, baselines and amendment epochs.
+      void refresh().catch((error) => feedback(error.message, true))
+    })
+    if (stopLibraryChanges)
+      addEventListener('pagehide', stopLibraryChanges, { once: true })
     await refresh()
   } catch (error) {
     feedback(error.message, true)
