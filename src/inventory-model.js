@@ -3,6 +3,7 @@ import {
   cartonBatchMark,
   cartonDecimal,
 } from './carton-batches.js'
+import { physicalMarkReadback } from './physical-mark-aliases.js'
 
 export const MAX_OPERATIONAL_CARTONS = 10_000
 export const orderKey = (value) =>
@@ -295,6 +296,7 @@ export function physicalUnits(batch) {
               : unitMetrics.volumePerCarton,
       ...dimensions,
       mark: cartonBatchMark(batch),
+      ...(batch.physicalMark ? physicalMarkReadback(batch) : {}),
       needsReview: !!batch.needsReview || batchNeedsLegacyReview(batch),
     }
   })

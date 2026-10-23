@@ -15,6 +15,7 @@ import {
   sourceRevision,
   stableValue,
 } from './inventory-model.js'
+import { physicalMarkOwner } from './physical-mark-aliases.js'
 
 const key = (value) =>
   JSON.stringify([
@@ -169,6 +170,125 @@ const memberKey = (member) =>
   JSON.stringify([member.accountId || 'local', member.orderId, member.groupId])
 const locksOf = (state) => state.locks ?? state.shipmentLocks ?? []
 
+/** Current physical aliases occupy the SAME issued-code namespace as products.
+ * Eligibility and current preparation membership determine release/revival;
+ * historical snapshots and ordinary checkpoints never reserve a retired alias.
+ */
+export function physicalMarkReservations({
+  preparations = [],
+  records = [],
+  orders = records,
+  batches = [],
+  cartonBatches = batches,
+} = {}) {
+  const result = []
+  for (const batch of cartonBatches) {
+    const physical = batch.physicalMark
+    if (!physical) continue
+    const orderId = batch.orderId || physical.originalMark.orderId
+    const preparation = preparations.find(
+      (value) =>
+        value.accountId === batch.accountId && value.orderId === orderId
+    )
+    const record = orders.find(
+      (value) => key(value) === key({ ...batch, orderId })
+    )
+    const prepared = new Set(
+      preparation?.groups.flatMap((group) =>
+        group.variants.flatMap((variant) => variant.entryIds)
+      ) || []
+    )
+    const eligibility = new Map(
+      record
+        ? eligibleOrderItems(record, orders).map((item) => [
+            item.entryId,
+            item.eligible,
+          ])
+        : []
+    )
+    if (
+      !physical.relatedEntryIds.some(
+        (id) =>
+          prepared.has(id) &&
+          (eligibility.get(id) == null || BigInt(eligibility.get(id)) > 0n)
+      )
+    )
+      continue
+    const owner = physicalMarkOwner(batch, preparations)
+    for (const alias of physical.aliases) {
+      const group = owner?.group
+      result.push({
+        accountId: batch.accountId,
+        orderId,
+        groupId: group?.id || physical.originalMark.groupId,
+        sellerId: alias.sellerId,
+        month: alias.month,
+        kind: 'base',
+        code: alias.code,
+        ...(group?.sharedProductId && group.baseCode === alias.code
+          ? {
+              sharedProductId: group.sharedProductId,
+              sharedStoreId: group.sharedStoreId,
+              members: [{ orderId, groupId: group.id }],
+            }
+          : {}),
+        ownerSnapshot: {
+          sellerName: record?.snapshot.sellerName || '',
+          groupTitle: group?.title || '',
+          spanishName: group?.spanishName || '',
+          category: group?.category || '',
+          variant: '',
+          entryIds: physical.relatedEntryIds,
+          photos: [],
+        },
+      })
+    }
+  }
+  return result
+}
+
+/** Persist the lifecycle on its existing physical evidence, without a new ledger. */
+export function retirePhysicalMarkAliases(state, nextEditTimestamp) {
+  const active = physicalMarkReservations(state)
+  return (state.batches || []).map((batch) => {
+    const physical = batch.physicalMark
+    if (!physical) return batch
+    const current = active.some(
+      (reservation) =>
+        reservation.accountId === batch.accountId &&
+        reservation.orderId ===
+          (batch.orderId || physical.originalMark.orderId) &&
+        physical.aliases.some((alias) => alias.code === reservation.code)
+    )
+    if (current === !physical.retiredAt) return batch
+    const updatedAt = nextEditTimestamp(batch.updatedAt)
+    const mark = clone(physical)
+    mark.history.push({
+      kind: current ? 'revived' : 'retired',
+      at: updatedAt,
+      reason: current
+        ? 'Related goods are current again; ownership revalidated.'
+        : 'All related goods are retired or ineligible.',
+    })
+    if (current) {
+      delete mark.retiredAt
+      delete mark.retirementReason
+    } else {
+      mark.retiredAt = updatedAt
+      mark.retirementReason = 'All related goods are retired or ineligible.'
+    }
+    const original = clone(batch)
+    delete original.cartonHistory
+    return {
+      ...batch,
+      physicalMark: mark,
+      revision: batch.revision + 1,
+      updatedAt,
+      cartonHistory: [...clone(batch.cartonHistory || []), original],
+    }
+  })
+}
+
 function validateCodeLock(lock) {
   const text = (value) => typeof value === 'string' && value.trim().length > 0
   const invalid = () => {
@@ -188,6 +308,24 @@ function validateCodeLock(lock) {
   )
     invalid()
   for (const lineage of lock.lineages) {
+    if (
+      lineage.physicalMarkAlias !== undefined &&
+      (lineage.physicalMarkAlias !== true ||
+        !/^CE\d{8}$/.test(lineage.productCode) ||
+        lineage.productCode === lineage.baseCode ||
+        !lock.lineages.some(
+          (primary) =>
+            !primary.physicalMarkAlias &&
+            primary.baseCode === lineage.productCode &&
+            primary.sharedProductId === lineage.sharedProductId &&
+            lineage.members.every((member) =>
+              primary.members.some(
+                (value) => memberKey(member) === memberKey(value)
+              )
+            )
+        ))
+    )
+      invalid()
     if (
       !Array.isArray(lineage.members) ||
       !lineage.members.length ||
@@ -306,6 +444,9 @@ export function assertConsumedCodeChanges({
               })
           }
         }
+      // The primary consumed lineage freezes all member/variant identity. A
+      // physical alias reserves a different old code for those same members.
+      if (lineage.physicalMarkAlias) continue
       for (const member of lineage.members) {
         const old = before
           .get(key(member))
@@ -490,7 +631,18 @@ export function consumptionLocksForManifest(manifest, state = {}) {
   const reservations = activePackingState(
     preparations,
     state.allocations ?? [],
-    state.issuedCodes ?? []
+    state.issuedCodes ?? [],
+    {
+      historicalReservations: physicalMarkReservations({
+        ...state,
+        preparations,
+        records: (manifest.orders || [])
+          .map((order) => order.record)
+          .filter(Boolean),
+        batches: manifest.batches || state.batches,
+        cartonBatches: manifest.batches || state.batches,
+      }),
+    }
   ).issuedCodes
   const loaded = new Set(
     (manifest.cartons ?? [])
@@ -595,6 +747,54 @@ export function consumptionLocksForManifest(manifest, state = {}) {
               },
             ]),
           })
+        }
+      }
+      for (const carton of [
+        ...(manifest.cartons || []),
+        ...(manifest.leftBehind?.cartons || []),
+      ]) {
+        if (key(carton) !== key(preparation) || !carton.physicalMark) continue
+        if (
+          kind === 'code-consumption' &&
+          !(manifest.cartons || []).some((value) => value.id === carton.id)
+        )
+          continue
+        const group = preparation.groups.find(
+          (value) => value.id === carton.mark?.groupId
+        )
+        if (!group) continue
+        for (const alias of carton.physicalMark.aliases) {
+          if (alias.code === group.baseCode) continue
+          const primary = lineageFor(
+            preparation,
+            group,
+            preparations,
+            reservations
+          )
+          const lineage = {
+            ...primary,
+            baseCode: alias.code,
+            productCode: group.baseCode,
+            physicalMarkAlias: true,
+            reservations: reservations.filter(
+              (reservation) =>
+                reservation.accountId === preparation.accountId &&
+                reservation.kind === 'base' &&
+                reservation.code === alias.code &&
+                codeReservationMembers(reservation).some((member) =>
+                  primary.members.some(
+                    (value) => memberKey(value) === memberKey(member)
+                  )
+                )
+            ),
+          }
+          if (!lineage.reservations.length)
+            throw codeError(
+              'INVALID_CODE_LOCK',
+              'A physical mark alias is missing its current reservation.'
+            )
+          if (!lineages.has(lineageKey(lineage)))
+            lineages.set(lineageKey(lineage), lineage)
         }
       }
       result.set(id, {
@@ -787,7 +987,10 @@ export function planPurchaseCodeReview(
     })
     drafts.push(validatePreparation(draft))
   }
-  const historicalReservations = historicalCodeReservations(locksOf(state))
+  const historicalReservations = [
+    ...historicalCodeReservations(locksOf(state)),
+    ...physicalMarkReservations(state),
+  ]
   const supplierIdentityEquivalences = supplierCodeIdentityEquivalences(records)
   let packing = activePackingState(
     preparations,

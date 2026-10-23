@@ -5,6 +5,7 @@ import {
   validatePreparation,
   mergeVariantMaterials,
 } from './packing-model.js'
+import { physicalMarkReservations } from './purchase-codes.js'
 import { preparationAuthoring } from './product-vocabulary.js'
 import { paymentSourceDependencies } from './payment-links.js'
 import { cartonBatchesForItems } from './carton-confirmations.js'
@@ -696,7 +697,14 @@ export function createPackingBackup(backup, selection) {
     [],
     (backup.issuedCodes || []).filter(
       (entry) => entry.sharedProductId || (entry.members || []).length > 1
-    )
+    ),
+    {
+      historicalReservations: physicalMarkReservations({
+        preparations,
+        records: orders,
+        batches: cartonBatches,
+      }),
+    }
   )
   const urls = collectImageReferences({
     orders: selectedOrders.map(({ snapshot }) => ({

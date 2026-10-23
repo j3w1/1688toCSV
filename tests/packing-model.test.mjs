@@ -18,6 +18,7 @@ import {
   reorderPreparationVariants,
   restoreDefaultPacking,
   restorePreviousPacking,
+  refreshPreparationMaterials,
   setGroupSizeMode,
   validatePackingPreferences,
   validatePreparation,
@@ -25,6 +26,37 @@ import {
 } from '../src/packing-model.js'
 import { DEFAULT_SIZE_VOCABULARY } from '../src/size-vocabulary.js'
 import { regroupSelection } from '../src/packing-grouping.js'
+
+test('empty unknown material refresh preserves untouched siblings while known suggestions clear and manual blanks survive', () => {
+  const variants = Array.from({ length: 250 }, (_, index) => ({
+    id: `material-${index}`,
+    entryIds: [String(index + 1)],
+  }))
+  variants[0].material = '玻璃'
+  variants[0].materialSource = 'suggested'
+  variants[1].material = ''
+  variants[1].materialSource = 'manual'
+  const preparation = { groups: [{ variants }] },
+    original = structuredClone(preparation)
+  const snapshot = {
+    items: variants.map((variant) => ({
+      entryId: variant.entryIds[0],
+      title: 'Unknown synthetic product',
+    })),
+  }
+  const refreshed = refreshPreparationMaterials(
+    preparation,
+    snapshot,
+    new Map(snapshot.items.map((item) => [item.entryId, '']))
+  )
+  assert.deepEqual(preparation, original)
+  assert.deepEqual(
+    refreshed.groups[0].variants.slice(1),
+    original.groups[0].variants.slice(1)
+  )
+  assert.equal(refreshed.groups[0].variants[0].material, '')
+  assert.equal(refreshed.groups[0].variants[0].materialSource, 'suggested')
+})
 
 function source(items, extra = {}) {
   return {

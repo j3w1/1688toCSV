@@ -11,7 +11,10 @@ import {
   encodeReportAsset,
   validateOperationalBackup,
 } from './carton-report-repository.js'
-import { validateContainerRecord } from './container-model.js'
+import {
+  validateContainerRecord,
+  reconciliationRevisions,
+} from './container-model.js'
 import {
   sourceRevision,
   orderKey,
@@ -73,10 +76,16 @@ import {
 } from './carton-confirmations.js'
 import { createCartonBatchesRepository } from './carton-batches-repository.js'
 import {
+  transitionPhysicalMark,
+  physicalMarkReadback,
+  assertPhysicalMarkCommandContext,
+} from './physical-mark-aliases.js'
+import {
   validateCartonBatch,
   createLegacyCartonBatches,
   cartonBatchIssues,
   assertCartonBatchEvidence,
+  cartonBatchMarkOwnerChoices,
 } from './carton-batches.js'
 const productAnnotationFields = [
   [
@@ -1405,13 +1414,29 @@ export async function openDatabase({ name = '1688-order-library' } = {}) {
       run
     )
   let containerRepository
-  const write = (stores, run, { notify = true } = {}) =>
-    transaction(
+  const write = (stores, run, { notify = true } = {}) => {
+    let implicitStores = []
+    return transaction(
       database,
       [...new Set([...stores, ...OPERATIONAL_STORES])],
       'readwrite',
       async (tx) => {
         const result = await run(tx)
+        if (
+          stores.some((store) =>
+            [
+              'orders',
+              'preparations',
+              'cartonBatches',
+              'containers',
+              'shipmentLocks',
+              'packingAllocations',
+              'issuedCodes',
+            ].includes(store)
+          )
+        ) {
+          implicitStores = await synchronizePhysicalMarkOwnership(tx, result)
+        }
         // Legacy source, payment and order-metadata writers share this guard.
         // Coupled container operations validate their complete graph themselves.
         if (stores.includes('orders') && !stores.includes('containers'))
@@ -1420,9 +1445,10 @@ export async function openDatabase({ name = '1688-order-library' } = {}) {
       }
     ).then((result) => {
       if (typeof notify === 'function' ? notify(result) : notify)
-        changes.publish(stores)
+        changes.publish([...new Set([...stores, ...implicitStores])])
       return result
     })
+  }
   const cartonBatchesRepository = createCartonBatchesRepository({
     read,
     write,
@@ -1441,6 +1467,7 @@ export async function openDatabase({ name = '1688-order-library' } = {}) {
     nextEditTimestamp,
     codeHooks: {
       ...purchaseCodes,
+      synchronizePhysicalMarkOwnership,
       async commitPreparedState(tx, effective, previous) {
         purchaseCodes.assertConsumedCodeChanges({
           previous: previous.preparations,
@@ -1462,9 +1489,9 @@ export async function openDatabase({ name = '1688-order-library' } = {}) {
           previous.allocations,
           previous.issuedCodes,
           {
-            historicalReservations: purchaseCodes.historicalCodeReservations(
-              effective.locks
-            ),
+            historicalReservations: purchaseCodes
+              .historicalCodeReservations(effective.locks)
+              .concat(purchaseCodes.physicalMarkReservations(effective)),
             supplierIdentityEquivalences:
               purchaseCodes.supplierCodeIdentityEquivalences(effective.records),
           }
@@ -1486,6 +1513,76 @@ export async function openDatabase({ name = '1688-order-library' } = {}) {
     containerRepository,
   })
 
+  async function synchronizePhysicalMarkOwnership(tx, result) {
+    const final = await containerRepository.state(tx)
+    if (!final.batches.some((batch) => batch.physicalMark)) return []
+    const batches = purchaseCodes.retirePhysicalMarkAliases(
+      final,
+      nextEditTimestamp
+    )
+    for (let index = 0; index < batches.length; index++)
+      if (batches[index] !== final.batches[index])
+        tx.objectStore('cartonBatches').put(batches[index])
+    const current = activePackingState(
+      final.preparations,
+      final.allocations,
+      final.issuedCodes,
+      {
+        historicalReservations: [
+          ...purchaseCodes.historicalCodeReservations(final.locks),
+          ...purchaseCodes.physicalMarkReservations({ ...final, batches }),
+        ],
+        supplierIdentityEquivalences:
+          purchaseCodes.supplierCodeIdentityEquivalences(final.records),
+      }
+    )
+    tx.objectStore('issuedCodes').clear()
+    tx.objectStore('packingAllocations').clear()
+    for (const value of current.issuedCodes)
+      tx.objectStore('issuedCodes').put(value)
+    for (const value of current.allocations)
+      tx.objectStore('packingAllocations').put(value)
+    if (
+      result?.revisions &&
+      result.record &&
+      !result.contextContainerId &&
+      !result.amendmentContext
+    ) {
+      result.revisions = reconciliationRevisions(
+        { ...final, batches },
+        result.record.snapshot
+      )
+      if (result.batches)
+        result.batches = batches
+          .filter(
+            (batch) =>
+              batch.accountId === result.record.snapshot.accountId &&
+              batchOrderIds(batch).includes(result.record.snapshot.orderId)
+          )
+          .map((batch) => ({
+            ...batch,
+            ...physicalMarkReadback(batch, final.preparations),
+            ...(batch.physicalMark
+              ? {
+                  physicalMarkOwnerChoices: cartonBatchMarkOwnerChoices(
+                    batch,
+                    final.records,
+                    final.preparations,
+                    batches
+                  ),
+                }
+              : {}),
+          }))
+    }
+    return [
+      'issuedCodes',
+      'packingAllocations',
+      ...(batches.some((batch, index) => batch !== final.batches[index])
+        ? ['cartonBatches']
+        : []),
+    ]
+  }
+
   async function replaceActiveCodes(
     tx,
     allocationInputs,
@@ -1500,9 +1597,21 @@ export async function openDatabase({ name = '1688-order-library' } = {}) {
         ...(await requested(tx.objectStore('issuedCodes').getAll())),
       ],
       {
-        historicalReservations: purchaseCodes.historicalCodeReservations(
-          await requested(tx.objectStore('shipmentLocks').getAll())
-        ),
+        historicalReservations: purchaseCodes
+          .historicalCodeReservations(
+            await requested(tx.objectStore('shipmentLocks').getAll())
+          )
+          .concat(
+            purchaseCodes.physicalMarkReservations({
+              preparations: await requested(
+                tx.objectStore('preparations').getAll()
+              ),
+              records: await requested(tx.objectStore('orders').getAll()),
+              batches: await requested(
+                tx.objectStore('cartonBatches').getAll()
+              ),
+            })
+          ),
       }
     )
     tx.objectStore('issuedCodes').clear()
@@ -1943,6 +2052,9 @@ export async function openDatabase({ name = '1688-order-library' } = {}) {
             })
           : null
         if (activeContext)
+          for (const change of cartonBatchChanges)
+            assertPhysicalMarkCommandContext(change, { contextContainerId })
+        if (activeContext)
           for (const draft of drafts)
             containerRepository.amendmentFor(rawState, {
               ...draft,
@@ -2078,8 +2190,38 @@ export async function openDatabase({ name = '1688-order-library' } = {}) {
           locks,
           amendment: !!activeContext,
         })
-        const historicalReservations =
-          purchaseCodes.historicalCodeReservations(locks)
+        const physicalBefore =
+          stagedState?.batches ||
+          (await requested(tx.objectStore('cartonBatches').getAll()))
+        const projectedPreparations = [
+          ...previousPreparations.filter(
+            (entry) =>
+              !selectedKeys.has(
+                JSON.stringify([entry.accountId, entry.orderId])
+              )
+          ),
+          ...drafts,
+        ]
+        const physicalAfter = physicalBefore.map((batch) => {
+          const change = cartonBatchChanges.find(
+            (value) => (value.after || value.batch)?.id === batch.id
+          )
+          return transitionPhysicalMark(
+            batch,
+            change?.after || change?.batch || batch,
+            previousPreparations,
+            projectedPreparations,
+            { issuedCodes }
+          )
+        })
+        const historicalReservations = [
+          ...purchaseCodes.historicalCodeReservations(locks),
+          ...purchaseCodes.physicalMarkReservations({
+            preparations: projectedPreparations,
+            records: orders,
+            batches: physicalAfter,
+          }),
+        ]
         // Reserve the complete final set of explicit codes before allocating blanks.
         // This makes swaps and bulk edits atomic and ignores retired assignments.
         const current = activePackingState(
@@ -2194,11 +2336,17 @@ export async function openDatabase({ name = '1688-order-library' } = {}) {
         const affected = physical.filter(
           (batch) =>
             !batch.deletedAt &&
-            !batch.needsReview &&
             !changedBatchIds.has(batch.id) &&
-            !cartonBatchIssues(batch, orders, previousPreparations, physical)
-              .length &&
-            cartonBatchIssues(batch, orders, nextPreparations, physical).length
+            ((!batch.needsReview &&
+              !cartonBatchIssues(batch, orders, previousPreparations, physical)
+                .length &&
+              cartonBatchIssues(batch, orders, nextPreparations, physical)
+                .length) ||
+              stableValue(batch.physicalMark) !==
+                stableValue(
+                  physicalAfter.find((value) => value.id === batch.id)
+                    ?.physicalMark
+                ))
         )
         if (affected.length && !(preview && allowCartonReview)) {
           const error = new Error(
@@ -2277,7 +2425,7 @@ export async function openDatabase({ name = '1688-order-library' } = {}) {
               effective,
               reference,
               group,
-              { contextContainerId }
+              { contextContainerId, previousPreparations }
             )
             containerRepository.validateChanges(effective, reference, changes, {
               contextContainerId,

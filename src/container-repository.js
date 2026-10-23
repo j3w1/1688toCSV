@@ -25,6 +25,7 @@ import {
 import {
   validateCartonBatch,
   assertSingleOrderCarton,
+  cartonBatchMarkOwnerChoices,
 } from './carton-batches.js'
 import { repeatProductStoreIdentity } from './repeat-products.js'
 import { reconcileOrder } from './carton-reconciliation.js'
@@ -33,6 +34,12 @@ import {
   resolvedPurchaseDate,
 } from './order-eligibility.js'
 import { imageCacheKey, collectImageReferences } from './images.js'
+import {
+  retainCartonEvidence,
+  transitionPhysicalMark,
+  physicalMarkReadback,
+  assertPhysicalMarkCommandContext,
+} from './physical-mark-aliases.js'
 
 export const OPERATIONAL_STORES = [
   'orders',
@@ -288,6 +295,8 @@ export function createContainerRepository({
       }
       const loaded = await state(tx),
         result = await operation(tx, loaded)
+      if (codeHooks.synchronizePhysicalMarkOwnership)
+        await codeHooks.synchronizePhysicalMarkOwnership(tx, result)
       if (
         id &&
         !(
@@ -383,6 +392,10 @@ export function createContainerRepository({
           fields.some(
             (field) => stableValue(current[field]) !== stableValue(unit[field])
           ) ||
+          ((current.physicalMark || unit.physicalMark) &&
+            (current.physicalMarkCode !== unit.markCode ||
+              current.currentProductCode !==
+                (unit.currentProductCode || unit.markCode))) ||
           (unit.contents === null &&
             [
               'contents',
@@ -547,6 +560,8 @@ export function createContainerRepository({
                   wid: unit.wid,
                   ht: unit.ht,
                   mark: unit.mark,
+                  physicalMarkCode: unit.physicalMark?.code,
+                  currentProductCode: unit.physicalMark?.productCode,
                 })
               : null
           if (
@@ -587,13 +602,14 @@ export function createContainerRepository({
     loaded,
     reference,
     changes,
-    { contextContainerId } = {}
+    { contextContainerId, previousPreparations = loaded.preparations } = {}
   ) {
     const scope = orderScopeState(loaded, reference),
       seen = new Set()
     if (!Array.isArray(changes))
       fail('INVALID_CARTON_CHANGES', 'Choose complete carton changes.')
     return changes.map((change) => {
+      assertPhysicalMarkCommandContext(change, { contextContainerId })
       const raw = change.after || change.batch,
         before = loaded.batches.find((batch) => batch.id === raw?.id)
       if (!raw || seen.has(raw.id))
@@ -623,18 +639,23 @@ export function createContainerRepository({
           'This physical identity already belongs to another purchase.',
           { batchId: raw.id }
         )
-      const original = before && clone(before)
-      if (original) delete original.cartonHistory
+      const updatedAt = nextEditTimestamp(before?.updatedAt)
       const batch = validateCartonBatch({
-        ...raw,
-        ...(before
-          ? {
-              cartonHistory: [...clone(before.cartonHistory || []), original],
-              ...(before.sourceFacts
-                ? { sourceFacts: clone(before.sourceFacts) }
-                : {}),
+        ...retainCartonEvidence(
+          before,
+          transitionPhysicalMark(
+            before,
+            raw,
+            previousPreparations,
+            loaded.preparations,
+            {
+              decision: change.physicalMarkResolution,
+              restoreHistory: change.restorePhysicalMarkHistory,
+              updatedAt,
+              issuedCodes: loaded.issuedCodes,
             }
-          : {}),
+          )
+        ),
         ...(raw.unresolvedContents
           ? {
               unresolvedContents: raw.unresolvedContents.map(
@@ -651,7 +672,7 @@ export function createContainerRepository({
           repeatProductStoreIdentity(scope.record) ||
           `order:${reference.accountId || 'local'}/${reference.orderId}`,
         revision: (before?.revision || 0) + 1,
-        updatedAt: nextEditTimestamp(before?.updatedAt),
+        updatedAt,
       })
       if (!batch.mark && !batch.groups.length && scope.preparation) {
         batch.groups = scope.preparation.groups
@@ -758,7 +779,20 @@ export function createContainerRepository({
     return {
       record,
       preparation: contextualPreparation,
-      batches,
+      batches: batches.map((batch) => ({
+        ...batch,
+        ...physicalMarkReadback(batch, loaded.preparations),
+        ...(batch.physicalMark
+          ? {
+              physicalMarkOwnerChoices: cartonBatchMarkOwnerChoices(
+                batch,
+                loaded.records,
+                loaded.preparations,
+                loaded.batches
+              ),
+            }
+          : {}),
+      })),
       reports,
       ...recovery,
       projection,
@@ -1060,9 +1094,24 @@ export function createContainerRepository({
           preparations: loaded.preparations.filter(
             (prep) => prep.accountId === accountId
           ),
-          batches: loaded.batches.filter(
-            (batch) => batch.accountId === accountId
-          ),
+          batches: loaded.batches
+            .filter((batch) => batch.accountId === accountId)
+            .map((batch) => ({
+              ...batch,
+              ...(batch.physicalMark
+                ? physicalMarkReadback(batch, loaded.preparations)
+                : {}),
+              ...(batch.physicalMark
+                ? {
+                    physicalMarkOwnerChoices: cartonBatchMarkOwnerChoices(
+                      batch,
+                      loaded.records,
+                      loaded.preparations,
+                      loaded.batches
+                    ),
+                  }
+                : {}),
+            })),
           containers: loaded.containers.filter(
             (value) => value.accountId === accountId
           ),
@@ -1299,6 +1348,66 @@ export function createContainerRepository({
       return mutate('saveOrderCartonFacts', input, (tx, loaded) =>
         saveFacts(tx, loaded, input)
       )
+    },
+    resolveCartonPhysicalMark(input) {
+      const intent = { ...input, intentId: input.intentId ?? input.operationId }
+      return mutate('resolveCartonPhysicalMark', intent, async (tx, loaded) => {
+        const base = input.contextContainerId
+          ? overlay(loaded, containerFor(loaded, input.contextContainerId))
+          : loaded
+        const batch = base.batches.find((value) => value.id === input.batchId)
+        if (
+          !batch ||
+          batch.accountId !== (input.accountId || 'local') ||
+          batchOrderIds(batch).length !== 1 ||
+          batchOrderIds(batch)[0] !== input.orderId
+        )
+          fail(
+            'CARTON_OWNERSHIP',
+            'Choose physical cartons belonging to this purchase.'
+          )
+        if (!batch.physicalMark)
+          fail(
+            'PHYSICAL_MARK_REVIEW_REQUIRED',
+            'These cartons have no pending physical mark resolution.'
+          )
+        let after = clone(batch)
+        if (input.targetMark) {
+          const owner = cartonBatchMarkOwnerChoices(
+            batch,
+            base.records,
+            base.preparations,
+            base.batches
+          ).find(
+            (choice) =>
+              choice.mark.orderId === input.targetMark.orderId &&
+              choice.mark.groupId === input.targetMark.groupId
+          )
+          if (!owner)
+            fail(
+              'PHYSICAL_MARK_OWNER_REQUIRED',
+              'Choose a valid current mark owner from this purchase review.'
+            )
+          after.mark = clone(owner.mark)
+          after.groups = clone(owner.groups)
+          if (owner.needsReview) after.needsReview = true
+          else delete after.needsReview
+        }
+        return saveFacts(tx, loaded, {
+          ...input,
+          changes: [
+            {
+              after,
+              expectedRevision: batch.revision,
+              physicalMarkResolution: {
+                choice: input.choice,
+                reason: input.reason,
+                physicalRelabelConfirmed: input.physicalRelabelConfirmed,
+              },
+            },
+          ],
+        })
+      })
     },
     confirmOrderCartons(input) {
       return mutate('confirmOrderCartons', input, async (tx, loaded) => {

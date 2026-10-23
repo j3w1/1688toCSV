@@ -16,6 +16,11 @@ import {
   decimalTotal,
 } from './inventory-model.js'
 import { cartonBatchMetrics } from './carton-batches.js'
+import {
+  physicalMarkReadback,
+  physicalMarkResolutionRequired,
+  validatePhysicalMark,
+} from './physical-mark-aliases.js'
 import { cartonMeasurementWarnings } from './carton-reconciliation.js'
 import { shipmentMoney } from './shipment-money.js'
 import { productFeatures } from './product-features.js'
@@ -823,11 +828,31 @@ export function projectContainer(
         state: draft.decisions[unit.id] || 'unconfirmed',
         record: member.record,
         preparation: member.preparation,
-        markCode: group?.baseCode || '',
+        ...physicalMarkReadback(
+          {
+            ...unit,
+            contents:
+              unit.contents ||
+              member.batches.find((batch) => batch.id === unit.batchId)
+                ?.contents,
+          },
+          member.preparation ? [member.preparation] : []
+        ),
+        markCode: unit.physicalMark?.code || group?.baseCode || '',
       }
     })
     const loaded = own.filter((unit) => unit.state === 'loaded'),
       left = own.filter((unit) => unit.state === 'left-behind')
+    for (const unit of loaded)
+      if (physicalMarkResolutionRequired(unit))
+        issues.push({
+          code: 'PHYSICAL_MARK_UNRESOLVED',
+          batchId: unit.batchId,
+          cartonId: unit.id,
+          orderId: member.orderId,
+          message:
+            'Choose whether to keep the recorded physical mark or confirm physical relabeling before sealing.',
+        })
     for (const unit of own) {
       if (unit.state === 'unconfirmed')
         issues.push({
@@ -1187,6 +1212,23 @@ export function assertManifestEvidence(manifest) {
         'A sealed physical carton is missing, duplicated or belongs to several orders.'
       )
     seen.add(unit.id)
+    if (unit.physicalMark) {
+      validatePhysicalMark(unit.physicalMark)
+      if (
+        physicalMarkResolutionRequired(unit) ||
+        stableValue(unit.physicalMark) !== stableValue(batch.physicalMark) ||
+        unit.markCode !== unit.physicalMark.code ||
+        unit.currentProductCode !== unit.physicalMark.productCode
+      )
+        throw inventoryError(
+          'INVALID_MANIFEST',
+          'A sealed physical mark requires its explicit frozen resolution and current product code.'
+        )
+    } else if (batch.physicalMark)
+      throw inventoryError(
+        'INVALID_MANIFEST',
+        'A sealed carton is missing its physical mark evidence.'
+      )
     if (!units.has(batch.id)) units.set(batch.id, physicalUnits(batch))
     const source = units.get(batch.id).find((value) => value.id === unit.id)
     const meaning = (value) =>
