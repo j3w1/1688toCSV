@@ -248,7 +248,13 @@ for (const [field, value, action, message] of [
     const ref = { ...refs[0], entryId: '2001' },
       editor = await editOrderProduct(page, ref, { [field]: value })
     await closeOrderProduct(editor)
-    await page.locator('#clear-rows').click()
+    const clear = page.locator('#clear-rows')
+    if (await clear.isEnabled()) await clear.click()
+    await expect(
+      page.locator(
+        '#sheet-body tr[data-selection-key] input[type="checkbox"]:checked'
+      )
+    ).toHaveCount(0)
     const target = page.locator(
       `#sheet-body tr[data-selection-key=${JSON.stringify(JSON.stringify(['local', ref.orderId, ref.entryId]))}]`
     )
@@ -373,7 +379,13 @@ test('an unresolved size output error names the product and focuses its Orders s
   }, refs[0])
   await page.locator('#view-orders').click()
   await page.reload()
-  await page.locator('#clear-rows').click()
+  const clear = page.locator('#clear-rows')
+  if (await clear.isEnabled()) await clear.click()
+  await expect(
+    page.locator(
+      '#sheet-body tr[data-selection-key] input[type="checkbox"]:checked'
+    )
+  ).toHaveCount(0)
   await page
     .locator(
       `#sheet-body tr[data-selection-key=${JSON.stringify(JSON.stringify(['local', refs[0].orderId, '2001']))}]`
