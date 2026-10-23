@@ -7,6 +7,11 @@ import {
   assertCartonBatchEvidence,
   assertSingleOrderCarton,
 } from './carton-batches.js'
+import {
+  retainCartonEvidence,
+  transitionPhysicalMark,
+  physicalMarkReadback,
+} from './physical-mark-aliases.js'
 
 /** The collection owns physical cartons across purchases; order annotations are source evidence. */
 export function createCartonBatchesRepository({
@@ -16,13 +21,21 @@ export function createCartonBatchesRepository({
   nextEditTimestamp,
   guardChanges = async () => {},
 }) {
-  const stores = ['orders', 'history', 'preparations', 'cartonBatches']
+  const stores = [
+    'orders',
+    'history',
+    'preparations',
+    'cartonBatches',
+    'issuedCodes',
+  ]
   async function state(tx) {
     return {
       records: await requested(tx.objectStore('orders').getAll()),
       history: await requested(tx.objectStore('history').getAll()),
       preparations: await requested(tx.objectStore('preparations').getAll()),
       batches: await requested(tx.objectStore('cartonBatches').getAll()),
+      issuedCodes:
+        (await requested(tx.objectStore('issuedCodes').getAll())) || [],
     }
   }
   async function seed(tx, loaded) {
@@ -96,7 +109,21 @@ export function createCartonBatchesRepository({
       }
       const updatedAt = nextEditTimestamp(before?.updatedAt)
       const batch = validateCartonBatch({
-        ...raw,
+        ...retainCartonEvidence(
+          before,
+          transitionPhysicalMark(
+            before,
+            raw,
+            loaded.preparations,
+            preparations || loaded.preparations,
+            {
+              decision: change.physicalMarkResolution,
+              restoreHistory: change.restorePhysicalMarkHistory,
+              updatedAt,
+              issuedCodes: loaded.issuedCodes,
+            }
+          )
+        ),
         revision: (before?.revision || 0) + 1,
         updatedAt,
         ...(raw?.deletedAt ? { deletedAt: updatedAt } : {}),
@@ -187,6 +214,9 @@ export function createCartonBatchesRepository({
               )
               .map((batch) => ({
                 ...batch,
+                ...(batch.physicalMark
+                  ? physicalMarkReadback(batch, loaded.preparations)
+                  : {}),
                 ...(cartonBatchIssues(
                   batch,
                   loaded.records,

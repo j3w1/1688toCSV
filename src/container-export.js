@@ -351,6 +351,12 @@ const physicalFields = [
   'packingBasis',
   'mark',
   'markCode',
+  'physicalMarkCode',
+  'currentProductCode',
+  'currentProductCodes',
+  'physicalMark',
+  'recordedArtwork',
+  'currentProductArtwork',
   'baseCode',
   'category',
   'chineseCategory',
@@ -747,16 +753,35 @@ function markSource(carton, manifest) {
   const group = source.preparation?.groups?.find(
     (value) => value.id === carton.mark?.groupId
   )
+  const recordedArtwork = carton.physicalMark
+    ? carton.physicalMark.artwork
+    : null
+  const category = carton.physicalMark
+    ? recordedArtwork?.category || ''
+    : (carton.chineseCategory ?? carton.category ?? group?.category ?? '')
   return {
     ...source,
     baseCode: carton.markCode ?? carton.baseCode ?? group?.baseCode ?? '',
     barcode: carton.markCode ?? carton.baseCode ?? group?.baseCode ?? '',
-    chineseCategory:
-      carton.chineseCategory ?? carton.category ?? group?.category ?? '',
-    category:
-      carton.category ?? carton.chineseCategory ?? group?.category ?? '',
+    chineseCategory: category,
+    category,
+    title: carton.physicalMark
+      ? recordedArtwork?.title || ''
+      : group?.title || '',
+    spanishName: carton.physicalMark
+      ? recordedArtwork?.spanishName || ''
+      : group?.spanishName || '',
     markCode: carton.markCode ?? carton.baseCode ?? group?.baseCode ?? '',
-    group: clone(group ?? null),
+    group: group
+      ? {
+          ...clone(group),
+          ...(recordedArtwork || {}),
+          baseCode: carton.markCode ?? carton.baseCode ?? group.baseCode,
+          category,
+          chineseCategory: category,
+        }
+      : null,
+    currentProductGroup: clone(group ?? null),
     quantity: '1',
     known: 1,
     cartonId: carton.cartonId ?? carton.id,
@@ -905,6 +930,20 @@ function physicalWorksheet(manifest, options) {
     options.cartonColumns,
     PACKING_CARTON_DEFAULT_COLUMNS
   )
+  if (manifest.cartons.some((carton) => carton.physicalMark)) {
+    if (!columns.some((column) => column.key === 'cartonMark'))
+      columns.unshift(
+        PACKING_CARTON_COLUMNS.find((column) => column.key === 'cartonMark')
+      )
+    if (!columns.some((column) => column.key === 'currentProductCode'))
+      columns.splice(
+        columns.findIndex((column) => column.key === 'cartonMark') + 1,
+        0,
+        PACKING_CARTON_COLUMNS.find(
+          (column) => column.key === 'currentProductCode'
+        )
+      )
+  }
   const sheet = blankSheet(
     options.words.sheets[1],
     columns,
@@ -939,6 +978,17 @@ function physicalWorksheet(manifest, options) {
     const values = {
       batch: textCell(referenceOf(carton, options.words)),
       cartonMark: textCell(carton.markCode ?? '', 8),
+      currentProductCode: textCell(
+        [
+          ...new Set(
+            [
+              carton.currentProductCode,
+              ...(carton.currentProductCodes || []),
+            ].filter(Boolean)
+          ),
+        ].join(', '),
+        8
+      ),
       contents: textCell(content),
       count: numberCell('1'),
       received: numberCell(null),
@@ -1177,7 +1227,11 @@ export function planContainerWorkbook(manifest, options = {}) {
     const row = fullRow(
       remaining,
       'left-carton',
-      `${referenceOf(carton, settings.words)} · ${carton.markCode ?? ''}\n${contentsText(carton, allSources, settings.words)}`
+      `${referenceOf(carton, settings.words)} · ${carton.markCode ?? ''}${
+        carton.physicalMark
+          ? ` · ${PACKING_CARTON_COLUMNS.find((column) => column.key === 'currentProductCode').labels[settings.language]}: ${[...new Set([carton.currentProductCode, ...(carton.currentProductCodes || [])].filter(Boolean))].join(', ')}`
+          : ''
+      }\n${contentsText(carton, allSources, settings.words)}`
     )
     leftPhysical.records.push({ carton, row: row.number })
   }

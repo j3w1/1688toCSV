@@ -222,6 +222,15 @@ export function packingSummary({
             month: batch.month,
             storeId: batch.storeId,
             code: batch.baseCode || '',
+            ...(batch.physicalMark
+              ? {
+                  physicalMarkCode:
+                    batch.physicalMarkCode || batch.physicalMark.code,
+                  currentProductCode:
+                    batch.currentProductCode || batch.physicalMark.productCode,
+                  physicalMark: structuredClone(batch.physicalMark),
+                }
+              : {}),
             ...(batch.cartonNumber ? { cartonNumber: batch.cartonNumber } : {}),
             ...(batch.mark ? { mark: { ...batch.mark } } : {}),
             contents: batch.contents.map((content) => ({
@@ -301,6 +310,14 @@ export function printSummary({
         })
   const products = items.map((item) => ({
     code: item.code,
+    ...(item.physicalMark
+      ? {
+          physicalMarkCode: item.physicalMarkCode || item.physicalMark.code,
+          currentProductCode:
+            item.currentProductCode || item.physicalMark.productCode,
+          physicalMark: structuredClone(item.physicalMark),
+        }
+      : {}),
     name: item.name || '',
     orders: (item.orders || []).map((source) => source.orderId),
     requested: item.requested,

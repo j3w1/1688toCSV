@@ -2,7 +2,9 @@
 const clone = (value) => structuredClone(value)
 const base = /^CE\d{4}(?:0[1-9]|[1-9]\d)(?:0[1-9]|[1-9]\d)$/
 const fail = (message) => {
-  throw Object.assign(new Error(message), { code: 'PHYSICAL_MARK_REVIEW_REQUIRED' })
+  throw Object.assign(new Error(message), {
+    code: 'PHYSICAL_MARK_REVIEW_REQUIRED',
+  })
 }
 const text = (value) => typeof value === 'string' && value.trim().length > 0
 const reference = (value) => {
@@ -10,17 +12,93 @@ const reference = (value) => {
     fail('Retain the original physical mark owner.')
   return { orderId: value.orderId, groupId: value.groupId }
 }
-export const PHYSICAL_MARK_CHOICES = ['keep-recorded-mark', 'relabel-reprint']
+export const PHYSICAL_MARK_CHOICES = Object.freeze([
+  'keep-recorded-mark',
+  'relabel-reprint',
+])
+
+const sameReference = (left, right) =>
+  left?.orderId === right?.orderId && left?.groupId === right?.groupId
+function artwork(owner, code) {
+  return owner
+    ? {
+        code,
+        baseCode: code,
+        orderId: owner.mark.orderId,
+        groupId: owner.mark.groupId,
+        title: owner.group.title || '',
+        spanishName: owner.group.spanishName || '',
+        category: owner.group.category || '',
+        chineseCategory: owner.group.category || '',
+        provenance: 'recorded-owner-text',
+      }
+    : null
+}
+function validateArtwork(input, code) {
+  if (input == null) return null
+  if (
+    input.code !== code ||
+    input.baseCode !== code ||
+    input.provenance !== 'recorded-owner-text' ||
+    !['title', 'spanishName', 'category', 'chineseCategory'].every(
+      (field) => typeof input[field] === 'string'
+    )
+  )
+    fail(
+      'Retain the recorded mark owner text separately from current product labels.'
+    )
+  return {
+    code,
+    baseCode: code,
+    ...reference(input),
+    title: input.title,
+    spanishName: input.spanishName,
+    category: input.category,
+    chineseCategory: input.chineseCategory,
+    provenance: 'recorded-owner-text',
+  }
+}
+export function physicalMarkResolutionRequired(batch) {
+  const mark = batch.physicalMark
+  return Boolean(
+    mark &&
+    !mark.resolution &&
+    (mark.code !== mark.productCode ||
+      !sameReference(mark.originalMark, batch.mark ?? batch.groups?.[0]))
+  )
+}
+
+/** A cancelable logical draft cannot be the only copy of an actual physical act. */
+export function assertPhysicalMarkCommandContext(
+  change,
+  { contextContainerId } = {}
+) {
+  if (
+    contextContainerId &&
+    change.physicalMarkResolution?.choice === 'relabel-reprint'
+  )
+    throw Object.assign(
+      new Error(
+        'Relabeling must be confirmed on unsealed cartons. In an amendment, keep the recorded mark (shown beside the code) or finish the amendment first.'
+      ),
+      { code: 'PHYSICAL_RELABEL_AMENDMENT_PENDING' }
+    )
+}
 
 function resolution(input, { pending = false } = {}) {
   if (input == null) return null
   if (
     !PHYSICAL_MARK_CHOICES.includes(input.choice) ||
-    !text(input.reason) || input.reason.length > 2000 ||
+    !text(input.reason) ||
+    input.reason.length > 2000 ||
     input.provenance !== 'manual-confirmed' ||
-    (input.choice === 'relabel-reprint' && input.physicalRelabelConfirmed !== true) ||
+    (input.choice === 'relabel-reprint' &&
+      input.physicalRelabelConfirmed !== true) ||
     (!pending && !Number.isFinite(Date.parse(input.resolvedAt)))
-  ) fail('Choose and explain the physical mark resolution; confirm actual relabeling when reprinting.')
+  )
+    fail(
+      'Choose and explain the physical mark resolution; confirm actual relabeling when reprinting.'
+    )
   return {
     choice: input.choice,
     reason: input.reason.trim(),
@@ -30,30 +108,61 @@ function resolution(input, { pending = false } = {}) {
   }
 }
 export function validatePhysicalMark(input, { pending = false } = {}) {
-  if (!input || !base.test(input.code) || !base.test(input.originalCode) ||
-      (input.productCode !== '' && !base.test(input.productCode)) ||
-      !Array.isArray(input.aliases) || !input.aliases.length ||
-      !Array.isArray(input.relatedEntryIds) || !input.relatedEntryIds.length ||
-      input.relatedEntryIds.some((id) => !/^\d+$/.test(id)) ||
-      !Array.isArray(input.history) || JSON.stringify(input).length > 131072)
+  if (
+    !input ||
+    !base.test(input.code) ||
+    !base.test(input.originalCode) ||
+    (input.productCode !== '' && !base.test(input.productCode)) ||
+    !Array.isArray(input.aliases) ||
+    !input.aliases.length ||
+    !Array.isArray(input.relatedEntryIds) ||
+    !input.relatedEntryIds.length ||
+    input.relatedEntryIds.some((id) => !/^[1-9]\d*$/.test(id)) ||
+    !Array.isArray(input.history) ||
+    JSON.stringify(input).length > 131072
+  )
     fail('Retain complete physical mark and code ownership evidence.')
   const aliases = input.aliases.map((alias) => {
-    if (!base.test(alias.code) || !/^20\d{2}-(?:0[1-9]|1[0-2])$/.test(alias.month) ||
-        !alias.code.startsWith(`CE${alias.month.slice(2).replace('-', '')}`) || !text(alias.sellerId))
+    if (
+      !base.test(alias.code) ||
+      !/^20\d{2}-(?:0[1-9]|1[0-2])$/.test(alias.month) ||
+      !alias.code.startsWith(`CE${alias.month.slice(2).replace('-', '')}`) ||
+      !text(alias.sellerId)
+    )
       fail('Retain the original physical mark namespace.')
     return { code: alias.code, month: alias.month, sellerId: alias.sellerId }
   })
-  if (new Set(aliases.map((alias) => alias.code)).size !== aliases.length ||
-      !aliases.some((alias) => alias.code === input.originalCode))
+  if (
+    new Set(aliases.map((alias) => alias.code)).size !== aliases.length ||
+    !aliases.some((alias) => alias.code === input.originalCode)
+  )
     fail('Retain each physical alias exactly once.')
   const result = {
-    code: input.code, originalCode: input.originalCode,
-    originalMark: reference(input.originalMark), productCode: input.productCode,
-    relatedEntryIds: [...new Set(input.relatedEntryIds)], aliases,
-    resolution: resolution(input.resolution, { pending }), history: clone(input.history),
+    code: input.code,
+    originalCode: input.originalCode,
+    originalMark: reference(input.originalMark),
+    productCode: input.productCode,
+    relatedEntryIds: [...new Set(input.relatedEntryIds)],
+    aliases,
+    resolution: resolution(input.resolution, { pending }),
+    history: clone(input.history),
+    originalArtwork: validateArtwork(input.originalArtwork, input.originalCode),
+    artwork: validateArtwork(input.artwork, input.code),
   }
+  if (
+    (result.resolution?.choice === 'relabel-reprint' &&
+      result.code !== result.productCode) ||
+    (result.code !== result.productCode &&
+      !aliases.some((alias) => alias.code === result.code))
+  )
+    fail(
+      'The recorded physical code must match its retained evidence and relabel attestation.'
+    )
   if (input.retiredAt !== undefined) {
-    if (!Number.isFinite(Date.parse(input.retiredAt)) || !text(input.retirementReason))
+    if (
+      !Number.isFinite(Date.parse(input.retiredAt)) ||
+      !text(input.retirementReason)
+    )
       fail('Retain the physical alias retirement reason and time.')
     result.retiredAt = input.retiredAt
     result.retirementReason = input.retirementReason
@@ -62,64 +171,185 @@ export function validatePhysicalMark(input, { pending = false } = {}) {
 }
 export function physicalMarkOwner(batch, preparations) {
   const mark = batch.mark ?? batch.groups?.[0]
-  const preparation = preparations.find((value) =>
-    (value.accountId || 'local') === (batch.accountId || 'local') && value.orderId === mark?.orderId)
+  const preparation = preparations.find(
+    (value) =>
+      (value.accountId || 'local') === (batch.accountId || 'local') &&
+      value.orderId === mark?.orderId
+  )
   const group = preparation?.groups.find((value) => value.id === mark?.groupId)
   return group ? { preparation, group, mark } : null
 }
 
 /** Capture from actual before state. Caller snapshots cannot claim an old printed code. */
-export function transitionPhysicalMark(before, after, beforePreparations, afterPreparations, {
-  decision, updatedAt = null, issuedCodes = [],
-} = {}) {
+export function transitionPhysicalMark(
+  before,
+  after,
+  beforePreparations,
+  afterPreparations,
+  { decision, restoreHistory = false, updatedAt = null, issuedCodes = [] } = {}
+) {
+  if (restoreHistory !== false && restoreHistory !== true)
+    fail('Request a typed logical keep-mark history restore.')
   if (!before) {
-    if (after.physicalMark) fail('A physical alias requires the retained prior carton evidence.')
+    if (after.physicalMark)
+      fail('A physical alias requires the retained prior carton evidence.')
     return after
   }
   const oldOwner = physicalMarkOwner(before, beforePreparations)
   const nextOwner = physicalMarkOwner(after, afterPreparations)
   const previous = before.physicalMark
-  const recorded = previous?.code || before.markCode || oldOwner?.group.baseCode || ''
+  const recorded =
+    previous?.code ||
+    (base.test(before.markCode)
+      ? before.markCode
+      : oldOwner?.group.baseCode || '')
   const productCode = nextOwner?.group.baseCode || ''
   if (!base.test(recorded) || (!previous && recorded === productCode)) {
     const result = { ...after }
     delete result.physicalMark
-    if (decision) fail('These cartons have no pending physical mark resolution.')
+    if (decision)
+      fail('These cartons have no pending physical mark resolution.')
     return result
   }
   const aliases = clone(previous?.aliases || [])
   if (oldOwner && !aliases.some((value) => value.code === recorded)) {
     const code = recorded
-    const issued = issuedCodes.find((value) => value.accountId === before.accountId && value.kind === 'base' && value.code === code)
-    aliases.push({ code, month: issued?.month || oldOwner.group.month || oldOwner.preparation.month,
-      sellerId: issued?.sellerId || oldOwner.preparation.sellerId })
+    const issued = issuedCodes.find(
+      (value) =>
+        value.accountId === before.accountId &&
+        value.kind === 'base' &&
+        value.code === code
+    )
+    aliases.push({
+      code,
+      month:
+        issued?.month || oldOwner.group.month || oldOwner.preparation.month,
+      sellerId: issued?.sellerId || oldOwner.preparation.sellerId,
+    })
   }
-  if (!aliases.length) fail('Review the original physical mark ownership before changing it.')
+  if (!aliases.length)
+    fail('Review the original physical mark ownership before changing it.')
   let physicalMark = {
-    ...(previous ? clone(previous) : {}), code: recorded,
+    ...(previous ? clone(previous) : {}),
+    code: recorded,
     originalCode: previous?.originalCode || recorded,
-    originalMark: clone(previous?.originalMark || oldOwner.mark), productCode,
+    originalMark: clone(previous?.originalMark || oldOwner.mark),
+    productCode,
     aliases,
-    relatedEntryIds: [...new Set([
-      ...(previous?.relatedEntryIds || []),
-      ...(nextOwner?.group.variants.flatMap((variant) => variant.entryIds) ||
-        oldOwner?.group.variants.flatMap((variant) => variant.entryIds) || []),
-    ])],
-    resolution: previous?.productCode === productCode ? clone(previous.resolution) : null,
+    relatedEntryIds: [
+      ...new Set([
+        ...(previous?.relatedEntryIds || []),
+        ...(before.contents || []).map((row) => row.entryId),
+        ...(before.unresolvedContents || []).flatMap(
+          (claim) => claim.entryIds || []
+        ),
+        ...Object.values(before.unitContents || {}).flatMap((rows) =>
+          rows.map((row) => row.entryId)
+        ),
+        ...(nextOwner?.group.variants.flatMap((variant) => variant.entryIds) ||
+          oldOwner?.group.variants.flatMap((variant) => variant.entryIds) ||
+          []),
+      ]),
+    ],
+    resolution:
+      previous?.productCode === productCode ? clone(previous.resolution) : null,
     history: clone(previous?.history || []),
+    originalArtwork: previous
+      ? clone(previous.originalArtwork ?? null)
+      : artwork(oldOwner, recorded),
+    artwork: previous
+      ? clone(previous.artwork ?? null)
+      : artwork(oldOwner, recorded),
   }
   if (previous && previous.productCode !== productCode)
-    physicalMark.history.push({ kind: 'product-code-change', code: previous.code,
-      productCode: previous.productCode, resolution: clone(previous.resolution), at: updatedAt })
+    physicalMark.history.push({
+      kind: 'product-code-change',
+      code: previous.code,
+      productCode: previous.productCode,
+      resolution: clone(previous.resolution),
+      at: updatedAt,
+    })
   if (decision) {
-    if (!productCode) fail('Choose a valid current product owner before resolving its physical mark.')
-    const resolved = resolution({ ...decision, provenance: 'manual-confirmed', resolvedAt: updatedAt }, { pending: updatedAt === null })
-    physicalMark.history.push({ kind: 'resolution', code: recorded, productCode,
-      resolution: clone(resolved), at: updatedAt })
+    if (restoreHistory)
+      fail('Choose a fresh resolution or a logical history restore, not both.')
+    if (!productCode)
+      fail(
+        'Choose a valid current product owner before resolving its physical mark.'
+      )
+    const resolved = resolution(
+      { ...decision, provenance: 'manual-confirmed', resolvedAt: updatedAt },
+      { pending: updatedAt === null }
+    )
+    physicalMark.history.push({
+      kind: 'resolution',
+      code: recorded,
+      productCode,
+      resolution: clone(resolved),
+      at: updatedAt,
+    })
     physicalMark.resolution = resolved
-    if (resolved.choice === 'relabel-reprint') physicalMark.code = productCode
+    if (resolved.choice === 'relabel-reprint') {
+      physicalMark.code = productCode
+      physicalMark.artwork = artwork(nextOwner, productCode)
+    }
   }
-  physicalMark = validatePhysicalMark(physicalMark, { pending: updatedAt === null })
+  if (restoreHistory) {
+    if (!physicalMark.artwork)
+      fail(
+        'Known recorded artwork is required to restore a keep-mark relation from history.'
+      )
+    const requested = after.physicalMark,
+      historical = [before, ...(before.cartonHistory || []).toReversed()].find(
+        (entry) => {
+          const saved = entry.physicalMark
+          return (
+            entry.id === before.id &&
+            entry.accountId === before.accountId &&
+            sameReference(entry.mark ?? entry.groups?.[0], nextOwner?.mark) &&
+            saved?.resolution?.choice === 'keep-recorded-mark' &&
+            requested?.resolution?.choice === 'keep-recorded-mark' &&
+            saved.code === recorded &&
+            requested.code === recorded &&
+            saved.productCode === productCode &&
+            requested.productCode === productCode &&
+            saved.originalCode === physicalMark.originalCode &&
+            requested.originalCode === physicalMark.originalCode &&
+            sameReference(saved.originalMark, physicalMark.originalMark) &&
+            sameReference(requested.originalMark, physicalMark.originalMark) &&
+            saved.resolution.reason === requested.resolution.reason &&
+            requested.resolution.provenance === saved.resolution.provenance &&
+            requested.resolution.physicalRelabelConfirmed === false &&
+            (requested.resolution.resolvedAt == null ||
+              requested.resolution.resolvedAt ===
+                saved.resolution.resolvedAt) &&
+            JSON.stringify(saved.artwork ?? null) ===
+              JSON.stringify(physicalMark.artwork ?? null) &&
+            JSON.stringify(requested.artwork ?? null) ===
+              JSON.stringify(physicalMark.artwork ?? null) &&
+            JSON.stringify(saved.originalArtwork ?? null) ===
+              JSON.stringify(physicalMark.originalArtwork ?? null) &&
+            JSON.stringify(requested.originalArtwork ?? null) ===
+              JSON.stringify(physicalMark.originalArtwork ?? null)
+          )
+        }
+      )
+    if (!historical || !productCode)
+      fail(
+        'The actual physical code, recorded artwork or retained keep-mark history no longer matches. Review the physical mark again.'
+      )
+    physicalMark.resolution = clone(historical.physicalMark.resolution)
+    physicalMark.history.push({
+      kind: 'logical-history-restore',
+      code: recorded,
+      productCode,
+      restoredFromRevision: historical.revision,
+      resolution: clone(physicalMark.resolution),
+      at: updatedAt,
+    })
+  }
+  physicalMark = validatePhysicalMark(physicalMark, {
+    pending: updatedAt === null,
+  })
   return { ...after, physicalMark }
 }
 
@@ -127,13 +357,36 @@ export function transitionPhysicalMark(before, after, beforePreparations, afterP
 export function resolvePhysicalMarkChange(plan, { batchId, ...decision }) {
   const result = clone(plan)
   const change = result.changes.find((value) => value.after?.id === batchId)
-  if (!change?.after.physicalMark) fail('Reopen the grouping review for these cartons.')
+  if (!change?.after.physicalMark)
+    fail('Reopen the grouping review for these cartons.')
   const mark = change.after.physicalMark
-  const resolved = resolution({ ...decision, provenance: 'manual-confirmed', resolvedAt: null }, { pending: true })
-  change.physicalMarkResolution = { choice: resolved.choice, reason: resolved.reason,
-    physicalRelabelConfirmed: resolved.physicalRelabelConfirmed }
+  const resolved = resolution(
+    { ...decision, provenance: 'manual-confirmed', resolvedAt: null },
+    { pending: true }
+  )
+  change.physicalMarkResolution = {
+    choice: resolved.choice,
+    reason: resolved.reason,
+    physicalRelabelConfirmed: resolved.physicalRelabelConfirmed,
+  }
   mark.resolution = resolved
-  if (resolved.choice === 'relabel-reprint') mark.code = mark.productCode
+  mark.code =
+    resolved.choice === 'relabel-reprint'
+      ? mark.productCode
+      : result.before[batchId]?.physicalMark?.code ||
+        result.reviews.find((value) => value.id === batchId)?.beforeMarkCode ||
+        mark.originalCode
+  mark.artwork =
+    resolved.choice === 'relabel-reprint'
+      ? clone(
+          result.reviews.find((value) => value.id === batchId)
+            ?.currentProductArtwork ?? null
+        )
+      : clone(
+          result.before[batchId]?.physicalMark?.artwork ??
+            mark.originalArtwork ??
+            null
+        )
   result.after[batchId] = clone(change.after)
   const review = result.reviews.find((value) => value.id === batchId)
   if (review) {
@@ -145,12 +398,58 @@ export function resolvePhysicalMarkChange(plan, { batchId, ...decision }) {
 }
 
 export function physicalMarkReadback(batch, preparations = []) {
-  const currentProductCode = physicalMarkOwner(batch, preparations)?.group.baseCode || batch.physicalMark?.productCode || ''
-  const physicalMarkCode = batch.physicalMark?.code || batch.markCode || currentProductCode
+  const currentProductCode =
+    physicalMarkOwner(batch, preparations)?.group.baseCode ||
+    batch.physicalMark?.productCode ||
+    ''
+  const physicalMarkCode =
+    batch.physicalMark?.code || batch.markCode || currentProductCode
+  const knownContents = [
+    ...(batch.contents || []),
+    ...Object.values(batch.unitContents || {}).flat(),
+  ]
+  const currentProductCodes = [
+    ...new Set(
+      preparations
+        .filter(
+          (preparation) =>
+            preparation.accountId === (batch.accountId || 'local')
+        )
+        .flatMap((preparation) =>
+          preparation.groups
+            .filter(
+              (group) =>
+                group.variants.some((variant) =>
+                  knownContents.some(
+                    (row) =>
+                      row.orderId === preparation.orderId &&
+                      variant.entryIds.includes(row.entryId)
+                  )
+                ) ||
+                (batch.unresolvedContents || []).some(
+                  (claim) =>
+                    claim.orderId === preparation.orderId &&
+                    claim.groupId === group.id
+                )
+            )
+            .map((group) => group.baseCode)
+        )
+        .filter(Boolean)
+    ),
+  ]
   return {
-    physicalMarkCode, currentProductCode,
+    physicalMarkCode,
+    currentProductCode,
+    currentProductCodes,
+    recordedArtwork: batch.physicalMark
+      ? clone(batch.physicalMark.artwork ?? null)
+      : artwork(physicalMarkOwner(batch, preparations), physicalMarkCode),
+    currentProductArtwork: artwork(
+      physicalMarkOwner(batch, preparations),
+      currentProductCode
+    ),
     ...(batch.physicalMark ? { physicalMark: clone(batch.physicalMark) } : {}),
-    physicalMarkResolutionRequired: Boolean(batch.physicalMark && !batch.physicalMark.resolution),
+    physicalMarkResolutionRequired: physicalMarkResolutionRequired(batch),
   }
 }
 
@@ -159,8 +458,11 @@ export function retainCartonEvidence(before, after) {
   if (!before) return after
   const original = clone(before)
   delete original.cartonHistory
-  return { ...after,
+  return {
+    ...after,
     cartonHistory: [...clone(before.cartonHistory || []), original],
-    ...(before.sourceFacts !== undefined ? { sourceFacts: clone(before.sourceFacts) } : {}),
+    ...(before.sourceFacts !== undefined
+      ? { sourceFacts: clone(before.sourceFacts) }
+      : {}),
   }
 }
