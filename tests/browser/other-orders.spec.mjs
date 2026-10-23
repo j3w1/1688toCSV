@@ -1,3 +1,4 @@
+import { exportPdf } from './export-completion-helpers.mjs'
 import { readFile } from 'node:fs/promises'
 import { test, expect } from './extension-fixture.mjs'
 import {
@@ -175,7 +176,9 @@ test('manual other-source order follows packing, labels, carton marks and full/s
   await expect(product).toHaveAttribute('aria-selected', 'true')
   await action(page, 'open-print-menu').click()
   await action(page, 'print-labels').click()
-  await action(page, 'export-pdf').click()
+  expect(await exportPdf(page, action(page, 'export-pdf'))).toEqual({
+    saved: true,
+  })
   let files = await downloaded(extension, 2)
   expect((await readFile(files[0].filename)).subarray(0, 5).toString()).toBe(
     '%PDF-'
@@ -188,7 +191,9 @@ test('manual other-source order follows packing, labels, carton marks and full/s
   await action(page, 'close-print-dialog').click()
   await action(page, 'open-print-menu').click()
   await action(page, 'print-carton-marks').click()
-  await action(page, 'export-pdf').click()
+  expect(await exportPdf(page, action(page, 'export-pdf'))).toEqual({
+    saved: true,
+  })
   files = await downloaded(extension, 4)
   expect(files[2].filename).toContain('CE-carton-marks-')
   expect((await readFile(files[2].filename)).subarray(0, 5).toString()).toBe(

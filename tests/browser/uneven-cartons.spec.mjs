@@ -246,7 +246,11 @@ test('uneven numbered cartons retain exact supplier measurements through the wor
   const exportDialog = page.locator('.packing-export-dialog')
   await expect(exportDialog).toBeVisible()
   await exportDialog.locator('button[data-language="en"]').click()
+  const workbookDownload = page.waitForEvent('download', (download) =>
+    download.suggestedFilename().endsWith('.xlsx')
+  )
   await exportDialog.locator('[data-action="download-packing-list"]').click()
+  await workbookDownload
   let downloaded
   await expect
     .poll(async () => {

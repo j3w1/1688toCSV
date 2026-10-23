@@ -1,3 +1,4 @@
+import { exportPdf, observePrintExport } from './export-completion-helpers.mjs'
 import { test, expect } from './extension-fixture.mjs'
 import { readFile, writeFile } from 'node:fs/promises'
 import { createDemoRecords } from '../../preview/library-fixture.js'
@@ -406,12 +407,10 @@ async function exportAliasMark(
   await expect(print).toBeVisible()
   await expect(print.getByLabel(/^Quantity for /)).toHaveCount(1)
   await expect(print.getByLabel(/^Quantity for /)).toHaveValue('6')
-  await print.locator('[data-action="export-pdf"]').click()
-  // PDF encoding is asynchronous; use its actual completion before checking
-  // both downloaded artifacts, rather than the default five-second poll alone.
-  await expect(print.locator('[data-action="export-pdf"]')).toBeEnabled({
-    timeout: 20_000,
-  })
+  expect(
+    await exportPdf(page, print.locator('[data-action="export-pdf"]'))
+  ).toEqual({ saved: true })
+  await expect(print.locator('[data-action="export-pdf"]')).toBeEnabled()
   let pdf, summaryFile
   await expect
     .poll(async () => {
@@ -919,7 +918,9 @@ test('returned cartons retain original evidence but require a fresh label after 
     )
   await expect(historicalPrint.getByLabel(/^Quantity for /)).toHaveCount(1)
   await expect(historicalPrint.getByLabel(/^Quantity for /)).toHaveValue('1')
-  await historicalPrint.locator('[data-action="export-pdf"]').click()
+  expect(
+    await exportPdf(page, historicalPrint.locator('[data-action="export-pdf"]'))
+  ).toEqual({ saved: true })
   let historicalPdf, historicalJson
   await expect
     .poll(async () => {
@@ -1047,6 +1048,7 @@ test('a carton change during real mark PDF encoding rejects the captured output 
       return original.apply(this, args)
     }
   })
+  const settled = await observePrintExport(page)
   await print.locator('[data-action="export-pdf"]').click()
   await expect
     .poll(() => page.evaluate(() => window.markEncodingStarted))
@@ -1074,6 +1076,7 @@ test('a carton change during real mark PDF encoding rejects the captured output 
   )
   await other.close()
   await page.evaluate(() => window.releaseMarkEncoding())
+  expect(await settled()).toEqual({ saved: false })
   await expect(print).toBeVisible()
   await expect(print.locator('.print-status').first()).toContainText(
     'The captured carton mark changed'

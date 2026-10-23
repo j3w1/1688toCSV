@@ -270,7 +270,11 @@ test('reviewed payment links preserve source totals, skip payment rows and expor
   await page
     .getByLabel('Include detailed automation JSON', { exact: true })
     .check()
+  const workbookDownload = page.waitForEvent('download', (download) =>
+    download.suggestedFilename().endsWith('.xlsx')
+  )
   await page.locator('[data-action="download-packing-list"]').click()
+  await workbookDownload
   await expect.poll(() => downloads.length).toBe(2)
   let files
   await expect

@@ -1,3 +1,4 @@
+import { exportPdf } from './export-completion-helpers.mjs'
 import { readFile, writeFile } from 'node:fs/promises'
 import { basename } from 'node:path'
 import * as XLSX from 'xlsx'
@@ -220,7 +221,11 @@ test('an agent authors Orders, confirms one physical arrangement, seals a named 
   await page
     .getByLabel('Include detailed automation JSON', { exact: true })
     .check()
+  const workbookDownload = page.waitForEvent('download', (download) =>
+    download.suggestedFilename().endsWith('.xlsx')
+  )
   await page.locator('[data-action="download-packing-list"]').click()
+  await workbookDownload
   let files = await downloads(extension, 2)
   const xlsx = files.find((file) => file.filename.endsWith('.xlsx'))
   const summaryFile = files.find((file) => file.filename.endsWith('.json'))
@@ -433,7 +438,9 @@ test('an agent authors Orders, confirms one physical arrangement, seals a named 
   await action(page, 'open-print-menu').click()
   await action(page, 'print-labels').click()
   await expect(page.locator('[data-action="print-calibration"]')).toBeVisible()
-  await page.locator('[data-action="export-pdf"]').click()
+  expect(
+    await exportPdf(page, page.locator('[data-action="export-pdf"]'))
+  ).toEqual({ saved: true })
   files = await downloads(extension, 4)
   const labelPdf = files.find((file) =>
     /CE-labels-.*\.pdf$/.test(file.filename)
@@ -467,7 +474,9 @@ test('an agent authors Orders, confirms one physical arrangement, seals a named 
   // announce; the browser never renames it behind their back.
   const base = (file) => basename(file.filename)
   await page.waitForTimeout(1100)
-  await page.locator('[data-action="export-pdf"]').click()
+  expect(
+    await exportPdf(page, page.locator('[data-action="export-pdf"]'))
+  ).toEqual({ saved: true })
   files = await downloads(extension, 6)
   const repeatSummaryFile = files
     .slice(4)
@@ -507,7 +516,9 @@ test('an agent authors Orders, confirms one physical arrangement, seals a named 
   await page.locator('[data-action="close-print-dialog"]').click()
   await action(page, 'open-print-menu').click()
   await action(page, 'print-carton-marks').click()
-  await page.locator('[data-action="export-pdf"]').click()
+  expect(
+    await exportPdf(page, page.locator('[data-action="export-pdf"]'))
+  ).toEqual({ saved: true })
   files = await downloads(extension, 8)
   const markPdf = files.find((file) =>
     /CE-carton-marks-.*\.pdf$/.test(file.filename)
