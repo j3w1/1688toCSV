@@ -3167,6 +3167,17 @@ export async function startLibrary(
     marks: labelCopies[1],
     headers: $('include-headers').closest('label'),
   })
+  $('orders-actions').addEventListener('focusin', ({ target }) => {
+    if (
+      !matchMedia('(max-width: 760px)').matches ||
+      !target.matches('button,input,select') ||
+      target.closest('.copy-actions-panel')
+    )
+      return
+    // Chromium can focus a partly visible button without revealing its edge.
+    // Real Tab/click focus must expose the complete control in the phone bar.
+    target.scrollIntoView({ block: 'nearest', inline: 'nearest' })
+  })
   ordersCopyMenu.trigger.dataset.action = 'open-copy-menu'
   const printButtons = [
     ['print-labels', 'Print labels…', 'barcode', 'barcode'],
