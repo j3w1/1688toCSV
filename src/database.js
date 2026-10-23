@@ -2708,6 +2708,7 @@ export async function openDatabase({ name = '1688-order-library' } = {}) {
               ),
               suggest
             )
+            containerRepository.graph(await containerRepository.state(tx))
           }
           return { changed: result.changed, order: result.order }
         }

@@ -191,6 +191,170 @@ test('native source refresh and newer legacy restores preserve authored inventor
   }
 })
 
+test('native source refresh and restore cannot reduce or remove shipped goods or poison unrelated operations', async () => {
+  const fixture = await databaseBrowser()
+  try {
+    const result = await fixture.page.evaluate(async () => {
+      const { openDatabase, fixture: factories } = modules,
+        db = await openDatabase({ name: 'synthetic-refresh-shipped-source' })
+      await db.restoreBackup({
+        format: '1688-order-library',
+        version: 4,
+        exportedAt: new Date().toISOString(),
+        orders: [
+          factories.syntheticOrder('1003'),
+          factories.syntheticOrder('1004'),
+        ],
+        history: [],
+        images: [],
+        preparations: [],
+        allocations: [],
+        issuedCodes: [],
+        packingPreferences: null,
+        cartonBatches: [
+          factories.syntheticBatch('1003'),
+          factories.syntheticBatch('1004'),
+        ],
+      })
+      const seal = async (orderId) => {
+        const container = await db.createContainer({
+          name: `Synthetic ${orderId}`,
+        })
+        let view = await db.includeContainerOrders({
+          id: container.id,
+          orderRefs: [{ orderId }],
+          expectedRevision: container.revision,
+        })
+        view = await db.markContainerLoaded({
+          id: container.id,
+          expectedRevision: view.container.revision,
+        })
+        const review = await db.reviewContainerSeal({
+          id: container.id,
+          expectedRevision: view.container.revision,
+        })
+        if (!review.ready)
+          throw new Error('Synthetic source fixture must be ready')
+        return db.sealContainer({
+          id: container.id,
+          expectedRevision: view.container.revision,
+          reviewToken: review.reviewToken,
+        })
+      }
+      const first = await seal('1003'),
+        before = await db.exportBackup(),
+        stable = (backup) => JSON.stringify({ ...backup, exportedAt: '' }),
+        errors = []
+      for (const mode of ['reduced', 'removed']) {
+        const source = (await db.getOrder('1003')).snapshot,
+          candidate = {
+            ...source,
+            observedAt: '2026-10-03T12:00:00.000Z',
+            items: source.items.map((item) => ({
+              ...item,
+              entryId: mode === 'removed' ? '2002' : item.entryId,
+              quantity: mode === 'reduced' ? '40' : item.quantity,
+            })),
+            totals:
+              mode === 'reduced'
+                ? {
+                    ...source.totals,
+                    goodsGross: '400.00',
+                    goodsNet: '400.00',
+                    payable: '400.00',
+                  }
+                : source.totals,
+          }
+        for (const route of ['refresh', 'restore']) {
+          try {
+            if (route === 'refresh') await db.saveSnapshot(candidate)
+            else {
+              const backup = structuredClone(before),
+                incoming = backup.orders.find(
+                  (record) => record.snapshot.orderId === '1003'
+                )
+              incoming.snapshot = candidate
+              incoming.lastCheckedAt = candidate.observedAt
+              // A supported old source-only archive merges into the existing
+              // shipment graph; it cannot carry a pre-forged contradictory graph.
+              await db.restoreBackup({
+                format: '1688-order-library',
+                version: 1,
+                exportedAt: backup.exportedAt,
+                orders: [incoming],
+                history: [],
+                images: [],
+              })
+            }
+          } catch (error) {
+            errors.push({
+              mode,
+              route,
+              code: error.code,
+              orderId: error.detail?.orderId,
+            })
+          }
+        }
+      }
+      const atomic = stable(before) === stable(await db.exportBackup()),
+        unrelated = await db.getOrder('1004')
+      await db.updateOrderCapacities({
+        orderId: '1004',
+        values: { 2001: '10' },
+        expectedValues: { 2001: null },
+        expectedObservedAt: unrelated.snapshot.observedAt,
+      })
+      const second = await seal('1004'),
+        frozen = await db.getContainerManifest({
+          id: first.container.id,
+          revisionId: first.revisionId,
+        }),
+        capacity = (await db.getOrder('1004')).unitsPerCarton['2001']
+      db.close()
+      return {
+        errors,
+        atomic,
+        first,
+        frozen,
+        secondQuantity: second.totals.quantity,
+        capacity,
+      }
+    })
+    assert.deepEqual(result.errors, [
+      {
+        mode: 'reduced',
+        route: 'refresh',
+        code: 'SHIPMENT_OVERALLOCATION',
+        orderId: '1003',
+      },
+      {
+        mode: 'reduced',
+        route: 'restore',
+        code: 'SHIPMENT_OVERALLOCATION',
+        orderId: '1003',
+      },
+      {
+        mode: 'removed',
+        route: 'refresh',
+        code: 'SHIPMENT_SOURCE_MISSING',
+        orderId: '1003',
+      },
+      {
+        mode: 'removed',
+        route: 'restore',
+        code: 'SHIPMENT_SOURCE_MISSING',
+        orderId: '1003',
+      },
+    ])
+    assert.equal(result.atomic, true)
+    assert.deepEqual(result.frozen, result.first)
+    assert.equal(result.capacity, 10)
+    assert.equal(result.secondQuantity, '100')
+  } finally {
+    await fixture.close()
+  }
+})
+
 test('native whole-order reservation, stale tabs, logical loading, atomic seal and historical amendment', async () => {
   const fixture = await databaseBrowser()
   try {
