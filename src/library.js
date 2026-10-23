@@ -664,13 +664,14 @@ export async function startLibrary(
     },
     true
   )
+  function revealOrder(key) {
+    if (key === orderKeys[0]) $('order-list').scrollTop = 0
+    return orderList?.ensureVisible(key)
+  }
   const orderSelection = createRowSelection({
     selected: selectedOrders,
     getKeys: () => orderKeys,
-    ensureVisible: (key) => {
-      if (key === orderKeys[0]) $('order-list').scrollTop = 0
-      return orderList?.ensureVisible(key)
-    },
+    ensureVisible: revealOrder,
     onChange: () => {
       productSelection.reset()
       productTable.reset()
@@ -1683,7 +1684,7 @@ export async function startLibrary(
               event,
               orderSelectionKey(record),
               orderKeys,
-              (key) => orderList?.ensureVisible(key)
+              revealOrder
             )
           )
             return
