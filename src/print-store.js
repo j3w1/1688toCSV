@@ -33,6 +33,216 @@ const normalize = (kind, value) =>
 const newPresetId = () =>
   `preset-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`
 
+const refText = (value) =>
+  typeof value === 'string' &&
+  value &&
+  value.length <= 512 &&
+  !/[\u0000-\u001f\u007f]/.test(value)
+    ? value
+    : null
+const physicalScope = 'order-carton-mark'
+const markRoles = ['recorded', 'current-product']
+const baseCode = /^CE\d{8}$/
+const physicalRefError = () =>
+  new Error(
+    'The captured carton mark changed. Review the current order before printing again.'
+  )
+const hasPhysicalRef = (ref) =>
+  ref &&
+  (ref.scope === physicalScope ||
+    ref.batchId !== undefined ||
+    ref.markRole !== undefined ||
+    ref.sourceGuard !== undefined)
+function cleanOrderCartonRef(ref) {
+  if (
+    ref?.scope !== physicalScope ||
+    !['accountId', 'orderId', 'batchId', 'sourceObservedAt'].every((key) =>
+      refText(ref[key])
+    ) ||
+    !Number.isFinite(Date.parse(ref.sourceObservedAt)) ||
+    !Number.isSafeInteger(ref.index) ||
+    ref.index < 0 ||
+    !markRoles.includes(ref.markRole) ||
+    !baseCode.test(ref.code) ||
+    !(ref.currentProductCode === '' || baseCode.test(ref.currentProductCode)) ||
+    !Number.isSafeInteger(ref.batchRevision) ||
+    ref.batchRevision < 1 ||
+    !Number.isSafeInteger(ref.preparationRevision) ||
+    ref.preparationRevision < 0 ||
+    typeof ref.sourceGuard !== 'string' ||
+    !/^[0-9a-f]{64}$/.test(ref.sourceGuard) ||
+    ['containerId', 'revisionId', 'draft', 'draftRevision', 'cartonId'].some(
+      (key) => ref[key] !== undefined
+    ) ||
+    ((ref.contextContainerId !== undefined ||
+      ref.amendmentEpoch !== undefined) &&
+      (!refText(ref.contextContainerId) || !refText(ref.amendmentEpoch))) ||
+    (ref.groupId !== undefined && !refText(ref.groupId))
+  )
+    return null
+  return {
+    scope: physicalScope,
+    accountId: ref.accountId,
+    orderId: ref.orderId,
+    batchId: ref.batchId,
+    index: ref.index,
+    markRole: ref.markRole,
+    code: ref.code,
+    currentProductCode: ref.currentProductCode,
+    batchRevision: ref.batchRevision,
+    preparationRevision: ref.preparationRevision,
+    sourceObservedAt: ref.sourceObservedAt,
+    sourceGuard: ref.sourceGuard,
+    ...(ref.groupId !== undefined ? { groupId: ref.groupId } : {}),
+    ...(ref.contextContainerId !== undefined
+      ? {
+          contextContainerId: ref.contextContainerId,
+          amendmentEpoch: ref.amendmentEpoch,
+        }
+      : {}),
+  }
+}
+const canonical = (value) =>
+  Array.isArray(value)
+    ? value.map(canonical)
+    : value && typeof value === 'object'
+      ? Object.fromEntries(
+          Object.keys(value)
+            .sort()
+            .filter((key) => value[key] !== undefined)
+            .map((key) => [key, canonical(value[key])])
+        )
+      : value
+
+/** Compact, complete captured source identity; no source/photo signature is stored. */
+export async function makeOrderCartonPrintRef(
+  context,
+  { batchId, role = 'recorded', index = 0 } = {}
+) {
+  const snapshot = context?.record?.snapshot,
+    accountId = snapshot?.accountId || context?.record?.accountId || 'local',
+    orderId = snapshot?.orderId,
+    batch = context?.batches?.find((batch) => batch.id === batchId),
+    revisions = context?.revisions,
+    amendment = context?.amendmentContext || revisions?.amendmentContext,
+    preparationRevision = context?.preparation?.revision || 0
+  if (
+    !refText(accountId) ||
+    !refText(orderId) ||
+    !batch ||
+    batch.deletedAt ||
+    (batch.accountId || 'local') !== accountId ||
+    batch.orderId !== orderId ||
+    !Number.isSafeInteger(batch.count) ||
+    batch.count < 1 ||
+    !Number.isSafeInteger(index) ||
+    index < 0 ||
+    (batch.entitlementIndices
+      ? !batch.entitlementIndices.includes(index)
+      : index >= batch.count) ||
+    !markRoles.includes(role) ||
+    !revisions ||
+    typeof revisions.source !== 'string' ||
+    !revisions.source ||
+    revisions.observedAt !== snapshot.observedAt ||
+    revisions.preparation !== preparationRevision ||
+    revisions.cartons?.[batchId] !== batch.revision ||
+    (context.preparation &&
+      ((context.preparation.accountId || 'local') !== accountId ||
+        context.preparation.orderId !== orderId)) ||
+    ((batch.mark || batch.groups?.[0]) &&
+      (batch.mark || batch.groups[0]).orderId !== orderId) ||
+    (context.amendmentContext &&
+      revisions.amendmentContext &&
+      JSON.stringify(canonical(context.amendmentContext)) !==
+        JSON.stringify(canonical(revisions.amendmentContext))) ||
+    (amendment &&
+      (!refText(amendment.containerId) || !refText(amendment.epoch)))
+  )
+    throw physicalRefError()
+  const owner = context.preparation?.groups.find(
+      (group) => group.id === (batch.mark || batch.groups?.[0])?.groupId
+    ),
+    currentProductCode = owner?.baseCode || '',
+    code =
+      role === 'recorded'
+        ? batch.physicalMark?.code || currentProductCode
+        : currentProductCode,
+    artwork =
+      role === 'recorded' && batch.physicalMark
+        ? batch.physicalMark.artwork || null
+        : owner
+          ? {
+              title: owner.title || '',
+              spanishName: owner.spanishName || '',
+              category: owner.category || '',
+            }
+          : null
+  if (!baseCode.test(code)) throw physicalRefError()
+  const bytes = new TextEncoder().encode(
+    JSON.stringify(
+      canonical({
+        accountId,
+        orderId,
+        batchId,
+        index,
+        role,
+        code,
+        currentProductCode,
+        artwork,
+        revisions,
+        amendmentContext: amendment || null,
+      })
+    )
+  )
+  const digest = await globalThis.crypto.subtle.digest('SHA-256', bytes)
+  const sourceGuard = [...new Uint8Array(digest)]
+    .map((value) => value.toString(16).padStart(2, '0'))
+    .join('')
+  const ref = cleanOrderCartonRef({
+    scope: physicalScope,
+    accountId,
+    orderId,
+    batchId,
+    index,
+    markRole: role,
+    code,
+    currentProductCode,
+    batchRevision: batch.revision,
+    preparationRevision,
+    sourceObservedAt: snapshot.observedAt,
+    sourceGuard,
+    ...(amendment
+      ? {
+          contextContainerId: amendment.containerId,
+          amendmentEpoch: amendment.epoch,
+        }
+      : {}),
+  })
+  if (!ref) throw physicalRefError()
+  return ref
+}
+
+export async function assertOrderCartonPrintRef(ref, context) {
+  const cleaned = cleanOrderCartonRef(ref)
+  if (!cleaned) throw physicalRefError()
+  let expected
+  try {
+    expected = await makeOrderCartonPrintRef(context, {
+      batchId: cleaned.batchId,
+      role: cleaned.markRole,
+      index: cleaned.index,
+    })
+  } catch {
+    throw physicalRefError()
+  }
+  if (refKey(cleaned) !== refKey(expected)) throw physicalRefError()
+  return true
+}
+export function orderCartonPrintIdentity(ref) {
+  return cleanOrderCartonRef(ref)
+}
+
 function cleanPreset(input) {
   const name = String(input?.name ?? '')
     .trim()
@@ -58,6 +268,7 @@ function cleanRef(ref) {
       ? value
       : null
   if (!ref || !text(ref.orderId)) return null
+  if (hasPhysicalRef(ref)) return cleanOrderCartonRef(ref)
   const historical =
     ref.containerId !== undefined ||
     ref.revisionId !== undefined ||
@@ -114,24 +325,41 @@ function cleanRef(ref) {
 export const refKey = (ref) =>
   !ref
     ? ''
-    : ref.containerId ||
-        ref.revisionId ||
-        ref.cartonId ||
-        (ref.accountId && ref.accountId !== 'local')
+    : hasPhysicalRef(ref)
       ? JSON.stringify([
-          ref.accountId || 'local',
+          physicalScope,
+          ref.accountId,
           ref.orderId,
-          ref.groupId || '',
-          ref.variantId || '',
-          ref.containerId || '',
-          ref.revisionId || '',
-          ref.cartonId || '',
-          ref.entryId || '',
-          [...(ref.entryIds || [])].sort(),
-          [...(ref.cartonBatchIds || [])].sort(),
-          ...(ref.draft === true ? ['draft', ref.draftRevision] : []),
+          ref.batchId,
+          ref.index,
+          ref.markRole,
+          ref.code,
+          ref.currentProductCode,
+          ref.batchRevision,
+          ref.preparationRevision,
+          ref.sourceObservedAt,
+          ref.sourceGuard,
+          ref.contextContainerId || '',
+          ref.amendmentEpoch || '',
         ])
-      : `${ref.orderId}/${ref.groupId}/${ref.variantId ?? ''}`
+      : ref.containerId ||
+          ref.revisionId ||
+          ref.cartonId ||
+          (ref.accountId && ref.accountId !== 'local')
+        ? JSON.stringify([
+            ref.accountId || 'local',
+            ref.orderId,
+            ref.groupId || '',
+            ref.variantId || '',
+            ref.containerId || '',
+            ref.revisionId || '',
+            ref.cartonId || '',
+            ref.entryId || '',
+            [...(ref.entryIds || [])].sort(),
+            [...(ref.cartonBatchIds || [])].sort(),
+            ...(ref.draft === true ? ['draft', ref.draftRevision] : []),
+          ])
+        : `${ref.orderId}/${ref.groupId}/${ref.variantId ?? ''}`
 
 /** A draft reference is a captured version, never an alias for live Orders. */
 export function assertContainerPrintRef(ref, manifest) {

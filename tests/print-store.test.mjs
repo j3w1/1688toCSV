@@ -8,7 +8,210 @@ import {
   RECENT_PRODUCT_LIMIT,
   refKey,
   assertContainerPrintRef,
+  makeOrderCartonPrintRef,
+  assertOrderCartonPrintRef,
+  orderCartonPrintIdentity,
 } from '../src/print-store.js'
+
+function physicalContext() {
+  return {
+    record: {
+      snapshot: {
+        accountId: 'local',
+        orderId: '101',
+        observedAt: '2026-10-23T04:00:00Z',
+      },
+    },
+    preparation: {
+      accountId: 'local',
+      orderId: '101',
+      revision: 3,
+      groups: [
+        {
+          id: 'surviving',
+          baseCode: 'CE26101001',
+          category: '当前产品',
+          spanishName: 'ACTUAL',
+        },
+      ],
+    },
+    batches: [
+      {
+        id: 'batch-a',
+        accountId: 'local',
+        orderId: '101',
+        revision: 4,
+        count: 2,
+        mark: { orderId: '101', groupId: 'surviving' },
+        physicalMark: {
+          code: 'CE26101002',
+          productCode: 'CE26101001',
+          artwork: { category: '原纸箱标记', spanishName: 'ORIGINAL' },
+        },
+      },
+    ],
+    revisions: {
+      source: `complete-source-and-original-photo-signature:${'synthetic-photo'.repeat(1000)}`,
+      observedAt: '2026-10-23T04:00:00Z',
+      preparation: 3,
+      cartons: { 'batch-a': 4 },
+      reports: {},
+    },
+  }
+}
+
+test('typed Orders carton marks retain compact complete guards and recorded/current roles without an old product group', async () => {
+  const context = physicalContext(),
+    original = structuredClone(context)
+  const ref = await makeOrderCartonPrintRef(context, {
+    batchId: 'batch-a',
+    role: 'recorded',
+    index: 1,
+  })
+  assert.equal(ref.scope, 'order-carton-mark')
+  assert.equal(ref.code, 'CE26101002')
+  assert.equal(ref.currentProductCode, 'CE26101001')
+  assert.equal(ref.batchRevision, 4)
+  assert.equal(ref.preparationRevision, 3)
+  assert.equal(Object.hasOwn(ref, 'groupId'), false)
+  assert.match(ref.sourceGuard, /^[0-9a-f]{64}$/)
+  assert.ok(JSON.stringify(ref).length < 600)
+  assert.equal(JSON.stringify(ref).includes('synthetic-photo'), false)
+  const storage = memoryStorage(),
+    store = createPrintStore(storage)
+  const job = store.recordJob({
+    kind: 'marks',
+    products: [{ code: ref.code, quantity: 6, ref }],
+  })
+  assert.deepEqual(
+    createPrintStore(storage).recentJobs()[0].products[0].ref,
+    ref
+  )
+  assert.deepEqual(orderCartonPrintIdentity(ref), ref)
+  assert.equal(
+    await assertOrderCartonPrintRef(JSON.parse(JSON.stringify(ref)), context),
+    true
+  )
+  const same = { key: 'actual-mark', code: ref.code, ref }
+  assert.equal(restoreJob(job, [same]).items.length, 1)
+  const current = await makeOrderCartonPrintRef(context, {
+    batchId: 'batch-a',
+    role: 'current-product',
+    index: 1,
+  })
+  assert.equal(current.code, 'CE26101001')
+  assert.notEqual(refKey(ref), refKey(current))
+  assert.equal(restoreJob(job, [{ ...same, ref: current }]).missing.length, 1)
+  assert.notEqual(
+    refKey(ref),
+    refKey(
+      await makeOrderCartonPrintRef(context, { batchId: 'batch-a', index: 0 })
+    )
+  )
+  assert.notEqual(refKey(ref), refKey({ orderId: '101', groupId: 'surviving' }))
+  assert.deepEqual(context, original)
+})
+
+test('physical mark regeneration rejects changed source, batch, preparation, artwork, role, epoch and missing cartons', async () => {
+  const context = physicalContext()
+  context.amendmentContext = { containerId: 'container', epoch: 'first' }
+  context.revisions.amendmentContext = structuredClone(context.amendmentContext)
+  const ref = await makeOrderCartonPrintRef(context, { batchId: 'batch-a' })
+  assert.equal(ref.contextContainerId, 'container')
+  assert.equal(ref.amendmentEpoch, 'first')
+  const variants = []
+  for (const change of [
+    (value) => {
+      value.revisions.source += ':changed'
+    },
+    (value) => {
+      value.batches[0].revision++
+      value.revisions.cartons['batch-a']++
+    },
+    (value) => {
+      value.preparation.revision++
+      value.revisions.preparation++
+    },
+    (value) => {
+      value.record.snapshot.observedAt = value.revisions.observedAt =
+        '2026-10-23T05:00:00Z'
+    },
+    (value) => {
+      value.batches[0].physicalMark.code = 'CE26101003'
+    },
+    (value) => {
+      value.batches[0].physicalMark.artwork.category =
+        'Different recorded artwork'
+    },
+    (value) => {
+      value.amendmentContext.epoch = value.revisions.amendmentContext.epoch =
+        'second'
+    },
+    (value) => {
+      delete value.amendmentContext
+      delete value.revisions.amendmentContext
+    },
+    (value) => {
+      value.batches = []
+    },
+    (value) => {
+      value.batches[0].deletedAt = '2026-10-23T05:00:00Z'
+    },
+    (value) => {
+      value.record.snapshot.accountId = 'other'
+    },
+  ]) {
+    const next = structuredClone(context)
+    change(next)
+    variants.push(next)
+  }
+  for (const next of variants)
+    await assert.rejects(
+      assertOrderCartonPrintRef(ref, next),
+      /Review the current order/
+    )
+  await assert.rejects(
+    assertOrderCartonPrintRef({ ...ref, markRole: 'current-product' }, context),
+    /Review the current order/
+  )
+  await assert.rejects(
+    makeOrderCartonPrintRef(context, { batchId: 'batch-a', index: 2 }),
+    /Review the current order/
+  )
+})
+
+test('malformed physical refs cannot fall back to legacy Orders or container identity', async () => {
+  const ref = await makeOrderCartonPrintRef(physicalContext(), {
+    batchId: 'batch-a',
+  })
+  for (const change of [
+    { scope: 'orders' },
+    { batchRevision: 0 },
+    { preparationRevision: -1 },
+    { sourceGuard: 'not-a-guard' },
+    { index: -1 },
+    { index: 0.5 },
+    { markRole: 'guess' },
+    { code: 'not-a-code' },
+    { contextContainerId: 'x' },
+    { amendmentEpoch: 'missing-context' },
+    { containerId: 'container', revisionId: 'r1' },
+  ]) {
+    const candidate = {
+      ...ref,
+      groupId: 'legacy-does-not-rescue-it',
+      ...change,
+    }
+    assert.equal(
+      createPrintStore(memoryStorage()).recordJob({
+        kind: 'marks',
+        products: [{ code: ref.code, quantity: 1, ref: candidate }],
+      }),
+      null
+    )
+    assert.equal(orderCartonPrintIdentity(candidate), null)
+  }
+})
 
 function memoryStorage() {
   const values = new Map()

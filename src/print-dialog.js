@@ -35,7 +35,11 @@ import {
 } from './print-layout.js'
 import { createPdf, rgbImage } from './pdf-writer.js'
 import { canvasPage } from './print-canvas.js'
-import { createPrintStore, containerPrintIdentity } from './print-store.js'
+import {
+  createPrintStore,
+  containerPrintIdentity,
+  orderCartonPrintIdentity,
+} from './print-store.js'
 import { saveFile, announceExport, uniqueFileName } from './save-file.js'
 import {
   printSummary,
@@ -136,6 +140,7 @@ export function openPrintDialog({
   logoUrl,
   job = null,
   store = createPrintStore(),
+  validateSource,
 }) {
   const marks = kind === 'marks'
   const refs = items.flatMap(
@@ -145,6 +150,24 @@ export function openPrintDialog({
     (ref) => ref.containerId !== undefined || ref.revisionId !== undefined
   )
   const container = hasContainer ? containerPrintIdentity(refs[0]) : null
+  const physicalRefs = refs.filter(
+      (ref) =>
+        ref.scope === 'order-carton-mark' ||
+        ref.batchId !== undefined ||
+        ref.markRole !== undefined ||
+        ref.sourceGuard !== undefined
+    ),
+    physicalMarks = physicalRefs.map(orderCartonPrintIdentity)
+  if (
+    physicalRefs.length &&
+    (!marks ||
+      hasContainer ||
+      physicalRefs.length !== refs.length ||
+      physicalMarks.some((ref) => !ref))
+  )
+    throw new Error(
+      'Review the captured physical carton marks before printing again.'
+    )
   if (
     hasContainer &&
     (!container ||
@@ -1304,6 +1327,8 @@ export function openPrintDialog({
       language: getLanguage(dialog),
     }
     try {
+      await validateSource?.()
+      if (closed) return
       const pages = Array.from({ length: state.plan.pages }, (_, index) =>
         opsFor(state, index)
       )
@@ -1345,6 +1370,8 @@ export function openPrintDialog({
       const bytes = pdf.build()
       // Cancel or close while preparing means no download and no recent job.
       if (closed) return
+      await validateSource?.()
+      if (closed) return
       const filename = uniqueFileName(
         `${container?.draft ? 'DRAFT-' : ''}${printFileName(kind, state.plan.items.length, new Date(), state.language)}`
       )
@@ -1367,6 +1394,7 @@ export function openPrintDialog({
           total: entry.total,
         })),
       })
+      if (physicalMarks.length) summary.physicalMarks = physicalMarks
       saveFile(
         new Blob([JSON.stringify(summary, null, 2)], {
           type: 'application/json',
