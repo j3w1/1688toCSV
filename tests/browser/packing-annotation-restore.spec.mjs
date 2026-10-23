@@ -10,6 +10,7 @@ function snapshot() {
     sellerName: 'Synthetic partial annotations',
     sellerMemberLogin: 'synthetic-partial-annotations',
     status: 'Completed',
+    purchasedAt: '2026-10-01T12:00:00+08:00',
     observedAt: '2026-10-01T12:00:00.000Z',
     items: ['Cup', 'Bowl', 'Plate'].map((title, index) => ({
       entryId: String(index + 1),

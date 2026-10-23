@@ -53,6 +53,12 @@ function snapshot(overrides = {}) {
   }
 }
 
+// Current issuance fixtures explicitly carry their original purchase month.
+// Legacy/enrichment snapshots above remain date-less unless a test supplies it.
+function codeSnapshot(month, overrides = {}) {
+  return snapshot({ purchasedAt: `${month}-01T12:00:00+08:00`, ...overrides })
+}
+
 async function openTestDatabase(extension) {
   const page = await extension.context.newPage()
   await page.goto(`${extension.origin}/unsupported`)
@@ -701,7 +707,7 @@ test('automatic naming changes preserve manual fields, explicit clears, codes an
   extension,
 }) => {
   const page = await openTestDatabase(extension)
-  const first = snapshot()
+  const first = codeSnapshot('2026-10')
   first.items[0].title = '测试 蜡烛'
   first.items[1].title = '未命名测试样品'
   const result = await page.evaluate(async (input) => {
@@ -761,7 +767,7 @@ test('derived names preserve authoring time so newer manual backups restore and 
   extension,
 }) => {
   const page = await openTestDatabase(extension)
-  const first = snapshot()
+  const first = codeSnapshot('2026-10')
   first.items[0].title = '测试 蜡烛'
   const result = await page.evaluate(async (input) => {
     const { createPreparation } = await import('/src/packing-model.js')
@@ -1940,7 +1946,7 @@ test('invalid backup rows and image data reject the whole restore before writing
         orders: [nextRecord, original.orders[0]],
       }
       const invalid = [
-        { ...candidate, version: 5 },
+        { ...candidate, version: 6 },
         { ...candidate, cartonBatches: {} },
         {
           ...candidate,
@@ -2095,7 +2101,7 @@ test('v1 databases upgrade in place with orders, history, images and jobs preser
   expect(result.image).toEqual(image)
   expect(result.preparations).toEqual([])
   expect(result.cartonBatches).toEqual([])
-  expect(result.backup.version).toBe(4)
+  expect(result.backup.version).toBe(5)
   expect(result.backup.cartonBatches).toEqual([])
   expect(result.backup.issuedCodes).toEqual([])
 })
@@ -2259,7 +2265,7 @@ test('unavailable source sellers require an authored identity before codes and p
       afterMalformed,
       afterIdentified,
     }
-  }, snapshot())
+  }, codeSnapshot('2026-10'))
   expect(result.initialSeller).toBe('')
   expect(result.preparationErrors).toHaveLength(8)
   expect(
@@ -2340,7 +2346,7 @@ test('concurrent database connections allocate unique codes and reject stale pre
     }
     other.close()
     return output
-  }, snapshot())
+  }, codeSnapshot('2026-06'))
   expect(
     result.saved.flatMap((entry) => entry.groups.map((group) => group.baseCode))
   ).toEqual(['CE26060101', 'CE26060102', 'CE26060103', 'CE26060104'])
@@ -2398,14 +2404,14 @@ test('refresh preserves authoring and removed memberships while new entries rema
       restoredPreparation,
       source: await library.getOrder(first.orderId),
     }
-  }, snapshot())
+  }, codeSnapshot('2026-06'))
   expect(result.retained).toEqual(result.saved)
   expect(result.active).toHaveLength(1)
   expect(result.edited.groups[1].variants[0].entryIds).toEqual([
     '2234567890123456790',
   ])
   expect(result.error).toContain('entry missing')
-  expect(result.source.snapshot.totals).toEqual(snapshot().totals)
+  expect(result.source.snapshot.totals).toEqual(codeSnapshot('2026-06').totals)
   expect(result.source.snapshot.items).toHaveLength(2)
   expect(result.restoredPreparation).toEqual(result.edited)
 })
@@ -2445,7 +2451,7 @@ test('manual base edits update variant codes and deletion releases current assig
       error,
       current: await library.getPreparation(first.orderId),
     }
-  }, snapshot())
+  }, codeSnapshot('2026-06'))
   expect(result.code).toBe('CE26060107')
   expect(result.afterDelete.orders).toEqual([])
   expect(result.afterDelete.preparations).toEqual([])
@@ -2494,7 +2500,7 @@ test('barcode lookup includes only current suffixes and isolates the base and ac
       before: { ...before, exportedAt: '' },
       after: { ...after, exportedAt: '' },
     }
-  }, snapshot())
+  }, codeSnapshot('2026-06'))
   expect(result.reserved).toEqual(['CE26060101B'])
   expect(result.otherReserved).toEqual(['CE26060101C'])
   expect(result.absent).toEqual([])
@@ -2558,7 +2564,7 @@ test('saved product codes roundtrip and released barcode endings can be reused',
       restored,
       final,
     }
-  }, snapshot())
+  }, codeSnapshot('2026-10'))
   expect(result.returned.groups).toEqual(result.original.groups)
   expect(result.unchanged).toEqual(result.reassigned)
   expect(result.restored.groups).toEqual(result.original.groups)
@@ -2635,7 +2641,7 @@ test('backups preserve independent authoring and preferences without reviving re
       restored.close()
       return output
     },
-    { first: snapshot(), image }
+    { first: codeSnapshot('2026-06'), image }
   )
   expect(result.beforeUpdate).toEqual(result.newerPreparation)
   expect(result.preparation).toEqual(result.newerPreparation)
@@ -2709,7 +2715,7 @@ test('cross-library code conflicts and malformed packing backups roll back the e
       original: { ...original, exportedAt: '' },
       after: { ...after, exportedAt: '' },
     }
-  }, snapshot())
+  }, codeSnapshot('2026-06'))
   expect(result.errors).toHaveLength(5)
   expect(result.errors[0]).toContain('Code conflict')
   expect(result.after).toEqual(result.original)
@@ -2762,7 +2768,7 @@ test('restore rolls back authoring whose members disappear in tied source or his
       })
     }
     return output
-  }, snapshot())
+  }, codeSnapshot('2026-06'))
   for (const result of results) {
     expect(result.error).toContain('entry missing from its order and history')
     expect(result.after).toEqual(result.before)
@@ -2849,7 +2855,7 @@ test('current assignments allow the 3103 to 3105 to 3103 sequence and release 31
       afterOlderRestore,
       roundtrip,
     }
-  }, snapshot())
+  }, codeSnapshot('2026-10'))
   expect(result.transitions).toEqual([
     'CE26103103',
     'CE26103105',
@@ -2882,7 +2888,7 @@ test('current assignments allow the 3103 to 3105 to 3103 sequence and release 31
     result.afterConflict.preparations
   )
   expect(result.roundtrip.issuedCodes).toEqual(result.afterConflict.issuedCodes)
-  expect(result.roundtrip.version).toBe(4)
+  expect(result.roundtrip.version).toBe(5)
   expect(result.roundtrip.cartonBatches).toEqual(
     result.afterConflict.cartonBatches
   )
@@ -2920,7 +2926,7 @@ test('an atomic code swap checks final assignments and rejects a duplicate witho
     }
     const after = await library.exportBackup()
     return { originals, swapped, before, after, conflict }
-  }, snapshot())
+  }, codeSnapshot('2026-10'))
   expect(result.swapped[0].groups[0].baseCode).toBe(
     result.originals[1].groups[0].baseCode
   )

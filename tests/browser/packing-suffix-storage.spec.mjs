@@ -9,6 +9,7 @@ function snapshot(orderId) {
     sellerName: 'Synthetic suffix seller',
     sellerMemberLogin: 'synthetic-suffix-seller',
     status: 'Completed',
+    purchasedAt: '2026-10-01T12:00:00+08:00',
     observedAt: '2026-10-01T12:00:00.000Z',
     items: ['Red cup', 'Blue cup', 'Bowl'].map((description, index) => ({
       entryId: String(index + 1),

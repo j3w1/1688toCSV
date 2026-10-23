@@ -10,6 +10,7 @@ function snapshot(accountId = 'local') {
     sellerName: 'Synthetic confirmation supplier',
     sellerMemberLogin: 'synthetic-confirmation-supplier',
     status: 'Completed',
+    purchasedAt: '2026-10-01T12:00:00+08:00',
     observedAt: '2026-10-01T12:00:00.000Z',
     items: ['Cup', 'Bowl', 'Plate'].map((title, index) => ({
       entryId: String(index + 1),

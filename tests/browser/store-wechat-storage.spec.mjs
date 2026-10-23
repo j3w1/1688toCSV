@@ -13,6 +13,7 @@ function snapshot(
     sellerName: 'Synthetic store',
     sellerMemberLogin,
     status: 'Completed',
+    purchasedAt: '2026-10-01T12:00:00+08:00',
     observedAt: '2026-10-01T12:00:00.000Z',
     items: [
       {

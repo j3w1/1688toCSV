@@ -9,6 +9,7 @@ function snapshot(orderId, accountId = 'local') {
     sellerName: 'Synthetic carton deletion supplier',
     sellerMemberLogin: 'synthetic-carton-deletion',
     status: 'Completed',
+    purchasedAt: '2026-10-01T12:00:00+08:00',
     observedAt: '2026-10-01T12:00:00.000Z',
     items: [
       {
