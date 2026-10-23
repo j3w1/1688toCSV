@@ -29,6 +29,9 @@ const numberCell = (value, style = 5) => ({
   value: absent(value) ? '' : exactDecimal(value),
   style,
 })
+const excelNumeric = (value) =>
+  !absent(value) &&
+  String(value).replace(/[-.]/g, '').replace(/^0+/, '').length <= 15
 const identity = (value) =>
   JSON.stringify([
     value.accountId || 'local',
@@ -940,6 +943,23 @@ function physicalWorksheet(manifest, options) {
       height: Math.min(409, Math.max(83, content.split('\n').length * 15 + 16)),
       cells: columns.map((column) => values[column.key]),
     }
+    const dimensionColumns = ['len', 'wid', 'ht'].map((key) =>
+      columns.findIndex((column) => column.key === key)
+    )
+    if (
+      dimensionColumns.every((index) => index >= 0) &&
+      ['len', 'wid', 'ht'].every((key) => excelNumeric(carton[key])) &&
+      excelNumeric(carton.volume)
+    ) {
+      const refs = dimensionColumns.map(
+        (index) => `${columnName(index)}${row.number}`
+      )
+      const formula = `IF(AND(COUNT(${refs.join(',')})=3,${refs.map((ref) => `${ref}>0`).join(',')}),${refs.join('*')}/1000000,"")`
+      for (const key of ['volumePerCarton', 'totalVolume', 'loadedVolume']) {
+        const index = columns.findIndex((column) => column.key === key)
+        if (index >= 0) row.cells[index].formula = formula
+      }
+    }
     sheet.rows.push(row)
     sheet.lastRow = row.number
     sheet.lastProductRow = row.number
@@ -967,6 +987,25 @@ function physicalWorksheet(manifest, options) {
       loadedVolume: manifest.totals.volume,
     }))
       replaceCell(sheet, row, key, numberCell(value, styles(key, true)))
+    if (
+      manifest.cartons.length &&
+      manifest.cartons.every((carton) => !absent(carton.volume))
+    )
+      for (const key of ['totalVolume', 'loadedVolume']) {
+        const index = columns.findIndex((column) => column.key === key)
+        if (
+          index >= 0 &&
+          excelNumeric(row.cells[index].value) &&
+          sheet.records.every(
+            (record) => sheet.rows[record.row - 1].cells[index]?.formula
+          )
+        ) {
+          const first = sheet.records[0].row,
+            last = sheet.records.at(-1).row
+          row.cells[index].formula =
+            `SUM(${columnName(index)}${first}:${columnName(index)}${last})`
+        }
+      }
     const label = columns.findIndex((column) =>
       ['batch', 'contents', 'cartonMark'].includes(column.key)
     )

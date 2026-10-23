@@ -11,6 +11,64 @@ import {
 } from '../src/container-export.js'
 import { PACKING_PRODUCT_DEFAULT_COLUMNS } from '../src/packing-workbook.js'
 import { SUMMARY_FORMAT } from '../src/export-summary.js'
+import { syntheticManifest } from './fixtures/container-fixture.mjs'
+
+test('Cartons retains trusted editable dimension formulas with exact caches, custom columns and truthful unknowns', async () => {
+  const manifest = syntheticManifest(),
+    cartonColumns = [
+      'batch',
+      'ht',
+      'wid',
+      'len',
+      'volumePerCarton',
+      'totalVolume',
+      'loadedVolume',
+    ],
+    plan = planContainerWorkbook(manifest, { cartonColumns }),
+    sheet = plan.sheets[1],
+    first = sheet.records[0].row,
+    bytes = await createContainerWorkbook(manifest, { cartonColumns }),
+    workbook = read(bytes, { type: 'array' }),
+    cartons = workbook.Sheets.Cartons
+  assert.match(cartons[`E${first}`].f, /D\d+\*C\d+\*B\d+\/1000000/)
+  assert.equal(cartons[`E${first}`].v, 0.125)
+  assert.equal(cartons[`F${first}`].v, 0.125)
+  assert.match(cartons[`F${sheet.totalRow}`].f, /^SUM\(F\d+:F\d+\)$/)
+  assert.equal(cartons[`F${sheet.totalRow}`].v, 0.25)
+  const hidden = planContainerWorkbook(manifest, {
+    cartonColumns: ['batch', 'totalVolume'],
+  }).sheets[1]
+  assert.ok(
+    hidden.rows.every((row) => row.cells.every((cell) => !cell.formula))
+  )
+  assert.equal(hidden.rows[hidden.records[0].row - 1].cells[1].value, '0.125')
+  const unknown = structuredClone(manifest)
+  Object.assign(unknown.cartons[0], { len: '', wid: '', ht: '', volume: null })
+  unknown.totals.volume = null
+  const incomplete = planContainerWorkbook(unknown, { cartonColumns }).sheets[1]
+  assert.equal(
+    incomplete.rows[incomplete.records[0].row - 1].cells[4].formula,
+    undefined
+  )
+  assert.equal(
+    incomplete.rows[incomplete.records[0].row - 1].cells[4].value,
+    ''
+  )
+  assert.equal(
+    incomplete.rows[incomplete.totalRow - 1].cells[5].formula,
+    undefined
+  )
+  assert.equal(incomplete.rows[incomplete.totalRow - 1].cells[5].value, '')
+  const precise = structuredClone(manifest)
+  precise.cartons[0].len = '1.23456789123456789'
+  precise.cartons[0].volume = '0.003086419728086419725'
+  const exact = planContainerWorkbook(precise, { cartonColumns }).sheets[1]
+  assert.equal(exact.rows[exact.records[0].row - 1].cells[4].formula, undefined)
+  assert.equal(
+    exact.rows[exact.records[0].row - 1].cells[4].value,
+    precise.cartons[0].volume
+  )
+})
 
 const PHOTO =
   'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO2WZ4kAAAAASUVORK5CYII='
