@@ -39,6 +39,71 @@ export const CARTON_GRID_COLUMNS = [
   { key: 'provenance', label: 'Evidence', readonly: true },
 ]
 
+function supersededMarkMessages(review) {
+  const messages = []
+  for (const entry of review.physicalMarkSupersessions || [])
+    for (const conflict of entry.conflicts || [])
+      messages.push(
+        conflict.containerId
+          ? m(
+              'The recorded mark {code} belongs to shipment {shipment} (revision {revision}). Print the current product mark and confirm physical relabeling.',
+              {
+                code: entry.code,
+                shipment: conflict.containerId,
+                revision: conflict.revisionId || '—',
+              }
+            )
+          : m(
+              'The recorded mark {code} belongs to purchase {order}. Print the current product mark and confirm physical relabeling.',
+              { code: entry.code, order: conflict.orderId }
+            )
+      )
+  return messages.length
+    ? messages
+    : [
+        m(
+          'The recorded carton mark is superseded. Print the current product mark and confirm physical relabeling.'
+        ),
+      ]
+}
+
+function appendSupersededMarkEvidence(card, review) {
+  if (!review.physicalMarkRelabelOnly) return
+  const evidence = el('div', undefined, 'physical-mark-supersession')
+  evidence.dataset.markSupersession = 'true'
+  for (const message of supersededMarkMessages(review))
+    evidence.append(el('p', message))
+  for (const entry of review.physicalMarkSupersessions || []) {
+    if (entry.reason) {
+      const reason = el('p')
+      reason.append(el('strong', m('Reason')), el('span', entry.reason))
+      evidence.append(reason)
+    }
+    for (const conflict of entry.conflicts || [])
+      evidence.append(
+        el(
+          'p',
+          m('Code owner: {order} / {group}', {
+            order: conflict.orderId,
+            group: conflict.groupId,
+          })
+        )
+      )
+    for (const current of entry.currentProducts || [])
+      evidence.append(
+        el(
+          'p',
+          m('Current product: {code} ({order} / {group})', {
+            code: current.productCode,
+            order: current.mark.orderId,
+            group: current.mark.groupId,
+          })
+        )
+      )
+  }
+  card.append(evidence)
+}
+
 /** Explicit Orders decisions; this control never writes or invents mark facts. */
 export function mountPhysicalMarkChoices({
   host,
@@ -84,7 +149,11 @@ export function mountPhysicalMarkChoices({
       owner = el('select'),
       ownerChoices = review.physicalMarkOwnerChoices || [],
       allowedChoices = new Set(
-        review.resolutionChoices || ['keep-recorded-mark', 'relabel-reprint']
+        review.resolutionChoices ||
+          review.physicalMarkResolutionChoices || [
+            'keep-recorded-mark',
+            'relabel-reprint',
+          ]
       ),
       requiresOwner = !(
         review.currentProductCode || review.physicalMark?.productCode
@@ -118,6 +187,7 @@ export function mountPhysicalMarkChoices({
       row.append(el('strong', m(label)), code)
       card.append(row)
     }
+    appendSupersededMarkEvidence(card, review)
     if (requiresOwner) {
       owner.dataset.action = 'choose-physical-mark-owner'
       bindAttribute(owner, 'aria-label', m('Choose the current product owner'))
@@ -221,6 +291,7 @@ export function mountPhysicalMarkChoices({
             )
             if (
               state.printBusy ||
+              (role === 'recorded' && review.physicalMarkRelabelOnly) ||
               (role === 'current-product' &&
                 ((requiresOwner && !target) ||
                   !canPrintCurrent(review, target?.mark)))
@@ -276,12 +347,18 @@ export function mountPhysicalMarkChoices({
           '—'
       )
       for (const button of row.printButtons) {
-        const unavailable =
-          button.dataset.markRole === 'current-product' &&
-          ((row.requiresOwner && !target) ||
-            !canPrintCurrent(row.review, target?.mark))
+        const superseded =
+            button.dataset.markRole === 'recorded' &&
+            row.review.physicalMarkRelabelOnly,
+          unavailable =
+            superseded ||
+            (button.dataset.markRole === 'current-product' &&
+              ((row.requiresOwner && !target) ||
+                !canPrintCurrent(row.review, target?.mark)))
         button.disabled = row.printBusy || unavailable
-        if (unavailable)
+        if (superseded)
+          bindAttribute(button, 'title', supersededMarkMessages(row.review)[0])
+        else if (unavailable)
           bindAttribute(
             button,
             'title',
@@ -358,7 +435,9 @@ export async function openPhysicalMarkReview({
     el(
       'p',
       m(
-        'Keep the recorded mark alongside the current product code, or confirm actual relabeling. Original quantities, prices and carton measurements stay unchanged.'
+        batch.physicalMarkRelabelOnly
+          ? 'Print the current product mark and confirm actual relabeling. Original quantities, prices and carton measurements stay unchanged.'
+          : 'Keep the recorded mark alongside the current product code, or confirm actual relabeling. Original quantities, prices and carton measurements stay unchanged.'
       )
     )
   )
@@ -399,7 +478,12 @@ export async function openPhysicalMarkReview({
       const missingOwner =
         role === 'current-product' &&
         !(batch.currentProductCode || batch.physicalMark?.productCode)
-      button.disabled = missingOwner
+      const superseded = role === 'recorded' && batch.physicalMarkRelabelOnly
+      button.disabled = missingOwner || superseded
+      if (superseded) {
+        button.dataset.recordedMarkSuperseded = 'true'
+        bindAttribute(button, 'title', supersededMarkMessages(batch)[0])
+      }
       if (missingOwner) {
         button.dataset.ownerRequired = 'true'
         bindAttribute(
@@ -412,6 +496,7 @@ export async function openPhysicalMarkReview({
       }
       button.onclick = () =>
         void (async () => {
+          if (busy || button.disabled) return
           printButtons.forEach((button) => {
             button.disabled = true
           })
@@ -431,7 +516,10 @@ export async function openPhysicalMarkReview({
             if (error.noticeOptions) showErrorNotice(error, { scope: modal })
           } finally {
             printButtons.forEach((button) => {
-              button.disabled = busy || button.dataset.ownerRequired === 'true'
+              button.disabled =
+                busy ||
+                button.dataset.ownerRequired === 'true' ||
+                button.dataset.recordedMarkSuperseded === 'true'
             })
           }
         })()
@@ -451,6 +539,9 @@ export async function openPhysicalMarkReview({
         physicalMark: batch.physicalMark,
         physicalMarkOwnerChoices: batch.physicalMarkOwnerChoices,
         physicalMarkCode: batch.physicalMarkCode || batch.physicalMark.code,
+        physicalMarkRelabelOnly: batch.physicalMarkRelabelOnly,
+        physicalMarkSupersessions: batch.physicalMarkSupersessions,
+        resolutionChoices: batch.physicalMarkResolutionChoices,
         currentProductCode:
           batch.currentProductCode || batch.physicalMark.productCode,
         resolutionRequired: true,
@@ -485,7 +576,10 @@ export async function openPhysicalMarkReview({
       field.disabled = value || Boolean(saved) || unavailable.has(field)
     retry.disabled = value
     printButtons.forEach((button) => {
-      button.disabled = value || button.dataset.ownerRequired === 'true'
+      button.disabled =
+        value ||
+        button.dataset.ownerRequired === 'true' ||
+        button.dataset.recordedMarkSuperseded === 'true'
     })
   }
   const finish = async () => {

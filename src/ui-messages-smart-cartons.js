@@ -2,6 +2,36 @@
 export const SMART_CARTON_MESSAGES = Object.fromEntries(
   [
     [
+      'The recorded mark {code} belongs to shipment {shipment} (revision {revision}). Print the current product mark and confirm physical relabeling.',
+      'La marca registrada {code} pertenece al embarque {shipment} (revisión {revision}). Imprime la marca del producto actual y confirma el cambio físico de etiqueta.',
+      '已记录的箱唛 {code} 属于货柜 {shipment}（版本 {revision}）。请打印当前商品箱唛，并确认已实际更换标签。',
+    ],
+    [
+      'The recorded mark {code} belongs to purchase {order}. Print the current product mark and confirm physical relabeling.',
+      'La marca registrada {code} pertenece a la compra {order}. Imprime la marca del producto actual y confirma el cambio físico de etiqueta.',
+      '已记录的箱唛 {code} 属于采购订单 {order}。请打印当前商品箱唛，并确认已实际更换标签。',
+    ],
+    [
+      'The recorded carton mark is superseded. Print the current product mark and confirm physical relabeling.',
+      'La marca registrada de la caja fue sustituida. Imprime la marca del producto actual y confirma el cambio físico de etiqueta.',
+      '已记录的纸箱箱唛已被替代。请打印当前商品箱唛，并确认已实际更换标签。',
+    ],
+    [
+      'Print the current product mark and confirm actual relabeling. Original quantities, prices and carton measurements stay unchanged.',
+      'Imprime la marca del producto actual y confirma el cambio físico de etiqueta. Se mantienen las cantidades, los precios y las medidas originales.',
+      '请打印当前商品箱唛，并确认已实际更换标签。原始数量、价格及纸箱测量值保持不变。',
+    ],
+    [
+      'Code owner: {order} / {group}',
+      'Propietario del código: {order} / {group}',
+      '编码归属：{order} / {group}',
+    ],
+    [
+      'Current product: {code} ({order} / {group})',
+      'Producto actual: {code} ({order} / {group})',
+      '当前商品：{code}（{order} / {group}）',
+    ],
+    [
       'Existing product artwork for a proposed carton relation — printing does not confirm physical relabeling.',
       'Diseño de un producto existente para la relación propuesta de la caja: imprimir no confirma el cambio físico de etiqueta.',
       '使用已存在商品的图稿预览拟定纸箱归属：打印不代表已实际更换箱唛。',
