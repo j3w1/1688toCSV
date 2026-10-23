@@ -50,9 +50,13 @@ try {
   await first.locator('[data-action="edit-order-product"]').click()
   const authoring = page.locator('.product-authoring-dialog')
   await authoring.getByRole('button', { name: 'Barcode', exact: true }).click()
-  await page
-    .getByAltText('Printable label preview')
-    .evaluate((image) => image.decode())
+  const labelPreview = page.getByAltText('Printable label preview')
+  await expect(labelPreview).toBeVisible()
+  await expect(labelPreview).toHaveAttribute('src', /^(blob:|data:image\/)/)
+  await labelPreview.evaluate((image) => image.decode())
+  expect(
+    await labelPreview.evaluate((image) => image.naturalWidth)
+  ).toBeGreaterThan(0)
   await page
     .locator('#label-dialog')
     .screenshot({ path: 'screenshots/label-editor.png' })
