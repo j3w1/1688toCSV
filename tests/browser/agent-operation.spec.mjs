@@ -328,9 +328,11 @@ test('an agent authors Orders, confirms one physical arrangement, seals a named 
     basename(xlsx.filename),
     basename(summaryFile.filename),
   ])
-  expect(summary.products[0]).toMatchObject({
-    packingMonth: '2026-10',
-  })
+  expect(summary.container.name).toBe('Synthetic agent November')
+  for (const product of summary.products) {
+    expect(product.packingMonth).toBe('2026-10')
+    expect(product.barcode).toMatch(/^CE2610/)
+  }
   expect(summary.products).toHaveLength(3)
   expect(summary.cartonBatches).toHaveLength(3)
   expect(summary.cartonBatches.reduce((n, batch) => n + batch.count, 0)).toBe(6)
@@ -341,8 +343,9 @@ test('an agent authors Orders, confirms one physical arrangement, seals a named 
       len: '50',
       wid: '50',
       ht: '50',
-      month: '2026-10',
     })
+  for (const batch of summary.cartonBatches)
+    expect(batch.contents.every((part) => part.orderId === orderId)).toBe(true)
   expect(summary.cartons).toHaveLength(6)
   expect(summary.cartons.every((carton) => carton.state === 'loaded')).toBe(
     true
