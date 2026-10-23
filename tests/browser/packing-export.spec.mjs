@@ -345,7 +345,7 @@ test('container export preserves advanced columns/order/layout and exact theme/m
   expect(summary.products[0]).toHaveProperty('sourceUnitPrice')
   expect(
     summary.products.flatMap((row) => row.additionalChargeReasons || [])
-  ).toContain('Internal handling')
+  ).toEqual(Array(3).fill('Internal handling (¥12.00)'))
   await page.reload()
   await page.locator('#view-packing').click()
   await page.locator('[data-action="export-packing-list"]').click()

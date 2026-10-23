@@ -128,6 +128,12 @@ for (const language of ['en', 'es', 'zh']) {
               tableTop:
                 document.querySelector('.table-scroll').getBoundingClientRect()
                   .top + window.scrollY,
+              paneHeight: document
+                .querySelector('.sheet-pane')
+                .getBoundingClientRect().height,
+              actionBarHeight: document
+                .querySelector('.action-bar')
+                .getBoundingClientRect().height,
             },
             width: innerWidth,
             scrollY,
@@ -175,13 +181,16 @@ for (const language of ['en', 'es', 'zh']) {
       await expect(row).toHaveAttribute('aria-selected', 'false')
       expect(await layout(), `deselection at ${width}px`).toEqual(before)
       await row.focus()
+      // Native focus can scroll the phone's independent pane. Compare the
+      // selection operation after that focus step, retaining exact geometry.
+      const keyboardBefore = await layout()
       await page.keyboard.press('ControlOrMeta+a')
       await expect(
         page.locator('#sheet-body tr[aria-selected="true"]')
       ).toHaveCount(3)
-      expect(await layout(), `select all at ${width}px`).toEqual(before)
+      expect(await layout(), `select all at ${width}px`).toEqual(keyboardBefore)
       await page.keyboard.press('ControlOrMeta+d')
-      expect(await layout(), `clear all at ${width}px`).toEqual(before)
+      expect(await layout(), `clear all at ${width}px`).toEqual(keyboardBefore)
       await title.click()
       const original = page.locator('.product-details-dialog')
       await expect(original).toBeVisible()

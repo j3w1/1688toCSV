@@ -295,6 +295,12 @@
   gap: 0.75rem;
   margin-block: 0.75rem;
 }
+.physical-mark-print-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+  margin-block: 0.75rem;
+}
 .physical-mark-choices fieldset {
   display: grid;
   min-inline-size: 0;

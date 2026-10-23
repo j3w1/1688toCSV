@@ -27,6 +27,7 @@ import {
   captureGridTarget,
   PRODUCT_GRID_COLUMNS,
   mountPhysicalMarkChoices,
+  openPhysicalMarkReview,
 } from '../src/order-carton-grid.js'
 import * as actualPlanner from '../src/carton-reconciliation.js'
 import { applyCartonUnitException } from '../src/carton-batches.js'
@@ -108,6 +109,194 @@ test('physical mark choices require each explicit decision, reason and fresh rel
   assert.deepEqual(reviews, original)
   stop()
   assert.equal(host.querySelector('.physical-mark-choices'), null)
+})
+
+test('physical mark output uses recorded artwork after its group is gone, counts actual entitlements and rejects stale typed regeneration', async () => {
+  const { record, preparation } = syntheticManifest().orders[0],
+    group = preparation.groups[0],
+    artwork = {
+      code: 'CE26090102',
+      baseCode: 'CE26090102',
+      title: 'Original carton',
+      spanishName: 'CAJA ORIGINAL',
+      category: '旧杯',
+      chineseCategory: '旧杯',
+      orderId: '1001',
+      groupId: 'retired-owner',
+      provenance: 'recorded-owner-text',
+    },
+    batch = syntheticBatch('1001', 2, '100', {
+      groups: [{ orderId: '1001', groupId: group.id }],
+      mark: { orderId: '1001', groupId: group.id },
+      physicalMark: {
+        code: 'CE26090102',
+        originalCode: 'CE26090102',
+        originalMark: { orderId: '1001', groupId: 'retired-owner' },
+        productCode: group.baseCode,
+        aliases: [
+          {
+            code: 'CE26090102',
+            month: '2026-09',
+            sellerId: 'synthetic-factory',
+          },
+        ],
+        relatedEntryIds: ['2001'],
+        resolution: {
+          choice: 'keep-recorded-mark',
+          reason: 'Retain actual original label',
+          physicalRelabelConfirmed: false,
+          provenance: 'manual-confirmed',
+          resolvedAt: '2026-10-22T00:00:00.000Z',
+        },
+        originalArtwork: artwork,
+        artwork,
+        history: [],
+      },
+    }),
+    context = {
+      record,
+      preparation,
+      batches: [batch],
+      reports: [],
+      revisions: {
+        source: 'captured-source',
+        observedAt: record.snapshot.observedAt,
+        preparation: preparation.revision,
+        cartons: { [batch.id]: batch.revision },
+        reports: {},
+      },
+    },
+    original = structuredClone({ record, preparation }),
+    output = createProductOutput({
+      repository: {
+        getOrderReconciliation: async () => structuredClone(context),
+        getPackingPreferences: async () => validatePackingPreferences({}),
+      },
+      authoring: { flush: async () => {} },
+    }),
+    ref = { accountId: 'local', orderId: '1001', batchId: batch.id }
+  const recorded = await output.orderCartonContext({
+      ...ref,
+      role: 'recorded',
+    }),
+    oldModel = outputLabelModels(recorded, 'mark')[0]
+  assert.equal(oldModel.code, 'CE26090102')
+  assert.equal(oldModel.model.category, '旧杯')
+  assert.equal(oldModel.name, 'CAJA ORIGINAL')
+  assert.equal(oldModel.quantity, '2')
+  assert.equal(oldModel.known, 2)
+  assert.deepEqual(
+    oldModel.refs.map((ref) => ref.index),
+    [0, 1]
+  )
+  assert.ok(
+    oldModel.refs.every(
+      (ref) =>
+        ref.scope === 'order-carton-mark' &&
+        ref.markRole === 'recorded' &&
+        ref.groupId === undefined &&
+        /^[a-f0-9]{64}$/.test(ref.sourceGuard)
+    )
+  )
+  const current = await output.orderCartonContext({
+      ...ref,
+      role: 'current-product',
+    }),
+    newModel = outputLabelModels(current, 'mark')[0]
+  assert.equal(newModel.code, group.baseCode)
+  assert.equal(newModel.model.category, group.category)
+  assert.equal(batch.physicalMark.code, 'CE26090102')
+  assert.deepEqual({ record, preparation }, original)
+  batch.revision++
+  context.revisions.cartons[batch.id] = batch.revision
+  await assert.rejects(
+    output.orderCartonContext(oldModel.refs[0]),
+    /captured carton mark changed/
+  )
+  assert.deepEqual({ record, preparation }, original)
+})
+
+test('saved physical mark resolution uses the complete captured token and keeps committed refresh retries read-only', async (context) => {
+  const { document, window } = dom(context),
+    source = syntheticOrder('1001'),
+    token = {
+      source: 'original-source',
+      preparation: 3,
+      cartons: { physical: 7 },
+      reports: {},
+      amendmentContext: { containerId: 'c1', epoch: 'captured' },
+    },
+    batch = syntheticBatch('1001', 2, '100', {
+      id: 'physical',
+      physicalMark: {
+        code: 'CE26090102',
+        productCode: 'CE26090101',
+        resolution: null,
+      },
+    }),
+    original = structuredClone(source),
+    calls = []
+  let failRefresh = true
+  const modal = await openPhysicalMarkReview({
+    repository: {
+      getOrderReconciliation: async () => ({
+        record: source,
+        batches: [batch],
+        revisions: structuredClone(token),
+        amendmentContext: token.amendmentContext,
+      }),
+      resolveCartonPhysicalMark: async (args) => {
+        calls.push(structuredClone(args))
+        return {
+          record: source,
+          batches: [batch],
+          revisions: { ...token, cartons: { physical: 8 } },
+        }
+      },
+    },
+    orderRef: { accountId: 'local', orderId: '1001' },
+    batchId: 'physical',
+    contextContainerId: 'c1',
+    onSaved: async () => {
+      if (failRefresh) throw new Error('Synthetic read refresh failed')
+    },
+  })
+  const keep = modal.querySelector('[data-choice="keep-recorded-mark"]'),
+    reason = modal.querySelector('textarea'),
+    save = modal.querySelector('[data-action="save-physical-mark-decision"]')
+  assert.equal(
+    modal.querySelector('[data-choice="relabel-reprint"]').disabled,
+    true
+  )
+  assert.match(
+    modal.textContent,
+    /Relabeling must be confirmed on unsealed cartons/
+  )
+  assert.equal(save.disabled, true)
+  keep.checked = true
+  keep.dispatchEvent(new window.Event('change'))
+  reason.value = 'Retain the verified printed code'
+  reason.dispatchEvent(new window.Event('input'))
+  save.click()
+  await new Promise((resolve) => setTimeout(resolve, 0))
+  assert.equal(calls.length, 1)
+  assert.deepEqual(calls[0].expectedRevisions, token)
+  assert.deepEqual(calls[0].expectedAmendment, token.amendmentContext)
+  assert.equal(calls[0].contextContainerId, 'c1')
+  assert.equal(calls[0].choice, 'keep-recorded-mark')
+  assert.equal(calls[0].physicalRelabelConfirmed, false)
+  assert.ok(calls[0].operationId)
+  assert.equal(save.hidden, true)
+  assert.match(modal.textContent, /Synthetic read refresh failed/)
+  failRefresh = false
+  modal.querySelector('[data-action="retry-physical-mark-refresh"]').click()
+  await new Promise((resolve) => setTimeout(resolve, 0))
+  assert.equal(calls.length, 1)
+  assert.equal(
+    document.querySelector('[data-action="review-physical-mark"]'),
+    null
+  )
+  assert.deepEqual(source, original)
 })
 
 test('carton history retains current, retired, legacy and prior revisions across complete order scope', () => {
@@ -1216,7 +1405,7 @@ test('physical confirmation disables only its action and clears the acknowledged
 })
 
 test('reviewed grouping captures actual physical revisions and compound Undo/Redo retains every carton fact while rejecting foreign changes', async (context) => {
-  const { document } = authoringEnvironment(context),
+  const { document, window } = authoringEnvironment(context),
     { record, preparation } = syntheticManifest().orders[0],
     first = preparation.groups[0],
     second = structuredClone(first)
@@ -1297,24 +1486,42 @@ test('reviewed grouping captures actual physical revisions and compound Undo/Red
   const review = document.querySelector('.packing-change-dialog')
   assert.ok(review)
   assert.match(review.textContent, /CE26090102/)
-  assert.match(review.textContent, /Review cartons/)
+  assert.match(review.textContent, /CE26090101/)
+  const apply = [...review.querySelectorAll('button')].find(
+      (button) => button.textContent === 'Apply changes'
+    ),
+    keep = review.querySelector('[data-choice="keep-recorded-mark"]'),
+    reason = review.querySelector('[data-action="physical-mark-reason"]')
+  assert.equal(apply.disabled, true)
+  keep.checked = true
+  keep.dispatchEvent(new window.Event('change'))
+  reason.value = 'Actual old printed mark remains on the same cartons'
+  reason.dispatchEvent(new window.Event('input'))
+  assert.equal(apply.disabled, false)
   assert.equal(writes.length, 0)
-  ;[...review.querySelectorAll('button')]
-    .find((button) => button.textContent === 'Apply changes')
-    .click()
+  apply.click()
   await new Promise((resolve) => setTimeout(resolve, 0))
   assert.equal(saved.groups.length, 1)
   assert.equal(physical.revision, 8)
-  assert.equal(physical.needsReview, true)
-  assert.deepEqual(physical.groups, original.physical.groups)
+  assert.equal(physical.physicalMark.code, 'CE26090102')
+  assert.equal(physical.physicalMark.productCode, 'CE26090101')
+  assert.deepEqual(
+    physical.physicalMark.originalMark,
+    original.physical.groups[0]
+  )
+  assert.equal(physical.physicalMark.resolution.choice, 'keep-recorded-mark')
+  assert.equal(
+    writes[0].options.cartonBatchChanges[0].physicalMarkResolution.choice,
+    'keep-recorded-mark'
+  )
   await authoring.undo()
   assert.equal(saved.groups.length, 2)
   assert.equal(physical.revision, 9)
-  assert.equal(physical.needsReview, undefined)
+  assert.equal(physical.physicalMark, undefined)
   await authoring.redo()
   assert.equal(saved.groups.length, 1)
   assert.equal(physical.revision, 10)
-  assert.equal(physical.needsReview, true)
+  assert.equal(physical.physicalMark.code, 'CE26090102')
   assert.deepEqual(
     writes.map((write) => write.options.cartonBatchChanges[0].expectedRevision),
     [7, 8, 9]
