@@ -49,6 +49,7 @@ test('stable container ordering survives reload and copy without rewriting codes
   const { page, view, id } = await setup(extension)
   const before = await libraryBackup(extension),
     frozen = await manifest(extension, id)
+  expect(frozen.draft).toBe(true)
   const rows = view.locator('tr[data-container-row]'),
     ids = () =>
       rows.evaluateAll((nodes) =>
@@ -67,12 +68,28 @@ test('stable container ordering survives reload and copy without rewriting codes
     'clipboard-read',
     'clipboard-write',
   ])
+  await page.bringToFront()
+  await expect.poll(() => page.evaluate(() => document.hasFocus())).toBe(true)
   for (const row of await rows.all()) await row.getByRole('checkbox').check()
   await revealCopyActions(page)
   await view.locator('[data-action="copy-values"]').click()
-  await expect(view.locator('[data-action="copy-values"]')).toContainText(
-    'Copied'
-  )
+  try {
+    await expect(view.locator('[data-action="copy-values"]')).toContainText(
+      'Copied'
+    )
+  } catch (error) {
+    const diagnostic = await page.evaluate(() => ({
+      focused: document.hasFocus(),
+      errors: [...document.querySelectorAll('.error-notice')].map(
+        (node) => node.textContent
+      ),
+      statuses: [
+        ...document.querySelectorAll('#container-content [role="status"]'),
+      ].map((node) => node.textContent),
+    }))
+    console.log('Packing copy failure diagnostic:', JSON.stringify(diagnostic))
+    throw error
+  }
   const values = (await page.evaluate(() => navigator.clipboard.readText()))
     .split('\r\n')
     .map((row) => row.split('\t'))
@@ -231,7 +248,13 @@ for (const [field, value, action, message] of [
     const ref = { ...refs[0], entryId: '2001' },
       editor = await editOrderProduct(page, ref, { [field]: value })
     await closeOrderProduct(editor)
-    await page.locator('#clear-rows').click()
+    const clear = page.locator('#clear-rows')
+    if (await clear.isEnabled()) await clear.click()
+    await expect(
+      page.locator(
+        '#sheet-body tr[data-selection-key] input[type="checkbox"]:checked'
+      )
+    ).toHaveCount(0)
     const target = page.locator(
       `#sheet-body tr[data-selection-key=${JSON.stringify(JSON.stringify(['local', ref.orderId, ref.entryId]))}]`
     )
@@ -356,7 +379,13 @@ test('an unresolved size output error names the product and focuses its Orders s
   }, refs[0])
   await page.locator('#view-orders').click()
   await page.reload()
-  await page.locator('#clear-rows').click()
+  const clear = page.locator('#clear-rows')
+  if (await clear.isEnabled()) await clear.click()
+  await expect(
+    page.locator(
+      '#sheet-body tr[data-selection-key] input[type="checkbox"]:checked'
+    )
+  ).toHaveCount(0)
   await page
     .locator(
       `#sheet-body tr[data-selection-key=${JSON.stringify(JSON.stringify(['local', refs[0].orderId, '2001']))}]`
