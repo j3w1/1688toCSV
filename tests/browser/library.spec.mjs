@@ -103,7 +103,7 @@ test('order and product context helpers show saved facts without changing select
   await expect(row).toHaveAttribute('aria-selected', 'false')
   await page.mouse.move(1, 1)
   await expect(tooltip).toHaveCount(0)
-  await row.locator('.row-number').click()
+  await row.getByRole('checkbox').click()
   await expect(row).toHaveAttribute('aria-selected', 'true')
   await expect(card).toHaveAttribute('aria-selected', 'false')
   await page.close()
@@ -136,6 +136,8 @@ test('photo copy appears only on hover or keyboard focus without changing select
   await expect(copy).toHaveCSS('opacity', '0')
   await row.focus()
   await row.press('Tab')
+  await expect(row.getByRole('checkbox')).toBeFocused()
+  await row.getByRole('checkbox').press('Tab')
   await expect(photo).toBeFocused()
   await expect(copy).toHaveCSS('opacity', '0.94')
   await photo.press('Tab')
@@ -517,7 +519,7 @@ test('filters and explicit product selections determine copy scope', async ({
   await page
     .locator('#sheet-body tr[data-selection-key]')
     .first()
-    .locator('.product-title')
+    .getByRole('checkbox')
     .click()
   await openCopyFormats(page)
   await page.getByRole('checkbox', { name: 'Headers', exact: true }).uncheck()
@@ -542,7 +544,7 @@ test('filters and explicit product selections determine copy scope', async ({
     1
   )
 })
-test('order cards select across their full surface and open details from the store heading without changing selection', async ({
+test('order cards inspect across their surface and select explicitly without details changing selection', async ({
   extension,
 }) => {
   await seed(extension, (records) => {
@@ -566,7 +568,7 @@ test('order cards select across their full surface and open details from the sto
   expect(listEdges.overflows).toBe(false)
   for (const right of listEdges.cards)
     expect(Math.abs(listEdges.right - right)).toBeLessThanOrEqual(1)
-  await expect(cards.locator('input[type=checkbox]')).toHaveCount(0)
+  await expect(cards.getByRole('checkbox')).toHaveCount(3)
   await expect(card).toHaveAttribute('aria-selected', 'false')
   for (const target of [
     card.locator('.order-products'),
@@ -576,6 +578,13 @@ test('order cards select across their full surface and open details from the sto
     card.locator('.purchase-date'),
   ]) {
     await target.click()
+    await expect(details).toBeVisible()
+    await expect(card).toHaveAttribute('aria-selected', 'false')
+    await expect(
+      page.locator('#sheet-body tr[data-selection-key]')
+    ).toHaveCount(8)
+    await close.click()
+    await card.getByRole('checkbox').click()
     await expect(card).toHaveAttribute('aria-selected', 'true')
     await expect(details).not.toBeVisible()
     await expect(
@@ -583,14 +592,18 @@ test('order cards select across their full surface and open details from the sto
     ).toHaveCount(3)
     await page.getByRole('button', { name: 'Show all', exact: true }).click()
   }
-  // Padding and labels belong to the same selection and hover surface.
-  const box = await card.boundingBox()
+  // Padding and labels inspect the same order; selection stays explicit.
+  const box = await card.locator('.order-summary').boundingBox()
   await page.mouse.click(box.x + box.width - 3, box.y + box.height - 3)
+  await expect(details).toBeVisible()
+  await expect(card).toHaveAttribute('aria-selected', 'false')
+  await close.click()
+  await card.getByRole('checkbox').click()
   await expect(card).toHaveAttribute('aria-selected', 'true')
   await expect(details).not.toBeVisible()
   await cards
     .last()
-    .locator('.order-card-meta')
+    .getByRole('checkbox')
     .click({ modifiers: ['Shift'] })
   await expect(page.locator('.order-card[aria-selected=true]')).toHaveCount(3)
   await expect(page.locator('#sheet-body tr[data-selection-key]')).toHaveCount(
@@ -598,19 +611,20 @@ test('order cards select across their full surface and open details from the sto
   )
   await cards
     .nth(1)
-    .locator('.order-card-meta')
+    .getByRole('checkbox')
     .click({ modifiers: ['Control'] })
   await expect(page.locator('.order-card[aria-selected=true]')).toHaveCount(2)
   await expect(cards.nth(1)).toHaveAttribute('aria-selected', 'false')
   await expect(page.locator('#sheet-body tr[data-selection-key]')).toHaveCount(
     5
   )
-  await cards.nth(1).locator('.order-card-meta').click()
+  await page.getByRole('button', { name: 'Show all', exact: true }).click()
+  await cards.nth(1).getByRole('checkbox').click()
   await expect(page.locator('.order-card[aria-selected=true]')).toHaveCount(1)
   await expect(cards.nth(1)).toHaveAttribute('aria-selected', 'true')
 
   const product = page.locator('#sheet-body tr[data-selection-key]').first()
-  await product.locator('td.price-cell').click()
+  await product.getByRole('checkbox').click()
   const selectedOrder = await cards.nth(1).getAttribute('data-selection-key')
   const selectedProduct = await product.getAttribute('data-selection-key')
   const detailsButton = card.getByRole('button', {
@@ -639,7 +653,8 @@ test('order cards select across their full surface and open details from the sto
   await close.click()
   await expect(detailsButton).toBeFocused()
 
-  await card.locator('.order-card-meta').dblclick()
+  await card.focus()
+  await card.locator('.order-card-meta').click()
   await expect(details).toBeVisible()
   await close.click()
   await expect(card).toBeFocused()
@@ -674,12 +689,22 @@ test('product rows support ranges and toggles while image and copy actions prese
   const page = await openLibrary(extension)
   const rows = page.locator('#sheet-body tr[data-selection-key]')
   await expect(rows).toHaveCount(8)
-  await expect(rows.locator('input[type=checkbox]')).toHaveCount(0)
+  await expect(rows.getByRole('checkbox')).toHaveCount(8)
+  await rows.first().locator('.product-title').click()
+  const original = page.getByRole('dialog', {
+    name: 'Original product details',
+    exact: true,
+  })
+  await expect(original).toBeVisible()
+  await expect(rows.first()).toHaveAttribute('aria-selected', 'false')
+  await original
+    .getByRole('button', { name: 'Close product details', exact: true })
+    .click()
   const selected = page.locator('#sheet-body tr[aria-selected=true]')
-  await rows.nth(1).locator('.product-title').click()
+  await rows.nth(1).getByRole('checkbox').click()
   await rows
     .nth(4)
-    .locator('.product-title')
+    .getByRole('checkbox')
     .click({ modifiers: ['Shift'] })
   await expect(selected).toHaveCount(4)
   await expect(rows.nth(0)).toHaveAttribute('aria-selected', 'false')
@@ -687,13 +712,13 @@ test('product rows support ranges and toggles while image and copy actions prese
   await expect(rows.nth(4)).toHaveAttribute('aria-selected', 'true')
   await rows
     .nth(2)
-    .locator('.product-title')
+    .getByRole('checkbox')
     .click({ modifiers: ['Control'] })
   await expect(selected).toHaveCount(3)
   await expect(rows.nth(2)).toHaveAttribute('aria-selected', 'false')
   await rows
     .nth(6)
-    .locator('.product-title')
+    .getByRole('checkbox')
     .click({ modifiers: ['Control'] })
   await expect(selected).toHaveCount(4)
   await expect(page.locator('#selection-summary')).toContainText('4 selected')
@@ -737,15 +762,20 @@ test('product rows support ranges and toggles while image and copy actions prese
     .getByRole('button', { name: 'Clear selection', exact: true })
     .click()
   await expect(selected).toHaveCount(0)
-  await rows.nth(2).locator('.product-title').click()
+  await rows.nth(2).getByRole('checkbox').click()
   await expect(selected).toHaveCount(1)
   await rows.nth(2).press('Shift+ArrowDown')
-  await expect(selected).toHaveCount(2)
+  await expect(selected).toHaveCount(1)
   await expect(rows.nth(3)).toBeFocused()
+  await rows
+    .nth(3)
+    .getByRole('checkbox')
+    .click({ modifiers: ['Shift'] })
+  await expect(selected).toHaveCount(2)
   await rows.nth(3).press('Control+Space')
   await expect(selected).toHaveCount(1)
   await expect(rows.nth(3)).toHaveAttribute('aria-selected', 'false')
-  await rows.nth(3).press('Control+ArrowDown')
+  await rows.nth(3).press('ArrowDown')
   await expect(rows.nth(4)).toBeFocused()
   await expect(selected).toHaveCount(1)
   // Pointer exit preserves the new rich helper owned by keyboard row focus.
@@ -755,6 +785,8 @@ test('product rows support ranges and toggles while image and copy actions prese
   ).toHaveCount(1)
   await rows.nth(4).press('Escape')
   await expect(page.getByRole('tooltip')).toHaveCount(0)
+  await expect(selected).toHaveCount(1)
+  await rows.nth(4).press('Control+d')
   await expect(selected).toHaveCount(0)
   await rows.nth(4).press('Control+a')
   await expect(selected).toHaveCount(8)
@@ -763,16 +795,16 @@ test('product rows support ranges and toggles while image and copy actions prese
     .getByRole('combobox', { name: 'Search products and orders', exact: true })
     .fill('candle')
   await expect(rows).toHaveCount(2)
-  await rows.first().locator('.product-title').click()
+  await rows.first().getByRole('checkbox').click()
   await rows
     .last()
-    .locator('.product-title')
+    .getByRole('checkbox')
     .click({ modifiers: ['Shift'] })
   await expect(selected).toHaveCount(2)
   await expect(page.locator('#selection-summary')).toHaveText(
     '2 rows · 2 selected'
   )
-  await page.locator('.order-card-meta').first().click()
+  await page.locator('.order-card').first().getByRole('checkbox').click()
   await expect(rows).toHaveCount(1)
   await expect(selected).toHaveCount(0)
   await expect(page.locator('.order-card[aria-selected=true]')).toHaveCount(1)
@@ -787,8 +819,8 @@ test('notes are editable separately and survive a later source revision', async 
   await page
     .locator('.order-card')
     .filter({ hasText: 'Habitat Studio' })
-    .locator('.order-card-meta')
-    .dblclick()
+    .locator('.order-details-trigger')
+    .click()
   await expect(page.getByRole('dialog')).toBeVisible()
   await page.getByLabel('Your notes').fill('Reserved for display')
   await page
@@ -825,8 +857,8 @@ test('notes are editable separately and survive a later source revision', async 
   await page
     .locator('.order-card')
     .filter({ hasText: 'Habitat Studio' })
-    .locator('.order-card-meta')
-    .dblclick()
+    .locator('.order-details-trigger')
+    .click()
   await expect(page.getByLabel('Your notes')).toHaveValue(
     'Reserved for display'
   )
@@ -889,7 +921,7 @@ test('copy images only produces one picture per selected row', async ({
       name: `Order ${records[0].snapshot.orderId}`,
       exact: true,
     })
-    .locator('.order-card-meta')
+    .getByRole('checkbox')
     .click()
   await expect(page.locator('#sheet-body tr[data-selection-key]')).toHaveCount(
     3
@@ -1026,8 +1058,8 @@ test('purchase dates group orders by month while separators stay out of copied v
   await page
     .locator('.order-card')
     .filter({ hasText: 'Habitat Studio' })
-    .locator('.order-card-meta')
-    .dblclick()
+    .locator('.order-details-trigger')
+    .click()
   await expect(page.locator('#order-details time.purchase-date')).toHaveText(
     '12 Oct 2026'
   )
@@ -1049,10 +1081,10 @@ test('purchase dates group orders by month while separators stay out of copied v
   await orderBands.first().click()
   await expect(page.locator('#sheet-body tr.is-selected')).toHaveCount(0)
   const productRows = page.locator('#sheet-body tr[data-selection-key]')
-  await productRows.first().locator('.row-number').click()
+  await productRows.first().getByRole('checkbox').click()
   await productRows
     .nth(4)
-    .locator('.row-number')
+    .getByRole('checkbox')
     .click({ modifiers: ['Shift'] })
   await expect(page.locator('#sheet-body tr.is-selected')).toHaveCount(5)
   await expect(orderBands.locator('[aria-selected]')).toHaveCount(0)
@@ -1284,12 +1316,16 @@ test('large libraries bound order and product DOM while progress updates avoid r
   const anchorRow = page.locator(
     `#sheet-body tr[data-selection-key="${anchorKey}"]`
   )
-  await anchorRow.locator('.product-title').click()
+  await anchorRow.getByRole('checkbox').click()
   expect(
     await page.locator('#sheet-body tr[data-selection-key]').allTextContents()
   ).not.toEqual(initialProducts)
-  for (let index = 0; index < 3; index++)
-    await page.keyboard.press('Shift+ArrowDown')
+  await anchorRow.focus()
+  for (let index = 0; index < 3; index++) await page.keyboard.press('ArrowDown')
+  await page
+    .locator('#sheet-body tr:focus')
+    .getByRole('checkbox')
+    .click({ modifiers: ['Shift'] })
   await expect(page.locator('#selection-summary')).toContainText('4 selected')
   await page.locator('.table-scroll').evaluate((element) => {
     element.scrollTop = element.scrollHeight
@@ -1318,11 +1354,23 @@ test('large libraries bound order and product DOM while progress updates avoid r
     .getAttribute('data-selection-key')
   await page
     .locator(
-      `.order-card[data-selection-key="${orderAnchorKey}"] .order-card-meta`
+      `.order-card[data-selection-key="${orderAnchorKey}"] input[type="checkbox"]`
     )
     .click()
-  await page.keyboard.press('Shift+ArrowDown')
-  await page.keyboard.press('Shift+ArrowDown')
+  await page
+    .locator(`.order-card[data-selection-key="${orderAnchorKey}"]`)
+    .focus()
+  await page.keyboard.press('ArrowDown')
+  await page.keyboard.press('ArrowDown')
+  await page
+    .locator('.order-card:focus')
+    .getByRole('checkbox')
+    .click({ modifiers: ['Shift'] })
+  await page
+    .locator('.order-card')
+    .filter({ has: page.getByRole('checkbox', { checked: true }) })
+    .last()
+    .focus()
   await expect(page.locator('#refresh-orders')).toHaveText('Refresh 3 orders')
   await expect(page.locator('.order-card[aria-selected=true]')).toHaveCount(3)
   await expect(page.locator('#sheet-body tr[data-selection-key]')).toHaveCount(
@@ -1363,7 +1411,8 @@ test('large libraries bound order and product DOM while progress updates avoid r
     3
   )
   await page.locator('.order-card').focus()
-  await page.keyboard.press('Shift+Space')
+  await page.locator('.order-card').getByRole('checkbox').focus()
+  await page.keyboard.press('Space')
   await expect(page.locator('#refresh-orders')).toHaveText('Refresh 1 order')
   await page
     .getByRole('combobox', { name: 'Search orders', exact: true })
@@ -1381,7 +1430,7 @@ test('large libraries bound order and product DOM while progress updates avoid r
   await expect(page.locator('.virtual-table-spacer')).toHaveCount(0)
   await page
     .locator('#sheet-body tr[data-selection-key]')
-    .locator('.product-title')
+    .getByRole('checkbox')
     .click({ modifiers: ['Shift'] })
   await expect(page.locator('#selection-summary')).toContainText('1 selected')
   await page
@@ -1531,7 +1580,7 @@ test('purchase date refresh scopes are inclusive, cancellable and inert when emp
   await expect(page.locator('.order-card .purchase-date')).toHaveText(
     '8 Oct 2026'
   )
-  await page.locator('.order-card-meta').click()
+  await page.locator('.order-card').getByRole('checkbox').click()
   await expect(page.locator('#refresh-orders')).toHaveText('Refresh 1 order')
   await page.getByLabel('From', { exact: true }).fill('2026-10-20')
   await page.getByLabel('Through', { exact: true }).fill('2026-10-21')

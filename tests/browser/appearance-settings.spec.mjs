@@ -140,7 +140,7 @@ test('tag picker ranks keyboard choices and Settings randomizes colors or remove
     .locator('.month-toggle[aria-expanded=false]')
     .all())
     await toggle.click()
-  await page.locator('.order-card-meta').first().dblclick()
+  await page.locator('.order-details-trigger').first().click()
   dialog = page.locator('#order-details')
   const input = dialog.getByRole('combobox', { name: 'Tags', exact: true })
   await input.fill('frag')
@@ -493,7 +493,7 @@ test('reusable tags can be created in Settings and order details, autosave on cl
     .locator('.month-toggle[aria-expanded=false]')
     .all())
     await toggle.click()
-  await page.locator('.order-card-meta').first().dblclick()
+  await page.locator('.order-details-trigger').first().click()
   dialog = page.locator('#order-details')
   const preventsExit = () =>
     page.evaluate(() => {
@@ -534,7 +534,7 @@ test('reusable tags can be created in Settings and order details, autosave on cl
     .getByRole('combobox', { name: 'Search orders', exact: true })
     .fill('Locally created')
   await expect(page.locator('.order-card')).toHaveCount(1)
-  await page.locator('.order-card-meta').first().dblclick()
+  await page.locator('.order-details-trigger').first().click()
   await expect(page.getByLabel('Your notes')).toHaveValue(
     'Last typing before close'
   )
@@ -559,7 +559,7 @@ test('Settings renames both tag catalogs everywhere, rejects duplicates and reta
     .locator('.month-toggle[aria-expanded=false]')
     .all())
     await toggle.click()
-  await page.locator('.order-card-meta').first().dblclick()
+  await page.locator('.order-details-trigger').first().click()
   let dialog = page.locator('#order-details')
   await dialog
     .getByRole('combobox', { name: 'Tags', exact: true })
@@ -568,7 +568,7 @@ test('Settings renames both tag catalogs everywhere, rejects duplicates and reta
     .getByRole('button', { name: 'Close order details', exact: true })
     .click()
   await expect(dialog).not.toBeVisible()
-  await page.locator('.product-title').first().dblclick()
+  await page.locator('.product-title').first().click()
   dialog = page.locator('.product-details-dialog')
   await dialog
     .getByRole('combobox', { name: 'Product tags', exact: true })
@@ -709,7 +709,7 @@ test('Settings renames both tag catalogs everywhere, rejects duplicates and reta
   expect(
     backup.data.packingPreferences.value.productTags.map((tag) => tag.name)
   ).toContain('Pending creation')
-  await page.locator('.product-title').first().dblclick()
+  await page.locator('.product-title').first().click()
   await expect(
     page
       .locator('.product-details-dialog')
@@ -883,7 +883,7 @@ test('closing order details locks annotations until a delayed save finishes', as
     .locator('.month-toggle[aria-expanded=false]')
     .all())
     await toggle.click()
-  await page.locator('.order-card-meta').first().dblclick()
+  await page.locator('.order-details-trigger').first().click()
   const dialog = page.locator('#order-details')
   await page.evaluate(() => {
     window.holdOrderTagSave = true
@@ -933,7 +933,7 @@ test('closing order details locks annotations until a delayed save finishes', as
   )
   expect(backup.data.orders[0].notes).toBe('Closing draft')
   expect(backup.data.orders[0].tags).toEqual(['Typed before close'])
-  await page.locator('.order-card-meta').first().dblclick()
+  await page.locator('.order-details-trigger').first().click()
   await expect(dialog.getByLabel('Your notes')).toBeEnabled()
   expect(await tags.evaluate((node) => Boolean(node.closest('[inert]')))).toBe(
     false
@@ -985,7 +985,7 @@ test('custom tag foreground colors persist, Auto restores readable text and comp
     .locator('.month-toggle[aria-expanded=false]')
     .all())
     await toggle.click()
-  await page.locator('.order-card-meta').first().dblclick()
+  await page.locator('.order-details-trigger').first().click()
   await page
     .getByRole('combobox', { name: 'Tags', exact: true })
     .fill('Display stock')
@@ -1120,7 +1120,7 @@ test('edited product color aliases, translations and swatches update tables and 
   await expect(
     page.locator('#sheet-body .product-color-hint').first()
   ).toHaveText('Negro tinta')
-  await page.locator('.product-title').first().dblclick()
+  await page.locator('.product-title').first().click()
   await expect(page.locator('.product-original-description pre')).toHaveText(
     '合成玻璃罐\n颜色：黑色'
   )

@@ -158,7 +158,7 @@ test('bulk picture copying preserves full pixels in separate compact Excel cells
       name: `Order ${records[0].snapshot.orderId}`,
       exact: true,
     })
-    .locator('.order-card-meta')
+    .getByRole('checkbox')
     .click()
   for (const id of ['copy-images', 'copy-excel']) {
     const button = page.locator(`#${id}`)
