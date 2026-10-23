@@ -337,8 +337,16 @@ export function createContainerRepository({
     for (const { manifest } of effectiveShipments(state.containers))
       for (const unit of manifest.cartons || []) {
         const batch = state.batches.find((batch) => batch.id === unit.batchId),
+          frozenBatch = manifest.batches.find(
+            (value) => value.id === unit.batchId
+          ),
           current =
-            batch && physicalUnits(batch).find((value) => value.id === unit.id)
+            batch &&
+            physicalUnits(
+              !batch.mark && !batch.groups?.length && frozenBatch?.mark
+                ? { ...batch, mark: frozenBatch.mark }
+                : batch
+            ).find((value) => value.id === unit.id)
         if (
           !current ||
           current.accountId !== unit.accountId ||
@@ -349,9 +357,6 @@ export function createContainerRepository({
             'An effective shipment requires its current physical carton and purchase ownership.',
             { cartonId: unit.id }
           )
-        const frozenBatch = manifest.batches.find(
-          (value) => value.id === batch.id
-        )
         const fields = [
           'contents',
           'weight',
@@ -627,6 +632,24 @@ export function createContainerRepository({
         revision: (before?.revision || 0) + 1,
         updatedAt: nextEditTimestamp(before?.updatedAt),
       })
+      if (!batch.mark && !batch.groups.length && scope.preparation) {
+        batch.groups = scope.preparation.groups
+          .filter((group) =>
+            group.variants.some((variant) =>
+              variant.entryIds.some(
+                (entryId) =>
+                  batch.contents.some((row) => row.entryId === entryId) ||
+                  batch.unresolvedContents?.some(
+                    (claim) =>
+                      claim.groupId === group.id ||
+                      claim.entryIds.includes(entryId)
+                  )
+              )
+            )
+          )
+          .map((group) => ({ orderId: reference.orderId, groupId: group.id }))
+        if (batch.groups.length) batch.mark = { ...batch.groups[0] }
+      }
       if (
         (raw.accountId && raw.accountId !== batch.accountId) ||
         (raw.orderId && raw.orderId !== batch.orderId)

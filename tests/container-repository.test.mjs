@@ -1,5 +1,8 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
+import { CFB } from 'xlsx'
+import { createContainerWorkbook } from '../src/container-export.js'
+import { SYNTHETIC_PHOTO } from './fixtures/container-fixture.mjs'
 import { databaseBrowser } from './fixtures/database-browser.mjs'
 
 test('native whole-order reservation, stale tabs, logical loading, atomic seal and historical amendment', async () => {
@@ -1684,6 +1687,140 @@ test('native v5 scoped backups close physical and financial dependencies, retain
       price: ['10.00', '2.00'],
       linked: '0.01',
     })
+  } finally {
+    await browser.close()
+  }
+})
+
+test('native confirmed capacity and facts predating preparation freeze valid same-order marks into actual workbook drawings', async () => {
+  const browser = await databaseBrowser()
+  try {
+    const result = await browser.page.evaluate(async () => {
+      const {
+          openDatabase,
+          fixture: { syntheticOrder, syntheticBatch, syntheticManifest },
+        } = modules,
+        db = await openDatabase({ name: 'synthetic-canonical-default-mark' })
+      await db.restoreBackup({
+        format: '1688-order-library',
+        version: 4,
+        exportedAt: new Date().toISOString(),
+        orders: [syntheticOrder('1001', '60'), syntheticOrder('1002', '20')],
+        history: [],
+        images: [],
+        preparations: [],
+        allocations: [],
+        issuedCodes: [],
+        cartonBatches: [syntheticBatch('1002', 2, '20')],
+        packingPreferences: null,
+      })
+      const a = syntheticManifest().orders[0].preparation,
+        b = structuredClone(a)
+      b.orderId = '1002'
+      b.groups[0].baseCode = 'CE26090102'
+      await db.savePreparations([a, b], {
+        expectedRevisions: [0, 0],
+        preserveNaming: true,
+      })
+      await db.updateOrderCapacities({
+        orderId: '1001',
+        values: { 2001: '10' },
+        expectedValues: { 2001: null },
+        expectedObservedAt: '2026-10-01T12:00:00.000Z',
+      })
+      const context = await db.getOrderReconciliation({ orderId: '1001' })
+      const confirmed = await db.confirmOrderCartons({
+        orderId: '1001',
+        draft: {},
+        expectedRevisions: context.revisions,
+      })
+      const manifests = []
+      for (const orderId of ['1001', '1002']) {
+        const c = await db.createContainer({ name: `Mark ${orderId}` })
+        let view = await db.includeContainerOrders({
+          id: c.id,
+          orderRefs: [{ orderId }],
+          expectedRevision: c.revision,
+        })
+        view = await db.markContainerLoaded({
+          id: c.id,
+          expectedRevision: view.container.revision,
+        })
+        const review = await db.reviewContainerSeal({
+          id: c.id,
+          expectedRevision: view.container.revision,
+        })
+        if (!review.ready) throw new Error(JSON.stringify(review.issues))
+        manifests.push(
+          await db.sealContainer({
+            id: c.id,
+            expectedRevision: view.container.revision,
+            reviewToken: review.reviewToken,
+          })
+        )
+      }
+      const backup = await db.exportBackup({}),
+        other = await openDatabase({
+          name: 'synthetic-canonical-default-mark-restored',
+        })
+      await other.restoreBackup(backup)
+      const restored = await other.getContainerManifest({
+        id: manifests[1].container.id,
+      })
+      db.close()
+      other.close()
+      return {
+        capacityCount: confirmed.batches.reduce(
+          (sum, batch) => sum + batch.count,
+          0
+        ),
+        capacityMark: confirmed.batches[0].mark,
+        oldSourceStillUnmarked: !backup.cartonBatches.find(
+          (batch) => batch.id === 'batch-1002'
+        ).mark,
+        manifests,
+        restored: JSON.stringify(restored) === JSON.stringify(manifests[1]),
+      }
+    })
+    assert.equal(result.capacityCount, 6)
+    assert.equal(result.capacityMark.orderId, '1001')
+    assert.equal(result.oldSourceStillUnmarked, true)
+    assert.equal(result.restored, true)
+    for (const [index, manifest] of result.manifests.entries()) {
+      const expected = index === 0 ? 'CE26090101' : 'CE26090102'
+      assert(manifest.cartons.every((unit) => unit.markCode === expected))
+      assert.equal(manifest.products[0].cartonMarkCode, expected)
+      const requested = []
+      const bytes = await createContainerWorkbook(manifest, {
+        language: 'en',
+        prepareImages: async (source, limits) => {
+          if (limits.mark) requested.push(source.baseCode)
+          return Object.fromEntries(
+            ['photo', 'code', 'mark']
+              .filter((kind) => limits[kind])
+              .map((kind) => [
+                kind,
+                {
+                  bytes: new Uint8Array(
+                    Buffer.from(SYNTHETIC_PHOTO.split(',')[1], 'base64')
+                  ),
+                  mimeType: 'image/png',
+                  width: 1,
+                  height: 1,
+                },
+              ])
+          )
+        },
+      })
+      assert(requested.includes(expected))
+      const archive = CFB.read(bytes, { type: 'array' }),
+        drawings = archive.FullPaths.flatMap((path, index) =>
+          /xl\/drawings\/drawing\d+\.xml$/.test(path)
+            ? [new TextDecoder().decode(archive.FileIndex[index].content)]
+            : []
+        ).join('')
+      assert.match(drawings, /name="mark-/)
+    }
   } finally {
     await browser.close()
   }

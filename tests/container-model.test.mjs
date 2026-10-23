@@ -346,3 +346,31 @@ test('reported padded references and actual independent mark owners follow stabl
   assert.equal(view.products[0].cartonMarkCode, 'CE26090102')
   assert.equal(view.products[0].baseCode, 'CE26090101')
 })
+
+test('historical remaining projection separates exact unprepared pieces from known left boxes and never reports their missing measures as zero', () => {
+  const state = base()
+  state.batches = [
+    syntheticBatch('1001', 3, '30', { weight: '1', suppliedCbm: '0.1' }),
+  ]
+  const container = draft(state)
+  container.draft.decisions = Object.fromEntries(
+    container.draft.orders[0].cartons.map((unit, index) => [
+      unit.id,
+      index === 0 ? 'loaded' : 'left-behind',
+    ])
+  )
+  const view = projectContainer(state, container)
+  assert.equal(view.products[0].quantity, '10')
+  assert.equal(view.leftBehind.products[0].quantity, '90')
+  assert.equal(view.leftBehind.products[0].remainingQuantity, '90')
+  assert.equal(view.leftBehind.unprepared[0].quantity, '70')
+  assert.equal(view.leftBehind.totals.knownCartons, 2)
+  assert.equal(view.leftBehind.totals.cartons, null)
+  assert.equal(view.leftBehind.totals.weight, null)
+  assert.equal(view.leftBehind.totals.volume, null)
+  assert.equal(view.leftBehind.totals.weightCoverage.knownSubtotal, '2')
+  assert.equal(view.leftBehind.totals.weightCoverage.complete, false)
+  assert.equal(view.leftBehind.totals.weightCoverage.unpreparedQuantity, '70')
+  state.records.push(syntheticOrder('1002'))
+  assert.equal(projectContainer(state, container).leftBehind.products.length, 1)
+})
