@@ -2424,6 +2424,64 @@ test('zero-loaded container export keeps full-revision scope, three sheets and f
   assert.equal(await opening, false)
 })
 
+test('blank and invalid loading counts remain recoverable UI drafts and never become zero loading decisions', async (testContext) => {
+  const { document, window, values } = authoringEnvironment(testContext),
+    fixture = setup(),
+    state = view()
+  state.cartons = Array.from({ length: 5 }, (_, index) => ({
+    id: `count-${index}`,
+    batchId: 'batch1',
+    accountId: 'local',
+    orderId: '10001',
+    count: 1,
+    state: 'unconfirmed',
+    canSelectCount: index === 0,
+    contents: [],
+  }))
+  fixture.setView(state)
+  const make = async () => {
+    const workspace = createContainerWorkspace({
+      host: document.getElementById('host'),
+      repository: fixture.repository,
+      output: {},
+    })
+    await workspace.open('c1')
+    document
+      .querySelector('.container-order [data-action="expand-container-order"]')
+      .click()
+    await new Promise((resolve) => setTimeout(resolve, 0))
+    return workspace
+  }
+  let workspace = await make(),
+    input = document.querySelector('input[role="spinbutton"]')
+  input.value = '-'
+  input.dispatchEvent(new window.Event('input'))
+  input.dispatchEvent(new window.Event('blur'))
+  await new Promise((resolve) => setTimeout(resolve, 0))
+  assert.equal(fixture.writes.length, 0)
+  assert.equal(input.getAttribute('aria-invalid'), 'true')
+  assert.ok([...values.values()].some((value) => value.includes('"raw":"-"')))
+  workspace.dispose()
+  workspace = await make()
+  input = document.querySelector('input[role="spinbutton"]')
+  assert.equal(input.value, '-')
+  assert.equal(input.getAttribute('aria-invalid'), 'true')
+  input.value = ''
+  input.dispatchEvent(new window.Event('input'))
+  input.dispatchEvent(new window.Event('blur'))
+  await new Promise((resolve) => setTimeout(resolve, 0))
+  assert.equal(fixture.writes.length, 0)
+  input.value = '0'
+  input.dispatchEvent(new window.Event('input'))
+  const enter = new window.Event('keydown')
+  enter.key = 'Enter'
+  input.dispatchEvent(enter)
+  await new Promise((resolve) => setTimeout(resolve, 0))
+  assert.equal(fixture.writes.length, 1)
+  assert.equal(fixture.writes[0].args.leftBehind, 0)
+  workspace.dispose()
+})
+
 test('interchangeable count control uses complete logical set size once and is absent from sealed history', async (context) => {
   let workspace
   context.after(() => workspace?.dispose())
@@ -2455,7 +2513,7 @@ test('interchangeable count control uses complete logical set size once and is a
   await Promise.resolve()
   await Promise.resolve()
   const counts = document.querySelectorAll(
-    '.container-main input[type="number"]'
+    '.container-main input[role="spinbutton"]'
   )
   assert.equal(counts.length, 1)
   assert.equal(counts[0].max, '5')
@@ -2469,7 +2527,8 @@ test('interchangeable count control uses complete logical set size once and is a
   await Promise.resolve()
   await Promise.resolve()
   assert.equal(
-    document.querySelectorAll('.container-main input[type="number"]').length,
+    document.querySelectorAll('.container-main input[role="spinbutton"]')
+      .length,
     0
   )
 })

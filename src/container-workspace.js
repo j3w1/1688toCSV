@@ -309,11 +309,67 @@ export function createContainerWorkspace({
     allRows = [],
     visibleRows = [],
     matchingKeys = [],
+    rowView,
     selectionBox,
     expandedOrders = new Set(),
     targetOrder,
     lastSelection
   let selectorGeneration = 0
+  const countDraftKey = '1688-container-loading-count-drafts'
+  let countDrafts = new Map()
+  try {
+    const saved = JSON.parse(
+      globalThis.localStorage?.getItem(countDraftKey) || '[]'
+    )
+    if (Array.isArray(saved))
+      countDrafts = new Map(
+        saved.filter(
+          (entry) =>
+            Array.isArray(entry) &&
+            typeof entry[0] === 'string' &&
+            typeof entry[1]?.raw === 'string' &&
+            Number.isSafeInteger(entry[1].revision)
+        )
+      )
+  } catch {}
+  function countScope(view = controller.view()) {
+    return [
+      controller.route()?.containerId,
+      view?.container.amendment?.epoch || null,
+    ]
+  }
+  function sameCountScope(key, scope = countScope()) {
+    try {
+      const value = JSON.parse(key)
+      return value[0] === scope[0] && value[1] === scope[1]
+    } catch {
+      return false
+    }
+  }
+  function hasCountDrafts() {
+    const scope = countScope()
+    return [...countDrafts.keys()].some((key) => sameCountScope(key, scope))
+  }
+  function retainCountDrafts() {
+    try {
+      globalThis.localStorage?.setItem(
+        countDraftKey,
+        JSON.stringify(
+          [...countDrafts].map(([key, value]) => [
+            key,
+            { raw: value.raw, revision: value.revision, error: value.error },
+          ])
+        )
+      )
+    } catch {
+      failure(new Error('The editing draft could not be saved for recovery.'))
+    }
+  }
+  function clearCountDrafts(scope = countScope()) {
+    for (const key of countDrafts.keys())
+      if (sameCountScope(key, scope)) countDrafts.delete(key)
+    retainCountDrafts()
+  }
   const buttons = new Map(),
     tabButtons = []
   let painting = false
@@ -365,9 +421,12 @@ export function createContainerWorkspace({
   )
   buttons.set(
     'all',
-    action(tools, 'Mark all loaded', 'mark-all-loaded', () =>
-      controller.markAllLoaded()
-    )
+    action(tools, 'Mark all loaded', 'mark-all-loaded', async () => {
+      const scope = countScope()
+      await controller.markAllLoaded()
+      clearCountDrafts(scope)
+      renderRows()
+    })
   )
   buttons.set(
     'loaded',
@@ -397,6 +456,16 @@ export function createContainerWorkspace({
   )
   action(tools, 'Select all', 'select-all-rows', () => selectAll())
   action(tools, 'Clear selection', 'clear-selection', () => clearSelection())
+  const discardCounts = action(
+    tools,
+    'Use saved loading decisions',
+    'discard-loading-count-drafts',
+    () => {
+      clearCountDrafts()
+      render()
+    }
+  )
+  discardCounts.hidden = true
   buttons.set(
     'revalidate',
     action(
@@ -417,6 +486,10 @@ export function createContainerWorkspace({
   buttons.set(
     'seal',
     action(tools, 'Review & seal', 'review-container-seal', async () => {
+      if (hasCountDrafts())
+        throw new Error(
+          'Review the pending carton count before sealing. Your value is retained.'
+        )
       const review = await controller.reviewSeal()
       await reviewDialog(
         'Review & seal',
@@ -701,6 +774,7 @@ export function createContainerWorkspace({
           Boolean(view.draft || view.container.amendment) &&
           !controller.route().revisionId,
         busy = controller.busy()
+      discardCounts.hidden = !editable || !hasCountDrafts()
       heading.replaceChildren(
         el('h2', view.container.name),
         el('code', view.revisionId || '—')
@@ -841,6 +915,7 @@ export function createContainerWorkspace({
   function renderRows() {
     const view = controller.view()
     if (!view) return
+    rowView = view
     const source =
       currentView === 'loading'
         ? view.cartons
@@ -961,6 +1036,10 @@ export function createContainerWorkspace({
     head.append(tr)
     virtual.setItems(visibleRows.map((row) => ({ key: row.key, row })))
     updateSelectionControls()
+    discardCounts.hidden =
+      !(view.draft || view.container.amendment) ||
+      Boolean(controller.route().revisionId) ||
+      !hasCountDrafts()
   }
   function renderRow(row) {
     if (row.kind === 'order') {
@@ -1111,7 +1190,7 @@ export function createContainerWorkspace({
           )
         )
       )
-      const view = controller.view()
+      const view = rowView
       if (
         (view.draft || view.container.amendment) &&
         !controller.route().revisionId
@@ -1120,10 +1199,13 @@ export function createContainerWorkspace({
           ['loaded', '+ Loaded'],
           ['left-behind', '− Left behind'],
           ['unconfirmed', 'Unconfirmed'],
-        ])
-          action(state, title, 'set-carton-loading', () =>
+        ]) {
+          const button = action(state, title, 'set-carton-loading', () =>
             controller.setLoading([{ cartonId: idFor(source), state: value }])
-          ).dataset.state = value
+          )
+          button.disabled = controller.busy()
+          button.dataset.state = value
+        }
       const batchUnits = view.cartons.filter(
         (carton) => carton.batchId === source.batchId
       )
@@ -1140,7 +1222,14 @@ export function createContainerWorkspace({
         const availableCount =
           source.count > 1 ? source.count : batchUnits.length
         const input = el('input')
-        input.type = 'number'
+        const key = JSON.stringify([
+            ...countScope(view),
+            source.batchId || source.id,
+          ]),
+          draft = countDrafts.get(key)
+        input.type = 'text'
+        input.inputMode = 'numeric'
+        input.setAttribute('role', 'spinbutton')
         input.min = '0'
         input.max = String(availableCount)
         input.step = '1'
@@ -1149,14 +1238,113 @@ export function createContainerWorkspace({
           'aria-label',
           m('Left behind out of {0}', { 0: availableCount })
         )
-        input.value = String(source.leftBehind ?? '')
-        input.onchange = () =>
-          void controller
-            .setInterchangeableLoading(
-              source.batchId || source.id,
-              Number(input.value)
+        input.maxLength = 64
+        input.setAttribute('aria-valuemin', '0')
+        input.setAttribute('aria-valuemax', String(availableCount))
+        input.value =
+          draft?.raw ??
+          String(
+            source.leftBehind ??
+              (batchUnits.some(
+                (unit) => (unit.state || 'unconfirmed') === 'unconfirmed'
+              )
+                ? ''
+                : batchUnits.filter((unit) => unit.state === 'left-behind')
+                    .length)
+          )
+        input.disabled = controller.busy()
+        const valid = () =>
+          /^\d+$/.test(input.value.trim()) &&
+          Number.isSafeInteger(Number(input.value)) &&
+          Number(input.value) <= availableCount
+        const markValue = () => {
+          if (valid()) {
+            input.setAttribute('aria-valuenow', String(Number(input.value)))
+            input.removeAttribute('aria-valuetext')
+          } else {
+            input.removeAttribute('aria-valuenow')
+            bindAttribute(
+              input,
+              'aria-valuetext',
+              m(countDrafts.has(key) ? 'Needs review' : 'Unconfirmed')
             )
-            .catch(failure)
+          }
+        }
+        if (draft?.error || (draft && draft.revision !== revisionFor(view)))
+          input.setAttribute('aria-invalid', 'true')
+        markValue()
+        let composing = false
+        input.oncompositionstart = () => {
+          composing = true
+        }
+        const retain = () => {
+          countDrafts.set(key, {
+            raw: input.value,
+            revision: revisionFor(view),
+            error: !composing && !valid(),
+          })
+          retainCountDrafts()
+          discardCounts.hidden = false
+          markValue()
+          if (!composing && !valid()) input.setAttribute('aria-invalid', 'true')
+          else input.removeAttribute('aria-invalid')
+        }
+        input.oninput = retain
+        input.oncompositionend = () => {
+          composing = false
+          retain()
+        }
+        const commitCount = async () => {
+          const value = countDrafts.get(key)
+          if (!value || value.pending || composing) return
+          if (
+            !valid() ||
+            !sameCountScope(key) ||
+            value.revision !== revisionFor(controller.view())
+          ) {
+            value.error = true
+            input.setAttribute('aria-invalid', 'true')
+            retainCountDrafts()
+            failure(
+              new Error(
+                'Enter a whole carton count from zero up to the displayed maximum, using the current loading view.'
+              )
+            )
+            return
+          }
+          value.pending = true
+          try {
+            await controller.setInterchangeableLoading(
+              source.batchId || source.id,
+              Number(value.raw)
+            )
+            if (countDrafts.get(key) === value) countDrafts.delete(key)
+            retainCountDrafts()
+            renderRows()
+          } catch (error) {
+            value.pending = false
+            value.error = true
+            retainCountDrafts()
+            failure(error)
+            renderRows()
+          }
+        }
+        input.onblur = () => void commitCount()
+        input.onkeydown = (event) => {
+          if (event.isComposing || composing) return
+          if (event.key === 'Enter') {
+            event.preventDefault()
+            void commitCount()
+          } else if (['ArrowUp', 'ArrowDown'].includes(event.key) && valid()) {
+            event.preventDefault()
+            const next =
+              Number(input.value) + (event.key === 'ArrowUp' ? 1 : -1)
+            if (next >= 0 && next <= availableCount) {
+              input.value = String(next)
+              retain()
+            }
+          }
+        }
         state.append(input)
       }
       tr.append(state)
