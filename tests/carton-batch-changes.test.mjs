@@ -31,7 +31,13 @@ function fixture() {
     },
   ]
   const beforePreparations = [
-    { accountId: 'local', orderId: '1001', month: '2026-10', groups: [group] },
+    {
+      accountId: 'local',
+      orderId: '1001',
+      sellerId: 'supplier',
+      month: '2026-10',
+      groups: [group],
+    },
   ]
   const batch = validateCartonBatch({
     id: 'cartons',
@@ -155,7 +161,7 @@ test('an explicit mark survives split contents while its group contributes zero 
   assert.deepEqual(planned.reviews[0].afterCodes, ['CE26101005', 'CE26101006'])
 })
 
-test('removing a zero-content explicit mark owner requires review and preserves the exact physical record', () => {
+test('removing a zero-content explicit mark owner preserves exact physical facts and pending original mark ownership', () => {
   const value = fixture(),
     group = value.beforePreparations[0].groups[0],
     contentGroup = {
@@ -183,7 +189,21 @@ test('removing a zero-content explicit mark owner requires review and preserves 
   assert.equal(planned.reviews[0].reason, 'carton-mark')
   assert.equal(planned.reviews[0].beforeMarkCode, 'CE26101001')
   assert.equal(planned.reviews[0].afterMarkCode, '')
-  assert.deepEqual(planned.after.cartons, { ...batch, needsReview: true })
+  const { physicalMark, ...physicalFacts } = planned.after.cartons
+  assert.deepEqual(physicalFacts, { ...batch, needsReview: true })
+  assert.equal(physicalMark.code, 'CE26101001')
+  assert.equal(physicalMark.originalCode, 'CE26101001')
+  assert.equal(physicalMark.productCode, '')
+  assert.equal(physicalMark.resolution, null)
+  assert.deepEqual(physicalMark.originalMark, {
+    orderId: '1001',
+    groupId: 'group',
+  })
+  assert.deepEqual(physicalMark.aliases, [
+    { code: 'CE26101001', month: '2026-10', sellerId: 'supplier' },
+  ])
+  assert.deepEqual([...physicalMark.relatedEntryIds].sort(), ['1', '2', '3'])
+  assert.equal(planned.reviews[0].resolutionRequired, true)
   assert.deepEqual(planned.reviews[0].originalMark, {
     orderId: '1001',
     groupId: 'group',
