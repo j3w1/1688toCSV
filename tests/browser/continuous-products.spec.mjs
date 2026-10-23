@@ -1,5 +1,9 @@
 import { test, expect } from './extension-fixture.mjs'
 import { createDemoRecords } from '../../preview/library-fixture.js'
+import {
+  openOrderReconciliation,
+  realOrderContext,
+} from './smart-workspace-helpers.mjs'
 
 async function seed(extension, count = 500) {
   const [record] = await extension.inspector.evaluate(
@@ -53,51 +57,111 @@ async function seed(extension, count = 500) {
   return { page, record }
 }
 
-test('continuous products retain active decimal drafts across the whole list and save after recycling', async ({
+test('continuous physical rows retain active decimal drafts across the whole list and save after recycling', async ({
   extension,
 }) => {
-  const { page, record } = await seed(extension)
-  const first = page.locator(
-    `#sheet-body [data-selection-key=${JSON.stringify(JSON.stringify([record.snapshot.accountId, record.snapshot.orderId, '800000']))}]`
-  )
-  const weight = first.getByRole('textbox', {
-    name: 'Weight (kg/box)',
-    exact: true,
-  })
+  const { page, record } = await seed(extension),
+    ref = {
+      accountId: record.snapshot.accountId || 'local',
+      orderId: record.snapshot.orderId,
+    }
+  // Declared synthetic physical evidence: one exact carton for each source unit.
+  // Product measurement columns are read-only; physical weights belong here.
+  const original = await extension.inspector.evaluate(async (ref) => {
+    const repository = await window.testRepository,
+      context = await repository.getOrderReconciliation(ref),
+      draft = window.testPlanner.createReconciliationDraft(context)
+    draft.cartons = context.record.snapshot.items.map((item, index) => ({
+      ...ref,
+      id: `continuous-carton-${index + 1}`,
+      cartonNumber: String(index + 1),
+      count: 1,
+      packingBasis: 'exact',
+      labelOrigin: 'reported',
+      contents: [
+        { orderId: ref.orderId, entryId: item.entryId, quantity: '1' },
+      ],
+      unresolvedContents: [],
+      weight: '',
+      weightBasis: 'carton',
+      draftKind: 'manual',
+    }))
+    await repository.confirmOrderCartons({
+      ...ref,
+      draft,
+      expectedRevisions: context.revisions,
+    })
+    return repository.getOrderReconciliation(ref)
+  }, ref)
+  expect(original.batches).toHaveLength(500)
+  expect(original.record.snapshot).toEqual(record.snapshot)
+  const grid = await openOrderReconciliation(page, ref, 'cartons'),
+    firstBatch = original.batches[0],
+    lastBatch = original.batches.at(-1),
+    first = grid.locator(`tr[data-grid-key=${JSON.stringify(firstBatch.id)}]`),
+    weight = first.locator('[data-grid-column="weight"]'),
+    scroller = grid.locator('.smart-grid-scroll')
+  await expect(grid.locator('tr[data-grid-key]')).toHaveCount(100)
   await weight.fill('12..')
-  await page.locator('.table-scroll').evaluate((element) => {
+  await scroller.evaluate((element) => {
     element.scrollTop = element.scrollHeight
   })
-  await expect(
-    page
-      .locator('#sheet-body tr[data-selection-key]')
-      .last()
-      .locator('.row-number')
-  ).toHaveText('500')
+  const last = grid.locator(`tr[data-grid-key=${JSON.stringify(lastBatch.id)}]`)
+  await expect(last).toBeAttached()
+  await expect(last).toHaveAttribute('aria-rowindex', '501')
+  await expect(last.locator('.carton-reference-text')).toHaveText(
+    lastBatch.cartonNumber
+  )
   await expect(weight).toBeFocused()
   await expect(weight).toHaveValue('12..')
-  expect(
-    await page.locator('#sheet-body tr[data-selection-key]').count()
-  ).toBeLessThanOrEqual(101)
-  await weight.fill('12.5')
-  await page.locator('#sheet-title').click()
+  expect(await grid.locator('tr[data-grid-key]').count()).toBeLessThanOrEqual(
+    101
+  )
+  const rawKey = JSON.stringify([firstBatch.id, 'weight'])
   await expect
-    .poll(async () => {
-      const response = await extension.inspector.evaluate(() =>
-        chrome.runtime.sendMessage({ type: 'BACKUP_EXPORT' })
-      )
-      return response.data.orders[0].cartonDetails?.['800000']?.kg
-    })
+    .poll(
+      async () =>
+        (await realOrderContext(extension, ref)).draft?.value?.rawCells?.[
+          rawKey
+        ]
+    )
+    .toBe('12..')
+  const invalid = await realOrderContext(extension, ref)
+  expect(invalid.batches).toEqual(original.batches)
+  expect(invalid.record.snapshot).toEqual(original.record.snapshot)
+  await weight.fill('12.5')
+  await weight.blur()
+  await grid.locator('[data-action="confirm-order-cartons"]').click()
+  await expect
+    .poll(
+      async () =>
+        (await realOrderContext(extension, ref)).batches.find(
+          (batch) => batch.id === firstBatch.id
+        )?.weight
+    )
     .toBe('12.5')
-  await page.locator('.table-scroll').evaluate((element) => {
+  const saved = await realOrderContext(extension, ref)
+  expect(saved.batches.filter((batch) => batch.id !== firstBatch.id)).toEqual(
+    original.batches.filter((batch) => batch.id !== firstBatch.id)
+  )
+  expect(saved.record.snapshot).toEqual(original.record.snapshot)
+  expect(saved.record.cartonDetails).toEqual(original.record.cartonDetails)
+  await scroller.evaluate((element) => {
     element.scrollTop = 0
   })
   await expect(weight).toHaveValue('12.5')
-  await expect(page.locator('#sheet-body tr[data-selection-key]')).toHaveCount(
-    100
-  )
+  await expect(grid.locator('tr[data-grid-key]')).toHaveCount(100)
   await page.reload()
-  await expect(weight).toHaveValue('12.5')
+  const reloaded = await openOrderReconciliation(page, ref, 'cartons')
+  await expect(
+    reloaded.locator(
+      `tr[data-grid-key=${JSON.stringify(firstBatch.id)}] [data-grid-column="weight"]`
+    )
+  ).toHaveValue('12.5')
+  await expect(reloaded.locator('tr[data-grid-key]')).toHaveCount(100)
+  expect((await realOrderContext(extension, ref)).record.snapshot).toEqual(
+    original.record.snapshot
+  )
 })
 
 test('keyboard reaches every product and shift selection crosses recycled rows with full totals', async ({
@@ -113,12 +177,20 @@ test('keyboard reaches every product and shift selection crosses recycled rows w
   )
   await expect(last).toBeFocused()
   await expect(last).toBeInViewport()
-  await page.keyboard.press('Shift+End')
+  await last.getByRole('checkbox').click({ modifiers: ['Shift'] })
   await expect(page.locator('#selection-summary')).toContainText('500 selected')
-  await page.keyboard.press('Shift+Home')
+  await last.focus()
+  await page.keyboard.press('Control+Home')
+  await page.keyboard.press('Control+d')
+  await first.getByRole('checkbox').check()
   await expect(page.locator('#selection-summary')).toContainText('1 selected')
+  await first.focus()
   await page.keyboard.press('Control+End')
-  await page.keyboard.press('Shift+End')
+  await page.keyboard.press('Control+d')
+  await last.getByRole('checkbox').check()
+  await last.focus()
+  await page.keyboard.press('Control+Home')
+  await first.getByRole('checkbox').click({ modifiers: ['Shift'] })
   await expect(page.locator('#selection-summary')).toContainText('500 selected')
   await expect(
     page.locator('#product-selection-totals [data-selection-total="gross"] dd')
