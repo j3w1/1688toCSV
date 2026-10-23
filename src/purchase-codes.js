@@ -542,9 +542,16 @@ export function recoverPhysicalMarkAliases(
             ? conflicts.length
               ? [
                   ...new Map(
-                    [...(claimed?.conflicts || []), ...conflicts].map(
-                      (value) => [conflictKey(value), value]
-                    )
+                    [
+                      ...conflicts,
+                      ...(claimed?.conflicts || []).filter(
+                        (value) =>
+                          !conflicts.some(
+                            (actual) =>
+                              conflictKey(actual) === conflictKey(value)
+                          )
+                      ),
+                    ].map((value) => [conflictKey(value), value])
                   ).values(),
                 ]
               : clone(claimed.conflicts)
@@ -577,15 +584,21 @@ export function recoverPhysicalMarkAliases(
             'The returned physical alias is currently reserved by its related goods.',
             { code: alias.code }
           )
-        if (conflicts.length)
+        // Current holders lead the list used by canonical/typed refusal reasons.
+        // Retain former holders behind them as corroborating witness history.
+        if (conflicts.length) {
+          if (known.active === false && mark.code === alias.code)
+            mark.resolution = null
           known.conflicts = [
-            ...new Map(
-              [...known.conflicts, ...conflicts].map((value) => [
-                conflictKey(value),
-                value,
-              ])
-            ).values(),
+            ...conflicts,
+            ...known.conflicts.filter(
+              (value) =>
+                !conflicts.some(
+                  (actual) => conflictKey(actual) === conflictKey(value)
+                )
+            ),
           ]
+        }
         known.active = conflicts.length > 0
         known.reviewRequired = known.reviewRequired === true
         const freshReview =

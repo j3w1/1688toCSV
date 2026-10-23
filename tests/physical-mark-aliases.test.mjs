@@ -41,6 +41,10 @@ import {
 } from './fixtures/container-fixture.mjs'
 import { databaseBrowser } from './fixtures/database-browser.mjs'
 import { createPackingBackup } from '../src/packing-backup.js'
+import {
+  makeOrderCartonPrintRef,
+  assertOrderCartonPrintRef,
+} from '../src/print-store.js'
 
 const time = '2026-10-23T05:00:00.000Z'
 function fixture({ legacy = false } = {}) {
@@ -4357,6 +4361,324 @@ test('native current-holder conflict is temporary and becomes permanent if that 
       ).orderId,
       '1002'
     )
+  } finally {
+    await browser.close()
+  }
+})
+
+test('native repeated temporary supersession names the live holder and requires a fresh physical decision after every release', async (t) => {
+  const browser = await databaseBrowser()
+  try {
+    const state = await openFixture(browser, fixture()),
+      { next, plan } = await mergePlan(state)
+    await saveMerge(browser, state, next, plan)
+    const foreign = ['1002', '1004'].map((orderId, index) => {
+      const record = syntheticOrder(orderId, '30', {
+          purchasedAt: `2026-10-0${index + 5}T12:00:00+08:00`,
+        }),
+        preparation = createPreparation(record.snapshot, '2026-10')
+      preparation.groups[0].baseCode = 'CE26101002'
+      return { record, preparation }
+    })
+    const result = await browser.page.evaluate(
+      async ({ foreign }) => {
+        const context = () =>
+            aliasDb.getOrderReconciliation({ orderId: '1001' }),
+          backup = () => aliasDb.exportBackup({}),
+          keep = async (reason) => {
+            const ctx = await context()
+            return aliasDb.resolveCartonPhysicalMark({
+              orderId: '1001',
+              batchId: ctx.batches[0].id,
+              expectedRevisions: ctx.revisions,
+              choice: 'keep-recorded-mark',
+              reason,
+            })
+          },
+          before = await backup(),
+          payment = modules.fixture.syntheticOrder('1003', '30', {
+            purchasedAt: '2026-10-07T12:00:00+08:00',
+          })
+        await keep('Initial explicit review of the actual recorded boxes')
+        await aliasDb.restoreBackup({
+          format: '1688-order-library',
+          version: 1,
+          exportedAt: '2026-10-23T05:00:00.000Z',
+          orders: [payment, ...foreign.map((value) => value.record)],
+          history: [],
+          images: [],
+        })
+        const episodes = []
+        for (const [index, holder] of foreign.entries()) {
+          await aliasDb.linkPayment('1003', {
+            sourceOrderId: '1001',
+            reason: 'Synthetic retirement releases the unused physical alias',
+          })
+          await aliasDb.savePreparations([holder.preparation], {
+            expectedRevisions: [0],
+          })
+          const links = await aliasDb.getPaymentLinks('1003'),
+            link = (links.links || links)[0]
+          await aliasDb.unlinkPayment('1003', link.id)
+          const conflicted = await context(),
+            beforeRefusal = await backup()
+          let keepError
+          try {
+            await keep('A current foreign holder cannot be overridden')
+          } catch (error) {
+            keepError = error.code
+          }
+          const afterRefusal = await backup(),
+            current = (await aliasDb.getOperationalState({})).preparations.find(
+              (value) => value.orderId === holder.record.snapshot.orderId
+            ),
+            freed = structuredClone(current)
+          freed.groups[0].baseCode = `CE261010${index ? '19' : '09'}`
+          await aliasDb.savePreparations([freed], {
+            expectedRevisions: [current.revision],
+          })
+          const released = await context()
+          if (index === 0) {
+            await keep('Fresh explicit keep after the first unused release')
+            episodes.push({
+              conflicted,
+              released,
+              kept: await context(),
+              keepError,
+              beforeRefusal,
+              afterRefusal,
+            })
+            continue
+          }
+          const c = await aliasDb.createContainer({
+            name: 'Second release still requires a fresh physical review',
+          })
+          let view = await aliasDb.includeContainerOrders({
+            id: c.id,
+            expectedRevision: c.revision,
+            orderRefs: [{ orderId: '1001' }],
+          })
+          view = await aliasDb.markContainerLoaded({
+            id: c.id,
+            expectedRevision: view.container.revision,
+          })
+          const review = await aliasDb.reviewContainerSeal({
+              id: c.id,
+              expectedRevision: view.container.revision,
+            }),
+            beforeSeal = await backup()
+          let sealError, prematureManifest
+          try {
+            prematureManifest = await aliasDb.sealContainer({
+              id: c.id,
+              expectedRevision: view.container.revision,
+              reviewToken: review.reviewToken,
+            })
+          } catch (error) {
+            sealError = error.code
+          }
+          const afterSeal = await backup()
+          let manifest, reviewed
+          if (sealError) {
+            await keep('Fresh explicit keep after the second unused release')
+            reviewed = await context()
+            view = await aliasDb.getContainerView({ id: c.id })
+            await aliasDb.removeContainerOrder({
+              id: c.id,
+              expectedRevision: view.container.revision,
+              orderRef: { orderId: '1001' },
+            })
+            view = await aliasDb.getContainerView({ id: c.id })
+            view = await aliasDb.includeContainerOrders({
+              id: c.id,
+              expectedRevision: view.container.revision,
+              orderRefs: [{ orderId: '1001' }],
+            })
+            view = await aliasDb.markContainerLoaded({
+              id: c.id,
+              expectedRevision: view.container.revision,
+            })
+            const fresh = await aliasDb.reviewContainerSeal({
+              id: c.id,
+              expectedRevision: view.container.revision,
+            })
+            if (!fresh.ready) throw new Error(JSON.stringify(fresh.issues))
+            manifest = await aliasDb.sealContainer({
+              id: c.id,
+              expectedRevision: view.container.revision,
+              reviewToken: fresh.reviewToken,
+            })
+          }
+          episodes.push({
+            conflicted,
+            released,
+            keepError,
+            beforeRefusal,
+            afterRefusal,
+            review,
+            sealError,
+            prematureManifest,
+            beforeSeal,
+            afterSeal,
+            reviewed,
+            manifest,
+          })
+        }
+        const final = await backup(),
+          restoredDb = await modules.openDatabase({
+            name: 'repeated-supersession-roundtrip',
+          })
+        await restoredDb.restoreBackup(final)
+        const restored = await restoredDb.exportBackup({})
+        restoredDb.close()
+        return { before, episodes, final, restored }
+      },
+      { foreign }
+    )
+    const [first, second] = result.episodes,
+      batch = second.conflicted.batches[0],
+      originalCode = 'CE26101002'
+    await t.test(
+      'readback and typed refusals identify the second actual holder',
+      async () => {
+        assert.match(
+          batch.physicalMarkConflictReason,
+          /Order 1004 currently owns/
+        )
+        assert.doesNotMatch(batch.physicalMarkConflictReason, /\bOrder 1002\b/)
+        const oldRef = await makeOrderCartonPrintRef(first.kept, {
+          batchId: batch.id,
+        })
+        for (const request of [
+          () =>
+            makeOrderCartonPrintRef(second.conflicted, { batchId: batch.id }),
+          () => assertOrderCartonPrintRef(oldRef, second.conflicted),
+        ])
+          await assert.rejects(request(), (error) => {
+            assert.equal(error.code, 'PHYSICAL_MARK_RELABEL_REQUIRED')
+            assert.match(error.message, /1004/)
+            assert.doesNotMatch(error.message, /\bpurchase 1002\b/)
+            return true
+          })
+        const fresh = await makeOrderCartonPrintRef(second.conflicted, {
+          batchId: batch.id,
+          role: 'current-product',
+        })
+        assert.equal(fresh.code, 'CE26101001')
+        assert.equal(
+          await assertOrderCartonPrintRef(fresh, second.conflicted),
+          true
+        )
+        const supersession = batch.physicalMark.supersededAliases[0]
+        assert.ok(
+          supersession.conflicts.some((value) => value.orderId === '1002')
+        )
+        assert.ok(
+          supersession.conflicts.some((value) => value.orderId === '1004')
+        )
+        assert.deepEqual(
+          supersession.reservationWitness,
+          first.conflicted.batches[0].physicalMark.supersededAliases[0]
+            .reservationWitness
+        )
+      }
+    )
+    await t.test(
+      'renewed supersession clears the old decision and unused release does not restore it',
+      () => {
+        for (const episode of result.episodes) {
+          assert.equal(
+            episode.conflicted.batches[0].physicalMark.resolution,
+            null
+          )
+          assert.equal(
+            episode.released.batches[0].physicalMarkResolutionRequired,
+            true
+          )
+          assert.equal(
+            episode.released.batches[0].physicalMarkConflictKind,
+            'none'
+          )
+          assert.equal(episode.keepError, 'PHYSICAL_MARK_RELABEL_REQUIRED')
+          for (const field of [
+            'orders',
+            'preparations',
+            'cartonBatches',
+            'issuedCodes',
+            'containers',
+            'shipmentLocks',
+          ])
+            assert.deepEqual(
+              episode.afterRefusal[field],
+              episode.beforeRefusal[field],
+              field
+            )
+        }
+        assert.equal(second.review.ready, false)
+        assert.ok(
+          second.review.issues.some(
+            (issue) => issue.code === 'PHYSICAL_MARK_UNRESOLVED'
+          )
+        )
+        assert.ok(second.sealError)
+        assert.equal(second.prematureManifest, undefined)
+        for (const field of [
+          'orders',
+          'preparations',
+          'cartonBatches',
+          'issuedCodes',
+          'containers',
+          'shipmentLocks',
+        ])
+          assert.deepEqual(
+            second.afterSeal[field],
+            second.beforeSeal[field],
+            field
+          )
+        assert.equal(second.manifest.cartons[0].markCode, originalCode)
+        assert.equal(
+          second.reviewed.batches[0].physicalMark.resolution.reason,
+          'Fresh explicit keep after the second unused release'
+        )
+      }
+    )
+    for (const field of [
+      'id',
+      'count',
+      'received',
+      'len',
+      'wid',
+      'ht',
+      'weight',
+      'weightBasis',
+      'contents',
+      'sourceFacts',
+    ])
+      assert.deepEqual(
+        second.released.batches[0][field],
+        result.before.cartonBatches[0][field],
+        field
+      )
+    assert.deepEqual(
+      result.final.orders.find((record) => record.snapshot.orderId === '1001')
+        .snapshot,
+      result.before.orders.find((record) => record.snapshot.orderId === '1001')
+        .snapshot
+    )
+    for (const field of [
+      'orders',
+      'preparations',
+      'cartonBatches',
+      'issuedCodes',
+      'containers',
+      'shipmentLocks',
+      'images',
+    ])
+      assert.deepEqual(
+        result.restored[field],
+        result.final[field],
+        `roundtrip ${field}`
+      )
   } finally {
     await browser.close()
   }
