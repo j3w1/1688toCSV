@@ -7,6 +7,142 @@ import { databaseBrowser } from './fixtures/database-browser.mjs'
 import { setGroupSizeMode, barcodeValue } from '../src/packing-model.js'
 import { createContainerSummary } from '../src/container-export.js'
 
+test('native committed metadata notifications isolate databases, skip abort/read echoes and retain stale-write authority after a missed event', async () => {
+  const fixture = await databaseBrowser()
+  try {
+    await fixture.page.evaluate(async () => {
+      window.writer = await modules.openDatabase({
+        name: 'synthetic-change-events',
+      })
+      await writer.saveSnapshot(modules.fixture.syntheticOrder().snapshot)
+    })
+    const tab = await fixture.newPage()
+    await tab.evaluate(async () => {
+      window.reader = await modules.openDatabase({
+        name: 'synthetic-change-events',
+      })
+      window.foreign = await modules.openDatabase({
+        name: 'synthetic-foreign-events',
+      })
+      window.events = []
+      window.nextEvents = []
+      window.foreignCount = 0
+      foreign.subscribe(() => foreignCount++)
+      window.unsubscribe = reader.subscribe(async (change) => {
+        const record = await reader.getOrder('1001')
+        events.push({ change, capacity: record.unitsPerCarton?.['2001'] })
+      })
+    })
+    await fixture.page.evaluate(async () => {
+      await writer.updateOrderCapacities({
+        orderId: '1001',
+        values: { 2001: '10' },
+        expectedValues: { 2001: null },
+        expectedObservedAt: '2026-10-01T12:00:00.000Z',
+      })
+    })
+    await tab.waitForFunction(() => window.events.length === 1, null, {
+      timeout: 5000,
+    })
+    const aborted = await fixture.page.evaluate(async () => {
+      let code
+      try {
+        await writer.updateOrderCapacities({
+          orderId: '1001',
+          values: { 2001: '99' },
+          expectedValues: { 2001: null },
+          expectedObservedAt: '2026-10-01T12:00:00.000Z',
+        })
+      } catch (error) {
+        code = error.code
+      }
+      await writer.exportBackup()
+      await writer.listCartonBatches()
+      await writer.updateOrderCapacities({
+        orderId: '1001',
+        values: { 2001: '20' },
+        expectedValues: { 2001: 10 },
+        expectedObservedAt: '2026-10-01T12:00:00.000Z',
+      })
+      return code
+    })
+    await tab.waitForFunction(() => window.events.length === 2, null, {
+      timeout: 5000,
+    })
+    const received = await tab.evaluate(() => events)
+    assert.equal(aborted, 'CAPACITY_CONFLICT')
+    assert.deepEqual(
+      received.map((event) => event.capacity),
+      [10, 20]
+    )
+    assert.equal(received[1].change.sequence, received[0].change.sequence + 1)
+    for (const event of received) {
+      assert.deepEqual(Object.keys(event.change).sort(), [
+        'schema',
+        'sequence',
+        'stores',
+      ])
+      assert.equal(event.change.schema, '1688-order-library-change/v1')
+      assert.ok(event.change.stores.includes('orders'))
+    }
+    await tab.evaluate(() => unsubscribe())
+    await fixture.page.evaluate(async () => {
+      await writer.updateOrderCapacities({
+        orderId: '1001',
+        values: { 2001: '30' },
+        expectedValues: { 2001: 20 },
+        expectedObservedAt: '2026-10-01T12:00:00.000Z',
+      })
+    })
+    const stale = await tab.evaluate(async () => {
+      try {
+        await reader.updateOrderCapacities({
+          orderId: '1001',
+          values: { 2001: '40' },
+          expectedValues: { 2001: 20 },
+          expectedObservedAt: '2026-10-01T12:00:00.000Z',
+        })
+      } catch (error) {
+        return error.code
+      }
+    })
+    assert.equal(stale, 'CAPACITY_CONFLICT')
+    await tab.evaluate(() =>
+      reader.subscribe((change) => nextEvents.push(change))
+    )
+    await fixture.page.evaluate(async () => {
+      await writer.updateOrderCapacities({
+        orderId: '1001',
+        values: { 2001: '40' },
+        expectedValues: { 2001: 30 },
+        expectedObservedAt: '2026-10-01T12:00:00.000Z',
+      })
+    })
+    await tab.waitForFunction(() => window.nextEvents.length === 1, null, {
+      timeout: 5000,
+    })
+    const disposed = await tab.evaluate(() => {
+      reader.close()
+      foreign.close()
+      let closed = false
+      try {
+        reader.subscribe(() => {})
+      } catch {
+        closed = true
+      }
+      return { closed, originalCount: events.length, foreignCount }
+    })
+    assert.deepEqual(disposed, {
+      closed: true,
+      originalCount: 2,
+      foreignCount: 0,
+    })
+    await fixture.page.evaluate(() => writer.close())
+  } finally {
+    await fixture.close()
+  }
+})
+
 test('native base identity remains stable while unresolved variant sizes stay warned and unprintable until explicit resolution', async () => {
   const fixture = await databaseBrowser()
   try {
