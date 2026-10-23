@@ -63,6 +63,8 @@ Pre-v4 upgrade converts historical defaults once in its upgrade transaction; bac
 
 Stable indexed unit contents and measurements support a physical exception without renumbering untouched cartons. A formerly declared uniform set retains the untouched proven facts. A changed content weight becomes stale until explicitly reconfirmed; original reported facts remain in history. Genuine aggregate evidence cannot be divided to fill unknown units. Reconciliation preserves known measurement subtotals and missing coverage independently of complete-set totals.
 
+Source reconciliation carries all independently authored inventory/identity values, clear markers, edit clocks and metadata history into the new record. Source changes conflicting with an existing exclusion reject for explicit review. Source refresh and restore also validate the effective shipment graph in the same transaction: a positively shipped source row cannot disappear or fall below its committed eligible quantity. Rejection retains the prior source/history and cannot poison unrelated edits or seals.
+
 ## Containers, reservations and historical output
 
 Backlog is a derived projection of eligible purchase quantities less effective shipments. Explicit non-goods, fee, payment-only and canceled dispositions retain authored evidence and independent edit clocks; a legacy UI skip does not establish a goods exclusion. Unknown physical counts remain unknown. Draft-reserved goods stay visible with their container reference. Se quedó is the frozen remainder of included orders at one shipment revision, not current global Backlog.
