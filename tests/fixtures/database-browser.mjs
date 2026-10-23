@@ -8,7 +8,7 @@ export async function databaseBrowser() {
   const bundle = await build({
     stdin: {
       contents:
-        "import {openDatabase,validateBackup} from './src/database.js'; import * as fixture from './tests/fixtures/container-fixture.mjs'; import * as reports from './src/packing-report-model.js'; import * as cells from './src/packing-report-cells.js'; import * as matches from './src/packing-report-matches.js'; import * as archive from './src/backup-file.js'; import * as cartons from './src/carton-batches.js'; import * as payments from './src/payment-links.js'; window.modules={openDatabase,validateBackup,fixture,reports,cells,matches,archive,cartons,payments};",
+        "import {openDatabase,validateBackup} from './src/database.js'; import * as fixture from './tests/fixtures/container-fixture.mjs'; import * as reports from './src/packing-report-model.js'; import * as cells from './src/packing-report-cells.js'; import * as matches from './src/packing-report-matches.js'; import * as archive from './src/backup-file.js'; import * as cartons from './src/carton-batches.js'; import * as payments from './src/payment-links.js'; import * as workbooks from './src/store-workbook-reader.js'; window.modules={openDatabase,validateBackup,fixture,reports,cells,matches,archive,cartons,payments,workbooks};",
       resolveDir: process.cwd(),
     },
     bundle: true,

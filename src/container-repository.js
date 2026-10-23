@@ -1074,7 +1074,9 @@ export function createContainerRepository({
               )
             if (
               value !== null &&
-              (!/^\d+$/.test(String(value)) || BigInt(value) < 1n)
+              (!/^\d+$/.test(String(value)) ||
+                BigInt(value) < 1n ||
+                !Number.isSafeInteger(Number(value)))
             )
               fail(
                 'INVALID_CAPACITY',
@@ -1084,7 +1086,7 @@ export function createContainerRepository({
           record.unitsPerCarton = { ...record.unitsPerCarton }
           for (const [id, value] of Object.entries(input.values || {})) {
             if (value === null) delete record.unitsPerCarton[id]
-            else record.unitsPerCarton[id] = String(value)
+            else record.unitsPerCarton[id] = Number(value)
           }
           record.unitsPerCartonUpdatedAt = nextEditTimestamp(
             record.unitsPerCartonUpdatedAt

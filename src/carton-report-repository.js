@@ -406,7 +406,21 @@ export function createCartonReportRepository({
         )
       })
     },
-    commitPackingReportUpdate(input) {
+    async commitPackingReportUpdate(input) {
+      const reference = {
+          accountId: input.accountId || 'local',
+          orderId: input.orderId,
+        },
+        proposed = input.plan?.commitPayload?.report || input.plan?.report
+      let replay
+      if (input.plan?.commitPayload && proposed?.source?.rawAssetRef) {
+        const asset = await validateReportAsset(
+          await api.getPackingReportSource(proposed.source)
+        )
+        // Workbook decompression/image processing must finish before opening
+        // the write transaction. Current asset/revisions are checked again below.
+        replay = { asset, source: await parseAsset(asset, reference) }
+      }
       return domain.mutate(
         'commitPackingReportUpdate',
         input,
@@ -478,7 +492,21 @@ export function createCartonReportRepository({
               'REPORT_SOURCE_MISSING',
               'The report original does not belong to this purchase.'
             )
-          const source = await parseAsset(asset, reference),
+          const evidence = (value) =>
+            stableValue({
+              rawAssetRef: value.rawAssetRef,
+              rawDigest: value.rawDigest,
+              kind: value.kind,
+              filename: value.filename,
+              text: value.text,
+              bytes: value.bytes,
+            })
+          if (!replay || evidence(replay.asset) !== evidence(asset))
+            fail(
+              'REPORT_SOURCE_CHANGED',
+              'The original report asset changed during review; retain the draft and parse it again.'
+            )
+          const source = replay.source,
             analysis = analyzePackingReport({
               source,
               context,

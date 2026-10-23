@@ -861,7 +861,7 @@ test('native active amendment epoch stages preparation and identity; forged and 
       stale: 'AMENDMENT_CONTEXT_CONFLICT',
       staleCapacity: 'AMENDMENT_CONTEXT_CONFLICT',
       effectiveCapacity: null,
-      stagedCapacity: '7',
+      stagedCapacity: 7,
       canceledCapacity: null,
       ordinaryDraft: null,
       currentDraft: null,
