@@ -8,6 +8,7 @@ import {
   setGroupSizeMode,
   setVariantMaterial,
   barcodeValue,
+  variantMaterial,
 } from '../src/packing-model.js'
 import { createContainerSummary } from '../src/container-export.js'
 import { planContainerWorkbook } from '../src/container-export.js'
@@ -478,9 +479,16 @@ test('native explicit preparation and material rule saves persist automatic evid
       [
         ['玻璃', 'suggested'],
         ['棉', 'suggested'],
-        ['', 'suggested'],
+        [undefined, undefined],
       ]
     )
+    const unknown = original.preparation.groups[0].variants[2]
+    assert.equal(Object.hasOwn(unknown, 'material'), false)
+    assert.equal(Object.hasOwn(unknown, 'materialSource'), false)
+    assert.deepEqual(variantMaterial(unknown), {
+      value: '',
+      source: 'suggested',
+    })
     const edited = structuredClone(original.preparation)
     setVariantMaterial(edited.groups[0].variants[0], 'Owner material wording')
     setVariantMaterial(edited.groups[0].variants[1], '')

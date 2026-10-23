@@ -3,7 +3,11 @@ import { repeatProductStoreIdentity } from './repeat-products.js'
 import { productCartonDetails } from './carton-details.js'
 import { cartonBreakdown } from './carton-packing.js'
 import { unresolvedCoverageFeasible } from './carton-reconciliation.js'
-import { validatePhysicalMark, physicalMarkReadback } from './physical-mark-aliases.js'
+import {
+  validatePhysicalMark,
+  physicalMarkReadback,
+  retainCartonEvidence,
+} from './physical-mark-aliases.js'
 
 const sourceKey = (orderId, entryId) => JSON.stringify([orderId, entryId])
 const referenceKey = (reference) =>
@@ -491,6 +495,14 @@ export function validateCartonBatch(input) {
   if (input.needsReview) result.needsReview = true
   if (input.physicalMark !== undefined)
     result.physicalMark = validatePhysicalMark(input.physicalMark)
+  if (
+    result.physicalMark &&
+    result.physicalMark.originalMark.orderId !==
+      (result.orderId || result.contents[0]?.orderId)
+  )
+    throw new Error(
+      'Physical mark provenance must belong to its original purchase.'
+    )
   return result
 }
 
@@ -1038,7 +1050,9 @@ export function cartonBatchProjection(batches, records, preparations) {
         ...physicalMarkReadback(batch, preparations),
         mark,
         baseCode: batch.physicalMark?.code || markGroup?.baseCode || '',
-        category: markGroup?.category || '',
+        category: batch.physicalMark
+          ? batch.physicalMark.artwork?.category || ''
+          : markGroup?.category || '',
         sellerName:
           scope?.sellerName ||
           records.find(
@@ -1233,12 +1247,38 @@ export function mergeCartonBatchRecords(previous, incoming) {
     const batch = validateCartonBatch(raw),
       old = result.get(batch.id)
     if (!old) result.set(batch.id, batch)
-    else if (Date.parse(batch.updatedAt) > Date.parse(old.updatedAt))
+    else if (Date.parse(batch.updatedAt) > Date.parse(old.updatedAt)) {
+      if (
+        old.physicalMark &&
+        (!batch.physicalMark ||
+          old.physicalMark.originalCode !== batch.physicalMark.originalCode ||
+          JSON.stringify(old.physicalMark.originalMark) !==
+            JSON.stringify(batch.physicalMark.originalMark) ||
+          old.physicalMark.aliases.some(
+            (alias) =>
+              !batch.physicalMark.aliases.some(
+                (value) => JSON.stringify(value) === JSON.stringify(alias)
+              )
+          ))
+      )
+        throw Object.assign(
+          new Error(
+            'Restore cannot discard or replace recorded physical mark ownership; review its current history.'
+          ),
+          { code: 'PHYSICAL_MARK_RESTORE_CONFLICT' }
+        )
+      const retained = retainCartonEvidence(old, batch)
+      const history = new Map(
+        [...retained.cartonHistory, ...(batch.cartonHistory || [])].map(
+          (entry) => [JSON.stringify(entry), entry]
+        )
+      )
       result.set(batch.id, {
-        ...batch,
+        ...retained,
+        cartonHistory: [...history.values()],
         revision: Math.max(old.revision, batch.revision) + 1,
       })
-    else if (
+    } else if (
       Date.parse(batch.updatedAt) === Date.parse(old.updatedAt) &&
       JSON.stringify({ ...validateCartonBatch(old), revision: 0 }) !==
         JSON.stringify({ ...batch, revision: 0 })

@@ -155,6 +155,13 @@ export const PACKING_CARTON_COLUMNS = Object.freeze(
   [
     ['batch', 'Batch', 'Lote', '箱批', 12],
     ['cartonMark', 'Carton mark', 'Marca', '唛头', 20],
+    [
+      'currentProductCode',
+      'Current product code',
+      'Código actual del producto',
+      '当前商品编码',
+      22,
+    ],
     ['contents', 'Contents', 'Contenido', '内装商品', 42],
     ['count', 'Cartons', 'Cajas', '箱数', 9],
     ['received', 'Received', 'Recibidas', '实收', 9],
@@ -176,7 +183,9 @@ export const PACKING_CARTON_COLUMNS = Object.freeze(
 export const PACKING_CARTON_COLUMN_ORDER = Object.freeze(
   PACKING_CARTON_COLUMNS.map(({ key }) => key)
 )
-export const PACKING_CARTON_DEFAULT_COLUMNS = PACKING_CARTON_COLUMN_ORDER
+export const PACKING_CARTON_DEFAULT_COLUMNS = Object.freeze(
+  PACKING_CARTON_COLUMN_ORDER.filter((key) => key !== 'currentProductCode')
+)
 const columnSections = [
   {
     keys: PACKING_WORKBOOK_COLUMN_ORDER.slice(0, 7),
@@ -1416,7 +1425,17 @@ function planCartonWorksheet(rows, options) {
     requested.some((key) => !PACKING_CARTON_COLUMN_ORDER.includes(key))
   )
     throw new Error('Choose at least one supported carton column.')
-  const columns = [...new Set(requested)].map((key) => {
+  const selected = [...new Set(requested)]
+  if (options.cartonBatches.some((batch) => batch.physicalMark)) {
+    if (!selected.includes('cartonMark')) selected.unshift('cartonMark')
+    if (!selected.includes('currentProductCode'))
+      selected.splice(
+        selected.indexOf('cartonMark') + 1,
+        0,
+        'currentProductCode'
+      )
+  }
+  const columns = selected.map((key) => {
       const column = PACKING_CARTON_COLUMNS.find((column) => column.key === key)
       return { ...column, pixelWidth: columnPixels(column.width) }
     }),
@@ -1564,6 +1583,12 @@ function planCartonWorksheet(rows, options) {
           `${displayLabel}${batch.needsReview ? ` · ${labels.review}` : ''}`
         ),
         cartonMark: textCell(batch.baseCode || ''),
+        currentProductCode: textCell(
+          batch.currentProductCode ||
+            batch.physicalMark?.productCode ||
+            batch.baseCode ||
+            ''
+        ),
         contents: textCell(contents),
         count: numberCell(batch.count ?? ''),
         received: numberCell(batch.received ?? ''),

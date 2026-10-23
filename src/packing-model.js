@@ -87,25 +87,35 @@ export function refreshPreparationMaterials(
   const result = structuredClone(preparation)
   const source = new Map(snapshot.items.map((item) => [item.entryId, item]))
   for (const group of result.groups)
-    for (const variant of group.variants)
-      storeMaterials(
-        variant,
-        new Map(
-          variant.entryIds.map((id) => {
-            const current = variantMaterial(variant, id)
-            return [
-              id,
-              current.source === 'manual' || !source.has(id)
-                ? current
-                : {
-                    value:
-                      suggestions?.get(id) ?? suggestMaterial(source.get(id)),
-                    source: 'suggested',
-                  },
-            ]
-          })
+    for (const variant of group.variants) {
+      const entries = new Map(
+        variant.entryIds.map((id) => {
+          const current = variantMaterial(variant, id)
+          return [
+            id,
+            current.source === 'manual' || !source.has(id)
+              ? current
+              : {
+                  value:
+                    suggestions?.get(id) ?? suggestMaterial(source.get(id)),
+                  source: 'suggested',
+                },
+          ]
+        })
+      )
+      // Unknown suggestions do not author previously absent sibling fields.
+      // Existing suggestions still clear, and manual blanks remain explicit.
+      if (
+        !['material', 'materialSource', 'materialOverrides'].some((field) =>
+          Object.hasOwn(variant, field)
+        ) &&
+        [...entries.values()].every(
+          (value) => value.value === '' && value.source === 'suggested'
         )
       )
+        continue
+      storeMaterials(variant, entries)
+    }
   return result
 }
 
