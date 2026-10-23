@@ -213,6 +213,54 @@ test('malformed physical refs cannot fall back to legacy Orders or container ide
   }
 })
 
+test('a proposed surviving mark prints an explicit existing product owner without rewriting the carton context', async () => {
+  const context = physicalContext()
+  context.preparation.groups.push({
+    id: 'old-owner',
+    baseCode: 'CE26101002',
+    category: '原标记',
+  })
+  context.batches[0].mark.groupId = 'old-owner'
+  const before = structuredClone(context)
+  const ref = await makeOrderCartonPrintRef(context, {
+    batchId: 'batch-a',
+    role: 'current-product',
+    productGroupId: 'surviving',
+  })
+  assert.equal(ref.code, 'CE26101001')
+  assert.equal(ref.productGroupId, 'surviving')
+  assert.equal(context.batches[0].mark.groupId, 'old-owner')
+  assert.equal(await assertOrderCartonPrintRef(ref, context), true)
+  assert.equal(
+    createPrintStore(memoryStorage()).recordJob({
+      kind: 'marks',
+      products: [{ code: ref.code, quantity: 1, ref }],
+    }).products[0].ref.productGroupId,
+    'surviving'
+  )
+  await assert.rejects(
+    makeOrderCartonPrintRef(context, {
+      batchId: 'batch-a',
+      role: 'current-product',
+      productGroupId: 'not-yet-issued',
+    }),
+    /Review the current order/
+  )
+  await assert.rejects(
+    makeOrderCartonPrintRef(context, {
+      batchId: 'batch-a',
+      role: 'recorded',
+      productGroupId: 'surviving',
+    }),
+    /Review the current order/
+  )
+  await assert.rejects(
+    assertOrderCartonPrintRef({ ...ref, productGroupId: 'old-owner' }, context),
+    /Review the current order/
+  )
+  assert.deepEqual(context, before)
+})
+
 function memoryStorage() {
   const values = new Map()
   return {

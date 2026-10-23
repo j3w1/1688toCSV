@@ -77,7 +77,9 @@ function cleanOrderCartonRef(ref) {
     ((ref.contextContainerId !== undefined ||
       ref.amendmentEpoch !== undefined) &&
       (!refText(ref.contextContainerId) || !refText(ref.amendmentEpoch))) ||
-    (ref.groupId !== undefined && !refText(ref.groupId))
+    (ref.groupId !== undefined && !refText(ref.groupId)) ||
+    (ref.productGroupId !== undefined &&
+      (ref.markRole !== 'current-product' || !refText(ref.productGroupId)))
   )
     return null
   return {
@@ -94,6 +96,9 @@ function cleanOrderCartonRef(ref) {
     sourceObservedAt: ref.sourceObservedAt,
     sourceGuard: ref.sourceGuard,
     ...(ref.groupId !== undefined ? { groupId: ref.groupId } : {}),
+    ...(ref.productGroupId !== undefined
+      ? { productGroupId: ref.productGroupId }
+      : {}),
     ...(ref.contextContainerId !== undefined
       ? {
           contextContainerId: ref.contextContainerId,
@@ -117,7 +122,7 @@ const canonical = (value) =>
 /** Compact, complete captured source identity; no source/photo signature is stored. */
 export async function makeOrderCartonPrintRef(
   context,
-  { batchId, role = 'recorded', index = 0 } = {}
+  { batchId, role = 'recorded', index = 0, productGroupId } = {}
 ) {
   const snapshot = context?.record?.snapshot,
     accountId = snapshot?.accountId || context?.record?.accountId || 'local',
@@ -141,6 +146,8 @@ export async function makeOrderCartonPrintRef(
       ? !batch.entitlementIndices.includes(index)
       : index >= batch.count) ||
     !markRoles.includes(role) ||
+    (productGroupId !== undefined &&
+      (role !== 'current-product' || !refText(productGroupId))) ||
     !revisions ||
     typeof revisions.source !== 'string' ||
     !revisions.source ||
@@ -161,7 +168,9 @@ export async function makeOrderCartonPrintRef(
   )
     throw physicalRefError()
   const owner = context.preparation?.groups.find(
-      (group) => group.id === (batch.mark || batch.groups?.[0])?.groupId
+      (group) =>
+        group.id ===
+        (productGroupId || (batch.mark || batch.groups?.[0])?.groupId)
     ),
     currentProductCode = owner?.baseCode || '',
     code =
@@ -190,6 +199,7 @@ export async function makeOrderCartonPrintRef(
         code,
         currentProductCode,
         artwork,
+        productGroupId: productGroupId || null,
         revisions,
         amendmentContext: amendment || null,
       })
@@ -212,6 +222,7 @@ export async function makeOrderCartonPrintRef(
     preparationRevision,
     sourceObservedAt: snapshot.observedAt,
     sourceGuard,
+    ...(productGroupId !== undefined ? { productGroupId } : {}),
     ...(amendment
       ? {
           contextContainerId: amendment.containerId,
@@ -232,6 +243,7 @@ export async function assertOrderCartonPrintRef(ref, context) {
       batchId: cleaned.batchId,
       role: cleaned.markRole,
       index: cleaned.index,
+      productGroupId: cleaned.productGroupId,
     })
   } catch {
     throw physicalRefError()
@@ -341,6 +353,7 @@ export const refKey = (ref) =>
           ref.sourceGuard,
           ref.contextContainerId || '',
           ref.amendmentEpoch || '',
+          ref.productGroupId || '',
         ])
       : ref.containerId ||
           ref.revisionId ||
