@@ -415,6 +415,77 @@
   border-inline-start: 0.3rem solid var(--accent, #be7043);
 }
 @media (max-width: 760px) {
+  /* Keep source rows visible on a phone. Every existing action remains in a
+     keyboard/touch-scrollable row; native popovers still use the top layer. */
+  #orders-actions {
+    box-sizing: border-box;
+    max-block-size: min(180px, 30dvh);
+    overflow: auto;
+    overscroll-behavior: contain;
+    scrollbar-width: thin;
+  }
+  #orders-view.workspace {
+    grid-template-rows: 120px minmax(0, 1fr) auto;
+  }
+  #orders-view.workspace:has(> .packing-progress) {
+    grid-template-rows: auto 120px minmax(0, 1fr) auto;
+  }
+  #orders-actions .action-bar-selection {
+    flex-basis: 100%;
+  }
+  #orders-actions .selection-totals-grid {
+    grid-template-columns: repeat(4, minmax(0, 1fr));
+    column-gap: 6px;
+  }
+  #orders-actions .selection-totals-context {
+    flex-wrap: nowrap;
+    overflow-x: auto;
+    scrollbar-width: thin;
+    white-space: nowrap;
+  }
+  #orders-actions .selection-totals-context > div {
+    flex: none;
+  }
+  #orders-actions :is(.action-bar-actions, .orders-product-actions) {
+    flex: 1 1 100%;
+    flex-wrap: nowrap;
+    justify-content: flex-start;
+    max-inline-size: 100%;
+    min-inline-size: 0;
+    overflow-x: auto;
+    scrollbar-width: thin;
+    padding-block-end: 4px;
+  }
+  #orders-actions :is(.action-bar-export, .export-toolbar) {
+    flex-wrap: nowrap;
+    flex: none;
+  }
+  #orders-actions .orders-product-actions > button {
+    flex: none;
+  }
+  #orders-view .sheet-pane .sheet-toolbar {
+    padding: 8px 10px;
+  }
+  #orders-view .sheet-toolbar .filterbar {
+    flex-wrap: nowrap;
+    overflow-x: auto;
+    padding-block-end: 4px;
+  }
+  #orders-view .sheet-toolbar .filterbar .search {
+    flex: 0 0 190px;
+  }
+  #orders-view .sheet-toolbar .filterbar select {
+    flex: none;
+  }
+  #orders-view .order-totals .totals-grid {
+    flex-wrap: nowrap;
+    overflow-x: auto;
+    white-space: nowrap;
+    padding-block-end: 4px;
+  }
+  #orders-view .order-totals .totals-grid > div {
+    flex: none;
+  }
   .container-workspace #container-content {
     grid-template-columns: 1fr;
     grid-template-rows: auto minmax(18rem, 1fr);

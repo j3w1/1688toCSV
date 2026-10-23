@@ -1,6 +1,7 @@
 // UI text only. Supplier/source strings never pass through this catalog.
 export const SMART_CARTON_MESSAGES = Object.fromEntries(
   [
+    ['Draft revision {0}', 'Revisión de borrador {0}', '草稿版本 {0}'],
     [
       'The recorded mark {code} belongs to shipment {shipment} (revision {revision}). Print the current product mark and confirm physical relabeling.',
       'La marca registrada {code} pertenece al embarque {shipment} (revisión {revision}). Imprime la marca del producto actual y confirma el cambio físico de etiqueta.',

@@ -4408,7 +4408,9 @@ test('double-clicked report commit is one in-flight repository intent', async ()
 test('zero-loaded container export keeps full-revision scope, three sheets and fresh default-off JSON', async (context) => {
   const { document } = dom(context),
     manifest = captureContainerOutput(view()),
-    sheet = { palette: {}, columns: [], rows: [], products: [] }
+    sheet = { palette: {}, columns: [], rows: [], products: [] },
+    previousLanguage = getLanguage()
+  context.after(() => setLanguage(previousLanguage, { persist: false }))
   const opening = openPackingExportDialog({
     context: manifest,
     getRows: () => [],
@@ -4431,6 +4433,24 @@ test('zero-loaded container export keeps full-revision scope, three sheets and f
     dialog.querySelectorAll('.packing-export-sheet-tabs input').length,
     3
   )
+  const identity = dialog.querySelector('.container-export-identity')
+  for (const [language, expected] of [
+    ['en', 'Draft revision 1'],
+    ['es', 'Revisión de borrador 1'],
+    ['zh', '草稿版本 1'],
+  ]) {
+    dialog.querySelector(`[data-language="${language}"]`).click()
+    assert.ok(
+      identity.textContent.includes(expected),
+      `${language}: ${identity.textContent}`
+    )
+    assert.ok(identity.textContent.includes(manifest.containerId))
+    assert.ok(identity.textContent.includes(manifest.container.name))
+    assert.doesNotMatch(identity.textContent, /null|undefined/)
+  }
+  assert.equal(manifest.revisionId, null)
+  assert.equal(manifest.revision, 1)
+  dialog.querySelector('[data-language="en"]').click()
   ;[...dialog.querySelectorAll('button')]
     .find((button) => button.getAttribute('aria-label') === 'Close export')
     .click()

@@ -184,7 +184,16 @@ export async function openPackingExportDialog({
     ])
   else {
     const identity = el('p', undefined, 'container-export-identity')
-    identity.textContent = `${context.container.name} · ${context.containerId} · ${context.revisionId}`
+    bindText(
+      identity,
+      m('{0} · {1} · {2}', {
+        0: context.container.name,
+        1: context.containerId,
+        2: context.draft
+          ? m('Draft revision {0}', { 0: context.revision })
+          : context.revisionId,
+      })
+    )
     controls.append(
       identity,
       el(
