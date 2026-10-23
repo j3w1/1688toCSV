@@ -7,6 +7,7 @@ import { reviewPackingChanges } from './packing-review.js'
 import { setCodeText } from './code-display.js'
 import { decorateIcon } from './icons.js'
 import { measurementWarningMessages } from './ui-messages-smart-cartons.js'
+import { physicalMarkReadback } from './physical-mark-aliases.js'
 
 const clone = (value) => structuredClone(value)
 export const sourceKey = ({ accountId = 'local', orderId, entryId }) =>
@@ -31,6 +32,8 @@ export const CARTON_GRID_COLUMNS = [
   { key: 'weightBasis', label: 'Weight basis', readonly: true },
   { key: 'volumeBasis', label: 'Volume basis', readonly: true },
   { key: 'count', label: 'Carton count', readonly: true },
+  { key: 'physicalMarkCode', label: 'Recorded physical mark', readonly: true },
+  { key: 'currentProductCode', label: 'Current product code', readonly: true },
   { key: 'provenance', label: 'Evidence', readonly: true },
 ]
 
@@ -168,6 +171,160 @@ export function mountPhysicalMarkChoices({ host, apply, reviews, onChange }) {
   host.append(section)
   update()
   return () => section.remove()
+}
+
+/** Review a saved transition against its complete captured repository token. */
+export async function openPhysicalMarkReview({
+  repository,
+  orderRef,
+  batchId,
+  contextContainerId,
+  loadImage,
+  onSaved = async () => {},
+}) {
+  const ref = {
+      accountId: orderRef.accountId || 'local',
+      orderId: orderRef.orderId,
+      ...(contextContainerId ? { contextContainerId } : {}),
+    },
+    context = await repository.getOrderReconciliation(ref),
+    batch = context.batches.find((batch) => batch.id === batchId),
+    expectedRevisions = clone(context.revisions),
+    expectedAmendment = clone(
+      context.amendmentContext || context.revisions?.amendmentContext
+    )
+  if (!batch?.physicalMark)
+    throw new Error('This edit session is no longer available.')
+  const modal = el(
+      'dialog',
+      undefined,
+      'product-authoring-dialog physical-mark-dialog'
+    ),
+    host = el('div'),
+    status = el('p'),
+    actions = el('div', undefined, 'dialog-actions'),
+    save = el('button', m('Save physical mark decision'), 'primary'),
+    retry = el('button', m('Retry')),
+    close = el('button', m('Close'))
+  modal.dataset.action = 'review-physical-mark'
+  bindAttribute(modal, 'aria-label', m('Review physical mark'))
+  modal.append(
+    el('h2', m('Review physical mark')),
+    el(
+      'p',
+      m(
+        'Keep the recorded mark alongside the current product code, or confirm actual relabeling. Original quantities, prices and carton measurements stay unchanged.'
+      )
+    )
+  )
+  const source = context.record.snapshot.items.find((item) =>
+    batch.contents.some((part) => part.entryId === item.entryId)
+  )
+  if (source?.thumbnail) {
+    const photo = el('img', undefined, 'physical-mark-source-photo')
+    photo.width = photo.height = 96
+    photo.alt = source.description || source.title || source.entryId
+    const url = loadImage ? await loadImage(source.thumbnail) : source.thumbnail
+    photo.src = typeof url === 'string' ? url : url.dataUrl
+    modal.append(photo)
+  }
+  let decision,
+    valid = false,
+    busy = false,
+    saved,
+    operation
+  const stop = mountPhysicalMarkChoices({
+    host,
+    apply: save,
+    reviews: [
+      {
+        id: batch.id,
+        cartonNumber: batch.cartonNumber,
+        physicalMark: batch.physicalMark,
+        physicalMarkCode: batch.physicalMarkCode || batch.physicalMark.code,
+        currentProductCode:
+          batch.currentProductCode || batch.physicalMark.productCode,
+        resolutionRequired: true,
+      },
+    ],
+    onChange: (value) => {
+      valid = value.valid
+      decision = value.decisions[0]
+      save.disabled = busy || !valid
+    },
+  })
+  const lock = (value) => {
+    busy = value
+    save.disabled = value || !valid || Boolean(saved)
+    close.disabled = value
+    for (const field of host.querySelectorAll('input,textarea'))
+      field.disabled = value || Boolean(saved)
+    retry.disabled = value
+  }
+  const finish = async () => {
+    await onSaved(saved)
+    modal.close('saved')
+  }
+  const failed = (error) => {
+    bindText(status, m(error.message))
+    if (saved) retry.hidden = false
+  }
+  save.type = close.type = retry.type = 'button'
+  save.dataset.action = 'save-physical-mark-decision'
+  retry.dataset.action = 'retry-physical-mark-refresh'
+  retry.hidden = true
+  retry.onclick = () =>
+    void (async () => {
+      lock(true)
+      try {
+        await finish()
+      } catch (error) {
+        failed(error)
+      } finally {
+        lock(false)
+      }
+    })()
+  save.onclick = () =>
+    void (async () => {
+      if (busy || saved || !valid) return
+      const signature = JSON.stringify(decision)
+      if (operation?.signature !== signature)
+        operation = { signature, id: crypto.randomUUID() }
+      lock(true)
+      try {
+        saved = await repository.resolveCartonPhysicalMark({
+          ...ref,
+          batchId,
+          expectedRevisions,
+          ...decision,
+          ...(expectedAmendment ? { expectedAmendment } : {}),
+          operationId: operation.id,
+        })
+        save.hidden = true
+        bindText(status, m('Physical mark review saved'))
+        await finish()
+      } catch (error) {
+        failed(error)
+      } finally {
+        lock(false)
+      }
+    })()
+  status.setAttribute('role', 'status')
+  close.onclick = () => {
+    if (!busy) modal.close()
+  }
+  modal.oncancel = (event) => {
+    if (busy) event.preventDefault()
+  }
+  modal.onclose = () => {
+    stop()
+    modal.remove()
+  }
+  actions.append(close, retry, save)
+  modal.append(host, status, actions)
+  document.body.append(modal)
+  modal.showModal()
+  return modal
 }
 
 /** Quantity is the whole set total unless the planner explicitly supplies perCarton. */
@@ -418,6 +575,22 @@ export async function mountCartonHistory(
           const disclosure = el('details')
           disclosure.append(el('summary', m('Source evidence')), facts)
           modal.append(disclosure)
+          if (row.batch?.physicalMark) {
+            const review = el('button', m('Review physical mark'))
+            review.dataset.action = 'review-carton-physical-mark'
+            review.onclick = () =>
+              void openPhysicalMarkReview({
+                repository,
+                orderRef: row.refs[0],
+                batchId: row.batch.id,
+                contextContainerId,
+                onSaved: async () => {
+                  await refresh()
+                  modal.close('saved')
+                },
+              }).catch((error) => modal.append(el('p', m(error.message))))
+            modal.append(review)
+          }
           if (batchNeedsLegacyReview(row.batch)) {
             modal.append(
               el(
@@ -1531,6 +1704,10 @@ export async function createOrderCartonSession({
       ).values(),
     ].map((carton) => ({
       ...carton,
+      ...physicalMarkReadback(
+        carton,
+        context.preparation ? [context.preparation] : []
+      ),
       key: carton.id,
       label: carton.cartonNumber || carton.supplierLabel || carton.id,
       contents:
@@ -1990,6 +2167,17 @@ export async function createOrderCartonSession({
       notify()
     },
     projection,
+    async reviewPhysicalMark(batchId, options = {}) {
+      await flush()
+      return openPhysicalMarkReview({
+        repository,
+        orderRef,
+        batchId,
+        contextContainerId: getContextContainerId(),
+        ...options,
+        onSaved: () => session.refresh(),
+      })
+    },
     rawCell,
     state() {
       const state = raw.state()
@@ -2501,11 +2689,25 @@ export function mountOrderCartonGrid(
           bindText(text, value)
           readout.firstChild.replaceWith(text)
         }
-        if (column.key === 'code' && /^CE\d{8}/.test(String(value))) {
+        if (
+          ['code', 'physicalMarkCode', 'currentProductCode'].includes(
+            column.key
+          ) &&
+          /^CE\d{8}/.test(String(value))
+        ) {
           const status = readout.querySelector('[role="status"]')
           readout.classList.add('ce-code')
           setCodeText(readout, value)
           if (status) readout.append(status)
+        }
+        if (column.key === 'provenance' && row.physicalMark) {
+          const review = el('button', m('Review physical mark'))
+          review.dataset.action = 'review-carton-physical-mark'
+          review.onclick = () =>
+            void session
+              .reviewPhysicalMark(row.key, { loadImage })
+              .catch(onError)
+          td.append(review)
         }
         td.append(readout)
         if (column.key === 'code' && row.states?.length) {
@@ -2681,6 +2883,18 @@ export function mountOrderCartonGrid(
       el('p', row.provenance || ''),
       el('p', row.contents || m('Unknown contents'))
     )
+    if (row.physicalMark) {
+      const review = el('button', m('Review physical mark'))
+      review.dataset.action = 'review-carton-physical-mark'
+      review.onclick = () =>
+        void session
+          .reviewPhysicalMark(row.key, { loadImage })
+          .then((dialog) => {
+            if (dialog) modal.close()
+          })
+          .catch(onError)
+      modal.append(review)
+    }
     const fields = el('div', undefined, 'product-authoring-fields')
     for (const column of CARTON_GRID_COLUMNS.filter(
       (column) => !column.readonly

@@ -81,8 +81,12 @@ import {
   reviewPackingChanges,
   packingValueComparison,
 } from './packing-review.js'
-import { planCartonBatchChanges } from './carton-batch-changes.js'
+import {
+  planCartonBatchChanges,
+  resolvePhysicalMarkChange,
+} from './carton-batch-changes.js'
 import { cartonBatchReviewChanges } from './carton-batch-review.js'
+import { mountPhysicalMarkChoices } from './order-carton-grid.js'
 const $ = (id) => document.getElementById(id)
 const orderKey = ({ accountId = 'local', orderId }) =>
   JSON.stringify([accountId, orderId])
@@ -2317,6 +2321,16 @@ export async function createProductAuthoring({
               (draft) => replacements.get(orderKey(draft)) || draft
             ),
           })
+        const sourceChanges = groupingReviewChanges(
+            entries,
+            prepared,
+            getRecords()
+          ),
+          requiresMarkDecision = physicalPlan.reviews.some(
+            (review) => review.resolutionRequired
+          )
+        let reviewedPhysicalPlan = physicalPlan,
+          markDecisionsReady = !requiresMarkDecision
         if (
           !(await reviewPackingChanges({
             title: uiMessage('Review product grouping'),
@@ -2324,21 +2338,62 @@ export async function createProductAuthoring({
               'Review every affected source row. Purchase quantities, prices and physical carton evidence stay separate.'
             ),
             changes: [
-              ...groupingReviewChanges(entries, prepared, getRecords()),
+              ...sourceChanges,
               ...cartonBatchReviewChanges(physicalPlan),
             ],
+            ...(requiresMarkDecision
+              ? {
+                  mountControls: ({
+                    host,
+                    apply,
+                    modal: reviewModal,
+                    setChanges,
+                  }) =>
+                    mountPhysicalMarkChoices({
+                      host,
+                      apply,
+                      reviews: physicalPlan.reviews,
+                      onChange: ({ valid, decisions }) => {
+                        markDecisionsReady = valid
+                        reviewedPhysicalPlan = physicalPlan
+                        if (valid) {
+                          try {
+                            for (const decision of decisions)
+                              reviewedPhysicalPlan = resolvePhysicalMarkChange(
+                                reviewedPhysicalPlan,
+                                decision
+                              )
+                          } catch (error) {
+                            markDecisionsReady = false
+                            apply.disabled = true
+                            showErrorNotice(error, { scope: reviewModal })
+                            return
+                          }
+                        }
+                        setChanges([
+                          ...sourceChanges,
+                          ...cartonBatchReviewChanges(reviewedPhysicalPlan),
+                        ])
+                      },
+                    }),
+                }
+              : {}),
             proceed: uiMessage('Apply changes'),
             media,
           }))
         )
           return
+        if (!markDecisionsReady)
+          throw new Error(
+            'Choose a physical mark decision and enter its reason.'
+          )
         const before = prepared.map((candidate) =>
           baselines.get(orderKey(candidate))
         )
         const results = await repository.savePreparations(prepared, {
           ...groupingContext,
           expectedRevisions: before.map((draft) => draft.revision),
-          cartonBatchChanges: physicalPlan.changes,
+          cartonBatchChanges: reviewedPhysicalPlan.changes,
           allowCartonReview: true,
         })
         const physicalIds = new Set(

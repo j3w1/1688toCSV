@@ -1,6 +1,22 @@
 // UI text only. Supplier/source strings never pass through this catalog.
 export const SMART_CARTON_MESSAGES = Object.fromEntries(
   [
+    ['Review physical mark', 'Revisar la marca física', '核对实体箱唛'],
+    [
+      'Save physical mark decision',
+      'Guardar decisión de marca física',
+      '保存实体箱唛决定',
+    ],
+    [
+      'Physical mark review saved',
+      'Revisión de marca física guardada',
+      '实体箱唛核对已保存',
+    ],
+    [
+      'Keep the recorded mark alongside the current product code, or confirm actual relabeling. Original quantities, prices and carton measurements stay unchanged.',
+      'Conserva la marca registrada junto al código actual o confirma el cambio físico de etiqueta. Se mantienen las cantidades, los precios y las medidas originales.',
+      '保留已记录的箱唛并列出当前商品编码，或确认已实际更换箱唛。原始数量、价格及纸箱测量值保持不变。',
+    ],
     ['Recorded physical mark', 'Marca física registrada', '已记录的实体箱唛'],
     ['Current product code', 'Código de producto actual', '当前商品编码'],
     [
