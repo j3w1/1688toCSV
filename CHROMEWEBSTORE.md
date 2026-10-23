@@ -141,8 +141,8 @@ Earlier Chromium/Edge/native-Excel results apply only to their checked snapshots
 
 - One buyer account per library; unsupported layouts, installments, unknown adjustments or unreconciled totals fail explicitly.
 - Local naming is rule-based; unknown or ambiguous products/sizes/materials need review.
-- Independent libraries do not coordinate code numbering; only current assignments reserve codes.
-- Capacity planning does not establish actual carton contents; partial batch-total weight is not prorated. Container manifests within one month are outside the model.
+- Independent libraries do not coordinate code numbering. Current assignments and sealed code history reserve identities within each library.
+- Capacity proposals require physical confirmation. Partial aggregate measurements remain unknown unless supported by actual evidence; missing measurements retain their coverage disclosure.
 - Excel pictures float; other spreadsheet apps, custom row heights and native in-cell conversion require their own verification. Packing export creates a new XLSX.
 - Unique originals still consume backup/storage memory. Uncached remote photos need a connection.
 - Publisher details, live policy, rights-cleared/store-sized assets and Dashboard choices remain unfinished.

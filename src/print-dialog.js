@@ -35,7 +35,7 @@ import {
 } from './print-layout.js'
 import { createPdf, rgbImage } from './pdf-writer.js'
 import { canvasPage } from './print-canvas.js'
-import { createPrintStore } from './print-store.js'
+import { createPrintStore, containerPrintIdentity } from './print-store.js'
 import { saveFile, announceExport, uniqueFileName } from './save-file.js'
 import {
   printSummary,
@@ -138,6 +138,25 @@ export function openPrintDialog({
   store = createPrintStore(),
 }) {
   const marks = kind === 'marks'
+  const refs = items.flatMap(
+    (item) => item.refs || (item.ref ? [item.ref] : [])
+  )
+  const hasContainer = refs.some(
+    (ref) => ref.containerId !== undefined || ref.revisionId !== undefined
+  )
+  const container = hasContainer ? containerPrintIdentity(refs[0]) : null
+  if (
+    hasContainer &&
+    (!container ||
+      refs.some(
+        (ref) =>
+          JSON.stringify(containerPrintIdentity(ref)) !==
+          JSON.stringify(container)
+      ))
+  )
+    throw new Error(
+      'Review the complete captured container before printing its labels.'
+    )
   const quantityStep = marks ? 1 : 5
   const normalize = marks ? normalizeMarkLayout : normalizeLabelLayout
   let layout = normalize(job?.layout ?? store.layout(kind))
@@ -1298,6 +1317,7 @@ export function openPrintDialog({
       ]
       const pdf = createPdf({
         title: printText(marks ? 'marks' : 'labels', state.language),
+        draft: container?.draft === true,
       })
       const names = new Map()
       for (const [index, key] of keys.entries()) {
@@ -1326,13 +1346,14 @@ export function openPrintDialog({
       // Cancel or close while preparing means no download and no recent job.
       if (closed) return
       const filename = uniqueFileName(
-        printFileName(kind, state.plan.items.length, new Date(), state.language)
+        `${container?.draft ? 'DRAFT-' : ''}${printFileName(kind, state.plan.items.length, new Date(), state.language)}`
       )
       savePdf(bytes, filename)
       saved = true
       // A small machine-readable summary sits next to every PDF.
       const summary = printSummary({
         kind,
+        container,
         language: state.language,
         file: filename,
         pages: state.plan.pages,

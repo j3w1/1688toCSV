@@ -9,6 +9,7 @@ import {
   captureContainerOrder,
   projectContainer,
   cartonMeasurementTotals,
+  assertManifestEvidence,
 } from '../src/container-model.js'
 import { physicalUnits } from '../src/inventory-model.js'
 const base = () => ({
@@ -373,4 +374,21 @@ test('historical remaining projection separates exact unprepared pieces from kno
   assert.equal(view.leftBehind.totals.weightCoverage.unpreparedQuantity, '70')
   state.records.push(syntheticOrder('1002'))
   assert.equal(projectContainer(state, container).leftBehind.products.length, 1)
+})
+
+test('synthetic manifest fixture uses the authoritative frozen schema and proves physical/product/value/remaining correspondence', () => {
+  const manifest = syntheticManifest()
+  assert.doesNotThrow(() => assertManifestEvidence(manifest))
+  assert.equal(manifest.products[0].quantity, '20')
+  assert.equal(manifest.products[0].effectiveAmount, '200.00')
+  assert.equal(manifest.products[0].sourcePrice, '10.00')
+  assert.equal(manifest.products[0].valuation.sourceNet, '1000.00')
+  assert.equal(
+    manifest.products[0].valuation.budgets.sourceGrossAmount.source,
+    '1000.00'
+  )
+  assert.equal(manifest.leftBehind.products[0].quantity, '80')
+  assert.equal(manifest.leftBehind.totals.weight, '10')
+  assert.equal(manifest.totals.weight, '2.5')
+  assert.equal(manifest.orders[0].sourceReports.length, 0)
 })

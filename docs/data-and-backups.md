@@ -13,11 +13,15 @@ Packing backup captures the Orders source/preparation scope before export. Revie
 
 Both actions download lossless **`.json.gz`** archives. Restore accepts them directly and legacy plain **`.json`**; no manual unzip is needed. Library format v5 includes shipment/revision and report evidence; v1–4 remain supported. Keep the original file until you verify the restored library. Import reports and export summaries use different formats and cannot replace a backup.
 
+Modern order-owned cartons do not need a shipment month to appear in a backup. Their complete order, physical facts, tombstones and required dependencies are retained. A partial product selection that would split this evidence requires a reviewed full-library backup; it cannot silently omit those cartons.
+
 ## Restore a library or packing scope
 
 Use **Settings → Data** for full-library restore, or **Restore packing** in Orders for a scoped packing archive. Review the file's scope before restoring. Scoped restore returns to Orders without assigning new codes or silently changing container membership.
 
 Restore decodes and validates the whole file before writing. Invalid references, duplicate manual supplier/reference pairs, conflicting current code ownership or contradictory same-time values reject atomically. A failed restore does not partially import the file. Libraries do not coordinate numbering; use one buyer account per library.
+
+Changed source observations and newer-source restores retain authored inventory exclusions, explicit clears, supplier/date resolutions, code-identity reviews and their clocks/history. A source change that contradicts an authored exclusion or removes/reduces positively shipped goods rejects atomically. Review the named purchase or shipment before retrying; the retained library and unrelated operations remain usable.
 
 Scoped restore preserves unrelated products, newer local edits, explicit clears and existing global settings. Its label settings can initialize an otherwise empty library **once**; later scoped files preserve those initialized settings even before you save Settings manually. A complete backup can supply global catalogs omitted by scoped files under the normal full-restore rules.
 

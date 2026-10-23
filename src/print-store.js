@@ -59,8 +59,20 @@ function cleanRef(ref) {
       : null
   if (!ref || !text(ref.orderId)) return null
   const historical =
-    ref.containerId !== undefined || ref.revisionId !== undefined
-  if (historical && (!text(ref.containerId) || !text(ref.revisionId)))
+    ref.containerId !== undefined ||
+    ref.revisionId !== undefined ||
+    ref.draft !== undefined ||
+    ref.draftRevision !== undefined
+  const draft = ref.draft === true
+  if (
+    historical &&
+    (!text(ref.containerId) ||
+      (draft
+        ? ref.revisionId !== null ||
+          !Number.isSafeInteger(ref.draftRevision) ||
+          ref.draftRevision < 1
+        : !text(ref.revisionId) || ref.draftRevision !== undefined))
+  )
     return null
   for (const key of ['accountId', 'cartonId', 'entryId'])
     if (ref[key] !== undefined && !text(ref[key])) return null
@@ -75,7 +87,11 @@ function cleanRef(ref) {
     variantId: text(ref.variantId),
     ...(text(ref.accountId) ? { accountId: ref.accountId } : {}),
     ...(historical
-      ? { containerId: ref.containerId, revisionId: ref.revisionId }
+      ? {
+          containerId: ref.containerId,
+          revisionId: ref.revisionId,
+          ...(draft ? { draft: true, draftRevision: ref.draftRevision } : {}),
+        }
       : {}),
     ...(text(ref.cartonId) ? { cartonId: ref.cartonId } : {}),
     ...(text(ref.entryId) ? { entryId: ref.entryId } : {}),
@@ -113,8 +129,44 @@ export const refKey = (ref) =>
           ref.entryId || '',
           [...(ref.entryIds || [])].sort(),
           [...(ref.cartonBatchIds || [])].sort(),
+          ...(ref.draft === true ? ['draft', ref.draftRevision] : []),
         ])
       : `${ref.orderId}/${ref.groupId}/${ref.variantId ?? ''}`
+
+/** A draft reference is a captured version, never an alias for live Orders. */
+export function assertContainerPrintRef(ref, manifest) {
+  const cleaned = cleanRef(ref)
+  if (
+    !cleaned?.containerId ||
+    cleaned.containerId !== manifest?.container?.id ||
+    (cleaned.accountId || 'local') !==
+      (manifest?.container?.accountId || 'local') ||
+    (cleaned.draft
+      ? manifest?.draft !== true ||
+        manifest?.status === 'sealed' ||
+        manifest?.revisionId != null ||
+        manifest?.revision !== cleaned.draftRevision
+      : manifest?.draft === true || manifest?.revisionId !== cleaned.revisionId)
+  )
+    throw new Error(
+      cleaned?.draft
+        ? 'This draft print reference has changed or is no longer available. Review the current container before printing again.'
+        : 'The original container revision is unavailable. Review its print reference before printing again.'
+    )
+  return true
+}
+
+export function containerPrintIdentity(ref) {
+  const value = cleanRef(ref)
+  return value?.containerId
+    ? {
+        containerId: value.containerId,
+        revisionId: value.revisionId,
+        draft: value.draft === true,
+        ...(value.draft ? { draftRevision: value.draftRevision } : {}),
+      }
+    : null
+}
 
 function cleanRefs(value) {
   if (

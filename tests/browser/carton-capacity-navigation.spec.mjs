@@ -70,7 +70,7 @@ test('Orders capacity edits preserve pending names and source quantities, with n
           ref.entryId
         ]
     )
-    .toBe('12')
+    .toBe(12)
   await expect(row.locator('[data-column="proposedCount"]')).toHaveText('6')
   await expect(row.locator('[data-column="unassigned"]')).toContainText('8')
   for (const language of ['es', 'zh', 'en']) {
@@ -79,7 +79,7 @@ test('Orders capacity edits preserve pending names and source quantities, with n
   }
   const saved = await libraryBackup(extension)
   expect(saved.orders[0].snapshot).toEqual(record.snapshot)
-  expect(saved.orders[0].unitsPerCarton).toEqual({ [ref.entryId]: '12' })
+  expect(saved.orders[0].unitsPerCarton).toEqual({ [ref.entryId]: 12 })
   expect(saved.preparations).toEqual(before.preparations)
   expect(saved.cartonBatches).toEqual([])
   await page.locator('#view-packing').click()
@@ -138,7 +138,7 @@ test('order reconciliation reaches a filtered-out source without redirecting pas
           ref.entryId
         ]
     )
-    .toBe('8')
+    .toBe(8)
   await expect(row.locator('[data-column="proposedCount"]')).toHaveText('10')
   await page.locator('#view-orders').click()
   await page.locator('[data-orders-view="products"]').click()

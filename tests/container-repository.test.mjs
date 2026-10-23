@@ -5,6 +5,496 @@ import { createContainerWorkbook } from '../src/container-export.js'
 import { SYNTHETIC_PHOTO } from './fixtures/container-fixture.mjs'
 import { databaseBrowser } from './fixtures/database-browser.mjs'
 
+test('native source refresh and newer legacy restores preserve authored inventory, identity, clears and history', async () => {
+  const fixture = await databaseBrowser()
+  try {
+    const result = await fixture.page.evaluate(async () => {
+      const { openDatabase, fixture: factories } = modules,
+        db = await openDatabase({ name: 'synthetic-refresh-metadata' }),
+        source = factories.syntheticOrder('1001', '100', {
+          purchasedAt: undefined,
+          sellerMemberLogin: '',
+        }).snapshot,
+        fields = [
+          'inventoryDispositions',
+          'inventoryDispositionsUpdatedAt',
+          'inventoryDispositionClears',
+          'purchaseDateResolution',
+          'purchaseDateResolutionUpdatedAt',
+          'supplierIdentityResolution',
+          'supplierIdentityResolutionUpdatedAt',
+          'supplierCodeIdentityReview',
+          'supplierCodeIdentityReviewUpdatedAt',
+          'inventoryMetadataHistory',
+        ],
+        metadata = (record) =>
+          Object.fromEntries(fields.map((field) => [field, record[field]])),
+        remaining = async () => (await db.getBacklog({})).totals.quantity
+      await db.saveSnapshot(source)
+      const legacy = await db.exportBackup()
+      await db.resolvePurchaseDate({
+        orderId: '1001',
+        date: '2026-09-04',
+        expectedObservedAt: source.observedAt,
+      })
+      await db.resolvePurchaseSupplier({
+        orderId: '1001',
+        sellerId: 'synthetic-factory',
+        reason: 'Synthetic reviewed source identity',
+        expectedObservedAt: source.observedAt,
+      })
+      const preparation = factories.syntheticManifest().orders[0].preparation
+      await db.savePreparations([preparation], {
+        expectedRevisions: [0],
+        preserveNaming: true,
+      })
+      const review = await db.reviewLegacySupplierIdentity({ orderId: '1001' })
+      await db.confirmLegacySupplierIdentity({
+        plan: review.plan,
+        expectedRevisions: review.expectedRevisions,
+        reason: 'Synthetic retained supplier equivalence',
+      })
+      await db.setInventoryDispositions({
+        orderId: '1001',
+        entries: {
+          2001: { kind: 'canceled', quantity: '10', reason: 'Documented ten' },
+        },
+      })
+      const before = metadata(await db.getOrder('1001')),
+        original = await db.exportBackup(),
+        initialRemaining = await remaining()
+      const refreshed = await db.saveSnapshot({
+        ...source,
+        status: 'Seller shipped',
+        observedAt: '2026-10-02T12:00:00.000Z',
+      })
+      const afterRefresh = metadata(await db.getOrder('1001'))
+      const missingMetadata = structuredClone(legacy)
+      missingMetadata.orders[0].snapshot.status = 'Received'
+      missingMetadata.orders[0].snapshot.observedAt = '2026-10-03T12:00:00.000Z'
+      missingMetadata.orders[0].lastCheckedAt = '2026-10-03T12:00:00.000Z'
+      await db.restoreBackup(missingMetadata)
+      const afterMissingRestore = metadata(await db.getOrder('1001')),
+        retainedRemaining = await remaining()
+      await db.setInventoryDispositions({
+        orderId: '1001',
+        entries: {
+          2001: { kind: 'canceled', quantity: '20', reason: 'Reviewed twenty' },
+        },
+        expectedValues: { 2001: before.inventoryDispositions['2001'] },
+      })
+      const newer = metadata(await db.getOrder('1001')),
+        stale = structuredClone(original)
+      stale.orders[0].snapshot.status = 'Completed'
+      stale.orders[0].snapshot.observedAt = '2026-10-04T12:00:00.000Z'
+      stale.orders[0].lastCheckedAt = '2026-10-04T12:00:00.000Z'
+      await db.restoreBackup(stale)
+      const afterOlderRestore = metadata(await db.getOrder('1001')),
+        newerRemaining = await remaining(),
+        stableBackup = (backup) =>
+          JSON.stringify({ ...backup, exportedAt: '' }),
+        beforeConflict = stableBackup(await db.exportBackup()),
+        conflicts = []
+      for (const removed of [false, true]) {
+        const current = (await db.getOrder('1001')).snapshot,
+          candidate = {
+            ...current,
+            observedAt: '2026-10-05T12:00:00.000Z',
+            items: current.items.map((item) => ({
+              ...item,
+              entryId: removed ? '2002' : item.entryId,
+              quantity: removed ? '100' : '10',
+            })),
+            totals: removed
+              ? current.totals
+              : {
+                  ...current.totals,
+                  goodsGross: '100.00',
+                  goodsNet: '100.00',
+                  payable: '100.00',
+                },
+          }
+        try {
+          await db.saveSnapshot(candidate)
+        } catch (error) {
+          conflicts.push({ code: error.code, entryId: error.detail?.entryId })
+        }
+      }
+      const atomic = beforeConflict === stableBackup(await db.exportBackup())
+      await db.setInventoryDispositions({
+        orderId: '1001',
+        entries: { 2001: null },
+        expectedValues: { 2001: newer.inventoryDispositions['2001'] },
+      })
+      const cleared = metadata(await db.getOrder('1001'))
+      await db.saveSnapshot({
+        ...(await db.getOrder('1001')).snapshot,
+        status: 'Reviewed complete',
+        observedAt: '2026-10-06T12:00:00.000Z',
+      })
+      await db.restoreBackup(stale)
+      const afterClear = metadata(await db.getOrder('1001')),
+        finalRemaining = await remaining(),
+        backup = await db.exportBackup(),
+        restored = await openDatabase({ name: 'synthetic-refresh-roundtrip' })
+      await restored.restoreBackup(backup)
+      const roundtrip = metadata(await restored.getOrder('1001')),
+        roundtripRemaining = (await restored.getBacklog({})).totals.quantity
+      restored.close()
+      db.close()
+      return {
+        before,
+        afterRefresh,
+        afterMissingRestore,
+        refreshed: refreshed.changed,
+        initialRemaining,
+        retainedRemaining,
+        newer,
+        afterOlderRestore,
+        newerRemaining,
+        conflicts,
+        atomic,
+        cleared,
+        afterClear,
+        finalRemaining,
+        roundtrip,
+        roundtripRemaining,
+      }
+    })
+    assert.equal(result.refreshed, true)
+    assert.equal(result.initialRemaining, '90')
+    assert.equal(result.retainedRemaining, '90')
+    assert.deepEqual(result.afterRefresh, result.before)
+    assert.deepEqual(result.afterMissingRestore, result.before)
+    assert.equal(result.newerRemaining, '80')
+    assert.deepEqual(result.afterOlderRestore, result.newer)
+    assert.deepEqual(
+      result.conflicts,
+      [false, true].map(() => ({
+        code: 'INVENTORY_DISPOSITION_SOURCE_CONFLICT',
+        entryId: '2001',
+      }))
+    )
+    assert.equal(result.atomic, true)
+    assert.deepEqual(result.afterClear, result.cleared)
+    assert.deepEqual(result.roundtrip, result.cleared)
+    assert.equal(result.finalRemaining, '100')
+    assert.equal(result.roundtripRemaining, '100')
+    assert.ok(result.before.supplierCodeIdentityReview.codeOwners.length)
+    assert.ok(
+      result.cleared.inventoryMetadataHistory.length >
+        result.before.inventoryMetadataHistory.length
+    )
+    assert.deepEqual(result.cleared.inventoryDispositionClears, ['2001'])
+  } finally {
+    await fixture.close()
+  }
+})
+
+test('native entitlement-changing writes cannot reduce or remove shipped goods or poison unrelated operations', async () => {
+  const fixture = await databaseBrowser()
+  try {
+    const result = await fixture.page.evaluate(async () => {
+      const { openDatabase, fixture: factories } = modules,
+        db = await openDatabase({ name: 'synthetic-refresh-shipped-source' })
+      await db.restoreBackup({
+        format: '1688-order-library',
+        version: 4,
+        exportedAt: new Date().toISOString(),
+        orders: [
+          factories.syntheticOrder('1003'),
+          factories.syntheticOrder('1004'),
+        ],
+        history: [],
+        images: [],
+        preparations: [],
+        allocations: [],
+        issuedCodes: [],
+        packingPreferences: null,
+        cartonBatches: [
+          factories.syntheticBatch('1003'),
+          factories.syntheticBatch('1004'),
+        ],
+      })
+      const seal = async (orderId) => {
+        const container = await db.createContainer({
+          name: `Synthetic ${orderId}`,
+        })
+        let view = await db.includeContainerOrders({
+          id: container.id,
+          orderRefs: [{ orderId }],
+          expectedRevision: container.revision,
+        })
+        view = await db.markContainerLoaded({
+          id: container.id,
+          expectedRevision: view.container.revision,
+        })
+        const review = await db.reviewContainerSeal({
+          id: container.id,
+          expectedRevision: view.container.revision,
+        })
+        if (!review.ready)
+          throw new Error('Synthetic source fixture must be ready')
+        return db.sealContainer({
+          id: container.id,
+          expectedRevision: view.container.revision,
+          reviewToken: review.reviewToken,
+        })
+      }
+      const first = await seal('1003'),
+        before = await db.exportBackup(),
+        stable = (backup) => JSON.stringify({ ...backup, exportedAt: '' }),
+        errors = []
+      for (const mode of ['reduced', 'removed']) {
+        const source = (await db.getOrder('1003')).snapshot,
+          candidate = {
+            ...source,
+            observedAt: '2026-10-03T12:00:00.000Z',
+            items: source.items.map((item) => ({
+              ...item,
+              entryId: mode === 'removed' ? '2002' : item.entryId,
+              quantity: mode === 'reduced' ? '40' : item.quantity,
+            })),
+            totals:
+              mode === 'reduced'
+                ? {
+                    ...source.totals,
+                    goodsGross: '400.00',
+                    goodsNet: '400.00',
+                    payable: '400.00',
+                  }
+                : source.totals,
+          }
+        for (const route of ['refresh', 'restore']) {
+          try {
+            if (route === 'refresh') await db.saveSnapshot(candidate)
+            else {
+              const backup = structuredClone(before),
+                incoming = backup.orders.find(
+                  (record) => record.snapshot.orderId === '1003'
+                )
+              incoming.snapshot = candidate
+              incoming.lastCheckedAt = candidate.observedAt
+              // A supported old source-only archive merges into the existing
+              // shipment graph; it cannot carry a pre-forged contradictory graph.
+              await db.restoreBackup({
+                format: '1688-order-library',
+                version: 1,
+                exportedAt: backup.exportedAt,
+                orders: [incoming],
+                history: [],
+                images: [],
+              })
+            }
+          } catch (error) {
+            errors.push({
+              mode,
+              route,
+              code: error.code,
+              orderId: error.detail?.orderId,
+            })
+          }
+        }
+      }
+      const entitlementChanges = [
+        [
+          'linkPayment',
+          () =>
+            db.linkPayment('1004', {
+              sourceOrderId: '1003',
+              reason: 'Synthetic reviewed payment source',
+            }),
+        ],
+        [
+          'setPaymentLinks',
+          () =>
+            db.setPaymentLinks('1004', [
+              {
+                id: 'synthetic-shipped-payment',
+                sourceOrderId: '1003',
+                amount: '1000.00',
+                targetEntryIds: ['2001'],
+                reason: 'Synthetic reviewed whole-order payment',
+              },
+            ]),
+        ],
+        [
+          'setInventoryDispositions',
+          () =>
+            db.setInventoryDispositions({
+              orderId: '1003',
+              entries: {
+                2001: {
+                  kind: 'canceled',
+                  quantity: '1',
+                  reason: 'Cannot cancel already shipped goods',
+                },
+              },
+            }),
+        ],
+      ]
+      for (const [route, change] of entitlementChanges) {
+        try {
+          await change()
+        } catch (error) {
+          errors.push({
+            mode: 'eligibility',
+            route,
+            code: error.code,
+            orderId: error.detail?.orderId,
+          })
+        }
+      }
+      const atomic = stable(before) === stable(await db.exportBackup()),
+        unrelated = await db.getOrder('1004')
+      await db.updateOrderCapacities({
+        orderId: '1004',
+        values: { 2001: '10' },
+        expectedValues: { 2001: null },
+        expectedObservedAt: unrelated.snapshot.observedAt,
+      })
+      const second = await seal('1004'),
+        frozen = await db.getContainerManifest({
+          id: first.container.id,
+          revisionId: first.revisionId,
+        }),
+        capacity = (await db.getOrder('1004')).unitsPerCarton['2001']
+      db.close()
+      return {
+        errors,
+        atomic,
+        first,
+        frozen,
+        secondQuantity: second.totals.quantity,
+        capacity,
+      }
+    })
+    assert.deepEqual(result.errors, [
+      {
+        mode: 'reduced',
+        route: 'refresh',
+        code: 'SHIPMENT_OVERALLOCATION',
+        orderId: '1003',
+      },
+      {
+        mode: 'reduced',
+        route: 'restore',
+        code: 'SHIPMENT_OVERALLOCATION',
+        orderId: '1003',
+      },
+      {
+        mode: 'removed',
+        route: 'refresh',
+        code: 'SHIPMENT_SOURCE_MISSING',
+        orderId: '1003',
+      },
+      {
+        mode: 'removed',
+        route: 'restore',
+        code: 'SHIPMENT_SOURCE_MISSING',
+        orderId: '1003',
+      },
+      ...['linkPayment', 'setPaymentLinks', 'setInventoryDispositions'].map(
+        (route) => ({
+          mode: 'eligibility',
+          route,
+          code: 'SHIPMENT_OVERALLOCATION',
+          orderId: '1003',
+        })
+      ),
+    ])
+    assert.equal(result.atomic, true)
+    assert.deepEqual(result.frozen, result.first)
+    assert.equal(result.capacity, 10)
+    assert.equal(result.secondQuantity, '100')
+  } finally {
+    await fixture.close()
+  }
+})
+
+test('native scoped backups retain month-less confirmed cartons, source value and physical measures through restore', async () => {
+  const fixture = await databaseBrowser()
+  try {
+    const result = await fixture.page.evaluate(async () => {
+      const { openDatabase, fixture: factories } = modules,
+        db = await openDatabase({ name: 'synthetic-monthless-packing-backup' }),
+        record = factories.syntheticOrder(),
+        batch = factories.syntheticBatch('1001', 10, '100', {
+          weight: '1.25',
+          len: '50',
+          wid: '40',
+          ht: '30',
+          sourceFacts: {
+            supplierReference: '0007',
+            quantityBasis: 'uniform-per-carton',
+          },
+        })
+      delete batch.month
+      await db.restoreBackup({
+        format: '1688-order-library',
+        version: 4,
+        exportedAt: new Date().toISOString(),
+        orders: [record],
+        history: [],
+        images: [],
+        preparations: [],
+        allocations: [],
+        issuedCodes: [],
+        packingPreferences: null,
+        cartonBatches: [batch],
+      })
+      await db.savePreparations(
+        [factories.syntheticManifest().orders[0].preparation],
+        {
+          expectedRevisions: [0],
+          preserveNaming: true,
+        }
+      )
+      const full = await db.exportBackup(),
+        scoped = await db.exportBackup({
+          packingScope: {
+            orders: [{ orderId: '1001', entryIds: ['2001'] }],
+            months: ['2026-09'],
+          },
+        }),
+        target = await openDatabase({
+          name: 'synthetic-monthless-packing-restored',
+        })
+      await target.restoreBackup(scoped)
+      const restored = await target.exportBackup(),
+        backlog = await target.getBacklog({})
+      target.close()
+      db.close()
+      return {
+        fullBatches: full.cartonBatches,
+        scopedBatches: scoped.cartonBatches,
+        restoredBatches: restored.cartonBatches,
+        omissions: scoped.omittedCartonBatchIds || [],
+        originalSnapshot: full.orders[0].snapshot,
+        restoredSnapshot: restored.orders[0].snapshot,
+        quantity: backlog.totals.quantity,
+        cartons: backlog.totals.cartons,
+        codes: restored.preparations[0].groups.map((group) => group.baseCode),
+      }
+    })
+    assert.deepEqual(result.scopedBatches, result.fullBatches)
+    assert.deepEqual(result.restoredBatches, result.fullBatches)
+    assert.deepEqual(result.restoredSnapshot, result.originalSnapshot)
+    assert.deepEqual(result.omissions, [])
+    assert.equal(result.quantity, '100')
+    assert.equal(result.cartons, 10)
+    assert.deepEqual(result.codes, ['CE26090101'])
+    assert.equal(result.restoredBatches[0].month, undefined)
+    assert.equal(result.restoredBatches[0].weight, '1.25')
+    assert.deepEqual(result.restoredBatches[0].sourceFacts, {
+      supplierReference: '0007',
+      quantityBasis: 'uniform-per-carton',
+    })
+  } finally {
+    await fixture.close()
+  }
+})
+
 test('native whole-order reservation, stale tabs, logical loading, atomic seal and historical amendment', async () => {
   const fixture = await databaseBrowser()
   try {
