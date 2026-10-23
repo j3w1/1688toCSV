@@ -7,6 +7,7 @@ import {
 } from './print-layout.js'
 import { printLanguage } from './print-language.js'
 import { batchOrderIds } from './inventory-model.js'
+import { physicalMarkSupersessionState } from './physical-mark-aliases.js'
 
 export const PRINT_KEYS = Object.freeze({
   labels: '1688-print-labels',
@@ -170,24 +171,27 @@ export async function makeOrderCartonPrintRef(
       (!refText(amendment.containerId) || !refText(amendment.epoch)))
   )
     throw physicalRefError()
-  const supersession = [
-    ...(batch.physicalMarkSupersessions || []),
-    ...(batch.physicalMark?.supersededAliases || []),
-  ].find(
-    (entry) =>
-      entry.code === batch.physicalMark?.code &&
-      (entry.active !== false || entry.reviewRequired === true)
-  )
+  const markState = physicalMarkSupersessionState(batch),
+    supersession = [
+      ...(batch.physicalMarkSupersessions || []),
+      ...(batch.physicalMark?.supersededAliases || []),
+    ].find(
+      (entry) =>
+        entry.code === batch.physicalMark?.code &&
+        (entry.active !== false || entry.reviewRequired === true)
+    )
   if (
     role === 'recorded' &&
-    (batch.physicalMarkRelabelOnly === true ||
-      batch.physicalMarkHistoricalReviewRequired === true ||
-      supersession)
+    (markState.physicalMarkRelabelOnly ||
+      markState.physicalMarkHistoricalReviewRequired ||
+      batch.physicalMarkRelabelOnly === true ||
+      batch.physicalMarkHistoricalReviewRequired === true)
   ) {
     const conflicts = supersession?.conflicts || [],
       conflict = conflicts.find((entry) => entry.containerId) || conflicts[0],
       code = batch.physicalMark?.code || '',
       historicalReview =
+        markState.physicalMarkHistoricalReviewRequired ||
         batch.physicalMarkHistoricalReviewRequired === true ||
         supersession?.reviewRequired === true,
       message = historicalReview
@@ -203,6 +207,9 @@ export async function makeOrderCartonPrintRef(
         code,
         conflicts: structuredClone(conflicts),
         historicalReviewRequired: historicalReview,
+        conflictKind: historicalReview
+          ? 'historical-review'
+          : markState.physicalMarkConflictKind,
       },
     })
   }
