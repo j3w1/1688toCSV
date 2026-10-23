@@ -87,6 +87,8 @@ import {
 } from './carton-batch-changes.js'
 import { cartonBatchReviewChanges } from './carton-batch-review.js'
 import { mountPhysicalMarkChoices } from './order-carton-grid.js'
+import { makeOrderCartonPrintRef } from './print-store.js'
+import { physicalUnits } from './inventory-model.js'
 const $ = (id) => document.getElementById(id)
 const orderKey = ({ accountId = 'local', orderId }) =>
   JSON.stringify([accountId, orderId])
@@ -226,6 +228,7 @@ export async function createProductAuthoring({
   getContextContainerId = () => undefined,
   onAmend = () => {},
   getSelectedRows = () => [],
+  onPrintMark,
 }) {
   let preferences = {},
     preparations = new Map(),
@@ -2331,6 +2334,63 @@ export async function createProductAuthoring({
           )
         let reviewedPhysicalPlan = physicalPlan,
           markDecisionsReady = !requiresMarkDecision
+        const printContexts = new Map()
+        if (onPrintMark && requiresMarkDecision) {
+          for (const draft of baselines.values()) {
+            const current = await repository.getOrderReconciliation({
+              accountId: draft.accountId,
+              orderId: draft.orderId,
+              ...(groupingContext.contextContainerId
+                ? { contextContainerId: groupingContext.contextContainerId }
+                : {}),
+            })
+            const snapshot = groupingContext.expectedSnapshots.find(
+              (ref) => orderKey(ref) === orderKey(draft)
+            )
+            if (
+              current.preparation?.revision !== draft.revision ||
+              current.record.snapshot.observedAt !== snapshot.observedAt ||
+              !sameAmendment(
+                current.amendmentContext || current.revisions?.amendmentContext,
+                groupingContext.expectedAmendment
+              ) ||
+              Object.values(physicalPlan.before).some(
+                (batch) =>
+                  batch.orderId === draft.orderId &&
+                  current.batches.find((value) => value.id === batch.id)
+                    ?.revision !== batch.revision
+              )
+            )
+              throw new Error(
+                'Preparation changed in another tab. Reload it before saving your edits.'
+              )
+            printContexts.set(orderKey(draft), structuredClone(current))
+          }
+        }
+        const printContextFor = (review) => {
+          const batch = physicalPlan.before[review.id]
+          return printContexts.get(
+            orderKey({
+              accountId: batch.accountId,
+              orderId: batch.orderId || review.contents[0]?.orderId,
+            })
+          )
+        }
+        const actualPrintTarget = (review, targetMark) => {
+          const context = printContextFor(review),
+            target = targetMark || review.destinationMark,
+            code = targetMark
+              ? review.physicalMarkOwnerChoices?.find(
+                  (choice) =>
+                    choice.mark.orderId === targetMark.orderId &&
+                    choice.mark.groupId === targetMark.groupId
+                )?.productCode
+              : review.currentProductCode,
+            group = context?.preparation?.groups.find(
+              (group) => group.id === target?.groupId
+            )
+          return group?.baseCode && group.baseCode === code ? group : null
+        }
         if (
           !(await reviewPackingChanges({
             title: uiMessage('Review product grouping'),
@@ -2354,6 +2414,42 @@ export async function createProductAuthoring({
                       apply,
                       reviews: physicalPlan.reviews,
                       allowRelabel: !groupingContext.expectedAmendment,
+                      ...(onPrintMark
+                        ? {
+                            canPrintCurrent: (review, targetMark) =>
+                              Boolean(actualPrintTarget(review, targetMark)),
+                            onPrintMark: async ({
+                              review,
+                              role,
+                              targetMark,
+                            }) => {
+                              const context = printContextFor(review),
+                                batch = context.batches.find(
+                                  (batch) => batch.id === review.id
+                                ),
+                                target =
+                                  role === 'current-product'
+                                    ? actualPrintTarget(review, targetMark)
+                                    : null
+                              if (role === 'current-product' && !target)
+                                throw new Error(
+                                  'Save this grouping before printing the proposed mark.'
+                                )
+                              const ref = await makeOrderCartonPrintRef(
+                                context,
+                                {
+                                  batchId: batch.id,
+                                  role,
+                                  index: physicalUnits(batch)[0]?.index,
+                                  ...(target
+                                    ? { productGroupId: target.id }
+                                    : {}),
+                                }
+                              )
+                              await onPrintMark(ref)
+                            },
+                          }
+                        : {}),
                       onChange: ({ valid, decisions }) => {
                         markDecisionsReady = valid
                         reviewedPhysicalPlan = physicalPlan

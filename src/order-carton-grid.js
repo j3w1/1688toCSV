@@ -46,6 +46,8 @@ export function mountPhysicalMarkChoices({
   reviews,
   onChange,
   allowRelabel = true,
+  onPrintMark,
+  canPrintCurrent = () => true,
 }) {
   const pending = reviews.filter((row) => row.resolutionRequired)
   if (!pending.length) {
@@ -107,6 +109,8 @@ export function mountPhysicalMarkChoices({
     ]) {
       const row = el('p'),
         code = el('code', undefined, 'ce-code')
+      code.dataset.markCodeRole =
+        label === 'Current product code' ? 'current-product' : 'recorded'
       setCodeText(code, value)
       row.append(el('strong', m(label)), code)
       card.append(row)
@@ -173,7 +177,7 @@ export function mountPhysicalMarkChoices({
     status.setAttribute('role', 'status')
     card.append(label, attestation, status)
     section.append(card)
-    rows.push({
+    const state = {
       id,
       review,
       choice,
@@ -184,10 +188,58 @@ export function mountPhysicalMarkChoices({
       owner,
       ownerChoices,
       requiresOwner,
-    })
+      currentCode: card.querySelector(
+        '[data-mark-code-role="current-product"]'
+      ),
+      printBusy: false,
+      printButtons: [],
+    }
+    rows.push(state)
+    if (onPrintMark) {
+      const printing = el('div', undefined, 'physical-mark-print-actions')
+      for (const [role, title] of [
+        ['recorded', 'Print recorded mark'],
+        ['current-product', 'Print current product mark'],
+      ]) {
+        const button = el('button', m(title))
+        button.type = 'button'
+        button.dataset.action = 'print-order-carton-mark'
+        button.dataset.markRole = role
+        button.onclick = () =>
+          void (async () => {
+            const target = ownerChoices.find(
+              (candidate) => JSON.stringify(candidate.mark) === owner.value
+            )
+            if (
+              state.printBusy ||
+              (role === 'current-product' &&
+                ((requiresOwner && !target) ||
+                  !canPrintCurrent(review, target?.mark)))
+            )
+              return
+            state.printBusy = true
+            update()
+            let failure
+            try {
+              await onPrintMark({ review, role, targetMark: target?.mark })
+            } catch (error) {
+              failure = error
+              if (error.noticeOptions)
+                showErrorNotice(error, { scope: host.closest('dialog') })
+            } finally {
+              state.printBusy = false
+              update()
+              if (failure) bindText(status, m(failure.message))
+            }
+          })()
+        state.printButtons.push(button)
+        printing.append(button)
+      }
+      card.append(printing)
+    }
   }
   function update() {
-    let valid = !composing.size
+    let valid = !composing.size && !rows.some((row) => row.printBusy)
     const decisions = rows.map((row) => {
       const choice = row.choice.find((input) => input.checked)?.value || '',
         relabel = choice === 'relabel-reprint',
@@ -206,6 +258,26 @@ export function mountPhysicalMarkChoices({
           (!relabel || (allowRelabel && row.confirmed.checked))
         )
       row.attestation.hidden = !relabel
+      setCodeText(
+        row.currentCode,
+        target?.productCode ||
+          row.review.currentProductCode ||
+          row.review.physicalMark?.productCode ||
+          '—'
+      )
+      for (const button of row.printButtons) {
+        const unavailable =
+          button.dataset.markRole === 'current-product' &&
+          ((row.requiresOwner && !target) ||
+            !canPrintCurrent(row.review, target?.mark))
+        button.disabled = row.printBusy || unavailable
+        if (unavailable)
+          bindAttribute(
+            button,
+            'title',
+            m('Save this grouping before printing the proposed mark.')
+          )
+      }
       valid &&= ready
       bindText(
         row.status,
@@ -317,7 +389,7 @@ export async function openPhysicalMarkReview({
           button,
           'title',
           m(
-            'Choose and save the current product owner before printing its mark.'
+            'Choose an existing current product owner before printing its mark.'
           )
         )
       }
@@ -332,6 +404,9 @@ export async function openPhysicalMarkReview({
                 batchId,
                 role,
                 index,
+                ...(role === 'current-product' && decision?.targetMark
+                  ? { productGroupId: decision.targetMark.groupId }
+                  : {}),
               })
             await onPrintMark(ref)
           } catch (error) {
@@ -368,6 +443,16 @@ export async function openPhysicalMarkReview({
       valid = value.valid
       decision = value.decisions[0]
       save.disabled = busy || !valid
+      for (const button of printButtons) {
+        if (button.dataset.markRole !== 'current-product') continue
+        const missing =
+          !(batch.currentProductCode || batch.physicalMark.productCode) &&
+          !context.preparation?.groups.some(
+            (group) => group.id === decision?.targetMark?.groupId
+          )
+        button.dataset.ownerRequired = String(missing)
+        button.disabled = busy || missing
+      }
     },
   })
   const unavailable = new Set(

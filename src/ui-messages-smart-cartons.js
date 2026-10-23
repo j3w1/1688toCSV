@@ -2,14 +2,24 @@
 export const SMART_CARTON_MESSAGES = Object.fromEntries(
   [
     [
+      'Existing product artwork for a proposed carton relation — printing does not confirm physical relabeling.',
+      'Diseño de un producto existente para la relación propuesta de la caja: imprimir no confirma el cambio físico de etiqueta.',
+      '使用已存在商品的图稿预览拟定纸箱归属：打印不代表已实际更换箱唛。',
+    ],
+    [
+      'Save this grouping before printing the proposed mark.',
+      'Guarda esta agrupación antes de imprimir la marca propuesta.',
+      '请先保存此分组，再打印拟用箱唛。',
+    ],
+    [
       'Choose the current product owner',
       'Elige el producto propietario actual',
       '请选择当前归属商品',
     ],
     [
-      'Choose and save the current product owner before printing its mark.',
-      'Elige y guarda el producto propietario actual antes de imprimir su marca.',
-      '打印该箱唛前，请选择并保存当前归属商品。',
+      'Choose an existing current product owner before printing its mark.',
+      'Elige un producto propietario actual existente antes de imprimir su marca.',
+      '打印该箱唛前，请选择一个已存在的当前归属商品。',
     ],
     ['Print recorded mark', 'Imprimir marca registrada', '打印已记录箱唛'],
     [

@@ -314,7 +314,11 @@ async function exportAliasMark(
   markReview,
   role,
   batch,
-  testInfo
+  testInfo,
+  expectedCodes = {
+    recorded: batch.physicalMark.code,
+    current: batch.physicalMark.productCode,
+  }
 ) {
   const previous = new Set((await downloads(extension)).map((file) => file.id))
   await markReview
@@ -343,10 +347,7 @@ async function exportAliasMark(
     .toBe(true)
   const bytes = await readFile(pdf.filename),
     summary = JSON.parse(await readFile(summaryFile.filename, 'utf8')),
-    code =
-      role === 'recorded'
-        ? batch.physicalMark.code
-        : batch.physicalMark.productCode
+    code = role === 'recorded' ? expectedCodes.recorded : expectedCodes.current
   expect(bytes.subarray(0, 8).toString('ascii')).toBe('%PDF-1.4')
   expect(bytes.toString('latin1')).toContain('/MediaBox [0 0 595.276 841.89]')
   expect(bytes.toString('latin1')).toContain('/PrintScaling /None')
@@ -373,7 +374,7 @@ async function exportAliasMark(
       batchId: batch.id,
       markRole: role,
       code,
-      currentProductCode: batch.physicalMark.productCode,
+      currentProductCode: expectedCodes.current,
       batchRevision: batch.revision,
     })
     expect(mark.sourceGuard).toMatch(/^[a-f0-9]{64}$/)
@@ -621,7 +622,7 @@ test('reviewing legacy loading retains authored physical evidence and a November
 
 test('Orders merge reviews source ownership without losing a physical mark/count/measurements and compound Undo restores original groups', async ({
   extension,
-}) => {
+}, testInfo) => {
   const { page, view, before } = await seed(extension, { twoGroups: true })
   await reviewLegacy(page, view)
   const { review, tools } = await group(page, 'Merge products', [0, 1, 2])
@@ -634,6 +635,32 @@ test('Orders merge reviews source ownership without losing a physical mark/count
   await mark
     .locator('[data-action="physical-mark-reason"]')
     .fill('The actual original printed mark remains on these same six cartons')
+  const physicalBeforePrint = await backup(extension),
+    printed = await exportAliasMark(
+      extension,
+      page,
+      review,
+      'current-product',
+      physicalBeforePrint.cartonBatches[0],
+      testInfo,
+      {
+        recorded: before.preparations[0].groups[1].baseCode,
+        current: before.preparations[0].groups[0].baseCode,
+      }
+    )
+  expect(
+    printed.physicalMarks.every(
+      (ref) => ref.productGroupId === before.preparations[0].groups[0].id
+    )
+  ).toBe(true)
+  expect((await backup(extension)).cartonBatches).toEqual(
+    physicalBeforePrint.cartonBatches
+  )
+  await expect(
+    mark.locator('[data-action="physical-mark-reason"]')
+  ).toHaveValue(
+    'The actual original printed mark remains on these same six cartons'
+  )
   expect((await backup(extension)).preparations).toEqual(before.preparations)
   await review
     .getByRole('button', { name: 'Apply changes', exact: true })
