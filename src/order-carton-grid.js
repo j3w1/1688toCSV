@@ -5,6 +5,7 @@ import { cartonBatchMetrics } from './carton-batches.js'
 import { physicalUnits, batchNeedsLegacyReview } from './inventory-model.js'
 import { reviewPackingChanges } from './packing-review.js'
 import { setCodeText } from './code-display.js'
+import { decorateIcon } from './icons.js'
 
 const clone = (value) => structuredClone(value)
 export const sourceKey = ({ accountId = 'local', orderId, entryId }) =>
@@ -2280,6 +2281,28 @@ export function mountOrderCartonGrid(
             })
         else photo.disabled = true
       } else if (column.readonly) {
+        if (kind === 'cartons' && column.key === 'label') {
+          const reference = el('span', row.label, 'carton-reference-text'),
+            copy = decorateIcon(el('button'), 'copy', {
+              iconOnly: true,
+              label: m('Copy value'),
+            })
+          copy.classList.add('carton-reference-copy')
+          bindAttribute(
+            copy,
+            'aria-label',
+            () => `${m('Copy value')}: ${row.label}`
+          )
+          copy.onclick = (event) => {
+            event.stopPropagation()
+            void copied(copy, () =>
+              navigator.clipboard.writeText(row.label)
+            ).catch(onError)
+          }
+          td.append(reference, copy)
+          tr.append(td)
+          continue
+        }
         if (column.key === 'pattern' && row.patternLabel) {
           const readout = el('span', undefined, 'pattern-readout'),
             copy = el('button', m('Copy value'))
@@ -2504,7 +2527,8 @@ export function mountOrderCartonGrid(
       const label = el('label', m(column.label)),
         input = el('input')
       input.type = 'text'
-      input.value = session.rawCell(row.key, column.key)
+      input.value =
+        session.rawCell(row.key, column.key) ?? row[column.key] ?? ''
       input.inputMode = 'decimal'
       let composing = false
       input.oncompositionstart = () => {
@@ -2536,6 +2560,7 @@ export function mountOrderCartonGrid(
       number.value = recovery?.cartonNumber ?? row.cartonNumber ?? ''
       number.dataset.cartonIdentity = 'reference'
       mark.dataset.cartonIdentity = 'mark'
+      bindAttribute(mark, 'aria-label', m('Carton mark'))
       mark.append(new Option(String(m('Keep current carton mark')), ''))
       for (const group of session.orderGroups())
         mark.append(new Option(group.baseCode, group.id))
@@ -2580,6 +2605,7 @@ export function mountOrderCartonGrid(
         evidence = el('p'),
         caption = el('label', m('Physical carton entitlement'))
       picker.dataset.action = 'choose-carton-entitlement'
+      bindAttribute(picker, 'aria-label', m('Physical carton entitlement'))
       caption.append(picker)
       section.append(
         el('h3', m('Exceptional carton contents')),
