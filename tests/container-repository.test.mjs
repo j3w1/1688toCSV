@@ -12,6 +12,112 @@ import {
 import { createContainerSummary } from '../src/container-export.js'
 import { planContainerWorkbook } from '../src/container-export.js'
 
+test('native physical confirmations retain every prior fact, preserve source evidence and distinguish zero from a later clear across restore', async () => {
+  const browser = await databaseBrowser()
+  try {
+    const result = await browser.page.evaluate(async () => {
+      const {
+        openDatabase,
+        fixture: { syntheticOrder, syntheticBatch },
+      } = modules
+      const db = await openDatabase({ name: 'synthetic-carton-fact-history' })
+      const batch = syntheticBatch('1001', 4, '100', {
+        len: '70',
+        wid: '50',
+        ht: '30',
+        weight: '20.5',
+        suppliedCbm: '0.21',
+        sourceFacts: {
+          suppliedCbm: '0.21',
+          note: 'Original synthetic supplier report',
+        },
+      })
+      await db.restoreBackup({
+        format: '1688-order-library',
+        version: 4,
+        exportedAt: new Date().toISOString(),
+        orders: [syntheticOrder()],
+        history: [],
+        images: [],
+        preparations: [],
+        allocations: [],
+        issuedCodes: [],
+        packingPreferences: null,
+        cartonBatches: [batch],
+      })
+      const before = await db.exportBackup({})
+      const contexts = []
+      for (const [index, weight] of [
+        '30.750000000000000001',
+        '0',
+        '',
+      ].entries()) {
+        const context = await db.getOrderReconciliation({ orderId: '1001' })
+        const edited = {
+          ...context.batches[0],
+          weight,
+          ht: '40',
+          ...(index === 1
+            ? {
+                cartonHistory: [],
+                sourceFacts: {
+                  note: 'Caller must not erase original evidence',
+                },
+              }
+            : {}),
+        }
+        const next = await db.confirmOrderCartons({
+          orderId: '1001',
+          expectedRevisions: context.revisions,
+          draft: { cartons: [edited] },
+        })
+        contexts.push(next.batches[0])
+      }
+      const backup = await db.exportBackup({})
+      const other = await openDatabase({
+        name: 'synthetic-carton-fact-history-restored',
+      })
+      await other.restoreBackup(backup)
+      const restored = await other.exportBackup({})
+      db.close()
+      other.close()
+      return { before, contexts, backup, restored }
+    })
+    assert.deepEqual(
+      result.contexts.map((batch) => batch.weight),
+      ['30.750000000000000001', '0', '']
+    )
+    assert.deepEqual(
+      result.contexts.map((batch) => batch.cartonHistory?.length),
+      [1, 2, 3]
+    )
+    const last = result.backup.cartonBatches[0]
+    assert.deepEqual(
+      last.cartonHistory.map((batch) => batch.weight),
+      ['20.5', '30.750000000000000001', '0']
+    )
+    assert.equal(last.cartonHistory[0].ht, '30')
+    assert.equal(
+      last.cartonHistory.every((batch) => batch.suppliedCbm === '0.21'),
+      true
+    )
+    assert.equal(
+      last.cartonHistory.every(
+        (batch) => !Object.hasOwn(batch, 'cartonHistory')
+      ),
+      true
+    )
+    assert.deepEqual(
+      last.sourceFacts,
+      result.before.cartonBatches[0].sourceFacts
+    )
+    assert.deepEqual(result.backup.orders, result.before.orders)
+    assert.deepEqual(result.restored.cartonBatches, result.backup.cartonBatches)
+  } finally {
+    await browser.close()
+  }
+})
+
 test('native aggregate unit CBM exceptions use confirmed dimensions consistently through reconciliation, seal, JSON, XLSX and restore', async () => {
   const browser = await databaseBrowser()
   try {

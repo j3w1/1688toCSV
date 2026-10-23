@@ -623,8 +623,18 @@ export function createContainerRepository({
           'This physical identity already belongs to another purchase.',
           { batchId: raw.id }
         )
+      const original = before && clone(before)
+      if (original) delete original.cartonHistory
       const batch = validateCartonBatch({
         ...raw,
+        ...(before
+          ? {
+              cartonHistory: [...clone(before.cartonHistory || []), original],
+              ...(before.sourceFacts
+                ? { sourceFacts: clone(before.sourceFacts) }
+                : {}),
+            }
+          : {}),
         ...(raw.unresolvedContents
           ? {
               unresolvedContents: raw.unresolvedContents.map(
