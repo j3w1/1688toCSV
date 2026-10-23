@@ -13,6 +13,7 @@ import {
   closeOrderProduct,
   createContainerThroughUI,
   sealContainerThroughUI,
+  clearOrderProductSelection,
 } from './smart-workspace-helpers.mjs'
 
 async function backup(extension) {
@@ -168,7 +169,7 @@ async function reviewLegacy(page, view) {
 }
 async function group(page, operation, indices) {
   await page.locator('[data-action="orders-products"]').click()
-  await page.locator('#clear-rows').click()
+  await clearOrderProductSelection(page)
   const rows = page.locator('#sheet-body tr[data-selection-key]')
   for (const index of indices)
     await rows.nth(index).getByRole('checkbox').check()
@@ -201,7 +202,13 @@ test('reviewing legacy loading retains authored physical evidence and a November
     ht: '25',
   })
   expect(batch.contents).toEqual(before.cartonBatches[0].contents)
-  expect(batch.legacyResolution).toMatchObject({ resolution: 'not-shipped' })
+  expect(batch.legacyResolution).toMatchObject({
+    kind: 'not-shipped',
+    attestNotShipped: true,
+    reason:
+      'Synthetic physical evidence reviewed; these goods have never shipped',
+    reviewedAt: '2026-10-15T04:00:00.000Z',
+  })
   const id = await createContainerThroughUI(
     page,
     [ref],

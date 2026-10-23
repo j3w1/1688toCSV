@@ -104,6 +104,23 @@ test('one-column paste aligns selected visible logical keys beyond mounted rows'
   assert.equal(plan.changes.at(-1).value, '140')
 })
 
+test('positive whole capacities normalize leading zeros while retaining the pasted source and refusing zero/exponent values', async () => {
+  const { rows, target } = fixture(3),
+    plan = await planGridPaste('010\n00012\n1', target, { rows })
+  assert.equal(plan.valid, true)
+  assert.deepEqual(
+    plan.changes.map((change) => change.value),
+    ['10', '12', '1']
+  )
+  assert.deepEqual(
+    plan.changes.map((change) => change.raw),
+    ['010', '00012', '1']
+  )
+  const invalid = await planGridPaste('00\n-1\n1e2', target, { rows })
+  assert.equal(invalid.valid, false)
+  assert.equal(invalid.errors.length, 3)
+})
+
 test('single-column target excludes hidden selected keys and preserves visible sort order', async () => {
   const { rows, keys, target } = fixture(5)
   target.visibleKeys = [keys[4], keys[2]]

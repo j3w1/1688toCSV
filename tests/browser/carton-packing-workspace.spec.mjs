@@ -197,7 +197,7 @@ test('shared codes retain each source capacity, unknown capacity remains visible
     items[2].quantity
   )
   await expect(unknown.locator('[data-column="proposedCount"]')).toContainText(
-    '0'
+    '—'
   )
   expect(
     Object.values(
