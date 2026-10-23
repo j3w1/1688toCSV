@@ -1307,8 +1307,7 @@ export function assertCartonBatchEvidence(
       if (
         !legacyStore &&
         !sources.some(
-          (record) =>
-            repeatProductStoreIdentity(record.snapshot) === batch.storeId
+          (record) => repeatProductStoreIdentity(record) === batch.storeId
         )
       )
         throw new Error(
@@ -1325,8 +1324,7 @@ export function assertCartonBatchEvidence(
       if (
         sources.length &&
         !sources.some(
-          (record) =>
-            repeatProductStoreIdentity(record.snapshot) === batch.storeId
+          (record) => repeatProductStoreIdentity(record) === batch.storeId
         )
       )
         throw new Error(

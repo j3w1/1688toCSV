@@ -61,6 +61,7 @@ export function collectImageReferences({
   containers = [],
   packingReports = [],
   orderCartonDrafts = [],
+  shipmentLocks = [],
 } = {}) {
   const urls = new Set()
   const add = (url) => {
@@ -90,6 +91,7 @@ export function collectImageReferences({
   visit(containers)
   visit(packingReports)
   visit(orderCartonDrafts)
+  visit(shipmentLocks)
   return urls
 }
 

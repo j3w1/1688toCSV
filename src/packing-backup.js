@@ -525,9 +525,32 @@ export function createPackingBackup(backup, selection) {
             references.forEach(retain)
         }
         for (const lock of backup.shipmentLocks || [])
-          if (required.has(key(lock)))
+          if (
+            required.has(key(lock)) ||
+            lock.lineages?.some((lineage) =>
+              lineage.members?.some((member) => required.has(key(member)))
+            )
+          ) {
+            retain(lock)
             for (const lineage of lock.lineages || [])
               for (const member of lineage.members || []) retain(member)
+          }
+        for (const code of backup.issuedCodes || [])
+          if (
+            required.has(key(code)) ||
+            code.members?.some((member) => required.has(key(member)))
+          ) {
+            retain(code)
+            for (const member of code.members || []) retain(member)
+          }
+        const selectedSources = backup.orders.filter((record) =>
+          required.has(key(record.snapshot))
+        )
+        for (const dependency of paymentSourceDependencies(
+          backup.orders,
+          selectedSources
+        ))
+          retain(dependency.snapshot)
       }
       const orders = backup.orders.filter((record) =>
           required.has(key(record.snapshot))
@@ -538,6 +561,38 @@ export function createPackingBackup(backup, selection) {
         preparations = backup.preparations.filter((prep) =>
           required.has(key(prep))
         )
+      const issuedCodes = structuredClone(
+        (backup.issuedCodes || []).filter(
+          (code) =>
+            required.has(key(code)) ||
+            code.members?.some((member) => required.has(key(member)))
+        )
+      )
+      const allocationSlots = new Set(
+        issuedCodes.map((code) =>
+          JSON.stringify([
+            code.accountId || 'local',
+            code.month,
+            Number(code.code.slice(6, 8)),
+          ])
+        )
+      )
+      const allocations = structuredClone(
+        (backup.allocations || [])
+          .map((allocation) => ({
+            ...allocation,
+            groups: allocation.groups.filter((group) =>
+              allocationSlots.has(
+                JSON.stringify([
+                  allocation.accountId || 'local',
+                  allocation.month,
+                  group.number,
+                ])
+              )
+            ),
+          }))
+          .filter((allocation) => allocation.groups.length)
+      )
       const containers = (backup.containers || []).filter((container) =>
         [
           ...(container.draft?.orders || []),
@@ -557,6 +612,8 @@ export function createPackingBackup(backup, selection) {
         orders,
         history,
         preparations,
+        issuedCodes,
+        allocations,
         cartonBatches: structuredClone(
           (backup.cartonBatches || []).filter(
             (batch) =>
@@ -587,7 +644,7 @@ export function createPackingBackup(backup, selection) {
       delete result.packingScope
       const refs = collectImageReferences({
         ...result,
-        issuedCodes: backup.issuedCodes,
+        issuedCodes,
       })
       result.images = structuredClone(
         (backup.images || []).filter((image) =>

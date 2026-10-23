@@ -17,7 +17,11 @@ import {
 } from './inventory-model.js'
 import { cartonBatchMetrics } from './carton-batches.js'
 import { shipmentMoney } from './shipment-money.js'
-import { validatePackingPreferences, barcodeValue } from './packing-model.js'
+import {
+  validatePackingPreferences,
+  barcodeValue,
+  variantMaterial,
+} from './packing-model.js'
 import { moneyToCents, centsToMoney } from './money.js'
 
 const clone = (value) => structuredClone(value)
@@ -102,10 +106,29 @@ export function captureContainerOrder(
       'This order remainder is reserved by another container.',
       { ...owner, orderId }
     )
-  const { record, preparation, batches } = orderScopeState(state, {
-    accountId,
-    orderId,
-  })
+  const scope = orderScopeState(state, { accountId, orderId }),
+    { record, preparation } = scope,
+    batches = scope.batches.map((batch) => {
+      if (batch.mark || batch.groups?.length || !preparation) return batch
+      const groups = preparation.groups
+        .filter((group) =>
+          group.variants.some((variant) =>
+            variant.entryIds.some(
+              (entryId) =>
+                batch.contents.some((row) => row.entryId === entryId) ||
+                batch.unresolvedContents?.some(
+                  (claim) =>
+                    claim.groupId === group.id ||
+                    claim.entryIds.includes(entryId)
+                )
+            )
+          )
+        )
+        .map((group) => ({ orderId, groupId: group.id }))
+      return groups.length
+        ? { ...batch, groups, mark: { ...groups[0] } }
+        : batch
+    })
   const committed = committedCartonOwners(state.containers || [], {
     exceptContainerId: containerId,
   })
@@ -268,6 +291,51 @@ function knownLoadedContents(member, loaded, reports) {
       units.some((unit) => !loaded.some((selected) => selected.id === unit.id))
     )
       continue
+    const scopes = activeBatches.filter((batch) => batchIds.includes(batch.id))
+    // Current actual contents outrank an older aggregate interpretation.
+    if (
+      units.every((unit) => unit.contents !== null) ||
+      scopes.every(
+        (batch) => !batch.contentsUnknown && !batch.unresolvedContents?.length
+      )
+    )
+      continue
+    const minimums = new Map()
+    for (const batch of scopes) {
+      const known = new Map()
+      for (const unit of units.filter((unit) => unit.batchId === batch.id))
+        for (const row of unit.contents || [])
+          known.set(
+            row.entryId,
+            (known.get(row.entryId) || 0n) + wholeUnits(row.quantity)
+          )
+      for (const row of batch.contents || [])
+        if (wholeUnits(row.quantity) > (known.get(row.entryId) || 0n))
+          known.set(row.entryId, wholeUnits(row.quantity))
+      for (const [entryId, quantity] of known)
+        minimums.set(entryId, (minimums.get(entryId) || 0n) + quantity)
+    }
+    const claimed = new Map()
+    for (const row of claim.contents || [])
+      claimed.set(
+        row.entryId,
+        (claimed.get(row.entryId) || 0n) + wholeUnits(row.quantity)
+      )
+    if (
+      units.some((unit) => coveredUnits.has(unit.id)) ||
+      [...minimums].some(
+        ([entryId, quantity]) => quantity > (claimed.get(entryId) || 0n)
+      )
+    ) {
+      issues.push({
+        code: 'COMPLETE_SET_COVERAGE_CONFLICT',
+        batchIds,
+        orderId: member.orderId,
+        message:
+          'The aggregate product claim conflicts with current actual contents or overlapping established coverage.',
+      })
+      continue
+    }
     for (const item of claim.contents || [])
       contents.push({
         orderId: member.orderId,
@@ -439,10 +507,16 @@ function buildProductRows(
       source: member.record.snapshot.source || '1688',
       title: item.title,
       description: item.description,
-      spanishName: group?.spanishName || '',
+      spanishName: variant?.spanishName ?? group?.spanishName ?? '',
       category: group?.category || '',
-      material: group?.material || '',
+      material: variant ? variantMaterial(variant, entryId).value : '',
+      materialSource: variant ? variantMaterial(variant, entryId).source : '',
       size: variant?.sizeSuffix || '',
+      variantSuffix: variant?.variantSuffix || '',
+      sizeSuffix: variant?.sizeSuffix || '',
+      needsSizeMapping: variant?.needsSizeMapping === true,
+      sourceSize: variant?.size || '',
+      variantDescription: variant?.variant || '',
       baseCode: group?.baseCode || '',
       barcode,
       packingMonth: group?.month || member.preparation?.month || '',
@@ -497,6 +571,45 @@ function buildProductRows(
     }
     const weights = measurementShares(measurement.weight, parts),
       volumes = measurementShares(measurement.volume, parts)
+    for (const row of rows) {
+      if (weights.has(row.entryId))
+        row.allocatedWeight = decimalTotal([
+          row.allocatedWeight || '0',
+          weights.get(row.entryId),
+        ])
+      if (volumes.has(row.entryId))
+        row.allocatedVolume = decimalTotal([
+          row.allocatedVolume || '0',
+          volumes.get(row.entryId),
+        ])
+    }
+  }
+  const measuredSets = new Map()
+  for (const part of contents) {
+    if (part.coverageBatchIds?.length < 2 || !part.coverageBatchIds) continue
+    const key = stableValue([...part.coverageBatchIds].sort())
+    if (!measuredSets.has(key))
+      measuredSets.set(key, { ids: part.coverageBatchIds, parts: [] })
+    measuredSets.get(key).parts.push(part)
+  }
+  for (const { ids, parts } of measuredSets.values()) {
+    const selected = cartons.filter((unit) => ids.includes(unit.batchId)),
+      measurement = cartonMeasurementTotals(
+        selected,
+        member.batches.filter((batch) => ids.includes(batch.id))
+      ),
+      quantities = new Map()
+    for (const part of parts)
+      quantities.set(
+        part.entryId,
+        (quantities.get(part.entryId) || 0n) + wholeUnits(part.quantity)
+      )
+    const allocation = [...quantities].map(([entryId, quantity]) => ({
+        entryId,
+        quantity: String(quantity),
+      })),
+      weights = measurementShares(measurement.weight, allocation),
+      volumes = measurementShares(measurement.volume, allocation)
     for (const row of rows) {
       if (weights.has(row.entryId))
         row.allocatedWeight = decimalTotal([
@@ -745,20 +858,49 @@ export function projectContainer(
     }
     leftRows.forEach((row) => {
       row.loadedQuantity = '0'
+      row.remainingQuantity = row.quantity
     })
-    for (const row of leftRows)
-      if (
-        !left.some((unit) =>
-          unit.contents?.some((item) => item.entryId === row.entryId)
+    const remainingProof = knownLoadedContents(
+        member,
+        left,
+        state.reports || []
+      ),
+      unknownBatches = new Set(
+        remainingProof.issues.flatMap((issue) =>
+          issue.batchId ? [issue.batchId] : issue.batchIds || []
         )
       )
+    for (const row of leftRows) {
+      const uncertain = left.some((unit) => {
+        if (!unknownBatches.has(unit.batchId)) return false
+        const batch = member.batches.find((batch) => batch.id === unit.batchId)
+        return (
+          (batch.contentsUnknown && !batch.unresolvedContents?.length) ||
+          batch.contents.some((item) => item.entryId === row.entryId) ||
+          batch.unresolvedContents?.some(
+            (claim) =>
+              !claim.entryIds?.length || claim.entryIds.includes(row.entryId)
+          )
+        )
+      })
+      const prepared = remainingProof.contents
+          .filter((part) => part.entryId === row.entryId)
+          .reduce((sum, part) => sum + wholeUnits(part.quantity), 0n),
+        quantity = uncertain
+          ? null
+          : String(wholeUnits(row.quantity) - prepared)
+      if (quantity === null || BigInt(quantity) > 0n)
         unprepared.push({
           accountId: member.accountId,
           orderId: member.orderId,
           entryId: row.entryId,
-          quantity: row.quantity,
-          reason: 'Awaiting packing data',
+          quantity,
+          reason:
+            quantity === null
+              ? 'Unassigned product coverage is unknown'
+              : 'Awaiting packing data',
         })
+    }
     for (const unit of own) {
       const members = own.filter((member) => member.batchId === unit.batchId)
       const same =
@@ -815,6 +957,31 @@ export function projectContainer(
   }
   const loaded = cartons.filter((unit) => unit.state === 'loaded'),
     totals = summary(products, loaded, batches, orders.length)
+  const remainingTotals = summary(
+    leftProducts,
+    leftCartons,
+    batches,
+    orders.length
+  )
+  if (unprepared.length) {
+    remainingTotals.knownCartons = remainingTotals.cartons
+    remainingTotals.cartons = null
+    remainingTotals.cartonsUnknown = true
+    remainingTotals.weight = null
+    remainingTotals.volume = null
+    for (const metric of ['weightCoverage', 'volumeCoverage']) {
+      remainingTotals[metric].complete = false
+      remainingTotals[metric].unknownCountBatches =
+        (remainingTotals[metric].unknownCountBatches || 0) + 1
+      remainingTotals[metric].unpreparedQuantity = unprepared.some(
+        (row) => row.quantity === null
+      )
+        ? null
+        : String(
+            unprepared.reduce((sum, row) => sum + wholeUnits(row.quantity), 0n)
+          )
+    }
+  }
   if (!totals.weightCoverage.complete)
     warnings.push({ code: 'WEIGHT_INCOMPLETE', ...totals.weightCoverage })
   if (!totals.volumeCoverage.complete)
@@ -843,7 +1010,7 @@ export function projectContainer(
       products: leftProducts,
       cartons: leftCartons,
       unprepared,
-      totals: summary(leftProducts, leftCartons, batches, orders.length),
+      totals: remainingTotals,
     },
     totals,
     preferences: clone(
@@ -940,6 +1107,8 @@ export function assertManifestEvidence(manifest) {
         index: value.index,
         accountId: value.accountId,
         orderId: value.orderId,
+        reference: value.reference,
+        labelOrigin: value.labelOrigin,
         contents: value.contents,
         weight: value.weight,
         volume: value.volume,
