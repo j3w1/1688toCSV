@@ -1397,14 +1397,21 @@ export async function openDatabase({ name = '1688-order-library' } = {}) {
       'readonly',
       run
     )
+  let containerRepository
   const write = (stores, run) =>
     transaction(
       database,
       [...new Set([...stores, ...OPERATIONAL_STORES])],
       'readwrite',
-      run
+      async (tx) => {
+        const result = await run(tx)
+        // Legacy source, payment and order-metadata writers share this guard.
+        // Coupled container operations validate their complete graph themselves.
+        if (stores.includes('orders') && !stores.includes('containers'))
+          containerRepository.graph(await containerRepository.state(tx))
+        return result
+      }
     )
-  let containerRepository
   const cartonBatchesRepository = createCartonBatchesRepository({
     read,
     write,
@@ -2708,7 +2715,6 @@ export async function openDatabase({ name = '1688-order-library' } = {}) {
               ),
               suggest
             )
-            containerRepository.graph(await containerRepository.state(tx))
           }
           return { changed: result.changed, order: result.order }
         }

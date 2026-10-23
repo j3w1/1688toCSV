@@ -191,7 +191,7 @@ test('native source refresh and newer legacy restores preserve authored inventor
   }
 })
 
-test('native source refresh and restore cannot reduce or remove shipped goods or poison unrelated operations', async () => {
+test('native entitlement-changing writes cannot reduce or remove shipped goods or poison unrelated operations', async () => {
   const fixture = await databaseBrowser()
   try {
     const result = await fixture.page.evaluate(async () => {
@@ -296,6 +296,55 @@ test('native source refresh and restore cannot reduce or remove shipped goods or
           }
         }
       }
+      const entitlementChanges = [
+        [
+          'linkPayment',
+          () =>
+            db.linkPayment('1004', {
+              sourceOrderId: '1003',
+              reason: 'Synthetic reviewed payment source',
+            }),
+        ],
+        [
+          'setPaymentLinks',
+          () =>
+            db.setPaymentLinks('1004', [
+              {
+                id: 'synthetic-shipped-payment',
+                sourceOrderId: '1003',
+                amount: '1000.00',
+                targetEntryIds: ['2001'],
+                reason: 'Synthetic reviewed whole-order payment',
+              },
+            ]),
+        ],
+        [
+          'setInventoryDispositions',
+          () =>
+            db.setInventoryDispositions({
+              orderId: '1003',
+              entries: {
+                2001: {
+                  kind: 'canceled',
+                  quantity: '1',
+                  reason: 'Cannot cancel already shipped goods',
+                },
+              },
+            }),
+        ],
+      ]
+      for (const [route, change] of entitlementChanges) {
+        try {
+          await change()
+        } catch (error) {
+          errors.push({
+            mode: 'eligibility',
+            route,
+            code: error.code,
+            orderId: error.detail?.orderId,
+          })
+        }
+      }
       const atomic = stable(before) === stable(await db.exportBackup()),
         unrelated = await db.getOrder('1004')
       await db.updateOrderCapacities({
@@ -345,6 +394,14 @@ test('native source refresh and restore cannot reduce or remove shipped goods or
         code: 'SHIPMENT_SOURCE_MISSING',
         orderId: '1003',
       },
+      ...['linkPayment', 'setPaymentLinks', 'setInventoryDispositions'].map(
+        (route) => ({
+          mode: 'eligibility',
+          route,
+          code: 'SHIPMENT_OVERALLOCATION',
+          orderId: '1003',
+        })
+      ),
     ])
     assert.equal(result.atomic, true)
     assert.deepEqual(result.frozen, result.first)
