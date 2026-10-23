@@ -1866,14 +1866,35 @@ test('unsealed output captures its actual numeric draft revision without fabrica
       revision: 4,
       draft: true,
       status: 'draft',
+      products: [
+        {
+          ...ref,
+          entryId: '2001',
+          quantity: '20',
+          barcode: 'CE26090101A',
+          baseCode: 'CE26090101',
+          spanishName: 'SYNTHETIC DRAFT',
+          chineseCategory: '合成',
+        },
+      ],
     },
     output = captureContainerOutput(draft)
   assert.equal(output.revisionId, null)
   assert.equal(output.revision, 4)
   assert.equal(output.draft, true)
+  const labels = outputLabelModels(output)
+  assert.equal(labels.length, 1)
+  assert.equal(labels[0].quantity, '20')
+  for (const item of labels)
+    for (const ref of item.refs) {
+      assert.equal(ref.containerId, output.containerId)
+      assert.equal(ref.revisionId, null)
+      assert.equal(ref.draft, true)
+      assert.equal(ref.draftRevision, output.revision)
+    }
   assert.equal(output.containerId, 'c1')
   draft.products.push({ orderId: 'later', entryId: 'later' })
-  assert.equal(output.products.length, 0)
+  assert.equal(output.products.length, 1)
   assert.throws(
     () => captureContainerOutput({ ...draft, draft: false, status: 'sealed' }),
     /complete container revision/

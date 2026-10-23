@@ -544,7 +544,7 @@ export async function startPackingWorkspace({
         backup = validateBackup(input)
       if (!backup.packingScope)
         throw new Error(
-          'Choose a file created by Back up packing. Use Settings → Data → Restore for a full-library backup.'
+          'This dependency-complete archive includes container history and original media. Restore it through Settings → Data → Restore so those dependencies stay together.'
         )
       if (
         !(await reviewPackingChanges({

@@ -2,6 +2,11 @@
 export const SMART_CARTON_MESSAGES = Object.fromEntries(
   [
     [
+      'This dependency-complete archive includes container history and original media. Restore it through Settings → Data → Restore so those dependencies stay together.',
+      'Este archivo completo incluye el historial de contenedores y las imágenes originales. Restáuralo mediante Ajustes → Datos → Restaurar para mantener juntas esas dependencias.',
+      '此完整备份包含货柜历史和原始图片。请通过设置 → 数据 → 恢复还原，以保持这些依赖关系完整。',
+    ],
+    [
       'Use saved loading decisions',
       'Usar decisiones de carga guardadas',
       '使用已保存的装柜决定',
