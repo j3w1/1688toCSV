@@ -58,7 +58,7 @@ test('continuous products retain active decimal drafts across the whole list and
 }) => {
   const { page, record } = await seed(extension)
   const first = page.locator(
-    `#sheet-body [data-selection-key="${record.snapshot.orderId}/800000"]`
+    `#sheet-body [data-selection-key=${JSON.stringify(JSON.stringify([record.snapshot.accountId, record.snapshot.orderId, '800000']))}]`
   )
   const weight = first.getByRole('textbox', {
     name: 'Weight (kg/box)',
@@ -103,12 +103,14 @@ test('continuous products retain active decimal drafts across the whole list and
 test('keyboard reaches every product and shift selection crosses recycled rows with full totals', async ({
   extension,
 }) => {
-  const { page } = await seed(extension)
+  const { page, record } = await seed(extension)
   const first = page.locator('#sheet-body tr[data-selection-key]').first()
   await first.focus()
   await page.keyboard.press('Space')
   await page.keyboard.press('Control+End')
-  const last = page.locator('#sheet-body [data-selection-key$="/800499"]')
+  const last = page.locator(
+    `#sheet-body [data-selection-key=${JSON.stringify(JSON.stringify([record.snapshot.accountId, record.snapshot.orderId, '800499']))}]`
+  )
   await expect(last).toBeFocused()
   await expect(last).toBeInViewport()
   await page.keyboard.press('Shift+End')
@@ -160,7 +162,9 @@ test('resizing a long table keeps the current product and its scroll position', 
     }
   })
   await page.setViewportSize({ width: 900, height: 900 })
-  const row = page.locator(`#sheet-body [data-selection-key="${anchor.key}"]`)
+  const row = page.locator(
+    `#sheet-body [data-selection-key=${JSON.stringify(anchor.key)}]`
+  )
   await expect(row).toBeAttached()
   await expect
     .poll(async () => {
