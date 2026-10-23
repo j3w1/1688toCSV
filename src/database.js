@@ -3403,9 +3403,12 @@ export async function openDatabase({ name = '1688-order-library' } = {}) {
               packingReports: await requested(
                 tx.objectStore('packingReports').getAll()
               ),
-              orderCartonDrafts: await requested(
-                tx.objectStore('orderCartonDrafts').getAll()
-              ),
+              orderCartonDrafts: [
+                ...(await requested(
+                  tx.objectStore('orderCartonDrafts').getAll()
+                )),
+                ...(await requested(tx.objectStore('cartonBatches').getAll())),
+              ],
             })
             for (const photo of candidates)
               if (!retained.has(photo)) tx.objectStore('images').delete(photo)
@@ -3427,6 +3430,9 @@ export async function openDatabase({ name = '1688-order-library' } = {}) {
                 identifier(id, 'Backup order ID')
               )
             )
+      const requestedOrderRefs = includedIds
+        ? [...includedIds].map((orderId) => ({ accountId, orderId }))
+        : null
       return write(
         [
           'orders',
@@ -3488,8 +3494,14 @@ export async function openDatabase({ name = '1688-order-library' } = {}) {
               for (const batch of physical.batches) {
                 if (batch.accountId !== accountId) continue
                 const owners = batchOrderIds(batch)
-                if (owners.some((id) => includedIds.has(id)))
+                if (owners.some((id) => includedIds.has(id))) {
                   owners.forEach((orderId) => retain({ accountId, orderId }))
+                  for (const alias of batch.physicalMark?.supersededAliases ||
+                    [])
+                    for (const conflict of alias.conflicts)
+                      if (conflict.accountId === batch.accountId)
+                        retain(conflict)
+                }
               }
               for (const lock of operational.shipmentLocks) {
                 const members = [
@@ -3611,11 +3623,32 @@ export async function openDatabase({ name = '1688-order-library' } = {}) {
             history,
             images: [],
             preparations,
+            ...(requestedOrderRefs
+              ? {
+                  requestedOrderRefs,
+                  dependencyOrderRefs: orders
+                    .filter(
+                      (record) =>
+                        !requestedOrderRefs.some(
+                          (ref) =>
+                            ref.accountId === record.snapshot.accountId &&
+                            ref.orderId === record.snapshot.orderId
+                        )
+                    )
+                    .map(({ snapshot }) => ({
+                      accountId: snapshot.accountId,
+                      orderId: snapshot.orderId,
+                    })),
+                }
+              : {}),
             cartonBatches: physical.batches.filter(
               (batch) =>
                 !includedIds ||
                 (batch.accountId === accountId &&
-                  batch.contents.every((item) => includedIds.has(item.orderId)))
+                  batchOrderIds(batch).length > 0 &&
+                  batchOrderIds(batch).every((orderId) =>
+                    includedIds.has(orderId)
+                  ))
             ),
             ...activePackingState(
               preparations,
@@ -3635,7 +3668,13 @@ export async function openDatabase({ name = '1688-order-library' } = {}) {
               : null,
           }
           Object.assign(backup, operational)
-          const photoUrls = collectImageReferences(backup)
+          const photoUrls = collectImageReferences({
+            ...backup,
+            orderCartonDrafts: [
+              ...backup.orderCartonDrafts,
+              ...backup.cartonBatches,
+            ],
+          })
           const imageStore = tx.objectStore('images')
           const imageKeys = await requested(imageStore.getAllKeys())
           backup.images = await Promise.all(

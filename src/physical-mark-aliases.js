@@ -1,4 +1,5 @@
 // Physical marks are evidence on existing cartons, not another code ledger.
+import { validateIssuedCode } from './packing-model.js'
 const clone = (value) => structuredClone(value)
 const base = /^CE\d{4}(?:0[1-9]|[1-9]\d)(?:0[1-9]|[1-9]\d)$/
 const fail = (message) => {
@@ -18,11 +19,54 @@ export const PHYSICAL_MARK_CHOICES = Object.freeze([
 ])
 
 export function physicalMarkRelabelOnly(batch) {
-  return Boolean(
+  return physicalMarkSupersessionState(batch).physicalMarkRelabelOnly
+}
+export const physicalMarkHistoricalReviewRequired = (batch) =>
+  Boolean(
     batch.physicalMark?.supersededAliases?.some(
-      (alias) => alias.code === batch.physicalMark.code
+      (alias) => alias.reviewRequired === true
     )
   )
+export function physicalMarkSupersessionState(batch) {
+  const active = (batch.physicalMark?.supersededAliases || []).filter(
+      (entry) =>
+        entry.active !== false && entry.code === batch.physicalMark.code
+    ),
+    held = physicalMarkHistoricalReviewRequired(batch),
+    permanent = active.some((entry) =>
+      entry.conflicts.some((owner) =>
+        ['code-history', 'code-consumption'].includes(owner.kind)
+      )
+    ),
+    kind = permanent
+      ? 'permanent'
+      : active.length
+        ? 'temporary'
+        : held
+          ? 'historical-review'
+          : 'none',
+    owner = active[0]?.conflicts.find(
+      (value) => value.kind === 'current-primary'
+    ),
+    shipment = active
+      .flatMap((entry) => entry.conflicts)
+      .find((value) =>
+        ['code-history', 'code-consumption'].includes(value.kind)
+      ),
+    reason =
+      kind === 'temporary'
+        ? `Order ${owner?.orderId || ''} currently owns ${batch.physicalMark.code}. This restriction clears if that purchase releases the code before sealing. Print a current product mark and confirm physical relabeling, or review again after release.`
+        : kind === 'permanent'
+          ? `Shipment ${shipment?.containerName || shipment?.containerId || ''} permanently reserves ${batch.physicalMark.code} for other goods. Print a current product mark and confirm physical relabeling.`
+          : held
+            ? 'This older archive has no corroborated primary-reservation witness. Review the historical evidence and confirm fresh physical relabeling before keeping, printing or sealing these cartons.'
+            : ''
+  return {
+    physicalMarkRelabelOnly: kind !== 'none',
+    physicalMarkHistoricalReviewRequired: held,
+    physicalMarkConflictKind: kind,
+    physicalMarkConflictReason: reason,
+  }
 }
 export function physicalMarkResolutionChoices(batch) {
   return !batch.physicalMark
@@ -32,13 +76,11 @@ export function physicalMarkResolutionChoices(batch) {
       : [...PHYSICAL_MARK_CHOICES]
 }
 function assertPhysicalMarkChoice(batch, choice) {
-  if (physicalMarkRelabelOnly(batch) && choice !== 'relabel-reprint')
-    throw Object.assign(
-      new Error(
-        'This recorded mark was released and is now owned by another product or shipment. Reprint a current product mark and confirm actual physical relabeling.'
-      ),
-      { code: 'PHYSICAL_MARK_RELABEL_REQUIRED' }
-    )
+  const state = physicalMarkSupersessionState(batch)
+  if (state.physicalMarkRelabelOnly && choice !== 'relabel-reprint')
+    throw Object.assign(new Error(state.physicalMarkConflictReason), {
+      code: 'PHYSICAL_MARK_RELABEL_REQUIRED',
+    })
 }
 
 const sameReference = (left, right) =>
@@ -226,10 +268,42 @@ export function validatePhysicalMark(input, { pending = false } = {}) {
         fail(
           'Retain the actual conflicting owner and fresh identity of the superseded alias.'
         )
+      if (
+        (value.active !== undefined && typeof value.active !== 'boolean') ||
+        (value.reviewRequired !== undefined &&
+          typeof value.reviewRequired !== 'boolean') ||
+        (value.reviewedAt !== undefined &&
+          !Number.isFinite(Date.parse(value.reviewedAt))) ||
+        (value.reservationWitness !== undefined &&
+          (!text(value.reservationWitness?.batchId) ||
+            !Number.isSafeInteger(value.reservationWitness.retiredRevision) ||
+            value.reservationWitness.retiredRevision < 1 ||
+            !Number.isFinite(Date.parse(value.reservationWitness.retiredAt))))
+      )
+        fail('Retain typed current and historical physical alias evidence.')
       return {
         code: value.code,
         at: value.at,
         reason: value.reason,
+        ...(value.active === undefined ? {} : { active: value.active }),
+        ...(value.reviewRequired === undefined
+          ? {}
+          : { reviewRequired: value.reviewRequired }),
+        ...(value.reviewedAt === undefined
+          ? {}
+          : { reviewedAt: value.reviewedAt }),
+        ...(value.reservationWitness === undefined
+          ? {}
+          : {
+              reservationWitness: {
+                batchId: value.reservationWitness.batchId,
+                retiredRevision: value.reservationWitness.retiredRevision,
+                retiredAt: value.reservationWitness.retiredAt,
+                reservation: validateIssuedCode(
+                  value.reservationWitness.reservation
+                ),
+              },
+            }),
         conflicts: value.conflicts.map((conflict) => {
           if (
             !text(conflict.accountId) ||
@@ -625,6 +699,7 @@ export function resolvePhysicalMarkChange(
     review.physicalMarkCode = mark.code
     review.resolutionRequired = false
     review.physicalMarkRelabelOnly = physicalMarkRelabelOnly(change.after)
+    Object.assign(review, physicalMarkSupersessionState(change.after))
     review.physicalMarkResolutionChoices = physicalMarkResolutionChoices(
       change.after
     )
@@ -687,7 +762,7 @@ export function physicalMarkReadback(batch, preparations = []) {
     ),
     ...(batch.physicalMark ? { physicalMark: clone(batch.physicalMark) } : {}),
     physicalMarkResolutionRequired: physicalMarkResolutionRequired(batch),
-    physicalMarkRelabelOnly: physicalMarkRelabelOnly(batch),
+    ...physicalMarkSupersessionState(batch),
     physicalMarkResolutionChoices: physicalMarkResolutionChoices(batch),
     physicalMarkSupersessions: clone(
       batch.physicalMark?.supersededAliases || []
