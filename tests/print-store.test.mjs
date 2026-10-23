@@ -7,6 +7,7 @@ import {
   RECENT_LIMIT,
   RECENT_PRODUCT_LIMIT,
   refKey,
+  assertContainerPrintRef,
 } from '../src/print-store.js'
 
 function memoryStorage() {
@@ -74,6 +75,103 @@ test('historical print jobs retain account/container/revision/carton identity an
       ],
     }).products[0].refs.length,
     2
+  )
+})
+
+test('draft print refs survive JSON storage, retain their explicit null revision and require the exact draft to regenerate', () => {
+  const storage = memoryStorage(),
+    store = createPrintStore(storage),
+    ref = {
+      accountId: 'local',
+      orderId: '101',
+      groupId: 'g',
+      variantId: null,
+      containerId: 'draft-container',
+      revisionId: null,
+      draft: true,
+      draftRevision: 3,
+    },
+    job = store.recordJob({
+      kind: 'labels',
+      products: [{ code: 'CE26090101', quantity: 10, refs: [ref] }],
+    }),
+    manifest = {
+      container: { id: 'draft-container', accountId: 'local' },
+      draft: true,
+      status: 'draft',
+      revision: 3,
+      revisionId: null,
+    }
+  assert.ok(job)
+  assert.deepEqual(createPrintStore(storage).recentJobs()[0].products[0].refs, [
+    ref,
+  ])
+  const json = JSON.parse(JSON.stringify(job))
+  assert.equal(
+    assertContainerPrintRef(json.products[0].refs[0], manifest),
+    true
+  )
+  for (const candidate of [
+    null,
+    { ...manifest, revision: 4 },
+    {
+      ...manifest,
+      draft: false,
+      status: 'sealed',
+      revisionId: 'draft-container/r1',
+    },
+    { ...manifest, container: { id: 'another' } },
+    { ...manifest, container: { ...manifest.container, accountId: 'another' } },
+  ]) {
+    assert.throws(
+      () => assertContainerPrintRef(ref, candidate),
+      /Review the current container/
+    )
+  }
+  const exact = { key: 'captured', code: 'CE26090101', refs: [ref] }
+  assert.equal(restoreJob(json, [exact]).items.length, 1)
+  assert.equal(
+    restoreJob(json, [{ ...exact, refs: [{ ...ref, draftRevision: 4 }] }])
+      .missing.length,
+    1
+  )
+  assert.notEqual(
+    refKey(ref),
+    refKey({
+      ...ref,
+      draft: undefined,
+      draftRevision: undefined,
+      revisionId: 'draft-container/r1',
+    })
+  )
+  for (const draftRevision of [
+    undefined,
+    0,
+    -1,
+    '3',
+    1.5,
+    Number.MAX_SAFE_INTEGER + 1,
+  ])
+    assert.equal(
+      store.recordJob({
+        kind: 'labels',
+        products: [
+          { code: 'CE26090101', quantity: 1, ref: { ...ref, draftRevision } },
+        ],
+      }),
+      null
+    )
+  const sealed = { ...ref, revisionId: 'draft-container/r1' }
+  delete sealed.draft
+  delete sealed.draftRevision
+  assert.equal(
+    assertContainerPrintRef(sealed, {
+      ...manifest,
+      draft: false,
+      status: 'sealed',
+      revisionId: sealed.revisionId,
+    }),
+    true
   )
 })
 
