@@ -368,6 +368,15 @@ export function createProductOutput({
             )
           )
         )
+      if (context.productGroupId)
+        note.append(
+          el(
+            'p',
+            m(
+              'Existing product artwork for a proposed carton relation — printing does not confirm physical relabeling.'
+            )
+          )
+        )
       dialog.querySelector('h2')?.after(note)
       return
     }
@@ -454,10 +463,12 @@ export function createProductOutput({
         context.preparation ? [context.preparation] : []
       ),
       owner = context.preparation?.groups.find(
-        (group) => group.id === (batch.mark || batch.groups?.[0])?.groupId
+        (group) =>
+          group.id ===
+          (ref.productGroupId || (batch.mark || batch.groups?.[0])?.groupId)
       ),
       currentArtwork =
-        readback.currentProductArtwork ||
+        (!ref.productGroupId && readback.currentProductArtwork) ||
         (owner && {
           title: owner.title,
           spanishName: owner.spanishName,
@@ -489,6 +500,7 @@ export function createProductOutput({
         batchId: batch.id,
         role,
         index: unit.index,
+        ...(ref.productGroupId ? { productGroupId: ref.productGroupId } : {}),
       })
       products.push({
         ...row,
@@ -508,6 +520,7 @@ export function createProductOutput({
         batchId: batch.id,
         batchRevision: batch.revision,
         markRole: role,
+        ...(ref.productGroupId ? { productGroupId: ref.productGroupId } : {}),
         amendmentContext:
           context.amendmentContext || context.revisions?.amendmentContext,
         preferences: await repository.getPackingPreferences(),

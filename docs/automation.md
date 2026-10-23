@@ -111,6 +111,8 @@ Click/Enter inspects an item; native checkboxes select. Source text and IDs rema
 | `redo-order-cartons`          | One compound paste/fill/assignment per step.                                                                           |
 | `confirm-order-cartons`       | One order-level physical confirmation with current source/carton revisions.                                            |
 | `review-carton-physical-mark` | Review the recorded physical mark beside the current product code in Orders.                                           |
+| `review-physical-mark`        | Orders physical-mark dialog with the captured source, batch and amendment guards.                                      |
+| `choose-physical-mark-owner`  | Explicit actual eligible owner choice when the previous mark owner is gone; no inferred target.                        |
 | `physical-mark-decision`      | One fieldset identified by the actual batch ID.                                                                        |
 | `choose-physical-mark`        | Explicit `keep-recorded-mark` or `relabel-reprint` choice.                                                             |
 | `physical-mark-reason`        | Retain the operator's reason; composing text cannot confirm a decision.                                                |

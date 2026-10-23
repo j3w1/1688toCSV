@@ -82,6 +82,7 @@ export async function startPackingWorkspace({
     feedback,
     loadImage,
     getSelectedRows,
+    onPrintMark: (ref) => output.printOrderCartonMark(ref),
     onCartons: openOrder,
     onPhotoEdit: onProductPhotoEdit,
     onAmend: (dependency) =>

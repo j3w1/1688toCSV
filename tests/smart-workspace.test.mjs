@@ -111,10 +111,76 @@ test('physical mark choices require each explicit decision, reason and fresh rel
   assert.equal(host.querySelector('.physical-mark-choices'), null)
 })
 
+test('a missing physical mark owner requires an explicit actual owner option without guessing from contents', (context) => {
+  const { document, window } = dom(context),
+    host = document.getElementById('host'),
+    apply = document.createElement('button'),
+    updates = [],
+    targetMark = { orderId: '1001', groupId: 'explicit-owner' },
+    reviews = [
+      {
+        id: 'physical',
+        resolutionRequired: true,
+        physicalMarkCode: 'CE26090102',
+        currentProductCode: '',
+        physicalMarkOwnerChoices: [
+          {
+            mark: targetMark,
+            productCode: 'CE26090101',
+            artwork: { spanishName: 'CURRENT PRODUCT' },
+          },
+        ],
+      },
+    ]
+  const stop = mountPhysicalMarkChoices({
+      host,
+      apply,
+      reviews,
+      onChange: (value) => updates.push(value),
+    }),
+    owner = host.querySelector('[data-action="choose-physical-mark-owner"]'),
+    keep = host.querySelector('[data-choice="keep-recorded-mark"]'),
+    reason = host.querySelector('textarea')
+  assert.equal(owner.value, '')
+  keep.checked = true
+  keep.dispatchEvent(new window.Event('change'))
+  reason.value = 'Explicitly reviewed actual owner'
+  reason.dispatchEvent(new window.Event('input'))
+  assert.equal(apply.disabled, true)
+  owner.value = JSON.stringify(targetMark)
+  owner.dispatchEvent(new window.Event('change'))
+  assert.equal(apply.disabled, false)
+  assert.deepEqual(updates.at(-1).decisions[0].targetMark, targetMark)
+  owner.value = JSON.stringify({ orderId: '1001', groupId: 'guessed-owner' })
+  owner.dispatchEvent(new window.Event('change'))
+  assert.equal(apply.disabled, true)
+  assert.equal(updates.at(-1).decisions[0].targetMark, undefined)
+  stop()
+})
+
 test('physical mark output uses recorded artwork after its group is gone, counts actual entitlements and rejects stale typed regeneration', async () => {
   const { record, preparation } = syntheticManifest().orders[0],
     group = preparation.groups[0],
-    artwork = {
+    target = structuredClone(group)
+  Object.assign(target, {
+    id: 'existing-print-target',
+    baseCode: 'CE26090103',
+    category: '新杯',
+    spanishName: 'EXISTING TARGET',
+  })
+  target.variants[0].id = 'existing-print-variant'
+  target.variants[0].entryIds = ['2002']
+  preparation.groups.push(target)
+  record.snapshot.items.push({
+    ...structuredClone(record.snapshot.items[0]),
+    entryId: '2002',
+  })
+  Object.assign(record.snapshot.totals, {
+    goodsGross: '2000.00',
+    goodsNet: '2000.00',
+    payable: '2000.00',
+  })
+  const artwork = {
       code: 'CE26090102',
       baseCode: 'CE26090102',
       title: 'Original carton',
@@ -205,6 +271,27 @@ test('physical mark output uses recorded artwork after its group is gone, counts
     newModel = outputLabelModels(current, 'mark')[0]
   assert.equal(newModel.code, group.baseCode)
   assert.equal(newModel.model.category, group.category)
+  const explicit = await output.orderCartonContext({
+      ...ref,
+      role: 'current-product',
+      productGroupId: target.id,
+    }),
+    targetModel = outputLabelModels(explicit, 'mark')[0]
+  assert.equal(targetModel.code, target.baseCode)
+  assert.equal(targetModel.model.category, target.category)
+  assert.ok(
+    targetModel.refs.every(
+      (ref) => ref.productGroupId === target.id && ref.code === target.baseCode
+    )
+  )
+  await assert.rejects(
+    output.orderCartonContext({
+      ...ref,
+      role: 'current-product',
+      productGroupId: 'unissued-proposed-group',
+    }),
+    /recorded carton mark evidence|captured carton mark changed/
+  )
   assert.equal(batch.physicalMark.code, 'CE26090102')
   assert.deepEqual({ record, preparation }, original)
   batch.revision++
@@ -1437,12 +1524,29 @@ test('reviewed grouping captures actual physical revisions and compound Undo/Red
   const original = structuredClone({ record, preparation, physical }),
     writes = [],
     reads = [],
+    printed = [],
     authoring = await createProductAuthoring({
       getRecords: () => [record],
+      onPrintMark: async (ref) => {
+        printed.push(structuredClone(ref))
+      },
       repository: {
         listPreparations: async () => [structuredClone(saved)],
         getPackingPreferences: async () => validatePackingPreferences({}),
         getReservedBarcodes: async () => [],
+        getOrderReconciliation: async () => ({
+          record: structuredClone(record),
+          preparation: structuredClone(saved),
+          batches: [structuredClone(physical)],
+          reports: [],
+          revisions: {
+            source: 'actual-captured-source',
+            observedAt: record.snapshot.observedAt,
+            preparation: saved.revision,
+            cartons: { [physical.id]: physical.revision },
+            reports: {},
+          },
+        }),
         listCartonBatches: async (args) => {
           reads.push(structuredClone(args))
           return [structuredClone(physical)]
@@ -1487,6 +1591,18 @@ test('reviewed grouping captures actual physical revisions and compound Undo/Red
   assert.ok(review)
   assert.match(review.textContent, /CE26090102/)
   assert.match(review.textContent, /CE26090101/)
+  const currentPrint = review.querySelector(
+    '[data-action="print-order-carton-mark"][data-mark-role="current-product"]'
+  )
+  assert.equal(currentPrint.disabled, false)
+  currentPrint.click()
+  await new Promise((resolve) => setTimeout(resolve, 0))
+  assert.equal(printed.length, 1)
+  assert.equal(printed[0].code, first.baseCode)
+  assert.equal(printed[0].productGroupId, first.id)
+  assert.equal(printed[0].batchId, physical.id)
+  assert.deepEqual(saved, original.preparation)
+  assert.deepEqual(physical, original.physical)
   const apply = [...review.querySelectorAll('button')].find(
       (button) => button.textContent === 'Apply changes'
     ),
