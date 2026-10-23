@@ -279,6 +279,7 @@ test('physical mark output uses recorded artwork after its group is gone, counts
     targetModel = outputLabelModels(explicit, 'mark')[0]
   assert.equal(targetModel.code, target.baseCode)
   assert.equal(targetModel.model.category, target.category)
+  assert.equal(explicit.products[0].entryId, '2002')
   assert.ok(
     targetModel.refs.every(
       (ref) => ref.productGroupId === target.id && ref.code === target.baseCode

@@ -474,6 +474,7 @@ export function createProductOutput({
           spanishName: owner.spanishName,
           category: owner.category,
           groupId: owner.id,
+          entryIds: owner.variants.flatMap((variant) => variant.entryIds),
         }),
       artwork =
         role === 'recorded' && batch.physicalMark
@@ -484,9 +485,14 @@ export function createProductOutput({
       throw new Error(
         'Review the recorded carton mark evidence in Orders before printing.'
       )
-    const item = context.record.snapshot.items.find((item) =>
-        batch.contents.some((part) => part.entryId === item.entryId)
-      ),
+    const associated = artwork.entryIds,
+      item = associated?.length
+        ? context.record.snapshot.items.find((item) =>
+            associated.includes(item.entryId)
+          ) || { entryId: associated[0], title: artwork.title || '' }
+        : context.record.snapshot.items.find((item) =>
+            batch.contents.some((part) => part.entryId === item.entryId)
+          ),
       row = {
         ...item,
         ...source,
