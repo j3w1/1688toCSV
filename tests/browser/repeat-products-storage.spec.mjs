@@ -1,6 +1,11 @@
 import { test, expect } from './extension-fixture.mjs'
 import { repeatSubsetFixture } from '../fixtures/repeat-subset-fixture.mjs'
 
+const productRow = (page, orderId, entryId = '1') =>
+  page.locator(
+    `#sheet-body tr[data-selection-key=${JSON.stringify(JSON.stringify(['local', orderId, entryId]))}]`
+  )
+
 function sources() {
   return ['3', '27'].map((quantity, index) => {
     const price = index ? '10.00' : '12.00'
@@ -14,6 +19,8 @@ function sources() {
       sellerName: 'Synthetic repeat supplier',
       sellerMemberLogin: 'synthetic-repeat-supplier',
       status: 'Completed',
+      // Declared synthetic purchase evidence, preceding code allocation.
+      purchasedAt: '2026-10-01T12:00:00+08:00',
       observedAt: '2026-10-01T00:00:00.000Z',
       items: [
         {
@@ -47,6 +54,11 @@ function sources() {
 async function setup(extension) {
   const page = await extension.context.newPage()
   await page.goto(`${extension.origin}/unsupported`)
+  const snapshots = sources()
+  expect(snapshots.map((snapshot) => snapshot.purchasedAt)).toEqual([
+    '2026-10-01T12:00:00+08:00',
+    '2026-10-01T12:00:00+08:00',
+  ])
   await page.evaluate(async (snapshots) => {
     const { openDatabase } = await import('/src/database.js')
     const { createPreparation } = await import('/src/packing-model.js')
@@ -67,7 +79,11 @@ async function setup(extension) {
       orderId: repeatPreparations[index].orderId,
       groupId: repeatPreparations[index].groups[0].id,
     })
-  }, sources())
+  }, snapshots)
+  const savedSources = await page.evaluate(async () =>
+    (await repeatLibrary.listOrders()).map((record) => record.snapshot)
+  )
+  expect(savedSources).toEqual(snapshots)
   return page
 }
 
@@ -108,8 +124,6 @@ test('a carton marked by one linked purchase prints once when all selected conte
     )
     return repeatLibrary.exportBackup()
   })
-  for (const record of backup.orders)
-    record.snapshot.purchasedAt = '2026-10-15T12:00:00+08:00'
   const restored = await extension.inspector.evaluate(
     (backup) => chrome.runtime.sendMessage({ type: 'BACKUP_RESTORE', backup }),
     backup
@@ -121,7 +135,7 @@ test('a carton marked by one linked purchase prints once when all selected conte
   await expect(page.locator('#sheet-body tr[data-selection-key]')).toHaveCount(
     2
   )
-  await page.locator('#sheet-body tr[data-selection-key="8702/1"]').click()
+  await productRow(page, '8702').getByRole('checkbox').check()
   await page.locator('#orders-print-actions .copy-actions-trigger').click()
   await page.locator('#print-carton-marks').click()
   const dialog = page.getByRole('dialog', {
@@ -144,7 +158,6 @@ test('repeat-product dialog previews both purchases, cancellation writes nothing
   const storagePage = await setup(extension)
   const backup = await storagePage.evaluate(() => repeatLibrary.exportBackup())
   backup.orders.forEach((record) => {
-    record.snapshot.purchasedAt = '2026-10-15T12:00:00+08:00'
     record.unitsPerCarton = { 1: 3 }
     record.unitsPerCartonUpdatedAt = '2026-10-15T12:00:00.000Z'
     record.productWorkflow = {
@@ -162,10 +175,10 @@ test('repeat-product dialog previews both purchases, cancellation writes nothing
   await page.goto(`${extension.extensionBaseUrl}/library.html`)
   const rows = page.locator('#sheet-body tr[data-selection-key]')
   await expect(rows).toHaveCount(2)
-  const source = page.locator('#sheet-body tr[data-selection-key="8702/1"]')
-  await source.click()
-  const original = page.locator('#sheet-body tr[data-selection-key="8701/1"]')
-  await original.click({ modifiers: ['Control'] })
+  const source = productRow(page, '8702')
+  await source.getByRole('checkbox').check()
+  const original = productRow(page, '8701')
+  await original.getByRole('checkbox').check()
   await source
     .getByRole('button', { name: 'Link repeat purchase', exact: true })
     .click()
@@ -542,7 +555,7 @@ test('a single-size repeat selects the original S card, stores canonical subset 
     await toggle.click()
   const rows = page.locator('#sheet-body tr[data-selection-key]')
   await expect(rows).toHaveCount(4)
-  const source = page.locator('#sheet-body tr[data-selection-key="8805/1"]')
+  const source = productRow(page, '8805')
   await expect(source.locator('.row-code-copy')).toHaveText('CE26101005')
   await source
     .getByRole('button', { name: 'Link repeat purchase', exact: true })
@@ -595,9 +608,7 @@ test('a single-size repeat selects the original S card, stores canonical subset 
     ['3', 'CE26101001L'],
   ]) {
     await expect(
-      page.locator(
-        `#sheet-body tr[data-selection-key="8801/${entryId}"] .row-code-copy`
-      )
+      productRow(page, '8801', entryId).locator('.row-code-copy')
     ).toHaveText(code)
   }
   const linked = await extension.inspector.evaluate(() =>

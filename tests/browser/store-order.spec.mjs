@@ -398,6 +398,19 @@ test('deleting orders removes unshared local originals while keeping shared and 
         ],
       },
     })
+    const guardedBefore = await repository.exportBackup()
+    let guardedError
+    try {
+      await repository.removeOrders([first.snapshot.orderId])
+    } catch (error) {
+      guardedError = error.message
+    }
+    const guardedAfter = await repository.exportBackup()
+    const firstBatches = (await repository.listCartonBatches()).filter(
+      (batch) =>
+        batch.contents.some((item) => item.orderId === first.snapshot.orderId)
+    )
+    await repository.removeCartonBatches(firstBatches)
     await repository.removeOrders([first.snapshot.orderId])
     const afterFirst = await repository.exportBackup()
     const cachedAfterFirst = {
@@ -406,6 +419,11 @@ test('deleting orders removes unshared local originals while keeping shared and 
       replacement: await repository.getImage(replacement.url),
       unrelated: await repository.getImage(unrelated.url),
     }
+    const secondBatches = (await repository.listCartonBatches()).filter(
+      (batch) =>
+        batch.contents.some((item) => item.orderId === second.snapshot.orderId)
+    )
+    await repository.removeCartonBatches(secondBatches)
     await repository.removeOrders([second.snapshot.orderId])
     const afterSecond = await repository.exportBackup()
     const cachedAfterSecond = {
@@ -414,10 +432,16 @@ test('deleting orders removes unshared local originals while keeping shared and 
       unrelated: await repository.getImage(unrelated.url),
     }
     return {
+      guardedBefore,
+      guardedAfter,
+      guardedError,
+      firstBatches,
+      secondBatches,
       history,
       sharedPhoto,
       uniquePhoto,
       replacement: replacement.url,
+      replacementBytes: replacement.dataUrl,
       unrelated: unrelated.url,
       afterFirst,
       afterSecond,
@@ -425,6 +449,15 @@ test('deleting orders removes unshared local originals while keeping shared and 
       cachedAfterSecond,
     }
   }, input)
+  expect(result.guardedError).toBe(
+    'Remove this order’s active carton batches before deleting it.'
+  )
+  const { exportedAt: beforeExportedAt, ...guardedBefore } =
+    result.guardedBefore
+  const { exportedAt: afterExportedAt, ...guardedAfter } = result.guardedAfter
+  expect(guardedAfter).toEqual(guardedBefore)
+  expect(result.firstBatches).toHaveLength(1)
+  expect(result.secondBatches).toHaveLength(1)
   expect(result.history).toHaveLength(1)
   expect(result.history[0].snapshot.items[0].photos).toContain(
     result.sharedPhoto
@@ -437,7 +470,11 @@ test('deleting orders removes unshared local originals while keeping shared and 
   expect(afterFirst).not.toContain(result.unrelated)
   expect(result.cachedAfterFirst.unique).toBeUndefined()
   expect(result.cachedAfterFirst.shared).toBeDefined()
+  expect(result.cachedAfterFirst.shared.dataUrl).toBe(photo)
   expect(result.cachedAfterFirst.replacement).toBeDefined()
+  expect(result.cachedAfterFirst.replacement.dataUrl).toBe(
+    result.replacementBytes
+  )
   expect(result.cachedAfterFirst.unrelated).toBeDefined()
   expect(result.afterSecond.orders).toHaveLength(0)
   expect(result.afterSecond.history).toHaveLength(0)

@@ -374,11 +374,14 @@ test('price-only size suggestions require visual confirmation with exact origina
     .getByRole('button', { name: 'Apply these size codes', exact: true })
     .click()
   await expect(review).toBeHidden()
-  expect(
-    (await backup(extension)).preparations[0].groups[0].variants.map(
-      (variant) => variant.sizeSuffix
+  // Closing the review starts an asynchronous save; wait for its exact result.
+  await expect
+    .poll(async () =>
+      (await backup(extension)).preparations[0].groups[0].variants.map(
+        (variant) => variant.sizeSuffix
+      )
     )
-  ).toEqual(['S', 'L'])
+    .toEqual(['S', 'L'])
   await closeOrderProduct(editorFor(page))
   await page.reload()
   expect(
