@@ -10,6 +10,154 @@ import {
   barcodeValue,
 } from '../src/packing-model.js'
 import { createContainerSummary } from '../src/container-export.js'
+import { planContainerWorkbook } from '../src/container-export.js'
+
+test('native measured CBM warnings survive confirmation, seal review, frozen exports and backup while quantity contradictions still block', async () => {
+  const browser = await databaseBrowser()
+  try {
+    const result = await browser.page.evaluate(async () => {
+      const {
+        openDatabase,
+        fixture: { syntheticOrder, syntheticBatch, syntheticManifest },
+      } = modules
+      const db = await openDatabase({ name: 'synthetic-measured-cbm-warning' })
+      await db.restoreBackup({
+        format: '1688-order-library',
+        version: 4,
+        exportedAt: new Date().toISOString(),
+        orders: [syntheticOrder('1001', '40')],
+        history: [],
+        images: [],
+        preparations: [],
+        allocations: [],
+        issuedCodes: [],
+        packingPreferences: null,
+        cartonBatches: [
+          syntheticBatch('1001', 4, '40', {
+            suppliedCbm: '0.21',
+            volumeBasis: 'batch',
+          }),
+        ],
+      })
+      const preparation = syntheticManifest().orders[0].preparation
+      await db.savePreparations([preparation], {
+        expectedRevisions: [0],
+        preserveNaming: true,
+      })
+      const before = await db.getOrderReconciliation({ orderId: '1001' })
+      const edited = {
+        ...before.batches[0],
+        len: '80.125',
+        wid: '50',
+        ht: '30',
+        weight: '25.25',
+      }
+      let quantityError = null
+      try {
+        await db.confirmOrderCartons({
+          orderId: '1001',
+          expectedRevisions: before.revisions,
+          draft: {
+            cartons: [
+              {
+                ...edited,
+                contents: [
+                  { orderId: '1001', entryId: '2001', quantity: '44' },
+                ],
+              },
+            ],
+          },
+        })
+      } catch (error) {
+        quantityError = error.code
+      }
+      const confirmed = await db.confirmOrderCartons({
+        orderId: '1001',
+        expectedRevisions: before.revisions,
+        draft: { cartons: [edited] },
+      })
+      const container = await db.createContainer({ name: 'Measured evidence' })
+      let view = await db.includeContainerOrders({
+        id: container.id,
+        expectedRevision: container.revision,
+        orderRefs: [{ orderId: '1001' }],
+      })
+      view = await db.markContainerLoaded({
+        id: container.id,
+        expectedRevision: view.container.revision,
+      })
+      const review = await db.reviewContainerSeal({
+        id: container.id,
+        expectedRevision: view.container.revision,
+      })
+      if (!review.ready) throw new Error(JSON.stringify(review.issues))
+      const manifest = await db.sealContainer({
+        id: container.id,
+        expectedRevision: view.container.revision,
+        reviewToken: review.reviewToken,
+      })
+      const backup = await db.exportBackup({})
+      const other = await openDatabase({
+        name: 'synthetic-measured-cbm-warning-restored',
+      })
+      await other.restoreBackup(backup)
+      const restored = await other.getContainerManifest({ id: container.id })
+      db.close()
+      other.close()
+      return { quantityError, confirmed, review, manifest, restored }
+    })
+    assert.equal(result.quantityError, 'RECONCILIATION_INVALID')
+    assert.equal(result.confirmed.batches[0].suppliedCbm, '0.21')
+    assert.equal(result.confirmed.batches[0].volumeBasis, 'batch')
+    assert.equal(result.review.ready, true)
+    assert.equal(result.manifest.totals.volume, '0.48075')
+    assert.equal(result.manifest.totals.weight, '101')
+    const warning = result.manifest.warnings.find(
+      (value) => value.code === 'volume-discrepancy'
+    )
+    assert.equal(warning.dimensionVolume, '0.48075')
+    assert.equal(warning.suppliedVolume, '0.21')
+    assert.equal(warning.usedVolume, '0.48075')
+    assert.equal(warning.usedVolumeBasis, 'measured')
+    assert.equal(warning.suppliedVolumeBasis, 'batch')
+    assert.equal(warning.severity, 'warning')
+    assert.deepEqual(
+      result.review.warnings.find(
+        (value) => value.code === 'volume-discrepancy'
+      ),
+      warning
+    )
+    const summary = createContainerSummary(result.manifest, {
+      file: 'measured.xlsx',
+    })
+    assert.deepEqual(
+      summary.warnings.find((value) => value.code === 'volume-discrepancy'),
+      warning
+    )
+    const plan = planContainerWorkbook(result.manifest, { language: 'en' })
+    const disclosure = plan.sheets[1].rows.find(
+      (value) => value.kind === 'warning'
+    ).cells[0].value
+    assert.match(
+      disclosure,
+      /Measured volume 0\.48075 m³ is used; supplied volume 0\.21 m³ is retained/
+    )
+    const bytes = await createContainerWorkbook(result.manifest, {
+      language: 'en',
+    })
+    const archive = CFB.read(bytes, { type: 'array' })
+    const xml = new TextDecoder().decode(
+      archive.FileIndex.find((value) => value.name === 'sheet2.xml').content
+    )
+    assert.match(
+      xml,
+      /Measured volume 0\.48075 m³ is used; supplied volume 0\.21 m³ is retained/
+    )
+    assert.deepEqual(result.restored, result.manifest)
+  } finally {
+    await browser.close()
+  }
+})
 
 test('native explicit preparation and material rule saves persist automatic evidence while retaining manual clears and authoring time', async () => {
   const fixture = await databaseBrowser()

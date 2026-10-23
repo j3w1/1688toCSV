@@ -1011,6 +1011,44 @@ test('supplied and measured source evidence, warnings and purchase references su
   assert.match(xml, /volume-discrepancy/)
 })
 
+test('volume discrepancy disclosure names the measured total used and retained supplied total in all output languages', () => {
+  const manifest = fixture()
+  manifest.warnings = [
+    {
+      code: 'volume-discrepancy',
+      severity: 'warning',
+      batchId: 'measured',
+      dimensionVolume: '0.48075',
+      suppliedVolume: '0.21',
+      usedVolume: '0.48075',
+      usedVolumeBasis: 'measured',
+      suppliedCbm: '0.21',
+      suppliedVolumeBasis: 'batch',
+    },
+  ]
+  for (const [language, expected] of [
+    [
+      'en',
+      'Measured volume 0.48075 m³ is used; supplied volume 0.21 m³ is retained.',
+    ],
+    [
+      'es',
+      'Se usa el volumen medido de 0.48075 m³; se conserva el volumen declarado de 0.21 m³.',
+    ],
+    ['zh', '采用实测体积 0.48075 m³；保留申报体积 0.21 m³。'],
+  ]) {
+    const row = planContainerWorkbook(manifest, {
+      ...settings,
+      language,
+    }).sheets[1].rows.find((row) => row.kind === 'warning')
+    assert.ok(row.cells[0].value.includes(expected), language)
+  }
+  assert.deepEqual(
+    createContainerSummary(manifest, { file: 'measured.xlsx' }).warnings,
+    manifest.warnings
+  )
+})
+
 test('product packing pattern links minority quantities and exact repeated boxes without averaging', () => {
   const manifest = fixture(),
     plan = planContainerWorkbook(manifest, settings)

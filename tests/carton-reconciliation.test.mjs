@@ -433,6 +433,81 @@ test('measurement coverage retains missing/zero, supplied and dimension evidence
   assert.ok(plan.issues.some((x) => x.code === 'volume-discrepancy'))
 })
 
+test('confirmed dimensions supersede differing supplied CBM with disclosed totals while ambiguous bases and quantity conflicts remain errors', () => {
+  const batch = box(
+    'measured',
+    { A: '40' },
+    {
+      count: 4,
+      packingBasis: 'uniform',
+      len: '80.125',
+      wid: '50',
+      ht: '30',
+      weight: '25.25',
+      suppliedCbm: '0.21',
+      volumeBasis: 'batch',
+    }
+  )
+  for (const [basis, suppliedTotal] of [
+    ['batch', '0.21'],
+    ['carton', '0.84'],
+  ]) {
+    const plan = reconcileOrder(
+      input(
+        { A: '40' },
+        {},
+        {
+          batches: [{ ...batch, volumeBasis: basis }],
+        }
+      )
+    )
+    assert.equal(plan.knownVolume, '0.48075')
+    assert.equal(plan.knownWeight, '101')
+    assert.equal(
+      plan.issues.some((value) => value.severity === 'error'),
+      false
+    )
+    const warning = plan.issues.find(
+      (value) => value.code === 'volume-discrepancy'
+    )
+    assert.deepEqual(
+      {
+        severity: warning.severity,
+        measured: warning.dimensionVolume,
+        supplied: warning.suppliedVolume,
+        used: warning.usedVolume,
+        usedBasis: warning.usedVolumeBasis,
+        raw: warning.suppliedCbm,
+        rawBasis: warning.suppliedVolumeBasis,
+      },
+      {
+        severity: 'warning',
+        measured: '0.48075',
+        supplied: suppliedTotal,
+        used: '0.48075',
+        usedBasis: 'measured',
+        raw: '0.21',
+        rawBasis: basis,
+      }
+    )
+    assert.equal(plan.cartons[0].suppliedCbm, '0.21')
+    conservation(plan)
+  }
+  for (const [changes, code] of [
+    [{ volumeBasis: 'unknown' }, 'invalid-measurement-basis'],
+    [{ count: 3 }, 'uniform-contents-conflict'],
+    [{ orderId: 'another-order' }, 'cross-order-carton'],
+  ]) {
+    const plan = reconcileOrder(
+      input({ A: '40' }, {}, { batches: [{ ...batch, ...changes }] })
+    )
+    assert.ok(
+      plan.issues.some((value) => value.severity === 'error'),
+      code
+    )
+  }
+})
+
 test('AC10 report-constrained mixed suggestions remain unallocated, ambiguous choices explicit', () => {
   const plan = reconcileOrder(
     input(

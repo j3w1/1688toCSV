@@ -47,6 +47,8 @@ const strings = {
     order: 'Order',
     evidence: 'Source batch evidence',
     suppliedVolume: 'Supplied volume',
+    volumeDiscrepancy: (measured, supplied) =>
+      `Measured volume ${measured} m³ is used; supplied volume ${supplied} m³ is retained.`,
     warning: 'Warning',
     note: 'Complete loaded scope of this container revision. Source purchase rows remain separate; physical cartons and measurements count once on Cartons.',
     cartonNote:
@@ -87,6 +89,8 @@ const strings = {
     order: 'Pedido',
     evidence: 'Datos originales del lote',
     suppliedVolume: 'Volumen declarado',
+    volumeDiscrepancy: (measured, supplied) =>
+      `Se usa el volumen medido de ${measured} m³; se conserva el volumen declarado de ${supplied} m³.`,
     warning: 'Advertencia',
     note: 'Alcance cargado completo de esta revisión. Cada compra mantiene sus filas; cajas y medidas físicas se cuentan una sola vez en Cajas.',
     cartonNote:
@@ -127,6 +131,8 @@ const strings = {
     order: '订单',
     evidence: '原始批次资料',
     suppliedVolume: '申报体积',
+    volumeDiscrepancy: (measured, supplied) =>
+      `采用实测体积 ${measured} m³；保留申报体积 ${supplied} m³。`,
     warning: '提示',
     note: '本货柜修订的全部已装货物。采购明细分开列示；实物纸箱及测量合计仅在纸箱表计算一次。',
     cartonNote:
@@ -1039,7 +1045,14 @@ function physicalWorksheet(manifest, options) {
         ? warning
         : [
             warning.code,
-            warning.message,
+            warning.code === 'volume-discrepancy' &&
+            !absent(warning.dimensionVolume) &&
+            !absent(warning.suppliedVolume)
+              ? options.words.volumeDiscrepancy(
+                  warning.dimensionVolume,
+                  warning.suppliedVolume
+                )
+              : warning.message,
             warning.cartonId,
             warning.batchId,
             warning.orderId,
@@ -1265,6 +1278,12 @@ export function createContainerSummary(
             'count',
             'quantity',
             'difference',
+            'dimensionVolume',
+            'suppliedVolume',
+            'usedVolume',
+            'usedVolumeBasis',
+            'suppliedCbm',
+            'suppliedVolumeBasis',
           ])
     ),
   }

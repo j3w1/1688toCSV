@@ -16,6 +16,7 @@ import {
   decimalTotal,
 } from './inventory-model.js'
 import { cartonBatchMetrics } from './carton-batches.js'
+import { cartonMeasurementWarnings } from './carton-reconciliation.js'
 import { shipmentMoney } from './shipment-money.js'
 import { productFeatures } from './product-features.js'
 import { createMaterialSuggester } from './material-vocabulary.js'
@@ -211,6 +212,13 @@ export function captureContainerOrder(
       warnings.push({ code: 'CARTON_COUNT_UNKNOWN', batchId: batch.id })
       continue
     }
+    warnings.push(
+      ...cartonMeasurementWarnings(batch).map((warning) => ({
+        ...warning,
+        batchId: batch.id,
+        orderId,
+      }))
+    )
     for (const unit of physicalUnits(batch))
       if (!committed.has(unit.id))
         cartons.push({ ...unit, count: 1, state: 'unconfirmed' })
