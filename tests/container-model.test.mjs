@@ -13,7 +13,10 @@ import {
 } from '../src/container-model.js'
 import { physicalUnits } from '../src/inventory-model.js'
 import { paymentSourceEvidence } from '../src/payment-links.js'
-import { createContainerSummary } from '../src/container-export.js'
+import {
+  createContainerSummary,
+  createContainerWorkbook,
+} from '../src/container-export.js'
 import { suggestMaterial } from '../src/material-vocabulary.js'
 const base = () => ({
   records: [syntheticOrder()],
@@ -37,6 +40,85 @@ function draft(state) {
   ]
   return container
 }
+
+test('large source entry ids retain purchase order and photo-edit identity through UUID-sorted physical batches and workbook raster callbacks', async () => {
+  const state = base(),
+    record = state.records[0],
+    original = record.snapshot.items[0]
+  record.snapshot.items = [0, 1, 2].map((index) => ({
+    ...original,
+    entryId: String(900000000000000000n + BigInt(index)),
+    title: `Synthetic source ${index}`,
+    description: `Synthetic source ${index}`,
+    quantity: '1',
+    ...(index === 0
+      ? {
+          photoEdits: {
+            0: {
+              tagScale: 2.75,
+              tags: [
+                {
+                  id: 'AX-tag',
+                  code: 'AX',
+                  x: 0.5,
+                  y: 0.5,
+                  labelX: 0.8,
+                  labelY: 0.15,
+                },
+              ],
+            },
+          },
+        }
+      : {}),
+  }))
+  Object.assign(record.snapshot.totals, {
+    goodsGross: '30.00',
+    goodsNet: '30.00',
+    payable: '30.00',
+  })
+  state.batches = [2, 0, 1].map((sourceIndex, batchIndex) =>
+    syntheticBatch('1001', 1, '1', {
+      id: `synthetic-uuid-order-${batchIndex}`,
+      contents: [
+        {
+          orderId: '1001',
+          entryId: record.snapshot.items[sourceIndex].entryId,
+          quantity: '1',
+        },
+      ],
+      packingBasis: 'exact',
+    })
+  )
+  const container = draft(state)
+  container.draft.decisions = Object.fromEntries(
+    container.draft.orders[0].cartons.map((unit) => [unit.id, 'loaded'])
+  )
+  const view = projectContainer(state, container),
+    expected = record.snapshot.items.map((item) => item.entryId)
+  assert.deepEqual(
+    view.products.map((row) => row.entryId),
+    expected
+  )
+  const observed = []
+  await createContainerWorkbook(
+    {
+      ...view,
+      cartons: view.cartons.filter((unit) => unit.state === 'loaded'),
+    },
+    {
+      prepareImages: async (row, limits) => {
+        if (limits.photo)
+          observed.push({ entryId: row.entryId, edits: row.photoEdits })
+        return {}
+      },
+    }
+  )
+  assert.deepEqual(
+    observed.map((row) => row.entryId),
+    expected
+  )
+  assert.equal(observed[0].edits[0].tags[0].code, 'AX')
+})
 
 test('captured material suggestions use the library vocabulary without writes, manual-clear replacement or global rule drift', () => {
   const state = base(),
