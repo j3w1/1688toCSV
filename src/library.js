@@ -1652,6 +1652,11 @@ export async function startLibrary(
           orderCheck.checked = selectedOrders.has(orderSelectionKey(record))
         }
         const cartons = node('button', uiMessage('Reconcile cartons'))
+        cartons.className = 'order-cartons-trigger'
+        decorateIcon(cartons, 'packing', {
+          iconOnly: true,
+          label: uiMessage('Reconcile cartons'),
+        })
         cartons.dataset.action = 'open-order-cartons'
         cartons.onclick = () =>
           void packing
@@ -1661,7 +1666,7 @@ export async function startLibrary(
             })
             .catch((error) => feedback(error.message, true))
         card.prepend(orderCheck)
-        card.append(cartons)
+        actions.append(cartons)
         card.onclick = (event) => {
           if (
             event.detail <= 1 &&

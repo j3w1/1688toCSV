@@ -334,10 +334,35 @@
 }
 #orders-view .order-card {
   position: relative;
+  padding-inline-start: 44px;
 }
 #orders-view .order-card > input[type='checkbox'] {
-  flex: 0 0 auto;
-  margin: 0.5rem;
+  position: absolute;
+  inset-inline-start: 10px;
+  inset-block-start: 4px;
+  margin: 0;
+}
+#orders-view .order-cartons-trigger {
+  display: inline-grid;
+  place-items: center;
+  inline-size: 18px;
+  block-size: 18px;
+  min-block-size: 0;
+  padding: 0;
+}
+#orders-view .order-cartons-trigger > .ui-icon {
+  inline-size: 14px;
+  block-size: 14px;
+}
+@media (pointer: coarse) {
+  #orders-view .order-card > input[type='checkbox'] {
+    inline-size: 2rem;
+    block-size: 2rem;
+  }
+  #orders-view .order-cartons-trigger {
+    inline-size: 2.75rem;
+    block-size: 2.75rem;
+  }
 }
 #sheet-body .row-number input {
   display: block;
