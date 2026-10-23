@@ -672,6 +672,9 @@ test('editable empty endings and distinct saved product summaries survive EN/ES/
   await expect(page.getByRole('tooltip')).toContainText(`${firstName} · CAJAS`)
   await page.mouse.move(0, 0)
   await summary.focus()
+  await page.keyboard.press('Shift+Tab')
+  await page.keyboard.press('Tab')
+  await expect(summary).toBeFocused()
   await expect(page.getByRole('tooltip')).toContainText(`${firstName} · CAJAS`)
   await page.locator('#language-toggle [data-language="es"]').click()
   await expect(summary.locator('.order-name-label')).toHaveText(firstName)
@@ -1217,7 +1220,11 @@ test('a conflicting saved revision retains its local draft and requires explicit
   const other = await extension.context.newPage()
   await other.goto(`${extension.extensionBaseUrl}/library.html`)
   await closeOrderProduct(
-    await editOrderProduct(other, 0, { 'Spanish name': 'NEWER SAVED' })
+    await editOrderProduct(other, 0, {
+      'Product code': (await packingBackup(extension)).preparations[0].groups[0]
+        .baseCode,
+      'Spanish name': 'NEWER SAVED',
+    })
   )
   const newer = await packingBackup(extension)
   await view
@@ -1267,7 +1274,7 @@ for (const [action, mode] of [
     for (const index of mode === 'split'
       ? [0]
       : mode === 'merge'
-        ? [0, 2]
+        ? [0, 1, 2]
         : [0, 1])
       await rows(page).nth(index).getByRole('checkbox').check()
     await page.locator('#group-order-products').click()
@@ -1287,6 +1294,7 @@ for (const [action, mode] of [
       .getByRole('button', { name: 'Apply changes', exact: true })
       .click()
     await expect(review).toBeHidden()
+    await expect(page.locator('.orders-grouping-dialog')).toBeHidden()
     const after = await packingBackup(extension),
       preparation = after.preparations[0]
     expect(

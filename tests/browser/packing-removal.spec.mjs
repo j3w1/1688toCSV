@@ -216,8 +216,34 @@ test('loading reset is reversible and sealed membership requires amendment inste
   await expect(
     view.locator('[data-action="remove-container-order"]')
   ).toHaveCount(0)
-  await expect(view.locator('[data-action="mark-all-loaded"]')).toBeDisabled()
+  await expect(view.locator('[data-action="mark-all-loaded"]')).toBeHidden()
   await expect(view.locator('[data-action="amend-container"]')).toBeEnabled()
+  const sealed = await extension.inspector.evaluate(
+    async (id) => (await window.testRepository).getContainerManifest({ id }),
+    id
+  )
+  const rejection = await extension.inspector.evaluate(async (id) => {
+    const repository = await window.testRepository,
+      view = await repository.getContainerView({ id })
+    try {
+      await repository.setContainerLoading({
+        id,
+        decisions: [{ cartonId: view.cartons[0].id, state: 'unconfirmed' }],
+        expectedRevision: view.container.revision,
+        intentId: crypto.randomUUID(),
+      })
+      return null
+    } catch (error) {
+      return error.message
+    }
+  }, id)
+  expect(rejection).toMatch(/sealed|amend|draft|loading/i)
+  expect(
+    await extension.inspector.evaluate(
+      async (id) => (await window.testRepository).getContainerManifest({ id }),
+      id
+    )
+  ).toEqual(sealed)
   expect(immutableGoods(await libraryBackup(extension))).toEqual(
     immutableGoods(before)
   )
