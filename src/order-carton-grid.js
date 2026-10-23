@@ -38,7 +38,13 @@ export const CARTON_GRID_COLUMNS = [
 ]
 
 /** Explicit Orders decisions; this control never writes or invents mark facts. */
-export function mountPhysicalMarkChoices({ host, apply, reviews, onChange }) {
+export function mountPhysicalMarkChoices({
+  host,
+  apply,
+  reviews,
+  onChange,
+  allowRelabel = true,
+}) {
   const pending = reviews.filter((row) => row.resolutionRequired)
   if (!pending.length) {
     onChange?.({ valid: true, decisions: [] })
@@ -50,6 +56,15 @@ export function mountPhysicalMarkChoices({ host, apply, reviews, onChange }) {
   section.append(
     el('p', m('A verified seal requires a reviewed physical mark choice.'))
   )
+  if (!allowRelabel)
+    section.append(
+      el(
+        'p',
+        m(
+          'Relabeling must be confirmed on unsealed cartons. In an amendment, keep the recorded mark (shown beside the code) or finish the amendment first.'
+        )
+      )
+    )
   for (const review of pending) {
     const id = review.id || review.batchId,
       groupName = `physical-mark-${crypto.randomUUID()}`,
@@ -98,6 +113,7 @@ export function mountPhysicalMarkChoices({ host, apply, reviews, onChange }) {
       input.type = 'radio'
       input.name = groupName
       input.value = value
+      input.disabled = value === 'relabel-reprint' && !allowRelabel
       input.dataset.action = 'choose-physical-mark'
       input.dataset.choice = value
       label.prepend(input)
@@ -144,7 +160,7 @@ export function mountPhysicalMarkChoices({ host, apply, reviews, onChange }) {
           row.reason.value.length <= 2000 &&
           (row.review.currentProductCode ||
             row.review.physicalMark?.productCode) &&
-          (!relabel || row.confirmed.checked)
+          (!relabel || (allowRelabel && row.confirmed.checked))
         )
       row.attestation.hidden = !relabel
       valid &&= ready
@@ -236,6 +252,7 @@ export async function openPhysicalMarkReview({
   const stop = mountPhysicalMarkChoices({
     host,
     apply: save,
+    allowRelabel: !expectedAmendment,
     reviews: [
       {
         id: batch.id,
@@ -253,12 +270,17 @@ export async function openPhysicalMarkReview({
       save.disabled = busy || !valid
     },
   })
+  const unavailable = new Set(
+    [...host.querySelectorAll('input,textarea')].filter(
+      (field) => field.disabled
+    )
+  )
   const lock = (value) => {
     busy = value
     save.disabled = value || !valid || Boolean(saved)
     close.disabled = value
     for (const field of host.querySelectorAll('input,textarea'))
-      field.disabled = value || Boolean(saved)
+      field.disabled = value || Boolean(saved) || unavailable.has(field)
     retry.disabled = value
   }
   const finish = async () => {

@@ -159,6 +159,14 @@ test('saved physical mark resolution uses the complete captured token and keeps 
   const keep = modal.querySelector('[data-choice="keep-recorded-mark"]'),
     reason = modal.querySelector('textarea'),
     save = modal.querySelector('[data-action="save-physical-mark-decision"]')
+  assert.equal(
+    modal.querySelector('[data-choice="relabel-reprint"]').disabled,
+    true
+  )
+  assert.match(
+    modal.textContent,
+    /Relabeling must be confirmed on unsealed cartons/
+  )
   assert.equal(save.disabled, true)
   keep.checked = true
   keep.dispatchEvent(new window.Event('change'))

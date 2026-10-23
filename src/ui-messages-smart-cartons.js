@@ -1,6 +1,11 @@
 // UI text only. Supplier/source strings never pass through this catalog.
 export const SMART_CARTON_MESSAGES = Object.fromEntries(
   [
+    [
+      'Relabeling must be confirmed on unsealed cartons. In an amendment, keep the recorded mark (shown beside the code) or finish the amendment first.',
+      'El reetiquetado debe confirmarse en cajas sin sellar. En una enmienda, conserva la marca registrada (junto al código) o termina primero la enmienda.',
+      '必须在未封存的纸箱上确认实际更换箱唛。修订期间请保留已记录的箱唛（与编码并列显示），或先完成修订。',
+    ],
     ['Review physical mark', 'Revisar la marca física', '核对实体箱唛'],
     [
       'Save physical mark decision',

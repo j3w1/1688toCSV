@@ -2353,6 +2353,7 @@ export async function createProductAuthoring({
                       host,
                       apply,
                       reviews: physicalPlan.reviews,
+                      allowRelabel: !groupingContext.expectedAmendment,
                       onChange: ({ valid, decisions }) => {
                         markDecisionsReady = valid
                         reviewedPhysicalPlan = physicalPlan
