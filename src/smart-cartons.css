@@ -13,7 +13,8 @@
   padding: 0.65rem 1rem;
   border-block-end: 1px solid var(--line, #c4b9a6);
 }
-.workspace-subviews [aria-current='page'] {
+.workspace-subviews [aria-current='page'],
+.workspace-subviews [aria-current='page']:hover {
   background: var(--accent, #be7043);
   color: var(--on-accent, #fff);
   font-weight: 700;
