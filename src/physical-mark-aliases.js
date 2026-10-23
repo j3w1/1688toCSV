@@ -17,6 +17,30 @@ export const PHYSICAL_MARK_CHOICES = Object.freeze([
   'relabel-reprint',
 ])
 
+export function physicalMarkRelabelOnly(batch) {
+  return Boolean(
+    batch.physicalMark?.supersededAliases?.some(
+      (alias) => alias.code === batch.physicalMark.code
+    )
+  )
+}
+export function physicalMarkResolutionChoices(batch) {
+  return !batch.physicalMark
+    ? []
+    : physicalMarkRelabelOnly(batch)
+      ? ['relabel-reprint']
+      : [...PHYSICAL_MARK_CHOICES]
+}
+function assertPhysicalMarkChoice(batch, choice) {
+  if (physicalMarkRelabelOnly(batch) && choice !== 'relabel-reprint')
+    throw Object.assign(
+      new Error(
+        'This recorded mark was released and is now owned by another product or shipment. Reprint a current product mark and confirm actual physical relabeling.'
+      ),
+      { code: 'PHYSICAL_MARK_RELABEL_REQUIRED' }
+    )
+}
+
 const sameReference = (left, right) =>
   left?.orderId === right?.orderId && left?.groupId === right?.groupId
 const artworkValue = (value) =>
@@ -95,9 +119,10 @@ export function physicalMarkResolutionRequired(batch) {
   const mark = batch.physicalMark
   return Boolean(
     mark &&
-    !mark.resolution &&
-    (mark.code !== mark.productCode ||
-      !sameReference(mark.originalMark, batch.mark ?? batch.groups?.[0]))
+    (physicalMarkRelabelOnly(batch) ||
+      (!mark.resolution &&
+        (mark.code !== mark.productCode ||
+          !sameReference(mark.originalMark, batch.mark ?? batch.groups?.[0]))))
   )
 }
 
@@ -181,6 +206,72 @@ export function validatePhysicalMark(input, { pending = false } = {}) {
     history: clone(input.history),
     originalArtwork: validateArtwork(input.originalArtwork, input.originalCode),
     artwork: validateArtwork(input.artwork, input.code),
+  }
+  if (input.supersededAliases !== undefined) {
+    if (
+      !Array.isArray(input.supersededAliases) ||
+      new Set(input.supersededAliases.map((value) => value.code)).size !==
+        input.supersededAliases.length
+    )
+      fail('Retain each superseded physical alias exactly once.')
+    result.supersededAliases = input.supersededAliases.map((value) => {
+      if (
+        !aliases.some((alias) => alias.code === value.code) ||
+        !Number.isFinite(Date.parse(value.at)) ||
+        !text(value.reason) ||
+        !Array.isArray(value.conflicts) ||
+        !value.conflicts.length ||
+        !Array.isArray(value.currentProducts)
+      )
+        fail(
+          'Retain the actual conflicting owner and fresh identity of the superseded alias.'
+        )
+      return {
+        code: value.code,
+        at: value.at,
+        reason: value.reason,
+        conflicts: value.conflicts.map((conflict) => {
+          if (
+            !text(conflict.accountId) ||
+            !text(conflict.orderId) ||
+            !text(conflict.groupId) ||
+            !['current-primary', 'code-history', 'code-consumption'].includes(
+              conflict.kind
+            ) ||
+            (conflict.kind !== 'current-primary' &&
+              (!text(conflict.containerId) ||
+                !text(conflict.revisionId) ||
+                !Number.isFinite(Date.parse(conflict.consumedAt))))
+          )
+            fail(
+              'Retain the actual shipment or current owner that superseded this physical alias.'
+            )
+          return {
+            accountId: conflict.accountId,
+            ...reference(conflict),
+            kind: conflict.kind,
+            ...(conflict.kind === 'current-primary'
+              ? {}
+              : {
+                  containerId: conflict.containerId,
+                  revisionId: conflict.revisionId,
+                  consumedAt: conflict.consumedAt,
+                  ...(text(conflict.containerName)
+                    ? { containerName: conflict.containerName }
+                    : {}),
+                }),
+          }
+        }),
+        currentProducts: value.currentProducts.map((product) => {
+          if (!base.test(product.productCode))
+            fail('Retain the fresh current product identity.')
+          return {
+            mark: reference(product.mark),
+            productCode: product.productCode,
+          }
+        }),
+      }
+    })
   }
   if (
     (result.resolution?.choice === 'relabel-reprint' &&
@@ -347,8 +438,16 @@ export function transitionPhysicalMark(
         ...Object.values(before.unitContents || {}).flatMap((rows) =>
           rows.map((row) => row.entryId)
         ),
+        ...(after.contents || []).map((row) => row.entryId),
+        ...(after.unresolvedContents || []).flatMap(
+          (claim) => claim.entryIds || []
+        ),
+        ...Object.values(after.unitContents || {}).flatMap((rows) =>
+          rows.map((row) => row.entryId)
+        ),
+        ...(oldOwner?.group.variants.flatMap((variant) => variant.entryIds) ||
+          []),
         ...(nextOwner?.group.variants.flatMap((variant) => variant.entryIds) ||
-          oldOwner?.group.variants.flatMap((variant) => variant.entryIds) ||
           []),
       ]),
     ],
@@ -371,6 +470,7 @@ export function transitionPhysicalMark(
       at: updatedAt,
     })
   if (decision) {
+    assertPhysicalMarkChoice({ physicalMark }, decision.choice)
     if (restoreHistory)
       fail('Choose a fresh resolution or a logical history restore, not both.')
     if (!productCode)
@@ -395,6 +495,7 @@ export function transitionPhysicalMark(
     }
   }
   if (restoreHistory) {
+    assertPhysicalMarkChoice({ physicalMark }, 'keep-recorded-mark')
     if (!physicalMark.artwork)
       fail(
         'Known recorded artwork is required to restore a keep-mark relation from history.'
@@ -486,6 +587,7 @@ export function resolvePhysicalMarkChange(
     if (!owner.needsReview) review.kind = 'reanchor'
   }
   const mark = change.after.physicalMark
+  assertPhysicalMarkChoice(change.after, decision.choice)
   if (!base.test(mark.productCode))
     fail(
       'Select an explicit current mark owner before resolving its physical mark.'
@@ -522,6 +624,12 @@ export function resolvePhysicalMarkChange(
     review.physicalMark = clone(mark)
     review.physicalMarkCode = mark.code
     review.resolutionRequired = false
+    review.physicalMarkRelabelOnly = physicalMarkRelabelOnly(change.after)
+    review.physicalMarkResolutionChoices = physicalMarkResolutionChoices(
+      change.after
+    )
+    review.resolutionChoices = physicalMarkResolutionChoices(change.after)
+    review.physicalMarkSupersessions = clone(mark.supersededAliases || [])
   }
   return result
 }
@@ -579,6 +687,11 @@ export function physicalMarkReadback(batch, preparations = []) {
     ),
     ...(batch.physicalMark ? { physicalMark: clone(batch.physicalMark) } : {}),
     physicalMarkResolutionRequired: physicalMarkResolutionRequired(batch),
+    physicalMarkRelabelOnly: physicalMarkRelabelOnly(batch),
+    physicalMarkResolutionChoices: physicalMarkResolutionChoices(batch),
+    physicalMarkSupersessions: clone(
+      batch.physicalMark?.supersededAliases || []
+    ),
   }
 }
 
