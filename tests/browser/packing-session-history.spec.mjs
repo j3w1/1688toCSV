@@ -277,7 +277,7 @@ test('Undo after a different tab edits the owner rejects without overwriting its
   const newer = await libraryBackup(extension)
   await local.getByRole('button', { name: 'Undo', exact: true }).click()
   try {
-    await expect(local.locator('.error-notice:visible')).toContainText(
+    await expect(local.getByRole('status')).toContainText(
       /changed|another tab|revision/i
     )
   } finally {
