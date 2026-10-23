@@ -83,6 +83,9 @@ export function mountPhysicalMarkChoices({
       choice = [],
       owner = el('select'),
       ownerChoices = review.physicalMarkOwnerChoices || [],
+      allowedChoices = new Set(
+        review.resolutionChoices || ['keep-recorded-mark', 'relabel-reprint']
+      ),
       requiresOwner = !(
         review.currentProductCode || review.physicalMark?.productCode
       )
@@ -146,7 +149,9 @@ export function mountPhysicalMarkChoices({
       input.type = 'radio'
       input.name = groupName
       input.value = value
-      input.disabled = value === 'relabel-reprint' && !allowRelabel
+      input.disabled =
+        !allowedChoices.has(value) ||
+        (value === 'relabel-reprint' && !allowRelabel)
       input.dataset.action = 'choose-physical-mark'
       input.dataset.choice = value
       label.prepend(input)
@@ -191,6 +196,7 @@ export function mountPhysicalMarkChoices({
       owner,
       ownerChoices,
       requiresOwner,
+      allowedChoices,
       currentCode: card.querySelector(
         '[data-mark-code-role="current-product"]'
       ),
@@ -253,6 +259,7 @@ export function mountPhysicalMarkChoices({
           : null,
         ready = Boolean(
           choice &&
+          row.allowedChoices.has(choice) &&
           row.reason.value.trim() &&
           row.reason.value.length <= 2000 &&
           (target?.productCode ||
