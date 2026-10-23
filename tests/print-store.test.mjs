@@ -233,6 +233,97 @@ test('typed Orders marks accept proven single-order legacy cartons and reject mi
   }
 })
 
+test('superseded physical marks refuse old-code regeneration while fresh marks and the owning shipment remain printable', async () => {
+  const context = physicalContext(),
+    recorded = await makeOrderCartonPrintRef(context, { batchId: 'batch-a' }),
+    supersession = {
+      code: 'CE26101002',
+      at: '2026-10-23T06:00:00Z',
+      reason: 'The code is permanently owned by another sealed purchase',
+      conflicts: [
+        {
+          accountId: 'local',
+          orderId: '102',
+          groupId: 'foreign',
+          kind: 'code-consumption',
+          containerId: 'sealed-owner-container',
+          revisionId: 'sealed-owner-revision',
+        },
+      ],
+      currentProducts: [
+        {
+          mark: { orderId: '101', groupId: 'surviving' },
+          productCode: 'CE26101001',
+        },
+      ],
+    }
+  context.batches[0].physicalMarkRelabelOnly = true
+  context.batches[0].physicalMarkSupersessions = [supersession]
+  context.batches[0].physicalMark.supersededAliases = [
+    structuredClone(supersession),
+  ]
+  const original = structuredClone(context)
+  for (const value of [
+    context,
+    (() => {
+      const persisted = structuredClone(context)
+      delete persisted.batches[0].physicalMarkRelabelOnly
+      delete persisted.batches[0].physicalMarkSupersessions
+      return persisted
+    })(),
+  ]) {
+    for (const request of [
+      () =>
+        makeOrderCartonPrintRef(value, {
+          batchId: 'batch-a',
+          role: 'recorded',
+        }),
+      () => assertOrderCartonPrintRef(recorded, value),
+    ])
+      await assert.rejects(request(), (error) => {
+        assert.equal(error.code, 'PHYSICAL_MARK_RELABEL_REQUIRED')
+        assert.match(error.message, /CE26101002/)
+        assert.match(error.message, /sealed-owner-container/)
+        assert.match(error.message, /sealed-owner-revision/)
+        return true
+      })
+    const fresh = await makeOrderCartonPrintRef(value, {
+      batchId: 'batch-a',
+      role: 'current-product',
+    })
+    assert.equal(fresh.code, 'CE26101001')
+    assert.equal(await assertOrderCartonPrintRef(fresh, value), true)
+  }
+  const owner = physicalContext()
+  owner.record.snapshot.orderId =
+    owner.preparation.orderId =
+    owner.batches[0].orderId =
+    owner.batches[0].mark.orderId =
+      '102'
+  owner.batches[0].physicalMark.code = 'CE26101002'
+  const ownerRef = await makeOrderCartonPrintRef(owner, { batchId: 'batch-a' })
+  assert.equal(ownerRef.code, 'CE26101002')
+  assert.equal(await assertOrderCartonPrintRef(ownerRef, owner), true)
+  assert.equal(
+    assertContainerPrintRef(
+      {
+        orderId: '102',
+        groupId: 'foreign',
+        containerId: 'sealed-owner-container',
+        revisionId: 'sealed-owner-revision',
+      },
+      {
+        container: { id: 'sealed-owner-container', accountId: 'local' },
+        status: 'sealed',
+        draft: false,
+        revisionId: 'sealed-owner-revision',
+      }
+    ),
+    true
+  )
+  assert.deepEqual(context, original)
+})
+
 test('malformed physical refs cannot fall back to legacy Orders or container identity', async () => {
   const ref = await makeOrderCartonPrintRef(physicalContext(), {
     batchId: 'batch-a',
