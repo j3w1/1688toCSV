@@ -166,9 +166,10 @@ for (const language of ['en', 'es', 'zh']) {
         await page.addStyleTag({ content: `body { font-family: ${font}; }` })
       await row.focus()
       await page.keyboard.press('ControlOrMeta+d')
-      await title.scrollIntoViewIfNeeded()
-      const before = await layout(),
-        checkbox = row.getByRole('checkbox')
+      const checkbox = row.getByRole('checkbox')
+      await checkbox.scrollIntoViewIfNeeded()
+      await checkbox.focus()
+      const before = await layout()
       await checkbox.check()
       await expect(row).toHaveAttribute('aria-selected', 'true')
       expect(await layout(), `selection at ${width}px`).toEqual(before)
@@ -177,9 +178,12 @@ for (const language of ['en', 'es', 'zh']) {
       await expect(inspect).toBeVisible()
       await expect(row).toHaveAttribute('aria-selected', 'true')
       await page.keyboard.press('Escape')
+      await checkbox.scrollIntoViewIfNeeded()
+      await checkbox.focus()
+      const beforeClear = await layout()
       await checkbox.uncheck()
       await expect(row).toHaveAttribute('aria-selected', 'false')
-      expect(await layout(), `deselection at ${width}px`).toEqual(before)
+      expect(await layout(), `deselection at ${width}px`).toEqual(beforeClear)
       await row.focus()
       // Native focus can scroll the phone's independent pane. Compare the
       // selection operation after that focus step, retaining exact geometry.

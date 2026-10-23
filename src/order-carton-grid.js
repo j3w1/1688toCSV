@@ -129,7 +129,10 @@ export function mountPhysicalMarkChoices({
           )
         )
       owner.value = ''
-      owner.onchange = update
+      owner.onchange = () => {
+        confirmed.checked = false
+        update()
+      }
       const ownerLabel = el('label', m('Choose the current product owner'))
       ownerLabel.append(owner)
       card.append(ownerLabel)
@@ -151,7 +154,7 @@ export function mountPhysicalMarkChoices({
       choice.push(input)
       input.onchange = () => {
         for (const other of choice) if (other !== input) other.checked = false
-        if (value !== 'relabel-reprint') confirmed.checked = false
+        confirmed.checked = false
         update()
       }
     }
@@ -1627,7 +1630,9 @@ export function createGridDraftController({
         if (next[key] === value) delete next[key]
       state.rawCells = next
       state.generation++
+      const acknowledgedGeneration = state.generation
       emit()
+      return acknowledgedGeneration
     },
     clearAcknowledged(generation) {
       if (state.generation !== generation) return false
@@ -2146,11 +2151,11 @@ export async function createOrderCartonSession({
       }
       history.present = clone(domainDraft)
       const changedWhileSaving = raw.state().generation !== submittedGeneration
-      raw.acknowledgeCells(acknowledged)
+      const acknowledgedGeneration = raw.acknowledgeCells(acknowledged)
       await raw.flush()
       lastInputGeneration = changedWhileSaving
         ? submittedGeneration
-        : raw.state().generation
+        : acknowledgedGeneration
     })()
     // Include acknowledgement/recovery persistence in the barrier. Waiting on
     // only the already-resolved mutation can spin microtasks while IDB awaits

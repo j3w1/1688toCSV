@@ -134,6 +134,11 @@ test('a missing physical mark owner requires an explicit actual owner option wit
             productCode: 'CE26090101',
             artwork: { spanishName: 'CURRENT PRODUCT' },
           },
+          {
+            mark: { orderId: '1001', groupId: 'other-explicit-owner' },
+            productCode: 'CE26090103',
+            artwork: { spanishName: 'OTHER CURRENT PRODUCT' },
+          },
         ],
       },
     ]
@@ -156,6 +161,32 @@ test('a missing physical mark owner requires an explicit actual owner option wit
   owner.dispatchEvent(new window.Event('change'))
   assert.equal(apply.disabled, false)
   assert.deepEqual(updates.at(-1).decisions[0].targetMark, targetMark)
+  const relabel = host.querySelector('[data-choice="relabel-reprint"]'),
+    attestation = host.querySelector('[data-action="confirm-physical-relabel"]')
+  relabel.checked = true
+  relabel.dispatchEvent(new window.Event('change'))
+  attestation.checked = true
+  attestation.dispatchEvent(new window.Event('change'))
+  assert.equal(apply.disabled, false)
+  owner.value = JSON.stringify({
+    orderId: '1001',
+    groupId: 'other-explicit-owner',
+  })
+  owner.dispatchEvent(new window.Event('change'))
+  assert.equal(attestation.checked, false)
+  assert.equal(apply.disabled, true)
+  assert.equal(reason.value, 'Explicitly reviewed actual owner')
+  assert.equal(
+    updates.at(-1).decisions[0].targetMark.groupId,
+    'other-explicit-owner'
+  )
+  assert.equal(
+    host.querySelector('[data-mark-code-role="current-product"]').textContent,
+    'CE26090103'
+  )
+  attestation.checked = true
+  attestation.dispatchEvent(new window.Event('change'))
+  assert.equal(apply.disabled, false)
   owner.value = JSON.stringify({ orderId: '1001', groupId: 'guessed-owner' })
   owner.dispatchEvent(new window.Event('change'))
   assert.equal(apply.disabled, true)
@@ -1613,7 +1644,24 @@ test('reviewed grouping captures actual physical revisions and compound Undo/Red
   )
   assert.equal(currentPrint.disabled, false)
   currentPrint.click()
-  await new Promise((resolve) => setTimeout(resolve, 0))
+  await new Promise((resolve, reject) => {
+    let settled = false
+    const deadline = setTimeout(() => {
+      settled = true
+      reject(
+        new Error('Actual typed print callback and controls did not settle')
+      )
+    }, 2000)
+    const check = () => {
+      if (settled) return
+      if (printed.length === 1 && !currentPrint.disabled) {
+        settled = true
+        clearTimeout(deadline)
+        resolve()
+      } else setTimeout(check, 5)
+    }
+    check()
+  })
   assert.equal(printed.length, 1)
   assert.equal(printed[0].code, first.baseCode)
   assert.equal(printed[0].productGroupId, first.id)
@@ -1943,6 +1991,73 @@ test('acknowledged capacity edits refresh live scalar values while a new edit re
   assert.equal(writes.at(-1).expectedValues['2001'], '10')
   assert.equal(context.record.unitsPerCarton['2001'], '20')
   assert.equal(session.rawCell(key, 'capacity'), '45')
+})
+
+test('typing a later capacity while an earlier recovery acknowledgement is pending still commits that newer value', async (context) => {
+  const fixture = exceptionSessionFixture(),
+    record = fixture.record,
+    first = JSON.stringify(['local', '1001', '2001']),
+    second = JSON.stringify(['local', '1001', '2002']),
+    writes = [],
+    save = fixture.repository.saveOrderCartonDraft
+  record.snapshot.items.push({
+    ...structuredClone(record.snapshot.items[0]),
+    entryId: '2002',
+  })
+  Object.assign(record.snapshot.totals, {
+    goodsGross: '2000.00',
+    goodsNet: '2000.00',
+    payable: '2000.00',
+  })
+  let release,
+    signal,
+    held = false
+  const waiting = new Promise((resolve) => {
+      signal = resolve
+    }),
+    gate = new Promise((resolve) => {
+      release = resolve
+    })
+  fixture.repository.updateOrderCapacities = async (args) => {
+    writes.push(structuredClone(args))
+    record.unitsPerCarton = { ...record.unitsPerCarton, ...args.values }
+    return {
+      record: structuredClone(record),
+      revisions: structuredClone(fixture.context.revisions),
+    }
+  }
+  fixture.repository.saveOrderCartonDraft = async (args) => {
+    const result = await save(args)
+    if (
+      writes.length === 1 &&
+      !Object.keys(args.draft.rawCells).length &&
+      !held
+    ) {
+      held = true
+      signal()
+      await gate
+    }
+    return result
+  }
+  const session = await fixture.create()
+  context.after(() => session.dispose())
+  session.editCell(first, 'capacity', '10')
+  const firstSave = session.flush()
+  await waiting
+  session.editCell(second, 'capacity', '20')
+  release()
+  await firstSave
+  await session.flush()
+  assert.deepEqual(record.unitsPerCarton, { 2001: '10', 2002: '20' })
+  assert.deepEqual(
+    writes.map((write) => write.values),
+    [{ 2001: '10' }, { 2002: '20' }]
+  )
+  assert.equal(
+    session.state().rawCells[JSON.stringify([second, 'capacity'])],
+    undefined
+  )
+  assert.equal(fixture.confirmed.length, 0)
 })
 
 test('reloading a draft after a foreign physical revision requires review and preserves the old raw values across later recovery writes', async (testContext) => {
