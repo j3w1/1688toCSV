@@ -324,6 +324,70 @@ test('superseded physical marks refuse old-code regeneration while fresh marks a
   assert.deepEqual(context, original)
 })
 
+test('recorded printing follows current conflict and historical-review state without reviving a past restriction', async () => {
+  const context = physicalContext(),
+    entry = {
+      code: 'CE26101002',
+      active: true,
+      reviewRequired: false,
+      conflicts: [
+        {
+          accountId: 'local',
+          orderId: '102',
+          groupId: 'foreign',
+          kind: 'current-primary',
+        },
+      ],
+    }
+  context.batches[0].physicalMark.supersededAliases = [entry]
+  context.batches[0].physicalMarkSupersessions = [structuredClone(entry)]
+  const original = structuredClone(context)
+  const free = structuredClone(context)
+  free.batches[0].physicalMarkRelabelOnly = false
+  free.batches[0].physicalMarkHistoricalReviewRequired = false
+  free.batches[0].physicalMark.supersededAliases[0].active = false
+  free.batches[0].physicalMarkSupersessions[0].active = false
+  free.batches[0].revision = free.revisions.cartons['batch-a'] = 5
+  const ref = await makeOrderCartonPrintRef(free, { batchId: 'batch-a' })
+  assert.equal(ref.code, 'CE26101002')
+  assert.equal(await assertOrderCartonPrintRef(ref, free), true)
+  assert.equal(free.batches[0].physicalMark.supersededAliases.length, 1)
+  await assert.rejects(
+    makeOrderCartonPrintRef(context, { batchId: 'batch-a' }),
+    (error) => {
+      assert.equal(error.code, 'PHYSICAL_MARK_RELABEL_REQUIRED')
+      assert.match(error.message, /currently reserved by purchase 102/)
+      assert.match(error.message, /clears when that purchase releases/)
+      return true
+    }
+  )
+  for (const exposeFlag of [true, false]) {
+    const held = structuredClone(free)
+    if (exposeFlag) held.batches[0].physicalMarkHistoricalReviewRequired = true
+    held.batches[0].physicalMark.supersededAliases[0].reviewRequired = true
+    held.batches[0].physicalMarkSupersessions[0].reviewRequired = true
+    await assert.rejects(
+      makeOrderCartonPrintRef(held, { batchId: 'batch-a' }),
+      (error) => {
+        assert.equal(error.code, 'PHYSICAL_MARK_RELABEL_REQUIRED')
+        assert.match(error.message, /needs historical ownership review/)
+        assert.doesNotMatch(
+          error.message,
+          /currently reserved|belongs to purchase/
+        )
+        assert.equal(error.detail.historicalReviewRequired, true)
+        return true
+      }
+    )
+    const fresh = await makeOrderCartonPrintRef(held, {
+      batchId: 'batch-a',
+      role: 'current-product',
+    })
+    assert.equal(fresh.code, 'CE26101001')
+  }
+  assert.deepEqual(context, original)
+})
+
 test('malformed physical refs cannot fall back to legacy Orders or container identity', async () => {
   const ref = await makeOrderCartonPrintRef(physicalContext(), {
     batchId: 'batch-a',
