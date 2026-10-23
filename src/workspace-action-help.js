@@ -9,6 +9,14 @@ const descriptions = new Map(
 )
 const stableDescriptions = new Map([
   [
+    'undo-order-products',
+    'Undo the last Orders edit using its captured source and physical revisions.',
+  ],
+  [
+    'redo-order-products',
+    'Reapply the next Orders history step only while its captured revisions remain current.',
+  ],
+  [
     'review-recovered-carton-draft',
     'This draft uses an earlier order revision or amendment. Review every retained value against the current order before using it. Physical identities and revision checks still apply.',
   ],

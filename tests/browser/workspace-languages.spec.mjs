@@ -103,13 +103,53 @@ for (const language of ['en', 'es', 'zh']) {
     await page.locator(`#language-toggle [data-language=${language}]`).click()
     const row = page.locator('#sheet-body tr[data-selection-key]').first()
     const title = row.locator('.product-title')
-    const layout = () =>
-      page.locator('.sheet-toolbar').evaluate((toolbar) => ({
-        height: toolbar.getBoundingClientRect().height,
-        tableTop:
-          document.querySelector('.table-scroll').getBoundingClientRect().top +
-          window.scrollY,
-      }))
+    let layoutSample = 0
+    const layout = async () => {
+      const sample = await page
+        .locator('.sheet-toolbar')
+        .evaluate((toolbar) => {
+          const measure = (selector) => {
+            const node = document.querySelector(selector)
+            if (!node) return null
+            const rect = node.getBoundingClientRect(),
+              style = getComputedStyle(node)
+            return {
+              top: rect.top,
+              height: rect.height,
+              scrollTop: node.scrollTop,
+              scrollHeight: node.scrollHeight,
+              clientHeight: node.clientHeight,
+              gridRows: style.gridTemplateRows,
+            }
+          }
+          return {
+            geometry: {
+              height: toolbar.getBoundingClientRect().height,
+              tableTop:
+                document.querySelector('.table-scroll').getBoundingClientRect()
+                  .top + window.scrollY,
+            },
+            width: innerWidth,
+            scrollY,
+            focused: document.activeElement?.outerHTML.slice(0, 500),
+            panes: Object.fromEntries(
+              [
+                '#orders-view',
+                '.orders-pane',
+                '.sheet-pane',
+                '.table-scroll',
+                '.action-bar',
+                '.product-selection-totals',
+              ].map((selector) => [selector, measure(selector)])
+            ),
+          }
+        })
+      await test.info().attach(`selection-layout-${layoutSample++}`, {
+        body: Buffer.from(JSON.stringify(sample, null, 2)),
+        contentType: 'application/json',
+      })
+      return sample.geometry
+    }
     for (const { width, font } of [
       ...[1440, 1280, 1000, 390, 375, 360].map((width) => ({ width })),
       // Different font metrics exposed an extra summary line on hosted Linux.

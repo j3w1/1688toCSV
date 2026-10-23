@@ -2,6 +2,16 @@
 export const SMART_CARTON_MESSAGES = Object.fromEntries(
   [
     [
+      'Undo the last Orders edit using its captured source and physical revisions.',
+      'Deshace la última edición de Pedidos con sus versiones de origen y cajas guardadas.',
+      '按已捕获的来源与实体装箱版本，撤销订单中的上一次编辑。',
+    ],
+    [
+      'Reapply the next Orders history step only while its captured revisions remain current.',
+      'Rehace el siguiente paso de Pedidos solo si sus versiones capturadas siguen vigentes.',
+      '仅当捕获的版本仍有效时，重做订单历史的下一步。',
+    ],
+    [
       'Measured volume {0} m³ is used for this set of {2} cartons; supplied volume {1} m³ remains recorded.',
       'Se usa el volumen medido de {0} m³ para este conjunto de {2} cajas; se conserva el volumen aportado de {1} m³.',
       '这 {2} 箱合计采用实测体积 {0} m³；保留供应商提供的体积 {1} m³。',

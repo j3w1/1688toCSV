@@ -332,7 +332,16 @@ test('container export preserves advanced columns/order/layout and exact theme/m
   expect(summary.products).toHaveLength(3)
   expect(summary.scope).toBe('container-revision')
   expect(summary.containerId).toBe(containerId)
-  expect(summary.revisionId).toBeTruthy()
+  expect(summary.revisionId).toBeNull()
+  expect(summary.draft).toBe(true)
+  expect(Number.isSafeInteger(summary.revision)).toBe(true)
+  expect(summary.revision).toBeGreaterThan(0)
+  const actualDraft = await extension.inspector.evaluate(
+    async (id) => (await window.testRepository).getContainerView({ id }),
+    containerId
+  )
+  expect(summary.revision).toBe(actualDraft.container.revision)
+  expect(summary.sealedAt).toBeNull()
   expect(summary.products[0]).toHaveProperty('sourceUnitPrice')
   expect(
     summary.products.flatMap((row) => row.additionalChargeReasons || [])

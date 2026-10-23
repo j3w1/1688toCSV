@@ -951,7 +951,33 @@ export async function createProductAuthoring({
   }
   async function reviewCodes(rows = getSelectedRows()) {
     await flushSaves()
-    const refs = rows.map((row) => ({
+    const eligibility = new Map(),
+      records = getRecords()
+    const eligible = rows.filter((row) => {
+      const record = recordFor(row)
+      if (!record) return true
+      const key = orderKey(row)
+      if (!eligibility.has(key))
+        eligibility.set(
+          key,
+          new Map(
+            eligibleOrderItems(record, records).map((item) => [
+              item.entryId,
+              item,
+            ])
+          )
+        )
+      const item = eligibility.get(key).get(row.entryId)
+      // Keep unknown or invalid source quantities in the guarded review. Only
+      // a documented, resolved disposition removes a zero-eligible source ref.
+      return (
+        !item ||
+        item.eligible === null ||
+        !(item.dispositionKind || item.paymentOnly) ||
+        BigInt(item.eligible) > 0n
+      )
+    })
+    const refs = eligible.map((row) => ({
       accountId: row.accountId || row.record?.accountId || 'local',
       orderId: row.orderId,
       entryId: row.entryId,
@@ -2390,6 +2416,15 @@ export async function createProductAuthoring({
       if (saved && !proposals.has(key))
         proposals.set(key, structuredClone(saved))
     }
+    const liveBaselines = new Map(
+      [...proposals.values()].map((draft) => [
+        orderKey(draft),
+        structuredClone(
+          sessions.get(sessionKey(draft))?.draft ||
+            preparations.get(orderKey(draft))
+        ),
+      ])
+    )
     conflictContext.expectedSnapshots = [...proposals.values()].map(
       (draft) => ({
         accountId: draft.accountId,
@@ -2676,7 +2711,7 @@ export async function createProductAuthoring({
               session.saved = structuredClone(value)
               acknowledgePreparation(
                 session.draft,
-                proposals.get(orderKey(value)),
+                liveBaselines.get(orderKey(value)),
                 value
               )
               session.dirty = false
@@ -3366,6 +3401,7 @@ export async function createProductAuthoring({
     }),
     undo: () => travel('undo'),
     redo: () => travel('redo'),
+    historyState: () => history().state(),
     dispose() {
       generation++
       for (const session of sessions.values()) clearTimeout(session.timer)
