@@ -49,6 +49,7 @@ test('stable container ordering survives reload and copy without rewriting codes
   const { page, view, id } = await setup(extension)
   const before = await libraryBackup(extension),
     frozen = await manifest(extension, id)
+  expect(frozen.draft).toBe(true)
   const rows = view.locator('tr[data-container-row]'),
     ids = () =>
       rows.evaluateAll((nodes) =>
