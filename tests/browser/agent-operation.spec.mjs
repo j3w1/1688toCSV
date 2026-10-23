@@ -1,6 +1,7 @@
 import { readFile, writeFile } from 'node:fs/promises'
 import { basename } from 'node:path'
 import * as XLSX from 'xlsx'
+import { planContainerWorkbook } from '../../src/container-export.js'
 import { test, expect } from './extension-fixture.mjs'
 import { createDemoRecords } from '../../preview/library-fixture.js'
 import {
@@ -262,6 +263,57 @@ test('an agent authors Orders, confirms one physical arrangement, seals a named 
     bitmap.close()
     return { black, dimensions }
   }, Array.from(archive.FileIndex[photoIndex].content))
+  if (raster.black <= 500) {
+    const evidence = await extension.inspector.evaluate(
+        async ({ id, ref }) => {
+          const repository = await window.testRepository,
+            manifest = await repository.getContainerManifest({ id }),
+            source = await repository.getOrderReconciliation(ref)
+          return {
+            manifest,
+            source: {
+              items: source.record.snapshot.items,
+              productPhotos: source.record.productPhotos,
+            },
+          }
+        },
+        { id: containerId, ref }
+      ),
+      plan = planContainerWorkbook(evidence.manifest),
+      snapshot = (row) => ({
+        entryId: row.entryId,
+        barcode: row.barcode,
+        photoEdits: row.photoEdits,
+        thumbnail: row.thumbnail?.slice(0, 80),
+        photos: row.photos?.map((photo) => photo.slice(0, 80)),
+      })
+    await testInfo.attach('frozen-image-diagnostics.json', {
+      body: JSON.stringify(
+        {
+          raster,
+          firstWorkbookPhotoSource: snapshot(
+            plan.products[0].markSource || plan.products[0].source
+          ),
+          source: {
+            ...evidence.source,
+            items: evidence.source.items.map(snapshot),
+          },
+          products: evidence.manifest.products.map(snapshot),
+          plan: plan.products.map((product) => ({
+            row: product.row,
+            source: snapshot(product.source),
+            markSource: product.markSource
+              ? snapshot(product.markSource)
+              : null,
+          })),
+          photoNames: archive.FullPaths.filter((path) => path.endsWith('.jpg')),
+        },
+        null,
+        2
+      ),
+      contentType: 'application/json',
+    })
+  }
   expect(raster.black).toBeGreaterThan(500)
   expect(raster.dimensions).toEqual([240, 240])
   const summary = JSON.parse(await readFile(summaryFile.filename, 'utf8'))
