@@ -156,6 +156,18 @@ export function assertContainerPrintRef(ref, manifest) {
   return true
 }
 
+export function containerPrintIdentity(ref) {
+  const value = cleanRef(ref)
+  return value?.containerId
+    ? {
+        containerId: value.containerId,
+        revisionId: value.revisionId,
+        draft: value.draft === true,
+        ...(value.draft ? { draftRevision: value.draftRevision } : {}),
+      }
+    : null
+}
+
 function cleanRefs(value) {
   if (
     !Array.isArray(value) ||

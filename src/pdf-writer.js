@@ -70,6 +70,7 @@ export function createPdf({
   title = 'Print sheet',
   widthMm = 210,
   heightMm = 297,
+  draft = false,
 } = {}) {
   const pageWidth = widthMm * POINTS_PER_MM
   const pageHeight = heightMm * POINTS_PER_MM
@@ -173,7 +174,15 @@ export function createPdf({
         const xobjects = [...usedImages]
           .map((name) => `/${name} ${imageRefs.get(name)} 0 R`)
           .join(' ')
-        const content = encoder.encode(ops.join('\n'))
+        const marker = 'DRAFT - UNSEALED / UNVERIFIED'
+        const pageOps =
+          draft === true
+            ? [
+                ...ops,
+                `BT /F1 7 Tf 0.2 g ${format(captionLeftMm(marker, widthMm / 2, 7, 'center') * POINTS_PER_MM)} ${y(3)} Td (${marker}) Tj ET`,
+              ]
+            : ops
+        const content = encoder.encode(pageOps.join('\n'))
         const contentRef = add([
           `<< /Length ${content.length} >>\nstream\n`,
           content,
@@ -190,7 +199,7 @@ export function createPdf({
         `<< /Type /Pages /Kids [${pageRefs.map((ref) => `${ref} 0 R`).join(' ')}] /Count ${pageRefs.length} >>`,
       ]
       const info = add([
-        `<< /Title ${metadataString(title)} /Producer (1688toPL) >>`,
+        `<< /Title ${metadataString(draft === true ? `DRAFT - ${title}` : title)} /Producer (1688toPL) >>`,
       ])
       // The header's binary marker uses raw bytes, not UTF-8.
       const chunks = [
