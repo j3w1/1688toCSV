@@ -194,6 +194,42 @@ test('a missing physical mark owner requires an explicit actual owner option wit
   stop()
 })
 
+test('authoritative relabel-only choices cannot be bypassed by selecting a disabled keep control', (context) => {
+  const { document, window } = dom(context),
+    host = document.getElementById('host'),
+    apply = document.createElement('button')
+  const stop = mountPhysicalMarkChoices({
+    host,
+    apply,
+    reviews: [
+      {
+        id: 'physical',
+        resolutionRequired: true,
+        currentProductCode: 'CE26090101',
+        physicalMarkCode: 'CE26090102',
+        resolutionChoices: ['relabel-reprint'],
+      },
+    ],
+  })
+  const keep = host.querySelector('[data-choice="keep-recorded-mark"]'),
+    relabel = host.querySelector('[data-choice="relabel-reprint"]'),
+    reason = host.querySelector('textarea'),
+    attestation = host.querySelector('[data-action="confirm-physical-relabel"]')
+  assert.equal(keep.disabled, true)
+  keep.checked = true
+  keep.dispatchEvent(new window.Event('change'))
+  reason.value = 'Current code must replace the historical mark'
+  reason.dispatchEvent(new window.Event('input'))
+  assert.equal(apply.disabled, true)
+  relabel.checked = true
+  relabel.dispatchEvent(new window.Event('change'))
+  assert.equal(apply.disabled, true)
+  attestation.checked = true
+  attestation.dispatchEvent(new window.Event('change'))
+  assert.equal(apply.disabled, false)
+  stop()
+})
+
 test('physical mark output uses recorded artwork after its group is gone, counts actual entitlements and rejects stale typed regeneration', async () => {
   const { record, preparation } = syntheticManifest().orders[0],
     group = preparation.groups[0],
