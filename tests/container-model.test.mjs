@@ -110,6 +110,10 @@ test('frozen loaded and remaining rows retain original photo edits and readable 
       },
     }
   record.snapshot.items[0].photoEdits = structuredClone(edits)
+  record.tags = ['Shared']
+  record.productTags = { 2001: ['Fragile'] }
+  record.snapshot.items[0].productNumber = 'SYNTHETIC-01'
+  state.preparations = [syntheticManifest().orders[0].preparation]
   record.productWorkflow = {
     2001: { features: { lighting: true, rotation: true } },
   }
@@ -139,6 +143,12 @@ test('frozen loaded and remaining rows retain original photo edits and readable 
   assert.deepEqual(left.photoEdits, edits)
   assert.notStrictEqual(row.photoEdits, record.snapshot.items[0].photoEdits)
   assert.equal(row.productFeatures, 'Lighting · Rotation')
+  assert.equal(row.chineseCategory, '杯')
+  assert.equal(row.productNumber, 'SYNTHETIC-01')
+  assert.equal(row.orderDate, record.snapshot.purchasedAt)
+  assert.equal(row.orderStatus, record.snapshot.status)
+  assert.deepEqual(row.orderTags, ['Shared'])
+  assert.deepEqual(row.productTags, ['Fragile'])
   assert.equal(row.linkedPaymentReasons, 'Lighting and rotation service')
   assert.equal(row.sourceAmount, '500.00')
   assert.equal(row.linkedPaymentCharge, '5.00')
@@ -158,11 +168,15 @@ test('frozen loaded and remaining rows retain original photo edits and readable 
   record.snapshot.items[0].photoEdits[0].tags[0].code = 'CHANGED'
   record.productWorkflow[2001].features = { lighting: false }
   record.paymentLinks[0].reason = 'CHANGED'
+  record.tags.push('CHANGED')
+  record.productTags[2001].push('CHANGED')
   const retained = projectContainer(state, container).products[0]
   assert.deepEqual(retained.photoEdits, edits)
   assert.equal(retained.productFeatures, row.productFeatures)
   assert.equal(retained.linkedPaymentReasons, row.linkedPaymentReasons)
   assert.equal(retained.effectiveAmount, row.effectiveAmount)
+  assert.deepEqual(retained.orderTags, ['Shared'])
+  assert.deepEqual(retained.productTags, ['Fragile'])
 })
 
 test('inclusion captures whole remainder without loading; logical mark all and exceptions derive products', () => {
