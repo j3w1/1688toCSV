@@ -216,7 +216,16 @@ export function physicalMarkReservations({
       continue
     const owner = physicalMarkOwner(batch, preparations)
     for (const alias of physical.aliases) {
-      const group = owner?.group
+      if (
+        physical.supersededAliases?.some((value) => value.code === alias.code)
+      )
+        continue
+      // The mark can point at an independent product while its exact original
+      // primary is still current. Reference that assignment; never create a
+      // second primary owner for the same code. Removing it hands the alias to
+      // the current carton lineage in this same final-state rebuild.
+      const original = originalAliasOwner(batch, alias, preparations)
+      const group = original?.group || owner?.group
       result.push({
         accountId: batch.accountId,
         orderId,
@@ -247,10 +256,260 @@ export function physicalMarkReservations({
   return result
 }
 
-/** Persist the lifecycle on its existing physical evidence, without a new ledger. */
-export function retirePhysicalMarkAliases(state, nextEditTimestamp) {
-  const active = physicalMarkReservations(state)
+function originalAliasOwner(batch, alias, preparations) {
+  const physical = batch.physicalMark
+  const references = [
+    ...(alias.code === physical.originalCode ? [physical.originalMark] : []),
+    ...[
+      physical.originalArtwork,
+      physical.artwork,
+      ...(batch.cartonHistory || []).map(
+        (entry) => entry.physicalMark?.artwork
+      ),
+    ].filter((value) => value?.code === alias.code),
+  ]
+  const preparation = preparations.find(
+    (value) =>
+      key(value) ===
+      key({
+        ...batch,
+        orderId: batch.orderId || physical.originalMark.orderId,
+      })
+  )
+  const group = preparation?.groups.find(
+    (value) =>
+      value.baseCode === alias.code &&
+      references.some(
+        (ref) => ref.orderId === preparation.orderId && ref.groupId === value.id
+      )
+  )
+  return group ? { preparation, group } : null
+}
+
+function aliasConflicts(state, batch, alias) {
+  const orderId = batch.orderId || batch.physicalMark.originalMark.orderId,
+    owner =
+      originalAliasOwner(batch, alias, state.preparations || []) ||
+      physicalMarkOwner(batch, state.preparations || []),
+    ownerId = owner?.group.id || batch.physicalMark.originalMark.groupId,
+    allowed = (value) => value.orderId === orderId && value.groupId === ownerId,
+    conflicts = []
+  for (const preparation of state.preparations || []) {
+    if (preparation.accountId !== batch.accountId) continue
+    for (const group of preparation.groups)
+      if (
+        group.baseCode === alias.code &&
+        !allowed({ ...preparation, groupId: group.id })
+      )
+        conflicts.push({
+          accountId: preparation.accountId,
+          orderId: preparation.orderId,
+          groupId: group.id,
+          kind: 'current-primary',
+        })
+  }
+  for (const lock of locksOf(state).filter(supportedLock)) {
+    if (lock.accountId !== batch.accountId) continue
+    for (const lineage of lock.lineages)
+      if (
+        lineage.reservations.some(
+          (value) => value.kind === 'base' && value.code === alias.code
+        )
+      )
+        for (const member of lineage.members)
+          if (!allowed(member)) {
+            const containerName = state.containers?.find(
+              (value) => value.id === lock.firstContainerId
+            )?.name
+            conflicts.push({
+              ...member,
+              kind: lock.kind,
+              containerId: lock.firstContainerId,
+              revisionId: lock.firstRevisionId,
+              consumedAt: lock.consumedAt,
+              ...(containerName ? { containerName } : {}),
+            })
+          }
+  }
+  return [
+    ...new Map(conflicts.map((value) => [conflictKey(value), value])).values(),
+  ]
+}
+const conflictKey = ({ containerName, ...value }) => stableValue(value)
+
+/** Derive recovery only from actual final primaries/locks and the stored prior
+ * retirement. A caller-supplied supersession never releases a current alias.
+ * The result is still the existing carton evidence, not a second code ledger.
+ */
+export function recoverPhysicalMarkAliases(
+  state,
+  previousBatches = state.batches || [],
+  at = null,
+  { validateClaims = true } = {}
+) {
+  historicalCodeReservations(locksOf(state))
   return (state.batches || []).map((batch) => {
+    if (!batch.physicalMark) return batch
+    const prior = previousBatches.find((value) => value.id === batch.id),
+      previous = prior?.physicalMark,
+      mark = clone(batch.physicalMark),
+      trusted = previous?.supersededAliases || [],
+      incoming = mark.supersededAliases || [],
+      superseded = clone(trusted),
+      recoveryAt =
+        typeof at === 'function' ? at(batch.updatedAt) : at || batch.updatedAt
+    for (const alias of mark.aliases) {
+      const conflicts = aliasConflicts(state, batch, alias),
+        known = superseded.find((value) => value.code === alias.code),
+        claimed = incoming.find((value) => value.code === alias.code)
+      if (
+        claimed &&
+        !known &&
+        (!conflicts.length ||
+          (prior && !previous?.retiredAt) ||
+          (!prior && !mark.retiredAt) ||
+          (validateClaims &&
+            claimed.conflicts.some(
+              (value) =>
+                !conflicts.some(
+                  (actual) => conflictKey(actual) === conflictKey(value)
+                )
+            )))
+      )
+        throw codeError(
+          'PHYSICAL_MARK_RESTORE_CONFLICT',
+          'Superseded physical aliases require actual retained retirement and conflicting current or shipment ownership.'
+        )
+      if (
+        !known &&
+        conflicts.length &&
+        (previous?.retiredAt || (!prior && mark.retiredAt))
+      ) {
+        // An already consumed own lineage is permanent, even after retirement.
+        if (
+          locksOf(state).some(
+            (lock) =>
+              lock.accountId === batch.accountId &&
+              lock.lineages?.some(
+                (lineage) =>
+                  lineage.baseCode === alias.code &&
+                  lineage.members.some(
+                    (member) =>
+                      member.orderId ===
+                      (batch.orderId || mark.originalMark.orderId)
+                  )
+              )
+          )
+        ) {
+          if (claimed)
+            throw codeError(
+              'PHYSICAL_MARK_RESTORE_CONFLICT',
+              'A permanent own shipment lineage cannot become a superseded alias.'
+            )
+          continue
+        }
+        const entry = {
+          code: alias.code,
+          at: claimed?.at || recoveryAt,
+          reason:
+            'The released physical alias is now reserved by another current product or shipment; use a fresh current product code and confirm physical relabeling.',
+          conflicts: validateClaims
+            ? conflicts
+            : claimed?.conflicts || conflicts,
+          currentProducts: [],
+        }
+        superseded.push(entry)
+        if (!claimed) mark.history.push({ kind: 'superseded', ...clone(entry) })
+        if (mark.code === alias.code) mark.resolution = null
+      } else if (known && conflicts.length) {
+        known.conflicts = [
+          ...new Map(
+            [...known.conflicts, ...conflicts].map((value) => [
+              conflictKey(value),
+              value,
+            ])
+          ).values(),
+        ]
+      }
+    }
+    if (!superseded.length) return batch
+    const preparation = (state.preparations || []).find(
+        (value) =>
+          key(value) ===
+          key({
+            ...batch,
+            orderId: batch.orderId || mark.originalMark.orderId,
+          })
+      ),
+      record = (state.records || []).find(
+        (value) => key(value) === key(preparation || {})
+      ),
+      eligible = record
+        ? new Map(
+            eligibleOrderItems(record, state.records).map((item) => [
+              item.entryId,
+              item.eligible,
+            ])
+          )
+        : new Map(),
+      currentProducts = (preparation?.groups || [])
+        .filter(
+          (group) =>
+            group.baseCode &&
+            group.variants.some((variant) =>
+              variant.entryIds.some(
+                (id) =>
+                  mark.relatedEntryIds.includes(id) &&
+                  (eligible.get(id) == null || BigInt(eligible.get(id)) > 0n)
+              )
+            )
+        )
+        .map((group) => ({
+          mark: { orderId: preparation.orderId, groupId: group.id },
+          productCode: group.baseCode,
+        }))
+    for (const entry of superseded) {
+      entry.currentProducts = clone(currentProducts)
+      const event = mark.history.findLast(
+        (value) => value.kind === 'superseded' && value.code === entry.code
+      )
+      if (
+        event &&
+        !trusted.some((value) => value.code === entry.code) &&
+        !incoming.some((value) => value.code === entry.code)
+      )
+        Object.assign(event, clone(entry))
+      else if (
+        stableValue(
+          trusted.find((value) => value.code === entry.code) ||
+            incoming.find((value) => value.code === entry.code)
+        ) !== stableValue(entry)
+      )
+        mark.history.push({
+          kind: 'superseded-update',
+          ...clone(entry),
+          at: recoveryAt,
+        })
+    }
+    mark.supersededAliases = superseded
+    if (stableValue(mark) === stableValue(batch.physicalMark)) return batch
+    return { ...batch, physicalMark: mark }
+  })
+}
+
+/** Persist the lifecycle on its existing physical evidence, without a new ledger. */
+export function retirePhysicalMarkAliases(
+  state,
+  nextEditTimestamp,
+  previousBatches = state.batches || []
+) {
+  const recovered = recoverPhysicalMarkAliases(
+      state,
+      previousBatches,
+      nextEditTimestamp
+    ),
+    active = physicalMarkReservations({ ...state, batches: recovered })
+  return recovered.map((batch, index) => {
     const physical = batch.physicalMark
     if (!physical) return batch
     const current = active.some(
@@ -260,31 +519,33 @@ export function retirePhysicalMarkAliases(state, nextEditTimestamp) {
           (batch.orderId || physical.originalMark.orderId) &&
         physical.aliases.some((alias) => alias.code === reservation.code)
     )
-    if (current === !physical.retiredAt) return batch
+    const originalBatch = state.batches[index]
+    if (current === !physical.retiredAt && batch === originalBatch) return batch
     const updatedAt = nextEditTimestamp(batch.updatedAt)
     const mark = clone(physical)
-    mark.history.push({
-      kind: current ? 'revived' : 'retired',
-      at: updatedAt,
-      reason: current
-        ? 'Related goods are current again; ownership revalidated.'
-        : 'All related goods are retired or ineligible.',
-    })
-    if (current) {
+    if (current !== !physical.retiredAt)
+      mark.history.push({
+        kind: current ? 'revived' : 'retired',
+        at: updatedAt,
+        reason: current
+          ? 'Related goods are current again; ownership revalidated.'
+          : 'All related goods are retired or ineligible.',
+      })
+    if (current && physical.retiredAt) {
       delete mark.retiredAt
       delete mark.retirementReason
-    } else {
+    } else if (!current && !physical.retiredAt) {
       mark.retiredAt = updatedAt
       mark.retirementReason = 'All related goods are retired or ineligible.'
     }
-    const original = clone(batch)
+    const original = clone(originalBatch)
     delete original.cartonHistory
     return {
       ...batch,
       physicalMark: mark,
       revision: batch.revision + 1,
       updatedAt,
-      cartonHistory: [...clone(batch.cartonHistory || []), original],
+      cartonHistory: [...clone(originalBatch.cartonHistory || []), original],
     }
   })
 }
@@ -765,6 +1026,15 @@ export function consumptionLocksForManifest(manifest, state = {}) {
         if (!group) continue
         for (const alias of carton.physicalMark.aliases) {
           if (alias.code === group.baseCode) continue
+          if (
+            carton.physicalMark.supersededAliases?.some(
+              (value) => value.code === alias.code
+            )
+          )
+            continue
+          // An independent mark can still reference its exact original primary.
+          // That group's ordinary consumed/history lineage already freezes it.
+          if (originalAliasOwner(carton, alias, preparations)) continue
           const primary = lineageFor(
             preparation,
             group,

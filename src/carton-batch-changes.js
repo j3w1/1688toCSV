@@ -7,7 +7,7 @@ import {
 import { repeatProductStoreIdentity } from './repeat-products.js'
 import {
   transitionPhysicalMark,
-  PHYSICAL_MARK_CHOICES,
+  physicalMarkResolutionChoices,
   physicalMarkResolutionRequired,
   physicalMarkReadback,
 } from './physical-mark-aliases.js'
@@ -261,7 +261,13 @@ export function planCartonBatchChanges({
               proposed,
               afterPreparations
             ).currentProductArtwork,
-            resolutionChoices: [...PHYSICAL_MARK_CHOICES],
+            physicalMarkRelabelOnly:
+              physicalMarkReadback(proposed).physicalMarkRelabelOnly,
+            physicalMarkResolutionChoices:
+              physicalMarkResolutionChoices(proposed),
+            physicalMarkSupersessions:
+              physicalMarkReadback(proposed).physicalMarkSupersessions,
+            resolutionChoices: physicalMarkResolutionChoices(proposed),
             physicalMarkOwnerChoices: cartonBatchMarkOwnerChoices(
               proposed,
               records,

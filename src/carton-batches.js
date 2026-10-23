@@ -1296,6 +1296,27 @@ export function mergeCartonBatchRecords(previous, incoming) {
     if (!old) result.set(batch.id, batch)
     else if (Date.parse(batch.updatedAt) > Date.parse(old.updatedAt)) {
       if (
+        old.physicalMark?.supersededAliases?.length &&
+        (batch.physicalMark?.code !== old.physicalMark.code ||
+          JSON.stringify(batch.physicalMark?.artwork) !==
+            JSON.stringify(old.physicalMark.artwork) ||
+          JSON.stringify(batch.physicalMark?.originalArtwork) !==
+            JSON.stringify(old.physicalMark.originalArtwork) ||
+          JSON.stringify(batch.physicalMark?.resolution) !==
+            JSON.stringify(old.physicalMark.resolution) ||
+          old.physicalMark.history.some(
+            (value, index) =>
+              JSON.stringify(value) !==
+              JSON.stringify(batch.physicalMark?.history[index])
+          ))
+      )
+        throw Object.assign(
+          new Error(
+            'Restore cannot attest physical relabeling of a superseded mark. Review the retained cartons and confirm the actual relabel.'
+          ),
+          { code: 'PHYSICAL_MARK_RESTORE_CONFLICT' }
+        )
+      if (
         old.physicalMark &&
         (!batch.physicalMark ||
           old.physicalMark.originalCode !== batch.physicalMark.originalCode ||
