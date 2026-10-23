@@ -21,8 +21,31 @@ const repository = fileURLToPath(new URL('../../', import.meta.url))
 const syntheticOrderId = '1234567890123456789'
 
 async function startFixtureServer() {
+  const moduleBundles = new Map()
   const server = createServer(async (request, response) => {
     const pathname = new URL(request.url, 'http://127.0.0.1').pathname
+    // Native repository tests import source modules directly. Report decoding
+    // brings SheetJS into that graph; serve its browser ESM bundle locally.
+    if (pathname === '/src/store-workbook-reader.js') {
+      if (!moduleBundles.has(pathname))
+        moduleBundles.set(
+          pathname,
+          build({
+            absWorkingDir: repository,
+            entryPoints: [pathname.slice(1)],
+            bundle: true,
+            write: false,
+            platform: 'browser',
+            format: 'esm',
+            target: 'chrome120',
+          }).then((result) => result.outputFiles[0].text)
+        )
+      response.writeHead(200, {
+        'Content-Type': 'text/javascript; charset=utf-8',
+      })
+      response.end(await moduleBundles.get(pathname))
+      return
+    }
     if (
       /^\/src\/[a-z][a-z0-9-]*\.js$/.test(pathname) ||
       [
