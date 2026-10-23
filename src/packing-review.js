@@ -138,6 +138,7 @@ export async function reviewPackingChanges({
   alternate,
   media,
   overview = false,
+  mountControls,
 }) {
   const modal = el('dialog', undefined, 'packing-review packing-change-dialog')
   modal.classList.toggle('packing-review-overview', overview)
@@ -321,6 +322,7 @@ export async function reviewPackingChanges({
     const availableHeight = () => {
       const bodyStyle = view.getComputedStyle(fitHost.parentElement),
         explanationStyle = view.getComputedStyle(explanationText),
+        controlsStyle = controlsHost && view.getComputedStyle(controlsHost),
         modalStyle = view.getComputedStyle(modal)
       const pixels = (style, property) => parseFloat(style[property]) || 0
       return (
@@ -328,6 +330,11 @@ export async function reviewPackingChanges({
         modal.querySelector('.scroll-dialog-header').getBoundingClientRect()
           .height -
         explanationText.getBoundingClientRect().height -
+        (controlsHost?.getBoundingClientRect().height || 0) -
+        (controlsStyle
+          ? pixels(controlsStyle, 'marginTop') +
+            pixels(controlsStyle, 'marginBottom')
+          : 0) -
         pixels(explanationStyle, 'marginTop') -
         pixels(explanationStyle, 'marginBottom') -
         pixels(bodyStyle, 'paddingTop') -
@@ -431,18 +438,40 @@ export async function reviewPackingChanges({
   actions.append(cancel)
   if (secondary) actions.append(secondary)
   actions.append(apply)
+  const controlsHost = mountControls
+    ? el('div', undefined, 'packing-review-controls')
+    : null
   if (overview) {
     fitHost.append(list)
-    modal.append(fitHost, actions)
-  } else modal.append(list, actions)
+    modal.append(fitHost)
+  } else modal.append(list)
+  if (controlsHost) modal.append(controlsHost)
+  modal.append(actions)
   pinDialogActions(modal, actions)
   enableLightDismiss(modal)
   document.body.append(modal)
   render()
-  return new Promise((resolve) => {
-    let confirmed = false
+  return new Promise((resolve, reject) => {
+    let confirmed = false,
+      cleanupControls,
+      settled = false
+    const dispose = () => {
+      const cleanup = cleanupControls
+      cleanupControls = undefined
+      try {
+        if (typeof cleanup === 'function') cleanup()
+      } finally {
+        fitObserver?.disconnect()
+        stopLanguageFit?.()
+        document.defaultView?.removeEventListener('resize', scheduleFit)
+        if (fitFrame !== undefined) cancelAnimationFrame(fitFrame)
+        media?.forget(list)
+        modal.remove()
+      }
+    }
     cancel.onclick = () => modal.close()
     apply.onclick = () => {
+      if (apply.disabled) return
       confirmed = true
       modal.close()
     }
@@ -452,24 +481,35 @@ export async function reviewPackingChanges({
         modal.close()
       }
     modal.onclose = () => {
-      fitObserver?.disconnect()
-      stopLanguageFit?.()
-      document.defaultView?.removeEventListener('resize', scheduleFit)
-      if (fitFrame !== undefined) cancelAnimationFrame(fitFrame)
-      media?.forget(list)
-      modal.remove()
-      resolve(confirmed)
-    }
-    modal.showModal()
-    if (overview) {
-      if (typeof ResizeObserver === 'function') {
-        fitObserver = new ResizeObserver(scheduleFit)
-        fitObserver.observe(document.documentElement)
+      if (settled) return
+      settled = true
+      try {
+        dispose()
+        resolve(confirmed)
+      } catch (error) {
+        reject(error)
       }
-      document.defaultView?.addEventListener('resize', scheduleFit)
-      stopLanguageFit = onLanguageChange(scheduleFit, modal)
-      fitOverview()
     }
-    cancel.focus()
+    try {
+      cleanupControls = mountControls?.({ host: controlsHost, apply, modal })
+      modal.showModal()
+      if (overview) {
+        if (typeof ResizeObserver === 'function') {
+          fitObserver = new ResizeObserver(scheduleFit)
+          fitObserver.observe(document.documentElement)
+        }
+        document.defaultView?.addEventListener('resize', scheduleFit)
+        stopLanguageFit = onLanguageChange(scheduleFit, modal)
+        fitOverview()
+      }
+      cancel.focus()
+    } catch (error) {
+      settled = true
+      try {
+        dispose()
+      } finally {
+        reject(error)
+      }
+    }
   })
 }
