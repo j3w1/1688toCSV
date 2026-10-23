@@ -7,6 +7,8 @@ async function open(extension) {
   const records = await extension.inspector.evaluate(
     `(${createDemoRecords.toString()})(document)`
   )
+  for (const [index, record] of records.entries())
+    record.snapshot.sellerMemberLogin = `synthetic-print-supplier-${index}`
   const restored = await extension.inspector.evaluate(
     (orders) =>
       chrome.runtime.sendMessage({

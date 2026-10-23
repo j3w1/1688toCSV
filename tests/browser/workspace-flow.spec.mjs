@@ -229,9 +229,11 @@ test.describe('copy progress and recovery', () => {
     await page.setViewportSize({ width, height: 960 })
     await enableClipboard(extension, page)
     await page
-      .locator('#sheet-body tr.selectable-row .row-number')
+      .locator(
+        '#sheet-body tr.selectable-row .row-number input[type="checkbox"]'
+      )
       .first()
-      .click()
+      .check()
     await revealCopyActions(page)
     const button = page.locator('#copy-images')
     await button.click()

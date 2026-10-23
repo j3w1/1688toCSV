@@ -1581,15 +1581,14 @@ export async function createOrderCartonSession({
           context.record.unitsPerCarton?.[id] ?? null,
         ])
       )
-    writeWork = repository.updateOrderCapacities({
-      ...orderRef,
-      ...mutationContext(),
-      values,
-      expectedValues,
-      expectedObservedAt: context.record.snapshot.observedAt,
-    })
-    try {
-      const result = await writeWork
+    const operation = (async () => {
+      const result = await repository.updateOrderCapacities({
+        ...orderRef,
+        ...mutationContext(),
+        values,
+        expectedValues,
+        expectedObservedAt: context.record.snapshot.observedAt,
+      })
       // Accept the new baseline without replacing raw typing or planner commands.
       context = {
         ...context,
@@ -1616,8 +1615,15 @@ export async function createOrderCartonSession({
       lastInputGeneration = changedWhileSaving
         ? submittedGeneration
         : raw.state().generation
+    })()
+    // Include acknowledgement/recovery persistence in the barrier. Waiting on
+    // only the already-resolved mutation can spin microtasks while IDB awaits
+    // its next event, starving a following capacity edit.
+    writeWork = operation
+    try {
+      await operation
     } finally {
-      writeWork = null
+      if (writeWork === operation) writeWork = null
     }
     if (raw.state().generation !== submittedGeneration) return flush()
     notify()

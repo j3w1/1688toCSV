@@ -16,6 +16,10 @@ async function openPacking(extension, theme = 'dark') {
   for (const [index, item] of record.snapshot.items.entries()) {
     item.title = index < 2 ? '合成玻璃罐' : '合成收纳盒'
     item.productNumber = index < 2 ? 'TEST-JAR' : 'TEST-BOX'
+    item.skuProperties = [
+      { label: '颜色', value: ['透明', '灰色', '原色'][index] },
+    ]
+    item.description = `${item.title}\n颜色：${item.skuProperties[0].value}\n货号：${item.productNumber}`
   }
   const restored = await extension.inspector.evaluate(
     (record) =>
