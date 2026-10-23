@@ -60,7 +60,7 @@ export function mountAppearanceSettings(host, value, { onColorsReset } = {}) {
     }
     select.value = value.appearance[`${mode}Theme`]
     const sample = el('div', undefined, 'appearance-sample')
-    const sampleHeading = el('strong', m('1688 Packing workspace')),
+    const sampleHeading = el('strong', '1688toPL'),
       sampleText = el('span', m('Orders · packing · Excel')),
       sampleAccent = el(
         'span',

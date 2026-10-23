@@ -1,5 +1,18 @@
 import { test, expect } from './extension-fixture.mjs'
 import { repeatSubsetFixture } from '../fixtures/repeat-subset-fixture.mjs'
+import {
+  createSmartContainer,
+  openContainerOutput,
+  libraryBackup,
+  openOrderReconciliation,
+  editOrderProduct,
+  closeOrderProduct,
+} from './smart-workspace-helpers.mjs'
+
+const productRow = (page, orderId, entryId = '1') =>
+  page.locator(
+    `#sheet-body tr[data-selection-key=${JSON.stringify(JSON.stringify(['local', orderId, entryId]))}]`
+  )
 
 function sources() {
   return ['3', '27'].map((quantity, index) => {
@@ -14,6 +27,8 @@ function sources() {
       sellerName: 'Synthetic repeat supplier',
       sellerMemberLogin: 'synthetic-repeat-supplier',
       status: 'Completed',
+      // Declared synthetic purchase evidence, preceding code allocation.
+      purchasedAt: '2026-10-01T12:00:00+08:00',
       observedAt: '2026-10-01T00:00:00.000Z',
       items: [
         {
@@ -47,6 +62,11 @@ function sources() {
 async function setup(extension) {
   const page = await extension.context.newPage()
   await page.goto(`${extension.origin}/unsupported`)
+  const snapshots = sources()
+  expect(snapshots.map((snapshot) => snapshot.purchasedAt)).toEqual([
+    '2026-10-01T12:00:00+08:00',
+    '2026-10-01T12:00:00+08:00',
+  ])
   await page.evaluate(async (snapshots) => {
     const { openDatabase } = await import('/src/database.js')
     const { createPreparation } = await import('/src/packing-model.js')
@@ -67,75 +87,156 @@ async function setup(extension) {
       orderId: repeatPreparations[index].orderId,
       groupId: repeatPreparations[index].groups[0].id,
     })
-  }, sources())
+  }, snapshots)
+  const savedSources = await page.evaluate(async () =>
+    (await repeatLibrary.listOrders()).map((record) => record.snapshot)
+  )
+  expect(savedSources).toEqual(snapshots)
   return page
 }
 
-test('a carton marked by one linked purchase prints once when all selected contents belong to its same-code counterpart', async ({
+test('a legacy carton marked by one linked purchase retains one read-only physical count under its same-code counterpart', async ({
   extension,
 }) => {
   const storagePage = await setup(extension)
-  const backup = await storagePage.evaluate(async () => {
+  const fixture = await storagePage.evaluate(async () => {
     const plan = await repeatLibrary.previewRepeatProductLink({
       source: repeatRef(1),
       target: repeatRef(0),
     })
     await repeatLibrary.linkRepeatProduct(plan)
-    await repeatLibrary.saveCartonBatch(
-      {
-        id: 'synthetic-zero-piece-mark-owner',
-        accountId: 'local',
-        month: '2026-10',
-        storeId: '["1688","synthetic-repeat-supplier"]',
-        mark: { orderId: repeatRef(0).orderId, groupId: repeatRef(0).groupId },
-        groups: [
-          { orderId: repeatRef(1).orderId, groupId: repeatRef(1).groupId },
-        ],
-        contents: [
-          { orderId: repeatRef(1).orderId, entryId: '1', quantity: '27' },
-        ],
-        cartonNumber: '1',
-        count: 1,
-        len: '40',
-        wid: '30',
-        ht: '25',
-        weightBasis: 'carton',
-        weight: '9.5',
-        received: 1,
-        loaded: 0,
+    // This historical zero-piece mark owner spans two linked purchases. Current
+    // writes must refuse it; backup compatibility retains the old evidence.
+    const legacyBatch = {
+      id: 'synthetic-zero-piece-mark-owner',
+      accountId: 'local',
+      month: '2026-10',
+      storeId: '["1688","synthetic-repeat-supplier"]',
+      mark: { orderId: repeatRef(0).orderId, groupId: repeatRef(0).groupId },
+      groups: [
+        { orderId: repeatRef(1).orderId, groupId: repeatRef(1).groupId },
+      ],
+      contents: [
+        { orderId: repeatRef(1).orderId, entryId: '1', quantity: '27' },
+      ],
+      cartonNumber: '1',
+      count: 1,
+      len: '40',
+      wid: '30',
+      ht: '25',
+      weightBasis: 'carton',
+      weight: '9.5',
+      received: 1,
+      loaded: 0,
+      revision: 1,
+      updatedAt: '2026-10-01T00:00:00.000Z',
+    }
+    const before = await repeatLibrary.exportBackup()
+    let refusal
+    try {
+      await repeatLibrary.saveCartonBatch(legacyBatch, { expectedRevision: 0 })
+    } catch (error) {
+      refusal = { code: error.code, message: error.message }
+    }
+    const after = await repeatLibrary.exportBackup()
+    return {
+      before,
+      after,
+      refusal,
+      backup: {
+        ...after,
+        version: 4,
+        exportedAt: '2026-10-15T04:00:00.000Z',
+        cartonBatches: [legacyBatch],
       },
-      { expectedRevision: 0 }
-    )
-    return repeatLibrary.exportBackup()
+    }
   })
-  for (const record of backup.orders)
-    record.snapshot.purchasedAt = '2026-10-15T12:00:00+08:00'
+  expect(fixture.refusal).toEqual({
+    code: 'CARTON_OWNERSHIP',
+    message: 'A carton can contain products from only one purchase order.',
+  })
+  const { exportedAt: beforeTime, ...before } = fixture.before,
+    { exportedAt: afterTime, ...after } = fixture.after
+  expect(after).toEqual(before)
+  const backup = fixture.backup
   const restored = await extension.inspector.evaluate(
     (backup) => chrome.runtime.sendMessage({ type: 'BACKUP_RESTORE', backup }),
     backup
   )
   expect(restored.ok, restored.error).toBe(true)
+  const restoredEvidence = await libraryBackup(extension)
+  expect(restoredEvidence.orders.map((record) => record.snapshot)).toEqual(
+    sources()
+  )
+  expect(restoredEvidence.cartonBatches).toHaveLength(1)
+  expect(restoredEvidence.cartonBatches[0]).toMatchObject(
+    backup.cartonBatches[0]
+  )
   const page = await extension.context.newPage()
   await page.clock.setFixedTime(new Date('2026-10-15T04:00:00Z'))
   await page.goto(`${extension.extensionBaseUrl}/library.html`)
   await expect(page.locator('#sheet-body tr[data-selection-key]')).toHaveCount(
     2
   )
-  await page.locator('#sheet-body tr[data-selection-key="8702/1"]').click()
-  await page.locator('#orders-print-actions .copy-actions-trigger').click()
-  await page.locator('#print-carton-marks').click()
-  const dialog = page.getByRole('dialog', {
-    name: 'Print carton marks',
-    exact: true,
-  })
-  await expect(dialog).toBeVisible()
-  await expect(dialog.getByLabel(/^Quantity for /)).toHaveCount(1)
-  await expect(dialog.getByLabel(/^Quantity for /)).toHaveValue('1')
-  const code = backup.preparations.find((prep) => prep.orderId === '8701')
-    .groups[0].baseCode
-  await expect(dialog.getByLabel(/^Quantity for /)).toHaveAccessibleName(
-    `Quantity for ${code}`
+  const original = restoredEvidence.preparations.find(
+      (prep) => prep.orderId === '8701'
+    ),
+    counterpart = restoredEvidence.preparations.find(
+      (prep) => prep.orderId === '8702'
+    ),
+    code = original.groups[0].baseCode
+  expect(counterpart.groups[0].baseCode).toBe(code)
+  expect(restoredEvidence.cartonBatches[0].needsReview).toBe(true)
+  expect(restoredEvidence.cartonBatches[0].legacyReview.kind).toBe(
+    'cross-order'
   )
+  expect(restoredEvidence.cartonBatches[0].count).toBe(1)
+  expect(restoredEvidence.cartonBatches[0].mark).toEqual({
+    orderId: '8701',
+    groupId: original.groups[0].id,
+  })
+  const backlog = await extension.inspector.evaluate(async () =>
+    (await window.testRepository).getBacklog()
+  )
+  const held = backlog.orders.find((order) => order.orderId === '8702')
+  expect(held.items[0].legacyReview).toBe(true)
+  expect(held.items[0].remaining).toBeNull()
+  expect(restoredEvidence.containers).toEqual([])
+  expect(restoredEvidence.shipmentLocks).toEqual([])
+  const grid = await openOrderReconciliation(page, {
+    accountId: 'local',
+    orderId: '8702',
+  })
+  await grid.locator('[data-action="order-carton-history"]').click()
+  const history = grid.locator(
+    '[data-action="carton-history"] tbody tr[data-history-key]'
+  )
+  await expect(history).toHaveCount(1)
+  await expect(history.locator('td').nth(2)).toHaveText('1')
+  await expect(history.locator('td').nth(3)).toHaveText('1: 27')
+  await expect(history.locator('td').nth(4)).toHaveText('1')
+  await expect(history.locator('td').last()).toContainText('Needs review')
+  await history.focus()
+  await history.press('Enter')
+  const historical = page.locator(
+    'dialog[data-action="inspect-carton-history"]'
+  )
+  await expect(historical).toBeVisible()
+  const retained = JSON.parse(await historical.locator('pre').textContent())
+  expect(retained).toMatchObject(backup.cartonBatches[0])
+  expect(
+    original.groups.find((group) => group.id === retained.mark.groupId).baseCode
+  ).toBe(code)
+  await expect(
+    historical.locator(
+      'input,select,textarea,[data-action="print-carton-marks"]'
+    )
+  ).toHaveCount(0)
+  await historical.getByRole('button', { name: 'Close', exact: true }).click()
+  await expect(historical).toBeHidden()
+  const afterHistory = await libraryBackup(extension)
+  expect(afterHistory.orders).toEqual(restoredEvidence.orders)
+  expect(afterHistory.cartonBatches).toEqual(restoredEvidence.cartonBatches)
 })
 
 test('repeat-product dialog previews both purchases, cancellation writes nothing and applying keeps both selected rows', async ({
@@ -144,7 +245,6 @@ test('repeat-product dialog previews both purchases, cancellation writes nothing
   const storagePage = await setup(extension)
   const backup = await storagePage.evaluate(() => repeatLibrary.exportBackup())
   backup.orders.forEach((record) => {
-    record.snapshot.purchasedAt = '2026-10-15T12:00:00+08:00'
     record.unitsPerCarton = { 1: 3 }
     record.unitsPerCartonUpdatedAt = '2026-10-15T12:00:00.000Z'
     record.productWorkflow = {
@@ -162,11 +262,12 @@ test('repeat-product dialog previews both purchases, cancellation writes nothing
   await page.goto(`${extension.extensionBaseUrl}/library.html`)
   const rows = page.locator('#sheet-body tr[data-selection-key]')
   await expect(rows).toHaveCount(2)
-  const source = page.locator('#sheet-body tr[data-selection-key="8702/1"]')
-  await source.click()
-  const original = page.locator('#sheet-body tr[data-selection-key="8701/1"]')
-  await original.click({ modifiers: ['Control'] })
-  await source
+  const source = productRow(page, '8702')
+  await source.getByRole('checkbox').check()
+  const original = productRow(page, '8701')
+  await original.getByRole('checkbox').check()
+  const sourceEditor = await editOrderProduct(page, source)
+  await sourceEditor
     .getByRole('button', { name: 'Link repeat purchase', exact: true })
     .click()
   let dialog = page.getByRole('dialog', {
@@ -191,7 +292,7 @@ test('repeat-product dialog previews both purchases, cancellation writes nothing
   )
   expect(cancelled.data.preparations).toEqual(backup.preparations)
   expect(cancelled.data.issuedCodes).toEqual(backup.issuedCodes)
-  await source
+  await sourceEditor
     .getByRole('button', { name: 'Link repeat purchase', exact: true })
     .click()
   dialog = page.getByRole('dialog', {
@@ -210,9 +311,23 @@ test('repeat-product dialog previews both purchases, cancellation writes nothing
     .click()
   await expect(dialog).not.toBeVisible()
   await expect(rows).toHaveCount(2)
-  await expect(
-    rows.locator('[aria-label="Linked repeat purchase"]')
-  ).toHaveCount(2)
+  await expect(sourceEditor).toBeHidden()
+  for (const row of [source, original]) {
+    const editor = await editOrderProduct(page, row)
+    await expect(
+      editor.getByRole('button', {
+        name: 'Linked repeat purchase',
+        exact: true,
+      })
+    ).toHaveCount(1)
+    await closeOrderProduct(editor)
+  }
+  const linkedState = await libraryBackup(extension)
+  expect(
+    linkedState.preparations.map((prep) =>
+      Boolean(prep.groups[0].sharedProductId)
+    )
+  ).toEqual([true, true])
   await expect(
     page.locator('#sheet-body tr[aria-selected="true"]')
   ).toHaveCount(2)
@@ -222,19 +337,57 @@ test('repeat-product dialog previews both purchases, cancellation writes nothing
   await page.locator('#orders-print-actions .copy-actions-trigger').click()
   await page.locator('#print-labels').click()
   const labels = page.getByRole('dialog', { name: 'Print labels', exact: true })
+  await labels.waitFor({ state: 'visible' })
   await expect(labels.getByLabel(/^Quantity for /)).toHaveCount(1)
   await expect(labels.getByLabel(/^Quantity for /)).toHaveValue('30')
   await labels.getByRole('button', { name: 'Cancel', exact: true }).click()
-  await page.locator('#orders-print-actions .copy-actions-trigger').click()
-  await page.locator('#print-carton-marks').click()
+  const sourceBeforeCartons = await libraryBackup(extension)
+  const refs = sources().map(({ accountId, orderId }) => ({
+    accountId,
+    orderId,
+  }))
+  await extension.inspector.evaluate(async (refs) => {
+    const repository = await window.testRepository
+    for (const ref of refs) {
+      const context = await repository.getOrderReconciliation(ref)
+      await repository.confirmOrderCartons({
+        ...ref,
+        draft: window.testPlanner.createReconciliationDraft(context),
+        expectedRevisions: context.revisions,
+        intentId: crypto.randomUUID(),
+      })
+    }
+  }, refs)
+  const containerId = await createSmartContainer(extension, refs)
+  await extension.inspector.evaluate(
+    async ({ id, refs }) => {
+      const repository = await window.testRepository,
+        view = await repository.getContainerView({ id })
+      await repository.markContainerLoaded({
+        id,
+        orderRefs: refs,
+        expectedRevision: view.container.revision,
+        intentId: crypto.randomUUID(),
+      })
+    },
+    { id: containerId, refs }
+  )
+  const output = await openContainerOutput(page, containerId)
+  await output.locator('[data-action="select-all-rows"]').click()
+  await output.locator('[data-action="open-print-menu"]').click()
+  await output.locator('[data-action="print-carton-marks"]').click()
   const marks = page.getByRole('dialog', {
     name: 'Print carton marks',
     exact: true,
   })
+  await marks.waitFor({ state: 'visible' })
   await expect(marks.getByLabel(/^Quantity for /)).toHaveCount(1)
   await expect(marks.getByLabel(/^Quantity for /)).toHaveValue('10')
   await expect(marks.locator('.print-known')).toContainText('10')
   await marks.getByRole('button', { name: 'Cancel', exact: true }).click()
+  expect((await libraryBackup(extension)).orders).toEqual(
+    sourceBeforeCartons.orders
+  )
 })
 
 test('reviewed repeated purchases save atomically with one shared owner and separate source finances, then restore a clipped identity', async ({
@@ -377,8 +530,12 @@ test('repeat link rejects stale preparation revisions and refreshed source evide
           JSON.stringify(afterSource.issuedCodes),
     }
   })
-  expect(result.staleError).toContain('Preparation changed in another tab')
-  expect(result.sourceError).toContain('source order changed')
+  expect(result.staleError).toBe(
+    'The source order or preparation changed. Review the linked products again.'
+  )
+  expect(result.sourceError).toBe(
+    'The source order or preparation changed. Review the linked products again.'
+  )
   expect(result.unchangedStale).toBe(true)
   expect(result.unchangedSource).toBe(true)
 })
@@ -436,7 +593,9 @@ test('repeat feature review detects concurrent changes and linked feature edits 
       statusAllowed: statusEdit.productWorkflow['1'].missingLabels.active,
     }
   })
-  expect(result.staleFeatureError).toContain('The source order changed')
+  expect(result.staleFeatureError).toBe(
+    'The source order or preparation changed. Review the linked products again.'
+  )
   expect(result.noPartialLink).toBe(true)
   expect(result.featureEditError).toContain('Unlink this repeat purchase')
   expect(result.featureUnchanged).toBe(true)
@@ -542,9 +701,10 @@ test('a single-size repeat selects the original S card, stores canonical subset 
     await toggle.click()
   const rows = page.locator('#sheet-body tr[data-selection-key]')
   await expect(rows).toHaveCount(4)
-  const source = page.locator('#sheet-body tr[data-selection-key="8805/1"]')
+  const source = productRow(page, '8805')
   await expect(source.locator('.row-code-copy')).toHaveText('CE26101005')
-  await source
+  const sourceEditor = await editOrderProduct(page, source)
+  await sourceEditor
     .getByRole('button', { name: 'Link repeat purchase', exact: true })
     .click()
   const dialog = page.getByRole('dialog', {
@@ -595,9 +755,7 @@ test('a single-size repeat selects the original S card, stores canonical subset 
     ['3', 'CE26101001L'],
   ]) {
     await expect(
-      page.locator(
-        `#sheet-body tr[data-selection-key="8801/${entryId}"] .row-code-copy`
-      )
+      productRow(page, '8801', entryId).locator('.row-code-copy')
     ).toHaveText(code)
   }
   const linked = await extension.inspector.evaluate(() =>
@@ -616,7 +774,8 @@ test('a single-size repeat selects the original S card, stores canonical subset 
         (value) => value.snapshot.orderId === record.snapshot.orderId
       ).snapshot
     ).toEqual(record.snapshot)
-  await source
+  const linkedEditor = await editOrderProduct(page, source)
+  await linkedEditor
     .getByRole('button', { name: 'Linked repeat purchase', exact: true })
     .click()
   const unlink = page.getByRole('dialog', {

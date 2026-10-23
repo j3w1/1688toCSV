@@ -975,7 +975,7 @@ export function recordNamingEdits(preparation, previous) {
 
 /** Compare authored preparation independently of derived names and write revisions. */
 export function preparationAuthoring(preparation) {
-  const { revision, ...content } = preparation
+  const { revision, restoreScopes, ...content } = preparation
   return {
     ...content,
     groups: preparation.groups.map(({ naming, ...group }) => {

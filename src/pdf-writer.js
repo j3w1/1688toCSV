@@ -70,6 +70,7 @@ export function createPdf({
   title = 'Print sheet',
   widthMm = 210,
   heightMm = 297,
+  draft = false,
 } = {}) {
   const pageWidth = widthMm * POINTS_PER_MM
   const pageHeight = heightMm * POINTS_PER_MM
@@ -89,6 +90,7 @@ export function createPdf({
     },
     page() {
       const ops = []
+      const usedImages = new Set()
       const page = {
         /** Place an image in a box; `rotate` turns it 90° counter-clockwise. */
         image(name, box, { rotate = false } = {}) {
@@ -99,6 +101,7 @@ export function createPdf({
           const matrix = rotate
             ? [0, h, -w, 0, left + w, bottom]
             : [w, 0, 0, h, left, bottom]
+          usedImages.add(name)
           ops.push(`q ${matrix.map(format).join(' ')} cm /${name} Do Q`)
           return page
         },
@@ -142,7 +145,7 @@ export function createPdf({
           return page
         },
       }
-      pages.push(ops)
+      pages.push({ ops, usedImages })
       return page
     },
     /** Serialise the document with an exact cross-reference table. */
@@ -157,18 +160,29 @@ export function createPdf({
       const font = add([
         '<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica /Encoding /WinAnsiEncoding >>',
       ])
-      const imageRefs = images.map((image) =>
-        add([
-          `<< /Type /XObject /Subtype /Image /Width ${image.width} /Height ${image.height} /ColorSpace /DeviceRGB /BitsPerComponent 8 /Filter /FlateDecode /Length ${image.bytes.length} >>\nstream\n`,
-          image.bytes,
-          '\nendstream',
+      const imageRefs = new Map(
+        images.map((image) => [
+          image.name,
+          add([
+            `<< /Type /XObject /Subtype /Image /Width ${image.width} /Height ${image.height} /ColorSpace /DeviceRGB /BitsPerComponent 8 /Filter /FlateDecode /Length ${image.bytes.length} >>\nstream\n`,
+            image.bytes,
+            '\nendstream',
+          ]),
         ])
       )
-      const xobjects = images
-        .map((image, index) => `/${image.name} ${imageRefs[index]} 0 R`)
-        .join(' ')
-      const pageRefs = pages.map((ops) => {
-        const content = encoder.encode(ops.join('\n'))
+      const pageRefs = pages.map(({ ops, usedImages }) => {
+        const xobjects = [...usedImages]
+          .map((name) => `/${name} ${imageRefs.get(name)} 0 R`)
+          .join(' ')
+        const marker = 'DRAFT - UNSEALED / UNVERIFIED'
+        const pageOps =
+          draft === true
+            ? [
+                ...ops,
+                `BT /F1 7 Tf 0.2 g ${format(captionLeftMm(marker, widthMm / 2, 7, 'center') * POINTS_PER_MM)} ${y(3)} Td (${marker}) Tj ET`,
+              ]
+            : ops
+        const content = encoder.encode(pageOps.join('\n'))
         const contentRef = add([
           `<< /Length ${content.length} >>\nstream\n`,
           content,
@@ -185,7 +199,7 @@ export function createPdf({
         `<< /Type /Pages /Kids [${pageRefs.map((ref) => `${ref} 0 R`).join(' ')}] /Count ${pageRefs.length} >>`,
       ]
       const info = add([
-        `<< /Title ${metadataString(title)} /Producer (1688toCSV) >>`,
+        `<< /Title ${metadataString(draft === true ? `DRAFT - ${title}` : title)} /Producer (1688toPL) >>`,
       ])
       // The header's binary marker uses raw bytes, not UTF-8.
       const chunks = [

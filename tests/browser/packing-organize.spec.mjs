@@ -1,5 +1,11 @@
 import { test, expect } from './extension-fixture.mjs'
 import { createDemoRecords } from '../../preview/library-fixture.js'
+import {
+  assignSelectedPurchaseCodes,
+  loadedSourceContainer,
+  openContainerOutput,
+  libraryBackup,
+} from './smart-workspace-helpers.mjs'
 
 async function setup(extension) {
   const [record] = await extension.inspector.evaluate(
@@ -36,135 +42,97 @@ async function setup(extension) {
   await page.goto(`${extension.extensionBaseUrl}/library.html`)
   const rows = page.locator('#sheet-body tr[data-selection-key]')
   await expect(rows).toHaveCount(3)
-  await rows.first().focus()
-  await page.keyboard.press('Control+a')
-  await page.getByLabel('Packing month', { exact: true }).fill('2026-10')
-  await page
-    .getByRole('button', { name: 'Prepare packing list', exact: true })
-    .click()
-  const view = page.locator('#packing-view')
-  const review = page.getByRole('dialog', {
-    name: 'Assign product codes?',
-    exact: true,
-  })
-  await expect
-    .poll(async () => (await view.isVisible()) || (await review.isVisible()))
-    .toBe(true)
-  if (await review.isVisible())
-    await review
-      .getByRole('button', { name: 'Assign codes and prepare', exact: true })
-      .click()
-  await expect(view.locator('.preparation-group')).toHaveCount(2)
-  return { page, view }
+  await page.locator('#select-rows').click()
+  await assignSelectedPurchaseCodes(page)
+  const id = await loadedSourceContainer(extension, [
+      { accountId: 'local', orderId: record.snapshot.orderId },
+    ]),
+    view = await openContainerOutput(page, id)
+  return { page, view, record, id }
 }
 
-test('Organize unmounts normal product tables, keeps export selection and restores compact packing', async ({
+test('Packing removes Organize and authored membership while explicit output selection leaves the whole container unchanged', async ({
   extension,
 }) => {
-  const { page, view } = await setup(extension)
-  const selection = await view.locator('.preparation-copy-scope').innerText()
-  const before = await view
-    .locator('.group-code-editor')
-    .evaluateAll((nodes) => nodes.map((node) => node.value))
-  await expect(
-    view.locator('.reorder-handle, .packing-remove-button, .variant-actions')
-  ).toHaveCount(0)
-  await expect(
-    view.locator('.variants tbody tr').first().locator(':scope > td')
-  ).toHaveCount(4)
-  await view.getByRole('button', { name: 'Organize', exact: true }).click()
-  await expect(view.locator('.packing-organize-group')).toHaveCount(2)
+  const { page, view, id } = await setup(extension),
+    before = await libraryBackup(extension),
+    manifest = await extension.inspector.evaluate(
+      async (id) => (await window.testRepository).getContainerManifest({ id }),
+      id
+    )
   await expect(
     view.locator(
-      '.variants, .variant-scroll, .group-code-editor, .variant-carton-columns'
+      '.reorder-handle,.packing-remove-button,.variant-actions,.preparation-group,[data-action="organize-packing"],input[data-grid-column]'
     )
   ).toHaveCount(0)
-  await expect(
-    view.getByRole('button', { name: 'Export packing list', exact: true })
-  ).toHaveCount(0)
-  await expect(
-    view.getByRole('button', { name: 'Remove from packing', exact: true })
-  ).toBeDisabled()
-  await view.getByRole('button', { name: 'Select all', exact: true }).click()
-  await expect(view.locator('.packing-organize-count')).toHaveText(
-    '2 selected · 2 groups'
-  )
-  await view.getByRole('button', { name: 'Done', exact: true }).click()
-  await expect(view.locator('.preparation-group')).toHaveCount(2)
-  await expect(view.locator('.preparation-copy-scope')).toHaveText(selection)
-  expect(
-    await view
-      .locator('.group-code-editor')
-      .evaluateAll((nodes) => nodes.map((node) => node.value))
-  ).toEqual(before)
-  await view.getByRole('button', { name: 'Organize', exact: true }).click()
-  await expect(view.locator('.packing-organize-count')).toHaveText(
-    '2 selected · 2 groups'
-  )
-  await page.keyboard.press('Escape')
-  await expect(view.locator('.preparation-group')).toHaveCount(2)
+  const rows = view.locator('tr[data-container-row]')
+  await expect(rows).toHaveCount(3)
+  await rows.first().getByRole('checkbox').check()
+  await view.locator('[data-view="loading"]').click()
+  await view.locator('[data-view="packing-list"]').click()
+  await expect(rows.first().getByRole('checkbox')).toBeChecked()
+  const after = await libraryBackup(extension),
+    current = await extension.inspector.evaluate(
+      async (id) => (await window.testRepository).getContainerManifest({ id }),
+      id
+    )
+  expect(current).toEqual(manifest)
+  expect(after.preparations).toEqual(before.preparations)
+  expect(after.issuedCodes).toEqual(before.issuedCodes)
+  expect(after.orders).toEqual(before.orders)
 })
 
-test('group and product movement persists, visual group choice remains scoped and Undo restores the batch', async ({
+test('Loading uses physical selection and compound Undo/Redo without rearranging product codes or source evidence', async ({
+  extension,
+}) => {
+  const { page, view, id } = await setup(extension),
+    before = await libraryBackup(extension)
+  await view.locator('[data-view="loading"]').click()
+  await view.locator('[data-action="expand-container-order"]').first().click()
+  const row = view.locator('tr[data-container-row]').first(),
+    unitId = await row.getAttribute('data-container-row')
+  await row
+    .locator('[data-action="set-carton-loading"][data-state="left-behind"]')
+    .click()
+  const state = () =>
+    extension.inspector.evaluate(
+      async ({ id, unitId }) =>
+        (
+          await (await window.testRepository).getContainerView({ id })
+        ).cartons.find((unit) => unit.id === unitId).state,
+      { id, unitId }
+    )
+  await expect.poll(state).toBe('left-behind')
+  await view.locator('[data-action="undo-container-loading"]').click()
+  await expect.poll(state).toBe('loaded')
+  await view.locator('[data-action="redo-container-loading"]').click()
+  await expect.poll(state).toBe('left-behind')
+  const after = await libraryBackup(extension)
+  expect(after.preparations).toEqual(before.preparations)
+  expect(after.issuedCodes).toEqual(before.issuedCodes)
+  expect(after.orders).toEqual(before.orders)
+})
+
+test('copy controls retain exact inset square photo geometry in Orders and read-only Packing details', async ({
   extension,
 }) => {
   const { page, view } = await setup(extension)
-  const before = await view
-    .locator('.group-code-editor')
-    .evaluateAll((nodes) => nodes.map((node) => node.value))
-  await view.getByRole('button', { name: 'Organize', exact: true }).click()
-  const cards = view.locator('.packing-organize-group')
-  await cards.first().locator('input[type="checkbox"]').check()
-  await view.getByRole('button', { name: 'Move down', exact: true }).click()
-  await expect(view.locator('.preparation-save-status')).toHaveText(
-    'Saved automatically'
-  )
-  await expect(cards.first().locator('.ce-code')).toHaveText(before[1])
-  await view.getByRole('button', { name: 'Undo', exact: true }).click()
-  await expect(cards.first().locator('.ce-code')).toHaveText(before[0])
-  await cards
-    .first()
-    .getByRole('button', { name: 'Products', exact: true })
-    .click()
-  await expect(view.locator('.packing-organize-product')).toHaveCount(2)
-  await expect(view.locator('select, .variants')).toHaveCount(0)
-  const codes = await view
-    .locator('.packing-organize-product .ce-code')
-    .allTextContents()
-  await view
-    .locator('.packing-organize-product .reorder-handle')
-    .first()
-    .press('ArrowDown')
+  await view.locator('tr[data-container-row]').first().click()
+  const details = page.getByRole('dialog', {
+    name: 'Original product details',
+    exact: true,
+  })
+  await expect(details).toBeVisible()
+  await expect(details.locator('[data-action="edit-in-orders"]')).toBeVisible()
   await expect(
-    view.locator('.packing-organize-product .ce-code').first()
-  ).toHaveText(codes[1])
-  await view.getByRole('button', { name: 'Choose group', exact: true }).click()
-  const chooser = view.locator('.packing-organize-picker:popover-open')
-  await expect(
-    chooser.getByRole('searchbox', { name: 'Find group or store' })
-  ).toBeVisible()
-  await chooser.getByRole('searchbox').fill(before[1])
-  await expect(chooser.locator('.packing-organize-group-choice')).toHaveCount(1)
-  await chooser.locator('.packing-organize-group-choice').click()
-  await expect(view.locator('.packing-organize-product')).toHaveCount(1)
-  await view.getByRole('button', { name: 'Done', exact: true }).click()
-  await page.reload()
-  await page
-    .getByRole('button', { name: 'Prepare packing list', exact: true })
-    .click()
-  await expect(view).toBeVisible()
-  await expect(
-    view.locator('.variants').first().locator('tr[data-variant-id]').first()
-  ).toContainText(codes[1])
-})
-
-test('copy controls stay inset at the visible square photo corner in Orders and packing', async ({
-  extension,
-}) => {
-  const { view } = await setup(extension)
-  const tile = view.locator('.variant-photos > .photo-copy-tile').first()
-  const source = tile.locator('.photo-copy-source')
-  const image = source.locator('img')
+    details.getByRole('button', { name: 'Operations', exact: true })
+  ).toHaveCount(0)
+  await details.getByRole('button', { name: 'Close product details' }).click()
+  const tile = view
+      .locator('.container-product-photo .photo-copy-tile')
+      .first(),
+    source = tile.locator('.photo-copy-source'),
+    image = source.locator('img')
   await expect(image).toBeVisible()
   await tile.hover()
   const frame = await source.boundingBox(),
@@ -175,4 +143,15 @@ test('copy controls stay inset at the visible square photo corner in Orders and 
   expect(frame.width - picture.width).toBeLessThanOrEqual(2)
   expect(copy.y - frame.y).toBeCloseTo(2, 0)
   expect(frame.x + frame.width - copy.x - copy.width).toBeCloseTo(2, 0)
+  await page.locator('#view-orders').click()
+  const orderTile = page.locator('#sheet-body .photo-copy-tile').first()
+  await expect(orderTile.locator('img')).toBeVisible()
+  const sourceFrame = await orderTile
+      .locator('.photo-copy-source')
+      .boundingBox(),
+    original = await orderTile.locator('img').boundingBox()
+  expect(Math.abs(sourceFrame.width - sourceFrame.height)).toBeLessThanOrEqual(
+    1
+  )
+  expect(Math.abs(original.width - original.height)).toBeLessThanOrEqual(1)
 })

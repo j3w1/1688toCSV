@@ -6,8 +6,17 @@ import {
   groupPackingMonth,
   sameCodeOwner,
   validatePreparation,
+  packingCodeSellerId,
 } from './packing-model.js'
 import { featureSignature } from './product-features.js'
+import {
+  assertRepeatCodeEligibility,
+  purchaseMonthForCodes,
+  purchaseSupplierForCodes,
+  hasReviewedSupplierCodeIdentity,
+  supplierCodeIdentityEquivalences,
+} from './purchase-codes.js'
+import { sourceRevision } from './inventory-model.js'
 
 export const SHARED_PRODUCT_EDIT_ERROR =
   'Unlink this repeat purchase before changing its shared codes, variants, size handling or label names.'
@@ -34,12 +43,9 @@ const variantFeatures = (variant, record) =>
   ].sort()
 
 /** Names can change; only a known source identity proves a shared store. */
-export function repeatProductStoreIdentity(snapshot) {
-  const spreadsheet = snapshot.sourceType === 'spreadsheet'
-  const value = spreadsheet ? snapshot.store?.key : snapshot.sellerMemberLogin
-  return typeof value === 'string' && value.trim()
-    ? JSON.stringify([spreadsheet ? 'spreadsheet' : '1688', value.trim()])
-    : null
+export function repeatProductStoreIdentity(record) {
+  const identity = purchaseSupplierForCodes(record)
+  return identity.conflict ? null : identity.storeId
 }
 
 function locate(reference, preparations, records) {
@@ -54,6 +60,14 @@ function locate(reference, preparations, records) {
     throw new Error(
       'The repeat purchase product is no longer available. Reopen it and try again.'
     )
+  try {
+    validatePreparation(preparation)
+  } catch (cause) {
+    throw new Error(
+      `The complete products must have matching variants, sizes and features. ${cause.message}`,
+      { cause }
+    )
+  }
   const ids = new Set(record.snapshot.items.map((item) => item.entryId))
   if (
     !group.variants.length ||
@@ -150,25 +164,39 @@ function matchedVariants(source, target) {
   })
 }
 
-function assertCompatible(source, target) {
+function assertCompatible(source, target, preparations, locks) {
   if (key(source.preparation) === key(target.preparation))
     throw new Error('Choose a product from another purchase order.')
-  const sourceStore = repeatProductStoreIdentity(source.record.snapshot)
-  const targetStore = repeatProductStoreIdentity(target.record.snapshot)
+  const sourceStore = repeatProductStoreIdentity(source.record)
+  const targetStore = repeatProductStoreIdentity(target.record)
   if (
     !sourceStore ||
     sourceStore !== targetStore ||
-    source.preparation.accountId !== target.preparation.accountId ||
-    source.preparation.sellerId !== target.preparation.sellerId
+    source.preparation.accountId !== target.preparation.accountId
   )
     throw new Error(
       'Repeat purchases must belong to the same known store and buyer account.'
     )
   if (
-    groupPackingMonth(source.preparation, source.group) !==
-    groupPackingMonth(target.preparation, target.group)
+    [source, target].some(
+      (value) =>
+        !hasReviewedSupplierCodeIdentity(value.record, value.preparation)
+    )
   )
-    throw new Error('Repeat purchases must use the same packing month.')
+    throw Object.assign(
+      new Error(
+        'Review the existing legacy supplier code identity before linking or assigning new codes. Issued codes and their owner remain unchanged.'
+      ),
+      { code: 'LEGACY_SUPPLIER_IDENTITY_REVIEW_REQUIRED' }
+    )
+  assertRepeatCodeEligibility({
+    references: [source, target].map((value) => ({
+      ...value.preparation,
+      groupId: value.group.id,
+    })),
+    preparations,
+    locks,
+  })
   if (source.group.sharedProductId)
     throw new Error(
       'Unlink this repeat purchase before linking it to another product.'
@@ -176,8 +204,18 @@ function assertCompatible(source, target) {
   return matchedVariants(source, target)
 }
 
-export function repeatProductCandidates({ source, preparations, records }) {
-  const selected = locate(source, preparations, records)
+export function repeatProductCandidates({
+  source,
+  preparations,
+  records,
+  locks = [],
+}) {
+  let selected
+  try {
+    selected = locate(source, preparations, records)
+  } catch {
+    return []
+  }
   const candidates = []
   for (const preparation of preparations) {
     if (key(preparation) === key(selected.preparation)) continue
@@ -189,7 +227,12 @@ export function repeatProductCandidates({ source, preparations, records }) {
       }
       try {
         const candidate = locate(reference, preparations, records)
-        const matches = assertCompatible(selected, candidate)
+        const matches = assertCompatible(
+          selected,
+          candidate,
+          preparations,
+          locks
+        )
         candidates.push({
           ...reference,
           ...describe(
@@ -303,10 +346,15 @@ export function combineRepeatCartonPacking(packings) {
 }
 
 function snapshotsFor(values) {
-  return values.map(({ record, group }) => ({
+  return values.map(({ record, group, preparation }) => ({
     accountId: record.snapshot.accountId || 'local',
     orderId: record.snapshot.orderId,
     observedAt: record.snapshot.observedAt,
+    sourceRevision: sourceRevision(record, preparation),
+    supplierIdentity: purchaseSupplierForCodes(record),
+    codeIdentityReview: structuredClone(
+      record.supplierCodeIdentityReview ?? null
+    ),
     productFeatures: Object.fromEntries(
       group.variants
         .flatMap((variant) => variant.entryIds)
@@ -324,13 +372,16 @@ export function planSharedProductLink({
   target,
   preparations,
   records,
+  locks = [],
+  allocations = [],
+  issuedCodes = [],
   newId = () => crypto.randomUUID(),
 }) {
   const from = locate(source, preparations, records)
   const to = locate(target, preparations, records)
-  const matches = assertCompatible(from, to)
+  const matches = assertCompatible(from, to, preparations, locks)
   const sharedProductId = to.group.sharedProductId || newId()
-  const sharedStoreId = repeatProductStoreIdentity(to.record.snapshot)
+  const sharedStoreId = repeatProductStoreIdentity(to.record)
   const original = structuredClone(to.preparation)
   const repeated = structuredClone(from.preparation)
   const originalGroup = original.groups.find(
@@ -347,6 +398,7 @@ export function planSharedProductLink({
       spanishName: to.group.spanishName,
       category: to.group.category,
     })
+  repeatGroup.month = groupPackingMonth(to.preparation, to.group)
   for (const variant of originalGroup.variants)
     variant.sharedVariantId ||= newId()
   for (const { source: variant, target: match } of matches) {
@@ -364,7 +416,9 @@ export function planSharedProductLink({
   const byKey = new Map(drafts.map((draft) => [key(draft), draft]))
   const final = preparations.map((draft) => byKey.get(key(draft)) || draft)
   validateSharedProducts(final, { orders: records })
-  activePackingState(final)
+  activePackingState(final, allocations, issuedCodes, {
+    supplierIdentityEquivalences: supplierCodeIdentityEquivalences(records),
+  })
   const changes = [from, to].flatMap((entry) =>
     entry.group.variants.flatMap((variant) => {
       const draft = byKey.get(key(entry.preparation))
@@ -415,12 +469,27 @@ export function planSharedProductLink({
 }
 
 /** Detachment releases only this source alias; allocation chooses a fresh free code. */
-export function planSharedProductUnlink({ source, preparations, records }) {
+export function planSharedProductUnlink({
+  source,
+  preparations,
+  records,
+  locks = [],
+}) {
   const from = locate(source, preparations, records)
+  assertRepeatCodeEligibility({ references: [source], preparations, locks })
   if (!from.group.sharedProductId)
     throw new Error('This product is not linked to another purchase.')
   const draft = structuredClone(from.preparation)
   const group = draft.groups.find((entry) => entry.id === from.group.id)
+  const month = purchaseMonthForCodes(from.record)
+  if (!month)
+    throw Object.assign(
+      new Error(
+        'Resolve the original purchase date before generating new codes.'
+      ),
+      { code: 'PURCHASE_DATE_REQUIRED' }
+    )
+  group.month = month
   delete group.sharedProductId
   delete group.sharedStoreId
   group.baseCode = ''
@@ -524,10 +593,11 @@ export function validateSharedProducts(
   const records =
     orders && new Map(orders.map((record) => [key(record.snapshot), record]))
   const identities = new Map()
+  const equivalences = supplierCodeIdentityEquivalences(orders ?? [])
   for (const preparation of preparations)
     for (const group of preparation.groups) {
       if (!group.sharedProductId) continue
-      const source = records?.get(key(preparation))?.snapshot
+      const source = records?.get(key(preparation))
       if (
         records &&
         (!source ||
@@ -542,7 +612,10 @@ export function validateSharedProducts(
         group.sharedProductId,
       ])
       const descriptor = JSON.stringify([
-        preparation.sellerId,
+        packingCodeSellerId(preparation, group, {
+          issuedCodes: issuedCodes ?? [],
+          supplierIdentityEquivalences: equivalences,
+        }),
         group.sharedStoreId,
         groupPackingMonth(preparation, group),
         group.baseCode,
@@ -558,6 +631,7 @@ export function validateSharedProducts(
         descriptor,
         variants: new Map(),
         featureVariants: new Map(),
+        sourceVariants: new Map(),
         members: new Set(),
       }
       const memberKey = key(preparation)
@@ -607,12 +681,27 @@ export function validateSharedProducts(
               'Shared repeat purchases must have matching product features.'
             )
           state.featureVariants.set(variant.sharedVariantId, signature)
+          const sourceIdentity = variantIdentity(
+            variant,
+            records.get(key(preparation)).snapshot,
+            records.get(key(preparation)).productWorkflow
+          )
+          const previousSource = state.sourceVariants.get(
+            variant.sharedVariantId
+          )
+          if (previousSource && previousSource !== sourceIdentity)
+            throw new Error(
+              'Shared repeat purchases must have matching original product variants.'
+            )
+          state.sourceVariants.set(variant.sharedVariantId, sourceIdentity)
         }
       }
       identities.set(identityKey, state)
     }
   if (issuedCodes) {
-    const expected = activePackingState(preparations).issuedCodes
+    const expected = activePackingState(preparations, [], issuedCodes, {
+      supplierIdentityEquivalences: equivalences,
+    }).issuedCodes
     for (const reservation of issuedCodes.filter(
       (entry) => entry.sharedProductId
     )) {

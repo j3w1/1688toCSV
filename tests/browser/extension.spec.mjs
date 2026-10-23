@@ -3,7 +3,7 @@ import path from 'node:path'
 import { test, expect } from './extension-fixture.mjs'
 
 const controlFor = (extension) =>
-  extension.orderPage.getByRole('complementary', { name: '1688toCSV' })
+  extension.orderPage.getByRole('complementary', { name: '1688toPL' })
 const linkFor = (extension) =>
   controlFor(extension).getByRole('link', { name: 'Download CSV', exact: true })
 
@@ -141,7 +141,7 @@ test('a nonmatching page does not receive the download control', async ({
   const unsupported = await extension.context.newPage()
   await unsupported.goto(`${extension.origin}/unsupported`)
   await expect(
-    unsupported.getByRole('complementary', { name: '1688toCSV' })
+    unsupported.getByRole('complementary', { name: '1688toPL' })
   ).toHaveCount(0)
   expect(await savedFiles(extension)).toEqual([])
   expect(extension.unexpectedRequests).toEqual([])

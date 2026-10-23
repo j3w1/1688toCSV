@@ -102,6 +102,61 @@ const selection = (entryIds = ['2']) => ({
   orders: [{ orderId: '1001', entryIds }],
 })
 
+test('month-less physical facts require complete v5 order scope and retain exact facts and tombstones', () => {
+  const { backup } = fixture()
+  backup.version = 5
+  const physical = {
+    id: 'synthetic-modern-physical',
+    accountId: 'local',
+    orderId: '1001',
+    storeId: '["1688","synthetic-seller"]',
+    groups: [],
+    contents: [{ orderId: '1001', entryId: '2', quantity: '1' }],
+    count: 1,
+    packingBasis: 'exact',
+    unresolvedContents: [],
+    len: '60',
+    wid: '50',
+    ht: '40',
+    weight: '16.75',
+    weightBasis: 'carton',
+    suppliedCbm: '',
+    volumeBasis: 'carton',
+    received: null,
+    loaded: null,
+    revision: 1,
+    updatedAt: '2026-10-03T12:00:00.000Z',
+    sourceFacts: { supplierCarton: '0007', reportedWeight: '16.75' },
+  }
+  const tombstone = {
+    ...physical,
+    id: 'synthetic-deleted-physical',
+    deletedAt: '2026-10-04T12:00:00.000Z',
+  }
+  backup.cartonBatches = [physical, tombstone]
+  for (const field of [
+    'containers',
+    'packingReports',
+    'reportSources',
+    'orderCartonDrafts',
+    'shipmentLocks',
+    'operationIntents',
+  ])
+    backup[field] = []
+  assert.throws(
+    () => createPackingBackup(backup, selection()),
+    (error) =>
+      error.code === 'PACKING_BACKUP_DEPENDENCY_REVIEW' &&
+      error.requiredOrderRefs[0].orderId === '1001'
+  )
+  const result = createPackingBackup(backup, selection(['1', '2', '3']))
+  assert.deepEqual(result.cartonBatches, [physical, tombstone])
+  assert.deepEqual(result.orders[0].snapshot, backup.orders[0].snapshot)
+  assert.equal(result.version, 5)
+  assert.equal(result.cartonBatches[0].month, undefined)
+  assert.notStrictEqual(result.cartonBatches[0], physical)
+})
+
 test('packing backups retain complete linked payment sources without adding their packing scope', () => {
   const { backup } = fixture()
   const target = backup.orders[0]
@@ -242,6 +297,24 @@ test('scoped backup retains every local original referenced by full source depen
     false
   )
   assert.deepEqual(members(scoped.preparations[0]), ['2'])
+})
+
+test('scoped backup retains cached originals for transformed thumbnails and gallery photos', () => {
+  const { backup } = fixture()
+  const item = backup.orders[0].snapshot.items[1]
+  const original = 'https://cbu01.alicdn.com/selected.jpg?_=2020'
+  const gallery = 'https://cbu01.alicdn.com/gallery.png?_=2021'
+  item.thumbnail = original.replace('.jpg?', '.jpg_250x250.jpg?')
+  item.photos = [gallery.replace('.png?', '.png_300x300q90.jpg_.webp?')]
+  const cached = [original, gallery].map((url) => ({
+    url,
+    dataUrl: 'data:image/png;base64,AAAA',
+    storedAt: backup.exportedAt,
+  }))
+  backup.images.push(...cached)
+  const scoped = createPackingBackup(backup, selection())
+  assert.deepEqual(scoped.images, cached)
+  assert.doesNotThrow(() => validateBackup(scoped))
 })
 
 test('packing backup contains only selected prepared products and checkpoints, with full money dependencies', () => {
@@ -724,6 +797,221 @@ test('same-time preparation completion accepts exact subsets but rejects changed
   assert.equal(isPackingPreparationSubset(partial, preparation), false)
 })
 
+test('same-time disjoint monthly preparations complete missing groups and every checkpoint in either restore order', () => {
+  const { preparation } = fixture()
+  for (const checkpoint of [
+    preparation,
+    preparation.defaultPacking,
+    preparation.previousPacking,
+    preparation.previousPacking.defaults,
+  ]) {
+    checkpoint.groups[1].month = '2026-11'
+    checkpoint.groups[1].baseCode = checkpoint.groups[1].baseCode.replace(
+      'CE2610',
+      'CE2611'
+    )
+  }
+  for (const [firstIds, secondIds] of [
+    [['1', '2'], ['3']],
+    [['3'], ['1', '2']],
+    [['1'], ['2']],
+  ]) {
+    const first = selectPackingPreparation(preparation, firstIds)
+    const second = selectPackingPreparation(preparation, secondIds)
+    const before = structuredClone(first)
+    const merged = mergePackingPreparation(first, second, secondIds)
+    const expected = [...firstIds, ...secondIds].sort()
+    for (const checkpoint of [
+      merged,
+      merged.defaultPacking,
+      merged.previousPacking,
+      merged.previousPacking.defaults,
+    ])
+      assert.deepEqual(members(checkpoint).sort(), expected)
+    assert.equal(merged.updatedAt, preparation.updatedAt)
+    assert.equal(merged.revision, first.revision + 1)
+    assert.equal(mergePackingPreparation(merged, first, firstIds), merged)
+    assert.equal(mergePackingPreparation(merged, second, secondIds), merged)
+    assert.deepEqual(first, before)
+  }
+})
+
+test('same-time completion rejects overlapping product, shared group and checkpoint contradictions', () => {
+  const { preparation } = fixture()
+  const first = selectPackingPreparation(preparation, ['1', '2'])
+  const incoming = selectPackingPreparation(preparation, ['2', '3'])
+  assert.deepEqual(
+    members(mergePackingPreparation(first, incoming, ['2', '3'])),
+    ['1', '2', '3']
+  )
+  for (const change of [
+    (value) => (value.groups[0].variants[0].variant = 'Changed overlap'),
+    (value) => (value.defaultPacking.groups[0].spanishName = 'Changed reset'),
+    (value) =>
+      (value.previousPacking.defaults.groups[0].baseCode = 'CE26100199'),
+  ]) {
+    const conflicting = structuredClone(incoming)
+    change(conflicting)
+    assert.throws(
+      () => mergePackingPreparation(first, conflicting, ['2', '3']),
+      /same timestamp/
+    )
+  }
+  const disjoint = selectPackingPreparation(preparation, ['1'])
+  const contradictoryGroup = selectPackingPreparation(preparation, ['2'])
+  contradictoryGroup.groups[0].spanishName = 'Contradictory group'
+  assert.throws(
+    () => mergePackingPreparation(disjoint, contradictoryGroup, ['2']),
+    /Restore the whole group/
+  )
+})
+
+test('reverse same-time scope composition accepts the unchanged complete ordering at every level', () => {
+  const checkpoints = (value) =>
+    [
+      value,
+      value.defaultPacking,
+      value.previousPacking,
+      value.previousPacking?.defaults,
+    ].filter(Boolean)
+  const layout = (value) =>
+    value.groups.map((group) => ({
+      id: group.id,
+      variants: group.variants.map((variant) => ({
+        id: variant.id,
+        entryIds: variant.entryIds,
+      })),
+    }))
+  for (const sharedEntries of [false, true]) {
+    const { preparation } = fixture()
+    if (sharedEntries)
+      for (const checkpoint of checkpoints(preparation))
+        checkpoint.groups[0].variants = [
+          { ...checkpoint.groups[0].variants[0], entryIds: ['1', '2'] },
+        ]
+    for (const [firstIds, secondIds] of [
+      [['3'], ['1', '2']],
+      [['2'], ['1']],
+    ]) {
+      const first = selectPackingPreparation(preparation, firstIds)
+      const second = selectPackingPreparation(preparation, secondIds)
+      const composed = mergePackingPreparation(first, second, secondIds)
+      const restored = mergePackingPreparation(composed, preparation, [
+        '1',
+        '2',
+        '3',
+      ])
+      for (const [index, checkpoint] of checkpoints(restored).entries()) {
+        assert.deepEqual(
+          layout(checkpoint),
+          layout(checkpoints(preparation)[index])
+        )
+        assert.equal(checkpoint.restoreScopes, undefined)
+      }
+      assert.equal(
+        mergePackingPreparation(restored, preparation, ['1', '2', '3']),
+        restored
+      )
+    }
+  }
+})
+
+test('same-time composition preserves known overlapping group, variant and source-row order', () => {
+  const { preparation } = fixture()
+  const checkpoints = (value) => [
+    value,
+    value.defaultPacking,
+    value.previousPacking,
+    value.previousPacking.defaults,
+  ]
+  for (const [firstIds, secondIds, change] of [
+    [['1', '3'], ['2'], (value) => value.groups.reverse()],
+    [['1', '2'], ['3'], (value) => value.groups[0].variants.reverse()],
+  ]) {
+    const composed = mergePackingPreparation(
+      selectPackingPreparation(preparation, firstIds),
+      selectPackingPreparation(preparation, secondIds),
+      secondIds
+    )
+    for (let index = 0; index < 4; index++) {
+      const conflicting = structuredClone(preparation)
+      change(checkpoints(conflicting)[index])
+      assert.throws(
+        () => mergePackingPreparation(composed, conflicting, ['1', '2', '3']),
+        /same timestamp/
+      )
+    }
+  }
+  for (const checkpoint of checkpoints(preparation))
+    checkpoint.groups[0].variants = [
+      { ...checkpoint.groups[0].variants[0], entryIds: ['1', '2'] },
+    ]
+  const composed = mergePackingPreparation(
+    selectPackingPreparation(preparation, ['1', '2']),
+    selectPackingPreparation(preparation, ['3']),
+    ['3']
+  )
+  const conflicting = structuredClone(preparation)
+  conflicting.groups[0].variants[0].entryIds.reverse()
+  assert.throws(
+    () => mergePackingPreparation(composed, conflicting, ['1', '2', '3']),
+    /same timestamp/
+  )
+})
+
+test('same-time checkpoint conflicts are checked for checkpoint-only rows independently of active membership', () => {
+  const { preparation } = fixture()
+  const previous = selectPackingPreparation(preparation, ['1'])
+  previous.defaultPacking = structuredClone(preparation.defaultPacking)
+  previous.previousPacking = structuredClone(preparation.previousPacking)
+  for (const field of ['defaultPacking', 'previousPacking', 'defaults']) {
+    const incoming = selectPackingPreparation(preparation, ['2'])
+    const checkpoint =
+      field === 'defaults' ? incoming.previousPacking.defaults : incoming[field]
+    checkpoint.groups[0].spanishName = 'CONTRADICTORY DEFAULT'
+    assert.doesNotThrow(() => validatePreparation(previous))
+    assert.doesNotThrow(() => validatePreparation(incoming))
+    assert.throws(
+      () => mergePackingPreparation(previous, incoming, ['2']),
+      /same timestamp/
+    )
+  }
+})
+
+test('restore order provenance validates retained coverage and is clipped without unselected IDs', () => {
+  const { preparation } = fixture()
+  const composed = mergePackingPreparation(
+    selectPackingPreparation(preparation, ['3']),
+    selectPackingPreparation(preparation, ['1', '2']),
+    ['1', '2']
+  )
+  assert.deepEqual(composed.restoreScopes, [['3'], ['1', '2']])
+  assert.deepEqual(
+    validatePreparation(composed).restoreScopes,
+    composed.restoreScopes
+  )
+  const selected = selectPackingPreparation(composed, ['1', '3'])
+  assert.deepEqual(selected.restoreScopes, [['3'], ['1']])
+  for (const restoreScopes of [
+    [['1']],
+    [['1', '2', '3', '4']],
+    [
+      ['1', '1'],
+      ['2', '3'],
+    ],
+    [
+      ['1', '2', '3'],
+      ['3', '2', '1'],
+    ],
+    Array.from({ length: 10 }, () => ['1']),
+  ]) {
+    assert.throws(
+      () => validatePreparation({ ...composed, restoreScopes }),
+      /restore scope evidence/
+    )
+  }
+})
+
 test('an empty backup selection never means all products', () => {
   const { backup } = fixture()
   assert.throws(
@@ -994,4 +1282,59 @@ test('legacy scoped backups retain complete scoped orders and history without im
     assert.equal(record.snapshot.totals.payable, '30.00')
   }
   assert.deepEqual(members(scoped.preparations[0]), ['2'])
+})
+
+test('known-month physical batches without reports or containers require complete-order scope and preserve physical history', () => {
+  const { backup } = fixture()
+  backup.version = 5
+  for (const field of [
+    'containers',
+    'packingReports',
+    'reportSources',
+    'orderCartonDrafts',
+    'shipmentLocks',
+    'operationIntents',
+  ])
+    backup[field] = []
+  backup.cartonBatches = [
+    {
+      id: 'known-month-evidence',
+      accountId: 'local',
+      orderId: '1001',
+      month: '2026-10',
+      storeId: '["1688","synthetic-seller"]',
+      groups: [
+        { orderId: '1001', groupId: backup.preparations[0].groups[0].id },
+      ],
+      contents: [{ orderId: '1001', entryId: '1', quantity: '1' }],
+      count: 1,
+      packingBasis: 'exact',
+      unresolvedContents: [],
+      len: '40',
+      wid: '30',
+      ht: '25',
+      weight: '12.2504',
+      weightBasis: 'carton',
+      suppliedCbm: '',
+      volumeBasis: 'carton',
+      received: 1,
+      loaded: 0,
+      revision: 1,
+      updatedAt: '2026-10-03T12:00:00.000Z',
+      sourceFacts: { originalCarton: '0001' },
+      cartonHistory: [{ id: 'actual-original', weight: '0' }],
+    },
+  ]
+  assert.throws(() => createPackingBackup(backup, selection(['1'])), {
+    code: 'PACKING_BACKUP_DEPENDENCY_REVIEW',
+  })
+  const result = createPackingBackup(backup, selection(['1', '2', '3']))
+  assert.deepEqual(result.requestedPackingScope.orders, [
+    { accountId: 'local', orderId: '1001', entryIds: ['1', '2', '3'] },
+  ])
+  assert.deepEqual(result.dependencyOrderRefs, [])
+  assert.deepEqual(result.cartonBatches, backup.cartonBatches)
+  assert.deepEqual(result.orders, backup.orders)
+  assert.deepEqual(result.images, backup.images)
+  assert.equal(result.packingScope, undefined)
 })

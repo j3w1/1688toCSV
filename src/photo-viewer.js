@@ -48,6 +48,8 @@ export function createPhotoViewer(
       index = gallery.findIndex(
         (entry) =>
           entry.orderId === item.orderId &&
+          (entry.accountId || entry.record?.accountId || 'local') ===
+            (item.accountId || item.record?.accountId || 'local') &&
           entry.entryId === item.entryId &&
           entry.photoIndex === photoIndex
       )
@@ -103,6 +105,8 @@ export function createPhotoViewer(
       draftEdit = { ...DEFAULT_PHOTO_EDIT }
     let savingPhoto = false,
       recognizedSize = ''
+    status.id = `photo-viewer-status-${crypto.randomUUID()}`
+    close.setAttribute('aria-describedby', status.id)
     addSizeTag.type = 'button'
     addSizeTag.dataset.action = 'add-size-tag'
     sizeTagControl.append(addSizeTag)
@@ -123,6 +127,7 @@ export function createPhotoViewer(
         (saved?.tags?.length || 0) >= 50
       sizeTagControl.tabIndex = addSizeTag.disabled ? 0 : -1
       editButton.disabled = !ready || !originalData || savingPhoto
+      close.disabled = savingPhoto
       bindText(
         addSizeTag,
         recognizedSize
@@ -309,6 +314,7 @@ export function createPhotoViewer(
     async function savePhotoEdit(edit, message) {
       if (savingPhoto || !originalData || !onEdit || !ready) return
       savingPhoto = true
+      bindText(status, uiMessage('Saving…'))
       const selected = gallery[index],
         version = loadVersion,
         sourceData = originalData

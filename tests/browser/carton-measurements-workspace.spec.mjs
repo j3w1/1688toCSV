@@ -1,4 +1,9 @@
 import { test, expect } from './extension-fixture.mjs'
+import {
+  openOrderReconciliation,
+  realOrderContext,
+  createContainerThroughUI,
+} from './smart-workspace-helpers.mjs'
 import { createDemoRecords } from '../../preview/library-fixture.js'
 import {
   createPreparation,
@@ -111,218 +116,156 @@ async function backup(extension) {
   expect(result.ok, result.error).toBe(true)
   return result.data
 }
-const kg = (row) =>
-  row.getByRole('textbox', { name: 'Weight (kg/box)', exact: true })
-async function commit(input, value) {
-  await input.fill(value)
-  await input.press('Enter')
-  await expect(input.locator('..')).toHaveAttribute('data-state', 'saved')
+const refFor = (record) => ({
+  accountId: record.accountId || record.snapshot.accountId || 'local',
+  orderId: record.snapshot.orderId,
+})
+const physicalRow = (grid) =>
+  grid.locator('tr[data-grid-key="synthetic-measurement-cartons"]')
+const cell = (grid, column) =>
+  physicalRow(grid).locator(`[data-grid-column="${column}"]`)
+async function stage(grid, column, value) {
+  await cell(grid, column).fill(value)
+  await cell(grid, column).blur()
 }
-async function prepare(page) {
-  await page.locator('#select-rows').click()
-  await page.locator('#prepare-orders').click()
-  const packing = page.locator('#packing-view')
-  const review = page.getByRole('dialog', {
-    name: 'Assign product codes?',
-    exact: true,
-  })
+async function confirm(grid, extension, ref, check) {
+  await grid.locator('[data-action="confirm-order-cartons"]').click()
   await expect
-    .poll(async () => (await packing.isVisible()) || (await review.isVisible()))
+    .poll(async () =>
+      check(
+        (await realOrderContext(extension, ref)).batches.find(
+          (batch) => batch.id === 'synthetic-measurement-cartons'
+        )
+      )
+    )
     .toBe(true)
-  if (await review.isVisible())
-    await review
-      .getByRole('button', { name: 'Assign codes and prepare', exact: true })
-      .click()
-  await expect(packing).toBeVisible()
-  return packing
-}
-async function openBatch(page, packing) {
-  await packing.locator('.packing-group-cartons-edit').first().click()
-  const dialog = page.getByRole('dialog', {
-    name: 'Carton batches',
-    exact: true,
-  })
-  await expect(dialog).toBeVisible()
-  return dialog
-}
-const batchValue = (dialog, key) => dialog.locator(`input[name="${key}"]`)
-async function saveBatch(dialog, key, value) {
-  await batchValue(dialog, key).fill(value)
-  await dialog
-    .getByRole('button', { name: 'Save carton details', exact: true })
-    .click()
-  await expect(dialog.locator('.carton-batch-status')).toHaveText('Saved')
-  await dialog.getByRole('button', { name: 'Done', exact: true }).click()
-  await expect(dialog).toHaveCount(0)
 }
 
-test('Orders keeps compact kg editing while CBM opens XYZ and never replaces dimensions with a volume field', async ({
+test('Orders stages exact physical dimensions and zero/unknown weight separately while retaining supplied volume and source annotations', async ({
   extension,
 }) => {
-  const { page, rows, record } = await seed(extension),
-    first = rows.first()
-  await expect(kg(first)).toHaveValue('20.5')
-  await expect(
-    first.getByRole('textbox', { name: 'Volume (m³/box)', exact: true })
-  ).toHaveCount(0)
-  await expect(
-    first.getByRole('button', { name: 'Edit carton dimensions', exact: true })
-  ).toHaveText('0.105 m³')
-  const bounds = await kg(first).boundingBox()
-  expect(bounds.height).toBe(23)
-  expect(bounds.width).toBeLessThanOrEqual(70)
-  await commit(kg(first), '025,2500')
-  let saved = await backup(extension)
-  expect(
-    saved.orders[0].cartonDetails[record.snapshot.items[0].entryId]
-  ).toEqual({ kg: '25.25', cbm: '0.21', len: '70', wid: '50', ht: '30' })
-  await first
-    .getByRole('button', { name: 'Edit carton dimensions', exact: true })
-    .click()
-  const details = page.getByRole('dialog', {
-      name: 'Original product details',
-      exact: true,
-    }),
-    panel = details.locator('.product-carton-details')
-  await expect(panel.locator('input[name="cbm"]')).toHaveCount(0)
-  await panel.locator('input[name="len"]').fill('80,125')
-  await panel
-    .getByRole('button', { name: 'Save carton details', exact: true })
-    .click()
-  await expect(panel.locator('.product-carton-status')).toHaveText('Saved')
-  await expect(panel.locator('.product-carton-volume-value')).toHaveText(
-    '0.1201875'
+  const { page, record } = await seed(extension, { physical: true }),
+    ref = refFor(record),
+    before = await backup(extension),
+    grid = await openOrderReconciliation(page, ref, 'cartons')
+  await expect(cell(grid, 'weight')).toHaveValue('20.5')
+  await expect(cell(grid, 'dimensions')).toHaveValue('70×50×30')
+  await expect(cell(grid, 'suppliedCbm')).toHaveValue('0.21')
+  await stage(grid, 'weight', '025,2500')
+  await stage(grid, 'dimensions', '80,125 × 50 × 30')
+  const warning = grid.locator('[data-issue-code="volume-discrepancy"]')
+  await expect(warning).toHaveAttribute('data-issue-severity', 'warning')
+  await expect(warning).toContainText('Measured volume 0.48075 m³ is used')
+  await expect(warning).toContainText(
+    'supplied volume 0.84 m³ remains recorded'
   )
-  await details
-    .getByRole('button', { name: 'Close product details', exact: true })
-    .click()
-  await expect(details).toHaveCount(0)
-  saved = await backup(extension)
+  await expect(warning).toContainText('0.21 m³ · Per carton · 4 cartons')
+  expect((await backup(extension)).cartonBatches).toEqual(before.cartonBatches)
+  await confirm(
+    grid,
+    extension,
+    ref,
+    (batch) => batch.weight === '25.25' && batch.len === '80.125'
+  )
+  let saved = await backup(extension),
+    batch = saved.cartonBatches.find(
+      (batch) => batch.id === 'synthetic-measurement-cartons'
+    )
+  expect(batch).toMatchObject({
+    weight: '25.25',
+    suppliedCbm: '0.21',
+    len: '80.125',
+    wid: '50',
+    ht: '30',
+    count: 4,
+  })
+  expect(((80.125 * 50 * 30) / 1000000).toString()).toBe('0.1201875')
+  expect(saved.orders[0].cartonDetails).toEqual(before.orders[0].cartonDetails)
+  expect(saved.orders[0].snapshot).toEqual(record.snapshot)
+  await cell(grid, 'weight').fill('-')
+  await cell(grid, 'weight').blur()
+  await expect(cell(grid, 'weight')).toHaveAttribute('aria-invalid', 'true')
   expect(
-    saved.orders[0].cartonDetails[record.snapshot.items[0].entryId]
-  ).toEqual({ kg: '25.25', cbm: '0.21', len: '80.125', wid: '50', ht: '30' })
-  await kg(first).fill('-')
-  await kg(first).blur()
-  await expect(kg(first)).toHaveAttribute('aria-invalid', 'true')
-  expect(
-    (await backup(extension)).orders[0].cartonDetails[
-      record.snapshot.items[0].entryId
-    ].kg
+    (await backup(extension)).cartonBatches.find(
+      (entry) => entry.id === batch.id
+    ).weight
   ).toBe('25.25')
-  await commit(kg(first), '0')
+  await stage(grid, 'weight', '0')
+  await confirm(grid, extension, ref, (batch) => batch.weight === '0')
   await page.reload()
-  await expect(kg(rows.first())).toHaveValue('0')
-  await expect(
-    rows
-      .first()
-      .getByRole('button', { name: 'Edit carton dimensions', exact: true })
-  ).toHaveText('0.1201875 m³')
-  await commit(kg(rows.first()), '')
-  await page.reload()
-  await expect(kg(rows.first())).toHaveValue('')
-  await expect(rows.first().locator('.carton-measurement-unit')).toBeHidden()
+  const refreshed = await openOrderReconciliation(page, ref, 'cartons')
+  await expect(cell(refreshed, 'weight')).toHaveValue('0')
+  await stage(refreshed, 'weight', '')
+  await confirm(refreshed, extension, ref, (batch) => batch.weight === '')
+  await expect(cell(refreshed, 'weight')).toHaveValue('')
+  expect((await backup(extension)).orders[0].cartonDetails).toEqual(
+    before.orders[0].cartonDetails
+  )
+  await createContainerThroughUI(
+    page,
+    [ref],
+    'Synthetic measured-volume review'
+  )
+  const packing = page.locator('#packing-view')
+  await packing.locator('[data-action="mark-all-loaded"]').click()
+  await packing.locator('[data-action="review-container-seal"]').click()
+  const review = page.locator('.container-review-dialog'),
+    sealWarning = review.locator('[data-issue-code="volume-discrepancy"]')
+  await expect(sealWarning).toContainText('Measured volume 0.48075 m³ is used')
+  await expect(sealWarning).toContainText(
+    'supplied volume 0.84 m³ remains recorded'
+  )
+  await expect(sealWarning).toContainText('0.21 m³ · Per carton · 4 cartons')
+  await expect(review.locator('[data-action="seal-container"]')).toBeEnabled()
+  await review.getByRole('button', { name: 'Cancel', exact: true }).click()
 })
 
-test('prepared measurement changes travel through batch history without losing exact dimensions or supplier volume', async ({
+test('physical measurement edits form one order draft with Undo/Redo before a single confirm and retain exact decimals/history', async ({
   extension,
 }) => {
-  const { page } = await seed(extension, { physical: true }),
-    packing = await prepare(page)
-  let dialog = await openBatch(page, packing)
-  await expect(batchValue(dialog, 'weight')).toHaveValue('20.5')
-  await expect(dialog.locator('.product-carton-supplied')).toContainText(
-    '0.21 m³'
-  )
-  await saveBatch(dialog, 'weight', '30,750000000000000001')
-  let saved = await backup(extension)
-  expect(saved.cartonBatches[0].weight).toBe('30.750000000000000001')
-  dialog = await openBatch(page, packing)
-  await saveBatch(dialog, 'ht', '40')
-  saved = await backup(extension)
-  expect(saved.cartonBatches[0]).toMatchObject({
+  const { page, record } = await seed(extension, { physical: true }),
+    ref = refFor(record),
+    before = await backup(extension),
+    grid = await openOrderReconciliation(page, ref, 'cartons')
+  await stage(grid, 'weight', '30,750000000000000001')
+  await stage(grid, 'dimensions', '70 × 50 × 40')
+  await grid.locator('[data-action="undo-order-cartons"]').click()
+  await expect(cell(grid, 'dimensions')).toHaveValue('70×50×30')
+  await expect(cell(grid, 'weight')).toHaveValue('30,750000000000000001')
+  await grid.locator('[data-action="redo-order-cartons"]').click()
+  await expect(cell(grid, 'dimensions')).toHaveValue('70 × 50 × 40')
+  expect((await backup(extension)).cartonBatches).toEqual(before.cartonBatches)
+  await confirm(grid, extension, ref, (batch) => batch.ht === '40')
+  const after = await backup(extension),
+    batch = after.cartonBatches[0]
+  expect(batch).toMatchObject({
+    id: before.cartonBatches[0].id,
     weight: '30.750000000000000001',
     len: '70',
     wid: '50',
     ht: '40',
     suppliedCbm: '0.21',
+    count: 4,
   })
-  await packing.getByRole('button', { name: 'Undo', exact: true }).click()
-  await expect
-    .poll(async () => (await backup(extension)).cartonBatches[0].ht)
-    .toBe('30')
-  expect((await backup(extension)).cartonBatches[0].weight).toBe(
-    '30.750000000000000001'
+  expect(batch.contents).toEqual(before.cartonBatches[0].contents)
+  expect(batch.cartonHistory).toContainEqual(
+    expect.objectContaining({ weight: '20.5', ht: '30', suppliedCbm: '0.21' })
   )
-  await packing.getByRole('button', { name: 'Redo', exact: true }).click()
-  await expect
-    .poll(async () => (await backup(extension)).cartonBatches[0].ht)
-    .toBe('40')
-  const first = packing.locator('tr[data-variant-id]').first()
-  await expect(first.locator('.variant-code-design')).toHaveCSS(
-    '--ce-code-size',
-    '16px'
+  expect(after.orders).toEqual(before.orders)
+  await expect(grid.locator('[data-column="count"] input')).toHaveCount(0)
+  await expect(grid.locator('[data-column="weightBasis"]')).toContainText(
+    'Per carton'
   )
-  await expect(packing.locator('.packing-group-cartons')).toHaveCount(1)
-  await expect(packing.locator('.packing-carton-chip')).toHaveCount(1)
-  await expect(packing.locator('.packing-carton-chip')).toContainText(
-    '70 × 50 × 40 cm'
-  )
-  dialog = await openBatch(page, packing)
-  await expect(dialog.locator('.carton-batch-summary')).toContainText('0.14 m³')
-  await expect(dialog.locator('.product-carton-supplied')).toContainText(
-    '0.21 m³'
-  )
-  await dialog.getByRole('button', { name: 'Done', exact: true }).click()
-  await expect(first.locator('.variant-numeric-header')).toHaveText(
-    'QuantityPcs/box'
-  )
-  await expect(
-    first.getByRole('textbox', { name: 'Volume (m³/box)', exact: true })
-  ).toHaveCount(0)
 })
 
-test('prepared tables keep carton data once per group and compact product quantity/capacity at every viewport width', async ({
+test('one physical measurement row stays inside its own scroll surface at wide/narrow widths and product totals remain read-only', async ({
   extension,
 }) => {
-  const { page } = await seed(extension, { physical: true }),
-    packing = await prepare(page),
-    rows = packing.locator('tr[data-variant-id]')
-  await expect(packing.locator('.packing-group-cartons')).toHaveCount(1)
-  await expect(packing.locator('.packing-carton-chip')).toHaveCount(1)
-  await expect(packing.locator('.packing-carton-chip')).toContainText(
-    '70 × 50 × 30 cm'
-  )
-  await expect(rows.first().locator('.variant-numeric-header')).toHaveText(
-    'QuantityPcs/box'
-  )
+  const { page, record } = await seed(extension, { physical: true }),
+    grid = await openOrderReconciliation(page, refFor(record), 'cartons')
+  await expect(grid.locator('tr[data-grid-key]')).toHaveCount(1)
   for (const width of [1440, 1000, 390]) {
     await page.setViewportSize({ width, height: 1000 })
-    for (const [row, capacity] of [
-      [
-        rows.first(),
-        rows.first().getByRole('spinbutton', { name: 'Pcs/box', exact: true }),
-      ],
-      [
-        rows.nth(1),
-        rows.nth(1).getByRole('spinbutton', { name: 'Pcs/box', exact: true }),
-      ],
-    ]) {
-      await expect(capacity).toBeEditable()
-      await expect(
-        row.getByRole('textbox', { name: 'Volume (m³/box)', exact: true })
-      ).toHaveCount(0)
-      await expect(row.locator('.carton-measurement')).toHaveCount(0)
-      const columns = await row.locator('.variant-carton-columns').boundingBox()
-      for (const readout of [row.locator('.variant-quantity'), capacity]) {
-        await expect(readout).toBeVisible()
-        const bounds = await readout.boundingBox()
-        expect(bounds.height).toBeLessThanOrEqual(32)
-        expect(bounds.x + bounds.width).toBeLessThanOrEqual(
-          columns.x + columns.width + 1
-        )
-      }
-    }
-    await expect(packing.locator('.packing-group-cartons-edit')).toBeVisible()
     expect(
       await page.evaluate(
         () =>
@@ -330,65 +273,124 @@ test('prepared tables keep carton data once per group and compact product quanti
           document.documentElement.clientWidth
       )
     ).toBeLessThanOrEqual(1)
+    const scroll = await grid.locator('.smart-grid-scroll').boundingBox()
+    expect(scroll.x).toBeGreaterThanOrEqual(0)
+    expect(scroll.x + scroll.width).toBeLessThanOrEqual(width)
+    await expect(cell(grid, 'weight')).toBeEditable()
+    await expect(grid.locator('[data-column="count"] input')).toHaveCount(0)
+    await expect(
+      grid.locator('[data-action="confirm-order-cartons"]')
+    ).toBeVisible()
   }
+  await grid.locator('[data-action="reconciliation-products"]').click()
+  await expect(
+    grid.locator(
+      '[data-column="purchased"] input,[data-column="available"] input,[data-column="unassigned"] input'
+    )
+  ).toHaveCount(0)
+  await expect(grid.locator('input[data-grid-column="weight"]')).toHaveCount(0)
+  await expect(grid.locator('[data-column="pattern"]').first()).toContainText(
+    'per-carton contents unknown'
+  )
+  await expect(grid.locator('[data-column="code"] .ce-code').first()).toHaveCSS(
+    '--ce-code-size',
+    '16px'
+  )
 })
 
-test('an invalid Orders measurement survives broadcasts and cannot overwrite another tab’s newer value', async ({
+test('invalid physical input survives a broadcast/reload while another tab confirms a newer value; stale correction cannot overwrite it', async ({
   extension,
 }) => {
-  const { page, rows, record } = await seed(extension),
-    draft = kg(rows.first())
-  await draft.fill('-')
+  const { page, record } = await seed(extension, { physical: true }),
+    ref = refFor(record),
+    grid = await openOrderReconciliation(page, ref, 'cartons')
+  await cell(grid, 'weight').fill('-')
+  await expect
+    .poll(async () =>
+      JSON.stringify((await realOrderContext(extension, ref)).draft)
+    )
+    .toContain('-')
   const other = await extension.context.newPage()
-  await other.clock.setFixedTime(new Date('2026-10-15T04:00:00Z'))
-  await other.goto(`${extension.extensionBaseUrl}/library.html`)
-  await commit(
-    kg(other.locator('#sheet-body tr[data-selection-key]').first()),
-    '6'
+  await other.goto(`${extension.extensionBaseUrl}/inspector.html`)
+  await other.evaluate(async (ref) => {
+    const repository = await window.testRepository,
+      current = await repository.getOrderReconciliation(ref),
+      batch = current.batches[0]
+    await repository.saveOrderCartonFacts({
+      ...ref,
+      changes: [
+        { after: { ...batch, weight: '6' }, expectedRevision: batch.revision },
+      ],
+      expectedRevisions: current.revisions,
+      intentId: crypto.randomUUID(),
+    })
+  }, ref)
+  await expect(cell(grid, 'weight')).toHaveValue('-')
+  await stage(grid, 'weight', '5')
+  await grid.locator('[data-action="confirm-order-cartons"]').click()
+  await expect(page.locator('.error-notice')).toBeVisible()
+  await expect(cell(grid, 'weight')).toHaveValue('5')
+  expect((await realOrderContext(extension, ref)).batches[0].weight).toBe('6')
+  expect((await realOrderContext(extension, ref)).record.snapshot).toEqual(
+    record.snapshot
   )
-  await commit(
-    kg(other.locator('#sheet-body tr[data-selection-key]').nth(1)),
-    '7'
-  )
-  await expect(kg(rows.nth(1))).toHaveValue('7')
-  await expect(draft).toHaveValue('-')
-  await draft.fill('5')
-  await draft.press('Enter')
-  await expect(draft.locator('..')).toHaveAttribute('data-state', 'error')
-  await expect(draft.locator('..')).toContainText('changed in another tab')
-  expect(
-    (await backup(extension)).orders[0].cartonDetails[
-      record.snapshot.items[0].entryId
-    ].kg
-  ).toBe('6')
-})
-
-test('a batch editor retains its stale draft and rejects overwriting a newer physical measurement from another tab', async ({
-  extension,
-}) => {
-  const { page } = await seed(extension, { physical: true }),
-    packing = await prepare(page),
-    dialog = await openBatch(page, packing)
-  await batchValue(dialog, 'weight').fill('-')
-  const other = await extension.context.newPage()
-  await other.clock.setFixedTime(new Date('2026-10-15T04:00:00Z'))
-  await other.goto(`${extension.extensionBaseUrl}/library.html`)
-  await expect(other.locator('#sheet-body tr[data-selection-key]')).toHaveCount(
-    3
-  )
-  await expect(other.locator('#prepare-orders')).toBeEnabled()
-  await other.locator('#view-packing').click()
-  const otherPacking = other.locator('#packing-view'),
-    otherDialog = await openBatch(other, otherPacking)
-  await saveBatch(otherDialog, 'weight', '6')
-  await expect(batchValue(dialog, 'weight')).toHaveValue('-')
-  await batchValue(dialog, 'weight').fill('5')
-  await dialog
-    .getByRole('button', { name: 'Save carton details', exact: true })
+  await page.reload()
+  const recoveredGrid = await openOrderReconciliation(page, ref, 'cartons')
+  await expect(cell(recoveredGrid, 'weight')).toHaveValue('6')
+  await recoveredGrid
+    .locator('[data-action="review-recovered-carton-draft"]')
     .click()
-  await expect(dialog.locator('.carton-batch-status')).toContainText(
-    'changed in another tab'
-  )
-  await expect(batchValue(dialog, 'weight')).toHaveValue('5')
+  const review = page.locator('.packing-change-dialog')
+  await expect(review).toContainText('earlier order revision or amendment')
+  await expect(review).toContainText('5')
+  expect((await realOrderContext(extension, ref)).batches[0].weight).toBe('6')
+  await review
+    .getByRole('button', { name: 'Keep saved version', exact: true })
+    .click()
+  await expect(review).toBeHidden()
+  await expect(cell(recoveredGrid, 'weight')).toHaveValue('6')
+})
+
+test('an exceptional unit uses a retained entitlement, leaves untouched combined facts unknown and rejects a newer physical revision', async ({
+  extension,
+}) => {
+  const { page, record } = await seed(extension, { physical: true }),
+    ref = refFor(record),
+    grid = await openOrderReconciliation(page, ref, 'cartons')
+  await physicalRow(grid).locator('[data-column="label"]').click()
+  const details = page.locator('[data-action="inspect-order-carton"]')
+  await details
+    .locator('[data-action="choose-carton-entitlement"]')
+    .selectOption('1')
+  await expect(
+    details.locator('.carton-unit-exception input[data-entry-id]').first()
+  ).toHaveValue('')
+  const weight = details.locator('[data-unit-measurement="weight"]')
+  await weight.fill('7.125')
+  await details.getByRole('button', { name: 'Close', exact: true }).click()
+  await details.waitFor({ state: 'hidden' })
+  expect((await backup(extension)).cartonBatches[0].weight).toBe('20.5')
+  const current = await realOrderContext(extension, ref)
+  expect(JSON.stringify(current.draft)).toContain('7.125')
+  const other = await extension.context.newPage()
+  await other.goto(`${extension.extensionBaseUrl}/inspector.html`)
+  await other.evaluate(async (ref) => {
+    const repository = await window.testRepository,
+      current = await repository.getOrderReconciliation(ref),
+      batch = current.batches[0]
+    await repository.saveOrderCartonFacts({
+      ...ref,
+      changes: [
+        { after: { ...batch, weight: '6' }, expectedRevision: batch.revision },
+      ],
+      expectedRevisions: current.revisions,
+      intentId: crypto.randomUUID(),
+    })
+  }, ref)
+  await grid.locator('[data-action="confirm-order-cartons"]').click()
+  await expect(page.locator('.error-notice')).toBeVisible()
   expect((await backup(extension)).cartonBatches[0].weight).toBe('6')
+  expect(
+    JSON.stringify((await realOrderContext(extension, ref)).draft)
+  ).toContain('7.125')
 })

@@ -10,6 +10,7 @@ function snapshot() {
     sellerName: 'Synthetic partial annotations',
     sellerMemberLogin: 'synthetic-partial-annotations',
     status: 'Completed',
+    purchasedAt: '2026-10-01T12:00:00+08:00',
     observedAt: '2026-10-01T12:00:00.000Z',
     items: ['Cup', 'Bowl', 'Plate'].map((title, index) => ({
       entryId: String(index + 1),
@@ -154,12 +155,40 @@ test('fresh packing restore keeps assigned tag colors and completes same-time so
       result.full.packingPreferences.value.appearance.paletteRevision,
   })
   expect(result.completed.orders).toEqual(result.full.orders)
+  // Joining a month-scoped restore materializes inherited group months in
+  // current preparation and its checkpoints. Assert the full normalized data.
+  const explicitMonths = (checkpoint) => ({
+    ...checkpoint,
+    groups: checkpoint.groups.map((group) => ({
+      ...group,
+      month: group.month ?? checkpoint.month,
+    })),
+  })
   expect(result.completed.preparations).toEqual(
     result.full.preparations.map((preparation) => ({
-      ...preparation,
+      ...explicitMonths(preparation),
+      defaultPacking: explicitMonths(preparation.defaultPacking),
       revision: preparation.revision + 1,
     }))
   )
+  const effectiveItemMonths = (checkpoint) =>
+    checkpoint.groups.flatMap((group) =>
+      group.variants.flatMap((variant) =>
+        variant.entryIds.map((entryId) => [
+          entryId,
+          group.month ?? checkpoint.month,
+        ])
+      )
+    )
+  for (const original of result.full.preparations) {
+    const restored = result.completed.preparations.find(
+      ({ orderId }) => orderId === original.orderId
+    )
+    expect(effectiveItemMonths(restored)).toEqual(effectiveItemMonths(original))
+    expect(effectiveItemMonths(restored.defaultPacking)).toEqual(
+      effectiveItemMonths(original.defaultPacking)
+    )
+  }
   expect(result.completed.packingPreferences).toEqual(
     result.full.packingPreferences
   )

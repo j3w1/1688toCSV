@@ -1,5 +1,10 @@
 import { test, expect } from './extension-fixture.mjs'
 import { createDemoRecords } from '../../preview/library-fixture.js'
+import {
+  assignSelectedPurchaseCodes,
+  loadedSourceContainer,
+  openContainerOutput,
+} from './smart-workspace-helpers.mjs'
 
 for (const mode of ['light', 'dark'])
   test(`Products and Packing export light badge colors in ${mode} workspace and copy the exact preview PNG`, async ({
@@ -35,7 +40,8 @@ for (const mode of ['light', 'dark'])
     record.snapshot.purchasedAt = '2026-10-15T12:00:00+08:00'
     record.tags = ['Shared']
     record.productTags = { [record.snapshot.items[0].entryId]: ['Shared'] }
-    for (const item of record.snapshot.items) item.title = '合成玻璃花瓶'
+    for (const [index, item] of record.snapshot.items.entries())
+      item.title = `合成玻璃花瓶 ${index + 1}`
     const restored = await extension.inspector.evaluate(
       ({ record, value }) =>
         chrome.runtime.sendMessage({
@@ -225,15 +231,13 @@ for (const mode of ['light', 'dark'])
     await page.locator('meta[name="color-scheme"]').evaluate((meta, mode) => {
       meta.content = mode
     }, mode)
-    const first = page.locator('#sheet-body tr[data-selection-key]').first()
-    await first.focus()
-    await first.press('Control+a')
-    await page.locator('#prepare-orders').click()
-    await page
-      .getByRole('button', { name: 'Assign codes and prepare', exact: true })
-      .click()
-    const packing = page.locator('#packing-view')
-    await expect(packing.locator('.variants tbody tr')).toHaveCount(3)
+    await page.locator('#select-rows').click()
+    await assignSelectedPurchaseCodes(page)
+    const id = await loadedSourceContainer(extension, [
+        { accountId: 'local', orderId: record.snapshot.orderId },
+      ]),
+      packing = await openContainerOutput(page, id)
+    await expect(packing.locator('tr[data-container-row]')).toHaveCount(3)
     await page.evaluate(() => {
       window.badgeText = []
     })
@@ -254,7 +258,8 @@ test('image style and detail controls persist, update the same preview, and keep
   record.snapshot.status = '交易成功'
   record.tags = ['Shipment A']
   record.productTags = { [record.snapshot.items[0].entryId]: ['Fragile'] }
-  for (const item of record.snapshot.items) item.title = '合成玻璃花瓶'
+  for (const [index, item] of record.snapshot.items.entries())
+    item.title = `合成玻璃花瓶 ${index + 1}`
   const restored = await extension.inspector.evaluate(
     (record) =>
       chrome.runtime.sendMessage({
@@ -396,6 +401,7 @@ test('image style and detail controls persist, update the same preview, and keep
   await dialog.screenshot({ path: 'work/classic-brown-excel-image.png' })
   await dialog.locator('.image-copy-heading [data-icon="close"]').click()
   await page.reload()
+  await page.locator('#sheet-body tr[data-selection-key]').first().waitFor()
   await page.locator('#copy-excel-image').click()
   await ready()
   await dialog.locator('.excel-style-details > summary').click()
@@ -456,7 +462,8 @@ test('store and order details toggle regenerates the raster and persists across 
   record.snapshot.sellerMemberLogin = 'synthetic-identity-toggle'
   record.snapshot.sellerShopOrigin =
     'https://synthetic-identity-toggle.1688.com'
-  for (const item of record.snapshot.items) item.title = '合成玻璃花瓶'
+  for (const [index, item] of record.snapshot.items.entries())
+    item.title = `合成玻璃花瓶 ${index + 1}`
   const result = await extension.inspector.evaluate(
     (record) =>
       chrome.runtime.sendMessage({
@@ -535,20 +542,19 @@ test('store and order details toggle regenerates the raster and persists across 
     )
   ).toBe(false)
   await page.reload()
+  await page.locator('#sheet-body tr[data-selection-key]').first().waitFor()
   await page.locator('#copy-excel-image').click()
   await ready()
   await expect(toggle).not.toBeChecked()
   await assertIdentity(false)
   await dialog.getByRole('button', { name: 'Done', exact: true }).click()
-  const first = page.locator('#sheet-body tr[data-selection-key]').first()
-  await first.focus()
-  await first.press('Control+a')
-  await page.locator('#prepare-orders').click()
-  await page
-    .getByRole('button', { name: 'Assign codes and prepare', exact: true })
-    .click()
-  const packing = page.locator('#packing-view')
-  await expect(packing.locator('.variants tbody tr')).toHaveCount(3)
+  await page.locator('#select-rows').click()
+  await assignSelectedPurchaseCodes(page)
+  const id = await loadedSourceContainer(extension, [
+      { accountId: 'local', orderId: record.snapshot.orderId },
+    ]),
+    packing = await openContainerOutput(page, id)
+  await expect(packing.locator('tr[data-container-row]')).toHaveCount(3)
   await page.evaluate(() => {
     window.excelIdentityText = []
   })
@@ -586,7 +592,8 @@ test('image columns reorder, persist across copying and reload, and use the sele
   )
   record.snapshot.sellerMemberLogin = 'synthetic-image-columns'
   record.snapshot.sellerShopOrigin = 'https://synthetic-image-columns.1688.com'
-  for (const item of record.snapshot.items) item.title = '合成玻璃花瓶'
+  for (const [index, item] of record.snapshot.items.entries())
+    item.title = `合成玻璃花瓶 ${index + 1}`
   const result = await extension.inspector.evaluate(
     (record) =>
       chrome.runtime.sendMessage({
@@ -675,6 +682,7 @@ test('image columns reorder, persist across copying and reload, and use the sele
   expect(preference.selected.toSorted()).toEqual(selected.toSorted())
   expect(preference.order[0]).toBe('quantity')
   await page.reload()
+  await page.locator('#sheet-body tr[data-selection-key]').first().waitFor()
   await page.locator('#language-toggle [data-language="es"]').click()
   await page.locator('#copy-excel-image').click()
   dialog = page.locator('.image-copy-dialog')
@@ -814,17 +822,13 @@ test('image columns reorder, persist across copying and reload, and use the sele
     )
   ).toEqual(preference)
   await page.locator('#language-toggle [data-language="en"]').click()
-  const first = page.locator('#sheet-body tr[data-selection-key]').first()
-  await first.focus()
-  await first.press('Control+a')
-  await page.locator('#prepare-orders').click()
-  await page
-    .getByRole('button', { name: 'Assign codes and prepare', exact: true })
-    .click()
-  const packing = page.locator('#packing-view')
-  await expect(packing).toBeVisible()
-  await expect(packing.locator('.preparation-group')).toHaveCount(1)
-  await expect(packing.locator('.variants tbody tr')).toHaveCount(3)
+  await page.locator('#select-rows').click()
+  await assignSelectedPurchaseCodes(page)
+  const id = await loadedSourceContainer(extension, [
+      { accountId: 'local', orderId: record.snapshot.orderId },
+    ]),
+    packing = await openContainerOutput(page, id)
+  await expect(packing.locator('tr[data-container-row]')).toHaveCount(3)
   await packing
     .getByRole('button', { name: 'Copy Excel image', exact: true })
     .click()

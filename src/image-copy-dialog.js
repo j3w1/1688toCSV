@@ -96,7 +96,10 @@ export function enableImageNavigation(
     zoomIn.disabled = scale >= 4
   }
   const reset = () => {
-    if (!ready()) return
+    const available = ready()
+    for (const control of [zoomOut, zoomIn, fit, button])
+      control.disabled = !available
+    if (!available) return
     fitted = fitScale()
     apply(fitted)
     viewport.scrollTo(0, 0)

@@ -4,6 +4,11 @@ import {
   repeatProductCandidates,
 } from './repeat-products.js'
 import { planCartonBatchChanges } from './carton-batch-changes.js'
+import {
+  assertRepeatCodeEligibility,
+  purchaseSupplierForCodes,
+} from './purchase-codes.js'
+import { sourceRevision, stableValue } from './inventory-model.js'
 
 /** Planning is read-only; expected revisions and source observations guard the atomic save. */
 export function createRepeatProductsRepository({
@@ -12,11 +17,27 @@ export function createRepeatProductsRepository({
   savePreparations,
 }) {
   async function load() {
-    return read(['orders', 'preparations', 'cartonBatches'], async (tx) => ({
-      records: await requested(tx.objectStore('orders').getAll()),
-      preparations: await requested(tx.objectStore('preparations').getAll()),
-      batches: await requested(tx.objectStore('cartonBatches').getAll()),
-    }))
+    return read(
+      [
+        'orders',
+        'preparations',
+        'cartonBatches',
+        'shipmentLocks',
+        'packingAllocations',
+        'issuedCodes',
+      ],
+      async (tx) => ({
+        records: await requested(tx.objectStore('orders').getAll()),
+        preparations: await requested(tx.objectStore('preparations').getAll()),
+        batches: await requested(tx.objectStore('cartonBatches').getAll()),
+        locks: await requested(tx.objectStore('shipmentLocks').getAll()),
+        allocations:
+          (await requested(tx.objectStore('packingAllocations').getAll())) ??
+          [],
+        issuedCodes:
+          (await requested(tx.objectStore('issuedCodes').getAll())) ?? [],
+      })
+    )
   }
   const options = (plan, preview) => ({
     expectedRevisions: plan.preparations.map(
@@ -60,6 +81,33 @@ export function createRepeatProductsRepository({
         'Review the repeat purchase changes before applying them.'
       )
   }
+  function assertCurrentPlan(plan, state) {
+    assertRepeatCodeEligibility({
+      references: [plan.source, ...(plan.target ? [plan.target] : [])],
+      preparations: state.preparations,
+      locks: state.locks,
+    })
+    for (const expected of plan.expectedSnapshots) {
+      const same = (value) =>
+        (value.accountId || value.snapshot?.accountId || 'local') ===
+          expected.accountId &&
+        (value.orderId || value.snapshot?.orderId) === expected.orderId
+      const record = state.records.find(same),
+        preparation = state.preparations.find(same)
+      if (
+        !record ||
+        !expected.sourceRevision ||
+        sourceRevision(record, preparation) !== expected.sourceRevision ||
+        JSON.stringify(purchaseSupplierForCodes(record)) !==
+          JSON.stringify(expected.supplierIdentity) ||
+        stableValue(record.supplierCodeIdentityReview ?? null) !==
+          stableValue(expected.codeIdentityReview)
+      )
+        throw new Error(
+          'The source order or preparation changed. Review the linked products again.'
+        )
+    }
+  }
   return {
     async getRepeatProductCandidates(source) {
       return repeatProductCandidates({ source, ...(await load()) })
@@ -80,6 +128,7 @@ export function createRepeatProductsRepository({
     },
     async linkRepeatProduct(plan) {
       assertPlan(plan, 'link')
+      assertCurrentPlan(plan, await load())
       return savePreparations(plan.preparations, options(plan, false))
     },
     async previewRepeatProductUnlink({ source }) {
@@ -140,6 +189,7 @@ export function createRepeatProductsRepository({
     },
     async unlinkRepeatProduct(plan) {
       assertPlan(plan, 'unlink')
+      assertCurrentPlan(plan, await load())
       return savePreparations(plan.preparations, options(plan, false))
     },
   }

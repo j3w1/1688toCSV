@@ -4,14 +4,14 @@ import { mountPageDownload } from './page-download.js'
 import { extractOrderSnapshot } from './order-snapshot.js'
 import { collectFinancialDiagnostics } from './import-diagnostics.js'
 
-const controllerKey = Symbol.for('1688tocsv.detailController')
+const controllerKey = Symbol.for('1688topl.detailController')
 globalThis[controllerKey]?.()
 let disposed = false
 let suspended = false
 let progressTimer,
   progressQuery = false,
   missingProgress = 0
-const importReader = location.hash.startsWith('#1688tocsv-import=')
+const importReader = /^#1688to(?:pl|csv)-import=/.test(location.hash)
 async function send(type, data = {}) {
   const response = await chrome.runtime.sendMessage({ type, ...data })
   if (!response?.ok)

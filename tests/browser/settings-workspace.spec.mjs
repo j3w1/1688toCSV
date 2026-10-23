@@ -45,9 +45,15 @@ test('saving a naming rule updates unprepared products and searches immediately'
   await expect(
     page.locator('#sheet-body .row-preparation').first()
   ).toContainText('NOMBRE INMEDIATO')
-  await expect(
-    page.locator('#sheet-body .row-preparation').first()
-  ).toContainText('测试品')
+  // Category belongs to the saved naming rule; compact rows show its name.
+  const preferences = await extension.inspector.evaluate(async () =>
+    (await window.testRepository).getPackingPreferences()
+  )
+  expect(
+    preferences.vocabulary.find(
+      (rule) => rule.match === 'Synthetic unique naming title'
+    )
+  ).toMatchObject({ spanishName: 'NOMBRE INMEDIATO', category: '测试品' })
   await page.locator('#search').fill('NOMBRE INMEDIATO')
   await expect(page.locator('#sheet-body tr[data-selection-key]')).toHaveCount(
     3
@@ -74,10 +80,26 @@ test('Settings keeps the same frame, navigation and save position across every s
   const { page, dialog } = await openSettings(extension)
   const tabs = dialog.getByRole('tab')
   await expect(tabs).toHaveCount(8)
+  const sectionCount = await tabs.count()
   await expect(
     dialog.getByRole('tab', { name: 'Tags', exact: true })
   ).toBeVisible()
-  const footer = dialog.locator('.settings-footer')
+  // Read each checkpoint together; the per-viewport baseline stays independent.
+  const readLayout = () =>
+    dialog.evaluate((node) => {
+      const bounds = (element) => {
+        const { x, y, width, height } = element.getBoundingClientRect()
+        return { x, y, width, height }
+      }
+      return {
+        frame: bounds(node),
+        navigation: bounds(node.querySelector('.settings-tabs')),
+        actions: bounds(node.querySelector('.settings-footer')),
+        panel: bounds(node.querySelector('.settings-panel:not([hidden])')),
+        dialogFits: node.scrollHeight <= node.clientHeight + 1,
+        pageFits: document.documentElement.scrollWidth <= innerWidth,
+      }
+    })
   for (const viewport of [
     { width: 1440, height: 1000 },
     { width: 1024, height: 650 },
@@ -88,23 +110,21 @@ test('Settings keeps the same frame, navigation and save position across every s
   ]) {
     await page.setViewportSize(viewport)
     await tabs.first().click()
-    const frame = await dialog.boundingBox()
-    const navigation = await dialog.locator('.settings-tabs').boundingBox()
-    const actions = await footer.boundingBox()
+    await expect(tabs.first()).toHaveAttribute('aria-selected', 'true')
+    const { frame, navigation, actions } = await readLayout()
     expect(frame.y).toBeGreaterThanOrEqual(0)
     expect(frame.y + frame.height).toBeLessThanOrEqual(viewport.height)
-    for (let index = 0; index < (await tabs.count()); index++) {
+    for (let index = 0; index < sectionCount; index++) {
       await tabs.nth(index).click()
       await expect(tabs.nth(index)).toHaveAttribute('aria-selected', 'true')
       const panel = dialog.locator('.settings-panel:not([hidden])')
       await expect(panel).toHaveCount(1)
-      const checkFrame = async () => {
-        for (const [locator, baseline] of [
-          [dialog, frame],
-          [dialog.locator('.settings-tabs'), navigation],
-          [footer, actions],
+      const checkFrame = (layout) => {
+        for (const [current, baseline] of [
+          [layout.frame, frame],
+          [layout.navigation, navigation],
+          [layout.actions, actions],
         ]) {
-          const current = await locator.boundingBox()
           for (const key of ['x', 'y', 'width', 'height'])
             expect(
               Math.abs(current[key] - baseline[key]),
@@ -112,23 +132,17 @@ test('Settings keeps the same frame, navigation and save position across every s
             ).toBeLessThanOrEqual(1)
         }
       }
-      await checkFrame()
-      const bounds = await panel.boundingBox()
+      const layout = await readLayout()
+      checkFrame(layout)
+      const bounds = layout.panel
       expect(bounds.height).toBeGreaterThan(40)
       expect(bounds.y + bounds.height).toBeLessThanOrEqual(actions.y + 1)
       // Long sections scroll within the fixed frame, without moving actions.
       await panel.evaluate((node) => node.scrollTo(0, node.scrollHeight))
-      await checkFrame()
-      expect(
-        await dialog.evaluate(
-          (node) => node.scrollHeight <= node.clientHeight + 1
-        )
-      ).toBe(true)
-      expect(
-        await page.evaluate(
-          () => document.documentElement.scrollWidth <= innerWidth
-        )
-      ).toBe(true)
+      const scrolledLayout = await readLayout()
+      checkFrame(scrolledLayout)
+      expect(scrolledLayout.dialogFits).toBe(true)
+      expect(scrolledLayout.pageFits).toBe(true)
       await expect(
         dialog.getByRole('button', { name: 'Save settings', exact: true })
       ).toBeInViewport()

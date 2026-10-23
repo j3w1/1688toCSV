@@ -30,6 +30,17 @@ test('packing export choices retain only supported columns in the chosen order a
   assert.ok(!defaults.order.includes('orderQuantity'))
   assert.equal(defaults.scope, 'all')
   assert.equal(defaults.descriptionWidth, 36)
+  assert.equal(defaults.includeAutomationJson, false)
+  assert.equal(
+    normalizePackingExportOptions({ includeAutomationJson: true })
+      .includeAutomationJson,
+    true
+  )
+  assert.equal(
+    normalizePackingExportOptions({ includeAutomationJson: 'true' })
+      .includeAutomationJson,
+    false
+  )
   const value = normalizePackingExportOptions({
     order: ['quantity', 'barcode', 'payments', 'quantity'],
     selected: ['barcode', 'quantity', 'made-up'],

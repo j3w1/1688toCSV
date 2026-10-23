@@ -274,7 +274,7 @@ export async function openRepeatProductDialog({
         message(
           candidates.length
             ? 'No original products match this search. Clear it to see compatible variants.'
-            : 'No original product has matching variants from this store and packing month. Prepare the original purchase and check its sizes and features first.'
+            : 'No eligible unconsumed original product has matching variants from this store. Assign the original purchase codes and check its sizes and features first.'
         )
       )
     }
@@ -360,7 +360,7 @@ export function mountRepeatProductControl(
     message(
       linked
         ? 'This product shares reviewed codes with another purchase. Click to review and unlink it.'
-        : 'Link this complete product to a matching purchase from the same store and packing month. Review first; source orders and costs stay separate.'
+        : 'Link this complete product to an unconsumed matching purchase from the same identified store and account, including another purchase month. Review first; source orders and costs stay separate.'
     )
   )
   button.addEventListener('click', async (event) => {

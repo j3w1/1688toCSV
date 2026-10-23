@@ -33,10 +33,69 @@ const scope = (draft, index = 0, variants = draft.groups[index].variants) => ({
 })
 const options = { getReservedBarcodes: async () => [] }
 
+test('same order IDs in different accounts produce independent share/split candidates and cannot merge ownership', async () => {
+  const a = order('same'),
+    b = order('same')
+  a.accountId = 'buyer-a'
+  b.accountId = 'buyer-b'
+  b.groups[0].variants[0].entryIds = ['buyer-b-source']
+  const original = structuredClone([a, b])
+  const shared = await regroupSelection([scope(a), scope(b)], 'share', options)
+  assert.equal(shared.length, 2)
+  assert.deepEqual(
+    shared.map((value) => value.accountId),
+    ['buyer-a', 'buyer-b']
+  )
+  assert.deepEqual(shared[0].groups[0].variants[0].entryIds, [
+    'same-1-1',
+    'same-1-2',
+  ])
+  assert.deepEqual(shared[1].groups[0].variants[0].entryIds, [
+    'buyer-b-source',
+    'same-1-2',
+  ])
+  const split = await regroupSelection(
+    [
+      scope(a, 0, [a.groups[0].variants[0]]),
+      scope(b, 0, [b.groups[0].variants[0]]),
+    ],
+    'split',
+    { ...options, newId: () => crypto.randomUUID() }
+  )
+  assert.equal(split.length, 2)
+  assert.deepEqual(split[0].groups.at(-1).variants[0].entryIds, ['same-1-1'])
+  assert.deepEqual(split[1].groups.at(-1).variants[0].entryIds, [
+    'buyer-b-source',
+  ])
+  await assert.rejects(
+    () => regroupSelection([scope(a), scope(b, 1)], 'merge', options),
+    /one order/
+  )
+  assert.deepEqual([a, b], original)
+})
+
+test('a claimed complete selection cannot move part of a shared variant or omit merge members', async () => {
+  const draft = order('same')
+  draft.groups[0].variants[0].entryIds.push('hidden-shared-row')
+  const selected = structuredClone(draft.groups[0].variants[0])
+  selected.entryIds.pop()
+  await assert.rejects(
+    () => regroupSelection([scope(draft, 0, [selected])], 'split', options),
+    /outside this packing selection/
+  )
+  const partial = scope(draft)
+  partial.group = { ...partial.group, variants: [partial.group.variants[0]] }
+  await assert.rejects(
+    () => regroupSelection([partial, scope(draft, 1)], 'merge', options),
+    /outside this packing selection/
+  )
+})
+
 function recordsFor(draft) {
   return [
     {
       snapshot: {
+        accountId: draft.accountId,
         orderId: draft.orderId,
         sellerName: 'Synthetic supplier',
         items: draft.groups.flatMap((group) =>

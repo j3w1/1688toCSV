@@ -12,6 +12,55 @@ import { workspaceStatus } from '../src/workspace-status.js'
 
 const day = new Date(2026, 9, 19, 10, 0)
 
+test('container label summaries identify truthful draft and sealed revisions without inventing a sealed id', () => {
+  const input = {
+    kind: 'labels',
+    file: 'DRAFT-labels.pdf',
+    pages: 1,
+    perPage: 20,
+    items: [
+      {
+        code: 'CE26090101',
+        orders: [{ orderId: '1001' }],
+        requested: 10,
+        extra: 0,
+        total: 10,
+      },
+    ],
+  }
+  const draft = printSummary({
+    ...input,
+    container: {
+      containerId: 'a',
+      revisionId: null,
+      draft: true,
+      draftRevision: 3,
+    },
+  })
+  assert.equal(draft.draft, true)
+  assert.equal(draft.revisionId, null)
+  assert.equal(draft.draftRevision, 3)
+  assert.equal(draft.containerId, 'a')
+  assert.equal(draft.products[0].requested, 10)
+  assert.deepEqual(draft.files, ['DRAFT-labels.pdf', 'DRAFT-labels.json'])
+  const sealed = printSummary({
+    ...input,
+    container: { containerId: 'a', revisionId: 'a/r1', draft: false },
+  })
+  assert.equal(sealed.revisionId, 'a/r1')
+  assert.equal(sealed.draft, false)
+  assert.equal(sealed.draftRevision, undefined)
+  assert.equal(printSummary(input).containerId, undefined)
+  for (const container of [
+    { containerId: 'a', revisionId: null },
+    { containerId: 'a', revisionId: null, draft: true, draftRevision: '3' },
+  ])
+    assert.throws(
+      () => printSummary({ ...input, container }),
+      /captured container identity/
+    )
+})
+
 test('export file names are predictable', () => {
   assert.equal(
     packingListFileName(['Habitat Studio'], day),

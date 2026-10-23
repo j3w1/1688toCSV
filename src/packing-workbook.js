@@ -155,6 +155,13 @@ export const PACKING_CARTON_COLUMNS = Object.freeze(
   [
     ['batch', 'Batch', 'Lote', '箱批', 12],
     ['cartonMark', 'Carton mark', 'Marca', '唛头', 20],
+    [
+      'currentProductCode',
+      'Current product code',
+      'Código actual del producto',
+      '当前商品编码',
+      22,
+    ],
     ['contents', 'Contents', 'Contenido', '内装商品', 42],
     ['count', 'Cartons', 'Cajas', '箱数', 9],
     ['received', 'Received', 'Recibidas', '实收', 9],
@@ -176,7 +183,9 @@ export const PACKING_CARTON_COLUMNS = Object.freeze(
 export const PACKING_CARTON_COLUMN_ORDER = Object.freeze(
   PACKING_CARTON_COLUMNS.map(({ key }) => key)
 )
-export const PACKING_CARTON_DEFAULT_COLUMNS = PACKING_CARTON_COLUMN_ORDER
+export const PACKING_CARTON_DEFAULT_COLUMNS = Object.freeze(
+  PACKING_CARTON_COLUMN_ORDER.filter((key) => key !== 'currentProductCode')
+)
 const columnSections = [
   {
     keys: PACKING_WORKBOOK_COLUMN_ORDER.slice(0, 7),
@@ -1416,7 +1425,17 @@ function planCartonWorksheet(rows, options) {
     requested.some((key) => !PACKING_CARTON_COLUMN_ORDER.includes(key))
   )
     throw new Error('Choose at least one supported carton column.')
-  const columns = [...new Set(requested)].map((key) => {
+  const selected = [...new Set(requested)]
+  if (options.cartonBatches.some((batch) => batch.physicalMark)) {
+    if (!selected.includes('cartonMark')) selected.unshift('cartonMark')
+    if (!selected.includes('currentProductCode'))
+      selected.splice(
+        selected.indexOf('cartonMark') + 1,
+        0,
+        'currentProductCode'
+      )
+  }
+  const columns = selected.map((key) => {
       const column = PACKING_CARTON_COLUMNS.find((column) => column.key === key)
       return { ...column, pixelWidth: columnPixels(column.width) }
     }),
@@ -1564,6 +1583,12 @@ function planCartonWorksheet(rows, options) {
           `${displayLabel}${batch.needsReview ? ` · ${labels.review}` : ''}`
         ),
         cartonMark: textCell(batch.baseCode || ''),
+        currentProductCode: textCell(
+          batch.currentProductCode ||
+            batch.physicalMark?.productCode ||
+            batch.baseCode ||
+            ''
+        ),
         contents: textCell(contents),
         count: numberCell(batch.count ?? ''),
         received: numberCell(batch.received ?? ''),
@@ -1830,7 +1855,7 @@ function sheetXml(plan, images) {
         : []
     )
   )
-  return `${XML_HEADER}<worksheet xmlns="${MAIN}" xmlns:r="${REL}"><sheetPr><pageSetUpPr fitToPage="1"/></sheetPr><dimension ref="A1:${plan.lastColumn}${plan.lastRow}"/><sheetViews><sheetView workbookViewId="0">${pane}</sheetView></sheetViews><sheetFormatPr defaultRowHeight="18"/><cols>${plan.columns.map((column, index) => `<col min="${index + 1}" max="${index + 1}" width="${column.width}" customWidth="1"/>`).join('')}</cols><sheetData>${plan.rows.map((row) => `<row r="${row.number}" ht="${row.height}" customHeight="1">${row.cells.map((cell, index) => serializeCell(cell, row.number, index)).join('')}</row>`).join('')}</sheetData>${plan.filters ? `<autoFilter ref="A5:${plan.lastColumn}${plan.lastProductRow}"/>` : ''}${plan.merges.length ? `<mergeCells count="${plan.merges.length}">${plan.merges.map((ref) => `<mergeCell ref="${ref}"/>`).join('')}</mergeCells>` : ''}${links.length ? `<hyperlinks>${links.join('')}</hyperlinks>` : ''}<printOptions horizontalCentered="1"/><pageMargins left="0.25" right="0.25" top="0.4" bottom="0.4" header="0.2" footer="0.2"/><pageSetup paperSize="8" orientation="landscape" fitToWidth="1" fitToHeight="0"/><headerFooter><oddFooter>&amp;L1688toCSV&amp;R&amp;P / &amp;N</oddFooter></headerFooter>${images.length ? '<drawing r:id="drawing1"/>' : ''}</worksheet>`
+  return `${XML_HEADER}<worksheet xmlns="${MAIN}" xmlns:r="${REL}"><sheetPr><pageSetUpPr fitToPage="1"/></sheetPr><dimension ref="A1:${plan.lastColumn}${plan.lastRow}"/><sheetViews><sheetView workbookViewId="0">${pane}</sheetView></sheetViews><sheetFormatPr defaultRowHeight="18"/><cols>${plan.columns.map((column, index) => `<col min="${index + 1}" max="${index + 1}" width="${column.width}" customWidth="1"/>`).join('')}</cols><sheetData>${plan.rows.map((row) => `<row r="${row.number}" ht="${row.height}" customHeight="1">${row.cells.map((cell, index) => serializeCell(cell, row.number, index)).join('')}</row>`).join('')}</sheetData>${plan.filters ? `<autoFilter ref="A5:${plan.lastColumn}${plan.lastProductRow}"/>` : ''}${plan.merges.length ? `<mergeCells count="${plan.merges.length}">${plan.merges.map((ref) => `<mergeCell ref="${ref}"/>`).join('')}</mergeCells>` : ''}${links.length ? `<hyperlinks>${links.join('')}</hyperlinks>` : ''}<printOptions horizontalCentered="1"/><pageMargins left="0.25" right="0.25" top="0.4" bottom="0.4" header="0.2" footer="0.2"/><pageSetup paperSize="8" orientation="landscape" fitToWidth="1" fitToHeight="0"/><headerFooter><oddFooter>&amp;L1688toPL&amp;R&amp;P / &amp;N</oddFooter></headerFooter>${images.length ? '<drawing r:id="drawing1"/>' : ''}</worksheet>`
 }
 
 function stylesXml(palette, language) {
@@ -1965,15 +1990,71 @@ function imageSize(bytes, mimeType) {
   throw new Error('Packing workbook images must be PNG or JPEG raster images.')
 }
 
-async function prepareWorkbookImages(plan, prepareImages) {
+function workbookImageRegistry() {
+  const assets = new WeakMap(),
+    contents = new Map(),
+    media = []
+  let totalBytes = 0
+  return {
+    media,
+    async prepare(asset, kind) {
+      let prepared = assets.get(asset)
+      if (!prepared) {
+        let bytes = asset.bytes ?? asset.blob
+        if (bytes instanceof Blob)
+          bytes = new Uint8Array(await bytes.arrayBuffer())
+        else if (bytes instanceof ArrayBuffer) bytes = new Uint8Array(bytes)
+        if (!(bytes instanceof Uint8Array))
+          throw new Error('Packing workbook image bytes are missing.')
+        const mimeType =
+          asset.mimeType || (bytes[0] === 0x89 ? 'image/png' : 'image/jpeg')
+        prepared = { bytes, mimeType, size: imageSize(bytes, mimeType) }
+        assets.set(asset, prepared)
+      }
+      const { bytes, mimeType, size } = prepared
+      const max = kind === 'code' ? [512, 128] : [320, 240]
+      if (
+        !size.width ||
+        !size.height ||
+        size.width > max[0] ||
+        size.height > max[1] ||
+        bytes.length > 384 * 1024
+      )
+        throw new Error(
+          'Packing workbook images must be resized before export.'
+        )
+      if (!prepared.key) {
+        const hash = await crypto.subtle.digest('SHA-256', bytes)
+        prepared.key = `${mimeType}:${Array.from(new Uint8Array(hash), (byte) => byte.toString(16).padStart(2, '0')).join('')}`
+      }
+      let entry = contents.get(prepared.key)
+      if (!entry) {
+        totalBytes += bytes.length
+        if (totalBytes > 24 * 1024 * 1024)
+          throw new Error(
+            'Packing workbook images exceed the export size limit.'
+          )
+        entry = {
+          bytes,
+          mimeType,
+          extension: mimeType === 'image/png' ? 'png' : 'jpg',
+          id: media.length + 1,
+        }
+        contents.set(prepared.key, entry)
+        media.push(entry)
+      }
+      return { media: entry, size }
+    },
+  }
+}
+
+async function prepareWorkbookImages(plan, prepareImages, registry) {
   if (
     !prepareImages ||
     Object.values(plan.imageColumns).every((column) => column === undefined)
   )
     return []
-  const images = [],
-    cache = new Map()
-  let totalBytes = 0
+  const images = []
   for (const product of plan.products) {
     const assets = await prepareImages(product.markSource || product.source, {
       photo:
@@ -1994,41 +2075,7 @@ async function prepareWorkbookImages(plan, prepareImages) {
       if (column === undefined) continue
       const asset = assets?.[kind]
       if (!asset) continue
-      let bytes = asset.bytes ?? asset.blob
-      if (bytes instanceof Blob)
-        bytes = new Uint8Array(await bytes.arrayBuffer())
-      else if (bytes instanceof ArrayBuffer) bytes = new Uint8Array(bytes)
-      if (!(bytes instanceof Uint8Array))
-        throw new Error('Packing workbook image bytes are missing.')
-      const mimeType =
-        asset.mimeType || (bytes[0] === 0x89 ? 'image/png' : 'image/jpeg')
-      const size = imageSize(bytes, mimeType)
-      const max = kind === 'code' ? [512, 128] : [320, 240]
-      if (
-        !size.width ||
-        !size.height ||
-        size.width > max[0] ||
-        size.height > max[1] ||
-        bytes.length > 384 * 1024
-      )
-        throw new Error(
-          'Packing workbook images must be resized before export.'
-        )
-      let media = cache.get(asset)
-      if (!media) {
-        totalBytes += bytes.length
-        if (totalBytes > 24 * 1024 * 1024)
-          throw new Error(
-            'Packing workbook images exceed the export size limit.'
-          )
-        media = {
-          bytes,
-          mimeType,
-          extension: mimeType === 'image/png' ? 'png' : 'jpg',
-          id: cache.size + 1,
-        }
-        cache.set(asset, media)
-      }
+      const { media, size } = await registry.prepare(asset, kind)
       const cellWidth = plan.columns[column].pixelWidth
       const cellHeight = plan.rows[product.row - 1].height / 0.75
       const box =
@@ -2070,15 +2117,21 @@ function drawingXml(images) {
 /** Editable cells plus bounded, composed raster assets. No original photos are fetched here. */
 export async function createPackingWorkbook(rows, options = {}) {
   const plan = planPackingWorkbook(rows, options)
+  return createPreparedPackingWorkbook(plan, options)
+}
+
+/** Serialize an already planned immutable export using the proven styles/media writer. */
+export async function createPreparedPackingWorkbook(plan, options = {}) {
   const sheets = plan.sheets || [{ ...plan, name: 'Packing list' }],
     prepared = [],
-    media = []
+    registry = workbookImageRegistry(),
+    media = registry.media
   for (const sheet of sheets) {
-    const images = await prepareWorkbookImages(sheet, options.prepareImages)
-    for (const asset of new Set(images.map((image) => image.media))) {
-      asset.id = media.length + 1
-      media.push(asset)
-    }
+    const images = await prepareWorkbookImages(
+      sheet,
+      options.prepareImages,
+      registry
+    )
     const codeRows = new Set(
       images
         .filter((image) => image.kind === 'code')
@@ -2101,11 +2154,6 @@ export async function createPackingWorkbook(rows, options = {}) {
       ),
     })
   }
-  if (
-    media.reduce((total, asset) => total + asset.bytes.length, 0) >
-    24 * 1024 * 1024
-  )
-    throw new Error('Packing workbook images exceed the export size limit.')
   const relationships = (items) =>
     `${XML_HEADER}<Relationships xmlns="${PACKAGE_REL}">${items.map(([id, type, target]) => `<Relationship Id="${id}" Type="${REL}/${type}" Target="${xml(target)}"/>`).join('')}</Relationships>`
   const files = [

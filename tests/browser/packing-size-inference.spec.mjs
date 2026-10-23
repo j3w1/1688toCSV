@@ -1,5 +1,11 @@
 import { test, expect } from './extension-fixture.mjs'
 import { createDemoRecords } from '../../preview/library-fixture.js'
+import {
+  assignSelectedPurchaseCodes,
+  editOrderProduct,
+  closeOrderProduct,
+  libraryBackup,
+} from './smart-workspace-helpers.mjs'
 
 async function openSizes(extension, sizes, colors = ['透明', '透明']) {
   const [record] = await extension.inspector.evaluate(
@@ -42,88 +48,84 @@ async function openSizes(extension, sizes, colors = ['透明', '透明']) {
   await expect(rows).toHaveCount(3)
   await rows.first().focus()
   await page.keyboard.press('Control+a')
-  await page.locator('#prepare-orders').click()
-  await page
-    .getByRole('button', { name: 'Assign codes and prepare', exact: true })
-    .click()
-  const view = page.locator('#packing-view')
-  await expect(view.locator('.preparation-group')).toHaveCount(2)
-  return {
-    page,
-    view,
-    group: view.locator('.preparation-group').first(),
-    record,
-  }
+  await assignSelectedPurchaseCodes(page)
+  const editor = await editOrderProduct(page, 0)
+  return { page, view: editor, group: editor, record }
 }
-
-test('same-size seller styles change recognition mode without a code warning or a repeated save', async ({
-  extension,
-}) => {
-  const { page, view, group } = await openSizes(extension, [
-    '#款式二 高33X底径10.5cm',
-    '#款式一 高33X底径10.5cm',
-  ])
-  const result = await backup(extension)
-  const variants = result.preparations[0].groups[0].variants
-  expect(variants.map((variant) => variant.variantSuffix)).toEqual(['A', 'B'])
-  expect(variants.map((variant) => variant.sizeSuffix)).toEqual(['', ''])
-  expect(variants.every((variant) => !variant.needsSizeMapping)).toBe(true)
-  await expect(group.getByAltText('Barcode preview')).toHaveCount(2)
-  await expect(
-    group.getByRole('button', { name: 'Review size suggestions', exact: true })
-  ).toHaveCount(0)
-  const mode = group.getByLabel('Size handling', { exact: true })
-  const review = page.getByRole('dialog', {
+const backup = libraryBackup
+const editorFor = (page) =>
+  page.locator('dialog[data-action="edit-order-product"]')
+async function mode(page, value, { review = false, cancel = false } = {}) {
+  const editor = editorFor(page)
+  await editor.locator(`[data-size-mode="${value}"]`).click()
+  const modal = page.getByRole('dialog', {
     name: 'Change size handling?',
     exact: true,
   })
+  if (review) {
+    await expect(modal).toBeVisible()
+    if (cancel)
+      await modal.getByRole('button', { name: 'Cancel', exact: true }).click()
+    else
+      await modal
+        .getByRole('button', { name: 'Apply size handling', exact: true })
+        .click()
+  } else await expect(modal).toHaveCount(0)
+  if (!cancel)
+    await expect(
+      editorFor(page).locator(`[data-size-mode="${value}"]`)
+    ).toHaveAttribute('aria-pressed', 'true')
+}
+
+test('same-size seller styles change recognition mode without a code warning or repeated assignment', async ({
+  extension,
+}) => {
+  const { page } = await openSizes(extension, [
+      '#款式二 高33X底径10.5cm',
+      '#款式一 高33X底径10.5cm',
+    ]),
+    result = await backup(extension),
+    variants = result.preparations[0].groups[0].variants
+  expect(variants.map((variant) => variant.variantSuffix)).toEqual(['A', 'B'])
+  expect(variants.map((variant) => variant.sizeSuffix)).toEqual(['', ''])
+  expect(variants.every((variant) => !variant.needsSizeMapping)).toBe(true)
+  await expect(
+    editorFor(page).getByRole('button', {
+      name: 'Review size suggestions',
+      exact: true,
+    })
+  ).toHaveCount(0)
   for (const value of ['none', 'automatic']) {
-    await mode.selectOption(value)
-    await expect(mode).toHaveValue(value)
-    await expect(review).toHaveCount(0)
-    const saved = await backup(extension)
-    const changed = saved.preparations[0].groups[0]
+    await mode(page, value)
+    const saved = await backup(extension),
+      changed = saved.preparations[0].groups[0]
     expect(changed.sizeMode || 'automatic').toBe(value)
     expect(changed.variants).toEqual(variants)
     expect(saved.preparations[0].groups[1]).toEqual(
       result.preparations[0].groups[1]
     )
     expect(saved.orders).toEqual(result.orders)
-    await mode.dispatchEvent('change')
-    await expect(view.locator('#preparation-content')).toHaveJSProperty(
-      'disabled',
-      false
-    )
-    await expect(review).toHaveCount(0)
-    expect((await backup(extension)).preparations).toEqual(saved.preparations)
+    expect(saved.issuedCodes).toEqual(result.issuedCodes)
   }
 })
 
-test('unresolved size flags save quietly and the recognition preference survives reopening', async ({
+test('unresolved size flags save quietly and recognition preference survives reopening', async ({
   extension,
 }) => {
-  const { page, group } = await openSizes(
-    extension,
-    // Explicit size wording stays unresolved; generic specifications are styles.
-    ['待确认尺寸甲', '待确认尺寸乙'],
-    ['金色', '银色']
-  )
-  const before = await backup(extension)
+  const { page } = await openSizes(
+      extension,
+      ['待确认尺寸甲', '待确认尺寸乙'],
+      ['金色', '银色']
+    ),
+    before = await backup(extension)
   expect(
     before.preparations[0].groups[0].variants.every(
       (variant) => variant.needsSizeMapping
     )
   ).toBe(true)
-  const mode = group.getByLabel('Size handling', { exact: true })
-  await mode.selectOption('none')
-  const review = page.getByRole('dialog', {
-    name: 'Change size handling?',
-    exact: true,
-  })
-  await expect(mode).toHaveValue('none')
-  await expect(review).toHaveCount(0)
-  const saved = await backup(extension)
-  const changed = saved.preparations[0].groups[0]
+  await mode(page, 'none')
+  const saved = await backup(extension),
+    changed = saved.preparations[0].groups[0]
   expect(changed.sizeMode).toBe('none')
   expect(changed.variants.map((variant) => variant.variantSuffix)).toEqual([
     'A',
@@ -138,33 +140,38 @@ test('unresolved size flags save quietly and the recognition preference survives
     before.preparations[0].groups[1]
   )
   expect(saved.orders).toEqual(before.orders)
-  await expect(group.getByAltText('Barcode preview').first()).toBeVisible()
+  await closeOrderProduct(editorFor(page))
   await page.reload()
-  await page.locator('#prepare-orders').click()
-  await expect(mode).toHaveValue('none')
-  await mode.selectOption('automatic')
-  await expect(mode).toHaveValue('automatic')
-  await expect(review).toHaveCount(0)
+  await editOrderProduct(page, 0)
+  await expect(
+    editorFor(page).locator('[data-size-mode="none"]')
+  ).toHaveAttribute('aria-pressed', 'true')
+  await mode(page, 'automatic')
   const restored = await backup(extension)
   expect(
     restored.preparations[0].groups[0].variants.every(
       (variant) => variant.needsSizeMapping
     )
   ).toBe(true)
-  await expect(group.getByAltText('Barcode preview').first()).toBeHidden()
   expect(restored.orders).toEqual(before.orders)
+  await expect(
+    page
+      .locator('#sheet-body tr[data-selection-key]')
+      .first()
+      .getByRole('button', { name: 'Barcode', exact: true })
+  ).toHaveCount(0)
 })
 
-test('size mode reviews only changed barcode values and cancellation preserves the saved setup', async ({
+test('size handling reviews only changed full barcodes and cancellation preserves saved codes and ownership', async ({
   extension,
 }) => {
-  const { page, group } = await openSizes(
+  const { page } = await openSizes(
     extension,
     ['10cm', '20cm'],
     ['金色', '银色']
   )
-  const sizes = group.locator('input[data-packing-field="size"]')
-  await sizes.first().fill('')
+  await editorFor(page).locator('[data-authoring-field="size-ending"]').fill('')
+  await editorFor(page).locator('[data-authoring-field="size-ending"]').blur()
   await expect
     .poll(
       async () =>
@@ -172,37 +179,26 @@ test('size mode reviews only changed barcode values and cancellation preserves t
           .sizeSuffix
     )
     .toBe('')
-  const before = await backup(extension)
-  const original = before.preparations[0].groups[0]
-  const code = (variant) =>
-    `${original.baseCode}${variant.variantSuffix}${variant.sizeSuffix}`
-  const mode = group.getByLabel('Size handling', { exact: true })
+  const before = await backup(extension),
+    original = before.preparations[0].groups[0],
+    code = (variant) =>
+      `${original.baseCode}${variant.variantSuffix}${variant.sizeSuffix}`
+  await editorFor(page).locator('[data-size-mode="none"]').click()
   const review = page.getByRole('dialog', {
-    name: 'Change size handling?',
-    exact: true,
-  })
-  await mode.selectOption('none')
-  const cards = review.locator('.packing-review-item')
+      name: 'Change size handling?',
+      exact: true,
+    }),
+    cards = review.locator('.packing-review-item')
   await expect(cards).toHaveCount(1)
   await expect(cards.locator('.packing-value-row code')).toHaveText([
     code(original.variants[1]),
     `${original.baseCode}${original.variants[1].variantSuffix}`,
   ])
-  await expect(cards.locator('p')).toHaveCount(0)
   await review.getByRole('button', { name: 'Cancel', exact: true }).click()
-  await expect(page.locator('#preparation-content')).toHaveJSProperty(
-    'disabled',
-    false
-  )
-  await expect(mode).toHaveValue('automatic')
   expect((await backup(extension)).preparations).toEqual(before.preparations)
-  await mode.selectOption('none')
-  await review
-    .getByRole('button', { name: 'Apply size handling', exact: true })
-    .click()
-  await expect(mode).toHaveValue('none')
-  const saved = await backup(extension)
-  const changed = saved.preparations[0].groups[0]
+  await mode(page, 'none', { review: true })
+  const saved = await backup(extension),
+    changed = saved.preparations[0].groups[0]
   expect(changed.variants[0]).toEqual(original.variants[0])
   expect(changed.variants[1]).toEqual({
     ...original.variants[1],
@@ -226,8 +222,7 @@ test('size mode reviews only changed barcode values and cancellation preserves t
         issued.variantId === original.variants[1].id
     )
   ).toBe(true)
-
-  await mode.selectOption('automatic')
+  await editorFor(page).locator('[data-size-mode="automatic"]').click()
   await expect(cards).toHaveCount(2)
   await expect(cards.nth(0).locator('.packing-value-row code')).toHaveText([
     `${original.baseCode}${original.variants[0].variantSuffix}`,
@@ -240,59 +235,44 @@ test('size mode reviews only changed barcode values and cancellation preserves t
   await review
     .getByRole('button', { name: 'Apply size handling', exact: true })
     .click()
-  await expect(mode).toHaveValue('automatic')
-  await expect(sizes.nth(0)).toHaveValue('S')
-  await expect(sizes.nth(1)).toHaveValue('L')
+  await expect
+    .poll(async () =>
+      (await backup(extension)).preparations[0].groups[0].variants.map(
+        (variant) => variant.sizeSuffix
+      )
+    )
+    .toEqual(['S', 'L'])
   expect((await backup(extension)).orders).toEqual(before.orders)
 })
 
-async function backup(extension) {
-  const result = await extension.inspector.evaluate(() =>
-    chrome.runtime.sendMessage({ type: 'BACKUP_EXPORT' })
-  )
-  expect(result.ok, result.error).toBe(true)
-  return result.data
-}
-
 for (const surface of ['inline', 'label editor'])
-  test(`a manually authored size ending restores automatic mode from the ${surface}`, async ({
+  test(`manual size ending restores automatic mode from Orders ${surface}`, async ({
     extension,
   }) => {
-    const { page, view, group } = await openSizes(
+    const { page } = await openSizes(
       extension,
       ['待确认尺寸甲', '待确认尺寸乙'],
       ['金色', '银色']
     )
-    const mode = group.getByLabel('Size handling', { exact: true })
-    await mode.selectOption('none')
-    const review = page.getByRole('dialog', {
-      name: 'Change size handling?',
-      exact: true,
-    })
-    await expect(mode).toHaveValue('none')
-    await expect(review).toHaveCount(0)
+    await mode(page, 'none')
     const before = await backup(extension)
-    const size = group.locator('input[data-packing-field="size"]').first()
     if (surface === 'inline') {
-      await size.fill('XS')
-      await expect(mode).toHaveValue('automatic')
-      await expect(review).toBeHidden()
-      await expect(view.locator('.preparation-save-status')).toHaveText(
-        'Saved automatically'
-      )
+      await editorFor(page)
+        .locator('[data-authoring-field="size-ending"]')
+        .fill('XS')
+      await closeOrderProduct(editorFor(page))
     } else {
-      await group
-        .getByRole('button', { name: 'Edit barcode', exact: true })
+      await closeOrderProduct(editorFor(page))
+      await page
+        .locator('#sheet-body tr[data-selection-key]')
         .first()
+        .getByRole('button', { name: 'Barcode', exact: true })
         .click()
       const label = page.getByRole('dialog', {
-        name: 'Label editor',
-        exact: true,
-      })
-      const input = label.getByRole('textbox', {
-        name: 'Size code',
-        exact: true,
-      })
+          name: 'Label editor',
+          exact: true,
+        }),
+        input = label.getByRole('textbox', { name: 'Size code', exact: true })
       await input.fill('XS')
       await input.press('Enter')
       await expect
@@ -306,10 +286,8 @@ for (const surface of ['inline', 'label editor'])
         .getByRole('button', { name: 'Close label editor', exact: true })
         .click()
     }
-    await expect(mode).toHaveValue('automatic')
-    await expect(size).toHaveValue('XS')
-    const after = await backup(extension)
-    const changed = after.preparations[0].groups[0]
+    const after = await backup(extension),
+      changed = after.preparations[0].groups[0]
     expect(changed.sizeMode).toBeUndefined()
     expect(changed.variants[0].sizeSuffix).toBe('XS')
     expect(changed.variants[0].needsSizeMapping).toBe(false)
@@ -321,105 +299,121 @@ for (const surface of ['inline', 'label editor'])
     )
     expect(after.orders).toEqual(before.orders)
     await page.reload()
-    await page.locator('#prepare-orders').click()
-    await expect(mode).toHaveValue('automatic')
-    await expect(size).toHaveValue('XS')
+    await editOrderProduct(page, 0)
+    await expect(
+      editorFor(page).locator('[data-size-mode="automatic"]')
+    ).toHaveAttribute('aria-pressed', 'true')
+    await expect(
+      editorFor(page).locator('[data-authoring-field="size-ending"]')
+    ).toHaveValue('XS')
   })
 
-test('embedded height and diameter assign size endings from all axes and survive reopening', async ({
+test('embedded height and diameter use all axes before price and survive reopening', async ({
   extension,
 }) => {
-  const { page, group } = await openSizes(extension, [
-    '#款式四高28.5X直径13cm',
-    '#款式五高22X直径10.5cm',
-  ])
-  const sizes = group.locator('input[data-packing-field="size"]')
-  // The larger product is deliberately cheaper in the fixture: measurements win.
-  await expect(sizes.nth(0)).toHaveValue('L')
-  await expect(sizes.nth(1)).toHaveValue('S')
-  await expect(
-    group.getByRole('button', { name: 'Review size suggestions', exact: true })
-  ).toHaveCount(0)
-  const before = await backup(extension)
+  const { page } = await openSizes(extension, [
+      '#款式四高28.5X直径13cm',
+      '#款式五高22X直径10.5cm',
+    ]),
+    before = await backup(extension)
+  expect(
+    before.preparations[0].groups[0].variants.map(
+      (variant) => variant.sizeSuffix
+    )
+  ).toEqual(['L', 'S'])
   expect(
     before.preparations[0].groups[0].variants.map(
       (variant) => variant.needsSizeMapping
     )
   ).toEqual([false, false])
+  await expect(
+    editorFor(page).getByRole('button', {
+      name: 'Review size suggestions',
+      exact: true,
+    })
+  ).toHaveCount(0)
+  await closeOrderProduct(editorFor(page))
   await page.reload()
-  await page.locator('#prepare-orders').click()
-  await expect(sizes.nth(0)).toHaveValue('L')
-  await expect(sizes.nth(1)).toHaveValue('S')
+  for (const [index, size] of ['L', 'S'].entries()) {
+    const editor = await editOrderProduct(page, index)
+    await expect(
+      editor.locator('[data-authoring-field="size-ending"]')
+    ).toHaveValue(size)
+    await closeOrderProduct(editor)
+  }
   expect((await backup(extension)).orders).toEqual(before.orders)
 })
 
-test('price-only suggestions require visual confirmation and preserve source data', async ({
+test('price-only size suggestions require visual confirmation with exact original photos and source money retained', async ({
   extension,
 }) => {
-  const { page, group } = await openSizes(extension, [
-    '待确认尺寸甲',
-    '待确认尺寸乙',
-  ])
-  const sizes = group.locator('input[data-packing-field="size"]')
-  await expect(sizes.nth(0)).toHaveValue('')
-  await expect(sizes.nth(1)).toHaveValue('')
-  const before = await backup(extension)
-  const review = group.getByRole('button', {
-    name: 'Review size suggestions',
-    exact: true,
-  })
-  await review.click()
-  const dialog = page.getByRole('dialog', {
-    name: 'Review size suggestions',
-    exact: true,
-  })
-  await expect(dialog).toContainText('Price is only a clue.')
-  await expect(dialog).toContainText('¥12.50')
-  await expect(dialog).toContainText('¥18.90')
-  await expect(dialog.locator('.preparation-photo')).toHaveCount(2)
-  await dialog.getByRole('button', { name: 'Cancel', exact: true }).click()
+  const { page } = await openSizes(extension, ['待确认尺寸甲', '待确认尺寸乙']),
+    before = await backup(extension)
+  expect(
+    before.preparations[0].groups[0].variants.map(
+      (variant) => variant.sizeSuffix
+    )
+  ).toEqual(['', ''])
+  const open = editorFor(page).getByRole('button', {
+      name: 'Review size suggestions',
+      exact: true,
+    }),
+    review = page.getByRole('dialog', {
+      name: 'Review size suggestions',
+      exact: true,
+    })
+  await open.click()
+  await expect(review).toContainText('Price is only a clue.')
+  await expect(review).toContainText('¥12.50')
+  await expect(review).toContainText('¥18.90')
+  await expect(review.locator('.preparation-photo')).toHaveCount(2)
+  await review.getByRole('button', { name: 'Cancel', exact: true }).click()
   expect((await backup(extension)).preparations).toEqual(before.preparations)
-  await review.click()
-  await dialog
+  await open.click()
+  await review
     .getByRole('button', { name: 'Apply these size codes', exact: true })
     .click()
-  await expect(dialog).toBeHidden()
-  await expect(sizes.nth(0)).toHaveValue('S')
-  await expect(sizes.nth(1)).toHaveValue('L')
+  await expect(review).toBeHidden()
+  // Closing the review starts an asynchronous save; wait for its exact result.
+  await expect
+    .poll(async () =>
+      (await backup(extension)).preparations[0].groups[0].variants.map(
+        (variant) => variant.sizeSuffix
+      )
+    )
+    .toEqual(['S', 'L'])
+  await closeOrderProduct(editorFor(page))
   await page.reload()
-  await page.locator('#prepare-orders').click()
-  await expect(sizes.nth(0)).toHaveValue('S')
-  await expect(sizes.nth(1)).toHaveValue('L')
+  expect(
+    (await backup(extension)).preparations[0].groups[0].variants.map(
+      (variant) => variant.sizeSuffix
+    )
+  ).toEqual(['S', 'L'])
   expect((await backup(extension)).orders).toEqual(before.orders)
 })
 
-test('orphan historical reservations do not block reviewed size suggestions', async ({
+test('orphan historical reservations cannot block reviewed size suggestions or change the current owner', async ({
   extension,
 }) => {
-  const { page, view, group } = await openSizes(extension, [
-    '待确认尺寸甲',
-    '待确认尺寸乙',
-  ])
-  await group
-    .getByLabel('Spanish short name', { exact: true })
+  const { page } = await openSizes(extension, ['待确认尺寸甲', '待确认尺寸乙'])
+  await editorFor(page)
+    .locator('[data-authoring-field="spanish-name"]')
     .fill('NOMBRE CONSERVADO')
-  await expect(view.locator('.preparation-save-status')).toHaveText(
-    'Saved automatically'
-  )
-  const before = await backup(extension)
-  const preparation = before.preparations[0]
-  const original = preparation.groups[0]
-  const oldCode = `${original.baseCode}${original.variants[0].variantSuffix}S`
-  const reservation = {
-    accountId: preparation.accountId,
-    orderId: preparation.orderId,
-    sellerId: preparation.sellerId,
-    month: preparation.month,
-    groupId: original.id,
-    variantId: original.variants[1].id,
-    kind: 'barcode',
-    code: oldCode,
-  }
+  await closeOrderProduct(editorFor(page))
+  const before = await backup(extension),
+    preparation = before.preparations[0],
+    original = preparation.groups[0],
+    oldCode = `${original.baseCode}${original.variants[0].variantSuffix}S`,
+    reservation = {
+      accountId: preparation.accountId,
+      orderId: preparation.orderId,
+      sellerId: preparation.sellerId,
+      month: preparation.month,
+      groupId: original.id,
+      variantId: original.variants[1].id,
+      kind: 'barcode',
+      code: oldCode,
+    }
   const restored = await extension.inspector.evaluate(
     (data) =>
       chrome.runtime.sendMessage({ type: 'BACKUP_RESTORE', backup: data }),
@@ -429,7 +423,9 @@ test('orphan historical reservations do not block reviewed size suggestions', as
   expect(
     (await backup(extension)).issuedCodes.some((code) => code.code === oldCode)
   ).toBe(false)
-  await group
+  await page.reload()
+  await editOrderProduct(page, 0)
+  await editorFor(page)
     .getByRole('button', { name: 'Review size suggestions', exact: true })
     .click()
   const review = page.getByRole('dialog', {
@@ -443,13 +439,18 @@ test('orphan historical reservations do not block reviewed size suggestions', as
   await expect(
     page.getByRole('dialog', { name: 'Resolve code conflict', exact: true })
   ).toHaveCount(0)
-  const sizes = group.locator('input[data-packing-field="size"]')
-  await expect(sizes.nth(0)).toHaveValue('S')
-  await expect(sizes.nth(1)).toHaveValue('L')
-  const after = await backup(extension)
-  const updated = after.preparations[0].groups[0]
+  await expect
+    .poll(
+      async () =>
+        (await backup(extension)).issuedCodes.find(
+          (code) => code.code === oldCode
+        )?.variantId
+    )
+    .toBe(original.variants[0].id)
+  const after = await backup(extension),
+    updated = after.preparations[0].groups[0]
   expect(updated.baseCode).toBe(original.baseCode)
-  expect(updated.spanishName).toBe('NOMBRE CONSERVADO')
+  expect(updated.variants[0].spanishName).toBe('NOMBRE CONSERVADO')
   expect(updated.variants[0].id).toBe(original.variants[0].id)
   expect(updated.variants[0].variantSuffix).toBe(
     original.variants[0].variantSuffix

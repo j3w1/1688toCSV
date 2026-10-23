@@ -43,7 +43,7 @@ export function mountListToolbar(document, { readList, send }) {
   const disclosure = mountFloatingPanel(document, {
     panel: aside,
     body: panelBody,
-    title: make('strong', '1688toCSV · Your order library'),
+    title: make('strong', '1688toPL · Your order library'),
     key: 'list',
   })
   const nav = make('nav')

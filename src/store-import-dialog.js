@@ -4,6 +4,7 @@ import { decorateIcon } from './icons.js'
 import { mountStoreSpreadsheetGuide } from './store-spreadsheet-guide.js'
 import { readStoreWorkbookAsync } from './store-workbook-client.js'
 import { analyzeStoreSheet } from './store-workbook-model.js'
+import { findMatchingStoreImports } from './store-import-matches.js'
 import { createPhotoViewer } from './photo-viewer.js'
 import { squareProductPhoto } from './product-photo.js'
 import { popupLanguageToggle } from './popup-language-toggle.js'
@@ -375,6 +376,7 @@ export function openStoreImportDialog({
       'store-import-status'
     ),
     issues = el('ul', undefined, 'store-import-issues'),
+    duplicateNotice = el('p', undefined, 'store-import-warning'),
     checksHeader = el('div', undefined, 'store-import-checks-header'),
     checksTitle = el('h3', m('Workbook checks')),
     checksStatus = el('span', undefined, 'store-import-checks-status'),
@@ -442,6 +444,9 @@ export function openStoreImportDialog({
   status.setAttribute('role', 'status')
   status.setAttribute('aria-live', 'polite')
   status.tabIndex = -1
+  duplicateNotice.hidden = true
+  duplicateNotice.dataset.action = 'duplicate-import-warning'
+  duplicateNotice.setAttribute('role', 'status')
   form.noValidate = true
   submit.type = 'submit'
   close.type = 'button'
@@ -523,6 +528,7 @@ export function openStoreImportDialog({
     setup,
     identity,
     status,
+    duplicateNotice,
     checksHeader,
     issues,
     summary,
@@ -750,7 +756,23 @@ export function openStoreImportDialog({
     status.classList.toggle('is-error', errors > 0)
   }
   const analyze = async () => {
-    analysis = await analyzeStoreSheet(workbook, sheet.value)
+    const current = generation,
+      result = await analyzeStoreSheet(workbook, sheet.value),
+      matches = await findMatchingStoreImports(
+        result,
+        await repository.listOrders()
+      )
+    if (current !== generation || !dialog.isConnected) return
+    analysis = result
+    duplicateNotice.hidden = !matches.length
+    if (matches.length)
+      bindText(
+        duplicateNotice,
+        m(
+          'This appears to match {0} imported order(s). Importing again creates a separate purchase; review the date before continuing.',
+          { 0: matches.length }
+        )
+      )
     render()
   }
   file.addEventListener('change', async () => {
@@ -762,6 +784,7 @@ export function openStoreImportDialog({
     storeName.removeAttribute('aria-invalid')
     analysis = undefined
     workbook = undefined
+    duplicateNotice.hidden = true
     render()
     setBusy(true)
     bindText(status, m('Reading workbook and product photos…'))

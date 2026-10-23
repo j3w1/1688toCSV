@@ -2,6 +2,7 @@ import { test, expect } from './extension-fixture.mjs'
 import { createDemoRecords } from '../../preview/library-fixture.js'
 import { revealCopyActions } from './copy-actions-helpers.mjs'
 import { DEFAULT_LABEL_SETTINGS } from '../../src/labels.js'
+import { assignSelectedPurchaseCodes } from './smart-workspace-helpers.mjs'
 
 async function observeImageWrites(page) {
   await page.evaluate(() => {
@@ -119,12 +120,11 @@ test('individual barcode and carton images keep their exact bytes and Excel labe
 }) => {
   const { page } = await workspace(extension, 2)
   await page.locator('#select-rows').click()
-  await page.locator('#prepare-orders').click()
-  await page
-    .getByRole('button', { name: 'Assign codes and prepare', exact: true })
-    .click()
-  const packing = page.locator('#packing-view')
-  await expect(packing.locator('.preparation-group')).toHaveCount(2)
+  await assignSelectedPurchaseCodes(page)
+  const packing = page.locator('#orders-view')
+  await expect(
+    packing.locator('#sheet-body tr[data-selection-key]')
+  ).toHaveCount(2)
   await observeImageWrites(page)
   for (const [kind, action] of [
     ['barcode', 'Copy barcode images'],
@@ -229,6 +229,7 @@ test('photo, Excel-cells and Excel-image previews copy individual full PNGs and 
     const dialog = page.locator('.image-copy-dialog')
     await expect(dialog.locator('.image-copy-submit')).toBeEnabled()
     const image = dialog.locator('.copy-preview img').first()
+    await image.evaluate((image) => image.decode())
     const expected = await imageDigest(image)
     if (action === 'copy-excel-image') {
       await dialog.getByRole('button', { name: 'Zoom in', exact: true }).click()
@@ -447,6 +448,7 @@ test('Excel preview matches copied bytes, errors retry in place, columns refresh
   const preview = dialog.locator('.copy-preview')
   const zoom = dialog.locator('.copy-preview-zoom')
   const originalSource = await zoom.locator('img').getAttribute('src')
+  await zoom.locator('img').evaluate((image) => image.decode())
   const beforeSize = await zoom.locator('img').boundingBox()
   await preview.hover()
   await page.mouse.wheel(0, -240)
@@ -598,6 +600,7 @@ test('Excel preview preserves its image and zoom when style options toggle', asy
   const style = dialog.locator('.excel-style-details')
   const summary = style.locator('summary')
   const source = await image.getAttribute('src')
+  await image.evaluate((image) => image.decode())
   await expect(style).toHaveJSProperty('open', false)
   await summary.click()
   await expect(style).toHaveJSProperty('open', true)
@@ -638,17 +641,16 @@ test('Excel preview preserves its image and zoom when style options toggle', asy
   await expect(dialog).toHaveCount(0)
 })
 
-test('carton mark batches show all generated marks and copy in the same packing dialog', async ({
+test('carton mark batches show every selected Orders mark and copy in one dialog', async ({
   extension,
 }) => {
   const { page } = await workspace(extension, 6)
   await page.locator('#select-rows').click()
-  await page.locator('#prepare-orders').click()
-  await page
-    .getByRole('button', { name: 'Assign codes and prepare', exact: true })
-    .click()
-  const packing = page.locator('#packing-view')
-  await expect(packing.locator('.preparation-group')).toHaveCount(6)
+  await assignSelectedPurchaseCodes(page)
+  const packing = page.locator('#orders-view')
+  await expect(
+    packing.locator('#sheet-body tr[data-selection-key]')
+  ).toHaveCount(6)
   await revealCopyActions(page)
   await packing
     .getByRole('button', { name: 'Copy carton marks', exact: true })

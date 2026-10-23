@@ -110,6 +110,7 @@ test('store cards keep IDs in details, show minimal charges and copy WeChat with
 }) => {
   const { page, sheets, native } = await seedStores(extension)
   const cards = page.locator('.order-card')
+  await expect(cards.getByRole('checkbox')).toHaveCount(6)
   for (const record of [...sheets, ...native]) {
     const target = page.locator(
       `.order-card[data-order-id="${record.snapshot.orderId}"]`

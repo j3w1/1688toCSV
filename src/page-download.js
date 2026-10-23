@@ -2,7 +2,7 @@ import { createProgressView, importProgressStyles } from './import-progress.js'
 import { mountFloatingPanel, floatingPanelStyles } from './floating-panel.js'
 import { mountPanelAppearance } from './panel-appearance.js'
 
-const controlKey = Symbol.for('1688tocsv.pageDownloadCleanup')
+const controlKey = Symbol.for('1688topl.pageDownloadCleanup')
 
 // Keep the native download link in the order document. Generate the current
 // file synchronously during its click, before the browser follows the link.
@@ -51,10 +51,10 @@ export function mountPageDownload(document, prepareFile, actions = {}) {
   `
   )
   const control = element('aside')
-  control.setAttribute('aria-label', '1688toCSV')
+  control.setAttribute('aria-label', '1688toPL')
   const panelBody = element('div', '', control)
   const title = document.createElement('p')
-  title.textContent = '1688toCSV · Order export'
+  title.textContent = '1688toPL · Order export'
   title.className = 'brand'
   const disclosure = mountFloatingPanel(document, {
     panel: control,

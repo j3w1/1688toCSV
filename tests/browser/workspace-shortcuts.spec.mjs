@@ -1,5 +1,10 @@
 import { test, expect } from './extension-fixture.mjs'
 import { createDemoRecords } from '../../preview/library-fixture.js'
+import {
+  seedSmartOrder,
+  openSmartLibrary,
+  createSmartContainer,
+} from './smart-workspace-helpers.mjs'
 
 async function openLibrary(extension, { skipped = false } = {}) {
   const [record] = await extension.inspector.evaluate(
@@ -41,56 +46,53 @@ async function openLibrary(extension, { skipped = false } = {}) {
   return { page, rows }
 }
 
-test('Ctrl+Enter reviews the selected eligible products through the existing Prepare action', async ({
+test('retired Ctrl+Enter cannot prepare or assign; explicit purchase-code review still cancels without allocation', async ({
   extension,
 }) => {
   const { page } = await openLibrary(extension)
-  await expect(page.locator('#prepare-orders')).toHaveAttribute(
-    'aria-keyshortcuts',
-    'Control+Enter Meta+Enter'
-  )
+  await expect(page.locator('#prepare-orders')).toHaveCount(0)
   await page.keyboard.press('Control+Enter')
-  const review = page.getByRole('dialog', {
-    name: 'Assign product codes?',
-    exact: true,
-  })
+  await expect(page.locator('dialog[open]')).toHaveCount(0)
+  const assignments = () =>
+    extension.inspector.evaluate(async () =>
+      (await window.testRepository).listPreparations()
+    )
+  expect(await assignments()).toEqual([])
+  await page.locator('[data-action="review-purchase-codes"]').click()
+  const review = page.locator('.purchase-code-review')
   await expect(review).toBeVisible()
-  await expect(review.locator('.packing-review-item')).toHaveCount(3)
-  // The same shortcut does not submit a confirmation or trigger a second action.
   await page.keyboard.press('Control+Enter')
   await expect(review).toBeVisible()
-  await expect(page.locator('#packing-view')).not.toBeVisible()
+  expect(await assignments()).toEqual([])
   await page.keyboard.press('Escape')
-  await expect(review).not.toBeVisible()
+  await expect(review).toHaveCount(0)
+  expect(await assignments()).toEqual([])
 })
 
-test('Ctrl+Enter respects skipped-only and disabled preparation scopes', async ({
+test('legacy skipped evidence cannot reopen Prepare or silently remove the purchase source through a shortcut', async ({
   extension,
 }) => {
   const { page, rows } = await openLibrary(extension, { skipped: true })
-  await expect(page.locator('#prepare-orders')).toBeDisabled()
+  const before = await extension.inspector.evaluate(async () =>
+    (await (await window.testRepository).listOrders()).map(
+      (record) => record.snapshot
+    )
+  )
   await page.keyboard.press('Control+Enter')
-  await expect(page.locator('dialog[open]')).toHaveCount(0)
-  await expect(page.locator('#packing-view')).not.toBeVisible()
   await page.locator('#packing-settings').focus()
   await page.keyboard.press('Control+Enter')
   await expect(page.locator('dialog[open]')).toHaveCount(0)
-  await rows
-    .first()
-    .getByRole('button', { name: 'Skipped — include in packing', exact: true })
-    .click()
-  await expect(page.locator('#prepare-orders')).toBeEnabled()
-  // A locked control must stay authoritative even if a keyboard event arrives.
-  await page.locator('#prepare-orders').evaluate((button) => {
-    button.disabled = true
-  })
-  await rows.first().focus()
-  await page.keyboard.press('Control+Enter')
-  await expect(page.locator('dialog[open]')).toHaveCount(0)
+  await expect(rows.locator('.packing-exclusion-toggle')).toHaveCount(0)
   await expect(page.locator('#packing-view')).not.toBeVisible()
+  const after = await extension.inspector.evaluate(async () =>
+    (await (await window.testRepository).listOrders()).map(
+      (record) => record.snapshot
+    )
+  )
+  expect(after).toEqual(before)
 })
 
-test('Ctrl+Enter remains available from checkboxes without changing their native Space behavior', async ({
+test('native Space selects explicit checkboxes without opening details or reviving Ctrl+Enter preparation', async ({
   extension,
 }) => {
   const { page, rows } = await openLibrary(extension)
@@ -100,17 +102,17 @@ test('Ctrl+Enter remains available from checkboxes without changing their native
   await expect(checkbox).toBeChecked()
   await page.keyboard.press('Space')
   await expect(checkbox).not.toBeChecked()
-  // Changing the display filter clears row selection. Restore a real eligible
-  // selection before testing the same Prepare shortcut from checkbox focus.
-  await rows.first().focus()
-  await page.keyboard.press('Control+a')
-  await expect(page.locator('#prepare-orders')).toBeEnabled()
-  await checkbox.focus()
-  await expect(checkbox).toBeFocused()
+  const selection = rows.first().locator('.row-number input[type="checkbox"]')
+  await selection.focus()
+  await page.keyboard.press('Space')
+  await expect(selection).toBeChecked()
+  await expect(rows.first()).toHaveAttribute('aria-selected', 'true')
   await page.keyboard.press('Control+Enter')
-  await expect(
-    page.getByRole('dialog', { name: 'Assign product codes?', exact: true })
-  ).toBeVisible()
+  await expect(page.locator('dialog[open]')).toHaveCount(0)
+  await expect(selection).toBeChecked()
+  await page.keyboard.press('Space')
+  await expect(selection).not.toBeChecked()
+  await expect(rows.first()).toHaveAttribute('aria-selected', 'false')
 })
 
 test('contextual shortcuts retain editor, dialog, browser and composition behavior with translated hover help', async ({
@@ -172,67 +174,83 @@ test('contextual shortcuts retain editor, dialog, browser and composition behavi
     ['en', 'Shortcut outside text fields'],
   ]) {
     await page.locator(`#language-toggle [data-language="${language}"]`).click()
-    await page.locator('#prepare-orders').hover()
+    await page.locator('#packing-settings').hover()
     const help = page.getByRole('tooltip')
     await expect(help).toContainText(caption)
-    await expect(help.locator('kbd')).toHaveText('Ctrl+Enter')
+    await expect(help.locator('kbd')).toHaveText('Alt+Shift+S')
     await page.mouse.move(2, 2)
     await expect(help).toHaveCount(0)
   }
 })
 
-test('packing shortcuts call the existing undo, redo, arrange, grouping and return actions', async ({
+test('Packing shortcuts undo and redo loading, retire Arrange/Grouping and return to Orders without source mutations', async ({
   extension,
 }) => {
-  const { page } = await openLibrary(extension)
-  await page.keyboard.press('Control+Enter')
-  await page
-    .getByRole('button', { name: 'Assign codes and prepare', exact: true })
-    .click()
-  const packing = page.locator('#packing-view')
-  await expect(packing).toBeVisible()
-  const code = packing
-    .getByRole('textbox', { name: 'Product code', exact: true })
-    .first()
-  await expect(code).toHaveValue(/^CE/)
-  const before = await code.inputValue()
-  const after = before.slice(0, -2) + '98'
-  await code.fill(after)
-  await code.press('Tab')
-  await expect(packing.locator('.preparation-save-status')).toHaveText(
-    'Saved automatically'
+  const ref = await seedSmartOrder(extension, { physical: true }),
+    id = await createSmartContainer(extension, [ref]),
+    page = await openSmartLibrary(extension)
+  const before = await extension.inspector.evaluate(
+    async (ref) =>
+      (await window.testRepository).getOrder(ref.orderId, {
+        accountId: ref.accountId,
+      }),
+    ref
   )
-  const undo = packing.getByRole('button', { name: 'Undo', exact: true })
+  await page.goto(
+    `${extension.extensionBaseUrl}/library.html#workspace=packing&containerId=${id}&view=loading`
+  )
+  await page.locator('[data-action="mark-all-loaded"]').click()
+  const undo = page.locator('[data-action="undo-container-loading"]')
   await expect(undo).toBeEnabled()
   await undo.focus()
   await page.keyboard.press('Control+z')
-  await expect(code).toHaveValue(before)
+  const states = () =>
+    extension.inspector.evaluate(
+      async (id) =>
+        (
+          await (await window.testRepository).getContainerView({ id })
+        ).cartons.map((carton) => carton.state),
+      id
+    )
+  await expect
+    .poll(async () => {
+      const values = await states()
+      return (
+        values.length > 0 && values.every((state) => state === 'unconfirmed')
+      )
+    })
+    .toBe(true)
   await expect(
-    packing.getByRole('button', { name: 'Redo', exact: true })
+    page.locator('[data-action="redo-container-loading"]')
   ).toBeEnabled()
   await page.keyboard.press('Control+Shift+z')
-  await expect(code).toHaveValue(after)
-  await packing.getByRole('button', { name: 'Organize', exact: true }).click()
+  await expect
+    .poll(async () => {
+      const values = await states()
+      return values.length > 0 && values.every((state) => state === 'loaded')
+    })
+    .toBe(true)
   await page.keyboard.press('Alt+Shift+a')
-  await expect(
-    packing.getByRole('group', { name: 'Arrange packing', exact: true })
-  ).toBeVisible()
-  await page.keyboard.press('Escape')
-  await packing.getByRole('button', { name: 'Done', exact: true }).click()
-  // Undo/redo restores authoring and leaves a fresh selection scope. Grouping
-  // must still obey its normal requirement for selected products.
-  await packing.getByRole('button', { name: 'Select all', exact: true }).click()
-  await expect(
-    packing.getByRole('button', { name: 'Grouping tools', exact: true })
-  ).toBeEnabled()
   await page.keyboard.press('Alt+Shift+g')
   await expect(
-    packing.getByRole('group', {
-      name: 'Selected product grouping',
-      exact: true,
-    })
-  ).toBeVisible()
-  await page.keyboard.press('Escape')
+    page.locator(
+      '#packing-view [data-action="organize-packing"],#packing-view [data-action="open-grouping-menu"]'
+    )
+  ).toHaveCount(0)
+  await expect(
+    page.locator(
+      '#packing-view .packing-organize-group,#packing-view .group-name-editor'
+    )
+  ).toHaveCount(0)
   await page.keyboard.press('Alt+Shift+o')
-  await expect(packing).not.toBeVisible()
+  await expect(page.locator('#orders-view')).toBeVisible()
+  const after = await extension.inspector.evaluate(
+    async (ref) =>
+      (await window.testRepository).getOrder(ref.orderId, {
+        accountId: ref.accountId,
+      }),
+    ref
+  )
+  expect(after.snapshot).toEqual(before.snapshot)
+  expect(after.productPhotos).toEqual(before.productPhotos)
 })

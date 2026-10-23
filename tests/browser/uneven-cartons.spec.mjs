@@ -8,6 +8,14 @@ import { validateCartonBatch } from '../../src/carton-batches.js'
 import { repeatProductStoreIdentity } from '../../src/repeat-products.js'
 import { mkdir, readFile, writeFile } from 'node:fs/promises'
 import XLSX from 'xlsx'
+import {
+  openOrderReconciliation,
+  productGridRow,
+  createSmartContainer,
+  openContainerOutput,
+  libraryBackup,
+} from './smart-workspace-helpers.mjs'
+import { revealCopyActions } from './copy-actions-helpers.mjs'
 
 const cartons = [
   { quantity: '13', len: '60', wid: '50', ht: '40', weight: '16.75' },
@@ -134,84 +142,115 @@ function table(sheet, headerLabel) {
 test('uneven numbered cartons retain exact supplier measurements through the workspace and actual Excel download', async ({
   extension,
 }) => {
-  const { batches } = await seed(extension),
-    page = await extension.context.newPage()
+  const { record, batches } = await seed(extension),
+    page = await extension.context.newPage(),
+    ref = {
+      accountId: record.snapshot.accountId,
+      orderId: record.snapshot.orderId,
+    },
+    before = await libraryBackup(extension)
   await page.clock.setFixedTime(new Date('2026-10-15T04:00:00Z'))
   await page.setViewportSize({ width: 1440, height: 1000 })
   await page.goto(`${extension.extensionBaseUrl}/library.html`)
   const sourceRow = page.locator('#sheet-body tr[data-selection-key]')
   await expect(sourceRow).toHaveCount(1)
-  await expect(
-    sourceRow.getByRole('spinbutton', { name: 'Pcs/box', exact: true })
-  ).toBeEditable()
-  await expect(sourceRow.locator('.carton-recorded-context')).toContainText(
-    'Varies · 6 recorded cartons'
-  )
-  await page.locator('#view-packing').click()
-  const packing = page.locator('#packing-view')
-  await expect(packing).toBeVisible()
-  await expect(packing.locator('.preparation-group')).toHaveCount(1)
-  await expect(packing.locator('.variants tbody tr')).toHaveCount(1)
-  await expect(
-    packing.getByRole('spinbutton', { name: 'Pcs/box', exact: true })
-  ).toBeEditable()
-  await expect(packing.locator('.carton-recorded-context')).toContainText(
-    'Varies · 6 recorded cartons'
-  )
-  await expect(packing.locator('.packing-carton-chip')).toHaveCount(6)
-  await expect(packing.locator('.packing-group-cartons')).toContainText(
-    '6 recorded cartons'
-  )
-  for (const [index, carton] of cartons.entries())
-    await expect(
-      packing.locator('.packing-carton-chip').nth(index)
-    ).toContainText(`#${index + 1} · ${carton.quantity}`)
-  await packing.locator('.packing-group-cartons-edit').click()
-  const editor = page.getByRole('dialog', {
-    name: 'Carton batches',
-    exact: true,
-  })
-  await expect(editor).toBeVisible()
-  await expect(editor.locator('.carton-batch-card')).toHaveCount(6)
-  await editor.locator(`[data-batch-id="${batches[0].id}"]`).click()
-  for (const [name, expected] of Object.entries({
-    cartonNumber: '1',
-    len: '60',
-    wid: '50',
-    ht: '40',
-    weight: '16.75',
-    count: '1',
-    received: '1',
-    loaded: '0',
-  }))
-    await expect(editor.locator(`input[name="${name}"]`)).toHaveValue(expected)
-  await expect(editor.locator('.carton-batch-quantity input')).toHaveValue('13')
-  await expect(editor.locator('.carton-batch-summary')).toContainText('0.12 m³')
-  await expect(editor.locator('.carton-batch-summary')).toContainText(
-    '16.75 kg'
-  )
-  await expect(
-    editor.getByRole('img', { name: 'Carton mark CE26101001', exact: true })
-  ).toBeVisible()
+  await sourceRow.getByRole('checkbox').check()
+  await revealCopyActions(page)
+  await page.locator('#copy-carton-marks').click()
+  const artwork = page.locator('.image-copy-dialog')
+  await expect(artwork.locator('figcaption .ce-code')).toHaveText([
+    'CE26101001',
+  ])
+  await expect(artwork.locator('.copy-preview img')).toHaveCount(1)
   await expect
     .poll(() =>
-      editor
-        .locator('img')
+      artwork
+        .locator('.copy-preview img')
         .evaluateAll((images) =>
           images.every((image) => image.complete && image.naturalWidth > 0)
         )
     )
     .toBe(true)
+  await artwork.getByRole('button', { name: 'Done', exact: true }).click()
+  const grid = await openOrderReconciliation(page, ref),
+    product = productGridRow(grid, {
+      ...ref,
+      entryId: record.snapshot.items[0].entryId,
+    })
+  await expect(product.locator('[data-grid-column="capacity"]')).toBeEditable()
+  await expect(product.locator('.pattern-readout')).toHaveText(
+    '1 × 13 + 1 × 12 + 1 × 11 + 1 × 9 + 1 × 9 + 1 × 9'
+  )
+  await grid.locator('[data-action="reconciliation-cartons"]').click()
+  const physicalRows = grid.locator('tbody tr[data-grid-key]')
+  await expect(physicalRows).toHaveCount(6)
+  for (const [index, carton] of cartons.entries()) {
+    const row = physicalRows.nth(index)
+    await expect(row.locator('[data-column="label"]')).toHaveText(
+      String(index + 1)
+    )
+    await expect(row.locator('[data-column="contents"]')).toHaveText(
+      `${record.snapshot.items[0].entryId}: ${carton.quantity}`
+    )
+    await expect(row.locator('[data-grid-column="dimensions"]')).toHaveValue(
+      `${carton.len}×${carton.wid}×${carton.ht}`
+    )
+    await expect(row.locator('[data-grid-column="weight"]')).toHaveValue(
+      batches[index].weight
+    )
+    await expect(row.locator('[data-column="count"]')).toHaveText('1')
+  }
+  await physicalRows.first().focus()
+  await physicalRows.first().press('Enter')
+  const editor = page.locator('dialog[data-action="inspect-order-carton"]')
+  await expect(editor).toBeVisible()
+  await expect(
+    editor.getByRole('textbox', { name: 'Dimensions (cm)', exact: true })
+  ).toHaveValue('60×50×40')
+  await expect(
+    editor.getByRole('textbox', { name: 'Weight (kg)', exact: true })
+  ).toHaveValue('16.75')
+  await expect(editor).toContainText(`${record.snapshot.items[0].entryId}: 13`)
   await mkdir('work', { recursive: true })
   await page.screenshot({ path: 'work/uneven-cartons-editor.png' })
-  await editor.getByRole('button', { name: 'Done', exact: true }).click()
+  await editor.getByRole('button', { name: 'Close', exact: true }).click()
   await expect(editor).toHaveCount(0)
+  // Receipts and the old source loading confirmation remain their own ledger.
+  const sourceBeforeLoading = await libraryBackup(extension)
+  expect(sourceBeforeLoading.orders).toEqual(before.orders)
+  expect(sourceBeforeLoading.cartonBatches).toEqual(before.cartonBatches)
+  expect(
+    sourceBeforeLoading.cartonBatches.map(({ received, loaded }) => ({
+      received,
+      loaded,
+    }))
+  ).toEqual(cartons.map(() => ({ received: 1, loaded: 0 })))
+  const containerId = await createSmartContainer(extension, [ref])
+  await extension.inspector.evaluate(
+    async ({ id, ref }) => {
+      const repository = await window.testRepository,
+        view = await repository.getContainerView({ id })
+      await repository.markContainerLoaded({
+        id,
+        orderRefs: [ref],
+        expectedRevision: view.container.revision,
+        intentId: crypto.randomUUID(),
+      })
+    },
+    { id: containerId, ref }
+  )
+  const packing = await openContainerOutput(page, containerId)
+  await expect(packing.locator('[data-grid-column="capacity"]')).toHaveCount(0)
 
   await packing.locator('[data-action="export-packing-list"]').click()
   const exportDialog = page.locator('.packing-export-dialog')
   await expect(exportDialog).toBeVisible()
   await exportDialog.locator('button[data-language="en"]').click()
+  const workbookDownload = page.waitForEvent('download', (download) =>
+    download.suggestedFilename().endsWith('.xlsx')
+  )
   await exportDialog.locator('[data-action="download-packing-list"]').click()
+  await workbookDownload
   let downloaded
   await expect
     .poll(async () => {
@@ -227,14 +266,14 @@ test('uneven numbered cartons retain exact supplier measurements through the wor
   const bytes = await readFile(downloaded[0].filename)
   await writeFile('work/uneven-cartons-synthetic.xlsx', bytes)
   const workbook = XLSX.read(bytes, { type: 'buffer' })
-  expect(workbook.SheetNames).toEqual(['Products', 'Cartons'])
-  const products = table(workbook.Sheets.Products, 'Code'),
+  expect(workbook.SheetNames).toEqual(['Packing list', 'Cartons', 'Se quedó'])
+  const products = table(workbook.Sheets['Packing list'], 'Code'),
     physical = table(workbook.Sheets.Cartons, 'Batch'),
     productRows = products.rows.filter(
       (row) => row[products.column('Code')] === 'CE26101001'
     ),
     cartonRows = physical.rows.filter((row) =>
-      /^#[1-6]$/.test(row[physical.column('Batch')])
+      /^[1-6]$/.test(row[physical.column('Batch')])
     ),
     total = physical.rows.find(
       (row) => row[physical.column('Batch')] === 'Totals'
@@ -242,18 +281,19 @@ test('uneven numbered cartons retain exact supplier measurements through the wor
   expect(productRows).toHaveLength(1)
   expect(productRows[0][products.column('Qty')]).toBe(63)
   expect(productRows[0][products.column('Subtotal 元')]).toBe(63)
-  expect(productRows[0][products.column('Pcs/box')]).toBe('Varies')
-  expect(productRows[0][products.column('Cartons')]).toBe(
-    '6 cartons · #1, #2, #3, #4, #5, #6'
-  )
+  expect(productRows[0][products.column('Pcs/box')]).toBe('Uneven')
+  const references = productRows[0][products.column('Cartons')]
+  for (let number = 1; number <= 6; number++)
+    expect(references).toContain(String(number))
+  expect(references).toBe('1, 2, 3, 4, 5, 6\n3 × 9 + 1 × 11 + 1 × 12 + 1 × 13')
   expect(cartonRows).toHaveLength(6)
   expect(cartonRows.map((row) => row[physical.column('Batch')])).toEqual([
-    '#1',
-    '#2',
-    '#3',
-    '#4',
-    '#5',
-    '#6',
+    '1',
+    '2',
+    '3',
+    '4',
+    '5',
+    '6',
   ])
   for (const [index, row] of cartonRows.entries()) {
     const expected = cartons[index]
@@ -262,15 +302,13 @@ test('uneven numbered cartons retain exact supplier measurements through the wor
     )
     for (const [header, number] of Object.entries({
       Cartons: 1,
-      Received: 1,
-      Loaded: 0,
+      Loaded: 1,
       'L · cm': Number(expected.len),
       'W · cm': Number(expected.wid),
       'H · cm': Number(expected.ht),
       'Weight kg': Number(expected.weight),
       'Total kg': Number(expected.weight),
-      'Loaded kg': 0,
-      'Loaded m³': 0,
+      'Loaded kg': Number(expected.weight),
     })) {
       const cell = physical.cell(row, header)
       expect(cell.t, `${row[0]} ${header} must remain numeric`).toBe('n')
@@ -282,18 +320,43 @@ test('uneven numbered cartons retain exact supplier measurements through the wor
       12
     )
     expect(physical.cell(row, 'm³/box').f).toContain('/1000000')
+    expect(physical.cell(row, 'Loaded m³').v).toBeCloseTo(
+      (Number(expected.len) * Number(expected.wid) * Number(expected.ht)) /
+        1_000_000,
+      12
+    )
+    expect(row[physical.column('Received')]).toBe('')
   }
   expect(physical.cell(total, 'Cartons').v).toBe(6)
-  expect(physical.cell(total, 'Received').v).toBe(6)
-  expect(physical.cell(total, 'Loaded').v).toBe(0)
+  expect(total[physical.column('Received')]).toBe('')
+  expect(physical.cell(total, 'Loaded').v).toBe(6)
   expect(physical.cell(total, 'Total kg').v).toBeCloseTo(57.22, 10)
   expect(physical.cell(total, 'Total m³').v).toBeCloseTo(0.461256, 12)
-  for (const header of ['Loaded', 'Loaded kg', 'Loaded m³']) {
+  for (const [header, expected] of [
+    ['Loaded', 6],
+    ['Loaded kg', 57.22],
+    ['Loaded m³', 0.461256],
+  ]) {
     const cell = physical.cell(total, header)
     expect(cell.t).toBe('n')
-    expect(cell.v).toBe(0)
+    expect(cell.v).toBeCloseTo(expected, 12)
     expect(cell.v).not.toBe('')
   }
+  const after = await libraryBackup(extension)
+  expect(after.orders).toEqual(before.orders)
+  expect(after.cartonBatches).toEqual(before.cartonBatches)
+  expect(
+    after.cartonBatches.map(({ received, loaded }) => ({ received, loaded }))
+  ).toEqual(cartons.map(() => ({ received: 1, loaded: 0 })))
+  expect(after.cartonBatches.map(({ id }) => id)).toEqual(
+    batches.map(({ id }) => id)
+  )
+  const archive = XLSX.CFB.read(bytes, { type: 'buffer' })
+  expect(
+    archive.FullPaths.filter((path) =>
+      /\/xl\/media\/.+\.(png|jpe?g)$/.test(path)
+    ).length
+  ).toBeGreaterThan(0)
   for (const sheet of Object.values(workbook.Sheets))
     expect(Object.values(sheet).filter((cell) => cell?.t === 'e')).toEqual([])
   expect(extension.unexpectedRequests).toEqual([])

@@ -1,3 +1,4 @@
+import { exportPdf } from './export-completion-helpers.mjs'
 import { mkdir, readFile, writeFile } from 'node:fs/promises'
 import { test, expect } from './extension-fixture.mjs'
 import {
@@ -162,7 +163,9 @@ for (const kind of ['labels', 'marks']) {
       const downloads = []
       const listener = (download) => downloads.push(download)
       page.on('download', listener)
-      await dialog.locator('[data-action="export-pdf"]').click()
+      expect(
+        await exportPdf(page, dialog.locator('[data-action="export-pdf"]'))
+      ).toEqual({ saved: true })
       await expect.poll(() => downloads.length).toBe(2)
       await expect(dialog.locator('[data-action="export-pdf"]')).toBeEnabled()
       page.off('download', listener)

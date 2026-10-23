@@ -2,6 +2,14 @@ import { CFB, utils, write } from 'xlsx'
 import { crc32, deflateSync } from 'node:zlib'
 import { mkdir } from 'node:fs/promises'
 import { test, expect } from './extension-fixture.mjs'
+import {
+  assignSelectedPurchaseCodes,
+  editOrderProduct,
+  closeOrderProduct,
+  openOrderReconciliation,
+  createContainerThroughUI,
+  sealContainerThroughUI,
+} from './smart-workspace-helpers.mjs'
 import { STORE_IMPORT_MARKERS } from '../../src/store-workbook-model.js'
 
 const png = (() => {
@@ -179,6 +187,106 @@ async function backup(extension) {
   return response.data
 }
 
+test('complete China purchase imports1350 pieces and15 physical cartons once, then whole-order loading seals without quantity reentry', async ({
+  extension,
+}) => {
+  const { page, dialog, file } = await openImport(extension),
+    quantities = [100, 150, 500, 500, 100],
+    capacities = [50, 75, 100, 100, 100]
+  await file.setInputFiles(
+    workbookFile({
+      rows: [
+        ['pic', 'desc', 'boxes', 'perbox', 'price', 'amount', 'group', 'var'],
+        ...quantities.map((quantity, index) => [
+          '',
+          `Synthetic China goods ${index + 1}`,
+          quantity / capacities[index],
+          capacities[index],
+          1,
+          quantity,
+          String(index + 1),
+          '',
+        ]),
+        ['total', 1350, 'total'],
+      ],
+      photoSpans: [{ from: 1, to: 6 }],
+    })
+  )
+  await expect(dialog.locator('.store-import-product')).toHaveCount(5)
+  await dialog.locator('input[name="allReviews"]').check()
+  await dialog.getByLabel('Purchase date', { exact: true }).fill('2026-09-12')
+  await dialog.locator('input[name="photosReviewed"]').check()
+  await dialog
+    .getByRole('button', { name: 'Import order', exact: true })
+    .click()
+  await expect(dialog).toBeHidden()
+  await expect(page.locator('#sheet-body tr[data-selection-key]')).toHaveCount(
+    5
+  )
+  const original = await backup(extension),
+    record = original.orders[0],
+    ref = {
+      accountId: record.accountId || 'local',
+      orderId: record.snapshot.orderId,
+    }
+  expect(record.snapshot.items.map((item) => item.quantity)).toEqual(
+    quantities.map(String)
+  )
+  expect(record.snapshot.items.every((item) => item.price === '1.00')).toBe(
+    true
+  )
+  expect(record.snapshot.totals.payable).toBe('1350.00')
+  const context = await extension.inspector.evaluate(
+    async (ref) => (await window.testRepository).getOrderReconciliation(ref),
+    ref
+  )
+  expect(context.batches.reduce((sum, batch) => sum + batch.count, 0)).toBe(15)
+  expect(
+    context.batches
+      .flatMap((batch) => batch.contents)
+      .reduce((sum, part) => sum + BigInt(part.quantity), 0n)
+      .toString()
+  ).toBe('1350')
+  await page.getByRole('button', { name: 'Show all', exact: true }).click()
+  await page.locator('#select-rows').click()
+  await assignSelectedPurchaseCodes(page)
+  const prepared = await backup(extension)
+  expect(
+    prepared.preparations[0].groups.every((group) =>
+      group.baseCode.startsWith('CE2609')
+    )
+  ).toBe(true)
+  const id = await createContainerThroughUI(
+    page,
+    [ref],
+    'Synthetic November China container'
+  )
+  await expect(
+    page.locator(
+      '#packing-view [data-grid-column="capacity"],#packing-view .preparation-group'
+    )
+  ).toHaveCount(0)
+  await sealContainerThroughUI(page)
+  const manifest = await extension.inspector.evaluate(
+    async (id) => (await window.testRepository).getContainerManifest({ id }),
+    id
+  )
+  expect(manifest.draft).toBe(false)
+  expect(manifest.cartons).toHaveLength(15)
+  expect(
+    manifest.products
+      .reduce((sum, product) => sum + BigInt(product.quantity), 0n)
+      .toString()
+  ).toBe('1350')
+  expect(
+    manifest.leftBehind.products
+      .reduce((sum, product) => sum + BigInt(product.quantity), 0n)
+      .toString()
+  ).toBe('0')
+  expect((await backup(extension)).orders[0].snapshot).toEqual(record.snapshot)
+  expect(extension.unexpectedRequests).toEqual([])
+})
+
 test('marked description cells without measurement headers reach automatic size recognition after a real workbook import', async ({
   extension,
 }) => {
@@ -243,16 +351,8 @@ test('marked description cells without measurement headers reach automatic size 
   expect(imported.items[0].productNumber).toBe('SYN-1-1')
   expect(imported.items[0].description).toBe('SYN-1-1 · 黑色陶瓷盘 · 25cm')
   await page.locator('#select-rows').click()
-  await page.locator('#prepare-orders').click()
-  await page
-    .getByRole('dialog', { name: 'Assign product codes?', exact: true })
-    .getByRole('button', { name: 'Assign codes and prepare', exact: true })
-    .click()
-  const packing = page.locator('#packing-view')
-  await expect(packing.locator('.preparation-group')).toHaveCount(3)
-  await expect(packing.locator('.preparation-save-status')).toHaveText(
-    'Saved automatically'
-  )
+  await assignSelectedPurchaseCodes(page)
+  await expect(page.locator('#orders-view')).toBeVisible()
   const saved = await backup(extension)
   const prepared = saved.preparations[0].groups
   expect(prepared[0].variants.map((variant) => variant.size)).toEqual(groups[0])
@@ -470,7 +570,7 @@ test('one embedded photo imports into every covered product group with one origi
   await page.close()
 })
 
-test('52 imported groups use a fitted assignment grid without pagers or main scrollbars and preserve source descriptions', async ({
+test('52 imported groups use one scrollable purchase-code review with bounded rows and preserve source descriptions', async ({
   extension,
 }) => {
   const { page, dialog, file } = await openImport(extension)
@@ -505,81 +605,56 @@ test('52 imported groups use a fitted assignment grid without pagers or main scr
   await expect(dialog).toHaveCount(0)
   const source = (await backup(extension)).orders[0].snapshot
   await page.locator('#select-rows').click()
-  await page.locator('#prepare-orders').click()
-  const review = page.locator('.packing-review-overview')
-  const cards = review.locator('.packing-review-overview-item')
+  await page.locator('#review-purchase-codes').click()
+  const review = page.locator('dialog[data-action="purchase-code-review"]'),
+    cards = review.locator('article')
+  await expect(review.locator('[data-row-count]')).toHaveAttribute(
+    'data-row-count',
+    '52'
+  )
   await expect(cards).toHaveCount(52)
-  await expect(
-    cards.first().locator('.packing-review-inline .packing-review-source')
-  ).toContainText('SYN-1')
+  await expect(cards.first()).toContainText('SYN-1')
   await expect(
     review.getByRole('button', { name: /^(Previous|Next)$/ })
   ).toHaveCount(0)
   await expect(review.locator('.order-reference-pair')).toHaveCount(0)
   const fitted = async () => {
-    await expect
-      .poll(() =>
-        cards.last().evaluate((card) => {
-          const rect = card.getBoundingClientRect(),
-            host = card
-              .closest('.packing-review-overview-fit')
-              .getBoundingClientRect()
-          return rect.bottom <= host.bottom + 1 && rect.top >= host.top - 1
-        })
-      )
-      .toBe(true)
-    expect(
-      await review
-        .locator('.scroll-dialog-content')
-        .evaluate(
-          (node) =>
-            node.scrollHeight <= node.clientHeight + 1 &&
-            node.scrollWidth <= node.clientWidth + 1
-        )
-    ).toBe(true)
+    const bounds = await review.boundingBox(),
+      viewport = page.viewportSize()
+    expect(bounds.x).toBeGreaterThanOrEqual(0)
+    expect(bounds.y).toBeGreaterThanOrEqual(0)
+    expect(bounds.x + bounds.width).toBeLessThanOrEqual(viewport.width)
+    expect(bounds.y + bounds.height).toBeLessThanOrEqual(viewport.height)
+    await cards.last().scrollIntoViewIfNeeded()
+    await expect(cards.last().locator('.purchase-code')).toBeVisible()
+    await expect(
+      review.locator('[data-action="assign-purchase-codes"]')
+    ).toBeVisible()
   }
-  await fitted()
+  await cards.first().scrollIntoViewIfNeeded()
   await cards.first().locator('.photo-copy-tile').hover()
-  const corner = cards.first().locator('.photo-copy-button')
-  const photoBounds = await cards
-    .first()
-    .locator('.photo-copy-source')
-    .boundingBox()
-  const cornerBounds = await corner.boundingBox()
+  const corner = cards.first().locator('.photo-copy-button'),
+    photoBounds = await cards
+      .first()
+      .locator('.photo-copy-source')
+      .boundingBox(),
+    cornerBounds = await corner.boundingBox()
   expect(cornerBounds.x + cornerBounds.width).toBeCloseTo(
     photoBounds.x + photoBounds.width - 2,
     0
   )
   expect(cornerBounds.y).toBeCloseTo(photoBounds.y + 2, 0)
   expect(cornerBounds.width).toBeLessThanOrEqual(16)
-  await mkdir(new URL('../../work/', import.meta.url), { recursive: true })
-  await review.screenshot({ path: 'work/packing-assignment-grid-wide.png' })
-  const selector = cards.first().locator('.packing-review-overview-select')
-  await selector.click()
-  const detail = review.locator('.packing-review-detail:popover-open')
-  await expect(detail).toBeVisible()
-  await expect(detail.locator('.packing-value-after code')).toHaveCount(1)
-  await expect(detail).toContainText('Product code')
-  expect(
-    (await detail.locator('.packing-value-label').allTextContents()).join(' ')
-  ).not.toContain('SYN-1')
-  await detail.locator('.packing-review-detail-close').press('Escape')
-  await expect(detail).toHaveCount(0)
-  await expect(selector).toBeFocused()
-  for (const width of [720, 390]) {
+  for (const width of [1280, 720, 390]) {
     await page.setViewportSize({ width, height: 700 })
     await fitted()
-    if (width === 390)
-      await review.screenshot({
-        path: 'work/packing-assignment-grid-narrow.png',
-      })
+    await review.screenshot({
+      path: test.info().outputPath(`purchase-code-review-${width}.png`),
+    })
   }
-  await cards.last().locator('.packing-review-overview-select').click()
-  await expect(detail).toBeVisible()
-  expect((await detail.boundingBox()).width).toBeGreaterThan(300)
-  await detail.locator('.packing-review-detail-close').click()
-  await review.locator('[data-action="review-proceed"]').click()
-  await expect(page.locator('#packing-view')).toBeVisible()
+  await review.locator('[data-action="assign-purchase-codes"]').click()
+  await expect(review).toBeHidden()
+  await expect(page.locator('#orders-view')).toBeVisible()
   const prepared = await backup(extension)
   expect(prepared.preparations[0].groups).toHaveLength(52)
   expect(prepared.orders[0].snapshot).toEqual(source)
@@ -863,7 +938,7 @@ test('additional order charges preview increased prices and preserve source amou
   expect(saved.snapshot.totals.payable).toBe('60.00')
 })
 
-test('editing a repeated import photo in preparation updates its exact order and preserves both original galleries', async ({
+test('editing a repeated import photo in Orders updates its exact order and preserves both original galleries', async ({
   extension,
 }) => {
   test.setTimeout(60000)
@@ -871,6 +946,14 @@ test('editing a repeated import photo in preparation updates its exact order and
   const importCopy = async (name, date) => {
     await file.setInputFiles(workbookFile({ name }))
     await expect(dialog.locator('.store-import-product')).toHaveCount(1)
+    if (name.includes('(2)'))
+      await expect(
+        dialog.locator('[data-action="duplicate-import-warning"]')
+      ).toContainText('match 1 imported order')
+    else
+      await expect(
+        dialog.locator('[data-action="duplicate-import-warning"]')
+      ).toBeHidden()
     await dialog.getByLabel('Purchase date', { exact: true }).fill(date)
     await dialog
       .getByRole('checkbox', {
@@ -904,25 +987,12 @@ test('editing a repeated import photo in preparation updates its exact order and
   )
 
   await page.locator('#select-rows').click()
-  await page.locator('#prepare-orders').click()
-  await expect(
-    page
-      .getByRole('dialog', { name: 'Assign product codes?', exact: true })
-      .locator('.order-source-link')
-  ).toHaveCount(0)
-  await page
-    .getByRole('dialog', { name: 'Assign product codes?', exact: true })
-    .getByRole('button', { name: 'Assign codes and prepare', exact: true })
-    .click()
-  const packing = page.locator('#packing-view')
-  await expect(packing).toBeVisible()
-  const secondOrder = packing.locator(
-    `[data-packing-order="${second.snapshot.orderId}"]`
+  await assignSelectedPurchaseCodes(page)
+  await expect(page.locator('#orders-view')).toBeVisible()
+  const secondRow = page.locator(
+    `#sheet-body tr[data-selection-key=${JSON.stringify(JSON.stringify(['local', second.snapshot.orderId, second.snapshot.items[0].entryId]))}]`
   )
-  await secondOrder
-    .locator('.variants tbody tr .preparation-photo')
-    .first()
-    .click()
+  await secondRow.getByRole('button', { name: /^Zoom product photo/ }).click()
   const viewer = page.getByRole('dialog', {
     name: 'Product photo',
     exact: true,
@@ -968,7 +1038,7 @@ test('editing a repeated import photo in preparation updates its exact order and
   for (const order of [firstSaved, secondSaved]) {
     const item = order.snapshot.items[0]
     const product = page.locator(
-      `#sheet-body tr[data-selection-key="${order.snapshot.orderId}/${item.entryId}"]`
+      `#sheet-body tr[data-selection-key=${JSON.stringify(JSON.stringify(['local', order.snapshot.orderId, item.entryId]))}]`
     )
     await product
       .getByRole('button', { name: 'Zoom product photo 1', exact: true })

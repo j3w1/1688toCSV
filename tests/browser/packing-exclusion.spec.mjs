@@ -1,6 +1,10 @@
 import { test, expect } from './extension-fixture.mjs'
 import { createDemoRecords } from '../../preview/library-fixture.js'
-import { writeFile } from 'node:fs/promises'
+import {
+  libraryBackup,
+  assignSelectedPurchaseCodes,
+  clearOrderProductSelection,
+} from './smart-workspace-helpers.mjs'
 
 async function backup(extension) {
   const result = await extension.inspector.evaluate(() =>
@@ -76,7 +80,6 @@ async function openOrders(
   await page.goto(`${extension.extensionBaseUrl}/library.html`)
   const rows = page.locator('#sheet-body tr[data-selection-key]')
   await expect(rows).toHaveCount(3)
-  await page.getByLabel('Packing month', { exact: true }).fill('2026-10')
   return { page, rows, record, view: page.locator('#packing-view') }
 }
 
@@ -95,50 +98,6 @@ function selection(rows) {
   )
 }
 
-async function skip(row, { keyboard = false } = {}) {
-  const action = row.getByRole('button', { name: 'Skip packing', exact: true })
-  if (keyboard) {
-    await action.focus()
-    await action.press('Enter')
-  } else {
-    await row.hover()
-    await expect(action).toHaveCSS('pointer-events', 'auto')
-    await action.click()
-  }
-  await expect(
-    row.getByRole('button', {
-      name: 'Skipped — include in packing',
-      exact: true,
-    })
-  ).toBeVisible()
-  await expect(
-    row.getByRole('button', { name: 'Prepare', exact: true })
-  ).toHaveCount(0)
-}
-
-async function acceptAssignment(page) {
-  const review = page.getByRole('dialog', {
-    name: 'Assign product codes?',
-    exact: true,
-  })
-  await expect(review).toBeVisible()
-  await review
-    .getByRole('button', { name: 'Assign codes and prepare', exact: true })
-    .click()
-  await expect(page.locator('#packing-view')).toBeVisible()
-  await expect(page.locator('.preparation-save-status')).toHaveText(
-    'Saved automatically'
-  )
-}
-
-function expectAssignmentsUnchanged(after, before) {
-  for (const field of ['preparations', 'allocations', 'issuedCodes'])
-    expect(after[field]).toEqual(before[field])
-  expect(after.orders.map((record) => record.snapshot)).toEqual(
-    before.orders.map((record) => record.snapshot)
-  )
-}
-
 async function controlExclusionWrites(page, mode) {
   await page.evaluate((mode) => {
     window.exclusionWriteMode = mode
@@ -147,7 +106,8 @@ async function controlExclusionWrites(page, mode) {
     IDBObjectStore.prototype.put = function (...args) {
       const exclusion =
         this.name === 'orders' &&
-        Array.isArray(args[0]?.packingExcludedEntryIds)
+        (Object.hasOwn(args[0] || {}, 'inventoryDispositions') ||
+          Object.hasOwn(args[0] || {}, 'inventoryDispositionClears'))
       if (exclusion && window.exclusionWriteMode === 'fail') {
         window.exclusionWriteStarted = true
         throw new DOMException(
@@ -173,267 +133,271 @@ async function controlExclusionWrites(page, mode) {
   }, mode)
 }
 
-test('Assign only saves the reviewed eligible codes and helpers while preserving Orders selection and filter', async ({
+async function evidence(page, row) {
+  await row.locator('[data-action="review-purchase-evidence"]').click()
+  const modal = page.locator('dialog[data-action="review-purchase-evidence"]')
+  await expect(modal).toBeVisible()
+  return modal
+}
+async function setDisposition(
+  page,
+  row,
+  kind = 'fee',
+  reason = 'Documented synthetic freight-only source row'
+) {
+  const modal = await evidence(page, row)
+  await modal
+    .getByLabel('Inventory disposition', { exact: true })
+    .selectOption(kind)
+  await modal.getByLabel('Evidence reason', { exact: true }).fill(reason)
+  await modal.locator('[data-action="save-inventory-disposition"]').click()
+  await expect(modal).toBeHidden()
+}
+const assignedIds = (data) =>
+  data.preparations.flatMap((prep) =>
+    prep.groups.flatMap((group) =>
+      group.variants.flatMap((variant) => variant.entryIds)
+    )
+  )
+function expectSource(after, before) {
+  expect(after.orders.map((record) => record.snapshot)).toEqual(
+    before.orders.map((record) => record.snapshot)
+  )
+  expect(after.orders.map((record) => record.productPhotos)).toEqual(
+    before.orders.map((record) => record.productPhotos)
+  )
+}
+async function expectCodeReview(page, count) {
+  await page.locator('#review-purchase-codes').click()
+  const review = page.locator('dialog[data-action="purchase-code-review"]')
+  await expect(review.locator('.purchase-code-review-items')).toHaveAttribute(
+    'data-row-count',
+    String(count)
+  )
+  return review
+}
+
+test('documented fee disposition preserves source finances and selection while one purchase-code review assigns only eligible goods', async ({
   extension,
 }) => {
-  const { page, rows, record, view } = await openOrders(extension)
-  const initialRow = await rows.first().elementHandle()
+  const { page, rows, record } = await openOrders(extension)
   await page.locator('#search').fill('eligibility')
-  await expect
-    .poll(() => initialRow.evaluate((node) => node.isConnected))
-    .toBe(false)
-  await expect(rows).toHaveCount(3)
-  await rows.first().focus()
-  await page.keyboard.press('Control+a')
-  await skip(rows.nth(2))
-  const chosen = await selection(rows)
-  expect(chosen).toHaveLength(3)
-  const before = await backup(extension)
-  const review = page.getByRole('dialog', {
-    name: 'Assign product codes?',
-    exact: true,
-  })
-  await page.locator('#prepare-orders').click()
-  await expect(
-    review.getByRole('button', { name: 'Assign only', exact: true })
-  ).toBeVisible()
+  await page.locator('#select-rows').click()
+  const chosen = await selection(rows),
+    before = await backup(extension)
+  await setDisposition(page, rows.nth(2))
+  expect(await selection(rows)).toEqual(chosen)
+  let review = await expectCodeReview(page, 2)
   await review.getByRole('button', { name: 'Cancel', exact: true }).click()
   expect((await backup(extension)).preparations).toEqual(before.preparations)
-  expectAssignmentsUnchanged(await backup(extension), before)
-  await expect(view).toBeHidden()
-  expect(await selection(rows)).toEqual(chosen)
-  await page.locator('#prepare-orders').click()
-  await expect(review.locator('.packing-review-item')).toHaveCount(2)
-  const proposed = await review
-    .locator('.packing-review-item')
-    .evaluateAll((items) =>
-      items.map((item) =>
-        Object.fromEntries(
-          [...item.querySelectorAll('.packing-value-row')].map((row) => [
-            row.querySelector('.packing-value-label').textContent,
-            row.querySelector('.packing-value-after .packing-value-content')
-              .textContent,
-          ])
-        )
-      )
-    )
-  expect(
-    proposed.some(
-      (item) =>
-        item['Spanish short name'] && item['Chinese category'] && item.Material
-    )
-  ).toBe(true)
-  await review.getByRole('button', { name: 'Assign only', exact: true }).click()
-  await expect(review).toHaveCount(0)
-  await expect(view).toBeHidden()
-  await expect(page.locator('#orders-view')).toBeVisible()
-  await expect(page.locator('#search')).toHaveValue('eligibility')
-  expect(await selection(rows)).toEqual(chosen)
-  await expect
-    .poll(async () => (await backup(extension)).preparations.length)
-    .toBe(1)
-  const assigned = await backup(extension)
-  expect(entryIds(assigned).sort()).toEqual(
+  expect((await backup(extension)).issuedCodes).toEqual(before.issuedCodes)
+  review = await expectCodeReview(page, 2)
+  const proposed = await review.locator('.purchase-code').allTextContents()
+  await review.locator('[data-action="assign-purchase-codes"]').click()
+  await expect(review).toBeHidden()
+  const after = await backup(extension)
+  expect(assignedIds(after).sort()).toEqual(
     record.snapshot.items
       .slice(0, 2)
       .map((item) => item.entryId)
       .sort()
   )
-  for (const group of assigned.preparations[0].groups) {
-    const proposal = proposed.find(
-      (item) => item['Product code'] === group.baseCode
-    )
-    expect(proposal).toBeDefined()
-    if (group.spanishName)
-      expect(group.spanishName).toBe(proposal['Spanish short name'])
-    if (group.category)
-      expect(group.category).toBe(proposal['Chinese category'])
-    for (const variant of group.variants)
-      if (variant.material) expect(variant.material).toBe(proposal.Material)
-  }
-  expect(assigned.orders[0].snapshot).toEqual(record.snapshot)
-  await expect(
-    rows.nth(2).getByRole('button', {
-      name: 'Skipped — include in packing',
-      exact: true,
-    })
-  ).toBeVisible()
-  await page.locator('#prepare-orders').click()
-  await expect(view).toBeVisible()
-  await expect(view.locator('.variants tbody tr')).toHaveCount(2)
-  await expect(review).toHaveCount(0)
-  const reopened = await backup(extension)
-  expect(reopened.issuedCodes).toEqual(assigned.issuedCodes)
-  expect(entryIds(reopened)).toEqual(entryIds(assigned))
+  expect(after.preparations[0].groups.map((group) => group.baseCode)).toEqual(
+    proposed
+  )
+  expect(
+    after.orders[0].inventoryDispositions[record.snapshot.items[2].entryId]
+  ).toMatchObject({
+    kind: 'fee',
+    reason: 'Documented synthetic freight-only source row',
+  })
+  expectSource(after, before)
+  await expect(page.locator('#search')).toHaveValue('eligibility')
+  expect(await selection(rows)).toEqual(chosen)
+  await expect(page.locator('#packing-view')).toBeHidden()
 })
 
-test('Assign only is unavailable when a seller still needs identification', async ({
+test('missing supplier identity blocks assignment until explicit authored evidence while original unavailable supplier text remains intact', async ({
   extension,
 }) => {
-  const missing = await openOrders(extension, { missingSeller: true })
-  await missing.rows.first().focus()
-  await missing.page.keyboard.press('Control+a')
-  const before = await backup(extension)
-  await missing.page.locator('#prepare-orders').click()
-  const missingReview = missing.page.getByRole('dialog', {
-    name: 'Assign product codes?',
-    exact: true,
-  })
-  await expect(missingReview).toBeVisible()
-  await expect(
-    missingReview.getByRole('button', { name: 'Assign only', exact: true })
-  ).toHaveCount(0)
-  await expect(missingReview).toContainText(
-    'Seller login required before assigning codes'
+  const { page, rows, record } = await openOrders(extension, {
+      missingSeller: true,
+    }),
+    before = await backup(extension)
+  await page.locator('#select-rows').click()
+  await page.locator('#review-purchase-codes').click()
+  const blockedReview = page.locator('[data-action="purchase-code-review"]')
+  await expect(blockedReview).toContainText(
+    'Resolve the original supplier identity'
   )
-  await missingReview
+  await expect(
+    blockedReview.locator('[data-action="assign-purchase-codes"]')
+  ).toBeDisabled()
+  expect((await backup(extension)).issuedCodes).toEqual(before.issuedCodes)
+  await blockedReview
     .getByRole('button', { name: 'Cancel', exact: true })
     .click()
-  expectAssignmentsUnchanged(await backup(extension), before)
-})
-
-test('Assign only is unavailable when existing product codes move to another month', async ({
-  extension,
-}) => {
-  const existing = await openOrders(extension, { prepared: true })
-  await existing.rows.first().focus()
-  await existing.page.keyboard.press('Control+a')
-  await existing.page
-    .getByLabel('Packing month', { exact: true })
-    .fill('2026-11')
-  const assigned = await backup(extension)
-  await existing.page.locator('#prepare-orders').click()
-  const move = existing.page.getByRole('dialog', {
-    name: 'Move selected products to this packing month?',
-    exact: true,
+  const modal = await evidence(page, rows.first())
+  await modal
+    .getByLabel('Authored supplier identity', { exact: true })
+    .fill('synthetic-identified-supplier')
+  await modal.locator('[data-action="resolve-purchase-supplier"]').click()
+  await expect(modal).toBeHidden()
+  await assignSelectedPurchaseCodes(page)
+  const after = await backup(extension)
+  expect(after.orders[0].supplierIdentityResolution).toMatchObject({
+    sellerId: 'synthetic-identified-supplier',
+    provenance: 'manual-confirmed',
   })
-  await expect(move).toBeVisible()
-  await expect(
-    move.getByRole('button', { name: 'Assign only', exact: true })
-  ).toHaveCount(0)
-  await move.getByRole('button', { name: 'Cancel', exact: true }).click()
-  expectAssignmentsUnchanged(await backup(extension), assigned)
+  expect(after.orders[0].snapshot).toEqual(record.snapshot)
+  expect(after.preparations).toHaveLength(1)
 })
 
-test('preparation stays unavailable until a delayed skip commits and then immediately excludes that product', async ({
+test('container selection has no arbitrary global exclusion or month reassignment path and rejected code rewrites preserve issued identities', async ({
   extension,
 }) => {
-  const { page, rows, record, view } = await openOrders(extension)
-  await rows.first().focus()
-  await page.keyboard.press('Control+a')
-  const fee = rows.nth(2)
-  const action = fee.getByRole('button', { name: 'Skip packing', exact: true })
+  const { page } = await openOrders(extension, { prepared: true }),
+    before = await backup(extension)
+  await expect(
+    page.locator(
+      '#packing-month,[data-action="prepare-packing-list"],.packing-exclusion-toggle'
+    )
+  ).toHaveCount(0)
+  const error = await extension.inspector.evaluate(async () => {
+    const repository = await window.testRepository,
+      prep = (await repository.listPreparations())[0]
+    prep.month = '2026-12'
+    for (const group of prep.groups) {
+      group.month = '2026-12'
+      group.baseCode = group.baseCode.replace('CE2610', 'CE2612')
+    }
+    try {
+      await repository.savePreparations([prep], {
+        expectedRevisions: [prep.revision],
+      })
+      return null
+    } catch (error) {
+      return error.message
+    }
+  })
+  expect(error).toMatch(/purchase|month/i)
+  const after = await backup(extension)
+  expect(after.preparations).toEqual(before.preparations)
+  expect(after.issuedCodes).toEqual(before.issuedCodes)
+  expectSource(after, before)
+})
+
+test('a delayed disposition transaction locks its evidence controls until commit and cannot assign or lose source rows early', async ({
+  extension,
+}) => {
+  const { page, rows, record } = await openOrders(extension)
+  await page.locator('#select-rows').click()
+  const chosen = await selection(rows),
+    modal = await evidence(page, rows.nth(2)),
+    save = modal.locator('[data-action="save-inventory-disposition"]')
+  await modal
+    .getByLabel('Inventory disposition', { exact: true })
+    .selectOption('fee')
+  await modal
+    .getByLabel('Evidence reason', { exact: true })
+    .fill('Reviewed freight-only transaction')
   await controlExclusionWrites(page, 'hold')
   try {
-    await action.focus()
-    await action.click()
+    await save.click()
     await expect
       .poll(() => page.evaluate(() => window.exclusionWriteStarted))
       .toBe(true)
-    await expect(action).toHaveAttribute('aria-busy', 'true')
-    await expect(page.locator('#prepare-orders')).toBeDisabled()
+    await expect(save).toBeDisabled()
     await expect(
-      rows.getByRole('button', { name: 'Prepare', exact: true })
-    ).toHaveCount(3)
-    for (const prepare of await rows
-      .getByRole('button', { name: 'Prepare', exact: true })
-      .all())
-      await expect(prepare).toBeDisabled()
-    await expect(view).toBeHidden()
+      modal.getByLabel('Inventory disposition', { exact: true })
+    ).toBeDisabled()
     await expect(
-      fee.getByRole('button', {
-        name: 'Skipped — include in packing',
-        exact: true,
-      })
-    ).toHaveCount(0)
+      modal.getByRole('button', { name: 'Close', exact: true })
+    ).toBeDisabled()
+    await expect(page.locator('#packing-view')).toBeHidden()
   } finally {
     await page.evaluate(() => {
       window.exclusionWriteMode = ''
     })
   }
-  await expect(
-    fee.getByRole('button', {
-      name: 'Skipped — include in packing',
-      exact: true,
-    })
-  ).toBeVisible()
-  await expect(page.locator('#prepare-orders')).toBeEnabled()
-  await page.locator('#prepare-orders').click()
-  await acceptAssignment(page)
-  expect(entryIds(await backup(extension)).sort()).toEqual(
-    record.snapshot.items
-      .slice(0, 2)
-      .map((item) => item.entryId)
-      .sort()
+  await expect(modal).toBeHidden()
+  expect(await selection(rows)).toEqual(chosen)
+  expect(
+    (await backup(extension)).orders[0].inventoryDispositions[
+      record.snapshot.items[2].entryId
+    ].kind
+  ).toBe('fee')
+  const review = await expectCodeReview(page, 2)
+  await review.locator('[data-action="assign-purchase-codes"]').click()
+  await expect(review).toBeHidden()
+  expect(assignedIds(await backup(extension))).not.toContain(
+    record.snapshot.items[2].entryId
   )
 })
 
-test('a failed skip keeps its product eligible and the same action can retry successfully', async ({
+test('failed disposition writes keep goods eligible, retain exact reason/kind and retry atomically without touching codes or source money/photos', async ({
   extension,
 }) => {
-  const { page, rows, record } = await openOrders(extension)
-  await rows.first().focus()
-  await page.keyboard.press('Control+a')
-  const chosen = await selection(rows)
-  const before = await backup(extension)
-  const fee = rows.nth(2)
-  const action = fee.getByRole('button', { name: 'Skip packing', exact: true })
+  const { page, rows, record } = await openOrders(extension),
+    before = await backup(extension),
+    modal = await evidence(page, rows.nth(2)),
+    save = modal.locator('[data-action="save-inventory-disposition"]')
+  await modal
+    .getByLabel('Inventory disposition', { exact: true })
+    .selectOption('fee')
+  await modal
+    .getByLabel('Evidence reason', { exact: true })
+    .fill('Retained exact fee reason')
   await controlExclusionWrites(page, 'fail')
-  await action.focus()
-  await action.click()
-  await expect
-    .poll(() => page.evaluate(() => window.exclusionWriteStarted))
-    .toBe(true)
+  await save.click()
+  await expect(modal.getByRole('status')).toContainText(
+    'Synthetic packing eligibility storage unavailable'
+  )
+  await expect(save).toBeEnabled()
   await expect(
-    page.getByText('Synthetic packing eligibility storage unavailable', {
-      exact: false,
-    })
-  ).toBeVisible()
-  await expect(action).toBeEnabled()
-  await expect(
-    fee.getByRole('button', { name: 'Prepare', exact: true })
-  ).toBeEnabled()
-  await expect(
-    fee.getByRole('button', {
-      name: 'Skipped — include in packing',
-      exact: true,
-    })
-  ).toHaveCount(0)
-  await expect(page.locator('#prepare-orders')).toBeEnabled()
-  expect(await selection(rows)).toEqual(chosen)
+    modal.getByLabel('Evidence reason', { exact: true })
+  ).toHaveValue('Retained exact fee reason')
   const failed = await backup(extension)
-  expect(failed.orders[0].packingExcludedEntryIds || []).toEqual([])
-  expectAssignmentsUnchanged(failed, before)
+  expect(
+    failed.orders[0].inventoryDispositions?.[
+      record.snapshot.items[2].entryId
+    ] ?? null
+  ).toBe(null)
+  expect(failed.issuedCodes).toEqual(before.issuedCodes)
+  expectSource(failed, before)
   await page.evaluate(() => {
     window.exclusionWriteMode = ''
   })
-  await action.click()
-  await expect(
-    fee.getByRole('button', {
-      name: 'Skipped — include in packing',
-      exact: true,
-    })
-  ).toBeVisible()
-  expect((await backup(extension)).orders[0].packingExcludedEntryIds).toEqual([
-    record.snapshot.items[2].entryId,
-  ])
-  expect(await selection(rows)).toEqual(chosen)
+  await save.click()
+  await expect(modal).toBeHidden()
+  expect(
+    (await backup(extension)).orders[0].inventoryDispositions[
+      record.snapshot.items[2].entryId
+    ].reason
+  ).toBe('Retained exact fee reason')
 })
 
-test('an older library read cannot unlock preparation before the committed exclusion is refreshed', async ({
+test('an older source read cannot finish a disposition refresh before the queued committed read is applied', async ({
   extension,
 }) => {
   const { page, rows, record } = await openOrders(extension)
-  await rows.first().focus()
-  await page.keyboard.press('Control+a')
+  await page.locator('#select-rows').click()
+  const modal = await evidence(page, rows.nth(2)),
+    save = modal.locator('[data-action="save-inventory-disposition"]')
+  await modal
+    .getByLabel('Inventory disposition', { exact: true })
+    .selectOption('fee')
+  await modal
+    .getByLabel('Evidence reason', { exact: true })
+    .fill('Scoped documented freight')
   await page.evaluate(() => {
     window.holdEligibilityReads = true
     window.heldEligibilityReads = []
-    const getAll = IDBIndex.prototype.getAll
-    const setSuccess = Object.getOwnPropertyDescriptor(
-      IDBRequest.prototype,
-      'onsuccess'
-    ).set
+    const getAll = IDBIndex.prototype.getAll,
+      setSuccess = Object.getOwnPropertyDescriptor(
+        IDBRequest.prototype,
+        'onsuccess'
+      ).set
     IDBIndex.prototype.getAll = function (...args) {
       const request = getAll.apply(this, args)
       if (
@@ -458,49 +422,41 @@ test('an older library read cannot unlock preparation before the committed exclu
   await expect
     .poll(() => page.evaluate(() => window.heldEligibilityReads.length))
     .toBe(1)
-  const action = rows
-    .nth(2)
-    .getByRole('button', { name: 'Skip packing', exact: true })
-  await action.focus()
-  await action.click()
+  await save.click()
   await expect
     .poll(
-      async () => (await backup(extension)).orders[0].packingExcludedEntryIds
+      async () =>
+        (await backup(extension)).orders[0].inventoryDispositions?.[
+          record.snapshot.items[2].entryId
+        ]?.kind
     )
-    .toEqual([record.snapshot.items[2].entryId])
-  await expect(page.locator('#prepare-orders')).toBeDisabled()
+    .toBe('fee')
+  await expect(save).toBeDisabled()
   await page.evaluate(() => window.heldEligibilityReads[0]())
   await expect
     .poll(() => page.evaluate(() => window.heldEligibilityReads.length))
     .toBe(2)
-  await expect(page.locator('#prepare-orders')).toBeDisabled()
+  await expect(save).toBeDisabled()
   await page.evaluate(() => {
     window.holdEligibilityReads = false
     window.heldEligibilityReads[1]()
   })
-  await expect(
-    rows.nth(2).getByRole('button', {
-      name: 'Skipped — include in packing',
-      exact: true,
-    })
-  ).toBeVisible()
-  await expect(page.locator('#prepare-orders')).toBeEnabled()
-  await page.locator('#prepare-orders').click()
-  await acceptAssignment(page)
-  expect(entryIds(await backup(extension)).sort()).toEqual(
-    record.snapshot.items
-      .slice(0, 2)
-      .map((item) => item.entryId)
-      .sort()
-  )
+  await expect(modal).toBeHidden()
+  const review = await expectCodeReview(page, 2)
+  await review.getByRole('button', { name: 'Cancel', exact: true }).click()
 })
 
-test('a refresh failure after a committed skip keeps that flag applied and offers a refresh retry', async ({
+test('a refresh failure after committed evidence offers read-only Retry and does not repeat the successful disposition mutation', async ({
   extension,
 }) => {
-  const { page, rows, record } = await openOrders(extension)
-  await rows.first().focus()
-  await page.keyboard.press('Control+a')
+  const { page, rows, record } = await openOrders(extension),
+    modal = await evidence(page, rows.nth(2))
+  await modal
+    .getByLabel('Inventory disposition', { exact: true })
+    .selectOption('fee')
+  await modal
+    .getByLabel('Evidence reason', { exact: true })
+    .fill('Committed before refresh failure')
   await page.evaluate(() => {
     window.failEligibilityQuery = true
     const getAll = IDBIndex.prototype.getAll
@@ -517,243 +473,130 @@ test('a refresh failure after a committed skip keeps that flag applied and offer
       return getAll.apply(this, args)
     }
   })
-  await skip(rows.nth(2))
-  const notice = page
-    .locator('.error-notice')
-    .filter({ hasText: 'Packing selection saved' })
-  await expect(notice).toBeVisible()
-  await expect(notice).toContainText('Synthetic eligibility query unavailable')
-  expect((await backup(extension)).orders[0].packingExcludedEntryIds).toEqual([
-    record.snapshot.items[2].entryId,
-  ])
-  await expect(page.locator('#prepare-orders')).toBeEnabled()
-  await expect(page.locator('#packing-scope')).toContainText('2 eligible')
+  await modal.locator('[data-action="save-inventory-disposition"]').click()
+  await expect(modal.getByRole('status')).toContainText(
+    'Synthetic eligibility query unavailable'
+  )
+  const committed = await backup(extension)
+  expect(
+    committed.orders[0].inventoryDispositions[record.snapshot.items[2].entryId]
+      .reason
+  ).toBe('Committed before refresh failure')
+  await expect(
+    modal.locator('[data-action="save-inventory-disposition"]')
+  ).toBeDisabled()
   await page.evaluate(() => {
     window.failEligibilityQuery = false
   })
-  await notice.getByRole('button', { name: 'Retry', exact: true }).click()
-  await expect(
-    rows.nth(2).getByRole('button', {
-      name: 'Skipped — include in packing',
-      exact: true,
-    })
-  ).toBeVisible()
-  await page.locator('#prepare-orders').click()
-  await acceptAssignment(page)
-  expect(entryIds(await backup(extension)).sort()).toEqual(
-    record.snapshot.items
-      .slice(0, 2)
-      .map((item) => item.entryId)
-      .sort()
+  await modal.locator('[data-action="retry-evidence-refresh"]').click()
+  await expect(modal).toBeHidden()
+  expect((await backup(extension)).orders[0].inventoryDispositions).toEqual(
+    committed.orders[0].inventoryDispositions
   )
+  expect((await backup(extension)).orders[0].snapshot).toEqual(record.snapshot)
 })
 
-test('mixed selection skips a fee without generating codes and including it again restores single-product preparation', async ({
+test('explicit fee clearing is keyboard/touch accessible, restores eligible goods and supersedes stale restored exclusion evidence', async ({
   extension,
 }) => {
-  const { page, rows, record, view } = await openOrders(extension)
-  const fee = rows.nth(2)
-  const feeId = record.snapshot.items[2].entryId
-  await rows.first().focus()
-  await page.keyboard.press('Control+a')
-  const chosen = await selection(rows)
-  expect(chosen).toHaveLength(3)
-  const before = await backup(extension)
-  await skip(fee, { keyboard: true })
-  expect(await selection(rows)).toEqual(chosen)
-  const skipped = await backup(extension)
-  expect(skipped.orders[0].packingExcludedEntryIds).toEqual([feeId])
-  expectAssignmentsUnchanged(skipped, before)
-  await expect(page.locator('#packing-scope')).toContainText('2 eligible')
-  await expect(page.locator('#packing-scope')).toContainText('1 skipped')
-  for (const theme of ['dark', 'light']) {
-    await page.setViewportSize({ width: 1440, height: 1000 })
-    if (
-      (await page
-        .locator('meta[name="color-scheme"]')
-        .getAttribute('content')) !== theme
-    )
-      await page.locator('#theme-toggle').click()
-    await rows.first().locator('.row-preparation').hover()
-    await page.locator('.table-scroll').screenshot({
-      path: test.info().outputPath(`packing-exclusion-${theme}.png`),
-    })
-    await rows
-      .first()
-      .getByRole('button', { name: 'Skip packing', exact: true })
-      .hover()
-    await page.locator('.table-scroll').screenshot({
-      path: test.info().outputPath(`packing-exclusion-skip-hover-${theme}.png`),
-    })
-  }
-  await page.setViewportSize({ width: 520, height: 900 })
-  await rows.first().hover()
-  await page.locator('.table-scroll').screenshot({
-    path: test.info().outputPath('packing-exclusion-narrow.png'),
-  })
-  const controlSizes = () =>
-    page.evaluate(() =>
-      Object.fromEntries(
-        ['packing-skip-button', 'packing-include-button'].map((name) => {
-          const button = document.querySelector(`.${name}`)
-          const { width, height } = button.getBoundingClientRect()
-          return [
-            name,
-            { width, height, fontSize: getComputedStyle(button).fontSize },
-          ]
-        })
-      )
-    )
-  const mouseSizes = await controlSizes()
+  const { page, rows, record } = await openOrders(extension)
+  await page.locator('#select-rows').click()
+  const chosen = await selection(rows),
+    before = await backup(extension)
+  await setDisposition(page, rows.nth(2))
+  const older = await backup(extension)
+  await page.reload()
+  const modal = await evidence(page, rows.nth(2))
+  await modal
+    .getByLabel('Inventory disposition', { exact: true })
+    .selectOption('goods')
   const touch = await extension.context.newCDPSession(page)
   try {
     await touch.send('Emulation.setTouchEmulationEnabled', { enabled: true })
     await expect
       .poll(() => page.evaluate(() => matchMedia('(pointer: coarse)').matches))
       .toBe(true)
-    await page.mouse.move(0, 0)
-    await expect(
-      rows.first().getByRole('button', { name: 'Skip packing', exact: true })
-    ).toHaveCSS('opacity', '1')
-    await expect(
-      fee.getByRole('button', {
-        name: 'Skipped — include in packing',
-        exact: true,
+    const save = modal.locator('[data-action="save-inventory-disposition"]'),
+      box = await save.boundingBox()
+    expect(box.width).toBeGreaterThanOrEqual(40)
+    expect(box.height).toBeGreaterThanOrEqual(40)
+    for (const theme of ['dark', 'light']) {
+      if (
+        (await page
+          .locator('meta[name="color-scheme"]')
+          .getAttribute('content')) !== theme
+      )
+        await page.locator('#theme-toggle').evaluate((button) => button.click())
+      await modal.screenshot({
+        path: test.info().outputPath(`inventory-disposition-${theme}.png`),
       })
-    ).toBeVisible()
-    await page.locator('.table-scroll').screenshot({
-      path: test.info().outputPath('packing-exclusion-coarse.png'),
-    })
-    const measurements = JSON.stringify({
-      mouse: mouseSizes,
-      coarse: await controlSizes(),
-    })
-    await test.info().attach('compact-packing-controls', {
-      body: measurements,
-      contentType: 'application/json',
-    })
-    await writeFile(
-      test.info().outputPath('packing-control-sizes.json'),
-      measurements
-    )
+    }
+    await save.focus()
+    await save.press('Enter')
+    await expect(modal).toBeHidden()
   } finally {
     await touch.send('Emulation.setTouchEmulationEnabled', { enabled: false })
     await touch.detach()
   }
-  await page.setViewportSize({ width: 1440, height: 1000 })
-  await page.locator('#prepare-orders').click()
-  const review = page.getByRole('dialog', {
-    name: 'Assign product codes?',
-    exact: true,
-  })
-  await expect(review).toContainText('2 selected product rows')
-  await expect(review).not.toContainText('补运费 货品差价')
-  await acceptAssignment(page)
-  await expect(view.locator('.variants tbody tr')).toHaveCount(2)
-  const assigned = await backup(extension)
-  expect(entryIds(assigned).sort()).toEqual(
-    record.snapshot.items
-      .slice(0, 2)
-      .map((item) => item.entryId)
-      .sort()
-  )
-  expect(entryIds(assigned)).not.toContain(feeId)
-  expect(assigned.orders[0].snapshot).toEqual(record.snapshot)
-  await view.page().locator('#view-orders').click()
-  await page.reload()
-  await expect(
-    fee.getByRole('button', {
-      name: 'Skipped — include in packing',
-      exact: true,
-    })
-  ).toBeVisible()
-  expect((await backup(extension)).orders[0].packingExcludedEntryIds).toEqual([
-    feeId,
-  ])
-  await fee.focus()
-  await page.keyboard.press('Space')
-  const selectedBeforeInclude = await selection(rows)
-  await fee
-    .getByRole('button', { name: 'Skipped — include in packing', exact: true })
-    .click()
-  expect(await selection(rows)).toEqual(selectedBeforeInclude)
-  await expect(
-    fee.getByRole('button', { name: 'Prepare', exact: true })
-  ).toBeVisible()
+  const cleared = await backup(extension)
   expect(
-    (await backup(extension)).orders[0].packingExcludedEntryIds || []
-  ).toEqual([])
-  await fee.getByRole('button', { name: 'Prepare', exact: true }).click()
-  await expect(review).toContainText('1 selected product rows')
-  await expect(review).toContainText('补运费 货品差价')
-  await acceptAssignment(page)
-  expect(entryIds(await backup(extension)).sort()).toEqual(
+    cleared.orders[0].inventoryDispositions?.[
+      record.snapshot.items[2].entryId
+    ] ?? null
+  ).toBe(null)
+  const restored = await extension.inspector.evaluate(
+    (backup) => chrome.runtime.sendMessage({ type: 'BACKUP_RESTORE', backup }),
+    older
+  )
+  expect(restored.ok, restored.error).toBe(true)
+  const after = await backup(extension)
+  expect(
+    after.orders[0].inventoryDispositions?.[record.snapshot.items[2].entryId] ??
+      null
+  ).toBe(null)
+  expectSource(after, before)
+  expect(await selection(rows)).toEqual(chosen)
+  const review = await expectCodeReview(page, 3)
+  await review.locator('[data-action="assign-purchase-codes"]').click()
+  await expect(review).toBeHidden()
+  expect(assignedIds(await backup(extension)).sort()).toEqual(
     record.snapshot.items.map((item) => item.entryId).sort()
   )
-  expect(extension.unexpectedRequests).toEqual([])
 })
 
-test('skipped-only selection never falls back to saved packing and unselected reopening excludes skipped rows', async ({
+test('fee-only label selection never falls back to saved goods and source code memberships survive documented global dispositions', async ({
   extension,
 }) => {
-  const { page, rows, record, view } = await openOrders(extension, {
-    prepared: true,
-  })
-  const before = await backup(extension)
-  const fee = rows.nth(2)
-  await skip(fee)
-  expectAssignmentsUnchanged(await backup(extension), before)
-  await fee.focus()
-  await page.keyboard.press('Space')
-  expect(await selection(rows)).toEqual([
-    `${record.snapshot.orderId}/${record.snapshot.items[2].entryId}`,
-  ])
-  await expect(page.locator('#prepare-orders')).toBeDisabled()
-  await expect(page.locator('#packing-scope')).toContainText('0 eligible')
-  await expect(page.locator('#packing-scope')).toContainText('1 skipped')
-  await expect(view).toBeHidden()
-  await fee.focus()
-  await page.keyboard.press('Control+d')
-  expect(await selection(rows)).toEqual([])
-  await expect(page.locator('#prepare-orders')).toBeEnabled()
-  await page.locator('#prepare-orders').click()
-  await expect(view).toBeVisible()
-  await expect(view.locator('.variants tbody tr')).toHaveCount(2)
-  await expect(view).not.toContainText('补运费 货品差价')
-  await expect(
-    page.getByRole('dialog', { name: 'Assign product codes?', exact: true })
-  ).toHaveCount(0)
-  await expect(view.locator('.preparation-save-status')).toHaveText(
-    'Saved automatically'
+  const { page, rows, record } = await openOrders(extension, {
+      prepared: true,
+    }),
+    before = await backup(extension)
+  await setDisposition(page, rows.nth(2))
+  await clearOrderProductSelection(page)
+  await rows.nth(2).getByRole('checkbox').check()
+  await expect(page.locator('#copy-barcodes')).toBeDisabled()
+  expect((await backup(extension)).preparations).toEqual(before.preparations)
+  expect((await backup(extension)).issuedCodes).toEqual(before.issuedCodes)
+  await setDisposition(
+    page,
+    rows.nth(0),
+    'non-goods',
+    'Documented synthetic non-goods service'
   )
-  const reopened = await backup(extension)
-  const assignedCodes = (data) =>
-    data.issuedCodes.map(({ kind, code, groupId, variantId }) => ({
-      kind,
-      code,
-      groupId,
-      variantId,
-    }))
-  // Reopening may refresh names/material suggestions and the saved revision,
-  // but excluded products retain their existing source membership and codes.
-  expect(entryIds(reopened)).toEqual(entryIds(before))
-  expect(assignedCodes(reopened)).toEqual(assignedCodes(before))
-  expect(reopened.orders[0].snapshot).toEqual(record.snapshot)
-  await view.page().locator('#view-orders').click()
-  await skip(rows.nth(0))
-  await skip(rows.nth(1))
-  expectAssignmentsUnchanged(await backup(extension), reopened)
-  await expect(page.locator('#prepare-orders')).toBeDisabled()
-  await expect(page.locator('#packing-scope')).toContainText('3 skipped')
+  await setDisposition(
+    page,
+    rows.nth(1),
+    'payment-only',
+    'Documented synthetic payment-only source'
+  )
   await page.reload()
-  await expect(
-    rows.getByRole('button', {
-      name: 'Skipped — include in packing',
-      exact: true,
-    })
-  ).toHaveCount(3)
-  await expect(page.locator('#prepare-orders')).toBeDisabled()
-  await expect(view).toBeHidden()
-  expectAssignmentsUnchanged(await backup(extension), reopened)
+  await expect(rows).toHaveCount(3)
+  await page.locator('#select-rows').click()
+  await expect(page.locator('#copy-barcodes')).toBeDisabled()
+  const after = await backup(extension)
+  expect(after.preparations).toEqual(before.preparations)
+  expect(after.issuedCodes).toEqual(before.issuedCodes)
+  expect(after.orders[0].snapshot).toEqual(record.snapshot)
+  expectSource(after, before)
   expect(extension.unexpectedRequests).toEqual([])
 })

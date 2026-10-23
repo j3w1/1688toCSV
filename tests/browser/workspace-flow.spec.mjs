@@ -70,19 +70,15 @@ test.describe('copy progress and recovery', () => {
     await page.setViewportSize({ width, height: 960 })
     await enableClipboard(extension, page)
     await page
-      .locator('#sheet-body tr.selectable-row .row-number')
+      .locator(
+        '#sheet-body tr.selectable-row .row-number input[type="checkbox"]'
+      )
       .first()
-      .click()
-    await page.locator('#prepare-orders').click()
-    await page
-      .getByRole('button', { name: 'Assign codes and prepare', exact: true })
-      .click()
-    const view = page.locator('#packing-view')
-    await expect(view).toBeVisible()
-    await expect(view.locator('.preparation-save-status')).toHaveText(
-      'Saved automatically'
-    )
-    await view.page().locator('#view-orders').click()
+      .check()
+    await page.locator('[data-action="review-purchase-codes"]').click()
+    await page.locator('[data-action="assign-purchase-codes"]').click()
+    await expect(page.locator('.purchase-code-review')).toHaveCount(0)
+    await expect(page.locator('#orders-view')).toBeVisible()
     const code = await page
       .locator('#sheet-body .row-code-copy')
       .first()
@@ -233,9 +229,11 @@ test.describe('copy progress and recovery', () => {
     await page.setViewportSize({ width, height: 960 })
     await enableClipboard(extension, page)
     await page
-      .locator('#sheet-body tr.selectable-row .row-number')
+      .locator(
+        '#sheet-body tr.selectable-row .row-number input[type="checkbox"]'
+      )
       .first()
-      .click()
+      .check()
     await revealCopyActions(page)
     const button = page.locator('#copy-images')
     await button.click()
@@ -312,7 +310,7 @@ test('month headings collapse independently; month choices toggle and Shift incl
   )
 })
 
-test('filtered totals count each whole order once and row clicks toggle without intercepting controls', async ({
+test('filtered totals count each whole order once and explicit checkboxes toggle without intercepting inspection controls', async ({
   extension,
 }) => {
   const { page, records } = await open(extension, { longSeller: true })
@@ -332,10 +330,10 @@ test('filtered totals count each whole order once and row clicks toggle without 
   await expect(total).toHaveText(
     money(summarizeOrders(records).amounts.payable)
   )
-  await page.locator('.order-card-meta').first().click()
+  await page.locator('.order-card > input[type="checkbox"]').first().click()
   await expect(page.locator('.order-card[aria-selected=true]')).toHaveCount(1)
   await expect(total).toHaveText(money(records[0].snapshot.totals.payable))
-  await page.locator('.order-card-meta').first().click()
+  await page.locator('.order-card > input[type="checkbox"]').first().click()
   await expect(page.locator('.order-card[aria-selected=true]')).toHaveCount(0)
   await expect(total).toHaveText(
     money(summarizeOrders(records).amounts.payable)
@@ -349,9 +347,9 @@ test('filtered totals count each whole order once and row clicks toggle without 
   )
   await expect(total).toHaveText(money(records[0].snapshot.totals.payable))
   const row = page.locator('#sheet-body tr[data-selection-key]')
-  await row.locator('.row-number').click()
+  await row.locator('.row-number input[type="checkbox"]').click()
   await expect(row).toHaveAttribute('aria-selected', 'true')
-  await row.locator('.row-number').click()
+  await row.locator('.row-number input[type="checkbox"]').click()
   await expect(row).toHaveAttribute('aria-selected', 'false')
   await row.locator('.product-photo-button').click()
   await expect(row).toHaveAttribute('aria-selected', 'false')
@@ -366,15 +364,22 @@ test('filtered totals count each whole order once and row clicks toggle without 
   await expect(page.locator('#refresh-orders')).toBeDisabled()
 })
 
-test('packing is the primary action while full refresh and backups stay in compact Settings', async ({
+test('Orders authoring and named containers replace Prepare while full refresh and backups stay in compact Settings', async ({
   extension,
 }) => {
   const { page } = await open(extension)
-  await expect(page.locator('.brand')).toContainText('1688 Packing workspace')
+  await expect(page.locator('.brand')).toContainText('1688toPL')
   await expect(page.locator('.brand img')).toHaveJSProperty('naturalWidth', 48)
   await expect(
-    page.getByRole('button', { name: 'Prepare packing list', exact: true })
+    page.getByRole('button', {
+      name: 'Review purchase-month codes',
+      exact: true,
+    })
   ).toBeVisible()
+  await expect(
+    page.locator('[data-action="prepare-packing-list"]')
+  ).toHaveCount(0)
+  await expect(page.locator('[data-action="orders-cartons"]')).toBeVisible()
   await expect(page.locator('#refresh-all')).not.toBeVisible()
   const settings = page.getByRole('button', { name: 'Settings', exact: true })
   const size = await settings.boundingBox()

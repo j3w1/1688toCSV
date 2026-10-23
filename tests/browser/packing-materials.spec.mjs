@@ -1,5 +1,11 @@
 import { test, expect } from './extension-fixture.mjs'
 import { createDemoRecords } from '../../preview/library-fixture.js'
+import {
+  assignSelectedPurchaseCodes,
+  editOrderProduct,
+  closeOrderProduct,
+  libraryBackup,
+} from './smart-workspace-helpers.mjs'
 
 async function openPacking(extension) {
   const records = await extension.inspector.evaluate(
@@ -49,71 +55,61 @@ async function openPacking(extension) {
     'Plastic',
   ])
   await page.locator('#select-rows').click()
-  await page.locator('#prepare-orders').click()
-  const review = page.getByRole('dialog', { name: 'Assign product codes?' })
-  await expect(review).toBeVisible()
-  await expect(page.locator('.packing-progress')).toContainText(
-    'Review changes to continue'
-  )
-  await expect(page.locator('.packing-progress')).toContainText('Materials 3')
-  await expect(page.locator('.packing-progress progress')).not.toHaveAttribute(
-    'value'
-  )
-  await review
-    .getByRole('button', { name: 'Assign codes and prepare', exact: true })
-    .click()
-  const view = page.locator('#packing-view')
-  await expect(view).toBeVisible()
-  await expect(view.locator('.preparation-save-status')).toHaveText(
-    'Saved automatically'
-  )
-  await expect(page.locator('.packing-progress')).toHaveCount(0)
-  return { page, view, record }
+  await assignSelectedPurchaseCodes(page)
+  return { page, view: page.locator('#orders-view'), record }
 }
 
-async function saved(view) {
-  await expect(view.locator('.preparation-save-status')).toHaveText(
-    'Saved automatically'
-  )
+async function editMaterial(page, index, value) {
+  const editor = await editOrderProduct(page, index, { Material: value })
+  await closeOrderProduct(editor)
 }
 
-test('materials fill automatically, edit per product or apply by group/order, and persist including a manual clear', async ({
+test('Orders materials retain automatic source suggestions and deliberate edits including a manual clear', async ({
   extension,
 }) => {
-  const { page, view } = await openPacking(extension)
-  let materials = view
-    .locator('.variants')
-    .getByRole('textbox', { name: 'Material', exact: true })
-  await expect(materials).toHaveCount(3)
-  await expect(materials.nth(0)).toHaveValue('Glass')
-  await expect(materials.nth(1)).toHaveValue('Stainless steel')
-  await expect(materials.nth(2)).toHaveValue('Plastic')
-  await expect(
-    view.locator('.variant-photos .preparation-photo img').first()
-  ).toHaveCSS('width', '74px')
-  await materials.nth(0).fill('Custom ceramic')
-  await saved(view)
-  const firstGroup = view.locator('.preparation-group').first()
-  await firstGroup
-    .getByLabel('Material for group', { exact: true })
-    .fill('Cotton')
-  await firstGroup
-    .getByRole('button', { name: 'Apply material to group', exact: true })
-    .click()
-  await saved(view)
-  await expect(materials.nth(0)).toHaveValue('Cotton')
-  await expect(materials.nth(1)).toHaveValue('Cotton')
-  await expect(materials.nth(2)).toHaveValue('Plastic')
-  await view.getByLabel('Material for order', { exact: true }).fill('Aluminum')
-  await view
-    .getByRole('button', { name: 'Apply material to order', exact: true })
-    .click()
-  await saved(view)
-  await expect(materials.nth(2)).toHaveValue('Aluminium')
-  await materials.nth(0).fill('')
-  await saved(view)
-  await page.keyboard.press('Escape')
-  await expect(view).toBeHidden()
+  const { page, record } = await openPacking(extension),
+    source = structuredClone(record.snapshot)
+  for (const [index, material] of [
+    'Glass',
+    'Stainless steel',
+    'Plastic',
+  ].entries()) {
+    const editor = await editOrderProduct(page, index)
+    await expect(
+      editor.getByRole('textbox', { name: 'Material', exact: true })
+    ).toHaveValue(material)
+    await closeOrderProduct(editor)
+  }
+  await editMaterial(page, 0, 'Custom ceramic')
+  for (const index of [0, 1]) await editMaterial(page, index, 'Cotton')
+  await expect
+    .poll(async () =>
+      (await libraryBackup(extension)).preparations[0].groups
+        .flatMap((group) => group.variants)
+        .map((variant) => variant.material)
+    )
+    .toEqual(['Cotton', 'Cotton', '塑料'])
+  const initialMaterials = (
+    await libraryBackup(extension)
+  ).preparations[0].groups
+    .flatMap((group) => group.variants)
+    .map(({ material, materialSource }) => ({ material, materialSource }))
+  expect(initialMaterials).toEqual([
+    { material: 'Cotton', materialSource: 'manual' },
+    { material: 'Cotton', materialSource: 'manual' },
+    { material: '塑料', materialSource: 'suggested' },
+  ])
+  const suggestedDisplay = page
+    .locator('#sheet-body tr[data-selection-key]')
+    .nth(2)
+    .locator('[data-attribute="material"] dd')
+  await expect(suggestedDisplay).toHaveText('Plastic')
+  await page.locator('#language-toggle [data-language="es"]').click()
+  await expect(suggestedDisplay).toHaveText('Plástico')
+  await page.locator('#language-toggle [data-language="en"]').click()
+  await expect(suggestedDisplay).toHaveText('Plastic')
+  for (const index of [0, 1, 2]) await editMaterial(page, index, 'Aluminum')
+  await editMaterial(page, 0, '')
   const productRows = page.locator('#sheet-body tr[data-selection-key]')
   await expect(
     productRows.first().locator('[data-attribute="material"]')
@@ -127,74 +123,76 @@ test('materials fill automatically, edit per product or apply by group/order, an
   ).toHaveText('Aluminio')
   await page.locator('[data-language="en"]').click()
   await page.reload()
-  await page.locator('#prepare-orders').click()
-  await expect(view).toBeVisible()
-  await saved(view)
-  materials = view
-    .locator('.variants')
-    .getByRole('textbox', { name: 'Material', exact: true })
-  await expect(materials.nth(0)).toHaveValue('')
-  await expect(materials.nth(1)).toHaveValue('Aluminium')
-  const result = await extension.inspector.evaluate(() =>
-    chrome.runtime.sendMessage({ type: 'BACKUP_EXPORT' })
-  )
-  expect(result.ok).toBe(true)
-  const variants = result.data.preparations[0].groups.flatMap(
-    (group) => group.variants
-  )
+  await expect(
+    productRows.nth(1).locator('[data-attribute="material"] dd')
+  ).toHaveText('Aluminium')
+  let editor = await editOrderProduct(page, 0)
+  await expect(
+    editor.getByRole('textbox', { name: 'Material', exact: true })
+  ).toHaveValue('')
+  await closeOrderProduct(editor)
+  editor = await editOrderProduct(page, 1)
+  await expect(
+    editor.getByRole('textbox', { name: 'Material', exact: true })
+  ).toHaveValue('Aluminum')
+  await closeOrderProduct(editor)
+  const result = await libraryBackup(extension),
+    variants = result.preparations[0].groups.flatMap((group) => group.variants)
   expect(variants[0].materialSource).toBe('manual')
   expect(variants[0].material).toBe('')
   expect(variants[1].materialSource).toBe('manual')
   expect(variants[1].material).toBe('Aluminum')
+  expect(result.orders[0].snapshot).toEqual(source)
 })
 
-test('packing product details activate by double-click and Enter without changing selection or interfering with editors', async ({
+test('Orders click and Enter inspect source details while explicit selection and contextual edits remain independent', async ({
   extension,
 }) => {
-  const { page, view } = await openPacking(extension)
-  const row = view.locator('.variants tbody tr').first()
-  const scope = view.locator('.preparation-copy-scope')
-  await expect(scope).toHaveText('3 selected products · 1 orders')
-  await row.dispatchEvent('dblclick')
-  const dialog = page.getByRole('dialog', {
+  const { page } = await openPacking(extension),
+    rows = page.locator('#sheet-body tr[data-selection-key]'),
+    row = rows.first()
+  await expect(rows.locator('input[type="checkbox"]:checked')).toHaveCount(3)
+  const details = page.getByRole('dialog', {
     name: 'Original product details',
     exact: true,
   })
-  await expect(dialog).toBeVisible()
-  await expect(scope).toHaveText('3 selected products · 1 orders')
-  await dialog.getByRole('button', { name: 'Close product details' }).click()
+  await row.click({ position: { x: 40, y: 10 } })
+  await expect(details).toBeVisible()
+  await details.getByRole('button', { name: 'Close product details' }).click()
   await row.focus()
   await page.keyboard.press('Enter')
-  await expect(dialog).toBeVisible()
-  await expect(scope).toHaveText('3 selected products · 1 orders')
-  await dialog.getByRole('button', { name: 'Close product details' }).click()
-  await row.getByRole('textbox', { name: 'Material', exact: true }).dblclick()
-  await expect(dialog).toHaveCount(0)
-  await expect(scope).toHaveText('3 selected products · 1 orders')
+  await expect(details).toBeVisible()
+  await details.getByRole('button', { name: 'Close product details' }).click()
+  const editor = await editOrderProduct(page, 0)
+  await editor
+    .getByRole('textbox', { name: 'Material', exact: true })
+    .dblclick()
+  await expect(details).toHaveCount(0)
+  await closeOrderProduct(editor)
+  await expect(rows.locator('input[type="checkbox"]:checked')).toHaveCount(3)
 })
 
-test('packing code segments use independent accessible helpers and stay apart when endings grow', async ({
+test('Orders code segments retain independent accessible names and do not overlap on narrow screens', async ({
   extension,
 }) => {
-  const { page, view } = await openPacking(extension)
-  const row = view.locator('.variants tbody tr').first()
-  await expect(row.locator('.code-part-label:visible')).toHaveCount(0)
-  const variant = row.locator('.code-part-variantSuffix input')
-  const size = row.locator('.code-part-sizeSuffix input')
+  const { page, record } = await openPacking(extension),
+    editor = await editOrderProduct(page, 0),
+    variant = editor.getByRole('textbox', {
+      name: 'Variant ending',
+      exact: true,
+    }),
+    size = editor.getByRole('textbox', { name: 'Size ending', exact: true })
   await variant.fill('ABCDEFGH')
   await size.fill('XXXXL')
   await page.setViewportSize({ width: 800, height: 900 })
-  const boxes = await row.locator('.variant-code-design').evaluate((element) =>
-    [...element.children].map((part) => {
-      const rect = part.getBoundingClientRect()
-      return {
-        left: rect.left,
-        right: rect.right,
-        top: rect.top,
-        bottom: rect.bottom,
-      }
-    })
-  )
+  const boxes = await editor
+    .locator('.product-authoring-fields > label')
+    .evaluateAll((nodes) =>
+      nodes.map((node) => {
+        const r = node.getBoundingClientRect()
+        return { left: r.left, right: r.right, top: r.top, bottom: r.bottom }
+      })
+    )
   for (let a = 0; a < boxes.length; a++)
     for (let b = a + 1; b < boxes.length; b++)
       expect(
@@ -203,6 +201,10 @@ test('packing code segments use independent accessible helpers and stay apart wh
           boxes[a].bottom <= boxes[b].top ||
           boxes[b].bottom <= boxes[a].top
       ).toBe(true)
-  await expect(variant).toHaveAccessibleName(/^Variant code /)
-  await expect(size).toHaveAccessibleName(/^Size code /)
+  await expect(variant).toHaveAccessibleName('Variant ending')
+  await expect(size).toHaveAccessibleName('Size ending')
+  await closeOrderProduct(editor)
+  expect((await libraryBackup(extension)).orders[0].snapshot).toEqual(
+    record.snapshot
+  )
 })

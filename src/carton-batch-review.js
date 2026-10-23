@@ -5,16 +5,50 @@ export function cartonBatchReviewChanges(plan) {
   return (plan?.reviews || []).map((review, index) => ({
     name: m('Carton batch {0}', { 0: index + 1 }),
     orderId: review.contents[0]?.orderId,
+    batchId: review.id,
+    ...(review.physicalMark
+      ? {
+          physicalMark: structuredClone(review.physicalMark),
+          physicalMarkCode: review.physicalMark.code,
+          currentProductCode: review.currentProductCode,
+          currentProductArtwork: structuredClone(review.currentProductArtwork),
+          physicalMarkOwnerChoices: structuredClone(
+            review.physicalMarkOwnerChoices
+          ),
+          resolutionRequired: review.resolutionRequired,
+          resolutionChoices: review.resolutionChoices,
+          physicalMarkRelabelOnly: review.physicalMarkRelabelOnly,
+          physicalMarkHistoricalReviewRequired:
+            review.physicalMarkHistoricalReviewRequired,
+          physicalMarkConflictKind: review.physicalMarkConflictKind,
+          physicalMarkConflictReason: review.physicalMarkConflictReason,
+          physicalMarkResolutionChoices: review.physicalMarkResolutionChoices,
+          physicalMarkSupersessions: structuredClone(
+            review.physicalMarkSupersessions
+          ),
+        }
+      : {}),
     values: [
       {
         label: m('Carton mark'),
         before: review.beforeMarkCode || review.beforeCodes.join(', '),
-        after:
-          review.kind === 'reanchor'
+        after: review.physicalMark
+          ? review.physicalMark.code
+          : review.kind === 'reanchor'
             ? review.afterMarkCode || review.afterCodes.join(', ')
             : review.beforeMarkCode || review.beforeCodes.join(', '),
         kind: 'code',
       },
+      ...(review.physicalMark
+        ? [
+            {
+              label: m('Product code'),
+              before: review.beforeProductCode || review.beforeMarkCode,
+              after: review.currentProductCode || '—',
+              kind: 'code',
+            },
+          ]
+        : []),
       {
         label: m('Packing month'),
         before: review.month,
@@ -29,7 +63,7 @@ export function cartonBatchReviewChanges(plan) {
         label: m('Status'),
         before: m('Saved'),
         after: m(
-          review.kind === 'reanchor'
+          review.kind === 'reanchor' && !review.resolutionRequired
             ? 'Linked to the new group'
             : 'Review cartons'
         ),

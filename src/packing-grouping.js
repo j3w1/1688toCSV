@@ -5,18 +5,22 @@ import {
   mergeVariantMaterials,
 } from './packing-model.js'
 import { message as uiMessage, t } from './i18n.js'
+const orderKey = (value) =>
+  JSON.stringify([value.accountId || 'local', value.orderId])
+const rowKey = (value, entryId) =>
+  JSON.stringify([value.accountId || 'local', value.orderId, entryId])
 
 /** Compare each affected source row, including rows whose barcode is shared. */
 export function groupingReviewChanges(entries, previews, records) {
   const sources = new Map(
-    records.map(({ snapshot }) => [snapshot.orderId, snapshot])
+    records.map(({ snapshot }) => [orderKey(snapshot), snapshot])
   )
   const nextRows = new Map()
   for (const draft of previews)
     for (const group of draft.groups)
       for (const variant of group.variants)
         for (const entryId of variant.entryIds)
-          nextRows.set(`${draft.orderId}/${entryId}`, { group, variant })
+          nextRows.set(rowKey(draft, entryId), { group, variant })
   const code = (group, variant) => {
     if (variant.needsSizeMapping) return uiMessage('Choose a size code')
     try {
@@ -26,13 +30,13 @@ export function groupingReviewChanges(entries, previews, records) {
     }
   }
   return entries.flatMap(({ draft, group, variants }) => {
-    const source = sources.get(draft.orderId)
+    const source = sources.get(orderKey(draft))
     const items = new Map(
       source?.items.map((item) => [item.entryId, item]) || []
     )
     return variants.flatMap((variant) =>
       variant.entryIds.map((entryId) => {
-        const next = nextRows.get(`${draft.orderId}/${entryId}`)
+        const next = nextRows.get(rowKey(draft, entryId))
         if (!next)
           throw new Error(
             'A selected product is missing from the grouping preview.'
@@ -79,7 +83,29 @@ export function groupingAvailability(entries) {
     entries: affected,
     reason: !affected.length
       ? emptyReason
-      : affected.some((entry) => !entry.complete)
+      : affected.some(({ draft, group, variants, complete }) => {
+            const actual = draft.groups.find((value) => value.id === group.id)
+            const sameIds = (left, right) =>
+              left.length === right.length &&
+              new Set(left).size === left.length &&
+              left.every((id) => right.includes(id))
+            return (
+              !complete ||
+              !actual ||
+              !sameIds(
+                group.variants.map((value) => value.id),
+                actual.variants.map((value) => value.id)
+              ) ||
+              new Set(variants.map((value) => value.id)).size !==
+                variants.length ||
+              variants.some((variant) => {
+                const source = actual.variants.find(
+                  (value) => value.id === variant.id
+                )
+                return !source || !sameIds(variant.entryIds, source.entryIds)
+              })
+            )
+          })
         ? incomplete
         : '',
   })
@@ -109,7 +135,7 @@ export function groupingAvailability(entries) {
   if (!merge.reason) {
     if (entries.length < 2)
       merge.reason = 'Select at least two product groups to merge.'
-    else if (new Set(entries.map(({ draft }) => draft.orderId)).size > 1)
+    else if (new Set(entries.map(({ draft }) => orderKey(draft))).size > 1)
       merge.reason =
         'Merge groups from one order at a time. Groups from different orders cannot share a product code.'
     else if (
@@ -142,8 +168,8 @@ export async function regroupSelection(
   const validVariantSuffix = createVariantSuffixValidator(sizeVocabulary)
   const candidates = new Map()
   for (const { draft } of availability.entries)
-    if (!candidates.has(draft.orderId))
-      candidates.set(draft.orderId, structuredClone(draft))
+    if (!candidates.has(orderKey(draft)))
+      candidates.set(orderKey(draft), structuredClone(draft))
   async function usedEndings(draft, group) {
     const used = new Set(
       group.variants.map(
@@ -186,7 +212,7 @@ export async function regroupSelection(
     )
   } else {
     for (const { draft, group, variants } of availability.entries) {
-      const candidate = candidates.get(draft.orderId)
+      const candidate = candidates.get(orderKey(draft))
       const edited = candidate.groups.find((entry) => entry.id === group.id)
       const ids = new Set(variants.map((variant) => variant.id))
       const selected = edited.variants.filter((variant) => ids.has(variant.id))

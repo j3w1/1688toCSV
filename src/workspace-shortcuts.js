@@ -3,12 +3,6 @@ import { actionHelp } from './workspace-action-help.js'
 import { preparationShortcut } from './preparation-help.js'
 
 const commands = [
-  {
-    id: 'prepare',
-    elementId: 'prepare-orders',
-    keys: ['Control+Enter', 'Meta+Enter'],
-    view: 'orders',
-  },
   { id: 'copy', labels: ['More copy formats'], keys: ['Alt+Shift+C'] },
   { id: 'excel-image', labels: ['Copy Excel image'], keys: ['Alt+Shift+E'] },
   {
@@ -35,34 +29,14 @@ const commands = [
   },
   { id: 'orders', labels: ['Orders'], keys: ['Alt+Shift+O'], view: 'packing' },
   {
-    id: 'arrange',
-    labels: ['Arrange packing'],
-    keys: ['Alt+Shift+A'],
-    view: 'packing',
-  },
-  {
-    id: 'grouping',
-    labels: ['Grouping tools'],
-    keys: ['Alt+Shift+G'],
-    view: 'packing',
-  },
-  {
-    id: 'backup',
-    labels: ['Back up packing'],
-    keys: ['Alt+Shift+B'],
-    view: 'packing',
-  },
-  {
     id: 'undo',
     labels: ['Undo'],
     keys: ['Control+Z', 'Meta+Z'],
-    view: 'packing',
   },
   {
     id: 'redo',
     labels: ['Redo'],
     keys: ['Control+Y', 'Control+Shift+Z', 'Meta+Shift+Z'],
-    view: 'packing',
   },
   // Selection stays with the existing controller, which remembers whether the
   // user last operated on orders, products or packing groups.
@@ -92,7 +66,7 @@ function commandFor(target) {
   return commands.find((command) =>
     command.elementId
       ? command.elementId === target.id
-      : command.labels.includes(label)
+      : command.labels?.includes(label)
   )
 }
 
@@ -163,12 +137,30 @@ export function installWorkspaceShortcuts(doc) {
       event.isComposing ||
       event.repeat ||
       event.getModifierState?.('AltGraph') ||
-      doc.querySelector('dialog[open]') ||
       event.target.closest?.(
         'input:not([type="checkbox"]):not([type="radio"]):not([type="button"]):not([type="submit"]):not([type="reset"]), textarea, select, [contenteditable]:not([contenteditable="false"]), [role="textbox"], [role="combobox"]'
       )
     )
       return
+    const dialog = [...doc.querySelectorAll('dialog[open]')].at(-1)
+    if (dialog) {
+      const command = commands.find(
+        (item) =>
+          ['undo', 'redo'].includes(item.id) &&
+          item.keys.some((chord) => matches(event, chord))
+      )
+      if (!command) return
+      const target = [...dialog.querySelectorAll('button')].find(
+        (button) =>
+          commandFor(button)?.id === command.id &&
+          !button.disabled &&
+          !button.closest('[hidden],[inert]')
+      )
+      if (!target) return
+      event.preventDefault()
+      target.click()
+      return
+    }
     const view =
       doc.getElementById('packing-view')?.hidden === false
         ? 'packing'

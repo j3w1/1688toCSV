@@ -1,7 +1,7 @@
 import { mountListToolbar } from './list-toolbar.js'
 import { readOrderList, goToListPage } from './order-list.js'
 
-const key = Symbol.for('1688tocsv.listController')
+const key = Symbol.for('1688topl.listController')
 globalThis[key]?.()
 let disposed = false,
   host

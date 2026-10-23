@@ -2,6 +2,7 @@ import test from 'node:test'
 import assert from 'node:assert/strict'
 import {
   activeGroups,
+  activePackingState,
   allocatePreparation,
   barcodeValue,
   codeOwnerEvidence,
@@ -17,6 +18,7 @@ import {
   reorderPreparationVariants,
   restoreDefaultPacking,
   restorePreviousPacking,
+  refreshPreparationMaterials,
   setGroupSizeMode,
   validatePackingPreferences,
   validatePreparation,
@@ -24,6 +26,37 @@ import {
 } from '../src/packing-model.js'
 import { DEFAULT_SIZE_VOCABULARY } from '../src/size-vocabulary.js'
 import { regroupSelection } from '../src/packing-grouping.js'
+
+test('empty unknown material refresh preserves untouched siblings while known suggestions clear and manual blanks survive', () => {
+  const variants = Array.from({ length: 250 }, (_, index) => ({
+    id: `material-${index}`,
+    entryIds: [String(index + 1)],
+  }))
+  variants[0].material = '玻璃'
+  variants[0].materialSource = 'suggested'
+  variants[1].material = ''
+  variants[1].materialSource = 'manual'
+  const preparation = { groups: [{ variants }] },
+    original = structuredClone(preparation)
+  const snapshot = {
+    items: variants.map((variant) => ({
+      entryId: variant.entryIds[0],
+      title: 'Unknown synthetic product',
+    })),
+  }
+  const refreshed = refreshPreparationMaterials(
+    preparation,
+    snapshot,
+    new Map(snapshot.items.map((item) => [item.entryId, '']))
+  )
+  assert.deepEqual(preparation, original)
+  assert.deepEqual(
+    refreshed.groups[0].variants.slice(1),
+    original.groups[0].variants.slice(1)
+  )
+  assert.equal(refreshed.groups[0].variants[0].material, '')
+  assert.equal(refreshed.groups[0].variants[0].materialSource, 'suggested')
+})
 
 function source(items, extra = {}) {
   return {
@@ -1210,4 +1243,53 @@ test('removal rejects stale or malformed memberships without changing the draft'
   for (const ids of [['9'], ['1', '9'], ['not-an-id'], [1], null])
     assert.throws(() => removeSelectedProducts(preparation, ids), /products/)
   assert.deepEqual(preparation, original)
+})
+
+test('sealed historical reservations occupy retired identities while inactive checkpoints alone release them', () => {
+  const old = allocatePreparation(
+    createPreparation(source([{}], { orderId: '101' }), '2026-06'),
+    [],
+    []
+  )
+  const retained = structuredClone(old)
+  const draft = createPreparation(source([{}], { orderId: '102' }), '2026-06')
+  const historical = old.issuedCodes
+  const without = allocatePreparation(draft, [], [])
+  const withHistory = allocatePreparation(draft, [], [], {
+    historicalReservations: historical,
+  })
+  assert.equal(without.preparation.groups[0].baseCode, 'CE26060101')
+  assert.equal(withHistory.preparation.groups[0].baseCode, 'CE26060102')
+  assert.ok(
+    withHistory.issuedCodes.some(
+      (code) => code.orderId === '101' && code.kind === 'base'
+    )
+  )
+  assert.deepEqual(old, retained)
+  const inactive = activePackingState([], old.allocations, old.issuedCodes)
+  assert.equal(inactive.issuedCodes.length, 0)
+  const sealed = activePackingState([], old.allocations, old.issuedCodes, {
+    historicalReservations: historical,
+  })
+  assert.equal(sealed.issuedCodes.length, 2)
+  assert.equal(
+    allocatePreparation(draft, inactive.allocations, inactive.issuedCodes)
+      .preparation.groups[0].baseCode,
+    'CE26060101'
+  )
+  assert.equal(
+    allocatePreparation(draft, sealed.allocations, sealed.issuedCodes)
+      .preparation.groups[0].baseCode,
+    'CE26060102'
+  )
+  assert.throws(
+    () =>
+      allocatePreparation(
+        { ...draft, groups: [{ ...draft.groups[0], baseCode: 'CE26060101' }] },
+        [],
+        [],
+        { historicalReservations: historical }
+      ),
+    /conflict/i
+  )
 })

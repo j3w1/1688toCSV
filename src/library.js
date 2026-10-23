@@ -34,8 +34,6 @@ import { createPhotoViewer } from './photo-viewer.js'
 import { formatCny } from './money-format.js'
 import { createSizeClassifier } from './size-vocabulary.js'
 import { openStoreImportDialog } from './store-import-dialog.js'
-import { productCartonDetails } from './carton-details.js'
-import { openCartonCapacityEditor } from './carton-packing-ui.js'
 import { mountOrderCharges } from './order-charges-ui.js'
 import { mountOperationsStrip, openOperationsDialog } from './operations-ui.js'
 import { mountPaymentLinks } from './payment-links-ui.js'
@@ -54,7 +52,6 @@ import { mergeOrderTags } from './order-tags.js'
 import { createRowSelection } from './row-selection.js'
 import { createVirtualTable } from './virtual-table.js'
 import { createVirtualList } from './virtual-list.js'
-import { copyExcelImage } from './excel-image-copy.js'
 import { copySourceImages } from './source-image-copy.js'
 import { mountProductCopyActions, mountCopyActions } from './copy-actions.js'
 import { showErrorNotice, clearErrorNotice } from './error-notice.js'
@@ -78,10 +75,21 @@ import {
 applyCodeDesign(document.documentElement)
 
 const $ = (id) => document.getElementById(id)
-const keyFor = (row) => `${row.orderId}/${row.entryId}`
+const keyFor = (row) =>
+  JSON.stringify([
+    row.accountId || row.record?.accountId || 'local',
+    row.orderId,
+    row.entryId,
+  ])
+const orderSelectionKey = (record) =>
+  JSON.stringify([
+    record.accountId || record.snapshot.accountId || 'local',
+    record.snapshot.orderId,
+  ])
 const storeKeyFor = (order) => storeIdentity(order) || order.orderId
 const headerPreference = '1688-library-include-headers'
 const monthPreference = '1688-library-purchase-months'
+const productsContextPreference = '1688-library-products-context'
 const purchaseDay = (order) => order.purchasedAt?.slice(0, 10) || ''
 const purchaseMonth = (order) => purchaseDay(order).slice(0, 7) || 'unknown'
 const monthLabel = (month) =>
@@ -285,7 +293,20 @@ export async function startLibrary(
   let productKeys = [],
     orderKeys = [],
     orderList
-  let storeFilter = null
+  let savedProductsContext = {}
+  try {
+    const value = JSON.parse(sessionStorage.getItem(productsContextPreference))
+    if (value && typeof value === 'object' && !Array.isArray(value))
+      savedProductsContext = value
+  } catch {}
+  let storeFilter =
+    typeof savedProductsContext.storeFilter === 'string'
+      ? savedProductsContext.storeFilter
+      : null
+  for (const id of ['search', 'order-search', 'date-from', 'date-to'])
+    if (typeof savedProductsContext[id] === 'string')
+      $(id).value = savedProductsContext[id]
+  $('changes-only').checked = savedProductsContext['changes-only'] === true
   let orderTagDefinitions = [],
     productTagDefinitions = [],
     productDetailsEditor,
@@ -344,8 +365,32 @@ export async function startLibrary(
       )
   } catch {}
   const selectedMonths = new Set(savedMonths)
-  const expandedMonths = new Set([currentMonth, ...savedMonths])
+  const expandedMonths = new Set([
+    currentMonth,
+    ...savedMonths,
+    ...(Array.isArray(savedProductsContext.expandedMonths)
+      ? savedProductsContext.expandedMonths.filter((month) =>
+          /^(?:20\d{2}-(?:0[1-9]|1[0-2])|unknown)$/.test(month)
+        )
+      : []),
+  ])
   let monthAnchor = null
+  async function editProductPhoto(item, edit) {
+    const store = repository || (await openDatabase()),
+      accountId = item.accountId || item.record?.accountId || 'local',
+      sourceItem = records
+        .find(
+          ({ snapshot, accountId: owner }) =>
+            snapshot.orderId === item.orderId &&
+            (owner || snapshot.accountId || 'local') === accountId
+        )
+        ?.snapshot.items.find((entry) => entry.entryId === item.entryId)
+    await packing?.flush()
+    await store.setProductPhoto(item.orderId, item.entryId, edit, { accountId })
+    if (edit.photoIndex === 0 && sourceItem)
+      packing?.refreshPhoto(sourceItem, edit.thumbnail)
+    await refresh()
+  }
   const photos = createPhotoViewer(
     async (url) => {
       const data = await send('IMAGE_GET', { url })
@@ -355,25 +400,42 @@ export async function startLibrary(
       getProductContext: (item) => packing?.photoContext(item),
       getSizeClassifier: () =>
         packing?.sizeClassifier() ?? createSizeClassifier(),
-      onEdit: async (item, edit) => {
-        const store = repository || (await openDatabase())
-        const sourceItem = records
-          .find(({ snapshot }) => snapshot.orderId === item.orderId)
-          ?.snapshot.items.find((entry) => entry.entryId === item.entryId)
-        await packing?.flush()
-        await store.setProductPhoto(item.orderId, item.entryId, edit, {
-          accountId: item.record?.accountId || 'local',
-        })
-        if (edit.photoIndex === 0 && sourceItem)
-          packing?.refreshPhoto(sourceItem, edit.thumbnail)
-        await refresh()
-      },
+      onEdit: editProductPhoto,
     }
   )
-  const selectedOrders = new Set(),
-    selectedRows = new Set(),
+  const savedSelection = (key) =>
+    Array.isArray(savedProductsContext[key])
+      ? savedProductsContext[key].filter((value) => typeof value === 'string')
+      : []
+  const selectedOrders = new Set(savedSelection('selectedOrders')),
+    selectedRows = new Set(savedSelection('selectedRows')),
     preparedImages = new Map(),
     loadingImages = new Map()
+  function saveProductsContext() {
+    // Per-tab route recovery only; this never edits purchase or carton data.
+    try {
+      sessionStorage.setItem(
+        productsContextPreference,
+        JSON.stringify({
+          ...Object.fromEntries(
+            [
+              'search',
+              'order-search',
+              'date-from',
+              'date-to',
+              'status-filter',
+            ].map((id) => [id, $(id).value])
+          ),
+          'changes-only': $('changes-only').checked,
+          selectedOrders: [...selectedOrders],
+          selectedRows: [...selectedRows],
+          expandedMonths: [...expandedMonths],
+          storeFilter,
+        })
+      )
+    } catch {}
+  }
+  addEventListener('pagehide', saveProductsContext)
   async function editOperations(record, entryId) {
     await packing?.flush()
     const store = repository || (await openDatabase())
@@ -402,7 +464,68 @@ export async function startLibrary(
     })
     return controller
   }
+  const readonlyPhotos = createPhotoViewer(
+    async (url) => {
+      const result = await send('IMAGE_GET', { url })
+      return typeof result === 'string' ? result : result.dataUrl
+    },
+    {
+      getProductContext: (row) => ({
+        code: row.barcode,
+        sellerName: row.sellerName,
+        spanishName: row.spanishName,
+        quantity: row.quantity,
+      }),
+    }
+  )
+  function showReadOnlyProductDetails(row, { returnTo } = {}) {
+    const original = row.record?.snapshot.items.find(
+      (item) => item.entryId === row.entryId
+    )
+    return openProductDetails(
+      {
+        ...row,
+        quantity: original?.quantity ?? row.purchasedQuantity ?? row.quantity,
+      },
+      {
+        mode: 'read-only',
+        shipment: {
+          loaded: row.loadedQuantity ?? row.quantity,
+          availableBefore: row.availableBeforeQuantity,
+          remaining: row.remainingQuantity,
+        },
+        onEditInOrders: () =>
+          packing.editInOrders({ ...row, view: 'products' }, returnTo),
+        tags: {
+          selected:
+            row.productTags ||
+            row.tags ||
+            row.record?.productTags?.[row.entryId] ||
+            [],
+        },
+        carton: { summary: row.pattern || row.cartonReferenceText || '' },
+        loadPhoto: loadContextImage,
+        onPhoto: () => readonlyPhotos.open(row, [row]),
+        copyPhoto: async () =>
+          copySingleImage(await loadContextImage(row.thumbnail)),
+      }
+    )
+  }
   function showProductDetails(row, { sourceItems = [row] } = {}) {
+    if (sourceItems.length === 1 && packing) {
+      const projected = packing.preparedRows([row])[0]
+      if (projected.variantId) {
+        const originals = packing.rowsForRefs([
+          {
+            accountId: projected.accountId,
+            orderId: projected.orderId,
+            groupId: projected.groupId,
+            variantId: projected.variantId,
+          },
+        ])
+        if (originals.length > 1) sourceItems = originals
+      }
+    }
     const record =
       records.find(
         ({ snapshot, accountId }) =>
@@ -412,6 +535,7 @@ export async function startLibrary(
     const details = openProductDetails(
       { ...row, record },
       {
+        onEditInOrders: () => packing.openEditor(row),
         onOperations: record
           ? () => {
               void editOperations(record, row.entryId).catch((error) =>
@@ -419,19 +543,7 @@ export async function startLibrary(
               )
             }
           : undefined,
-        carton: record
-          ? packing?.cartonDetailsOptions(row) || {
-              value: productCartonDetails(row, record),
-              onSave: async (value) => {
-                await packing?.flush()
-                const store = repository || (await openDatabase())
-                await store.setCartonDetails(row.orderId, row.entryId, value, {
-                  accountId: record.accountId,
-                })
-                await refresh()
-              },
-            }
-          : undefined,
+        carton: record ? packing?.cartonDetailsOptions(row) : undefined,
         tags:
           record && repository?.setProductTags
             ? {
@@ -512,38 +624,6 @@ export async function startLibrary(
     }
     return dialog
   }
-  function editCartonCapacity({ orderId, entryId, accountId }) {
-    const record = records.find(
-        ({ snapshot }) =>
-          snapshot.orderId === orderId &&
-          (snapshot.accountId || 'local') === accountId
-      ),
-      item = record?.snapshot.items.find((item) => item.entryId === entryId)
-    if (!item) throw new Error('Source product unavailable in Orders.')
-    const row = {
-        ...item,
-        orderId,
-        sellerName: record.snapshot.sellerName,
-        record,
-      },
-      key = keyFor(row),
-      visible = filteredRows().some((item) => keyFor(item) === key),
-      input =
-        visible &&
-        productTable.ensureVisible(key)?.querySelector('.pack-size-cell input')
-    if (input) {
-      input.focus({ preventScroll: true })
-      input.select()
-      return
-    }
-    // Keep all filters and selections intact when they exclude this source row.
-    openCartonCapacityEditor({
-      item: row,
-      code: packing.preparedRows([row])[0]?.barcode,
-      controller: packing.cartonCapacityEditor(row),
-      loadPhoto: loadContextImage,
-    })
-  }
   const productSelection = createRowSelection({
     selected: selectedRows,
     getKeys: () => productKeys,
@@ -584,13 +664,14 @@ export async function startLibrary(
     },
     true
   )
+  function revealOrder(key) {
+    if (key === orderKeys[0]) $('order-list').scrollTop = 0
+    return orderList?.ensureVisible(key)
+  }
   const orderSelection = createRowSelection({
     selected: selectedOrders,
     getKeys: () => orderKeys,
-    ensureVisible: (key) => {
-      if (key === orderKeys[0]) $('order-list').scrollTop = 0
-      return orderList?.ensureVisible(key)
-    },
+    ensureVisible: revealOrder,
     onChange: () => {
       productSelection.reset()
       productTable.reset()
@@ -599,11 +680,40 @@ export async function startLibrary(
       packing?.updateActions()
     },
     onActivate: (key) => {
-      const record = records.find(({ snapshot }) => snapshot.orderId === key)
+      const record = records.find((record) => orderSelectionKey(record) === key)
       if (record)
         void openDetails(record).catch((error) => feedback(error.message, true))
     },
   })
+  function navigateInspectionRow(event, key, keys, reveal) {
+    if (
+      event.isComposing ||
+      event.altKey ||
+      ((event.ctrlKey || event.metaKey) &&
+        !['Home', 'End'].includes(event.key)) ||
+      !['ArrowUp', 'ArrowDown', 'Home', 'End'].includes(event.key)
+    )
+      return false
+    const at = keys.indexOf(key),
+      index =
+        event.key === 'Home'
+          ? 0
+          : event.key === 'End'
+            ? keys.length - 1
+            : Math.max(
+                0,
+                Math.min(
+                  keys.length - 1,
+                  at + (event.key === 'ArrowDown' ? 1 : -1)
+                )
+              )
+    const next = keys[index]
+    if (!next) return false
+    event.preventDefault()
+    event.stopPropagation()
+    reveal(next)?.focus({ preventScroll: true })
+    return true
+  }
   const imageObserver = new IntersectionObserver(
     async (entries) => {
       for (const entry of entries)
@@ -627,7 +737,7 @@ export async function startLibrary(
     scroller: document.querySelector('.table-scroll'),
     body: $('sheet-body'),
     render: renderTableEntries,
-    paint: () => productSelection.paint(),
+    paint: () => paintProductSelection(),
     remove: (element) => {
       for (const image of element.querySelectorAll('img'))
         imageObserver.unobserve(image)
@@ -640,7 +750,6 @@ export async function startLibrary(
     ['copy-images', 'image'],
     ['copy-excel', 'table'],
     ['copy-excel-image', 'image'],
-    ['prepare-orders', 'packing'],
     ['copy-preparation', 'copy'],
     ['copy-group-codes', 'copy'],
     ['refresh-all', 'refresh'],
@@ -689,14 +798,6 @@ export async function startLibrary(
     ['search', 'Search product text, sellers and prepared names or codes.'],
     ['status-filter', 'Show orders with this purchase status.'],
     ['changes-only', 'Show product rows changed by a recent refresh.'],
-    [
-      'packing-month',
-      'The month you are packing for, independent of purchase dates. Selected products receive this month’s CE codes after you confirm any changes. With no products selected, reopen products already assigned to this packing month.',
-    ],
-    [
-      'prepare-orders',
-      'Prepare exactly the selected products. Ctrl+A in the product table selects all filtered products. Review the scope shown beside this button.',
-    ],
     [
       'copy-values',
       'Copy the five source columns. Uses selected rows, or all filtered rows.',
@@ -869,7 +970,17 @@ export async function startLibrary(
   }
   async function copyAction(button, handler) {
     try {
-      return await copied(button, handler)
+      return await copied(button, async (progress) => {
+        try {
+          return await handler(progress)
+        } catch (error) {
+          if (error?.noticeOptions?.context || error?.noticeOptions?.action) {
+            showErrorNotice(error)
+            return false
+          }
+          throw error
+        }
+      })
     } finally {
       if (button.closest('.copy-actions')) updateSelection()
     }
@@ -918,7 +1029,8 @@ export async function startLibrary(
     const changedOnly = $('changes-only').checked
     const rows = matchingOrders().flatMap((record) => {
       const order = record.snapshot
-      if (selectedOrders.size && !selectedOrders.has(order.orderId)) return []
+      if (selectedOrders.size && !selectedOrders.has(orderSelectionKey(record)))
+        return []
       if (status && order.status !== status) return []
       return order.items
         .filter((item) => {
@@ -1146,10 +1258,23 @@ export async function startLibrary(
     )
     host.replaceChildren(amounts, context)
   }
+  function paintProductSelection() {
+    for (const tr of $('sheet-body').querySelectorAll(
+      'tr[data-selection-key]'
+    )) {
+      const chosen = selectedRows.has(tr.dataset.selectionKey)
+      tr.setAttribute('aria-selected', String(chosen))
+      tr.classList.toggle('is-selected', chosen)
+      const checkbox = tr.querySelector('.row-number input[type="checkbox"]')
+      if (checkbox) checkbox.checked = chosen
+    }
+  }
   function updateSelection() {
+    saveProductsContext()
     packing?.updateActions()
     const rows = filteredRows(),
       selected = rows.filter((row) => selectedRows.has(keyFor(row)))
+    paintProductSelection()
     renderSelectionTotals(rows, selected)
     bindText(
       $('selection-summary'),
@@ -1223,7 +1348,7 @@ export async function startLibrary(
     const matching = matchingOrders()
     orderKeys = matching
       .filter(({ snapshot }) => expandedMonths.has(purchaseMonth(snapshot)))
-      .map(({ snapshot }) => snapshot.orderId)
+      .map(orderSelectionKey)
     const positions = new Map(orderKeys.map((key, index) => [key, index + 1]))
     if (!matching.length) {
       list.append(
@@ -1251,7 +1376,7 @@ export async function startLibrary(
         entries.push({ key: `month:${month}`, heading: true, month })
       lastMonth = month
       if (expandedMonths.has(month))
-        entries.push({ key: record.snapshot.orderId, record })
+        entries.push({ key: orderSelectionKey(record), record })
     }
     let mounting = true
     orderList = createVirtualList({
@@ -1300,7 +1425,10 @@ export async function startLibrary(
         const order = record.snapshot
         const card = node('div', undefined, 'order-card')
         card.setAttribute('role', 'option')
-        card.setAttribute('aria-posinset', String(positions.get(order.orderId)))
+        card.setAttribute(
+          'aria-posinset',
+          String(positions.get(orderSelectionKey(record)))
+        )
         card.setAttribute('aria-setsize', String(orderKeys.length))
         card.dataset.action = 'choose-order'
         card.dataset.orderId = order.orderId
@@ -1506,7 +1634,72 @@ export async function startLibrary(
         main.append(reference)
         summary.append(main, meta)
         card.append(summary)
-        orderSelection.bind(card, order.orderId)
+        card.dataset.selectionKey = orderSelectionKey(record)
+        card.dataset.orderKey = orderSelectionKey(record)
+        card.tabIndex = 0
+        const orderCheck = node('input')
+        orderCheck.type = 'checkbox'
+        orderCheck.checked = selectedOrders.has(orderSelectionKey(record))
+        bindAttribute(
+          orderCheck,
+          'aria-label',
+          uiMessage('Select order {0}', { 0: order.orderId })
+        )
+        orderCheck.onclick = (event) => {
+          orderSelection.select(orderSelectionKey(record), {
+            ctrlKey: true,
+            shiftKey: event.shiftKey,
+          })
+          orderCheck.checked = selectedOrders.has(orderSelectionKey(record))
+        }
+        const cartons = node('button', uiMessage('Reconcile cartons'))
+        cartons.className = 'order-cartons-trigger'
+        decorateIcon(cartons, 'packing', {
+          iconOnly: true,
+          label: uiMessage('Reconcile cartons'),
+        })
+        cartons.dataset.action = 'open-order-cartons'
+        cartons.onclick = () =>
+          void packing
+            ?.openOrder({
+              accountId: record.accountId || 'local',
+              orderId: order.orderId,
+            })
+            .catch((error) => feedback(error.message, true))
+        card.prepend(orderCheck)
+        actions.append(cartons)
+        card.onclick = (event) => {
+          if (
+            event.detail <= 1 &&
+            !event.target.closest('button,a,input,label,select,textarea')
+          )
+            void openDetails(record).catch((error) =>
+              feedback(error.message, true)
+            )
+        }
+        card.onkeydown = (event) => {
+          if (
+            event.target === card &&
+            navigateInspectionRow(
+              event,
+              orderSelectionKey(record),
+              orderKeys,
+              revealOrder
+            )
+          )
+            return
+          if (
+            event.target === card &&
+            event.key === 'Enter' &&
+            !event.ctrlKey &&
+            !event.metaKey &&
+            !event.altKey &&
+            !event.isComposing
+          )
+            void openDetails(record).catch((error) =>
+              feedback(error.message, true)
+            )
+        }
         return card
       },
     })
@@ -1530,6 +1723,15 @@ export async function startLibrary(
     $('order-list').scrollTop = 0
   }
   function updateOrderActions() {
+    for (const card of $('order-list').querySelectorAll(
+      '.order-card[data-order-id]'
+    )) {
+      const chosen = selectedOrders.has(card.dataset.orderKey)
+      card.setAttribute('aria-selected', String(chosen))
+      card.classList.toggle('is-selected', chosen)
+      const checkbox = card.querySelector(':scope > input[type="checkbox"]')
+      if (checkbox) checkbox.checked = chosen
+    }
     const matching = scopedOrders().filter(
       ({ snapshot }) =>
         snapshot.sourceType !== 'spreadsheet' &&
@@ -1698,7 +1900,65 @@ export async function startLibrary(
         'aria-label',
         uiMessage('Product {0}', { 0: row.entryId })
       )
-      productSelection.bind(tr, keyFor(row))
+      tr.dataset.selectionKey = keyFor(row)
+      tr.classList.add('selectable-row')
+      tr.tabIndex = 0
+      tr.onclick = (event) => {
+        if (
+          event.detail <= 1 &&
+          !event.target.closest(
+            'button, a, input, select, textarea, label, [contenteditable]'
+          )
+        )
+          showProductDetails(row)
+      }
+      tr.onkeydown = (event) => {
+        if (
+          event.target === tr &&
+          event.key === ' ' &&
+          !event.isComposing &&
+          !event.altKey
+        ) {
+          event.preventDefault()
+          productSelection.select(keyFor(row), event)
+          return
+        }
+        if (
+          event.target === tr &&
+          navigateInspectionRow(event, keyFor(row), productKeys, (key) =>
+            productTable.ensureVisible(key)
+          )
+        )
+          return
+        if (
+          event.target === tr &&
+          event.key === 'Enter' &&
+          !event.ctrlKey &&
+          !event.metaKey &&
+          !event.altKey &&
+          !event.isComposing
+        ) {
+          event.preventDefault()
+          showProductDetails(row)
+        }
+      }
+      const productCheck = node('input')
+      productCheck.type = 'checkbox'
+      productCheck.checked = selectedRows.has(keyFor(row))
+      bindAttribute(
+        productCheck,
+        'aria-label',
+        uiMessage('Select product {0}', { 0: row.entryId })
+      )
+      productCheck.addEventListener('click', (event) => {
+        productSelection.select(keyFor(row), {
+          ...event,
+          ctrlKey: true,
+          shiftKey: event.shiftKey,
+        })
+        productCheck.checked = selectedRows.has(keyFor(row))
+      })
+      selection.prepend(productCheck)
       const productContext = {
         getProduct: () => packing?.preparedRows([row])[0] || row,
         getRecord: () => row.record,
@@ -1777,7 +2037,7 @@ export async function startLibrary(
         preparationHelp(
           value,
           uiMessage(
-            'Material used for this product’s packing and exports. Edit it in Prepare packing; double-click the product to inspect the original seller data.'
+            'Material used for packing and exports. Edit it in Orders; click the product to inspect the original seller data.'
           )
         )
         pair.append(node('dt', uiMessage('Material')), value)
@@ -1852,13 +2112,18 @@ export async function startLibrary(
         description,
         priceCell,
         discount,
-        node(
-          'td',
-          Number(row.quantity).toLocaleString(getLocale(), {
-            maximumFractionDigits: 4,
-          }),
-          'numeric quantity-cell'
-        ),
+        (() => {
+          const cell = node('td', undefined, 'numeric quantity-cell'),
+            value = /^\d+$/.test(row.quantity)
+              ? BigInt(row.quantity).toLocaleString(getLocale())
+              : Number(row.quantity).toLocaleString(getLocale(), {
+                  maximumFractionDigits: 4,
+                })
+          const copy = copyTextButton(row.quantity, { label: 'Copy quantity' })
+          copy.firstChild.textContent = value
+          cell.append(copy)
+          return cell
+        })(),
         capacity,
         weight,
         volume
@@ -2372,7 +2637,7 @@ export async function startLibrary(
     annotationEditor?.setDefinitions(orderTagDefinitions)
     productDetailsEditor?.setDefinitions(productTagDefinitions)
     await packing?.reload()
-    const present = new Set(records.map((record) => record.snapshot.orderId))
+    const present = new Set(records.map(orderSelectionKey))
     for (const id of selectedOrders)
       if (!present.has(id)) selectedOrders.delete(id)
     records.sort(
@@ -2382,7 +2647,9 @@ export async function startLibrary(
         ) || b.snapshot.orderId.localeCompare(a.snapshot.orderId)
     )
     renderMonthOptions()
-    const oldStatus = $('status-filter').value
+    const oldStatus = hasLoadedLibrary
+      ? $('status-filter').value
+      : savedProductsContext['status-filter'] || ''
     $('status-filter').replaceChildren(
       new Option(t('All statuses'), ''),
       ...[...new Set(records.map((record) => record.snapshot.status))]
@@ -2406,6 +2673,14 @@ export async function startLibrary(
       }
       if (filteredRows().some((row) => addedOrderIds.has(row.orderId)))
         productTable.reset()
+    }
+    if (!hasLoadedLibrary) {
+      // These handlers need the first stored library/context, even when empty.
+      // Row, selection and code validity remain with their existing render rules.
+      for (const target of document.querySelectorAll(
+        '#packing-settings, #all-orders, #view-orders, #view-packing, #orders-subviews button, #copy-preparation, #copy-group-codes, #review-purchase-codes, #group-order-products, #include-orders, #backup-packing, #print-recent'
+      ))
+        target.disabled = false
     }
     render()
     hasLoadedLibrary = true
@@ -2677,7 +2952,7 @@ export async function startLibrary(
         node(
           'p',
           uiMessage(
-            'Seller unavailable on the source page. Products and totals are saved. Identify the seller in Prepare packing list before assigning label codes.'
+            'Seller unavailable on the source page. Products and totals are saved. Resolve the supplier identity in Orders before assigning label codes.'
           ),
           'packing-help'
         )
@@ -2906,6 +3181,17 @@ export async function startLibrary(
     marks: labelCopies[1],
     headers: $('include-headers').closest('label'),
   })
+  $('orders-actions').addEventListener('focusin', ({ target }) => {
+    if (
+      !matchMedia('(max-width: 760px)').matches ||
+      !target.matches('button,input,select') ||
+      target.closest('.copy-actions-panel')
+    )
+      return
+    // Chromium can focus a partly visible button without revealing its edge.
+    // Real Tab/click focus must expose the complete control in the phone bar.
+    target.scrollIntoView({ block: 'nearest', inline: 'nearest' })
+  })
   ordersCopyMenu.trigger.dataset.action = 'open-copy-menu'
   const printButtons = [
     ['print-labels', 'Print labels…', 'barcode', 'barcode'],
@@ -2927,6 +3213,7 @@ export async function startLibrary(
   const recentPrints = node('button', uiMessage('Recent print jobs…'))
   recentPrints.id = 'print-recent'
   recentPrints.dataset.action = 'print-recent'
+  recentPrints.disabled = true
   decorateIcon(recentPrints, 'undo')
   recentPrints.onclick = () => packing?.openRecentPrints()
   printButtons.push(recentPrints)
@@ -2947,23 +3234,13 @@ export async function startLibrary(
   $('copy-excel-image').addEventListener('click', () =>
     copyAction($('copy-excel-image'), async () => {
       if (copyBusy) return false
-      const rows = packing.preparedRows(copyRows())
+      const rows = copyRows()
       if (!rows.length) return false
-      const badges = packing.getImageBadges()
       copyBusy = true
       updateSelection()
-      const abort = new AbortController()
       try {
-        return await copyExcelImage(rows, {
-          badges,
-          renderCartonMark: packing.createCartonMarkRenderer(),
-          loadImage: async (url) => {
-            const image = await send('IMAGE_GET', { url })
-            return typeof image === 'string' ? image : image.dataUrl
-          },
-          signal: abort.signal,
-          errorOptions: packing.errorOptions,
-        })
+        const context = await packing.output.ordersContext(rows)
+        return await packing.output.copy(context, 'excel-image')
       } finally {
         copyBusy = false
         updateSelection()
@@ -3050,7 +3327,7 @@ export async function startLibrary(
         storeFilter = null
         orderSelection.reset()
         productSelection.reset()
-        selectedOrders.add(result.order.snapshot.orderId)
+        selectedOrders.add(orderSelectionKey(result.order))
         selectedMonths.clear()
         selectedMonths.add(purchaseMonth(result.order.snapshot))
         expandedMonths.add(purchaseMonth(result.order.snapshot))
@@ -3094,7 +3371,15 @@ export async function startLibrary(
       )
     )
       return
-    await send('LIBRARY_REMOVE', { orderIds: [...selectedOrders] })
+    const refs = [...selectedOrders].map((key) => JSON.parse(key))
+    if (new Set(refs.map(([accountId]) => accountId)).size > 1)
+      throw new Error(
+        'Select orders from one buyer account before removing sources.'
+      )
+    await send('LIBRARY_REMOVE', {
+      orderIds: refs.map(([, orderId]) => orderId),
+      accountId: refs[0]?.[0] || 'local',
+    })
     orderSelection.reset()
     productSelection.reset()
     await refresh()
@@ -3124,7 +3409,13 @@ export async function startLibrary(
         getSizeClassifier: () =>
           packing?.sizeClassifier() ?? createSizeClassifier(),
         repository: repository || (await openDatabase()),
-        onImported: async () => {
+        onImported: async (record) => {
+          // A reviewed purchase must be visible even when its original month
+          // differs from the current default filter. Preserve existing scope.
+          const month = purchaseMonth(record.snapshot)
+          selectedMonths.add(month)
+          expandedMonths.add(month)
+          monthAnchor = null
           await refresh()
           globalThis.chrome?.runtime
             ?.sendMessage?.({ type: 'LIBRARY_CHANGED' })
@@ -3158,13 +3449,17 @@ export async function startLibrary(
       $('backup-file').value = ''
     }
   })
-  $('select-rows').addEventListener('click', () => productSelection.selectAll())
+  $('select-rows').addEventListener('click', () => {
+    clearTimeout(searchTimer)
+    renderRows()
+    productSelection.selectAll()
+  })
   $('clear-rows').addEventListener('click', () => productSelection.clear())
   $('search').addEventListener('input', () => {
     clearTimeout(searchTimer)
+    productSelection.reset()
     searchTimer = setTimeout(() => {
       productTable.reset()
-      productSelection.reset()
       renderRows()
     }, 150)
   })
@@ -3188,7 +3483,8 @@ export async function startLibrary(
   attachSearchSuggestions($('search'), function* () {
     for (const record of matchingOrders()) {
       const order = record.snapshot
-      if (selectedOrders.size && !selectedOrders.has(order.orderId)) continue
+      if (selectedOrders.size && !selectedOrders.has(orderSelectionKey(record)))
+        continue
       if ($('status-filter').value && order.status !== $('status-filter').value)
         continue
       yield order.sellerName
@@ -3275,6 +3571,8 @@ export async function startLibrary(
     jobStructure = ''
     render()
   })
+  // Establish empty/loading selection guards before any asynchronous startup read.
+  updateSelection()
   try {
     await repository?.refreshNamingSuggestions?.()
     packing = await startPackingWorkspace({
@@ -3284,64 +3582,39 @@ export async function startLibrary(
       getSelectedRows: () =>
         filteredRows().filter((row) => selectedRows.has(keyFor(row))),
       headers: () => $('include-headers').checked,
+      setHeaders: (value) => {
+        $('include-headers').checked = value
+        $('include-headers').dispatchEvent(new Event('change'))
+      },
       changed: ({ reload = false } = {}) => {
         if (reload) return refresh()
         renderOrders()
         renderRows()
       },
       feedback,
-      setPackingExcluded: async (orderId, entryIds, excluded, accountId) => {
-        const saved = await send('LIBRARY_PACKING_EXCLUSION', {
-          orderId,
-          entryIds,
-          excluded,
-          accountId,
-        })
-        const acceptSavedExclusion = () => {
-          const record = records.find(
-            ({ snapshot }) =>
-              snapshot.orderId === orderId &&
-              snapshot.accountId === (accountId || 'local')
-          )
-          if (
-            record &&
-            (record.packingExclusionsUpdatedAt || '') <=
-              (saved.packingExclusionsUpdatedAt || '')
-          ) {
-            record.packingExcludedEntryIds = saved.packingExcludedEntryIds
-            record.packingExclusionsUpdatedAt = saved.packingExclusionsUpdatedAt
-          }
-        }
-        acceptSavedExclusion()
-        try {
-          await refresh()
-        } catch (error) {
-          // The write already committed. A failed read must not leave the
-          // old row action visible or misreport the saved edit as a failure.
-          acceptSavedExclusion()
-          renderRows()
-          showErrorNotice(
-            uiMessage(
-              'The library could not be refreshed. Your packing selection is saved; retry refreshing to update the rest of the workspace.'
-            ),
-            {
-              key: 'packing-exclusion-refresh',
-              title: uiMessage('Packing selection saved'),
-              detail: error.message,
-              context: { orderId },
-              action: { label: uiMessage('Retry'), onClick: refresh },
-            }
-          )
-        }
-      },
       onProductDetails: showProductDetails,
-      onEditCartonCapacity: editCartonCapacity,
+      onProductPhotoEdit: editProductPhoto,
+      onReadOnlyProductDetails: showReadOnlyProductDetails,
+      getSelectedOrders: () =>
+        records
+          .filter((record) => selectedOrders.has(orderSelectionKey(record)))
+          .map(({ accountId, snapshot }) => ({
+            accountId: accountId || 'local',
+            orderId: snapshot.orderId,
+          })),
       onRefreshOrder: (orderId) => refreshOrders([orderId]),
       loadImage: async (url) => {
         const result = await send('IMAGE_GET', { url })
         return typeof result === 'string' ? result : result.dataUrl
       },
     })
+    const stopLibraryChanges = repository?.subscribe?.(() => {
+      // Notifications invalidate reads only. refresh coalesces them and the
+      // active controllers retain dirty drafts, baselines and amendment epochs.
+      void refresh().catch((error) => feedback(error.message, true))
+    })
+    if (stopLibraryChanges)
+      addEventListener('pagehide', stopLibraryChanges, { once: true })
     await refresh()
   } catch (error) {
     feedback(error.message, true)

@@ -1,8 +1,14 @@
+import { exportPdf } from './export-completion-helpers.mjs'
 import { readFile, writeFile } from 'node:fs/promises'
 import { basename } from 'node:path'
 import * as XLSX from 'xlsx'
+import { planContainerWorkbook } from '../../src/container-export.js'
 import { test, expect } from './extension-fixture.mjs'
 import { createDemoRecords } from '../../preview/library-fixture.js'
+import {
+  createContainerThroughUI,
+  sealContainerThroughUI,
+} from './smart-workspace-helpers.mjs'
 
 // An automation agent drives the workspace through stable data-action names
 // only (docs/automation.md). Synthetic orders, temporary profile.
@@ -46,6 +52,15 @@ async function open(extension) {
     records
   )
   expect(restored.ok, restored.error).toBe(true)
+  await extension.inspector.evaluate(async () => {
+    window.agentChangeMetadata = Object.create(null)
+    const stop = (await window.testRepository).subscribe((change) => {
+      const key = JSON.stringify(change.stores)
+      window.agentChangeMetadata[key] =
+        (window.agentChangeMetadata[key] || 0) + 1
+    })
+    addEventListener('pagehide', stop, { once: true })
+  })
   const page = await extension.context.newPage()
   await page.addInitScript(() =>
     localStorage.setItem('1688-library-purchase-months', '[]')
@@ -71,23 +86,34 @@ async function downloads(extension, count) {
 const action = (page, name) => page.locator(`[data-action="${name}"]:visible`)
 const status = (page) => page.locator('#workspace-status')
 
-test('an agent prepares, exports and prints through stable data-action controls', async ({
+test('an agent authors Orders, confirms one physical arrangement, seals a named container and exports/prints through stable actions', async ({
   extension,
 }, testInfo) => {
   const page = await open(extension)
   await expect(status(page)).toHaveAttribute('data-status', 'idle')
   // Older months start collapsed; the current month's two orders are listed.
   await expect(page.locator('[data-action="choose-order"]')).toHaveCount(2)
-  // Choose one order, select its products and prepare them.
-  await page.locator('#packing-month').fill('2026-10')
-  await page.locator('#packing-month').blur()
-  // Choose an order by focusing its card and pressing Space (the card's
-  // links and copy buttons are separate controls).
+  const before = await extension.inspector.evaluate(() =>
+      chrome.runtime.sendMessage({ type: 'BACKUP_EXPORT' })
+    ),
+    orderId = '900000000000000003',
+    ref = { accountId: 'local', orderId }
   const card = page.locator(
-    '[data-action="choose-order"][data-order-id="900000000000000003"]'
+    `[data-action="choose-order"][data-order-id="${orderId}"]`
   )
-  await card.focus()
-  await card.press(' ')
+  try {
+    await card.locator('input[type="checkbox"]').check({ timeout: 5000 })
+  } catch (error) {
+    await testInfo.attach('committed-change-metadata.json', {
+      body: JSON.stringify(
+        await extension.inspector.evaluate(() => window.agentChangeMetadata),
+        null,
+        2
+      ),
+      contentType: 'application/json',
+    })
+    throw error
+  }
   await expect(card).toHaveAttribute('aria-selected', 'true')
   const rows = page.locator('#sheet-body tr[data-selection-key]')
   await expect(rows).toHaveCount(3)
@@ -95,76 +121,135 @@ test('an agent prepares, exports and prints through stable data-action controls'
   await expect(
     page.locator('#sheet-body tr[aria-selected="true"]')
   ).toHaveCount(3)
-  await action(page, 'prepare-packing-list').click()
-  await expect(page.locator('[data-action="review-cancel"]')).toBeVisible()
-  await expect(page.locator('[data-action="review-assign-only"]')).toBeVisible()
-  await page.locator('[data-action="review-proceed"]').click()
-  await expect(page.locator('#packing-view')).toBeVisible()
-  await expect(page.locator('#view-packing')).toHaveAttribute(
-    'aria-current',
-    'page'
+  await action(page, 'review-purchase-codes').click()
+  const codes = page.locator('[data-action="purchase-code-review"]')
+  await expect(
+    codes.locator('[data-action="assign-purchase-codes"]')
+  ).toBeEnabled()
+  await codes.locator('[data-action="assign-purchase-codes"]').click()
+  await expect(codes).toBeHidden()
+  for (let index = 0; index < 3; index++) {
+    await rows.nth(index).locator('[data-action="edit-order-product"]').click()
+    const editor = page.locator('dialog[data-action="edit-order-product"]')
+    await editor
+      .locator('[data-authoring-field="spanish-name"]')
+      .fill(`PRODUCTO ${index + 1}`)
+    await editor
+      .locator('[data-authoring-field="chinese-category"]')
+      .fill('测试')
+    await editor.getByRole('button', { name: 'Close', exact: true }).click()
+    await expect(editor).toBeHidden()
+  }
+  await card.locator('[data-action="open-order-cartons"]').click()
+  const grid = page.locator('#orders-cartons-view'),
+    capacities = grid.locator('[data-grid-column="capacity"]')
+  await capacities.first().fill('1.5')
+  await capacities.first().blur()
+  await expect(capacities.first()).toHaveAttribute('aria-invalid', 'true')
+  await capacities.first().fill('10')
+  await capacities.first().blur()
+  await expect(capacities.first()).not.toHaveAttribute('aria-invalid')
+  await action(page, 'select-grid-rows').click()
+  await grid
+    .getByRole('textbox', {
+      name: 'Paste carton or capacity cells',
+      exact: true,
+    })
+    .fill('10\n24\n80')
+  await action(page, 'preview-carton-paste').click()
+  await page
+    .locator('.grid-paste-preview [data-action="apply-carton-paste"]')
+    .click()
+  await expect(page.locator('.grid-paste-preview')).toBeHidden()
+  await action(page, 'reconciliation-cartons').click()
+  await expect(grid.locator('tr[data-grid-key]')).toHaveCount(3)
+  for (const [column, value] of [
+    ['dimensions', '50×50×50'],
+    ['weight', '9.5'],
+  ]) {
+    const first = grid.locator(`[data-grid-column="${column}"]`).first()
+    const key = await first.evaluate(
+      (input) => input.closest('[data-grid-key]').dataset.gridKey
+    )
+    await first.fill(value)
+    await first.blur()
+    await expect
+      .poll(() =>
+        extension.inspector.evaluate(
+          async ({ ref, key, column }) => {
+            const context = await (
+              await window.testRepository
+            ).getOrderReconciliation(ref)
+            const carton = context.draft?.value?.plannerDraft?.cartons.find(
+              (carton) => carton.id === key
+            )
+            return column === 'dimensions'
+              ? carton
+                ? [carton.len, carton.wid, carton.ht]
+                : null
+              : carton?.weight
+          },
+          { ref, key, column }
+        )
+      )
+      .toEqual(column === 'dimensions' ? ['50', '50', '50'] : '9.5')
+    await action(page, 'select-grid-rows').click()
+    // The typed field established the active column; another focus/blur would
+    // queue a second commit after the fill preview captured its generation.
+    await action(page, 'fill-grid-range').click()
+    await page
+      .locator('.grid-paste-preview [data-action="apply-carton-paste"]')
+      .click()
+    await expect(page.locator('.grid-paste-preview')).toBeHidden()
+  }
+  await action(page, 'confirm-order-cartons').click()
+  await expect
+    .poll(async () =>
+      (
+        await extension.inspector.evaluate(
+          async (ref) =>
+            (await window.testRepository).getOrderReconciliation(ref),
+          ref
+        )
+      ).batches.reduce((n, batch) => n + batch.count, 0)
+    )
+    .toBe(6)
+  const confirmedPhysicalIds = await extension.inspector.evaluate(
+    async (ref) =>
+      (await (await window.testRepository).getOrderReconciliation(ref)).batches
+        .filter((batch) => !batch.deletedAt)
+        .map((batch) => batch.id)
+        .sort(),
+    ref
   )
-  // Labels need names and categories; synthetic products may lack them.
-  const names = page.locator('#packing-view .group-name-editor')
-  for (let index = 0; index < (await names.count()); index++)
-    if (!(await names.nth(index).inputValue()))
-      await names.nth(index).fill(`PRODUCTO ${index + 1}`)
-  const categories = page.locator(
-    '#packing-view .preparation-group [data-packing-field="category"]'
+  const containerId = await createContainerThroughUI(
+    page,
+    [ref],
+    'Synthetic agent November'
   )
-  for (let index = 0; index < (await categories.count()); index++)
-    if (!(await categories.nth(index).inputValue()))
-      await categories.nth(index).fill('测试')
-  await expect(page.locator('.preparation-save-status')).toHaveText(
-    'Saved automatically'
-  )
-
+  await sealContainerThroughUI(page)
+  const view = page.locator('#packing-view')
   for (const name of [
     'clear-selection',
-    'open-grouping-menu',
     'open-print-menu',
+    'export-packing-list',
   ])
     await expect(action(page, name)).toHaveCount(1)
-  // Physical carton totals belong to the batch, not the product rows.
-  await page.locator('.packing-group-cartons-edit').first().click()
-  const cartonsDialog = page.getByRole('dialog', {
-      name: 'Carton batches',
-      exact: true,
-    }),
-    cartonCount = cartonsDialog.locator('input[name="count"]')
-  await cartonsDialog
-    .getByRole('button', { name: 'Batch', exact: true })
-    .click()
-  await cartonCount.fill('1.5')
-  await cartonsDialog
-    .getByRole('button', { name: 'Apply carton contents', exact: true })
-    .click()
-  await expect(cartonCount).toHaveAttribute('aria-invalid', 'true')
-  await cartonCount.fill('6')
-  await expect(cartonCount).not.toHaveAttribute('aria-invalid')
   await expect(
-    cartonsDialog.locator('input[name="cbm"], input[name="suppliedCbm"]')
+    view.locator(
+      '[data-action="open-grouping-menu"],[data-action="organize-packing"],[data-grid-column="capacity"]'
+    )
   ).toHaveCount(0)
-  for (const key of ['len', 'wid', 'ht'])
-    await cartonsDialog.locator(`input[name="${key}"]`).fill('50')
-  await cartonsDialog.locator('input[name="weight"]').fill('9.5')
-  await cartonsDialog
-    .getByRole('button', { name: 'Apply carton contents', exact: true })
-    .click()
-  await expect(cartonsDialog.locator('.carton-batch-status')).toHaveText(
-    'Saved'
-  )
-  await expect(cartonsDialog.locator('.carton-batch-summary')).toContainText(
-    '0.125 m³'
-  )
-  await cartonsDialog.getByLabel('Received boxes', { exact: true }).fill('6')
-  await cartonsDialog.getByLabel('Loaded boxes', { exact: true }).fill('0')
-  // Closing flushes confirmations even while their quiet autosave timer is pending.
-  await cartonsDialog.getByRole('button', { name: 'Done', exact: true }).click()
-  await expect(cartonsDialog).toHaveCount(0)
   // Export the whole packing list: .xlsx plus its JSON summary.
   await action(page, 'export-packing-list').click()
+  await page
+    .getByLabel('Include detailed automation JSON', { exact: true })
+    .check()
+  const workbookDownload = page.waitForEvent('download', (download) =>
+    download.suggestedFilename().endsWith('.xlsx')
+  )
   await page.locator('[data-action="download-packing-list"]').click()
+  await workbookDownload
   let files = await downloads(extension, 2)
   const xlsx = files.find((file) => file.filename.endsWith('.xlsx'))
   const summaryFile = files.find((file) => file.filename.endsWith('.json'))
@@ -215,39 +300,105 @@ test('an agent prepares, exports and prints through stable data-action controls'
     bitmap.close()
     return { black, dimensions }
   }, Array.from(archive.FileIndex[photoIndex].content))
+  if (raster.black <= 500) {
+    const evidence = await extension.inspector.evaluate(
+        async ({ id, ref }) => {
+          const repository = await window.testRepository,
+            manifest = await repository.getContainerManifest({ id }),
+            source = await repository.getOrderReconciliation(ref)
+          return {
+            manifest,
+            source: {
+              items: source.record.snapshot.items,
+              productPhotos: source.record.productPhotos,
+            },
+          }
+        },
+        { id: containerId, ref }
+      ),
+      plan = planContainerWorkbook(evidence.manifest),
+      snapshot = (row) => ({
+        entryId: row.entryId,
+        barcode: row.barcode,
+        photoEdits: row.photoEdits,
+        thumbnail: row.thumbnail?.slice(0, 80),
+        photos: row.photos?.map((photo) => photo.slice(0, 80)),
+      })
+    await testInfo.attach('frozen-image-diagnostics.json', {
+      body: JSON.stringify(
+        {
+          raster,
+          firstWorkbookPhotoSource: snapshot(
+            plan.products[0].markSource || plan.products[0].source
+          ),
+          source: {
+            ...evidence.source,
+            items: evidence.source.items.map(snapshot),
+          },
+          products: evidence.manifest.products.map(snapshot),
+          plan: plan.products.map((product) => ({
+            row: product.row,
+            source: snapshot(product.source),
+            markSource: product.markSource
+              ? snapshot(product.markSource)
+              : null,
+          })),
+          photoNames: archive.FullPaths.filter((path) => path.endsWith('.jpg')),
+        },
+        null,
+        2
+      ),
+      contentType: 'application/json',
+    })
+  }
   expect(raster.black).toBeGreaterThan(500)
   expect(raster.dimensions).toEqual([240, 240])
   const summary = JSON.parse(await readFile(summaryFile.filename, 'utf8'))
   expect(summary).toMatchObject({
     format: '1688-export-summary',
     kind: 'packing-list',
-    totals: { orders: 1, products: 3 },
+    version: 3,
+    scope: 'container-revision',
+    containerId,
   })
   expect(summary.files).toEqual([
     basename(xlsx.filename),
     basename(summaryFile.filename),
   ])
-  expect(summary.products[0]).toMatchObject({
-    packingMonth: '2026-10',
-  })
-  expect(summary.cartonBatches).toHaveLength(1)
-  expect(summary.cartonBatches[0]).toMatchObject({
-    count: 6,
-    received: 6,
-    loaded: 0,
-    weightBasis: 'carton',
-    weight: '9.5',
-    len: '50',
-    wid: '50',
-    ht: '50',
-    volumePerCarton: '0.125',
-    totalWeight: '57',
-    totalVolume: '0.75',
-    loadedWeight: '0',
-    loadedVolume: '0',
-    month: '2026-10',
-    includedInTotals: true,
-  })
+  expect(summary.container.name).toBe('Synthetic agent November')
+  expect(summary.container.period || '').toBe('')
+  for (const product of summary.products) {
+    expect(product.packingMonth).toBe('2026-10')
+    expect(product.barcode).toMatch(/^CE2610/)
+  }
+  expect(summary.products).toHaveLength(3)
+  expect(summary.cartonBatches).toHaveLength(3)
+  expect(summary.cartonBatches.map((batch) => batch.id).sort()).toEqual(
+    confirmedPhysicalIds
+  )
+  expect(summary.cartonBatches.reduce((n, batch) => n + batch.count, 0)).toBe(6)
+  for (const batch of summary.cartonBatches)
+    expect(batch).toMatchObject({
+      accountId: 'local',
+      orderId,
+      weightBasis: 'carton',
+      weight: '9.5',
+      len: '50',
+      wid: '50',
+      ht: '50',
+    })
+  for (const batch of summary.cartonBatches) {
+    expect(batch.contents.every((part) => part.orderId === orderId)).toBe(true)
+    expect(batch).not.toHaveProperty('month')
+  }
+  expect(summary.cartons).toHaveLength(6)
+  expect(summary.cartons.every((carton) => carton.state === 'loaded')).toBe(
+    true
+  )
+  expect(JSON.stringify(summary.totals)).toContain('57')
+  expect(JSON.stringify(summary.totals)).toContain('0.75')
+  expect(summary.revisionId).toBeTruthy()
+  expect(basename(xlsx.filename)).toContain(containerId)
   for (const product of summary.products)
     for (const field of [
       'receivedBoxes',
@@ -257,7 +408,7 @@ test('an agent prepares, exports and prints through stable data-action controls'
     ])
       expect(product).not.toHaveProperty(field)
   const exportedWorkbook = XLSX.read(workbook, { type: 'buffer' }),
-    table = XLSX.utils.sheet_to_json(exportedWorkbook.Sheets.Products, {
+    table = XLSX.utils.sheet_to_json(exportedWorkbook.Sheets['Packing list'], {
       header: 1,
       defval: '',
     }),
@@ -265,31 +416,44 @@ test('an agent prepares, exports and prints through stable data-action controls'
       header: 1,
       defval: '',
     })
-  expect(exportedWorkbook.SheetNames).toEqual(['Products', 'Cartons'])
-  expect(table[4]).not.toContain('Loaded boxes')
-  expect(table[4].join(' ')).not.toMatch(/Payments|Deposits|Balance/)
-  const headings = table[4]
+  expect(exportedWorkbook.SheetNames).toEqual([
+    'Packing list',
+    'Cartons',
+    'Se quedó',
+  ])
+  const headings = table.find(
+    (row) => row.includes('Code') && row.includes('Cartons')
+  )
+  expect(headings).not.toContain('Loaded boxes')
+  expect(headings.join(' ')).not.toMatch(/Payments|Deposits|Balance/)
   const exported = table.find(
-    (row) => row[headings.indexOf('Code')] === summary.products[0].code
+    (row) => row[headings.indexOf('Code')] === summary.products[0].barcode
   )
   expect(headings).not.toContain('Store')
   expect(headings[headings.indexOf('Code') + 1]).toBe('Carton mark')
-  expect(exported[headings.indexOf('Cartons')]).toContain('C001')
-  const cartonHeadings = cartonTable[4],
-    exportedCartons = cartonTable.find((row) => row[0] === 'C001')
-  expect(exportedCartons[cartonHeadings.indexOf('Loaded')]).toBe(0)
-  expect(exportedCartons[cartonHeadings.indexOf('Received')]).toBe(6)
-  expect(exportedCartons[cartonHeadings.indexOf('Loaded kg')]).toBe(0)
-  expect(exportedCartons[cartonHeadings.indexOf('Loaded m³')]).toBe(0)
+  expect(String(exported[headings.indexOf('Cartons')])).not.toBe('')
+  for (const product of summary.products)
+    expect(product.sourceUnitPrice).toBeTruthy()
   expect(
-    await page
-      .locator('.packing-order-sections')
-      .evaluate((node) => node.scrollWidth - node.clientWidth)
+    await view
+      .locator('.smart-grid-scroll')
+      .evaluate((node) => node.clientWidth)
+  ).toBeGreaterThan(0)
+  expect(
+    await page.evaluate(() => document.documentElement.scrollWidth - innerWidth)
   ).toBeLessThanOrEqual(1)
   await page.screenshot({ path: 'work/packing-export-workspace.png' })
-  expect(summary.orders).toEqual([
-    { orderId: '900000000000000003', seller: expect.any(String) },
-  ])
+  expect(summary.orders).toHaveLength(1)
+  expect(summary.orders[0].orderId).toBe(orderId)
+  const after = await extension.inspector.evaluate(() =>
+    chrome.runtime.sendMessage({ type: 'BACKUP_EXPORT' })
+  )
+  expect(after.data.orders.map((record) => record.snapshot)).toEqual(
+    before.data.orders.map((record) => record.snapshot)
+  )
+  expect(after.data.orders.map((record) => record.productPhotos)).toEqual(
+    before.data.orders.map((record) => record.productPhotos)
+  )
   await expect(status(page)).toHaveAttribute('data-status', 'export-finished')
   await expect(status(page)).toContainText(summary.files[0])
 
@@ -297,14 +461,25 @@ test('an agent prepares, exports and prints through stable data-action controls'
   await action(page, 'select-all-rows').click()
   await action(page, 'open-print-menu').click()
   await action(page, 'print-labels').click()
+  await page.locator('.print-dialog').waitFor()
   await expect(page.locator('[data-action="print-calibration"]')).toBeVisible()
-  await page.locator('[data-action="export-pdf"]').click()
+  expect(
+    await exportPdf(page, page.locator('[data-action="export-pdf"]'))
+  ).toEqual({ saved: true })
   files = await downloads(extension, 4)
   const labelPdf = files.find((file) =>
     /CE-labels-.*\.pdf$/.test(file.filename)
   )
   const labelSummary = JSON.parse(
     await readFile(labelPdf.filename.replace(/\.pdf$/, '.json'), 'utf8')
+  )
+  await writeFile(
+    testInfo.outputPath('sealed-labels-synthetic.pdf'),
+    await readFile(labelPdf.filename)
+  )
+  await writeFile(
+    testInfo.outputPath('sealed-labels-synthetic.json'),
+    JSON.stringify(labelSummary, null, 2)
   )
   expect(labelSummary).toMatchObject({ kind: 'labels', perPage: 70 })
   // Requested labels fill whole pages; spares are shared on the last page.
@@ -324,7 +499,9 @@ test('an agent prepares, exports and prints through stable data-action controls'
   // announce; the browser never renames it behind their back.
   const base = (file) => basename(file.filename)
   await page.waitForTimeout(1100)
-  await page.locator('[data-action="export-pdf"]').click()
+  expect(
+    await exportPdf(page, page.locator('[data-action="export-pdf"]'))
+  ).toEqual({ saved: true })
   files = await downloads(extension, 6)
   const repeatSummaryFile = files
     .slice(4)
@@ -364,13 +541,23 @@ test('an agent prepares, exports and prints through stable data-action controls'
   await page.locator('[data-action="close-print-dialog"]').click()
   await action(page, 'open-print-menu').click()
   await action(page, 'print-carton-marks').click()
-  await page.locator('[data-action="export-pdf"]').click()
+  expect(
+    await exportPdf(page, page.locator('[data-action="export-pdf"]'))
+  ).toEqual({ saved: true })
   files = await downloads(extension, 8)
   const markPdf = files.find((file) =>
     /CE-carton-marks-.*\.pdf$/.test(file.filename)
   )
   const markSummary = JSON.parse(
     await readFile(markPdf.filename.replace(/\.pdf$/, '.json'), 'utf8')
+  )
+  await writeFile(
+    testInfo.outputPath('sealed-marks-synthetic.pdf'),
+    await readFile(markPdf.filename)
+  )
+  await writeFile(
+    testInfo.outputPath('sealed-marks-synthetic.json'),
+    JSON.stringify(markSummary, null, 2)
   )
   expect(markSummary).toMatchObject({ kind: 'carton-marks', perPage: 2 })
   expect(markSummary.orders.map((entry) => entry.orderId)).toEqual([
@@ -383,10 +570,15 @@ test('an agent prepares, exports and prints through stable data-action controls'
     'view-packing',
     'open-activity',
     'print-recent',
-    'packing-month',
     'restore-packing',
   ])
     await expect(page.locator(`[data-action="${name}"]`).first()).toBeAttached()
+  for (const name of [
+    'packing-month',
+    'prepare-packing-list',
+    'organize-packing',
+  ])
+    await expect(page.locator(`[data-action="${name}"]`)).toHaveCount(0)
   await action(page, 'view-orders').click()
   await expect(page.locator('#orders-view')).toBeVisible()
   expect(extension.unexpectedRequests).toEqual([])

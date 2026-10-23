@@ -14,15 +14,40 @@ import {
 import { tmpdir } from 'node:os'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
+import { build } from 'esbuild'
 import { buildOrderFixture } from '../fixtures/order-fixture.mjs'
 
 const repository = fileURLToPath(new URL('../../', import.meta.url))
 const syntheticOrderId = '1234567890123456789'
 
 async function startFixtureServer() {
+  const moduleBundles = new Map()
   const server = createServer(async (request, response) => {
     const pathname = new URL(request.url, 'http://127.0.0.1').pathname
+    // Native repository tests import source modules directly. Report decoding
+    // brings SheetJS into that graph; serve its browser ESM bundle locally.
+    if (pathname === '/src/store-workbook-reader.js') {
+      if (!moduleBundles.has(pathname))
+        moduleBundles.set(
+          pathname,
+          build({
+            absWorkingDir: repository,
+            entryPoints: [pathname.slice(1)],
+            bundle: true,
+            write: false,
+            platform: 'browser',
+            format: 'esm',
+            target: 'chrome120',
+          }).then((result) => result.outputFiles[0].text)
+        )
+      response.writeHead(200, {
+        'Content-Type': 'text/javascript; charset=utf-8',
+      })
+      response.end(await moduleBundles.get(pathname))
+      return
+    }
     if (
+      /^\/src\/[a-z][a-z0-9-]*\.js$/.test(pathname) ||
       [
         '/src/database.js',
         '/src/store-order.js',
@@ -100,6 +125,24 @@ async function startFixtureServer() {
 
 async function prepareExtension(directory, importFlow) {
   await cp(path.join(repository, 'dist'), directory, { recursive: true })
+  // Disposable inspector only: tests call the same public repository/planner
+  // as the packaged UI. No direct IndexedDB writes or alternate inventory.
+  const harness = await build({
+    absWorkingDir: repository,
+    stdin: {
+      contents:
+        "import {openDatabase} from './src/database.js'; import * as planner from './src/carton-reconciliation.js'; window.testRepository=openDatabase(); window.testPlanner=planner;",
+      resolveDir: repository,
+    },
+    bundle: true,
+    write: false,
+    format: 'iife',
+    target: 'chrome120',
+  })
+  await writeFile(
+    path.join(directory, 'test-repository.js'),
+    harness.outputFiles[0].contents
+  )
   const manifestPath = path.join(directory, 'manifest.json')
   const manifest = JSON.parse(await readFile(manifestPath, 'utf8'))
   // Additional test-only inspection and reinjection permissions.
@@ -156,7 +199,7 @@ async function prepareExtension(directory, importFlow) {
   await writeFile(manifestPath, JSON.stringify(manifest, null, 2))
   await writeFile(
     path.join(directory, 'inspector.html'),
-    '<!doctype html><html lang="en"><title>Test inspector</title><body></body></html>'
+    '<!doctype html><html lang="en"><title>Test inspector</title><script src="test-repository.js"></script><body></body></html>'
   )
   return extensionId
 }
@@ -166,7 +209,7 @@ export const test = base.extend({
   extension: async ({ importFlow }, use) => {
     const temporaryParent = await realpath(tmpdir())
     const temporaryRoot = await mkdtemp(
-      path.join(temporaryParent, '1688tocsv-browser-')
+      path.join(temporaryParent, '1688topl-browser-')
     )
     const extensionPath = path.join(temporaryRoot, 'extension')
     const downloadPath = path.join(temporaryRoot, 'downloads')
@@ -256,7 +299,7 @@ export const test = base.extend({
       const resolved = await realpath(temporaryRoot)
       if (
         path.dirname(resolved) !== temporaryParent ||
-        !path.basename(resolved).startsWith('1688tocsv-browser-')
+        !path.basename(resolved).startsWith('1688topl-browser-')
       ) {
         throw new Error(
           'Refusing to clean an unexpected browser test directory'

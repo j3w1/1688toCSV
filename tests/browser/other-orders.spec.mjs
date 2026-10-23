@@ -1,5 +1,11 @@
+import { exportPdf } from './export-completion-helpers.mjs'
 import { readFile } from 'node:fs/promises'
 import { test, expect } from './extension-fixture.mjs'
+import {
+  assignSelectedPurchaseCodes,
+  editOrderProduct,
+  closeOrderProduct,
+} from './smart-workspace-helpers.mjs'
 import { createDemoRecords } from '../../preview/library-fixture.js'
 import { otherOrderSnapshot } from '../../src/other-orders.js'
 import { readBackupFile } from '../../src/backup-file.js'
@@ -138,36 +144,41 @@ test('manual other-source order follows packing, labels, carton marks and full/s
       (record) => record.snapshot.orderId === legacy[0].snapshot.orderId
     ).snapshot
   ).toEqual(legacy[0].snapshot)
-  const row = page.locator('#sheet-body tr[data-selection-key]').first()
-  await row.focus()
-  await row.press('Control+a')
-  await page.locator('#packing-month').fill('2026-10')
-  await action(page, 'prepare-packing-list').click()
-  await action(page, 'review-proceed').click()
-  await expect(page.locator('#packing-view')).toBeVisible()
-  await expect(page.locator('.packing-order-number')).toContainText(
-    'EXT-MANUAL-1'
+  // A manually entered supplier name is display text, not a source account.
+  // Supply explicit authored identity without rewriting the original snapshot.
+  await page
+    .locator('#sheet-body [data-action="review-purchase-evidence"]')
+    .first()
+    .click()
+  const evidence = page.locator(
+    'dialog[data-action="review-purchase-evidence"]'
   )
-  await expect(
-    page.getByRole('button', { name: 'Open selected order', exact: true })
-  ).toBeDisabled()
-  const names = page.locator('#packing-view .group-name-editor')
-  for (let i = 0; i < (await names.count()); i++)
-    if (!(await names.nth(i).inputValue()))
-      await names.nth(i).fill('FLORERO SINTETICO')
-  const categories = page.locator(
-    '#packing-view [data-packing-field="category"]'
-  )
-  for (let i = 0; i < (await categories.count()); i++)
-    if (!(await categories.nth(i).inputValue()))
-      await categories.nth(i).fill('花瓶')
-  await expect(page.locator('.preparation-save-status')).toHaveText(
-    'Saved automatically'
-  )
-  await action(page, 'select-all-rows').click()
+  await evidence
+    .getByLabel('Authored supplier identity', { exact: true })
+    .fill('synthetic-manual-supplier')
+  await evidence.locator('[data-action="resolve-purchase-supplier"]').click()
+  await expect(evidence).toBeHidden()
+  await page.locator('#select-rows').click()
+  await assignSelectedPurchaseCodes(page)
+  await expect(page.locator('#orders-view')).toBeVisible()
+  await expect(page.locator('#sheet-body')).toContainText('EXT-MANUAL-1')
+  await expect(page.locator('#sheet-body .order-source-link')).toHaveCount(0)
+  const editor = await editOrderProduct(page, 0, {
+    'Spanish name': 'FLORERO SINTETICO',
+    'Chinese category': '花瓶',
+  })
+  await closeOrderProduct(editor)
+  // Code assignment keeps this order's one product selected. Select-all is
+  // deliberately disabled when the complete visible scope is already chosen.
+  const product = page.locator('#sheet-body tr[data-selection-key]')
+  await expect(product).toHaveCount(1)
+  await product.getByRole('checkbox').check()
+  await expect(product).toHaveAttribute('aria-selected', 'true')
   await action(page, 'open-print-menu').click()
   await action(page, 'print-labels').click()
-  await action(page, 'export-pdf').click()
+  expect(await exportPdf(page, action(page, 'export-pdf'))).toEqual({
+    saved: true,
+  })
   let files = await downloaded(extension, 2)
   expect((await readFile(files[0].filename)).subarray(0, 5).toString()).toBe(
     '%PDF-'
@@ -180,7 +191,9 @@ test('manual other-source order follows packing, labels, carton marks and full/s
   await action(page, 'close-print-dialog').click()
   await action(page, 'open-print-menu').click()
   await action(page, 'print-carton-marks').click()
-  await action(page, 'export-pdf').click()
+  expect(await exportPdf(page, action(page, 'export-pdf'))).toEqual({
+    saved: true,
+  })
   files = await downloaded(extension, 4)
   expect(files[2].filename).toContain('CE-carton-marks-')
   expect((await readFile(files[2].filename)).subarray(0, 5).toString()).toBe(
@@ -189,10 +202,15 @@ test('manual other-source order follows packing, labels, carton marks and full/s
   await action(page, 'close-print-dialog').click()
   const complete = await orders(extension)
   expect(complete.preparations).toHaveLength(1)
-  await action(page, 'open-copy-menu').click()
-  await page
-    .getByRole('button', { name: 'Back up packing', exact: true })
-    .click()
+  const authored = complete.orders.find(
+    (record) => record.snapshot.orderId === entered.snapshot.orderId
+  )
+  expect(authored.snapshot).toEqual(entered.snapshot)
+  expect(authored.supplierIdentityResolution).toMatchObject({
+    sellerId: 'synthetic-manual-supplier',
+    provenance: 'manual-confirmed',
+  })
+  await action(page, 'backup-packing').click()
   const backupFiles = await downloaded(extension, 5)
   const scoped = await readBackupFile(
     new Blob([await readFile(backupFiles[4].filename)])
@@ -492,6 +510,10 @@ test('corrupt inline photos are refused by file entry, the manual picker, storag
     name: 'corrupt.png',
     mimeType: 'image/png',
     buffer: Buffer.from('iVBORw0KGgo=', 'base64'),
+  })
+  await page.waitForFunction(() => {
+    const photo = document.querySelector('[data-action="other-order-photo"]')
+    return photo?.isConnected && !photo.disabled
   })
   await expect(page.locator('.other-order-error')).toContainText('decodable')
   await expect(page.locator('.other-order-product img')).toBeHidden()

@@ -158,7 +158,7 @@ test('bulk picture copying preserves full pixels in separate compact Excel cells
       name: `Order ${records[0].snapshot.orderId}`,
       exact: true,
     })
-    .locator('.order-card-meta')
+    .getByRole('checkbox')
     .click()
   for (const id of ['copy-images', 'copy-excel']) {
     const button = page.locator(`#${id}`)
@@ -215,6 +215,7 @@ test('clipboard failures stay next to the copy control and can be retried', asyn
     }
   })
   const page = await openLibrary(extension)
+  await page.locator('#sheet-body tr[data-selection-key]').first().waitFor()
   const button = page.locator('#copy-values')
   await revealCopyActions(page)
   await button.click()

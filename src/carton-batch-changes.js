@@ -1,6 +1,18 @@
 import { groupPackingMonth } from './packing-model.js'
-import { cartonBatchIssues, cartonBatchMark } from './carton-batches.js'
+import {
+  cartonBatchIssues,
+  cartonBatchMark,
+  cartonBatchMarkOwnerChoices,
+} from './carton-batches.js'
 import { repeatProductStoreIdentity } from './repeat-products.js'
+import {
+  transitionPhysicalMark,
+  physicalMarkResolutionChoices,
+  physicalMarkResolutionRequired,
+  physicalMarkReadback,
+  physicalMarkSupersessionState,
+} from './physical-mark-aliases.js'
+export { resolvePhysicalMarkChange } from './physical-mark-aliases.js'
 
 const key = (accountId, orderId, entryId) =>
   JSON.stringify([accountId || 'local', orderId, entryId])
@@ -66,7 +78,7 @@ function markOwner(batch, preparations, records) {
         ...mark,
         month: groupPackingMonth(preparation, group),
         baseCode: group.baseCode,
-        storeId: repeatProductStoreIdentity(record.snapshot),
+        storeId: repeatProductStoreIdentity(record),
       }
     : null
 }
@@ -80,6 +92,7 @@ export function planCartonBatchChanges({
   records,
   beforePreparations,
   afterPreparations,
+  issuedCodes = [],
 }) {
   const beforeOwners = owners(beforePreparations)
   const afterOwners = owners(afterPreparations)
@@ -108,7 +121,7 @@ export function planCartonBatchChanges({
       afterPreparations,
       batches
     )
-    if (!resultingIssues.length) continue
+    if (!resultingIssues.length && !ownershipChanged) continue
     // A source-refresh/legacy issue alone must not block unrelated subsequent edits.
     if ((batch.needsReview || originalIssues.length) && !ownershipChanged)
       continue
@@ -120,11 +133,52 @@ export function planCartonBatchChanges({
         ? destinationGroups
         : structuredClone(batch.groups),
     }
+    const originalMark = cartonBatchMark(batch),
+      markedPreparation = beforePreparations.find(
+        (value) =>
+          value.accountId === batch.accountId &&
+          value.orderId === originalMark?.orderId
+      ),
+      markedGroup = markedPreparation?.groups.find(
+        (value) => value.id === originalMark?.groupId
+      ),
+      markedEntries =
+        markedGroup?.variants.flatMap((variant) => variant.entryIds) || [],
+      markedOwners = markedEntries.map((id) => {
+        const owner = afterOwners.get(
+          key(batch.accountId, originalMark.orderId, id)
+        )
+        return owner
+          ? {
+              orderId: owner.preparation.orderId,
+              groupId: owner.group.id,
+              month: groupPackingMonth(owner.preparation, owner.group),
+            }
+          : null
+      }),
+      markedDestinations = references(markedOwners),
+      markReanchor =
+        !nextMark &&
+        previousMark &&
+        markedEntries.length > 0 &&
+        markedOwners.every(Boolean) &&
+        markedDestinations.length === 1 &&
+        markedDestinations[0].orderId === previousMark.orderId &&
+        (batch.orderId ||
+          markedOwners.every((owner) => owner.month === batch.month))
+    // One complete same-order destination is an ownership reanchor, never a
+    // claim that the operator has replaced the mark already on the cartons.
+    if (
+      markReanchor &&
+      (batch.mark ||
+        refKey(candidate.groups[0]) !== refKey(markedDestinations[0]))
+    )
+      candidate.mark = structuredClone(markedDestinations[0])
     const mark = cartonBatchMark(batch),
       intactMark =
         nextMark &&
         nextMark.baseCode &&
-        nextMark.month === batch.month &&
+        (batch.orderId || nextMark.month === batch.month) &&
         nextMark.storeId === batch.storeId
     // Changing which product owns a code must not silently change a physical
     // carton's printed mark, including a mark with no pieces in its contents.
@@ -137,7 +191,8 @@ export function planCartonBatchChanges({
       next.every((owner) => owner?.baseCode === previousMark?.baseCode)
     const intact = next.every(Boolean)
     const sameMonth =
-      intact && next.every((owner) => owner.month === batch.month)
+      intact &&
+      (batch.orderId || next.every((owner) => owner.month === batch.month))
     const candidateIssues =
       intact && sameMonth
         ? cartonBatchIssues(candidate, records, afterPreparations, batches)
@@ -145,13 +200,19 @@ export function planCartonBatchChanges({
     const canReanchor =
       intact &&
       sameMonth &&
-      (intactMark || legacyReanchor) &&
+      (intactMark || legacyReanchor || markReanchor) &&
       !candidateIssues.length
     // Uncertain partitions retain their exact original physical evidence, not a split
     // copy of counts or confirmations attributed to every resulting code group.
-    const proposed = canReanchor
-      ? candidate
-      : { ...structuredClone(batch), needsReview: true }
+    const proposed = transitionPhysicalMark(
+      batch,
+      canReanchor
+        ? candidate
+        : { ...structuredClone(batch), needsReview: true },
+      beforePreparations,
+      afterPreparations,
+      { issuedCodes }
+    )
     const reason = !intact
       ? 'missing-products'
       : !sameMonth
@@ -178,7 +239,8 @@ export function planCartonBatchChanges({
       destinationGroups,
       originalMark: cartonBatchMark(batch),
       destinationMark: cartonBatchMark(proposed),
-      beforeMarkCode: previousMark?.baseCode || '',
+      beforeMarkCode: batch.physicalMark?.code || previousMark?.baseCode || '',
+      beforeProductCode: previousMark?.baseCode || '',
       afterMarkCode:
         markOwner(proposed, afterPreparations, records)?.baseCode || '',
       cartonNumber: batch.cartonNumber || '',
@@ -190,6 +252,30 @@ export function planCartonBatchChanges({
       contents: structuredClone(batch.contents),
       issues: canReanchor ? [] : [...new Set(candidateIssues)],
       needsReview: Boolean(proposed.needsReview),
+      ...(proposed.physicalMark
+        ? {
+            physicalMark: structuredClone(proposed.physicalMark),
+            physicalMarkCode: proposed.physicalMark.code,
+            currentProductCode: proposed.physicalMark.productCode,
+            resolutionRequired: physicalMarkResolutionRequired(proposed),
+            currentProductArtwork: physicalMarkReadback(
+              proposed,
+              afterPreparations
+            ).currentProductArtwork,
+            ...physicalMarkSupersessionState(proposed),
+            physicalMarkResolutionChoices:
+              physicalMarkResolutionChoices(proposed),
+            physicalMarkSupersessions:
+              physicalMarkReadback(proposed).physicalMarkSupersessions,
+            resolutionChoices: physicalMarkResolutionChoices(proposed),
+            physicalMarkOwnerChoices: cartonBatchMarkOwnerChoices(
+              proposed,
+              records,
+              afterPreparations,
+              batches
+            ),
+          }
+        : {}),
     })
   }
   return { changes, before, after, reviews }

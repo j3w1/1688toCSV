@@ -620,7 +620,7 @@ test('one source product can be split among carton types but quantities cannot b
   )
 })
 
-test('mixed purchases require explicit repeat linking, matching store and matching month', () => {
+test('linked purchases never share physical carton ownership, even in the same store and month', () => {
   const { batch, records, preparations } = fixture()
   records.push({
     snapshot: {
@@ -650,12 +650,22 @@ test('mixed purchases require explicit repeat linking, matching store and matchi
       { orderId: '1002', entryId: '4', quantity: '27' },
     ],
   }
-  assertCartonBatchContext(mixed, records, preparations, [mixed])
+  assert.throws(
+    () => assertCartonBatchContext(mixed, records, preparations, [mixed]),
+    /only one purchase order/
+  )
   assert.equal(cartonBatchMetrics(mixed).quantity, '90')
+  const separate = {
+    ...batch,
+    id: 'other-purchase-carton',
+    groups: [{ orderId: '1002', groupId: 'group-2' }],
+    contents: [{ orderId: '1002', entryId: '4', quantity: '27' }],
+  }
+  assertCartonBatchContext(separate, records, preparations, [batch, separate])
   delete preparations[1].groups[0].sharedProductId
   assert.throws(
     () => assertCartonBatchContext(mixed, records, preparations, [mixed]),
-    /eligible carton scope|exceed/
+    /only one purchase order/
   )
   preparations[1].groups[0].sharedProductId = 'repeat-1'
   preparations[1].month = '2026-11'
@@ -919,5 +929,93 @@ test('older-month active allocations consume the same purchased pieces until exp
       { ...previous, deletedAt: '2026-10-22T12:00:00.000Z' },
     ]).find((item) => item.entryId === '2').remaining,
     '30'
+  )
+})
+
+test('a uniform unit exception preserves untouched proven units, source totals, identity and stale measurement coverage', async () => {
+  const { applyCartonUnitException } = await import('../src/carton-batches.js')
+  const { syntheticBatch } = await import('./fixtures/container-fixture.mjs')
+  const { physicalUnits } = await import('../src/inventory-model.js')
+  const before = syntheticBatch('1001', 3, '30', {
+    weight: '2',
+    entitlementIndices: [0, 4, 9],
+  })
+  const result = applyCartonUnitException({
+    batch: before,
+    index: 4,
+    contents: [{ orderId: '1001', entryId: '2001', quantity: '12' }],
+  })
+  assert.equal(result.packingBasis, 'aggregate')
+  assert.equal(result.contents[0].quantity, '32')
+  assert.equal(result.sourceFacts.contents[0].quantity, '30')
+  assert.deepEqual(result.entitlementIndices, [0, 4, 9])
+  assert.equal(result.unitContents[0][0].quantity, '10')
+  assert.equal(result.unitContents[9][0].quantity, '10')
+  assert.equal(physicalUnits(result)[1].weight, null)
+  assert.equal(physicalUnits(result)[0].weight, '2')
+  assert.equal(result.cartonHistory.length, 1)
+  const aggregate = syntheticBatch('1001', 3, '30', {
+    packingBasis: 'aggregate',
+    weight: '6',
+    weightBasis: 'batch',
+  })
+  const refined = applyCartonUnitException({
+    batch: aggregate,
+    index: 1,
+    contents: [{ orderId: '1001', entryId: '2001', quantity: '12' }],
+  })
+  assert.equal(physicalUnits(refined)[0].contents, null)
+  assert.equal(refined.contents[0].quantity, '30')
+  assert.equal(refined.weight, '6')
+  assert.throws(
+    () =>
+      applyCartonUnitException({
+        batch: before,
+        index: 4,
+        expectedRevision: 0,
+      }),
+    { code: 'CARTON_BATCH_CONFLICT' }
+  )
+})
+
+test('combined measurement correction retires current combined totals while retaining original evidence and precise invalid drafts', async () => {
+  const { applyCartonUnitException } = await import('../src/carton-batches.js'),
+    { syntheticBatch } = await import('./fixtures/container-fixture.mjs')
+  const batch = syntheticBatch('1001', 3, '30', {
+    packingBasis: 'aggregate',
+    weight: '9',
+    weightBasis: 'batch',
+    suppliedCbm: '0.3',
+    volumeBasis: 'batch',
+  })
+  const next = applyCartonUnitException({
+    batch,
+    index: 1,
+    measurements: { weight: '2.5', suppliedCbm: '0.08' },
+  })
+  assert.equal(next.weight, '')
+  assert.equal(next.suppliedCbm, '')
+  assert.equal(next.sourceFacts.weight, '9')
+  assert.equal(next.sourceFacts.suppliedCbm, '0.3')
+  assert.equal(next.unitMeasurements[1].weight, '2.5')
+  assert.throws(
+    () =>
+      applyCartonUnitException({
+        batch,
+        index: 1,
+        contents: [{ orderId: '1001', entryId: '2001', quantity: 'invalid' }],
+      }),
+    { code: 'CARTON_UNIT_CONTENTS' }
+  )
+  assert.equal(batch.weight, '9')
+})
+
+test('modern reported identifiers retain long textual zeros while legacy number bounds stay compatible', async () => {
+  const { syntheticBatch } = await import('./fixtures/container-fixture.mjs')
+  const label = '0'.repeat(100) + 'ABC'
+  assert.equal(
+    validateCartonBatch(syntheticBatch('1001', 1, '1', { cartonNumber: label }))
+      .cartonNumber,
+    label
   )
 })

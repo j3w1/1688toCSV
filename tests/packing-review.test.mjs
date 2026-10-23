@@ -304,6 +304,146 @@ function reviewDocument() {
   }
 }
 
+test('review decision controls mount once before opening, gate the real Apply action and clean up on apply or cancel', async () => {
+  const fixture = reviewDocument()
+  try {
+    for (const accepted of [true, false]) {
+      let mounts = 0,
+        cleanups = 0,
+        control
+      const pending = reviewPackingChanges({
+        title: 'Review product grouping',
+        explanation: 'Keep the recorded physical mark or confirm a relabel.',
+        changes: [
+          {
+            name: 'Synthetic goods',
+            before: 'CE26101002',
+            after: 'CE26101001',
+          },
+        ],
+        mountControls({ host, apply, modal }) {
+          mounts++
+          assert.equal(modal.hasAttribute('open'), false)
+          assert.equal(apply.dataset.action, 'review-proceed')
+          assert.equal(
+            host.previousElementSibling.className,
+            'packing-review-list'
+          )
+          control = fixture.document.createElement('input')
+          control.type = 'checkbox'
+          control.setAttribute('aria-label', 'Physical relabel confirmed')
+          host.append(control)
+          apply.disabled = true
+          control.onchange = () => {
+            apply.disabled = !control.checked
+          }
+          return () => {
+            cleanups++
+          }
+        },
+      })
+      const modal = fixture.document.querySelector('.packing-change-dialog')
+      const apply = modal.querySelector('[data-action="review-proceed"]')
+      assert.equal(modal.hasAttribute('open'), true)
+      apply.onclick()
+      assert.equal(modal.hasAttribute('open'), true)
+      assert.equal(cleanups, 0)
+      setLanguage('es', { persist: false })
+      assert.equal(mounts, 1)
+      assert.equal(
+        modal.querySelector('.packing-review-controls input'),
+        control
+      )
+      if (accepted) {
+        control.checked = true
+        control.onchange()
+        apply.click()
+      } else modal.querySelector('[data-action="review-cancel"]').click()
+      assert.equal(await pending, accepted)
+      assert.equal(cleanups, 1)
+      assert.equal(
+        fixture.document.querySelector('.packing-change-dialog'),
+        null
+      )
+      modal.close()
+      assert.equal(cleanups, 1)
+      setLanguage('en', { persist: false })
+    }
+  } finally {
+    setLanguage('en', { persist: false })
+    fixture.restore()
+  }
+})
+
+test('review control mount failure removes the unfinished dialog and rejects without approval', async () => {
+  const fixture = reviewDocument()
+  try {
+    await assert.rejects(
+      reviewPackingChanges({
+        title: 'Review product grouping',
+        explanation: 'Synthetic failure',
+        changes: [],
+        mountControls() {
+          throw new Error('Synthetic controls failed to mount')
+        },
+      }),
+      /Synthetic controls failed to mount/
+    )
+    assert.equal(fixture.document.querySelector('.packing-change-dialog'), null)
+  } finally {
+    fixture.restore()
+  }
+})
+
+test('updating a physical mark comparison preserves the mounted choice input and focused value', async () => {
+  const fixture = reviewDocument()
+  try {
+    let setChanges, input, focused
+    Object.defineProperty(fixture.document, 'activeElement', {
+      configurable: true,
+      get: () => focused,
+    })
+    const result = reviewPackingChanges({
+      title: 'Review product grouping',
+      explanation: 'Synthetic relabel review',
+      changes: [
+        { name: 'Physical mark', before: 'CE26101002', after: 'CE26101002' },
+      ],
+      mountControls(context) {
+        setChanges = context.setChanges
+        input = fixture.document.createElement('input')
+        input.value = 'Keep the confirmed reason'
+        input.focus = () => {
+          focused = input
+        }
+        context.host.append(input)
+      },
+    })
+    const modal = fixture.document.querySelector('.packing-change-dialog')
+    input.focus()
+    setChanges([
+      { name: 'Physical mark', before: 'CE26101002', after: 'CE26101001' },
+    ])
+    assert.equal(
+      modal.querySelector('.packing-value-before code').textContent,
+      'CE26101002'
+    )
+    assert.equal(
+      modal.querySelector('.packing-value-after code').textContent,
+      'CE26101001'
+    )
+    assert.equal(modal.querySelector('.packing-review-controls input'), input)
+    assert.equal(input.isConnected, true)
+    assert.equal(input.value, 'Keep the confirmed reason')
+    assert.equal(fixture.document.activeElement, input)
+    modal.querySelector('[data-action="review-cancel"]').click()
+    assert.equal(await result, false)
+    assert.equal(setChanges([]), false)
+  } finally {
+    fixture.restore()
+  }
+})
+
 test('one group exposes every proposed full variant code and helper inline in all three languages without changing its source', async () => {
   const fixture = reviewDocument()
   const source = '合成玻璃杯 · 原始供应商描述'

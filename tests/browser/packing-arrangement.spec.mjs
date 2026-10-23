@@ -1,188 +1,171 @@
 import { test, expect } from './extension-fixture.mjs'
-import { createDemoRecords } from '../../preview/library-fixture.js'
-import { revealCopyActions } from './copy-actions-helpers.mjs'
 import {
-  openOrganizing,
-  finishOrganizing,
-} from './packing-organize-helpers.mjs'
+  seedSmartOrder,
+  openSmartLibrary,
+  createContainerThroughUI,
+  libraryBackup,
+  editOrderProduct,
+  closeOrderProduct,
+  revealOrderCard,
+  clearOrderProductSelection,
+} from './smart-workspace-helpers.mjs'
+import { revealCopyActions } from './copy-actions-helpers.mjs'
 
-async function setup(
-  extension,
-  { missingCategory = false, needsSize = false } = {}
-) {
-  const [record] = await extension.inspector.evaluate(
-    `(${createDemoRecords.toString()})(document)`
-  )
-  const records = ['z', 'a', 'z'].map((seller, index) => {
-    const copy = structuredClone(record)
-    copy.snapshot.orderId = String(7200000000000000000n + BigInt(index))
-    copy.snapshot.sourceUrl = `https://air.1688.com/app/ctf-page/trade-order-detail/index.html?orderId=${copy.snapshot.orderId}`
-    copy.snapshot.sellerName = `Synthetic ${seller} store`
-    copy.snapshot.sellerMemberLogin = `synthetic-${seller}`
-    copy.snapshot.items.forEach((item, index) => {
-      item.title = `玻璃花瓶${index}`
-      item.productNumber = `VASE-${index}`
-      item.skuProperties = []
-      if (needsSize && index < 2) {
-        item.title = '玻璃花瓶0'
-        item.productNumber = 'VASE-0'
-        item.skuProperties = [
-          { label: '尺寸', value: index ? '另一种尺寸' : '未知尺寸' },
-        ]
-      }
-    })
-    return copy
-  })
-  const fixture = await extension.context.newPage()
-  await fixture.goto(`${extension.origin}/unsupported`)
-  const seeded = await fixture.evaluate(
-    async ({ records, origin, missingCategory, needsSize }) => {
-      const { openDatabase } = await import(`${origin}/src/database.js`)
-      const { createPreparation } = await import(
-        `${origin}/src/packing-model.js`
-      )
-      const db = await openDatabase()
-      await db.restoreBackup({
-        format: '1688-order-library',
-        version: 1,
-        exportedAt: new Date().toISOString(),
-        orders: records,
-        history: [],
-        images: [],
+async function setup(extension) {
+  const refs = []
+  for (const [index, supplierId] of [
+    'synthetic-z',
+    'synthetic-a',
+    'synthetic-z',
+  ].entries())
+    refs.push(
+      await seedSmartOrder(extension, {
+        orderId: `72000000000000000${index}`,
+        supplierId,
+        count: 3,
+        physical: true,
       })
-      const saved = await db.savePreparations(
-        records.map(({ snapshot }) => {
-          const prep = createPreparation(snapshot, '2026-10')
-          prep.groups.forEach((group) => {
-            group.category = '玻璃'
-            group.spanishName = 'FLORERO'
-          })
-          return prep
-        })
-      )
-      if (missingCategory) {
-        saved[0].groups[0].category = ''
-        saved[0].groups[0].naming = {
-          category: { source: 'manual', value: '' },
-          spanishName: { source: 'manual', value: 'FLORERO' },
-        }
-      }
-      if (needsSize) {
-        saved[0].groups[0].variants[0].needsSizeMapping = true
-        saved[0].groups[0].variants[0].size = '未知尺寸'
-      }
-      saved[0].groups.reverse()
-      await db.savePreparations(saved)
-      return { saved, backup: await db.exportBackup() }
-    },
-    { records, origin: extension.origin, missingCategory, needsSize }
+    )
+  const page = await openSmartLibrary(extension)
+  const id = await createContainerThroughUI(page, refs)
+  const view = page.locator('#packing-view')
+  await view.locator('[data-action="mark-all-loaded"]').click()
+  await expect(view.locator('#container-content')).toHaveAttribute(
+    'aria-busy',
+    'false'
   )
-  const restored = await extension.inspector.evaluate(
-    (backup) => chrome.runtime.sendMessage({ type: 'BACKUP_RESTORE', backup }),
-    seeded.backup
-  )
-  expect(restored.ok, restored.error).toBe(true)
-  const response = seeded.saved
-  await fixture.close()
-  const page = await extension.context.newPage()
-  await page.clock.setFixedTime(new Date('2026-10-16T04:00:00Z'))
-  await page.addInitScript(() =>
-    localStorage.setItem('1688-library-purchase-months', '[]')
-  )
-  await page.goto(`${extension.extensionBaseUrl}/library.html`)
-  await expect(page.locator('#sheet-body tr[data-selection-key]')).toHaveCount(
-    9
-  )
-  await page.locator('#prepare-orders').click()
-  await expect(page.locator('#packing-view')).toBeVisible()
-  return { page, records, response, view: page.locator('#packing-view') }
+  await view.locator('[data-view="packing-list"]').click()
+  await expect(view.locator('tr[data-container-row]')).toHaveCount(9)
+  return { page, view, refs, id }
 }
+async function setupOrderAuthoring(extension) {
+  const ref = await seedSmartOrder(extension, {
+    orderId: '720000000000000009',
+    count: 3,
+  })
+  const page = await openSmartLibrary(extension)
+  return { page, refs: [ref] }
+}
+const manifest = (extension, id) =>
+  extension.inspector.evaluate(
+    async (id) => (await window.testRepository).getContainerManifest({ id }),
+    id
+  )
 
-test('arrangement persists, retains codes and exports the final manual order', async ({
+test('stable container ordering survives reload and copy without rewriting codes or authored arrangements', async ({
   extension,
 }) => {
-  const { page, view, records, response } = await setup(extension)
-  const arrange = async (name) => {
-    await openOrganizing(page)
-    await view
-      .getByRole('button', { name: 'Arrange packing', exact: true })
-      .click()
-    await view
-      .locator('.packing-arrange')
-      .getByRole('button', { name, exact: true })
-      .click()
-    await expect(view.locator('.preparation-save-status')).toHaveText(
-      'Saved automatically'
-    )
-    await finishOrganizing(page)
-  }
-  const ids = () =>
-    view
-      .locator('[data-packing-order]')
-      .evaluateAll((nodes) => nodes.map((node) => node.dataset.packingOrder))
-  await arrange('Store, then group code')
-  expect(await ids()).toEqual([
-    records[1].snapshot.orderId,
-    records[0].snapshot.orderId,
-    records[2].snapshot.orderId,
-  ])
-  const codes = response
-    .flatMap((draft) => draft.groups.map((group) => group.baseCode))
-    .sort()
-  expect(
-    (
-      await view
-        .locator('.group-code-editor')
-        .evaluateAll((nodes) => nodes.map((node) => node.value))
-    ).sort()
-  ).toEqual(codes)
-  await arrange('Group code')
-  expect(await ids()).toEqual([
-    records[0].snapshot.orderId,
-    records[2].snapshot.orderId,
-    records[1].snapshot.orderId,
-  ])
-  await openOrganizing(page)
-  await view
-    .locator('.packing-order-header > .reorder-handle')
-    .first()
-    .press('ArrowDown')
-  await expect(view.locator('.preparation-save-status')).toHaveText(
-    'Saved automatically'
-  )
-  await finishOrganizing(page)
-  const finalOrder = await ids()
+  const { page, view, id } = await setup(extension)
+  const before = await libraryBackup(extension),
+    frozen = await manifest(extension, id)
+  expect(frozen.draft).toBe(true)
+  const rows = view.locator('tr[data-container-row]'),
+    ids = () =>
+      rows.evaluateAll((nodes) =>
+        nodes.map((node) => node.dataset.containerRow)
+      )
+  const order = await ids()
   await expect(
-    view.getByRole('button', { name: 'Undo', exact: true })
-  ).toBeEnabled()
+    view.locator(
+      '.reorder-handle,.packing-arrange,[data-action="organize-packing"]'
+    )
+  ).toHaveCount(0)
   await page.reload()
-  await page.locator('#prepare-orders').click()
-  await expect(view).toBeVisible()
-  expect(await ids()).toEqual(finalOrder)
+  await expect(rows).toHaveCount(9)
+  expect(await ids()).toEqual(order)
   await extension.context.grantPermissions([
     'clipboard-read',
     'clipboard-write',
   ])
-  await view.getByRole('button', { name: 'Select all', exact: true }).click()
-  await revealCopyActions(page, view)
-  await view
-    .getByRole('button', { name: 'Copy group codes', exact: true })
-    .click()
-  const expected = await view
-    .locator('.group-code-editor')
-    .evaluateAll((nodes) => nodes.map((node) => node.value))
+  await page.bringToFront()
+  await expect.poll(() => page.evaluate(() => document.hasFocus())).toBe(true)
+  for (const row of await rows.all()) await row.getByRole('checkbox').check()
+  await revealCopyActions(page)
+  await view.locator('[data-action="copy-values"]').click()
+  try {
+    await expect(view.locator('[data-action="copy-values"]')).toContainText(
+      'Copied'
+    )
+  } catch (error) {
+    const diagnostic = await page.evaluate(() => ({
+      focused: document.hasFocus(),
+      errors: [...document.querySelectorAll('.error-notice')].map(
+        (node) => node.textContent
+      ),
+      statuses: [
+        ...document.querySelectorAll('#container-content [role="status"]'),
+      ].map((node) => node.textContent),
+    }))
+    console.log('Packing copy failure diagnostic:', JSON.stringify(diagnostic))
+    throw error
+  }
+  const values = (await page.evaluate(() => navigator.clipboard.readText()))
+    .split('\r\n')
+    .map((row) => row.split('\t'))
+  expect(values).toHaveLength(9)
+  for (const [index, product] of frozen.products.entries()) {
+    expect(values[index]).toEqual([
+      '',
+      product.description.replace(/[\t\r\n]+/g, ' · '),
+      product.price,
+      product.quantity,
+      product.discount,
+    ])
+    expect(values[index].slice(2)).toEqual(['2.00', '100', '0.00'])
+  }
+  await revealCopyActions(page)
+  const groupCopy = view.locator('[data-action="copy-group-codes"]')
+  await expect(groupCopy).toHaveAccessibleName('Copy group codes')
+  await groupCopy.click()
+  await expect(groupCopy).toContainText('Copied')
   expect(
     (await page.evaluate(() => navigator.clipboard.readText())).split('\r\n')
-  ).toEqual(expected)
+  ).toEqual([...new Set(frozen.products.map((product) => product.baseCode))])
+  await revealCopyActions(page)
+  await view.getByRole('button', { name: 'Copy columns', exact: true }).click()
+  const picker = page.locator('.preparation-column-dialog')
+  await picker
+    .getByRole('button', { name: 'Clear columns', exact: true })
+    .click()
+  for (const name of ['Barcode', 'Quantity'])
+    await picker.getByRole('checkbox', { name, exact: true }).check()
+  await picker.getByRole('checkbox', { name: 'Headers', exact: true }).uncheck()
+  await picker
+    .getByRole('button', { name: 'Copy chosen columns', exact: true })
+    .click()
+  await expect(
+    picker.getByRole('button', { name: 'Copied', exact: true })
+  ).toBeVisible()
+  const copied = (await page.evaluate(() => navigator.clipboard.readText()))
+    .split('\r\n')
+    .map((row) => row.split('\t'))
+  expect(copied).toEqual(
+    frozen.products.map((product) => [
+      product.barcode,
+      product.loadedQuantity || product.quantity,
+    ])
+  )
+  expect(await manifest(extension, id)).toEqual(frozen)
+  const after = await libraryBackup(extension)
+  expect(after.preparations).toEqual(before.preparations)
+  expect(after.issuedCodes).toEqual(before.issuedCodes)
+  expect(after.orders).toEqual(before.orders)
 })
 
-test('Escape works from header focus, shortcuts clear all packing and order/product selection without touching text edits', async ({
+test('Escape closes Packing menus and the Orders accelerator preserves independent native text selection', async ({
   extension,
 }) => {
-  const { page, view } = await setup(extension)
-  await page.locator('#theme-toggle').focus()
+  const { page, view, refs } = await setup(extension)
+  await revealCopyActions(page)
+  await expect(view.locator('.copy-actions-panel:visible')).toHaveCount(1)
+  await view.locator('[data-action="open-copy-menu"]').focus()
   await page.keyboard.press('Escape')
+  await expect(view.locator('.copy-actions-panel:visible')).toHaveCount(0)
+  await expect(view).toBeVisible()
+  await page.locator('#theme-toggle').focus()
+  await page.keyboard.press('Alt+Shift+o')
   await expect(page.locator('#orders-view')).toBeVisible()
+  await revealOrderCard(page, refs[0])
   const orders = page.locator('#order-list [data-selection-key]')
   await orders.first().focus()
   await page.keyboard.press('Control+a')
@@ -196,305 +179,275 @@ test('Escape works from header focus, shortcuts clear all packing and order/prod
   const products = page.locator('#sheet-body tr[data-selection-key]')
   await products.first().focus()
   await page.keyboard.press('Control+a')
-  await expect(page.locator('#sheet-body [aria-selected="true"]')).toHaveCount(
+  await expect(products.locator('input[type="checkbox"]:checked')).toHaveCount(
     9
   )
   await page.locator('#theme-toggle').focus()
   await page.keyboard.press('Control+d')
-  await expect(page.locator('#sheet-body [aria-selected="true"]')).toHaveCount(
+  await expect(products.locator('input[type="checkbox"]:checked')).toHaveCount(
     0
   )
-  await page.locator('#prepare-orders').click()
-  await view.getByRole('button', { name: 'Select all', exact: true }).focus()
-  await page.keyboard.press('Control+a')
-  await expect(view.locator('.preparation-copy-scope')).toContainText(
-    '9 selected products'
-  )
-  await page.keyboard.press('Control+d')
-  await expect(
-    view.getByRole('button', { name: 'Copy Excel image', exact: true })
-  ).toBeDisabled()
-  const input = view.locator('.group-name-editor').first()
-  await input.fill('FLORERO EDITADO')
+  const editor = await editOrderProduct(page, 0, {
+    'Spanish name': 'FLORERO EDITADO',
+  })
+  const input = editor.getByRole('textbox', {
+    name: 'Spanish name',
+    exact: true,
+  })
   await input.press('Control+a')
   expect(
     await input.evaluate((node) => node.selectionEnd - node.selectionStart)
   ).toBe(15)
-  await page.keyboard.press('Escape')
-  await expect(view).toBeHidden()
+  await closeOrderProduct(editor)
+  await page.locator('#view-packing').click()
+  await expect(view).toBeVisible()
 })
 
-test('small order links open their own order without changing selection', async ({
+test('source links open the exact purchase and preserve independent product selection', async ({
   extension,
 }) => {
-  const { page, view, records } = await setup(extension)
-  const expectedId = records[0].snapshot.orderId
+  const { page, refs } = await setup(extension)
+  await page.locator('#view-orders').click()
+  const card = await revealOrderCard(page, refs[0])
+  const rows = page.locator('#sheet-body tr[data-selection-key]')
+  await rows.first().getByRole('checkbox').check()
+  const selected = await rows
+    .locator('input[type="checkbox"]')
+    .evaluateAll((nodes) => nodes.map((node) => node.checked))
+  await expect(page.locator('#sheet-body .order-source-link')).toHaveCount(3)
+  const link = page.locator(
+    `#sheet-body .order-source-link[href$="orderId=${refs[0].orderId}"]`
+  )
+  await expect(link).toHaveAttribute(
+    'href',
+    new RegExp(`orderId=${refs[0].orderId}$`)
+  )
   await extension.context.route('https://air.1688.com/**', (route) =>
     route.fulfill({
       contentType: 'text/html',
-      body: '<title>Synthetic order</title>',
+      body: '<title>Synthetic exact source</title>',
     })
   )
-  const link = view.locator(
-    `[data-packing-order="${expectedId}"] .order-source-link`
-  )
-  const selectionBefore = await view
-    .locator('.preparation-copy-scope')
-    .textContent()
-  await expect(link).toHaveAttribute(
-    'href',
-    new RegExp(`orderId=${expectedId}$`)
-  )
-  const popupPromise = page.waitForEvent('popup')
+  const pending = page.waitForEvent('popup')
   await link.click()
-  const popup = await popupPromise
+  const popup = await pending
   await popup.waitForLoadState()
-  expect(popup.url()).toContain(`orderId=${expectedId}`)
+  expect(popup.url()).toContain(`orderId=${refs[0].orderId}`)
   await popup.close()
-  await expect(view).toBeVisible()
-  await expect(view.locator('.preparation-copy-scope')).toHaveText(
-    selectionBefore
-  )
-  await page.keyboard.press('Escape')
-  // Cards keep long order references inside store details. Their compact
-  // store-name trigger still gives access to the exact source order.
+  expect(
+    await rows
+      .locator('input[type="checkbox"]')
+      .evaluateAll((nodes) => nodes.map((node) => node.checked))
+  ).toEqual(selected)
   await expect(page.locator('#order-list .order-source-link')).toHaveCount(0)
-  const card = page.locator(`#order-list [data-order-id="${expectedId}"]`)
   await card.locator('.order-details-trigger').click()
   await expect(
     page.locator('#order-details .order-source-link')
-  ).toHaveAttribute('href', new RegExp(`orderId=${expectedId}$`))
-  await page
-    .locator('#order-details')
-    .getByRole('button', { name: 'Close order details', exact: true })
-    .click()
-  await expect(page.locator('#sheet-body .order-source-link')).toHaveCount(3)
+  ).toHaveAttribute('href', new RegExp(`orderId=${refs[0].orderId}$`))
 })
 
-test('missing category and unresolved size identify the product and reveal its editable field', async ({
-  extension,
-}) => {
-  const { page, view, records } = await setup(extension, {
-    missingCategory: true,
-    needsSize: true,
+for (const [field, value, action, message] of [
+  ['Chinese category', '', 'Copy carton marks', /Chinese category/i],
+  [
+    'Variant ending',
+    'A'.repeat(30),
+    'Copy barcode images',
+    /too long for the label width/i,
+  ],
+])
+  test(`${action} identifies the failing source and returns to its Orders field`, async ({
+    extension,
+  }) => {
+    const { page, refs } = await setupOrderAuthoring(extension)
+    await page.locator('#view-orders').click()
+    const ref = { ...refs[0], entryId: '2001' },
+      editor = await editOrderProduct(page, ref, { [field]: value })
+    await closeOrderProduct(editor)
+    const clear = page.locator('#clear-rows')
+    if (await clear.isEnabled()) await clear.click()
+    await expect(
+      page.locator(
+        '#sheet-body tr[data-selection-key] input[type="checkbox"]:checked'
+      )
+    ).toHaveCount(0)
+    const target = page.locator(
+      `#sheet-body tr[data-selection-key=${JSON.stringify(JSON.stringify(['local', ref.orderId, ref.entryId]))}]`
+    )
+    await target.getByRole('checkbox').check()
+    const before = await libraryBackup(extension)
+    await revealCopyActions(page)
+    await page.getByRole('button', { name: action, exact: true }).click()
+    const notice = page.locator('.error-notice:visible').last()
+    await expect(notice).toContainText(message)
+    await expect(notice).toContainText(ref.orderId)
+    await expect(notice.locator('img')).toHaveCount(1)
+    await notice
+      .getByRole('button', {
+        name: /Edit in Orders|Show affected field|Add Chinese category/,
+      })
+      .click()
+    const corrected = page.locator('dialog[data-action="edit-order-product"]')
+    await expect(
+      corrected.getByRole('textbox', { name: field, exact: true })
+    ).toBeFocused()
+    expect((await libraryBackup(extension)).preparations).toEqual(
+      before.preparations
+    )
   })
-  await view.getByRole('button', { name: 'Select all', exact: true }).click()
-  await view
-    .getByRole('button', { name: 'Copy Excel image', exact: true })
-    .click()
-  const notice = page.locator('.image-copy-dialog .error-notice')
-  await expect(notice).toContainText(records[0].snapshot.orderId)
-  await expect(notice.locator('img')).toHaveCount(1)
-  await notice
-    .getByRole('button', { name: 'Add Chinese category', exact: true })
-    .click()
-  const category = view.locator(
-    '[data-packing-field="category"].resolution-highlight'
-  )
-  await expect(category).toBeFocused()
-  await category.fill('玻璃')
-  await expect(view.locator('.preparation-save-status')).toHaveText(
-    'Saved automatically'
-  )
-  await view.getByRole('button', { name: 'Select all', exact: true }).click()
-  await revealCopyActions(page, view)
-  await view
-    .getByRole('button', { name: 'Copy barcode images', exact: true })
-    .click()
-  const sizeError = view.locator('.error-notice')
-  await expect(sizeError).toContainText('未知尺寸')
-  await sizeError
-    .getByRole('button', { name: 'Map size code', exact: true })
-    .click()
-  const size = view.locator('[data-packing-field="size"].resolution-highlight')
-  await expect(size).toBeFocused()
-  await size.fill('M')
-  await expect(view.locator('.preparation-save-status')).toHaveText(
-    'Saved automatically'
-  )
-})
 
-test('a batch barcode render failure identifies its saved variant and opens the suffix to fix', async ({
+test('filtering a selected subset leaves hidden order revisions, manifest membership and stable row slots unchanged', async ({
   extension,
 }) => {
-  const { page, view, records } = await setup(extension)
-  const order = view.locator(
-    `[data-packing-order="${records[0].snapshot.orderId}"]`
-  )
-  const suffix = order.locator('[data-packing-field="variant"]').first()
-  await suffix.fill('A'.repeat(30))
-  await expect(view.locator('.preparation-save-status')).toHaveText(
-    'Saved automatically'
-  )
-  await view.getByRole('button', { name: 'Select all', exact: true }).click()
-  await revealCopyActions(page, view)
+  const { page, view, id, refs } = await setup(extension)
+  const before = await libraryBackup(extension),
+    frozen = await manifest(extension, id)
+  const order = await view
+    .locator('tr[data-container-row]')
+    .evaluateAll((rows) => rows.map((row) => row.dataset.containerRow))
   await view
-    .getByRole('button', { name: 'Copy barcode images', exact: true })
-    .click()
-  const notice = page.locator('.image-copy-dialog .error-notice')
-  await expect(notice).toContainText('too long for the label width')
-  await expect(notice).toContainText(records[0].snapshot.orderId)
-  await expect(notice.locator('img')).toHaveCount(1)
-  await notice
-    .getByRole('button', { name: 'Show affected field', exact: true })
-    .click()
-  await expect(
-    order.locator('[data-packing-field="variant"].resolution-highlight')
-  ).toBeFocused()
-})
-
-test('arranging a selected subset preserves the hidden order slot and saved revision', async ({
-  extension,
-}) => {
-  const { page, view, records } = await setup(extension)
-  const arrange = async (name) => {
-    await openOrganizing(page)
-    await view
-      .getByRole('button', { name: 'Arrange packing', exact: true })
-      .click()
-    await view
-      .locator('.packing-arrange')
-      .getByRole('button', { name, exact: true })
-      .click()
-    await expect(view.locator('.preparation-save-status')).toHaveText(
-      'Saved automatically'
-    )
-    await finishOrganizing(page)
-  }
-  await arrange('Group code')
-  const saved = await extension.inspector.evaluate(() =>
-    chrome.runtime.sendMessage({ type: 'BACKUP_EXPORT' })
-  )
-  const hiddenBefore = saved.data.preparations.find(
-    (prep) => prep.orderId === records[2].snapshot.orderId
-  )
-  await page.keyboard.press('Escape')
-  for (const [index, record] of records.slice(0, 2).entries()) {
-    await page
-      .locator(`#order-list [data-selection-key="${record.snapshot.orderId}"]`)
-      .focus()
-    await page.keyboard.press(index ? 'Control+Space' : 'Space')
-  }
-  await page.locator('#select-rows').click()
-  await page.locator('#prepare-orders').click()
-  await expect(view.locator('[data-packing-order]')).toHaveCount(2)
-  await arrange('Store')
-  const after = await extension.inspector.evaluate(() =>
-    chrome.runtime.sendMessage({ type: 'BACKUP_EXPORT' })
-  )
-  expect(
-    after.data.preparations.find(
-      (prep) => prep.orderId === hiddenBefore.orderId
-    )
-  ).toEqual(hiddenBefore)
-  await page.reload()
-  await page.locator('#prepare-orders').click()
-  await expect(view.locator('[data-packing-order]')).toHaveCount(3)
-  expect(
-    await view
-      .locator('[data-packing-order]')
-      .evaluateAll((nodes) => nodes.map((node) => node.dataset.packingOrder))
-  ).toEqual(
-    [records[1], records[2], records[0]].map(
-      (record) => record.snapshot.orderId
-    )
-  )
-})
-
-test('an arrangement revision conflict preserves the batch and reloads the identified order', async ({
-  extension,
-}) => {
-  const { page, view } = await setup(extension)
-  const editedId = await view
-    .locator('[data-packing-order]')
+    .locator('tr[data-container-row]')
     .first()
-    .getAttribute('data-packing-order')
-  // Simulate another writer arranging all orders atomically, without reopening
-  // Prepare in this tab (which would replace the stale drafts being exercised).
-  await extension.inspector.evaluate(async (orderId) => {
-    const db = await new Promise((resolve, reject) => {
-      const request = indexedDB.open('1688-order-library')
-      request.onsuccess = () => resolve(request.result)
-      request.onerror = () => reject(request.error)
-    })
-    await new Promise((resolve, reject) => {
-      const tx = db.transaction('preparations', 'readwrite')
-      const store = tx.objectStore('preparations')
-      const request = store.getAll()
-      request.onsuccess = () => {
-        for (const [index, value] of request.result.entries()) {
-          if (value.orderId === orderId)
-            value.groups[0].spanishName = 'CAMBIO EXTERNO'
-          value.packingPosition = index
-          value.revision++
-          value.updatedAt = new Date().toISOString()
-          store.put(value)
-        }
-      }
-      tx.oncomplete = resolve
-      tx.onabort = () => reject(tx.error)
-    })
-    db.close()
-    const channel = new BroadcastChannel('1688-preparation')
-    channel.postMessage('changed')
-    channel.close()
-  }, editedId)
-  const before = await extension.inspector.evaluate(() =>
-    chrome.runtime.sendMessage({ type: 'BACKUP_EXPORT' })
-  )
-  await page.bringToFront()
-  await openOrganizing(page)
-  await view
-    .getByRole('button', { name: 'Arrange packing', exact: true })
-    .click()
-  await view
-    .locator('.packing-arrange')
-    .getByRole('button', { name: 'Store', exact: true })
-    .click()
-  const notice = view.locator('.error-notice')
-  await expect(notice).toContainText('Preparation changed in another tab')
-  const conflictedId = await notice
-    .locator('.order-reference-pair .copyable-text')
-    .textContent()
-  expect(
-    before.data.preparations.some((prep) => prep.orderId === conflictedId)
-  ).toBe(true)
-  const after = await extension.inspector.evaluate(() =>
-    chrome.runtime.sendMessage({ type: 'BACKUP_EXPORT' })
-  )
-  expect(after.data.preparations).toEqual(before.data.preparations)
-  await notice
-    .getByRole('button', { name: 'Reload saved version', exact: true })
-    .click()
-  await finishOrganizing(page)
-  await expect(
-    view
-      .locator(`[data-packing-order="${editedId}"] .group-name-editor`)
-      .first()
-  ).toHaveValue('CAMBIO EXTERNO')
-  await expect(view.locator('.preparation-save-status')).toHaveText(
-    'Saved automatically'
-  )
+    .getByRole('checkbox')
+    .check()
+  const filter = view.getByRole('searchbox', {
+    name: 'Filter container display',
+    exact: true,
+  })
+  await filter.fill(refs[0].orderId)
+  await expect(view.locator('tr[data-container-row]')).toHaveCount(3)
+  await filter.fill('')
+  await expect(view.locator('tr[data-container-row]')).toHaveCount(9)
   expect(
     await view
-      .locator('[data-packing-order]')
-      .evaluateAll((nodes) => nodes.map((node) => node.dataset.packingOrder))
-  ).toEqual(
-    before.data.preparations
-      .sort((a, b) => a.packingPosition - b.packingPosition)
-      .map((prep) => prep.orderId)
+      .locator('tr[data-container-row]')
+      .evaluateAll((rows) => rows.map((row) => row.dataset.containerRow))
+  ).toEqual(order)
+  await expect(
+    view.locator('tr[data-container-row]').first().getByRole('checkbox')
+  ).toBeChecked()
+  expect(await manifest(extension, id)).toEqual(frozen)
+  expect((await libraryBackup(extension)).preparations).toEqual(
+    before.preparations
   )
-  await openOrganizing(page)
+  await page.reload()
+  expect(await manifest(extension, id)).toEqual(frozen)
+})
+
+test('a stale loading revision rejects without rewriting another tab and live refresh retains its actual saved decisions', async ({
+  extension,
+}) => {
+  const { page, view, id } = await setup(extension)
+  const before = await libraryBackup(extension)
+  await view.locator('[data-view="loading"]').click()
   await view
-    .getByRole('button', { name: 'Arrange packing', exact: true })
+    .locator('.container-order [data-action="expand-container-order"]')
+    .first()
     .click()
-  await view
-    .locator('.packing-arrange')
-    .getByRole('button', { name: 'Store', exact: true })
-    .click()
-  await expect(view.locator('.preparation-save-status')).toHaveText(
-    'Saved automatically'
+  const row = view.locator('tr[data-container-row]').first(),
+    unitId = await row.getAttribute('data-container-row')
+  const staleRevision = await extension.inspector.evaluate(
+    async ({ id, unitId }) => {
+      const repository = await window.testRepository,
+        view = await repository.getContainerView({ id })
+      await repository.setContainerLoading({
+        id,
+        decisions: [{ cartonId: unitId, state: 'left-behind' }],
+        expectedRevision: view.container.revision,
+        intentId: crypto.randomUUID(),
+      })
+      return view.container.revision
+    },
+    { id, unitId }
   )
-  await finishOrganizing(page)
-  await expect(view.locator('.error-notice')).toHaveCount(0)
+  const newer = await manifest(extension, id)
+  // Advisory cross-tab refresh may already replace the displayed revision.
+  // Submit the captured stale intent explicitly, without disabling that refresh.
+  const rejection = await extension.inspector.evaluate(
+    async ({ id, unitId, staleRevision }) => {
+      const repository = await window.testRepository
+      try {
+        await repository.setContainerLoading({
+          id,
+          decisions: [{ cartonId: unitId, state: 'unconfirmed' }],
+          expectedRevision: staleRevision,
+          intentId: crypto.randomUUID(),
+        })
+        return null
+      } catch (error) {
+        return error.message
+      }
+    },
+    { id, unitId, staleRevision }
+  )
+  expect(rejection).toMatch(/changed|stale|revision/i)
+  expect(await manifest(extension, id)).toEqual(newer)
+  const savedRow = view.locator(
+    `tr[data-container-row=${JSON.stringify(unitId)}]`
+  )
+  await expect(savedRow).toContainText('Left behind')
+  const after = await libraryBackup(extension)
+  expect(after.orders).toEqual(before.orders)
+  expect(after.preparations).toEqual(before.preparations)
+  expect(after.issuedCodes).toEqual(before.issuedCodes)
+  await page.reload()
+  await view
+    .locator('.container-order [data-action="expand-container-order"]')
+    .first()
+    .click()
+  await expect(savedRow).toContainText('Left behind')
+  expect(await manifest(extension, id)).toEqual(newer)
+  await expect(
+    view.locator('.reorder-handle,[data-action="organize-packing"]')
+  ).toHaveCount(0)
+})
+
+test('an unresolved size output error names the product and focuses its Orders size field without changing saved evidence', async ({
+  extension,
+}) => {
+  const { page, refs } = await setupOrderAuthoring(extension)
+  await extension.inspector.evaluate(async (ref) => {
+    const repository = await window.testRepository,
+      context = await repository.getOrderReconciliation(ref),
+      preparation = structuredClone(context.preparation)
+    preparation.groups[0].variants[0].size = '未知尺寸'
+    preparation.groups[0].variants[0].needsSizeMapping = true
+    await repository.savePreparations([preparation], {
+      expectedRevisions: [preparation.revision],
+    })
+  }, refs[0])
+  await page.locator('#view-orders').click()
+  await page.reload()
+  const target = page.locator(
+    `#sheet-body tr[data-selection-key=${JSON.stringify(JSON.stringify(['local', refs[0].orderId, '2001']))}]`
+  )
+  await expect(target).toBeVisible()
+  await clearOrderProductSelection(page)
+  await expect(
+    page.locator(
+      '#sheet-body tr[data-selection-key] input[type="checkbox"]:checked'
+    )
+  ).toHaveCount(0)
+  await target.getByRole('checkbox').check()
+  const before = await libraryBackup(extension)
+  await revealCopyActions(page)
+  await page
+    .getByRole('button', { name: 'Copy barcode images', exact: true })
+    .click()
+  const notice = page.locator('.error-notice:visible').last()
+  await expect(notice).toContainText(/size/i)
+  await expect(notice).toContainText(refs[0].orderId)
+  await expect(notice.locator('img')).toHaveCount(1)
+  await notice
+    .getByRole('button', {
+      name: /Edit in Orders|Map size code|Show affected field/,
+    })
+    .click()
+  await expect(
+    page
+      .locator('.product-authoring-dialog')
+      .getByRole('textbox', { name: 'Size ending', exact: true })
+  ).toBeFocused()
+  expect((await libraryBackup(extension)).preparations).toEqual(
+    before.preparations
+  )
 })

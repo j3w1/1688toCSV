@@ -1,11 +1,13 @@
 import { test, expect } from './extension-fixture.mjs'
 import { createDemoRecords } from '../../preview/library-fixture.js'
+import { assignSelectedPurchaseCodes } from './smart-workspace-helpers.mjs'
 
 async function openLibrary(extension, fallback = false) {
   const records = await extension.inspector.evaluate(
     `(${createDemoRecords.toString()})(document)`
   )
   const record = records[0]
+  record.snapshot.sellerMemberLogin = 'synthetic-dialog-dismiss'
   for (const [index, item] of record.snapshot.items.entries()) {
     item.title = '合成玻璃罐'
     item.productNumber = `SYNTHETIC-${index}`
@@ -115,23 +117,11 @@ test('label backdrop saves a valid blurred edit, preserves Escape restore, and k
   extension,
 }) => {
   const page = await openLibrary(extension)
-  await page.getByLabel('Packing month', { exact: true }).fill('2026-10')
   await page.locator('#select-rows').click()
-  await page
-    .getByRole('button', { name: 'Prepare packing list', exact: true })
-    .click()
-  await page
-    .getByRole('button', { name: 'Assign codes and prepare', exact: true })
-    .click()
-  const preparation = page.locator('#packing-view')
-  await expect(preparation.locator('.preparation-save-status')).toHaveText(
-    'Saved automatically'
+  await assignSelectedPurchaseCodes(page)
+  await expect(page.locator('#sheet-body .row-code-copy').first()).toHaveText(
+    /^CE2610\d{4}/
   )
-  await expect(
-    preparation.getByLabel('Product code', { exact: true }).first()
-  ).toHaveValue(/^CE2610\d{4}$/)
-  await preparation.page().locator('#view-orders').click()
-  await expect(preparation).not.toBeVisible()
   const open = page
     .locator('#sheet-body tr[data-selection-key]')
     .first()

@@ -1,5 +1,9 @@
 import { test, expect } from './extension-fixture.mjs'
 import { createDemoRecords } from '../../preview/library-fixture.js'
+import {
+  assignSelectedPurchaseCodes,
+  editOrderProduct,
+} from './smart-workspace-helpers.mjs'
 
 async function openWorkspace(extension, { twoOrders = false } = {}) {
   const records = await extension.inspector.evaluate(
@@ -57,15 +61,15 @@ test('language toggle translates interface and color hints, persists, and preser
   await expect(page.locator('.product-color-hint').first()).toHaveText('Gray')
   await page.locator('#language-toggle [data-language=es]').click()
   await expect(page.locator('html')).toHaveAttribute('lang', 'es')
-  await expect(page.locator('#prepare-orders')).toHaveText(
-    'Preparar lista de empaque'
+  await expect(page.locator('#review-purchase-codes')).toHaveText(
+    'Revisar códigos del mes de compra'
   )
   await expect(page.locator('.product-color-hint').first()).toHaveText('Gris')
   await expect(page.locator('.order-section-store .order-seller')).toHaveText(
     'Photo'
   )
   await expect(page.locator('.product-title').first()).toHaveText('合成玻璃罐')
-  await page.locator('.product-title').first().dblclick()
+  await page.locator('.product-title').first().click()
   const original = page.locator('.product-details-dialog')
   await expect(original).toBeVisible()
   await expect(
@@ -77,12 +81,14 @@ test('language toggle translates interface and color hints, persists, and preser
   await expect(
     page.locator('#language-toggle [data-language=es]')
   ).toHaveAttribute('aria-pressed', 'true')
-  await expect(page.locator('#prepare-orders')).toHaveText(
-    'Preparar lista de empaque'
+  await expect(page.locator('#review-purchase-codes')).toHaveText(
+    'Revisar códigos del mes de compra'
   )
   await page.locator('#language-toggle [data-language=zh]').click()
   await expect(page.locator('html')).toHaveAttribute('lang', 'zh-CN')
-  await expect(page.locator('#prepare-orders')).toHaveText('准备装箱清单')
+  await expect(page.locator('#review-purchase-codes')).toHaveText(
+    '核对采购月份编码'
+  )
   await expect(page.locator('.product-color-hint').first()).toHaveText('灰色')
   await expect(page.locator('.order-section-store .order-seller')).toHaveText(
     'Photo'
@@ -90,48 +96,169 @@ test('language toggle translates interface and color hints, persists, and preser
 })
 
 for (const language of ['en', 'es', 'zh']) {
-  test(`product selection stays in place and double-click opens originals in ${language}`, async ({
+  test(`explicit product selection stays in place while click inspects originals in ${language}`, async ({
     extension,
   }) => {
     const { page } = await openWorkspace(extension)
     await page.locator(`#language-toggle [data-language=${language}]`).click()
     const row = page.locator('#sheet-body tr[data-selection-key]').first()
     const title = row.locator('.product-title')
-    const layout = () =>
-      page.locator('.sheet-toolbar').evaluate((toolbar) => ({
-        height: toolbar.getBoundingClientRect().height,
-        tableTop:
-          document.querySelector('.table-scroll').getBoundingClientRect().top +
-          window.scrollY,
-      }))
-    for (const { width, font } of [
+    let layoutSample = 0
+    const layout = async () => {
+      const sample = await page
+        .locator('.sheet-toolbar')
+        .evaluate((toolbar) => {
+          const measure = (selector) => {
+            const node = document.querySelector(selector)
+            if (!node) return null
+            const rect = node.getBoundingClientRect(),
+              style = getComputedStyle(node)
+            return {
+              top: rect.top,
+              height: rect.height,
+              scrollTop: node.scrollTop,
+              scrollHeight: node.scrollHeight,
+              clientHeight: node.clientHeight,
+              gridRows: style.gridTemplateRows,
+            }
+          }
+          return {
+            geometry: {
+              height: toolbar.getBoundingClientRect().height,
+              tableTop:
+                document.querySelector('.table-scroll').getBoundingClientRect()
+                  .top + window.scrollY,
+              paneHeight: document
+                .querySelector('.sheet-pane')
+                .getBoundingClientRect().height,
+              actionBarHeight: document
+                .querySelector('.action-bar')
+                .getBoundingClientRect().height,
+            },
+            width: innerWidth,
+            scrollY,
+            focused: document.activeElement?.outerHTML.slice(0, 500),
+            panes: Object.fromEntries(
+              [
+                '#orders-view',
+                '.orders-pane',
+                '.sheet-pane',
+                '.table-scroll',
+                '.action-bar',
+                '.product-selection-totals',
+              ].map((selector) => [selector, measure(selector)])
+            ),
+          }
+        })
+      await test.info().attach(`selection-layout-${layoutSample++}`, {
+        body: Buffer.from(JSON.stringify(sample, null, 2)),
+        contentType: 'application/json',
+      })
+      return sample.geometry
+    }
+    for (const { width, height = 900, font, initialRows } of [
+      { width: 390, height: 844, initialRows: true },
       ...[1440, 1280, 1000, 390, 375, 360].map((width) => ({ width })),
       // Different font metrics exposed an extra summary line on hosted Linux.
       { width: 375, font: 'Georgia, serif' },
     ]) {
-      await page.setViewportSize({ width, height: 900 })
+      await page.setViewportSize({ width, height })
+      if (initialRows) {
+        const frame = await page.evaluate(() => {
+          const pane = document.querySelector('.sheet-pane'),
+            scroll = document.querySelector('.table-scroll')
+          pane.scrollTop = scroll.scrollTop = 0
+          const p = pane.getBoundingClientRect(),
+            s = scroll.getBoundingClientRect(),
+            r = document
+              .querySelector('#sheet-body tr[data-selection-key]')
+              .getBoundingClientRect(),
+            header = scroll.querySelector('thead').getBoundingClientRect()
+          return {
+            visibleRow: Math.max(
+              0,
+              Math.min(r.bottom, p.bottom, s.bottom, innerHeight) -
+                Math.max(r.top, p.top, s.top + header.height)
+            ),
+            paneHeight: p.height,
+            actionBarHeight: document
+              .querySelector('.action-bar')
+              .getBoundingClientRect().height,
+          }
+        })
+        await test.info().attach('initial-phone-source-visibility', {
+          body: Buffer.from(JSON.stringify(frame, null, 2)),
+          contentType: 'application/json',
+        })
+        expect(frame.visibleRow).toBeGreaterThanOrEqual(48)
+        for (const selector of [
+          '#review-purchase-codes',
+          '#include-orders',
+          '#backup-packing',
+        ]) {
+          const action = page.locator(selector)
+          await expect(action).toBeEnabled()
+          await action.focus()
+          await expect(action).toBeFocused()
+          await test.info().attach(`phone-focus-${selector.slice(1)}`, {
+            body: Buffer.from(
+              JSON.stringify(
+                await action.evaluate((button) => ({
+                  id: button.id,
+                  disabled: button.disabled,
+                  activeId: document.activeElement?.id,
+                  parent: button.parentElement.className,
+                  parentScrollLeft: button.parentElement.scrollLeft,
+                  parentWidth: button.parentElement.clientWidth,
+                  parentScrollWidth: button.parentElement.scrollWidth,
+                })),
+                null,
+                2
+              )
+            ),
+            contentType: 'application/json',
+          })
+          const box = await action.boundingBox()
+          expect(box.x).toBeGreaterThanOrEqual(0)
+          expect(box.x + box.width).toBeLessThanOrEqual(width)
+          expect(box.y).toBeGreaterThanOrEqual(0)
+          expect(box.y + box.height).toBeLessThanOrEqual(height)
+        }
+      }
       if (font)
         await page.addStyleTag({ content: `body { font-family: ${font}; }` })
       await row.focus()
-      await row.press('Escape')
-      await title.scrollIntoViewIfNeeded()
+      await page.keyboard.press('ControlOrMeta+d')
+      const checkbox = row.getByRole('checkbox')
+      await checkbox.scrollIntoViewIfNeeded()
+      await checkbox.focus()
       const before = await layout()
-      await title.click()
+      await checkbox.check()
       await expect(row).toHaveAttribute('aria-selected', 'true')
       expect(await layout(), `selection at ${width}px`).toEqual(before)
       await title.click()
+      const inspect = page.locator('.product-details-dialog')
+      await expect(inspect).toBeVisible()
+      await expect(row).toHaveAttribute('aria-selected', 'true')
+      await page.keyboard.press('Escape')
+      await checkbox.scrollIntoViewIfNeeded()
+      await checkbox.focus()
+      const beforeClear = await layout()
+      await checkbox.uncheck()
       await expect(row).toHaveAttribute('aria-selected', 'false')
-      expect(await layout(), `deselection at ${width}px`).toEqual(before)
-      // Exercise Select All from the row focused by the actual click handler.
-      await expect(row).toBeFocused()
+      expect(await layout(), `deselection at ${width}px`).toEqual(beforeClear)
+      await row.focus()
+      // Native focus can scroll the phone's independent pane. Compare the
+      // selection operation after that focus step, retaining exact geometry.
+      const keyboardBefore = await layout()
       await page.keyboard.press('ControlOrMeta+a')
       await expect(
         page.locator('#sheet-body tr[aria-selected="true"]')
       ).toHaveCount(3)
-      expect(await layout(), `select all at ${width}px`).toEqual(before)
-      await row.press('Escape')
-      expect(await layout(), `clear all at ${width}px`).toEqual(before)
-      await title.dblclick()
+      expect(await layout(), `select all at ${width}px`).toEqual(keyboardBefore)
+      await page.keyboard.press('ControlOrMeta+d')
+      expect(await layout(), `clear all at ${width}px`).toEqual(keyboardBefore)
+      await title.click()
       const original = page.locator('.product-details-dialog')
       await expect(original).toBeVisible()
       await expect(
@@ -152,8 +279,7 @@ test('source identities copy directly and the card store name opens details with
     'clipboard-write',
   ])
   const rows = page.locator('#sheet-body tr[data-selection-key]')
-  await rows.first().focus()
-  await page.keyboard.press('Space')
+  await rows.first().getByRole('checkbox').check()
   const before = await rows.first().boundingBox()
   const header = page.locator('.order-section-band')
   const number = header.locator('.order-section-number')
@@ -167,10 +293,10 @@ test('source identities copy directly and the card store name opens details with
   expect(after.height).toBeCloseTo(before.height, 1)
   const shop = header.locator('.order-seller')
   await shop.click()
+  await expect(shop.locator('.copy-text-feedback')).toHaveText('Copied')
   expect(await page.evaluate(() => navigator.clipboard.readText())).toBe(
     'Photo'
   )
-  await expect(shop.locator('.copy-text-feedback')).toHaveText('Copied')
   const card = page.locator('.order-card').first()
   await expect(card).toHaveAttribute('aria-selected', 'false')
   await card.locator('.order-seller').click()
@@ -180,11 +306,21 @@ test('source identities copy directly and the card store name opens details with
   await expect(rows.first()).toHaveAttribute('aria-selected', 'true')
   await expect(card.locator('.order-reference')).toHaveCount(0)
   await details.locator('.order-reference').dblclick()
+  await expect(
+    details.locator('.order-reference .copy-text-feedback')
+  ).toHaveText('Copied')
   await expect(details).toBeVisible()
   await expect(rows.first()).toHaveAttribute('aria-selected', 'true')
   await expect(shop.locator('.copy-text-feedback')).toBeHidden()
   await details.locator('.order-reference').focus()
   await page.keyboard.press('Enter')
+  await expect(details.locator('.order-reference')).not.toHaveAttribute(
+    'aria-busy',
+    'true'
+  )
+  await expect(
+    details.locator('.order-reference .copy-text-feedback')
+  ).toHaveText('Copied')
   expect(await page.evaluate(() => navigator.clipboard.readText())).toBe(
     record.snapshot.orderId
   )
@@ -240,15 +376,68 @@ test('order metadata appears once per section and identical delivery statuses us
   await expect(page.getByRole('tooltip')).toContainText('Saved in this browser')
   const updated = rows.filter({ has: page.locator('.row-number') }).first()
   const saved = rows.last()
+  const keys = [
+    await updated.getAttribute('data-selection-key'),
+    await saved.getAttribute('data-selection-key'),
+  ]
+  const backgrounds = async (theme, selected) => {
+    let sample
+    await expect
+      .poll(async () => {
+        sample = await page.evaluate(
+          ({ keys, theme, selected }) => {
+            const all = [
+              ...document.querySelectorAll(
+                '#sheet-body tr[data-selection-key]'
+              ),
+            ]
+            const nodes = keys.map((key) =>
+              all.find((node) => node.dataset.selectionKey === key)
+            )
+            const states = nodes.map((node, index) => {
+              if (!node) return { ready: false }
+              const rect = node.getBoundingClientRect()
+              const background = getComputedStyle(node).backgroundColor
+              return {
+                background,
+                ready:
+                  node.isConnected &&
+                  document.contains(node) &&
+                  node.ownerDocument === document &&
+                  node.dataset.selectionKey === keys[index] &&
+                  rect.width > 0 &&
+                  rect.height > 0 &&
+                  background.length > 0 &&
+                  !node.matches(':hover') &&
+                  node.getAttribute('aria-selected') ===
+                    String(index === 0 && selected) &&
+                  node.querySelector('.row-number input[type="checkbox"]')
+                    ?.checked === (index === 0 && selected),
+              }
+            })
+            return {
+              ready:
+                all.length === 6 &&
+                document.querySelectorAll('.order-section-band').length === 2 &&
+                document.querySelector('meta[name="color-scheme"]')?.content ===
+                  theme &&
+                states.every((state) => state.ready),
+              colors: states.map((state) => state.background),
+            }
+          },
+          { keys, theme, selected }
+        )
+        return sample.ready
+      })
+      .toBe(true)
+    return sample.colors
+  }
   for (const theme of ['dark', 'light']) {
     if (theme === 'light') await page.locator('#theme-toggle').click()
     await page.mouse.move(0, 0)
-    expect(
-      await updated.evaluate((node) => getComputedStyle(node).backgroundColor)
-    ).toBe(
-      await saved.evaluate((node) => getComputedStyle(node).backgroundColor)
-    )
-    await updated.locator('.row-number').click()
+    const unselected = await backgrounds(theme, false)
+    expect(unselected[0]).toBe(unselected[1])
+    await updated.getByRole('checkbox').click()
     await page.mouse.move(0, 0)
     await expect(updated).toHaveAttribute('aria-selected', 'true')
     await expect(updated.locator('.row-number')).toHaveCSS('box-shadow', 'none')
@@ -257,68 +446,47 @@ test('order metadata appears once per section and identical delivery statuses us
         .locator('.row-number')
         .evaluate((node) => getComputedStyle(node, '::after').visibility)
     ).toBe('visible')
-    expect(
-      await updated.evaluate((node) => getComputedStyle(node).backgroundColor)
-    ).not.toBe(
-      await saved.evaluate((node) => getComputedStyle(node).backgroundColor)
-    )
-    await updated.locator('.row-number').click()
+    const selected = await backgrounds(theme, true)
+    expect(selected[0]).not.toBe(selected[1])
+    await updated.getByRole('checkbox').click()
     await expect(updated).toHaveAttribute('aria-selected', 'false')
   }
 })
 
-test('switching languages keeps packing edits mounted and preserves pending authored names', async ({
+test('switching languages keeps Orders authoring mounted and preserves pending source names', async ({
   extension,
 }) => {
   const { page } = await openWorkspace(extension)
-  await page.locator('#sheet-body tr[data-selection-key]').first().focus()
-  await page.keyboard.press('Control+a')
-  await page.locator('#prepare-orders').click()
-  const view = page.locator('#packing-view')
-  const review = page.getByRole('dialog', {
-    name: /^(Assign product codes\?|Move selected products to this packing month\?)$/,
-  })
-  await expect
-    .poll(async () => (await view.isVisible()) || (await review.isVisible()))
-    .toBe(true)
-  if (await review.isVisible())
-    await review
-      .getByRole('button', {
-        name: /^(Assign codes|Change codes) and prepare$/,
-      })
-      .click()
-  await expect(view).toBeVisible()
-  await expect(view.locator('.preparation-save-status')).toHaveText(
-    'Saved automatically'
-  )
-  const now = new Date('2026-10-15T04:10:00Z')
+  await page.locator('#select-rows').click()
+  await assignSelectedPurchaseCodes(page)
+  const view = await editOrderProduct(page, 0),
+    now = new Date('2026-10-15T04:10:00Z')
   await page.clock.install({ time: new Date(now.getTime() - 60000) })
   await page.clock.pauseAt(now)
-  const name = view.getByLabel('Spanish short name', { exact: true }).first()
+  const name = view.locator('[data-authoring-field="spanish-name"]')
   await name.fill('NOMBRE SIN GUARDAR')
   await name.evaluate((node) => {
     window.languageDraftNode = node
   })
   const code = await view
-    .getByLabel('Product code', { exact: true })
-    .first()
+    .getByRole('textbox', { name: 'Product code', exact: true })
     .inputValue()
-  await page.locator('#language-toggle [data-language=zh]').click()
-  await expect(
-    view.getByLabel('西班牙语短名称', { exact: true }).first()
-  ).toHaveValue('NOMBRE SIN GUARDAR')
+  await view.locator('[data-language="zh"]').click()
+  await expect(name).toHaveValue('NOMBRE SIN GUARDAR')
   expect(await page.evaluate(() => window.languageDraftNode.isConnected)).toBe(
     true
   )
   await expect(
-    view.getByLabel('商品货号', { exact: true }).first()
+    view.getByRole('textbox', { name: '商品货号', exact: true })
   ).toHaveValue(code)
-  await page.locator('#language-toggle [data-language=es]').click()
+  await view.locator('[data-language="es"]').click()
+  await expect(name).toHaveValue('NOMBRE SIN GUARDAR')
+  await expect(view.locator('[data-language="es"]')).toHaveAttribute(
+    'aria-pressed',
+    'true'
+  )
   await expect(
-    view.getByLabel('Nombre corto en español', { exact: true }).first()
-  ).toHaveValue('NOMBRE SIN GUARDAR')
-  await expect(
-    view.getByRole('button', { name: 'Copiar imagen de Excel', exact: true })
+    view.getByRole('button', { name: 'Código de barras', exact: true })
   ).toBeVisible()
 })
 

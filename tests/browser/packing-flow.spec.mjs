@@ -1,26 +1,16 @@
-import {
-  revealCopyActions,
-  copyCurrentImageBatch,
-} from './copy-actions-helpers.mjs'
+import { revealCopyActions } from './copy-actions-helpers.mjs'
 import { test, expect } from './extension-fixture.mjs'
 import { createDemoRecords } from '../../preview/library-fixture.js'
 import { UI_MESSAGES } from '../../src/ui-messages.js'
 import { preparationColumns } from '../../src/preparation-clipboard.js'
-import { readFile } from 'node:fs/promises'
-import { readBackupFile } from '../../src/backup-file.js'
 import {
-  openOrganizing,
-  finishOrganizing,
-} from './packing-organize-helpers.mjs'
-
-const codeOwners = (codes) =>
-  codes
-    .map(({ ownerSnapshot, ...owner }) => owner)
-    .sort((a, b) =>
-      `${a.kind}/${a.code}/${a.groupId}/${a.variantId || ''}`.localeCompare(
-        `${b.kind}/${b.code}/${b.groupId}/${b.variantId || ''}`
-      )
-    )
+  assignSelectedPurchaseCodes,
+  editOrderProduct,
+  closeOrderProduct,
+  libraryBackup as backup,
+  createContainerThroughUI,
+  sealContainerThroughUI,
+} from './smart-workspace-helpers.mjs'
 
 async function seedOrders(extension, count = 1) {
   const records = (
@@ -88,10 +78,26 @@ async function openLibrary(extension, count = 1) {
   const records = await seedOrders(extension, count)
   const page = await extension.context.newPage()
   await page.clock.setFixedTime(new Date('2026-10-15T04:00:00Z'))
-  await page.goto(`${extension.extensionBaseUrl}/library.html`)
-  await expect(page.locator('#sheet-body tr[data-selection-key]')).toHaveCount(
-    3
+  await page.addInitScript(() =>
+    localStorage.setItem('1688-library-purchase-months', '[]')
   )
+  await page.goto(`${extension.extensionBaseUrl}/library.html`)
+  const expectedKeys = records.flatMap((record) =>
+    record.snapshot.items.map((item) =>
+      JSON.stringify([
+        record.accountId || record.snapshot.accountId || 'local',
+        record.snapshot.orderId,
+        item.entryId,
+      ])
+    )
+  )
+  const sourceRows = page.locator('#sheet-body tr[data-selection-key]')
+  await expect(sourceRows).toHaveCount(expectedKeys.length)
+  expect(
+    await sourceRows.evaluateAll((nodes) =>
+      nodes.map((node) => node.dataset.selectionKey).sort()
+    )
+  ).toEqual(expectedKeys.sort())
   return { page, records, view: page.locator('#packing-view') }
 }
 
@@ -100,37 +106,9 @@ async function selectAllProducts(page) {
   await page.keyboard.press('Control+a')
 }
 
-async function backup(extension) {
-  const response = await extension.inspector.evaluate(() =>
-    chrome.runtime.sendMessage({ type: 'BACKUP_EXPORT' })
-  )
-  expect(response.ok, response.error).toBe(true)
-  return response.data
-}
-
-async function prepareSelected(page, month = '2026-10') {
-  await page
-    .locator('#orders-view')
-    .getByLabel('Packing month', { exact: true })
-    .fill(month)
-  await page
-    .getByRole('button', { name: 'Prepare packing list', exact: true })
-    .click()
-  const review = page.getByRole('dialog', {
-    name: 'Assign product codes?',
-    exact: true,
-  })
-  await expect(review).toBeVisible()
-  await review
-    .getByRole('button', { name: 'Assign codes and prepare', exact: true })
-    .click()
-  const view = page.locator('#packing-view')
-  await expect(view).toBeVisible()
-  await expect(page.locator('#orders-view')).toBeHidden()
-  await expect(view.locator('.preparation-save-status')).toHaveText(
-    'Saved automatically'
-  )
-  return view
+async function assignSelection(page) {
+  await assignSelectedPurchaseCodes(page)
+  return page.locator('#orders-view')
 }
 
 test('copy column choices and Headers survive copying, reopening and a page reload', async ({
@@ -138,17 +116,20 @@ test('copy column choices and Headers survive copying, reopening and a page relo
 }) => {
   const { page } = await openLibrary(extension)
   await selectAllProducts(page)
-  const view = await prepareSelected(page)
+  const view = await assignSelection(page)
   await extension.context.grantPermissions([
     'clipboard-read',
     'clipboard-write',
   ])
   await revealCopyActions(page)
-  await view.getByRole('button', { name: 'Copy columns', exact: true }).click()
-  const columns = page.getByRole('dialog', {
-    name: 'Copy preparation columns',
-    exact: true,
-  })
+  await view
+    .getByRole('button', { name: 'Copy preparation columns', exact: true })
+    .click()
+  const columns = page.locator('.preparation-column-dialog')
+  await expect(columns).toHaveRole('dialog')
+  await expect(columns).toHaveAccessibleName(
+    /^Copy (?:selected|container|\d+) product rows$/
+  )
   const chosen = ['Product code', 'Barcode', 'Quantity']
   const excluded = [
     'Description',
@@ -191,7 +172,9 @@ test('copy column choices and Headers survive copying, reopening and a page relo
   await retainedChoices()
   await columns.getByRole('button', { name: 'Close', exact: true }).click()
   await revealCopyActions(page)
-  await view.getByRole('button', { name: 'Copy columns', exact: true }).click()
+  await view
+    .getByRole('button', { name: 'Copy preparation columns', exact: true })
+    .click()
   await retainedChoices()
   await columns.getByRole('button', { name: 'Close', exact: true }).click()
   await view.page().locator('#view-orders').click()
@@ -241,10 +224,11 @@ test('chosen size columns preserve source dimensions and separate saved barcode 
   await page
     .getByRole('button', { name: 'Copy preparation columns', exact: true })
     .click()
-  const columns = page.getByRole('dialog', {
-    name: 'Copy preparation columns',
-    exact: true,
-  })
+  const columns = page.locator('.preparation-column-dialog')
+  await expect(columns).toHaveRole('dialog')
+  await expect(columns).toHaveAccessibleName(
+    /^Copy (?:selected|container|\d+) product rows$/
+  )
   for (const name of ['Size', 'Size code']) {
     await expect(
       columns.getByRole('checkbox', { name, exact: true })
@@ -269,17 +253,14 @@ test('chosen size columns preserve source dimensions and separate saved barcode 
   // Wait for the DOM node, including its Packing month checkbox, to be removed.
   await expect(page.locator('.preparation-column-dialog')).toHaveCount(0)
   await selectAllProducts(page)
-  const view = await prepareSelected(page)
-  await view
-    .locator('tr[data-variant-id]')
-    .first()
-    .getByRole('textbox', { name: /^Size code / })
-    .fill('XS')
-  await expect(view.locator('.preparation-save-status')).toHaveText(
-    'Saved automatically'
+  const view = await assignSelection(page)
+  await closeOrderProduct(
+    await editOrderProduct(page, 0, { 'Size ending': 'XS' })
   )
   await revealCopyActions(page)
-  await view.getByRole('button', { name: 'Copy columns', exact: true }).click()
+  await view
+    .getByRole('button', { name: 'Copy preparation columns', exact: true })
+    .click()
   for (const name of ['Size', 'Size code', 'Headers'])
     await expect(
       columns.getByRole('checkbox', { name, exact: true })
@@ -332,6 +313,10 @@ test('chosen columns search, keyboard selection and paste order persist with tra
   await revealCopyActions(page)
   await page.locator('#copy-preparation').click()
   const columns = page.locator('.preparation-column-dialog')
+  await expect(columns).toHaveRole('dialog')
+  await expect(columns).toHaveAccessibleName(
+    /^Copy (?:selected|container|\d+) product rows$/
+  )
   const search = columns.getByRole('combobox', { name: 'Search columns' })
   const copy = columns.getByRole('button', {
     name: 'Copy chosen columns',
@@ -454,12 +439,10 @@ test('order details copies the complete order number with visible success feedba
     'clipboard-write',
   ])
   await page
-    .getByRole('option', {
-      name: `Order ${records[0].snapshot.orderId}`,
-      exact: true,
-    })
-    .locator('.order-card-meta')
-    .dblclick()
+    .locator(
+      `.order-card[data-order-id="${records[0].snapshot.orderId}"] .order-details-trigger`
+    )
+    .click()
   const details = page.locator('#order-details')
   await expect(details).toBeVisible()
   const copy = details.locator('.order-detail-identity button')
@@ -479,784 +462,384 @@ test('order details copies the complete order number with visible success feedba
   expect(extension.unexpectedRequests).toEqual([])
 })
 
-test('Ctrl+A prepares every selected product across purchase months; preview Cancel writes nothing', async ({
+test('Ctrl+A reviews all selected purchase months, Cancel reserves nothing and assignment uses each original month', async ({
   extension,
 }) => {
-  const { page, records, view } = await openLibrary(extension, 3)
-  await expect(page.locator('#month-filter-label')).toHaveText('October 2026')
-  await expect(page.getByLabel('Packing month', { exact: true })).toHaveValue(
-    '2026-10'
-  )
-  await expect(
-    page.getByRole('button', { name: 'Prepare packing list', exact: true })
-  ).toBeDisabled()
-  await page.locator('#month-options [data-month="2026-09"]').click()
-  await expect(page.locator('#sheet-body tr[data-selection-key]')).toHaveCount(
-    6
-  )
-  await page
-    .getByRole('option', {
-      name: `Order ${records[0].snapshot.orderId}`,
-      exact: true,
-    })
-    .locator('.order-card-meta')
-    .click()
-  await page
-    .getByRole('option', {
-      name: `Order ${records[1].snapshot.orderId}`,
-      exact: true,
-    })
-    .locator('.order-card-meta')
-    .click({ modifiers: ['Control'] })
+  const { page, records } = await openLibrary(extension, 3)
   await selectAllProducts(page)
-  await expect(page.locator('#selection-summary')).toContainText('6 selected')
-  await page.getByLabel('Packing month', { exact: true }).fill('2026-12')
-  await expect(page.locator('#packing-scope')).toHaveText(
-    '6 selected products · 2 orders → December 2026'
+  const sourceCount = records.reduce(
+    (count, record) => count + record.snapshot.items.length,
+    0
+  )
+  await expect(page.locator('#selection-summary')).toContainText(
+    `${sourceCount} selected`
   )
   const before = await backup(extension)
-  await page
-    .getByRole('button', { name: 'Prepare packing list', exact: true })
-    .click()
-  const review = page.getByRole('dialog', {
-    name: 'Assign product codes?',
-    exact: true,
-  })
-  await expect(review).toContainText('6 selected product rows from 2 orders')
-  await expect(review.locator('.packing-review-item')).toHaveCount(4)
-  const previewCodes = await review
-    .locator(
-      '.packing-value-row:first-child .packing-value-after .packing-value-content'
-    )
-    .allTextContents()
-  expect(previewCodes).toHaveLength(4)
-  expect(previewCodes.every((code) => /^CE2612\d{4}$/.test(code))).toBe(true)
-  await review.getByRole('button', { name: 'Cancel', exact: true }).click()
-  await expect(view).toBeHidden()
-  const cancelled = await backup(extension)
-  for (const key of ['preparations', 'allocations', 'issuedCodes', 'orders'])
-    expect(cancelled[key]).toEqual(before[key])
-  await page
-    .getByRole('button', { name: 'Prepare packing list', exact: true })
-    .click()
-  await expect(
-    review.locator(
-      '.packing-value-row:first-child .packing-value-after .packing-value-content'
-    )
-  ).toHaveText(previewCodes)
-  await review
-    .getByRole('button', { name: 'Assign codes and prepare', exact: true })
-    .click()
-  await expect(view).toBeVisible()
-  await expect(view.locator('.packing-order-section')).toHaveCount(2)
-  await expect(view.locator('.variants tbody tr')).toHaveCount(6)
-  const saved = await backup(extension)
-  expect(saved.preparations.map((prep) => prep.orderId).sort()).toEqual(
-    records
-      .slice(0, 2)
-      .map((record) => record.snapshot.orderId)
-      .sort()
-  )
-  expect(
-    saved.preparations
-      .flatMap((prep) => prep.groups.map((group) => group.baseCode))
-      .sort()
-  ).toEqual([...previewCodes].sort())
-  expect(saved.orders).toEqual(before.orders)
-  await expect(
-    view.getByRole('button', { name: 'Open selected order', exact: true })
-  ).toBeDisabled()
-  await view
-    .getByRole('button', { name: 'Clear selection', exact: true })
-    .click()
-  for (const name of [
-    'Copy columns',
-    'Copy group codes',
-    'Copy Excel image',
-    'Copy barcode images',
-    'Copy carton marks',
-  ])
+  await page.locator('#review-purchase-codes').click()
+  const review = page.locator('dialog[data-action="purchase-code-review"]')
+  await expect(review).toContainText('original purchase month')
+  for (const [index, period] of ['2610', '2609', '2611'].entries())
     await expect(
-      view.getByRole('button', { name, exact: true, includeHidden: true })
-    ).toBeDisabled()
-  await view.locator('.group-select').first().focus()
-  await page.keyboard.press('Control+a')
-  await expect(view.locator('.preparation-copy-scope')).toHaveText(
-    '6 selected products · 2 orders'
-  )
-  await expect(view.locator('.group-select[aria-pressed="true"]')).toHaveCount(
-    4
-  )
+      review
+        .locator(
+          `[data-order-id="${records[index].snapshot.orderId}"] .purchase-code`
+        )
+        .first()
+    ).toHaveText(new RegExp(`^CE${period}\\d{4}`))
+  await review.getByRole('button', { name: 'Cancel', exact: true }).click()
+  const cancelled = await backup(extension)
+  expect(cancelled.preparations).toEqual(before.preparations)
+  expect(cancelled.issuedCodes).toEqual(before.issuedCodes)
+  await assignSelectedPurchaseCodes(page)
+  const assigned = await backup(extension)
+  for (const [index, period] of ['2610', '2609', '2611'].entries()) {
+    const preparation = assigned.preparations.find(
+      (prep) => prep.orderId === records[index].snapshot.orderId
+    )
+    expect(
+      preparation.groups.every((group) =>
+        group.baseCode.startsWith(`CE${period}`)
+      )
+    ).toBe(true)
+  }
+  expect(assigned.orders).toEqual(before.orders)
   await expect(
-    view.getByRole('button', {
-      name: 'Copy columns',
-      exact: true,
-      includeHidden: true,
-    })
-  ).toBeEnabled()
-  await view.page().locator('#view-orders').click()
-  await page.reload()
-  await expect(page.locator('#month-filter-label')).toHaveText(
-    '2 purchase months'
-  )
-  await expect(page.locator('#sheet-body tr[data-selection-key]')).toHaveCount(
-    6
-  )
-  await expect(page.getByLabel('Packing month', { exact: true })).toHaveValue(
-    '2026-10'
-  )
-  expect(extension.unexpectedRequests).toEqual([])
+    page.locator('[data-action="prepare-packing-list"],#packing-month')
+  ).toHaveCount(0)
 })
 
-test('moving one selected source row previews its split and leaves all unselected codes unchanged', async ({
+test('splitting one selected source row reviews only that membership and retains unselected codes, quantities and prices', async ({
   extension,
 }) => {
   const { page, records } = await openLibrary(extension)
   await selectAllProducts(page)
-  const view = await prepareSelected(page)
-  const original = await backup(extension)
-  const [oldJar, oldBox] = original.preparations[0].groups
-  await view.page().locator('#view-orders').click()
-  await page
-    .getByRole('button', { name: 'Clear selection', exact: true })
-    .click()
+  await assignSelectedPurchaseCodes(page)
+  const before = await backup(extension),
+    [oldJar, oldBox] = before.preparations[0].groups
+  await page.locator('#clear-rows').click()
   await page
     .locator('#sheet-body tr[data-selection-key]')
     .first()
-    .locator('.product-title')
-    .click()
-  await page.getByLabel('Packing month', { exact: true }).fill('2026-11')
-  await page
-    .getByRole('button', { name: 'Prepare packing list', exact: true })
-    .click()
+    .getByRole('checkbox')
+    .check()
+  const split = async () => {
+    await page.locator('#group-order-products').click()
+    await page
+      .locator('.orders-grouping-dialog')
+      .getByRole('button', { name: 'Move to new product', exact: true })
+      .click()
+  }
+  await split()
   const review = page.getByRole('dialog', {
-    name: 'Move selected products to this packing month?',
+    name: 'Review product grouping',
     exact: true,
   })
-  await expect(review).toContainText('1 partial groups will be split')
-  await expect(review.locator('.packing-review-item')).toHaveCount(1)
-  await expect(review.locator('.packing-value-row code').first()).toHaveText(
-    oldJar.baseCode
-  )
-  const newCode = await review
-    .locator('.packing-value-row:first-child .packing-value-after code')
-    .first()
-    .textContent()
-  expect(newCode).toMatch(/^CE2611\d{4}$/)
+  await expect(review).toContainText(oldJar.baseCode)
   await review.getByRole('button', { name: 'Cancel', exact: true }).click()
-  const cancelled = await backup(extension)
-  expect(cancelled.preparations).toEqual(original.preparations)
-  expect(cancelled.issuedCodes).toEqual(original.issuedCodes)
+  expect((await backup(extension)).preparations).toEqual(before.preparations)
+  expect((await backup(extension)).issuedCodes).toEqual(before.issuedCodes)
   await page
-    .getByRole('button', { name: 'Prepare packing list', exact: true })
+    .locator('.orders-grouping-dialog')
+    .getByRole('button', { name: 'Move to new product', exact: true })
     .click()
   await review
-    .getByRole('button', { name: 'Change codes and prepare', exact: true })
+    .getByRole('button', { name: 'Apply changes', exact: true })
     .click()
-  await expect(view.locator('.preparation-group')).toHaveCount(1)
-  await expect(view.locator('.variants tbody tr')).toHaveCount(1)
-  const moved = await backup(extension)
+  await expect(review).toBeHidden()
+  await expect(page.locator('.orders-grouping-dialog')).toBeHidden()
+  const after = await backup(extension)
   const groupFor = (entryId) =>
-    moved.preparations[0].groups.find((group) =>
+    after.preparations[0].groups.find((group) =>
       group.variants.some((variant) => variant.entryIds.includes(entryId))
     )
-  expect(groupFor(records[0].snapshot.items[0].entryId).baseCode).toBe(newCode)
+  expect(groupFor(records[0].snapshot.items[0].entryId).baseCode).not.toBe(
+    oldJar.baseCode
+  )
   expect(groupFor(records[0].snapshot.items[1].entryId).baseCode).toBe(
     oldJar.baseCode
   )
   expect(groupFor(records[0].snapshot.items[2].entryId).baseCode).toBe(
     oldBox.baseCode
   )
-  expect(moved.orders).toEqual(original.orders)
-  expect(
-    codeOwners(
-      moved.issuedCodes.filter((code) => code.code === oldJar.baseCode)
-    )
-  ).toEqual(
-    codeOwners(
-      original.issuedCodes.filter((code) => code.code === oldJar.baseCode)
-    )
-  )
-  await view.page().locator('#view-orders').click()
-  await page
-    .getByRole('button', { name: 'Clear selection', exact: true })
-    .click()
-  await page.getByLabel('Packing month', { exact: true }).fill('2026-10')
-  await expect(page.locator('#packing-scope')).toHaveText(
-    'Reopen 2 products already in October 2026'
-  )
-  await page
-    .getByRole('button', { name: 'Prepare packing list', exact: true })
-    .click()
-  await expect(view.locator('.variants tbody tr')).toHaveCount(2)
-  await expect(view.getByLabel('Product code', { exact: true })).toHaveCount(2)
-  await expect(
-    view.getByLabel('Product code', { exact: true }).nth(0)
-  ).toHaveValue(oldJar.baseCode)
-  await expect(
-    view.getByLabel('Product code', { exact: true }).nth(1)
-  ).toHaveValue(oldBox.baseCode)
-  expect(extension.unexpectedRequests).toEqual([])
+  expect(after.orders).toEqual(before.orders)
+  const owners = (data) =>
+    data.issuedCodes
+      .filter((code) => code.code === oldJar.baseCode)
+      .map(({ ownerSnapshot, ...owner }) => owner)
+  expect(owners(after)).toEqual(owners(before))
 })
 
-test('a released code is reusable and an active conflict identifies its owner before applying a correction', async ({
+test('released unconsumed codes are reusable and an active conflict identifies the saved owner before correction', async ({
   extension,
 }) => {
   const { page } = await openLibrary(extension)
   await selectAllProducts(page)
-  const view = await prepareSelected(page)
-  const original = await backup(extension)
-  const groups = view.locator('.preparation-group')
-  const first = groups.nth(0).getByLabel('Product code', { exact: true })
-  const second = groups.nth(1).getByLabel('Product code', { exact: true })
-  const retiredCode = await second.inputValue()
-  await second.fill('CE26109998')
-  await expect(view.locator('.preparation-save-status')).toHaveText(
-    'Saved automatically'
+  await assignSelectedPurchaseCodes(page)
+  const original = await backup(extension),
+    released = original.preparations[0].groups[1].baseCode
+  await closeOrderProduct(
+    await editOrderProduct(page, 2, { 'Product code': 'CE26109998' })
   )
-  await expect
-    .poll(
-      async () => (await backup(extension)).preparations[0].groups[1].baseCode
-    )
-    .toBe('CE26109998')
-  await first.fill(retiredCode)
-  await expect(view.locator('.preparation-save-status')).toHaveText(
-    'Saved automatically'
+  await closeOrderProduct(
+    await editOrderProduct(page, 0, { 'Product code': released })
   )
-  await expect(first).not.toHaveAttribute('aria-invalid', 'true')
   const reused = await backup(extension)
-  expect(reused.preparations[0].groups[0].baseCode).toBe(retiredCode)
-  await first.fill('CE26109998')
-  await expect(view.locator('.preparation-save-status')).toContainText(
-    'Code conflict'
-  )
-  await view.getByRole('button', { name: 'Resolve', exact: true }).click()
-  const conflict = page.getByRole('dialog', {
-    name: 'Resolve code conflict',
-    exact: true,
+  expect(reused.preparations[0].groups[0].baseCode).toBe(released)
+  const editor = await editOrderProduct(page, 0, {
+    'Product code': 'CE26109998',
   })
-  await expect(conflict).toContainText('CE26109998')
-  const owner = conflict.locator('.conflict-owner-card')
-  await expect(owner).toContainText('Current assignment')
-  await expect(owner.getByLabel('Product code', { exact: true })).toHaveValue(
-    'CE26109998'
-  )
-  await expect(conflict.getByAltText('Product photo')).toHaveCount(2)
   await expect(
-    conflict.getByRole('button', { name: 'Show owning product', exact: true })
-  ).toBeVisible()
-  await conflict
+    editor.getByRole('textbox', { name: 'Product code', exact: true })
+  ).toHaveAttribute('aria-invalid', 'true')
+  await editor
+    .getByRole('button', { name: 'Resolve code conflict', exact: true })
+    .click()
+  const resolver = page.locator('.code-conflict-dialog')
+  await expect(resolver.locator('.conflict-owner-card')).toContainText(
+    original.preparations[0].orderId
+  )
+  await expect(
+    resolver
+      .locator('.conflict-owner-card')
+      .getByRole('textbox', { name: 'Product code', exact: true })
+  ).toHaveValue('CE26109998')
+  await expect(resolver.locator('.preparation-photo')).toHaveCount(2)
+  await resolver
     .getByRole('button', { name: 'Use next available code', exact: true })
     .click()
-  await expect(conflict).toBeVisible()
   expect((await backup(extension)).preparations).toEqual(reused.preparations)
-  await conflict
+  await resolver
     .getByRole('button', { name: 'Apply corrections', exact: true })
     .click()
-  await expect(conflict).toBeHidden()
-  await expect(view.locator('.preparation-save-status')).toHaveText(
-    'Saved automatically'
-  )
-  const resolved = await backup(extension)
-  expect(resolved.preparations[0].groups[0].baseCode).not.toBe('CE26109998')
-  expect(resolved.preparations[0].groups[1].baseCode).toBe('CE26109998')
+  await expect(resolver).toBeHidden()
+  const after = await backup(extension)
+  expect(after.preparations[0].groups[0].baseCode).not.toBe('CE26109998')
+  expect(after.preparations[0].groups[1].baseCode).toBe('CE26109998')
   expect(
-    resolved.issuedCodes.find(
+    after.issuedCodes.find(
       (code) =>
         code.kind === 'base' &&
-        code.code === resolved.preparations[0].groups[0].baseCode
-    )?.groupId
+        code.code === after.preparations[0].groups[0].baseCode
+    ).groupId
   ).toBe(original.preparations[0].groups[0].id)
-  expect(resolved.orders).toEqual(original.orders)
-  expect(extension.unexpectedRequests).toEqual([])
+  expect(after.orders).toEqual(original.orders)
 })
 
-test('keyboard group moves and pointer product moves persist and export in the displayed order', async ({
+test('whole-order inclusion ignores product selection and begins Unconfirmed without moving any purchase codes', async ({
   extension,
 }) => {
-  test.setTimeout(60000)
   const { page, records } = await openLibrary(extension, 2)
-  await page.locator('#month-options [data-month="2026-09"]').click()
   await selectAllProducts(page)
-  const view = await prepareSelected(page)
-  const original = await backup(extension)
-  const first = original.preparations.find(
-    (entry) => entry.orderId === records[0].snapshot.orderId
-  )
-  const second = original.preparations.find(
-    (entry) => entry.orderId === records[1].snapshot.orderId
-  )
-  const [jar, box] = first.groups
-  const order = view.locator(`[data-packing-order="${first.orderId}"]`)
-  await openOrganizing(page)
-  await order
-    .locator(
-      `.packing-organize-group[data-group-id="${jar.id}"] .reorder-handle`
-    )
-    .press('ArrowDown')
-  await expect
-    .poll(async () => {
-      const saved = (await backup(extension)).preparations.find(
-        (entry) => entry.orderId === first.orderId
-      )
-      return saved.groups.map((group) => group.id)
-    })
-    .toEqual([box.id, jar.id])
-  await finishOrganizing(page)
-  await expect
-    .poll(() =>
-      order
-        .getByLabel('Product code', { exact: true })
-        .evaluateAll((inputs) => inputs.map((input) => input.value))
-    )
-    .toEqual([box.baseCode, jar.baseCode])
-  const jarCard = order.locator(`[data-group-id="${jar.id}"]`)
-  await openOrganizing(page)
-  await order
-    .locator(`.packing-organize-group[data-group-id="${jar.id}"]`)
-    .getByRole('button', { name: 'Products', exact: true })
-    .click()
-  const rows = view.locator('.packing-organize-product')
-  const grip = rows.nth(1).locator('.reorder-handle')
-  await grip.scrollIntoViewIfNeeded()
-  const from = await grip.boundingBox()
-  const to = await rows.first().boundingBox()
-  expect(from).not.toBeNull()
-  expect(to).not.toBeNull()
-  await page.mouse.move(from.x + from.width / 2, from.y + from.height / 2)
-  await page.mouse.down()
-  await page.mouse.move(to.x + 25, to.y + 12, { steps: 10 })
-  await page.mouse.up()
-  await expect
-    .poll(async () => {
-      const saved = (await backup(extension)).preparations.find(
-        (entry) => entry.orderId === first.orderId
-      )
-      return saved.groups[1].variants.map((variant) => variant.id)
-    })
-    .toEqual(jar.variants.map((variant) => variant.id).reverse())
-  await finishOrganizing(page)
-  await expect(view.locator('.preparation-copy-scope')).toHaveText(
-    '6 selected products · 2 orders'
-  )
-  const reordered = await backup(extension)
-  const current = reordered.preparations.find(
-    (entry) => entry.orderId === first.orderId
-  )
-  // The first Organize move materializes missing global order positions once.
-  // Its sibling keeps all authoring data and is not rewritten by the product move.
-  expect(current.packingPosition).toBe(0)
-  expect(
-    reordered.preparations.find((entry) => entry.orderId === second.orderId)
-  ).toEqual({
-    ...second,
-    packingPosition: 1,
-    revision: second.revision + 1,
-    updatedAt: new Date(Date.parse(second.updatedAt) + 1).toISOString(),
-  })
-  expect(reordered.orders).toEqual(original.orders)
-  expect(reordered.cartonBatches).toEqual(original.cartonBatches)
-  expect(codeOwners(reordered.issuedCodes)).toEqual(
-    codeOwners(original.issuedCodes)
-  )
-  for (const group of current.groups) {
-    const before = first.groups.find((entry) => entry.id === group.id)
-    expect(group.baseCode).toBe(before.baseCode)
-    for (const variant of group.variants) {
-      const originalVariant = before.variants.find(
-        (entry) => entry.id === variant.id
-      )
-      expect(variant.variantSuffix).toBe(originalVariant.variantSuffix)
-      expect(variant.sizeSuffix).toBe(originalVariant.sizeSuffix)
-    }
-  }
-  await extension.context.grantPermissions([
-    'clipboard-read',
-    'clipboard-write',
-  ])
-  await view.getByRole('button', { name: 'Select all', exact: true }).click()
-  await revealCopyActions(page)
-  await view.getByRole('button', { name: 'Copy columns', exact: true }).click()
-  const columns = page.getByRole('dialog', {
-    name: 'Copy preparation columns',
-    exact: true,
-  })
-  for (const name of [
-    'Description',
-    'Spanish description',
-    'Size',
-    'Size code',
-    'Price',
-    'Discount',
-    'Quantity',
-  ])
-    await columns.getByRole('checkbox', { name, exact: true }).uncheck()
-  await columns
-    .getByRole('button', { name: 'Copy chosen columns', exact: true })
-    .click()
-  await expect(
-    columns.getByRole('button', { name: 'Copied', exact: true })
-  ).toBeVisible()
-  const text = await page.evaluate(() => navigator.clipboard.readText())
-  const expected = [current, second].flatMap((preparation) =>
-    preparation.groups.flatMap((group) =>
-      group.variants.map((variant, index) => [
-        index === 0 ? group.baseCode : '',
-        `${group.baseCode}${variant.variantSuffix}${variant.sizeSuffix}`,
-      ])
-    )
-  )
-  expect(text.split('\r\n').map((line) => line.split('\t'))).toEqual(expected)
-  await columns.getByRole('button', { name: 'Close', exact: true }).click()
-  await page.evaluate(() => {
-    globalThis.packingImageRuns = []
-    const fillText = CanvasRenderingContext2D.prototype.fillText
-    CanvasRenderingContext2D.prototype.fillText = function (text, ...args) {
-      if (this.canvas.width > 2000)
-        packingImageRuns.push({
-          text: String(text),
-          y: args[1],
-          color: this.fillStyle,
-          font: this.font,
-        })
-      return fillText.call(this, text, ...args)
-    }
-  })
-  // The primary action changes its icon and label while confirming the copy.
-  const image = view.locator(
-    '.packing-copy-actions > button:not(.copy-actions-trigger)'
-  )
-  await expect(image).toHaveAccessibleName('Copy Excel image')
-  await image.click()
-  await copyCurrentImageBatch(page)
-  await expect(image).toHaveText('Copied')
-  await expect(image).toHaveAttribute('data-icon', 'check')
-  const imageRuns = await page.evaluate(() => packingImageRuns)
-  const codeRuns = imageRuns.filter((run) => /^CE\d/.test(run.text))
-  // Each barcode is one complete white, bold payload in the displayed row order.
-  expect(codeRuns.map((run) => run.text)).toEqual(
-    expected.map(([, barcode]) => barcode)
-  )
-  for (const [index, run] of codeRuns.entries()) {
-    expect(run.color).toMatch(/^#(?:fff|ffffff)$/i)
-    expect(run.font).toMatch(/^(?:700|bold) (?:1[2-7])px /)
-    if (index) expect(run.y).toBeGreaterThan(codeRuns[index - 1].y)
-  }
-  expect(
-    await page.evaluate(async () => (await navigator.clipboard.read())[0].types)
-  ).toContain('image/png')
-  await view.page().locator('#view-orders').click()
-  await page.reload()
+  await assignSelectedPurchaseCodes(page)
+  const before = await backup(extension)
+  await page.locator('#clear-rows').click()
   await page
-    .getByRole('button', { name: 'Prepare packing list', exact: true })
-    .click()
-  await expect
-    .poll(() =>
-      order
-        .getByLabel('Product code', { exact: true })
-        .evaluateAll((inputs) => inputs.map((input) => input.value))
-    )
-    .toEqual([box.baseCode, jar.baseCode])
-  expect(
-    await jarCard
-      .locator('.variants tbody tr')
-      .evaluateAll((elements) =>
-        elements.map((element) => element.dataset.variantId)
-      )
-  ).toEqual(jar.variants.map((variant) => variant.id).reverse())
-  expect(extension.unexpectedRequests).toEqual([])
-})
-
-test('reset order and codes retains current names while previous packing restores the earlier month and names', async ({
-  extension,
-}) => {
-  test.setTimeout(60000)
-  const { page } = await openLibrary(extension)
-  await selectAllProducts(page)
-  const view = await prepareSelected(page)
-  const form = view.locator('#preparation-content')
-  const productCodes = () =>
-    view
-      .getByLabel('Product code', { exact: true })
-      .evaluateAll((inputs) => inputs.map((input) => input.value))
-  const name = view.getByLabel('Spanish short name', { exact: true }).first()
-  await name.fill('NOMBRE ANTERIOR')
-  await expect(view.locator('.preparation-save-status')).toHaveText(
-    'Saved automatically'
-  )
-  const original = await backup(extension)
-  await view.page().locator('#view-orders').click()
-  await page.getByLabel('Packing month', { exact: true }).fill('2026-12')
-  await page
-    .getByRole('button', { name: 'Prepare packing list', exact: true })
-    .click()
-  const monthMove = page.getByRole('dialog', {
-    name: 'Move selected products to this packing month?',
-    exact: true,
-  })
-  await expect(monthMove).toBeVisible()
-  const movedCodes = await monthMove
-    .locator(
-      '.packing-value-row:first-child .packing-value-after .packing-value-content'
-    )
-    .allTextContents()
-  expect(movedCodes).toHaveLength(2)
-  expect(movedCodes.every((code) => /^CE2612\d{4}$/.test(code))).toBe(true)
-  await monthMove
-    .getByRole('button', { name: 'Change codes and prepare', exact: true })
-    .click()
-  await expect(view).toBeVisible()
-  await expect(page.locator('#orders-view')).toBeHidden()
-  await expect(view.locator('.packing-title')).toContainText('December 2026')
-  await expect.poll(productCodes).toEqual(movedCodes)
-  const moved = await backup(extension)
-  expect(moved.preparations[0].month).toBe('2026-12')
-  const defaults = moved.preparations[0].defaultPacking
-  expect(defaults.month).toBe('2026-12')
-  await name.fill('NOMBRE RECIENTE')
-  await view
-    .getByLabel('Product code', { exact: true })
+    .locator('#sheet-body tr[data-selection-key]')
     .first()
-    .fill('CE26129998')
-  await expect(view.locator('.preparation-save-status')).toHaveText(
-    'Saved automatically'
+    .getByRole('checkbox')
+    .check()
+  const refs = records.map((record) => ({
+    accountId: 'local',
+    orderId: record.snapshot.orderId,
+  }))
+  const id = await createContainerThroughUI(
+    page,
+    refs,
+    'November shipment, original purchase codes'
   )
-  await openOrganizing(page)
-  await view
-    .locator('.packing-organize-group .reorder-handle')
-    .first()
-    .press('ArrowDown')
-  await finishOrganizing(page)
-  await expect(form).toBeEnabled()
-  await expect.poll(productCodes).toEqual([movedCodes[1], 'CE26129998'])
-  await expect
-    .poll(
-      async () => (await backup(extension)).preparations[0].groups[1].baseCode
-    )
-    .toBe('CE26129998')
-  const edited = await backup(extension)
-  await view
-    .getByRole('button', { name: 'Reset order and codes', exact: true })
-    .click()
-  const reset = page.getByRole('dialog', {
-    name: 'Reset order and codes?',
-    exact: true,
-  })
-  await expect(reset).toContainText('Current names are retained')
-  await reset.getByRole('button', { name: 'Cancel', exact: true }).click()
-  await expect(reset).toBeHidden()
-  await expect(form).toBeEnabled()
-  expect((await backup(extension)).preparations).toEqual(edited.preparations)
-  await view
-    .getByRole('button', { name: 'Reset order and codes', exact: true })
-    .click()
-  await reset
-    .getByRole('button', { name: 'Reset order and codes', exact: true })
-    .click()
-  await expect(reset).toBeHidden()
-  // The review closes before its write starts; wait for the completed reset.
-  await expect(form).toBeEnabled()
-  await expect
-    .poll(productCodes)
-    .toEqual(defaults.groups.map((group) => group.baseCode))
-  const resetData = await backup(extension)
-  expect(
-    resetData.preparations[0].groups.map((group) => [group.id, group.baseCode])
-  ).toEqual(defaults.groups.map((group) => [group.id, group.baseCode]))
-  expect(resetData.preparations[0].groups[0].spanishName).toBe(
-    'NOMBRE RECIENTE'
+  const included = await extension.inspector.evaluate(
+    async (id) => (await window.testRepository).getContainerView({ id }),
+    id
+  )
+  expect(included.orders.map((order) => order.orderId).sort()).toEqual(
+    refs.map((ref) => ref.orderId).sort()
   )
   expect(
-    resetData.preparations[0].groups.some((group) => group.manualReordered)
-  ).toBe(false)
-  await view
-    .getByRole('button', { name: 'Restore previous packing', exact: true })
-    .click()
-  const previous = page.getByRole('dialog', {
-    name: 'Restore previous packing?',
-    exact: true,
-  })
-  await expect(previous).toContainText('Later edits will be lost')
-  await previous
-    .getByRole('button', { name: 'Restore previous packing', exact: true })
-    .click()
-  await expect(previous).toBeHidden()
-  await expect(form).toBeEnabled()
-  await expect(view.locator('.packing-title')).toContainText('October 2026')
-  await expect
-    .poll(productCodes)
-    .toEqual(original.preparations[0].groups.map((group) => group.baseCode))
-  const restored = await backup(extension)
-  expect(restored.preparations[0].month).toBe('2026-10')
-  expect(restored.preparations[0].groups).toEqual(
-    original.preparations[0].groups
-  )
-  expect(restored.orders).toEqual(original.orders)
-  expect(codeOwners(restored.issuedCodes)).toEqual(
-    codeOwners(original.issuedCodes)
-  )
-  expect(
-    restored.issuedCodes.some((entry) => entry.code.startsWith('CE2612'))
-  ).toBe(false)
-  await revealCopyActions(page)
-  const downloading = page.waitForEvent('download')
-  await view
-    .getByRole('button', { name: 'Back up packing', exact: true })
-    .click()
-  const download = await downloading
-  expect(download.suggestedFilename()).toBe('1688-packing-2026-10.json.gz')
-  expect(await download.failure()).toBeNull()
-  const files = await extension.inspector.evaluate(() =>
-    chrome.downloads.search({})
-  )
-  expect(files).toHaveLength(1)
-  expect(files[0].state).toBe('complete')
-  const exported = await readBackupFile(
-    new Blob([await readFile(files[0].filename)])
-  )
-  expect(exported.packingScope.months).toEqual(['2026-10'])
-  expect(exported.preparations).toEqual(restored.preparations)
-  // Scoped backups carry current ownership only, without redundant owner
-  // snapshots; the preparation/source rows already provide that information.
-  expect(exported.issuedCodes).toEqual(
-    restored.issuedCodes.map(({ ownerSnapshot, ...owner }) => owner)
-  )
-  expect(
-    exported.issuedCodes.every(
-      (owner) => !Object.hasOwn(owner, 'ownerSnapshot')
-    )
+    included.cartons.every((carton) => carton.state === 'unconfirmed')
   ).toBe(true)
-  expect(extension.unexpectedRequests).toEqual([])
+  const after = await backup(extension)
+  expect(after.preparations).toEqual(before.preparations)
+  expect(after.issuedCodes).toEqual(before.issuedCodes)
+  expect(after.orders).toEqual(before.orders)
+  await expect(
+    page.locator(
+      '#packing-view .group-code-editor,.reorder-handle,[data-action="organize-packing"]'
+    )
+  ).toHaveCount(0)
 })
 
-for (const editedIndex of [0, 1]) {
-  test(`duplicate barcode recovery keeps the base and changes the edited variant (${editedIndex + 1})`, async ({
-    extension,
-  }) => {
-    const { page } = await openLibrary(extension)
-    await selectAllProducts(page)
-    const view = await prepareSelected(page)
-    const original = await backup(extension)
-    const originalGroup = original.preparations[0].groups[0]
-    const unchangedIndex = 1 - editedIndex
-    const collisionSize = originalGroup.variants[unchangedIndex].sizeSuffix
-    const row = view
-      .locator('.preparation-group')
-      .first()
-      .locator('.variants tbody tr')
-      .nth(editedIndex)
-    await row.getByRole('textbox', { name: /^Size code / }).fill(collisionSize)
-    await expect(view.locator('.preparation-save-status')).toContainText(
-      'Code conflict'
-    )
-    const beforeResolution = await backup(extension)
-    expect(beforeResolution.preparations).toEqual(original.preparations)
-    expect(beforeResolution.issuedCodes).toEqual(original.issuedCodes)
-    await view.getByRole('button', { name: 'Resolve', exact: true }).click()
-    const conflict = page.getByRole('dialog', {
-      name: 'Resolve code conflict',
-      exact: true,
-    })
-    await expect(conflict).toContainText(
-      `${originalGroup.baseCode}${collisionSize}`
-    )
-    await conflict
-      .getByRole('button', {
-        name: 'Use next available variant code',
-        exact: true,
-      })
-      .click()
-    await expect(conflict).toBeVisible()
-    expect((await backup(extension)).preparations).toEqual(
-      original.preparations
-    )
-    await conflict
-      .getByRole('button', { name: 'Apply corrections', exact: true })
-      .click()
-    await expect(conflict).toBeHidden()
-    await expect(view.locator('.preparation-save-status')).toHaveText(
-      'Saved automatically'
-    )
-    const resolved = await backup(extension)
-    const group = resolved.preparations[0].groups[0]
-    expect(group.baseCode).toBe(originalGroup.baseCode)
-    expect(group.variants[unchangedIndex]).toEqual(
-      originalGroup.variants[unchangedIndex]
-    )
-    expect(group.variants[editedIndex].id).toBe(
-      originalGroup.variants[editedIndex].id
-    )
-    expect(group.variants[editedIndex].sizeSuffix).toBe(collisionSize)
-    expect(group.variants[editedIndex].variantSuffix).toMatch(/^[A-Z]+$/)
-    const barcode = `${group.baseCode}${group.variants[editedIndex].variantSuffix}${collisionSize}`
-    expect(
-      resolved.issuedCodes.some(
-        (code) =>
-          code.code === barcode &&
-          code.variantId === group.variants[editedIndex].id
-      )
-    ).toBe(true)
-    const oldBarcode = `${originalGroup.baseCode}${originalGroup.variants[editedIndex].variantSuffix}${originalGroup.variants[editedIndex].sizeSuffix}`
-    expect(
-      resolved.issuedCodes.some(
-        (code) => code.kind === 'barcode' && code.code === oldBarcode
-      )
-    ).toBe(false)
-    expect(resolved.orders).toEqual(original.orders)
-    expect(extension.unexpectedRequests).toEqual([])
-  })
-}
-
-test('a month move mixed with an unidentified seller stops before changing any codes', async ({
+test('sealed history keeps earlier authored names and prices while a correction uses a distinct revision', async ({
   extension,
 }) => {
-  const { page, records, view } = await openLibrary(extension, 2)
+  const { page, records } = await openLibrary(extension)
   await selectAllProducts(page)
-  await prepareSelected(page)
-  await view.page().locator('#view-orders').click()
-  const missing = structuredClone(records[1])
-  missing.snapshot.sellerName = 'Seller unavailable'
-  missing.snapshot.sellerMemberLogin = ''
-  missing.snapshot.sellerUnavailable = true
-  missing.snapshot.observedAt = '2026-10-14T12:00:00.000Z'
-  missing.lastCheckedAt = missing.snapshot.observedAt
-  const response = await extension.inspector.evaluate(
-    (record) =>
+  await assignSelectedPurchaseCodes(page)
+  await closeOrderProduct(
+    await editOrderProduct(page, 0, {
+      'Spanish name': 'ORIGINAL SHIPMENT NAME',
+    })
+  )
+  const ref = { accountId: 'local', orderId: records[0].snapshot.orderId }
+  await extension.inspector.evaluate(async (ref) => {
+    const repository = await window.testRepository
+    let context = await repository.getOrderReconciliation(ref)
+    await repository.updateOrderCapacities({
+      ...ref,
+      values: Object.fromEntries(
+        context.record.snapshot.items.map((item) => [
+          item.entryId,
+          item.quantity,
+        ])
+      ),
+      expectedValues: Object.fromEntries(
+        context.record.snapshot.items.map((item) => [item.entryId, null])
+      ),
+      expectedObservedAt: context.record.snapshot.observedAt,
+    })
+    context = await repository.getOrderReconciliation(ref)
+    await repository.confirmOrderCartons({
+      ...ref,
+      draft: window.testPlanner.createReconciliationDraft(context),
+      expectedRevisions: context.revisions,
+      intentId: crypto.randomUUID(),
+    })
+  }, ref)
+  const id = await createContainerThroughUI(page, [ref])
+  await sealContainerThroughUI(page)
+  const frozen = await extension.inspector.evaluate(
+    async (id) => (await window.testRepository).getContainerManifest({ id }),
+    id
+  )
+  expect(
+    frozen.products.some((row) => row.spanishName === 'ORIGINAL SHIPMENT NAME')
+  ).toBe(true)
+  // A direct ordinary edit must not rewrite consumed identity or historical values.
+  const rejected = await extension.inspector.evaluate(async (ref) => {
+    const repository = await window.testRepository,
+      context = await repository.getOrderReconciliation(ref),
+      draft = structuredClone(context.preparation)
+    draft.groups[0].baseCode = 'CE26109998'
+    try {
+      await repository.savePreparations([draft], {
+        expectedRevisions: [draft.revision],
+      })
+      return null
+    } catch (error) {
+      return error.message
+    }
+  }, ref)
+  expect(rejected).toMatch(/amend|consum|seal|frozen/i)
+  expect(
+    await extension.inspector.evaluate(
+      async ({ id, revisionId }) =>
+        (await window.testRepository).getContainerManifest({ id, revisionId }),
+      { id, revisionId: frozen.revisionId }
+    )
+  ).toEqual(frozen)
+})
+
+test('mixed valid and unidentified-supplier code review blocks every write and preserves source purchase months', async ({
+  extension,
+}) => {
+  const records = await seedOrders(extension, 2)
+  delete records[1].snapshot.sellerMemberLogin
+  records[1].snapshot.sellerName = 'Seller unavailable'
+  records[1].snapshot.sellerUnavailable = true
+  records[1].snapshot.observedAt = '2099-01-01T00:00:00Z'
+  records[1].lastCheckedAt = records[1].snapshot.observedAt
+  const restored = await extension.inspector.evaluate(
+    (orders) =>
       chrome.runtime.sendMessage({
         type: 'BACKUP_RESTORE',
         backup: {
           format: '1688-order-library',
           version: 1,
           exportedAt: new Date().toISOString(),
-          orders: [record],
+          orders,
           history: [],
           images: [],
         },
       }),
-    missing
+    records
   )
-  expect(response.ok, response.error).toBe(true)
-  await page.reload()
-  await page.locator('#month-options [data-month="2026-09"]').click()
-  await expect(page.locator('#sheet-body tr[data-selection-key]')).toHaveCount(
-    6
+  expect(restored.ok, restored.error).toBe(true)
+  const page = await extension.context.newPage()
+  await page.addInitScript(() =>
+    localStorage.setItem('1688-library-purchase-months', '[]')
   )
+  await page.goto(`${extension.extensionBaseUrl}/library.html`)
   await selectAllProducts(page)
-  await page.getByLabel('Packing month', { exact: true }).fill('2026-12')
   const before = await backup(extension)
-  await page
-    .getByRole('button', { name: 'Prepare packing list', exact: true })
-    .click()
-  await expect(page.locator('.error-notice-message')).toContainText(
-    'Some selected orders have no identified seller.'
-  )
-  await expect(page.locator('.error-notice-message')).toContainText(
-    'No codes have changed.'
-  )
-  await expect(view).toBeHidden()
-  await expect(page.locator('.packing-review')).toHaveCount(0)
-  const after = await backup(extension)
-  for (const field of ['orders', 'preparations', 'allocations', 'issuedCodes'])
-    expect(after[field]).toEqual(before[field])
-  expect(extension.unexpectedRequests).toEqual([])
+  await page.locator('#review-purchase-codes').click()
+  const review = page.locator('[data-action="purchase-code-review"]')
+  await expect(review).toContainText(/supplier|seller/i)
+  await expect(
+    review.locator('[data-action="assign-purchase-codes"]')
+  ).toBeDisabled()
+  expect((await backup(extension)).preparations).toEqual(before.preparations)
+  expect((await backup(extension)).issuedCodes).toEqual(before.issuedCodes)
+  expect((await backup(extension)).orders).toEqual(before.orders)
 })
+
+for (const editedIndex of [0, 1])
+  test(`duplicate barcode recovery retains the base and changes only edited variant ${editedIndex + 1}`, async ({
+    extension,
+  }) => {
+    const { page } = await openLibrary(extension)
+    await selectAllProducts(page)
+    await assignSelectedPurchaseCodes(page)
+    const before = await backup(extension),
+      group = before.preparations[0].groups[0],
+      unchangedIndex = 1 - editedIndex,
+      collisionSize = group.variants[unchangedIndex].sizeSuffix
+    const editor = await editOrderProduct(page, editedIndex, {
+      'Size ending': collisionSize,
+    })
+    await expect(
+      editor.getByRole('textbox', { name: 'Size ending', exact: true })
+    ).toHaveAttribute('aria-invalid', 'true')
+    expect((await backup(extension)).preparations).toEqual(before.preparations)
+    expect((await backup(extension)).issuedCodes).toEqual(before.issuedCodes)
+    await editor
+      .getByRole('button', { name: 'Resolve code conflict', exact: true })
+      .click()
+    const resolver = page.locator('.code-conflict-dialog')
+    await expect(resolver).toContainText(`${group.baseCode}${collisionSize}`)
+    await resolver
+      .getByRole('button', {
+        name: 'Use next available variant code',
+        exact: true,
+      })
+      .click()
+    expect((await backup(extension)).preparations).toEqual(before.preparations)
+    await resolver
+      .getByRole('button', { name: 'Apply corrections', exact: true })
+      .click()
+    await expect(resolver).toBeHidden()
+    const after = await backup(extension),
+      resolved = after.preparations[0].groups[0],
+      edited = resolved.variants[editedIndex]
+    expect(resolved.baseCode).toBe(group.baseCode)
+    expect(resolved.variants[unchangedIndex]).toEqual(
+      group.variants[unchangedIndex]
+    )
+    expect(edited.id).toBe(group.variants[editedIndex].id)
+    expect(edited.sizeSuffix).toBe(collisionSize)
+    expect(edited.variantSuffix).toMatch(/^[A-Z]+$/)
+    expect(after.issuedCodes).toContainEqual(
+      expect.objectContaining({
+        kind: 'barcode',
+        code: group.baseCode + edited.variantSuffix + edited.sizeSuffix,
+        variantId: edited.id,
+      })
+    )
+    const old = group.variants[editedIndex]
+    expect(
+      after.issuedCodes.some(
+        (code) =>
+          code.kind === 'barcode' &&
+          code.code === group.baseCode + old.variantSuffix + old.sizeSuffix
+      )
+    ).toBe(false)
+    expect(after.orders).toEqual(before.orders)
+  })

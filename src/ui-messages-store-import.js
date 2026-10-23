@@ -1,4 +1,9 @@
 export const STORE_IMPORT_MESSAGES = {
+  'This appears to match {0} imported order(s). Importing again creates a separate purchase; review the date before continuing.':
+    {
+      es: 'Esto parece coincidir con {0} pedido(s) importado(s). Volver a importar crea una compra separada; revisa la fecha antes de continuar.',
+      zh: '此文件似乎与 {0} 个已导入订单相同。再次导入会创建独立采购；请先核对日期。',
+    },
   'Workbook guide': { zh: '工作簿指南', es: 'Guía del libro' },
   Setup: { zh: '准备', es: 'Preparar' },
   Markers: { zh: '标记', es: 'Marcadores' },
@@ -43,28 +48,28 @@ export const STORE_IMPORT_MESSAGES = {
       zh: '每件商品都需要照片。图片锚定范围或合并的 pic 单元格覆盖对应行时，不同商品组可以共用照片。审核时请确认共用照片。缺失或无法读取的照片会阻止导入。正方形缩略图保持比例，并保留原图。',
       es: 'Cada producto necesita foto. Una foto puede servir a distintos grupos si su anclaje o celda pic combinada cubre sus filas. Confirma las fotos compartidas al revisar. Las fotos ausentes o ilegibles bloquean la importación. Las miniaturas cuadradas conservan las proporciones y los originales.',
     },
-  'After preparation, open Cartons for the code group. Pack together, Separate variants and Use all remaining fill proposals; Apply carton contents saves the allocation. Review leftovers instead of assuming another carton. Add extra order costs separately.':
+  'Import once, then review Products and Cartons in Orders. Supported source carton facts are confirmed during import; capacity-only edits remain proposals. Review prefilled remainders and confirm one order when its physical facts are ready. Add extra order costs separately.':
     {
-      zh: '备货后，在货号组打开“纸箱”。“合箱”“分开款式”和“使用全部剩余数量”可填写方案，再用“应用箱内商品”保存分配。零散件需核对，不自动增加纸箱。额外订单费用单独记录。',
-      es: 'Tras preparar, abre Cajas para el grupo. Embalar juntos, Separar variantes y Usar todo lo restante rellenan propuestas; Aplicar contenido guarda el reparto. Revisa los sobrantes sin suponer otra caja. Registra los costes extra aparte.',
+      zh: '只导入一次，然后在“订单”的“商品”和“纸箱”中核对。导入时确认有来源支持的纸箱事实；仅修改每箱件数仍是方案。核对自动填写的余件，实物事实齐全后统一确认该采购。额外订单费用单独记录。',
+      es: 'Importa una vez y revisa Productos y Cajas en Pedidos. Los datos físicos respaldados por el archivo se confirman al importar; editar solo la capacidad sigue siendo una propuesta. Revisa los sobrantes precargados y confirma el pedido cuando sus datos físicos estén listos. Registra los costes extra aparte.',
     },
   'Choose contents and carton mark': {
     zh: '选择箱内商品与实际唛头',
     es: 'Elige contenido y marca de caja',
   },
-  'Use Exact carton for one numbered carton’s actual contents, or Batch for combined totals. Groups from one purchase can mix; choose the physical carton mark separately, even when its group contributes no pieces. Group codes identify carton marks; full variant codes identify product labels. Other purchases need explicit product links within the same account, store and packing month. Unequal cartons do not imply a common pieces-per-box value.':
+  'Each carton belongs to one purchase. Products from that purchase may mix, with an independent carton mark even when its group contributes no pieces. Eligible repeat purchases may share reviewed codes across purchase months, but keep separate quantities, prices and cartons. Unequal cartons and aggregate totals never establish a uniform per-box split.':
     {
-      zh: '“逐箱登记”记录一个箱号的实际商品，“整批登记”记录多箱合计。同一采购中的不同商品组可以混装；实际唛头单独选择，即使该唛头组没有商品装入此箱。分组货号用于唛头，完整款式货号用于商品标签。跨采购装箱须在同一账户、店铺和装箱月份内明确关联商品。各箱件数不同时，不推定统一的每箱件数。',
-      es: 'Usa Caja individual para el contenido real de una caja numerada, o Lote para los totales conjuntos. Puedes mezclar grupos de una compra y elegir la marca física aparte, aunque su grupo no aporte piezas. Los códigos de grupo identifican las marcas; los códigos completos, las etiquetas de producto. Otras compras necesitan vínculos explícitos de productos de la misma cuenta, tienda y mes. Las cajas desiguales no implican una capacidad común.',
+      zh: '每个纸箱只属于一笔采购。同一采购的商品可以混装，唛头单独选择，即使唛头组没有商品装入此箱。符合条件的重复采购可以跨采购月份复用已核对货号，但数量、价格和实物纸箱始终分开。不等量纸箱或合计数不能证明每箱均分。',
+      es: 'Cada caja pertenece a una sola compra. Puedes mezclar sus productos y elegir una marca independiente, aunque su grupo no aporte piezas. Las compras repetidas elegibles pueden compartir códigos revisados entre meses, pero conservan cantidades, precios y cajas separados. Las cajas desiguales y los totales conjuntos no prueban un reparto uniforme.',
     },
-  'Confirm cartons independently': {
-    zh: '独立确认纸箱数量',
-    es: 'Confirmar las cajas por separado',
+  'Confirm loading in a container': {
+    zh: '在货柜中确认装柜',
+    es: 'Confirma la carga en un contenedor',
   },
-  'Different carton dimensions or weights need separate batches. Choose Per carton or Batch total for weight; partial batch-total weight stays unknown. Received and loaded counts are independent: blank is unknown and zero confirms none. They never change received product pieces.':
+  'In Packing, include whole orders in a named container and confirm Loaded or Left behind for physical cartons. Product quantities follow those decisions. Seal a revision after review; correct sealed facts through an amendment. Keep per-carton and combined measurements distinct; partial combined totals stay unknown. Receiving and supplier delivery remain separate.':
     {
-      zh: '纸箱尺寸或重量不同时分批记录。重量可选“每箱”或“整批”；整批重量不按部分箱数推算。实收与装柜箱数独立，留空表示未知，零表示确认没有，不会更改商品实收件数。',
-      es: 'Las cajas de distintas medidas o pesos necesitan lotes separados. Elige Por caja o Total del lote; el peso de una parte queda desconocido con un total de lote. Recibidas y cargadas son independientes: vacío es desconocido y cero confirma ninguna. No cambian las piezas recibidas.',
+      zh: '在“装箱”中，把整笔采购加入已命名货柜，再确认实物纸箱“已装柜”或“留下”。商品数量由这些决定自动得出。核对后封存修订，已封存事实通过修订更正。单箱与合计测量分开保留；部分箱数不能推算合计测量。实收与供应商发货仍分别记录。',
+      es: 'En Empaque, incluye pedidos completos en un contenedor con nombre y confirma las cajas Cargadas o Se quedaron. Las cantidades se derivan de esas decisiones. Sella una revisión después de comprobarla; corrige lo sellado mediante una enmienda. Distingue medidas por caja y conjuntas: una parte no determina el total combinado. La recepción y la entrega del proveedor siguen separadas.',
     },
   'Confirm the purchase date in the form. The filename identifies the store, not the date.':
     {

@@ -1,4 +1,8 @@
 import { test, expect } from './extension-fixture.mjs'
+import {
+  editOrderProduct,
+  closeOrderProduct,
+} from './smart-workspace-helpers.mjs'
 
 function snapshot(orderId) {
   return {
@@ -42,300 +46,389 @@ async function openTestDatabase(extension) {
     window.packingModel = await import('/src/packing-model.js')
     window.databaseName = `synthetic-packing-${crypto.randomUUID()}`
     window.library = await openDatabase({ name: window.databaseName })
+    window.saveSyntheticSource = async (source, target = window.library) => {
+      await target.saveSnapshot(source)
+      if (!source.purchasedAt) {
+        const record = await target.getOrder(source.orderId, {
+          accountId: source.accountId || 'local',
+        })
+        if (!record.purchaseDateResolution)
+          await target.resolvePurchaseDate({
+            accountId: source.accountId || 'local',
+            orderId: source.orderId,
+            date: '2026-10-01',
+            expectedObservedAt: source.observedAt,
+          })
+      }
+    }
+    // An explicit pre-SEAL archive exercises grandfathered mixed-month
+    // checkpoints. Ordinary v5 writes never perform a shipment-month move.
+    window.restoreLegacyMonthFixture = async (source) => {
+      await window.saveSyntheticSource(source, library)
+      const originalRecord = await library.getOrder(source.orderId, {
+        accountId: source.accountId || 'local',
+      })
+      const initial = packingModel.allocatePreparation(
+        { ...packingModel.createPreparation(source, '2026-10'), revision: 1 },
+        [],
+        [],
+        { snapshot: source }
+      ).preparation
+      initial.defaultPacking = packingModel.packingCheckpoint(initial)
+      const plan = packingModel.planSelectedPreparations(
+          [{ snapshot: source, preparation: initial, entryIds: ['2'] }],
+          '2026-12'
+        ),
+        allocation = packingModel.allocatePreparation(
+          { ...plan.preparations[0], revision: 2 },
+          [],
+          [],
+          { snapshot: source }
+        ),
+        moved = allocation.preparation
+      moved.previousPacking = packingModel.packingCheckpoint(initial, {
+        includeDefaults: true,
+      })
+      moved.defaultPacking = packingModel.packingCheckpoint(moved)
+      await library.restoreBackup({
+        format: '1688-order-library',
+        version: 4,
+        exportedAt: '2026-10-22T12:00:00.000Z',
+        orders: [originalRecord],
+        history: [],
+        images: [],
+        cartonBatches: [],
+        preparations: [moved],
+        allocations: allocation.allocations,
+        issuedCodes: allocation.issuedCodes,
+      })
+      return library.getPreparation(source.orderId)
+    }
   })
   return page
 }
 
-test('packing preview reserves nothing and multi-order month moves fail atomically on stale revisions', async ({
+test('purchase-code review reserves nothing and a stale multi-order assignment fails atomically before a fresh retry', async ({
   extension,
 }) => {
-  const page = await openTestDatabase(extension)
-  const result = await page.evaluate(
-    async (sources) => {
-      for (const source of sources) await library.saveSnapshot(source)
-      const originals = await library.savePreparations(
-        sources.map((source) =>
-          packingModel.createPreparation(source, '2026-10')
-        )
-      )
-      const before = await library.exportBackup()
-      const plan = packingModel.planSelectedPreparations(
-        sources.map((source, index) => ({
-          snapshot: source,
-          preparation: originals[index],
-          entryIds: index === 0 ? ['2'] : ['1', '2', '3'],
-        })),
-        '2026-12'
-      )
-      const preview = await library.previewPreparations(plan.preparations, {
-        capturePrevious: true,
-        resetDefaults: true,
+  const page = await openTestDatabase(extension),
+    sources = [snapshot('1001'), snapshot('1002')].map((source) => ({
+      ...source,
+      purchasedAt: '2026-10-01T07:30:00+08:00',
+    }))
+  const result = await page.evaluate(async (sources) => {
+    for (const source of sources) await library.saveSnapshot(source)
+    const refs = sources.map((source) => ({
+        accountId: 'local',
+        orderId: source.orderId,
+      })),
+      entryRefs = sources.flatMap((source) =>
+        source.items.map((item) => ({
+          accountId: 'local',
+          orderId: source.orderId,
+          entryId: item.entryId,
+        }))
+      ),
+      before = await library.exportBackup(),
+      review = await library.reviewPurchaseCodes({
+        orderRefs: refs,
+        entryRefs,
+      }),
+      afterPreview = await library.exportBackup(),
+      concurrent = await openOrderDatabase({ name: databaseName })
+    await concurrent.saveSnapshot({
+      ...sources[1],
+      observedAt: '2026-10-02T12:00:00.000Z',
+      status: 'Changed elsewhere',
+    })
+    const beforeFailure = await library.exportBackup()
+    let error
+    try {
+      await library.assignPurchaseCodes({
+        plan: review.plan,
+        expectedRevisions: review.expectedRevisions,
+        intentId: crypto.randomUUID(),
       })
-      const afterPreview = await library.exportBackup()
-      const concurrent = await openOrderDatabase({ name: databaseName })
-      const changed = structuredClone(originals[1])
-      changed.groups[0].category = 'Changed elsewhere'
-      await concurrent.savePreparation(changed)
-      const beforeFailure = await library.exportBackup()
-      let error
-      try {
-        await library.savePreparations(preview, {
-          capturePrevious: true,
-          resetDefaults: true,
-        })
-      } catch (failure) {
-        error = failure.message
-      }
-      const afterFailure = await library.exportBackup()
-      const current = await library.listPreparations()
-      const nextPlan = packingModel.planSelectedPreparations(
-        sources.map((source) => ({
-          snapshot: source,
-          preparation: current.find(
-            (entry) => entry.orderId === source.orderId
-          ),
-          entryIds:
-            source.orderId === sources[0].orderId ? ['2'] : ['1', '2', '3'],
-        })),
-        '2026-12'
-      )
-      const saved = await library.savePreparations(nextPlan.preparations, {
-        capturePrevious: true,
-        resetDefaults: true,
-      })
-      concurrent.close()
-      return {
-        before,
-        afterPreview,
-        preview,
-        beforeFailure,
-        afterFailure,
-        error,
-        saved,
-      }
-    },
-    [snapshot('1001'), snapshot('1002')]
-  )
-  for (const field of ['preparations', 'allocations', 'issuedCodes']) {
+    } catch (failure) {
+      error = failure.message
+    }
+    const afterFailure = await library.exportBackup(),
+      fresh = await library.reviewPurchaseCodes({ orderRefs: refs, entryRefs })
+    await library.assignPurchaseCodes({
+      plan: fresh.plan,
+      expectedRevisions: fresh.expectedRevisions,
+      intentId: crypto.randomUUID(),
+    })
+    const saved = await library.exportBackup()
+    concurrent.close()
+    return { before, afterPreview, beforeFailure, afterFailure, error, saved }
+  }, sources)
+  for (const field of [
+    'preparations',
+    'allocations',
+    'issuedCodes',
+    'orders',
+    'history',
+  ]) {
     expect(result.afterPreview[field]).toEqual(result.before[field])
     expect(result.afterFailure[field]).toEqual(result.beforeFailure[field])
   }
-  expect(result.preview.map((entry) => entry.revision)).toEqual([1, 1])
-  expect(result.error).toContain('changed in another tab')
-  expect(result.saved.map((entry) => entry.revision)).toEqual([2, 3])
-  expect(
-    result.saved[0].groups.map((entry) => [entry.month, entry.baseCode])
-  ).toEqual([
-    ['2026-10', 'CE26100101'],
-    ['2026-12', 'CE26120101'],
-    ['2026-10', 'CE26100102'],
-  ])
-  expect(result.saved[1].groups.map((entry) => entry.baseCode)).toEqual([
-    'CE26120102',
-    'CE26120103',
-  ])
-  expect(result.saved[0].previousPacking.groups[0].variants).toHaveLength(2)
-})
-
-test('mixed-month batches checkpoint only moved orders and preserve existing manual order, codes and history', async ({
-  extension,
-}) => {
-  const page = await openTestDatabase(extension)
-  const result = await page.evaluate(
-    async (sources) => {
-      for (const source of sources) await library.saveSnapshot(source)
-      const initial = await library.savePreparations(
-        sources.map((source) =>
-          packingModel.createPreparation(source, '2026-10')
+  expect(result.error).toMatch(/changed|stale|revision|review/i)
+  expect(result.saved.preparations).toHaveLength(2)
+  for (const preparation of result.saved.preparations) {
+    expect(preparation.revision).toBe(1)
+    expect(
+      preparation.groups.every((group) => group.baseCode.startsWith('CE2610'))
+    ).toBe(true)
+    expect(
+      preparation.groups
+        .flatMap((group) =>
+          group.variants.flatMap((variant) => variant.entryIds)
         )
-      )
-      const firstMove = packingModel.planSelectedPreparations(
-        [
-          {
-            snapshot: sources[1],
-            preparation: initial[1],
-            entryIds: ['1', '2', '3'],
-          },
-        ],
-        '2026-12'
-      )
-      const [movedEarlier] = await library.savePreparations(
-        firstMove.preparations,
-        { capturePrevious: true, resetDefaults: true }
-      )
-      const manual = packingModel.reorderPreparationGroups(
-        movedEarlier,
-        movedEarlier.groups.map((group) => group.id).reverse()
-      )
-      manual.groups[0].baseCode = 'CE26129998'
-      manual.groups[0].spanishName = 'NOMBRE MANUAL'
-      const unchanged = await library.savePreparation(manual)
-      const plan = packingModel.planSelectedPreparations(
-        [
-          {
-            snapshot: sources[0],
-            preparation: initial[0],
-            entryIds: ['1', '2', '3'],
-          },
-          {
-            snapshot: sources[1],
-            preparation: unchanged,
-            entryIds: ['1', '2', '3'],
-          },
-        ],
-        '2026-12'
-      )
-      const options = {
-        capturePrevious: [sources[0].orderId],
-        resetDefaults: [sources[0].orderId],
-      }
-      const before = await library.exportBackup()
-      const preview = await library.previewPreparations(
-        plan.preparations,
-        options
-      )
-      const afterPreview = await library.exportBackup()
-      const errors = []
-      for (const invalid of [
-        { capturePrevious: [sources[0].orderId, '9999'] },
-        { resetDefaults: [sources[0].orderId, sources[0].orderId] },
-        { capturePrevious: sources[0].orderId },
-        { resetDefaults: [1] },
-      ]) {
-        try {
-          await library.savePreparations(plan.preparations, invalid)
-        } catch (error) {
-          errors.push(error.message)
-        }
-      }
-      const afterInvalid = await library.exportBackup()
-      const saved = await library.savePreparations(preview, options)
-      return {
-        initial,
-        unchanged,
-        before,
-        preview,
-        afterPreview,
-        afterInvalid,
-        saved,
-        errors,
-      }
-    },
-    [snapshot('1001'), snapshot('1002')]
-  )
-  for (const field of ['preparations', 'allocations', 'issuedCodes']) {
-    expect(result.afterPreview[field]).toEqual(result.before[field])
-    expect(result.afterInvalid[field]).toEqual(result.before[field])
+        .sort()
+    ).toEqual(['1', '2', '3'])
   }
-  expect(result.errors).toEqual([
-    'capturePrevious contains an order outside this preparation batch',
-    'resetDefaults contains duplicate values',
-    'capturePrevious must be an array',
-    'resetDefaults must be a string with a value',
-  ])
-  const [moved, unchanged] = result.saved
-  expect(
-    moved.groups.every(
-      (group) =>
-        group.month === '2026-12' && group.baseCode.startsWith('CE2612')
+  for (const record of result.saved.orders) {
+    const source = sources.find(
+      (source) => source.orderId === record.snapshot.orderId
     )
-  ).toBe(true)
-  expect(moved.previousPacking.groups).toEqual(result.initial[0].groups)
-  expect(moved.previousPacking.defaults).toEqual(
-    result.initial[0].defaultPacking
-  )
-  expect(moved.defaultPacking.groups).toEqual(moved.groups)
-  for (const candidate of [result.preview[1], unchanged]) {
-    expect(candidate.groups).toEqual(result.unchanged.groups)
-    expect(candidate.defaultPacking).toEqual(result.unchanged.defaultPacking)
-    expect(candidate.previousPacking).toEqual(result.unchanged.previousPacking)
+    expect(record.snapshot.items).toEqual(source.items)
+    expect(record.snapshot.totals).toEqual(source.totals)
   }
-  expect(unchanged.groups[0].baseCode).toBe('CE26129998')
-  expect(unchanged.groups[0].spanishName).toBe('NOMBRE MANUAL')
-  expect(unchanged.groups[0].manualReordered).toBe(true)
-  expect(unchanged.revision).toBe(result.unchanged.revision + 1)
 })
 
-test('moving part of an order preserves its manual group and product order outside the selected rows', async ({
+test('literal China purchase months survive November container naming and zero-loaded sealing without consuming codes', async ({
   extension,
 }) => {
-  const page = await openTestDatabase(extension)
+  const page = await openTestDatabase(extension),
+    sources = [
+      { ...snapshot('1001'), purchasedAt: '2026-09-30T23:30:00+08:00' },
+      { ...snapshot('1002'), purchasedAt: '2026-10-01T07:30:00+08:00' },
+    ]
+  const result = await page.evaluate(async (sources) => {
+    for (const source of sources) await library.saveSnapshot(source)
+    const refs = sources.map((source) => ({
+        accountId: 'local',
+        orderId: source.orderId,
+      })),
+      review = await library.reviewPurchaseCodes({
+        orderRefs: refs,
+        entryRefs: sources.flatMap((source) =>
+          source.items.map((item) => ({
+            accountId: 'local',
+            orderId: source.orderId,
+            entryId: item.entryId,
+          }))
+        ),
+      })
+    await library.assignPurchaseCodes({
+      plan: review.plan,
+      expectedRevisions: review.expectedRevisions,
+      intentId: crypto.randomUUID(),
+    })
+    const preparations = await library.listPreparations(),
+      manual = structuredClone(preparations[0])
+    manual.groups[0].baseCode = manual.groups[0].baseCode.slice(0, 8) + '98'
+    manual.groups[0].spanishName = 'NOMBRE MANUAL'
+    await library.savePreparations([manual], {
+      expectedRevisions: [manual.revision],
+    })
+    const before = await library.exportBackup(),
+      created = await library.createContainer({
+        name: 'Synthetic November2026',
+        period: '2026-11',
+        intentId: crypto.randomUUID(),
+      }),
+      container = created.container || created
+    await library.includeContainerOrders({
+      id: container.id,
+      orderRefs: refs,
+      expectedRevision: container.revision,
+      intentId: crypto.randomUUID(),
+    })
+    const view = await library.getContainerView({ id: container.id }),
+      sealReview = await library.reviewContainerSeal({
+        id: container.id,
+        expectedRevision: view.container.revision,
+      })
+    if (!sealReview.ready) throw new Error(JSON.stringify(sealReview.issues))
+    await library.sealContainer({
+      id: container.id,
+      expectedRevision: view.container.revision,
+      reviewToken: sealReview.reviewToken,
+      intentId: crypto.randomUUID(),
+    })
+    return {
+      before,
+      after: await library.exportBackup(),
+      state: await library.getOperationalState({}),
+      manifest: await library.getContainerManifest({ id: container.id }),
+    }
+  }, sources)
+  const byOrder = new Map(
+    result.after.preparations.map((preparation) => [
+      preparation.orderId,
+      preparation,
+    ])
+  )
+  expect(
+    byOrder
+      .get('1001')
+      .groups.every((group) => group.baseCode.startsWith('CE2609'))
+  ).toBe(true)
+  expect(
+    byOrder
+      .get('1002')
+      .groups.every((group) => group.baseCode.startsWith('CE2610'))
+  ).toBe(true)
+  expect(result.after.preparations).toEqual(result.before.preparations)
+  expect(result.after.issuedCodes).toEqual(result.before.issuedCodes)
+  expect(result.after.orders.map((record) => record.snapshot)).toEqual(
+    result.before.orders.map((record) => record.snapshot)
+  )
+  expect(
+    result.state.locks.filter((lock) => lock.kind === 'code-consumption')
+  ).toEqual([])
+  expect(result.manifest.cartons).toEqual([])
+  expect(result.manifest.draft).toBe(false)
+})
+
+test('partial source code assignment preserves authored group/variant order and rejects an arbitrary packing-month code rewrite', async ({
+  extension,
+}) => {
+  const page = await openTestDatabase(extension),
+    source = { ...snapshot('1001'), purchasedAt: '2026-10-01T07:30:00+08:00' }
   const result = await page.evaluate(async (source) => {
     await library.saveSnapshot(source)
-    const initial = await library.savePreparation(
-      packingModel.createPreparation(source, '2026-10')
-    )
-    let manual = packingModel.reorderPreparationGroups(
-      initial,
-      initial.groups.map((group) => group.id).reverse()
-    )
-    manual = packingModel.reorderPreparationVariants(
-      manual,
-      manual.groups[1].id,
-      manual.groups[1].variants.map((variant) => variant.id).reverse()
-    )
-    manual.groups[0].baseCode = 'CE26109998'
+    const ref = { accountId: 'local', orderId: source.orderId },
+      assign = async (entries) => {
+        const review = await library.reviewPurchaseCodes({
+          orderRefs: [ref],
+          entryRefs: entries.map((entryId) => ({ ...ref, entryId })),
+        })
+        await library.assignPurchaseCodes({
+          plan: review.plan,
+          expectedRevisions: review.expectedRevisions,
+          intentId: crypto.randomUUID(),
+        })
+      }
+    await assign(['1', '3'])
+    let current = await library.getPreparation(source.orderId),
+      manual = packingModel.reorderPreparationGroups(
+        current,
+        current.groups.map((group) => group.id).reverse()
+      )
     manual.groups[0].spanishName = 'NOMBRE MANUAL'
-    const original = await library.savePreparation(manual)
-    const plan = packingModel.planSelectedPreparations(
-      [{ snapshot: source, preparation: original, entryIds: ['1'] }],
-      '2026-12'
-    )
-    const options = {
-      capturePrevious: [source.orderId],
-      resetDefaults: [source.orderId],
-    }
-    const before = await library.exportBackup()
-    const [preview] = await library.previewPreparations(
-      plan.preparations,
-      options
-    )
-    const afterPreview = await library.exportBackup()
-    const [saved] = await library.savePreparations([preview], options)
-    const after = await library.exportBackup()
-    return { original, plan, preview, saved, before, afterPreview, after }
-  }, snapshot('1001'))
-  for (const field of ['preparations', 'allocations', 'issuedCodes'])
-    expect(result.afterPreview[field]).toEqual(result.before[field])
-  const [bowl, cup] = result.original.groups
-  for (const candidate of [result.preview, result.saved]) {
-    expect(candidate.groups.map((group) => group.id)).toEqual(
-      result.plan.preparations[0].groups.map((group) => group.id)
-    )
-    expect(candidate.groups[0]).toEqual({ ...bowl, month: '2026-10' })
-    expect(candidate.groups[1]).toEqual({
-      ...cup,
-      month: '2026-10',
-      variants: cup.variants.filter((variant) => variant.entryIds[0] === '2'),
+    manual.groups[0].baseCode = manual.groups[0].baseCode.slice(0, 8) + '98'
+    const original = await library.savePreparation(manual),
+      before = await library.exportBackup(),
+      review = await library.reviewPurchaseCodes({
+        orderRefs: [ref],
+        entryRefs: [{ ...ref, entryId: '2' }],
+      }),
+      afterPreview = await library.exportBackup()
+    await library.assignPurchaseCodes({
+      plan: review.plan,
+      expectedRevisions: review.expectedRevisions,
+      intentId: crypto.randomUUID(),
     })
-    expect(candidate.groups[0].manualReordered).toBe(true)
-    expect(candidate.groups[1].variants[0].manualReordered).toBe(true)
-    expect(candidate.groups[2].baseCode).toBe('CE26120101')
-    expect(candidate.groups[2].variants[0].entryIds).toEqual(['1'])
-    expect(candidate.previousPacking.groups).toEqual(result.original.groups)
-    expect(candidate.defaultPacking.groups.map((group) => group.id)).toEqual([
-      candidate.groups[2].id,
-      cup.id,
-      bowl.id,
-    ])
-    expect(
-      candidate.defaultPacking.groups.some((group) => group.manualReordered)
-    ).toBe(false)
+    current = await library.getPreparation(source.orderId)
+    const beforeRefusal = await library.exportBackup(),
+      illegal = structuredClone(current)
+    illegal.month = '2026-12'
+    for (const group of illegal.groups) {
+      group.month = '2026-12'
+      group.baseCode = group.baseCode.replace(/^CE2610/, 'CE2612')
+    }
+    let error
+    try {
+      await library.savePreparation(illegal)
+    } catch (failure) {
+      error = failure.message
+    }
+    return {
+      original,
+      before,
+      afterPreview,
+      current,
+      beforeRefusal,
+      afterRefusal: await library.exportBackup(),
+      error,
+    }
+  }, source)
+  for (const field of [
+    'preparations',
+    'allocations',
+    'issuedCodes',
+    'orders',
+  ]) {
+    expect(result.afterPreview[field]).toEqual(result.before[field])
+    expect(result.afterRefusal[field]).toEqual(result.beforeRefusal[field])
   }
-  expect(result.after.orders).toEqual(result.before.orders)
+  expect(result.error).toMatch(/purchase|calendar|month/i)
+  const originalIds = result.original.groups.map((group) => group.id)
   expect(
-    result.after.issuedCodes.some((entry) => entry.code === 'CE26100101A')
-  ).toBe(false)
+    result.current.groups
+      .filter((group) => originalIds.includes(group.id))
+      .map((group) => group.id)
+  ).toEqual(originalIds)
+  for (const group of result.original.groups) {
+    const current = result.current.groups.find((value) => value.id === group.id)
+    expect(current.baseCode).toBe(group.baseCode)
+    expect(current.spanishName).toBe(group.spanishName)
+    expect(
+      current.variants.filter((variant) =>
+        group.variants.some((old) => old.id === variant.id)
+      )
+    ).toEqual(group.variants)
+  }
+  expect(result.afterRefusal.orders[0].snapshot).toEqual(source)
+})
+
+test('1688 snapshots reject non-China transport offsets without replacing valid literal purchase dates or source money', async ({
+  extension,
+}) => {
+  const page = await openTestDatabase(extension),
+    source = { ...snapshot('1001'), purchasedAt: '2026-09-30T23:30:00+08:00' }
+  const result = await page.evaluate(async (source) => {
+    await library.saveSnapshot(source)
+    const before = await library.exportBackup(),
+      errors = []
+    for (const purchasedAt of [
+      '2026-09-30T23:30:00Z',
+      '2026-09-30T23:30:00-05:00',
+    ]) {
+      try {
+        await library.saveSnapshot({
+          ...source,
+          purchasedAt,
+          observedAt: '2026-10-02T12:00:00.000Z',
+        })
+      } catch (error) {
+        errors.push(error.message)
+      }
+    }
+    return { before, after: await library.exportBackup(), errors }
+  }, source)
+  expect(result.errors).toHaveLength(2)
   expect(
-    result.after.issuedCodes.some((entry) => entry.code === 'CE26100101B')
+    result.errors.every((error) =>
+      /purchasedAt|purchase timestamp|China|08:00/i.test(error)
+    )
   ).toBe(true)
-  expect(
-    result.after.issuedCodes.some((entry) => entry.code === 'CE26120101')
-  ).toBe(true)
-  for (const reserved of result.before.issuedCodes.filter(
-    (entry) => entry.groupId === bowl.id
-  ))
-    expect(result.after.issuedCodes).toContainEqual(reserved)
+  for (const field of [
+    'orders',
+    'history',
+    'preparations',
+    'issuedCodes',
+    'allocations',
+  ])
+    expect(result.after[field]).toEqual(result.before[field])
+  expect(result.after.orders[0].snapshot.purchasedAt).toBe(
+    '2026-09-30T23:30:00+08:00'
+  )
+  expect(result.after.orders[0].snapshot.items).toEqual(source.items)
+  expect(result.after.orders[0].snapshot.totals).toEqual(source.totals)
 })
 
 test('released codes can move to another product while current conflicts reject atomically and order deletion releases ownership', async ({
@@ -343,7 +436,7 @@ test('released codes can move to another product while current conflicts reject 
 }) => {
   const page = await openTestDatabase(extension)
   const result = await page.evaluate(async (source) => {
-    await library.saveSnapshot(source)
+    await saveSyntheticSource(source)
     const original = await library.savePreparation(
       packingModel.createPreparation(source, '2026-10')
     )
@@ -408,7 +501,7 @@ test('legacy backups discard retired reservations after merge and split while re
   const page = await openTestDatabase(extension)
   const result = await page.evaluate(async (source) => {
     const { regroupSelection } = await import('/src/packing-grouping.js')
-    await library.saveSnapshot(source)
+    await saveSyntheticSource(source)
     const first = await library.savePreparation(
       packingModel.createPreparation(source, '2026-10')
     )
@@ -506,18 +599,7 @@ test('checkpoint restores survive backup round trips without reserving retired c
 }) => {
   const page = await openTestDatabase(extension)
   const result = await page.evaluate(async (source) => {
-    await library.saveSnapshot(source)
-    const first = await library.savePreparation(
-      packingModel.createPreparation(source, '2026-10')
-    )
-    const plan = packingModel.planSelectedPreparations(
-      [{ snapshot: source, preparation: first, entryIds: ['2'] }],
-      '2026-12'
-    )
-    const [moved] = await library.savePreparations(plan.preparations, {
-      capturePrevious: true,
-      resetDefaults: true,
-    })
+    const moved = await restoreLegacyMonthFixture(source)
     let edited = packingModel.reorderPreparationGroups(
       moved,
       moved.groups.map((entry) => entry.id).reverse()
@@ -540,9 +622,10 @@ test('checkpoint restores survive backup round trips without reserving retired c
     const otherSource = {
       ...source,
       orderId: '2002',
+      purchasedAt: '2026-12-01T10:00:00+08:00',
       sourceUrl: source.sourceUrl.replace(source.orderId, '2002'),
     }
-    await restoredLibrary.saveSnapshot(otherSource)
+    await saveSyntheticSource(otherSource, restoredLibrary)
     const other = packingModel.createPreparation(otherSource, '2026-12')
     other.groups[0].baseCode = moved.groups.find(
       (group) => group.month === '2026-12'
@@ -612,26 +695,11 @@ test('packing-only backups keep complete included preparations and only their cu
   }))
   const result = await page.evaluate(
     async (sources) => {
-      for (const source of sources) await library.saveSnapshot(source)
-      const preparations = await library.savePreparations(
-        sources.map((source) =>
-          packingModel.createPreparation(source, '2026-10')
-        )
+      await restoreLegacyMonthFixture(sources[0])
+      await saveSyntheticSource(sources[1])
+      await library.savePreparation(
+        packingModel.createPreparation(sources[1], '2026-10')
       )
-      const plan = packingModel.planSelectedPreparations(
-        [
-          {
-            snapshot: sources[0],
-            preparation: preparations[0],
-            entryIds: ['2'],
-          },
-        ],
-        '2026-12'
-      )
-      await library.savePreparations(plan.preparations, {
-        capturePrevious: true,
-        resetDefaults: true,
-      })
       const dataUrl =
         'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO2WZ4kAAAAASUVORK5CYII='
       for (const source of sources)
@@ -687,7 +755,7 @@ test('scoped packing restore preserves saved automatic label values and arrangem
       { match: 'Bowl', spanishName: 'CUENCO GUARDADO', category: '保存碗' },
     ]
     await library.savePackingPreferences({ settings: {}, vocabulary })
-    await library.saveSnapshot(source)
+    await saveSyntheticSource(source)
     const first = await library.savePreparation(
       packingModel.createPreparation(source, '2026-10', vocabulary)
     )
@@ -790,7 +858,8 @@ test('scoped packing restore preserves saved automatic label values and arrangem
     '全局',
     '全局',
   ])
-  // Exercise the packaged workspace startup and ordinary Prepare entry path.
+  // Restored names remain visible in the contextual Orders editor after startup
+  // and reload, without reopening the retired preparation screen.
   const uiBackup = structuredClone(result.scoped)
   for (const { snapshot } of uiBackup.orders)
     for (const item of snapshot.items) item.thumbnail = ''
@@ -807,15 +876,24 @@ test('scoped packing restore preserves saved automatic label values and arrangem
   await workspace.goto(`${extension.extensionBaseUrl}/library.html`)
   for (let opening = 0; opening < 2; opening++) {
     if (opening) await workspace.reload()
-    await workspace.locator('#prepare-orders').click()
-    await expect(workspace.locator('#packing-view')).toBeVisible()
-    await expect
-      .poll(() =>
-        workspace
-          .locator('.group-name-editor')
-          .evaluateAll((inputs) => inputs.map((input) => input.value))
+    const names = []
+    for (const group of result.expected.groups) {
+      const editor = await editOrderProduct(workspace, {
+        accountId: result.expected.accountId,
+        orderId: result.expected.orderId,
+        entryId: group.variants[0].entryIds[0],
+      })
+      names.push(
+        await editor
+          .locator('[data-authoring-field="spanish-name"]')
+          .inputValue()
       )
-      .toEqual(result.expected.groups.map((group) => group.spanishName))
+      await closeOrderProduct(editor)
+    }
+    expect(names).toEqual(
+      result.expected.groups.map((group) => group.spanishName)
+    )
+    await expect(workspace.locator('#packing-view')).toBeHidden()
     const backup = await extension.inspector.evaluate(() =>
       chrome.runtime.sendMessage({ type: 'BACKUP_EXPORT' })
     )
@@ -831,7 +909,7 @@ test('new memberships extend defaults without reserving old barcodes until those
 }) => {
   const page = await openTestDatabase(extension)
   const result = await page.evaluate(async (source) => {
-    await library.saveSnapshot(source)
+    await saveSyntheticSource(source)
     const first = await library.savePreparation(
       packingModel.createPreparation(
         { ...source, items: [source.items[0]] },
@@ -891,7 +969,7 @@ test('v2 databases migrate to current ownership without changing source records,
 }) => {
   const page = await openTestDatabase(extension)
   const result = await page.evaluate(async (source) => {
-    await library.saveSnapshot(source)
+    await saveSyntheticSource(source)
     const original = await library.savePreparation(
       packingModel.createPreparation(source, '2026-10')
     )
@@ -1031,8 +1109,19 @@ test('v2 databases migrate to current ownership without changing source records,
     }
   }, snapshot('1001'))
   expect(result.before.history).toHaveLength(1)
-  expect(result.after.version).toBe(4)
+  expect(result.after.version).toBe(5)
   expect(result.after.cartonBatches).toEqual([])
+  for (const field of [
+    'containers',
+    'packingReports',
+    'reportSources',
+    'orderCartonDrafts',
+    'shipmentLocks',
+    'operationIntents',
+  ]) {
+    expect(result.after[field]).toEqual([])
+    expect(result.afterReopen[field]).toEqual([])
+  }
   for (const field of [
     'orders',
     'history',

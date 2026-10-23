@@ -6,7 +6,468 @@ import {
   PRINT_KEYS,
   RECENT_LIMIT,
   RECENT_PRODUCT_LIMIT,
+  refKey,
+  assertContainerPrintRef,
+  makeOrderCartonPrintRef,
+  assertOrderCartonPrintRef,
+  orderCartonPrintIdentity,
 } from '../src/print-store.js'
+
+function physicalContext() {
+  return {
+    record: {
+      snapshot: {
+        accountId: 'local',
+        orderId: '101',
+        observedAt: '2026-10-23T04:00:00Z',
+      },
+    },
+    preparation: {
+      accountId: 'local',
+      orderId: '101',
+      revision: 3,
+      groups: [
+        {
+          id: 'surviving',
+          baseCode: 'CE26101001',
+          category: '当前产品',
+          spanishName: 'ACTUAL',
+        },
+      ],
+    },
+    batches: [
+      {
+        id: 'batch-a',
+        accountId: 'local',
+        orderId: '101',
+        revision: 4,
+        count: 2,
+        mark: { orderId: '101', groupId: 'surviving' },
+        physicalMark: {
+          code: 'CE26101002',
+          productCode: 'CE26101001',
+          artwork: { category: '原纸箱标记', spanishName: 'ORIGINAL' },
+        },
+      },
+    ],
+    revisions: {
+      source: `complete-source-and-original-photo-signature:${'synthetic-photo'.repeat(1000)}`,
+      observedAt: '2026-10-23T04:00:00Z',
+      preparation: 3,
+      cartons: { 'batch-a': 4 },
+      reports: {},
+    },
+  }
+}
+
+test('typed Orders carton marks retain compact complete guards and recorded/current roles without an old product group', async () => {
+  const context = physicalContext(),
+    original = structuredClone(context)
+  const ref = await makeOrderCartonPrintRef(context, {
+    batchId: 'batch-a',
+    role: 'recorded',
+    index: 1,
+  })
+  assert.equal(ref.scope, 'order-carton-mark')
+  assert.equal(ref.code, 'CE26101002')
+  assert.equal(ref.currentProductCode, 'CE26101001')
+  assert.equal(ref.batchRevision, 4)
+  assert.equal(ref.preparationRevision, 3)
+  assert.equal(Object.hasOwn(ref, 'groupId'), false)
+  assert.match(ref.sourceGuard, /^[0-9a-f]{64}$/)
+  assert.ok(JSON.stringify(ref).length < 600)
+  assert.equal(JSON.stringify(ref).includes('synthetic-photo'), false)
+  const storage = memoryStorage(),
+    store = createPrintStore(storage)
+  const job = store.recordJob({
+    kind: 'marks',
+    products: [{ code: ref.code, quantity: 6, ref }],
+  })
+  assert.deepEqual(
+    createPrintStore(storage).recentJobs()[0].products[0].ref,
+    ref
+  )
+  assert.deepEqual(orderCartonPrintIdentity(ref), ref)
+  assert.equal(
+    await assertOrderCartonPrintRef(JSON.parse(JSON.stringify(ref)), context),
+    true
+  )
+  const same = { key: 'actual-mark', code: ref.code, ref }
+  assert.equal(restoreJob(job, [same]).items.length, 1)
+  const current = await makeOrderCartonPrintRef(context, {
+    batchId: 'batch-a',
+    role: 'current-product',
+    index: 1,
+  })
+  assert.equal(current.code, 'CE26101001')
+  assert.notEqual(refKey(ref), refKey(current))
+  assert.equal(restoreJob(job, [{ ...same, ref: current }]).missing.length, 1)
+  assert.notEqual(
+    refKey(ref),
+    refKey(
+      await makeOrderCartonPrintRef(context, { batchId: 'batch-a', index: 0 })
+    )
+  )
+  assert.notEqual(refKey(ref), refKey({ orderId: '101', groupId: 'surviving' }))
+  assert.deepEqual(context, original)
+})
+
+test('physical mark regeneration rejects changed source, batch, preparation, artwork, role, epoch and missing cartons', async () => {
+  const context = physicalContext()
+  context.amendmentContext = { containerId: 'container', epoch: 'first' }
+  context.revisions.amendmentContext = structuredClone(context.amendmentContext)
+  const ref = await makeOrderCartonPrintRef(context, { batchId: 'batch-a' })
+  assert.equal(ref.contextContainerId, 'container')
+  assert.equal(ref.amendmentEpoch, 'first')
+  const variants = []
+  for (const change of [
+    (value) => {
+      value.revisions.source += ':changed'
+    },
+    (value) => {
+      value.batches[0].revision++
+      value.revisions.cartons['batch-a']++
+    },
+    (value) => {
+      value.preparation.revision++
+      value.revisions.preparation++
+    },
+    (value) => {
+      value.record.snapshot.observedAt = value.revisions.observedAt =
+        '2026-10-23T05:00:00Z'
+    },
+    (value) => {
+      value.batches[0].physicalMark.code = 'CE26101003'
+    },
+    (value) => {
+      value.batches[0].physicalMark.artwork.category =
+        'Different recorded artwork'
+    },
+    (value) => {
+      value.amendmentContext.epoch = value.revisions.amendmentContext.epoch =
+        'second'
+    },
+    (value) => {
+      delete value.amendmentContext
+      delete value.revisions.amendmentContext
+    },
+    (value) => {
+      value.batches = []
+    },
+    (value) => {
+      value.batches[0].deletedAt = '2026-10-23T05:00:00Z'
+    },
+    (value) => {
+      value.record.snapshot.accountId = 'other'
+    },
+  ]) {
+    const next = structuredClone(context)
+    change(next)
+    variants.push(next)
+  }
+  for (const next of variants)
+    await assert.rejects(
+      assertOrderCartonPrintRef(ref, next),
+      /Review the current order/
+    )
+  await assert.rejects(
+    assertOrderCartonPrintRef({ ...ref, markRole: 'current-product' }, context),
+    /Review the current order/
+  )
+  await assert.rejects(
+    makeOrderCartonPrintRef(context, { batchId: 'batch-a', index: 2 }),
+    /Review the current order/
+  )
+})
+
+test('typed Orders marks accept proven single-order legacy cartons and reject mixed or missing ownership', async () => {
+  for (const legacyReview of [undefined, { kind: 'legacy-loading' }]) {
+    const context = physicalContext(),
+      batch = context.batches[0]
+    delete batch.orderId
+    batch.contents = [{ orderId: '101', entryId: '201', quantity: '4' }]
+    batch.groups = [{ orderId: '101', groupId: 'surviving' }]
+    if (legacyReview) batch.legacyReview = legacyReview
+    const original = structuredClone(context)
+    for (const role of ['recorded', 'current-product']) {
+      const ref = await makeOrderCartonPrintRef(context, {
+        batchId: batch.id,
+        role,
+      })
+      assert.equal(ref.orderId, '101')
+      assert.equal(ref.code, role === 'recorded' ? 'CE26101002' : 'CE26101001')
+      assert.equal(await assertOrderCartonPrintRef(ref, context), true)
+      for (const change of [
+        (value) =>
+          value.batches[0].contents.push({
+            orderId: '102',
+            entryId: '202',
+            quantity: '1',
+          }),
+        (value) =>
+          value.batches[0].groups.push({ orderId: '102', groupId: 'foreign' }),
+        (value) => {
+          value.batches[0].orderId = '102'
+        },
+        (value) => {
+          value.batches[0].accountId = 'other'
+        },
+        (value) => {
+          value.revisions.source += ':changed'
+        },
+        (value) => {
+          delete value.batches[0].mark
+          value.batches[0].contents = []
+          value.batches[0].groups = []
+        },
+      ]) {
+        const changed = structuredClone(context)
+        change(changed)
+        await assert.rejects(
+          assertOrderCartonPrintRef(ref, changed),
+          /Review the current order/
+        )
+      }
+    }
+    assert.deepEqual(context, original)
+  }
+})
+
+test('superseded physical marks refuse old-code regeneration while fresh marks and the owning shipment remain printable', async () => {
+  const context = physicalContext(),
+    recorded = await makeOrderCartonPrintRef(context, { batchId: 'batch-a' }),
+    supersession = {
+      code: 'CE26101002',
+      at: '2026-10-23T06:00:00Z',
+      reason: 'The code is permanently owned by another sealed purchase',
+      conflicts: [
+        {
+          accountId: 'local',
+          orderId: '102',
+          groupId: 'foreign',
+          kind: 'code-consumption',
+          containerId: 'sealed-owner-container',
+          revisionId: 'sealed-owner-revision',
+        },
+      ],
+      currentProducts: [
+        {
+          mark: { orderId: '101', groupId: 'surviving' },
+          productCode: 'CE26101001',
+        },
+      ],
+    }
+  context.batches[0].physicalMarkRelabelOnly = true
+  context.batches[0].physicalMarkSupersessions = [supersession]
+  context.batches[0].physicalMark.supersededAliases = [
+    structuredClone(supersession),
+  ]
+  const original = structuredClone(context)
+  for (const value of [
+    context,
+    (() => {
+      const persisted = structuredClone(context)
+      delete persisted.batches[0].physicalMarkRelabelOnly
+      delete persisted.batches[0].physicalMarkSupersessions
+      return persisted
+    })(),
+  ]) {
+    for (const request of [
+      () =>
+        makeOrderCartonPrintRef(value, {
+          batchId: 'batch-a',
+          role: 'recorded',
+        }),
+      () => assertOrderCartonPrintRef(recorded, value),
+    ])
+      await assert.rejects(request(), (error) => {
+        assert.equal(error.code, 'PHYSICAL_MARK_RELABEL_REQUIRED')
+        assert.match(error.message, /CE26101002/)
+        assert.match(error.message, /sealed-owner-container/)
+        assert.match(error.message, /sealed-owner-revision/)
+        return true
+      })
+    const fresh = await makeOrderCartonPrintRef(value, {
+      batchId: 'batch-a',
+      role: 'current-product',
+    })
+    assert.equal(fresh.code, 'CE26101001')
+    assert.equal(await assertOrderCartonPrintRef(fresh, value), true)
+  }
+  const owner = physicalContext()
+  owner.record.snapshot.orderId =
+    owner.preparation.orderId =
+    owner.batches[0].orderId =
+    owner.batches[0].mark.orderId =
+      '102'
+  owner.batches[0].physicalMark.code = 'CE26101002'
+  const ownerRef = await makeOrderCartonPrintRef(owner, { batchId: 'batch-a' })
+  assert.equal(ownerRef.code, 'CE26101002')
+  assert.equal(await assertOrderCartonPrintRef(ownerRef, owner), true)
+  assert.equal(
+    assertContainerPrintRef(
+      {
+        orderId: '102',
+        groupId: 'foreign',
+        containerId: 'sealed-owner-container',
+        revisionId: 'sealed-owner-revision',
+      },
+      {
+        container: { id: 'sealed-owner-container', accountId: 'local' },
+        status: 'sealed',
+        draft: false,
+        revisionId: 'sealed-owner-revision',
+      }
+    ),
+    true
+  )
+  assert.deepEqual(context, original)
+})
+
+test('recorded printing follows current conflict and historical-review state without reviving a past restriction', async () => {
+  const context = physicalContext(),
+    entry = {
+      code: 'CE26101002',
+      active: true,
+      reviewRequired: false,
+      conflicts: [
+        {
+          accountId: 'local',
+          orderId: '102',
+          groupId: 'foreign',
+          kind: 'current-primary',
+        },
+      ],
+    }
+  context.batches[0].physicalMark.supersededAliases = [entry]
+  context.batches[0].physicalMarkSupersessions = [structuredClone(entry)]
+  const original = structuredClone(context)
+  const free = structuredClone(context)
+  free.batches[0].physicalMarkRelabelOnly = false
+  free.batches[0].physicalMarkHistoricalReviewRequired = false
+  free.batches[0].physicalMark.supersededAliases[0].active = false
+  free.batches[0].physicalMarkSupersessions[0].active = false
+  free.batches[0].revision = free.revisions.cartons['batch-a'] = 5
+  const ref = await makeOrderCartonPrintRef(free, { batchId: 'batch-a' })
+  assert.equal(ref.code, 'CE26101002')
+  assert.equal(await assertOrderCartonPrintRef(ref, free), true)
+  assert.equal(free.batches[0].physicalMark.supersededAliases.length, 1)
+  await assert.rejects(
+    makeOrderCartonPrintRef(context, { batchId: 'batch-a' }),
+    (error) => {
+      assert.equal(error.code, 'PHYSICAL_MARK_RELABEL_REQUIRED')
+      assert.match(error.message, /currently reserved by purchase 102/)
+      assert.match(error.message, /clears when that purchase releases/)
+      return true
+    }
+  )
+  for (const exposeFlag of [true, false]) {
+    const held = structuredClone(free)
+    if (exposeFlag) held.batches[0].physicalMarkHistoricalReviewRequired = true
+    held.batches[0].physicalMark.supersededAliases[0].reviewRequired = true
+    held.batches[0].physicalMarkSupersessions[0].reviewRequired = true
+    await assert.rejects(
+      makeOrderCartonPrintRef(held, { batchId: 'batch-a' }),
+      (error) => {
+        assert.equal(error.code, 'PHYSICAL_MARK_RELABEL_REQUIRED')
+        assert.match(error.message, /needs historical ownership review/)
+        assert.doesNotMatch(
+          error.message,
+          /currently reserved|belongs to purchase/
+        )
+        assert.equal(error.detail.historicalReviewRequired, true)
+        return true
+      }
+    )
+    const fresh = await makeOrderCartonPrintRef(held, {
+      batchId: 'batch-a',
+      role: 'current-product',
+    })
+    assert.equal(fresh.code, 'CE26101001')
+  }
+  assert.deepEqual(context, original)
+})
+
+test('malformed physical refs cannot fall back to legacy Orders or container identity', async () => {
+  const ref = await makeOrderCartonPrintRef(physicalContext(), {
+    batchId: 'batch-a',
+  })
+  for (const change of [
+    { scope: 'orders' },
+    { batchRevision: 0 },
+    { preparationRevision: -1 },
+    { sourceGuard: 'not-a-guard' },
+    { index: -1 },
+    { index: 0.5 },
+    { markRole: 'guess' },
+    { code: 'not-a-code' },
+    { contextContainerId: 'x' },
+    { amendmentEpoch: 'missing-context' },
+    { containerId: 'container', revisionId: 'r1' },
+  ]) {
+    const candidate = {
+      ...ref,
+      groupId: 'legacy-does-not-rescue-it',
+      ...change,
+    }
+    assert.equal(
+      createPrintStore(memoryStorage()).recordJob({
+        kind: 'marks',
+        products: [{ code: ref.code, quantity: 1, ref: candidate }],
+      }),
+      null
+    )
+    assert.equal(orderCartonPrintIdentity(candidate), null)
+  }
+})
+
+test('a proposed surviving mark prints an explicit existing product owner without rewriting the carton context', async () => {
+  const context = physicalContext()
+  context.preparation.groups.push({
+    id: 'old-owner',
+    baseCode: 'CE26101002',
+    category: '原标记',
+  })
+  context.batches[0].mark.groupId = 'old-owner'
+  const before = structuredClone(context)
+  const ref = await makeOrderCartonPrintRef(context, {
+    batchId: 'batch-a',
+    role: 'current-product',
+    productGroupId: 'surviving',
+  })
+  assert.equal(ref.code, 'CE26101001')
+  assert.equal(ref.productGroupId, 'surviving')
+  assert.equal(context.batches[0].mark.groupId, 'old-owner')
+  assert.equal(await assertOrderCartonPrintRef(ref, context), true)
+  assert.equal(
+    createPrintStore(memoryStorage()).recordJob({
+      kind: 'marks',
+      products: [{ code: ref.code, quantity: 1, ref }],
+    }).products[0].ref.productGroupId,
+    'surviving'
+  )
+  await assert.rejects(
+    makeOrderCartonPrintRef(context, {
+      batchId: 'batch-a',
+      role: 'current-product',
+      productGroupId: 'not-yet-issued',
+    }),
+    /Review the current order/
+  )
+  await assert.rejects(
+    makeOrderCartonPrintRef(context, {
+      batchId: 'batch-a',
+      role: 'recorded',
+      productGroupId: 'surviving',
+    }),
+    /Review the current order/
+  )
+  await assert.rejects(
+    assertOrderCartonPrintRef({ ...ref, productGroupId: 'old-owner' }, context),
+    /Review the current order/
+  )
+  assert.deepEqual(context, before)
+})
 
 function memoryStorage() {
   const values = new Map()
@@ -16,6 +477,197 @@ function memoryStorage() {
     values,
   }
 }
+
+test('historical print jobs retain account/container/revision/carton identity and never resolve to another revision or live data', () => {
+  const storage = memoryStorage(),
+    store = createPrintStore(storage)
+  const ref = {
+    accountId: 'local',
+    orderId: '101',
+    groupId: 'g',
+    variantId: null,
+    containerId: 'container-a',
+    revisionId: 'container-a/r1',
+    cartonId: 'unit:a:1',
+  }
+  const job = store.recordJob({
+    kind: 'marks',
+    products: [{ code: 'CE26090101', quantity: 1, refs: [ref] }],
+  })
+  assert.deepEqual(createPrintStore(storage).recentJobs()[0].products[0].refs, [
+    ref,
+  ])
+  const exact = { key: 'physical-one', code: 'CE26090101', refs: [ref] }
+  assert.equal(restoreJob(job, [exact]).items.length, 1)
+  assert.equal(
+    restoreJob(job, [
+      { ...exact, refs: [{ ...ref, revisionId: 'container-a/r2' }] },
+    ]).missing.length,
+    1
+  )
+  assert.equal(
+    restoreJob(job, [
+      { ...exact, refs: [{ orderId: '101', groupId: 'g', variantId: null }] },
+    ]).missing.length,
+    1
+  )
+  assert.notEqual(refKey(ref), refKey({ ...ref, accountId: 'another-account' }))
+  const next = { ...ref, cartonId: 'unit:a:2' }
+  assert.equal(
+    store.recordJob({
+      kind: 'marks',
+      products: [{ code: 'CE26090101', quantity: 2, refs: [ref, next] }],
+    }).products[0].refs.length,
+    2
+  )
+  const productRef = { ...ref, cartonId: undefined, entryIds: ['line-a'] }
+  delete productRef.cartonId
+  assert.equal(
+    store.recordJob({
+      kind: 'labels',
+      products: [
+        {
+          code: 'CE26090101',
+          quantity: 2,
+          refs: [productRef, { ...productRef, entryIds: ['line-b'] }],
+        },
+      ],
+    }).products[0].refs.length,
+    2
+  )
+})
+
+test('draft print refs survive JSON storage, retain their explicit null revision and require the exact draft to regenerate', () => {
+  const storage = memoryStorage(),
+    store = createPrintStore(storage),
+    ref = {
+      accountId: 'local',
+      orderId: '101',
+      groupId: 'g',
+      variantId: null,
+      containerId: 'draft-container',
+      revisionId: null,
+      draft: true,
+      draftRevision: 3,
+    },
+    job = store.recordJob({
+      kind: 'labels',
+      products: [{ code: 'CE26090101', quantity: 10, refs: [ref] }],
+    }),
+    manifest = {
+      container: { id: 'draft-container', accountId: 'local' },
+      draft: true,
+      status: 'draft',
+      revision: 3,
+      revisionId: null,
+    }
+  assert.ok(job)
+  assert.deepEqual(createPrintStore(storage).recentJobs()[0].products[0].refs, [
+    ref,
+  ])
+  const json = JSON.parse(JSON.stringify(job))
+  assert.equal(
+    assertContainerPrintRef(json.products[0].refs[0], manifest),
+    true
+  )
+  for (const candidate of [
+    null,
+    { ...manifest, revision: 4 },
+    {
+      ...manifest,
+      draft: false,
+      status: 'sealed',
+      revisionId: 'draft-container/r1',
+    },
+    { ...manifest, container: { id: 'another' } },
+    { ...manifest, container: { ...manifest.container, accountId: 'another' } },
+  ]) {
+    assert.throws(
+      () => assertContainerPrintRef(ref, candidate),
+      /Review the current container/
+    )
+  }
+  const exact = { key: 'captured', code: 'CE26090101', refs: [ref] }
+  assert.equal(restoreJob(json, [exact]).items.length, 1)
+  assert.equal(
+    restoreJob(json, [{ ...exact, refs: [{ ...ref, draftRevision: 4 }] }])
+      .missing.length,
+    1
+  )
+  assert.notEqual(
+    refKey(ref),
+    refKey({
+      ...ref,
+      draft: undefined,
+      draftRevision: undefined,
+      revisionId: 'draft-container/r1',
+    })
+  )
+  for (const draftRevision of [
+    undefined,
+    0,
+    -1,
+    '3',
+    1.5,
+    Number.MAX_SAFE_INTEGER + 1,
+  ])
+    assert.equal(
+      store.recordJob({
+        kind: 'labels',
+        products: [
+          { code: 'CE26090101', quantity: 1, ref: { ...ref, draftRevision } },
+        ],
+      }),
+      null
+    )
+  const sealed = { ...ref, revisionId: 'draft-container/r1' }
+  delete sealed.draft
+  delete sealed.draftRevision
+  assert.equal(
+    assertContainerPrintRef(sealed, {
+      ...manifest,
+      draft: false,
+      status: 'sealed',
+      revisionId: sealed.revisionId,
+    }),
+    true
+  )
+})
+
+test('incomplete or unbounded historical print refs are rejected whole instead of silently becoming live source refs', () => {
+  const store = createPrintStore(memoryStorage())
+  for (const ref of [
+    { orderId: '101', groupId: 'g', containerId: 'a' },
+    { orderId: '101', groupId: 'g', revisionId: 'a/r1' },
+    {
+      orderId: '101',
+      groupId: 'g',
+      containerId: 'a',
+      revisionId: 'x'.repeat(513),
+    },
+  ])
+    assert.equal(
+      store.recordJob({
+        kind: 'marks',
+        products: [{ code: 'CE26090101', quantity: 1, ref }],
+      }),
+      null
+    )
+  const ref = {
+    accountId: 'local',
+    orderId: '101',
+    containerId: 'a',
+    revisionId: 'a/r1',
+    cartonId: 'unit:a:1',
+  }
+  assert.deepEqual(
+    store.recordJob({
+      kind: 'marks',
+      products: [{ code: 'SUPPLIER-001', quantity: 1, refs: [ref] }],
+    }).products[0].refs[0],
+    { ...ref, variantId: null }
+  )
+})
 
 test('recent physical marks retain numbered carton identities even when their contents use another code group', () => {
   const storage = memoryStorage(),

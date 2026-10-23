@@ -180,7 +180,7 @@ test('detail importing panel stays compact across remounts and progress updates 
     }
     mountDetail()
   })
-  const panel = page.getByRole('complementary', { name: '1688toCSV' })
+  const panel = page.getByRole('complementary', { name: '1688toPL' })
   await panel
     .getByRole('button', { name: 'Minimize import panel', exact: true })
     .click()

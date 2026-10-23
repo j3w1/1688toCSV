@@ -24,6 +24,8 @@ import {
 
 /** Configure an editable workbook with small preview assets for five products. */
 export async function openPackingExportDialog({
+  context,
+  planWorkbook = planPackingWorkbook,
   getRows,
   getCartonBatches = () => [],
   hasSelection = false,
@@ -70,7 +72,10 @@ export async function openPackingExportDialog({
     for (const url of imageUrls) URL.revokeObjectURL(url)
     imageUrls.clear()
   }
-  if (!hasSelection) options.scope = 'all'
+  const containerOutput = context?.kind === 'container-revision'
+  if (!hasSelection || containerOutput) options.scope = 'all'
+  // Detailed JSON requires a fresh deliberate choice for every export.
+  options.includeAutomationJson = false
   const local = (value, params) => t(value, params, getLanguage(modal))
   const availableColumns = () =>
     activeSheet === 'cartons'
@@ -94,8 +99,9 @@ export async function openPackingExportDialog({
   header.append(heading, languages, close)
   sheets.append(el('legend', m('Worksheet')))
   for (const [value, title] of [
-    ['products', 'Products'],
+    ['products', containerOutput ? 'Packing list' : 'Products'],
     ['cartons', 'Cartons'],
+    ...(containerOutput ? [['left-behind', 'Se quedó']] : []),
   ]) {
     const label = el('label', m(title)),
       radio = el('input')
@@ -171,10 +177,41 @@ export async function openPackingExportDialog({
     }
     controls.append(group)
   }
-  optionGroup('Products to export', 'scope', [
-    ['all', 'All packing products'],
-    ['selected', 'Selected products'],
-  ])
+  if (!containerOutput)
+    optionGroup('Products to export', 'scope', [
+      ['all', 'All packing products'],
+      ['selected', 'Selected products'],
+    ])
+  else {
+    const identity = el('p', undefined, 'container-export-identity')
+    bindText(
+      identity,
+      m('{0} · {1} · {2}', {
+        0: context.container.name,
+        1: context.containerId,
+        2: context.draft
+          ? m('Draft revision {0}', { 0: context.revision })
+          : context.revisionId,
+      })
+    )
+    controls.append(
+      identity,
+      el(
+        'p',
+        m(
+          context.draft
+            ? 'DRAFT — unsealed container'
+            : 'Sealed container revision'
+        )
+      )
+    )
+    bindText(
+      note,
+      m(
+        'Exports include the complete loaded container revision, regardless of selected or filtered rows.'
+      )
+    )
+  }
   optionGroup('Photo size', 'photoSize', [
     ['compact', 'Compact'],
     ['standard', 'Standard'],
@@ -197,16 +234,37 @@ export async function openPackingExportDialog({
     persist()
   }
   controls.append(widths)
-  const flags = el('div', undefined, 'packing-export-flags')
+  const flags = el('div', undefined, 'packing-export-flags'),
+    automationHelp = el(
+      'p',
+      m(
+        'Optional JSON includes full costs, charge reasons and source identifiers for the chosen products and related cartons, regardless of Excel columns.'
+      ),
+      'packing-export-note'
+    )
+  automationHelp.id = `${heading.id}-automation-help`
+  if (containerOutput)
+    bindText(
+      automationHelp,
+      m(
+        'Optional JSON includes full costs, charge reasons and source identifiers for this complete container revision, regardless of Excel columns.'
+      )
+    )
   for (const [key, title] of [
     ['includeOrderDetails', 'Store and order headings'],
     ['includeTotals', 'Totals row'],
     ['freezeHeaders', 'Freeze headers'],
     ['filters', 'Column filters'],
+    ['includeAutomationJson', 'Include detailed automation JSON'],
   ]) {
     const label = el('label', m(title)),
       check = el('input')
     check.type = 'checkbox'
+    check.id = `${heading.id}-${key}`
+    check.name = key
+    label.htmlFor = check.id
+    if (key === 'includeAutomationJson')
+      check.setAttribute('aria-describedby', automationHelp.id)
     check.dataset.option = key
     check.onchange = () => {
       options[key] = check.checked
@@ -217,6 +275,7 @@ export async function openPackingExportDialog({
   }
   controls.append(
     flags,
+    automationHelp,
     el(
       'p',
       m('Excel exports use the current theme in light mode.'),
@@ -305,6 +364,14 @@ export async function openPackingExportDialog({
       cartonBatches: getCartonBatches(options.scope),
       language: getLanguage(modal),
       style: workspaceExportStyle(),
+      ...(containerOutput
+        ? {
+            containerId: context.containerId,
+            revisionId: context.revisionId,
+            draft: context.draft,
+            scope: 'all',
+          }
+        : {}),
     }
   }
   function render() {
@@ -325,7 +392,7 @@ export async function openPackingExportDialog({
       ready =
         selectedPackingExportColumns(options).length &&
         selectedPackingExportColumns(options, 'cartons').length
-    download.disabled = busy || !ready || !rows.length
+    download.disabled = busy || !ready || (!containerOutput && !rows.length)
     bindText(
       status,
       m('Products: {0} · Columns: {1}', { 0: rows.length, 1: selected.length })
@@ -341,8 +408,15 @@ export async function openPackingExportDialog({
       return
     }
     try {
-      const workbook = planPackingWorkbook(rows, exportOptions()),
-        plan = workbook.sheets[activeSheet === 'cartons' ? 1 : 0],
+      const workbook = planWorkbook(rows, exportOptions()),
+        plan =
+          workbook.sheets[
+            activeSheet === 'cartons'
+              ? 1
+              : activeSheet === 'left-behind'
+                ? 2
+                : 0
+          ],
         table = el('table'),
         columnSizes = el('colgroup'),
         head = el('thead'),
@@ -368,13 +442,17 @@ export async function openPackingExportDialog({
       head.append(tr)
       bindText(
         note,
-        activeSheet === 'cartons'
+        containerOutput
           ? m(
-              'Carton totals include complete batches only. Shared context is marked and excluded from totals.'
+              'Exports include the complete loaded container revision, regardless of selected or filtered rows.'
             )
-          : m(
-              'Preview shows the first 5 products. The workbook includes every product in the chosen scope.'
-            )
+          : activeSheet === 'cartons'
+            ? m(
+                'Carton totals include complete batches only. Shared context is marked and excluded from totals.'
+              )
+            : m(
+                'Preview shows the first 5 products. The workbook includes every product in the chosen scope.'
+              )
       )
       for (const row of plan.rows
         .filter((row) => ['product', 'carton', 'context'].includes(row.kind))

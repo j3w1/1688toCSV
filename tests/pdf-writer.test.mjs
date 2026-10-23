@@ -4,6 +4,28 @@ import { createPdf, rgbImage, pdfText } from '../src/pdf-writer.js'
 
 const latin1 = (bytes) => Buffer.from(bytes).toString('latin1')
 
+test('draft PDFs visibly mark every produced page while final output retains its exact original content', () => {
+  for (const draft of [false, true]) {
+    const pdf = createPdf({ title: 'Synthetic carton marks', draft })
+    pdf.page().text('CE26090101', 10, 20)
+    pdf.page().text('CE26090102', 10, 20)
+    const bytes = latin1(pdf.build())
+    assert.match(bytes, /\/Count 2/)
+    assert.match(bytes, /\(CE26090101\) Tj/)
+    assert.match(bytes, /\(CE26090102\) Tj/)
+    assert.equal(
+      (bytes.match(/\(DRAFT - UNSEALED \/ UNVERIFIED\) Tj/g) || []).length,
+      draft ? 2 : 0
+    )
+    assert.match(
+      bytes,
+      draft
+        ? /\/Title \(DRAFT - Synthetic carton marks\)/
+        : /\/Title \(Synthetic carton marks\)/
+    )
+  }
+})
+
 test('PDF metadata preserves Spanish accents and Chinese titles using UTF-16BE strings', () => {
   for (const title of ['CE 标签', 'Calibración CE']) {
     const pdf = createPdf({ title })
@@ -78,6 +100,34 @@ test('RGB images are flattened onto white and captions stay ASCII-safe', async (
     pdfText('Carton 1 of 3 · 装箱 (x)\\'),
     'Carton 1 of 3 \\(x\\)\\\\'
   )
+})
+
+test('100 image pages reference only their used artwork and retain repeated placements', async () => {
+  const pdf = createPdf()
+  const image = await rgbImage({
+    width: 1,
+    height: 1,
+    data: new Uint8ClampedArray([0, 0, 0, 255]),
+  })
+  for (let index = 0; index < 100; index++) {
+    const name = pdf.addImage(image)
+    const page = pdf
+      .page()
+      .image(name, { xMm: 5, yMm: 5, widthMm: 10, heightMm: 10 })
+    if (index === 0)
+      page.image(name, { xMm: 20, yMm: 5, widthMm: 10, heightMm: 10 })
+  }
+  pdf.page().text('No image', 5, 5)
+  const text = latin1(pdf.build())
+  const resources = [...text.matchAll(/\/XObject << ([^\n]*?) >>/g)]
+  assert.equal(resources.length, 101)
+  assert.equal((text.match(/\/Subtype \/Image/g) || []).length, 100)
+  assert.equal((text.match(/\/Im\d+ \d+ 0 R/g) || []).length, 100)
+  assert.equal((text.match(/\/Im\d+ Do Q/g) || []).length, 101)
+  for (let index = 0; index < 100; index++)
+    assert.match(resources[index][1], new RegExp(`^/Im${index + 1} \\d+ 0 R$`))
+  assert.equal(resources[100][1], '')
+  assert.match(text, /\/Producer \(1688toPL\)/)
 })
 
 test('dash lengths are millimetres converted to points, like coordinates', () => {

@@ -123,6 +123,7 @@ export function normalizePackingExportOptions(value) {
           Math.min(60, 24 + Math.round((value.descriptionWidth - 24) / 4) * 4)
         )
       : 36,
+    includeAutomationJson: value?.includeAutomationJson === true,
     ...Object.fromEntries(
       ['includeOrderDetails', 'includeTotals', 'freezeHeaders', 'filters'].map(
         (key) => [key, value?.[key] !== false]

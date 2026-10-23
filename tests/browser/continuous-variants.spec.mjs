@@ -1,11 +1,16 @@
 import { test, expect } from './extension-fixture.mjs'
 import { createDemoRecords } from '../../preview/library-fixture.js'
 import {
+  editOrderProduct,
+  closeOrderProduct,
+  libraryBackup,
+} from './smart-workspace-helpers.mjs'
+import {
   createPreparation,
   allocatePreparation,
 } from '../../src/packing-model.js'
 
-test('one large packing group scrolls every variant with bounded rows, full selection and retained invalid code drafts', async ({
+test('one large Orders group keeps full logical selection and every source variant across virtual scrolling and invalid contextual code edits', async ({
   extension,
 }) => {
   const [record] = await extension.inspector.evaluate(
@@ -74,78 +79,79 @@ test('one large packing group scrolls every variant with bounded rows, full sele
     localStorage.setItem('1688-library-purchase-months', '[]')
   )
   await page.goto(`${extension.extensionBaseUrl}/library.html`)
-  await page
-    .getByRole('button', { name: 'Prepare packing list', exact: true })
-    .click()
-  const view = page.locator('.preparation-workspace'),
-    card = view.locator('.preparation-group'),
-    rows = view.locator('tr[data-variant-id]'),
-    scroll = card.locator('.variant-scroll')
+  const rows = page.locator('#sheet-body tr[data-selection-key]'),
+    scroll = page.locator('.table-scroll')
   await expect(rows).toHaveCount(100)
-  await expect(
-    view.getByRole('button', { name: /^(Previous|Next) variants$/ })
-  ).toHaveCount(0)
-  await expect(card.locator('.variants')).toHaveAttribute(
+  await expect(page.locator('#sheet-body').locator('..')).toHaveAttribute(
     'aria-rowcount',
-    '251'
+    '252'
   )
-  const firstId = preparation.groups[0].variants[0].id,
-    lastId = preparation.groups[0].variants.at(-1).id
-  const first = view.locator(`[data-variant-id="${firstId}"]`),
-    last = view.locator(`[data-variant-id="${lastId}"]`)
+  // The logical grid includes its column heading and the purchase heading.
+  await expect(page.locator('#sheet-body .order-section-heading')).toHaveCount(
+    1
+  )
+  const sourceKey = (item) =>
+      JSON.stringify(['local', record.snapshot.orderId, item.entryId]),
+    sourceRow = (item) =>
+      page.locator(
+        `#sheet-body tr[data-selection-key=${JSON.stringify(sourceKey(item))}]`
+      ),
+    first = sourceRow(record.snapshot.items[0]),
+    last = sourceRow(record.snapshot.items.at(-1))
   await first.focus()
-  await page.keyboard.press('Space')
-  await page.keyboard.press('Shift+End')
+  await page.keyboard.press('Control+a')
+  await page.keyboard.press('Control+End')
   await expect(last).toBeFocused()
-  await expect(view.locator('.preparation-copy-scope')).toHaveText(
-    '250 selected products · 1 orders'
-  )
+  await expect(page.locator('#selection-summary')).toContainText('250 selected')
   expect(await rows.count()).toBeLessThanOrEqual(101)
   await page.keyboard.press('Control+Home')
   await expect(first).toBeFocused()
-  await expect(
-    first.getByRole('textbox', {
-      name: 'Weight (kg/box)',
-      exact: true,
-    })
-  ).toHaveCount(0)
-  const ending = first.getByRole('textbox', {
-    name: `Variant code ${firstId}`,
-    exact: true,
-  })
+  const editor = await editOrderProduct(page, 0),
+    ending = editor.locator('[data-authoring-field="variant-ending"]'),
+    originalInput = await ending.elementHandle(),
+    firstId = preparation.groups[0].variants[0].id
   await ending.fill('12..')
-  await scroll.evaluate((node) => (node.scrollTop = node.scrollHeight))
+  await ending.blur()
+  await expect(ending).toHaveAttribute('aria-invalid', 'true')
+  const savedBefore = await libraryBackup(extension)
+  expect(
+    savedBefore.preparations[0].groups[0].variants.find(
+      (variant) => variant.id === firstId
+    ).variantSuffix
+  ).toBe(preparation.groups[0].variants[0].variantSuffix)
+  await ending.focus()
+  await scroll.evaluate((node) => {
+    node.scrollTop = node.scrollHeight
+  })
   await expect(last).toBeAttached()
   await expect(ending).toBeFocused()
   await expect(ending).toHaveValue('12..')
-  await expect(ending).toHaveAttribute('aria-invalid', 'true')
+  expect(
+    await ending.evaluate((node, original) => node === original, originalInput)
+  ).toBe(true)
   expect(await rows.count()).toBeLessThanOrEqual(101)
   await ending.fill('ZZ')
-  await view
-    .getByRole('heading', { name: 'Prepare packing list', exact: true })
-    .click()
+  await closeOrderProduct(editor)
   await expect
-    .poll(async () => {
-      const response = await extension.inspector.evaluate(() =>
-        chrome.runtime.sendMessage({ type: 'BACKUP_EXPORT' })
-      )
-      expect(response.ok, response.error).toBe(true)
-      return response.data.preparations[0].groups[0].variants.find(
-        (variant) => variant.id === firstId
-      ).variantSuffix
-    })
+    .poll(
+      async () =>
+        (
+          await libraryBackup(extension)
+        ).preparations[0].groups[0].variants.find(
+          (variant) => variant.id === firstId
+        ).variantSuffix
+    )
     .toBe('ZZ')
-  await scroll.evaluate((node) => (node.scrollTop = 0))
-  await expect(
-    first.getByRole('textbox', { name: `Variant code ${firstId}`, exact: true })
-  ).toHaveValue('ZZ')
-  await expect(view.locator('.preparation-copy-scope')).toHaveText(
-    '250 selected products · 1 orders'
+  await scroll.evaluate((node) => {
+    node.scrollTop = 0
+  })
+  await expect(first).toBeAttached()
+  await expect(first.getByRole('checkbox')).toBeChecked()
+  await expect(page.locator('#selection-summary')).toContainText('250 selected')
+  const saved = await libraryBackup(extension)
+  expect(saved.orders[0].snapshot).toEqual(record.snapshot)
+  expect(saved.cartonBatches).toEqual([])
+  expect(saved.preparations[0].groups[0].variants.slice(1)).toEqual(
+    preparation.groups[0].variants.slice(1)
   )
-  const saved = await extension.inspector.evaluate(() =>
-    chrome.runtime.sendMessage({ type: 'BACKUP_EXPORT' })
-  )
-  expect(saved.ok, saved.error).toBe(true)
-  expect(saved.data.orders[0].snapshot).toEqual(record.snapshot)
-  expect(saved.data.cartonBatches).toEqual([])
 })

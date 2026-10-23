@@ -1,11 +1,8 @@
-// Fast local try-out loop: build, stage the complete dist into the installed
-// unpacked extension, reload it through CE Dev Browser and confirm that the
-// library survived. Machine-specific settings live outside the repository in
-// ~/.config/1688tocsv/try.json (see AGENTS.md); nothing here reads order data
-// beyond per-store record counts and import job states.
-import { spawn, spawnSync } from 'node:child_process'
-import { cp, mkdir, readFile, rm, stat, writeFile } from 'node:fs/promises'
-import { homedir } from 'node:os'
+// Checks/build always work. Loading is opt-in through machine configuration.
+import { spawnSync } from 'node:child_process'
+import { cp, mkdir, readFile, stat, writeFile } from 'node:fs/promises'
+import path from 'node:path'
+import { fileURLToPath } from 'node:url'
 import {
   checkIdentity,
   readIdentity,
@@ -13,361 +10,363 @@ import {
   stagingPaths,
   swapIn,
 } from './try-staging.mjs'
-import path from 'node:path'
-import { fileURLToPath } from 'node:url'
+import {
+  canonicalDirectory,
+  readTrialConfiguration,
+  trialArguments,
+  validateTrialConfiguration,
+  within,
+} from './try-config.mjs'
+import {
+  createTrialBrowser,
+  libraryInspector,
+  resultJson,
+} from './try-browser.mjs'
 
 const root = fileURLToPath(new URL('../', import.meta.url))
-const args = new Set(process.argv.slice(2))
-const usage = `Usage: npm run try -- [--quick] [--smoke] [--dry-run] [--rollback]
-  (default)   unit tests, build, stage into the installed extension, reload, verify
+const usage = `Usage: npm run try -- [--quick] [--smoke] [--dry-run] [--rollback] [--config FILE]
+  (default)   unit tests and build; load only a configured local trial target
   --quick     skip unit tests
-  --smoke     also run npm run test:smoke before staging
-  --dry-run   checks and build only; no staging or reload
-  --rollback  put the previously staged build back and reload it`
-if (args.has('--help')) {
-  console.log(usage)
-  process.exit(0)
-}
+  --smoke     also run the packaged browser smoke subset
+  --dry-run   checks and build only; configuration/browser are not accessed
+  --rollback  restore the configured target's previously staged build
+  --config    machine-local target file (or LOCAL_TRIAL_CONFIG)
+No target: checks/build still run, nothing is loaded, exit 0.`
 const started = Date.now()
-const elapsed = () => `${((Date.now() - started) / 1000).toFixed(1)}s`
-const step = (text) => console.log(`[${elapsed()}] ${text}`)
-const fail = (text, code = 1) => {
-  console.error(`\ntry: ${text}`)
-  process.exit(code)
+const step = (text) =>
+  console.log(`[${((Date.now() - started) / 1000).toFixed(1)}s] ${text}`)
+const summary = { loaded: false, staged: false, verified: false }
+function fail(message, exitCode = 1) {
+  throw Object.assign(new Error(message), { exitCode })
 }
-
-const configPath = path.join(
-  process.env.XDG_CONFIG_HOME || path.join(homedir(), '.config'),
-  '1688tocsv',
-  'try.json'
-)
-let config
-try {
-  config = JSON.parse(await readFile(configPath, 'utf8'))
-} catch {
-  fail(`missing ${configPath}; see AGENTS.md "Fast local loop" for its fields.`)
-}
-const { installDir, extensionId, browserMcp, stagingDir } = config
-if (
-  !path.isAbsolute(installDir || '') ||
-  !/^[a-p]{32}$/.test(extensionId || '') ||
-  !Array.isArray(browserMcp) ||
-  !path.isAbsolute(stagingDir || '')
-)
-  fail(
-    `${configPath} needs absolute installDir and stagingDir, extensionId and browserMcp.`
-  )
-if (path.basename(installDir) !== 'dist' || installDir.startsWith(root))
-  fail('installDir must be a dist folder outside this worktree.')
-
-function run(command, commandArgs, label) {
-  step(label)
-  const result = spawnSync(command, commandArgs, {
-    cwd: root,
-    stdio: 'inherit',
-  })
-  if (result.status !== 0) fail(`${label} failed.`)
-}
-
-// Minimal MCP stdio client for the same CE Dev Browser server agents use.
-function browser() {
-  const child = spawn(browserMcp[0], browserMcp.slice(1), {
-    stdio: ['pipe', 'pipe', 'inherit'],
-  })
-  let buffer = ''
-  let next = 0
-  const waiting = new Map()
-  child.stdout.on('data', (chunk) => {
-    buffer += chunk
-    for (let end; (end = buffer.indexOf('\n')) >= 0; ) {
-      const line = buffer.slice(0, end).trim()
-      buffer = buffer.slice(end + 1)
-      if (!line) continue
-      const message = JSON.parse(line)
-      waiting.get(message.id)?.(message)
-      waiting.delete(message.id)
-    }
-  })
-  const request = (method, params) =>
-    new Promise((resolve) => {
-      const id = ++next
-      waiting.set(id, resolve)
-      child.stdin.write(
-        JSON.stringify({ jsonrpc: '2.0', id, method, params }) + '\n'
-      )
-    })
-  return {
-    async start() {
-      await request('initialize', {
-        protocolVersion: '2025-06-18',
-        capabilities: {},
-        clientInfo: { name: '1688tocsv-try', version: '1' },
+function runScript(name, pkg) {
+  if (!pkg.scripts?.[name]) fail(`package.json has no ${name} script.`)
+  step(name)
+  const npmCli = process.env.npm_execpath
+  const result = npmCli
+    ? spawnSync(process.execPath, [npmCli, 'run', '--silent', name], {
+        cwd: root,
+        stdio: 'inherit',
       })
-      child.stdin.write(
-        JSON.stringify({
-          jsonrpc: '2.0',
-          method: 'notifications/initialized',
-        }) + '\n'
+    : spawnSync(
+        process.platform === 'win32' ? 'npm.cmd' : 'npm',
+        ['run', '--silent', name],
+        { cwd: root, stdio: 'inherit', shell: process.platform === 'win32' }
       )
-    },
-    async call(name, input, { tolerate } = {}) {
-      const message = await request('tools/call', { name, arguments: input })
-      const text = (message.result?.content || [])
-        .map((item) => item.text || '')
-        .join('\n')
-      if (tolerate && new RegExp(`"refused": "(${tolerate})"`).test(text))
-        return null
-      if (message.error || message.result?.isError || /"refused"/.test(text)) {
-        // Print CE's own refusal code and message only, never page or extension payloads.
-        let refusal = {}
-        try {
-          refusal = JSON.parse(text)
-        } catch {}
-        fail(
-          refusal.refused
-            ? `CE Dev Browser ${name} refused (${refusal.refused}): ${String(refusal.message || '').slice(0, 200)}`
-            : `CE Dev Browser ${name} returned an unexpected response.`,
-          2
-        )
-      }
-      return text
-    },
-    stop: () => child.kill(),
-  }
+  if (result.error || result.status !== 0) fail(`${name} failed.`)
 }
-const resultJson = (text) => {
-  const match = /### Result\n([\s\S]*?)(\n###|$)/.exec(text)
-  return JSON.parse(match ? match[1] : text)
-}
-
-// Read-only: open the database without a version (an upgrade aborts), count
-// every store and list import job states.
-const readLibrary = `async () => {
-  const db = await new Promise((resolve, reject) => {
-    const open = indexedDB.open('1688-order-library')
-    open.onsuccess = () => resolve(open.result)
-    open.onerror = () => reject(open.error)
-    open.onupgradeneeded = () => { open.transaction.abort(); reject(new Error('library database missing')) }
-  })
-  const names = [...db.objectStoreNames]
-  const tx = db.transaction(names, 'readonly')
-  const ask = (q) => new Promise((resolve, reject) => { q.onsuccess = () => resolve(q.result); q.onerror = () => reject(q.error) })
-  const counts = {}
-  for (const name of names) counts[name] = await ask(tx.objectStore(name).count())
-  const jobs = names.includes('jobs') ? (await ask(tx.objectStore('jobs').getAll())).map((job) => job.state) : []
-  db.close()
-  let build = null
-  try { build = await (await fetch('/build-info.json', { cache: 'no-store' })).json() } catch {}
-  return { counts, jobs, build }
-}`
-
-async function inspect(client, label) {
-  const marker = `try-${Date.now()}`
-  await client.call('browser_tabs', {
-    action: 'new',
-    url: `chrome-extension://${extensionId}/manifest.json?${marker}`,
-  })
-  await client.call('browser_snapshot', { depth: 1 })
-  const library = resultJson(
-    await client.call('browser_evaluate', { function: readLibrary })
-  )
-  const tabs = await client.call('browser_tabs', { action: 'list' })
-  const own = new RegExp(`^- (\\d+): .*\\?${marker}\\)`, 'm').exec(tabs)
-  if (own)
-    await client.call('browser_tabs', {
-      action: 'close',
-      index: Number(own[1]),
-    })
-  const ownerTabs = tabs
-    .split('\n')
-    .filter(
-      (line) =>
-        line.includes(`chrome-extension://${extensionId}/`) &&
-        !line.includes(marker)
-    ).length
-  step(
-    `${label}: ${Object.entries(library.counts)
-      .map(([key, value]) => `${key} ${value}`)
-      .join(', ')}`
-  )
-  return { ...library, ownerTabs }
-}
-
-async function registered(client) {
-  const list = JSON.parse(
-    await client.call('browser_extension', { action: 'list' })
-  )
-  const entry = list.registered?.find((item) => item.id === extensionId)
-  if (!entry || path.resolve(entry.path) !== path.resolve(installDir))
-    fail(
-      `extension ${extensionId} is not registered from ${installDir}; refusing to load anything new.`
-    )
-  const loaded = list.extensions?.find((item) => item.id === extensionId)
-  return { loaded, errors: list.errors || {} }
-}
-
-await mkdir(stagingDir, { recursive: true })
-if ((await stat(stagingDir)).dev !== (await stat(path.dirname(installDir))).dev)
-  fail(
-    'stagingDir must be on the same filesystem as installDir for an atomic swap.'
-  )
-// Finish or undo an interrupted run before reading the installed build.
-try {
-  const recovered = await recoverStaging({ installDir, stagingDir })
-  if (recovered !== 'none')
-    step(
-      recovered === 'restored'
-        ? 'Recovered an interrupted run: the previous install is back in place.'
-        : 'Recovered an interrupted run: the new install stays, rollback updated.'
-    )
-} catch (error) {
-  fail(error.message)
-}
-let installed
-try {
-  installed = await readIdentity(installDir)
-} catch {
-  fail(`${installDir} has no readable manifest.json.`)
-}
-if (installed.name !== '1688toCSV')
-  fail(`${installDir} does not hold the 1688toCSV extension.`)
-const { previous } = stagingPaths(stagingDir)
-const verifyCandidate = async (directory) => {
-  try {
-    checkIdentity(await readIdentity(directory), installed)
-  } catch (error) {
-    fail(error.message)
-  }
-}
-
-let candidate
-if (args.has('--rollback')) {
-  try {
-    await stat(path.join(previous, 'manifest.json'))
-  } catch {
-    fail('no previously staged build to restore.')
-  }
-  await verifyCandidate(previous)
-  candidate = previous
-} else {
-  if (!args.has('--quick'))
-    run(process.execPath, ['--test', ...testFiles()], 'Unit tests')
-  if (args.has('--smoke'))
-    run('npm', ['run', '--silent', 'test:smoke'], 'Browser smoke tests')
-  run(process.execPath, ['scripts/build.mjs', '--development'], 'Build')
-  const commit = spawnSync('git', ['rev-parse', '--short', 'HEAD'], {
-    cwd: root,
-    encoding: 'utf8',
-  }).stdout.trim()
-  const dirty =
-    spawnSync('git', ['status', '--porcelain'], {
+function git(args) {
+  return (
+    spawnSync('git', args, {
       cwd: root,
       encoding: 'utf8',
-    }).stdout.trim() !== ''
-  await verifyCandidate(path.join(root, 'dist'))
-  const built = (await readIdentity(path.join(root, 'dist'))).manifest
-  if (
-    JSON.stringify(built.permissions) !==
-    JSON.stringify(installed.manifest.permissions)
+      stdio: ['ignore', 'pipe', 'ignore'],
+    }).stdout?.trim() || ''
   )
-    console.warn(
-      'try: permissions changed; Chrome may ask to re-enable the extension.'
-    )
-  candidate = path.join(stagingDir, `build-${Date.now()}`)
-  await cp(path.join(root, 'dist'), candidate, { recursive: true })
-  await writeFile(
-    path.join(candidate, 'build-info.json'),
-    JSON.stringify(
-      { commit, dirty, builtAt: new Date().toISOString(), worktree: root },
-      null,
-      2
-    ) + '\n'
-  )
-}
-if (args.has('--dry-run')) {
-  if (candidate !== previous)
-    await rm(candidate, { recursive: true, force: true })
-  step('Dry run complete; nothing staged.')
-  process.exit(0)
 }
 
-const client = browser()
-await client.start()
-try {
-  // Wait up to five minutes for another agent's lease; never take over from the owner.
-  for (let attempt = 0; ; attempt++) {
-    const lease = await client.call(
-      'browser_lease',
-      {
-        action: 'acquire',
-        purpose: '1688toCSV try: reload extension',
-        ttl_s: 120,
-      },
-      { tolerate: 'lease_held' }
-    )
-    if (lease !== null) break
-    if (attempt === 4)
-      fail('the browser stayed busy for five minutes; try again later.', 2)
-    step('Waiting for the browser lease')
-    await client.call('browser_wait', {
-      events: ['lease', 'control'],
-      timeout_s: 60,
-    })
+async function main() {
+  const { flags, configPath } = trialArguments(process.argv.slice(2))
+  if (flags.has('--help')) {
+    console.log(usage)
+    return
   }
-  await registered(client)
-  const before = await inspect(client, 'Library before')
-  if (before.jobs.includes('running'))
-    fail('an import is running; let it finish or pause it, then try again.', 2)
-  if (before.ownerTabs)
-    console.warn(
-      `try: ${before.ownerTabs} open workspace tab(s) close on reload; one workspace tab reopens afterwards.`
-    )
-
-  // Swap complete folders; the browser only reads installDir on reload.
-  step('Stage complete build')
-  await swapIn({ installDir, stagingDir, candidate })
-
-  step('Reload through CE Dev Browser')
-  await client.call('browser_extension', { action: 'reload', id: extensionId })
-  const { loaded, errors } = await registered(client)
-  if (!loaded?.enabled) fail('the reloaded extension is not enabled.', 3)
-  if (Object.keys(errors).length)
-    fail(
-      `the reloaded extension reports ${Object.keys(errors).length} error group(s); read them with browser_extension logs.`,
-      3
-    )
-  const after = await inspect(client, 'Library after')
-  const changed = Object.keys({ ...before.counts, ...after.counts }).filter(
-    (key) => before.counts[key] !== after.counts[key]
+  const pkg = JSON.parse(
+    await readFile(path.join(root, 'package.json'), 'utf8')
   )
-  if (changed.length)
-    fail(
-      `library counts changed after reload: ${changed.join(', ')}. Do not retry; inspect first.`,
-      4
+  if (!flags.has('--rollback')) {
+    if (!flags.has('--quick')) runScript('test', pkg)
+    if (flags.has('--smoke')) runScript('test:smoke', pkg)
+    runScript(pkg.scripts?.['build:dev'] ? 'build:dev' : 'build', pkg)
+  }
+  if (flags.has('--dry-run')) {
+    summary.reason = 'dry-run'
+    step('Dry run complete: nothing loaded.')
+    return
+  }
+  const target = await readTrialConfiguration(root, { configPath })
+  if (!target.config) {
+    summary.reason = 'no-local-trial-target'
+    step('no local trial target: nothing loaded')
+    console.log(
+      `Configure --config FILE, LOCAL_TRIAL_CONFIG, or ${target.paths[0]}; see docs/development.md.`
     )
-  const build = after.build
-  // Chrome closes extension pages on reload; give the owner their workspace back.
-  if (before.ownerTabs)
+    return
+  }
+  if (target.legacy)
+    console.warn(
+      `try: legacy config ${target.configPath} is deprecated; use ${target.paths[0]}.`
+    )
+  const config = validateTrialConfiguration(target.config)
+  const { extensionId, browserMcp, databaseName } = config
+  const sourceDir = path.resolve(root, config.buildDir || 'dist')
+  if (
+    !within(path.resolve(root), sourceDir) ||
+    sourceDir === path.resolve(root)
+  )
+    fail('buildDir must be a generated folder inside this worktree.')
+  const installPath = path.resolve(config.installDir),
+    stagePath = path.resolve(config.stagingDir)
+  if (
+    within(path.resolve(root), installPath) ||
+    within(path.resolve(root), stagePath) ||
+    within(installPath, stagePath) ||
+    within(stagePath, installPath)
+  )
+    fail(
+      'installDir and stagingDir must be disjoint folders outside this worktree.'
+    )
+  const installDir = await canonicalDirectory(installPath),
+    stagingDir = await canonicalDirectory(stagePath)
+  const canonicalRoot = await canonicalDirectory(root)
+  if (
+    within(canonicalRoot, installDir) ||
+    within(canonicalRoot, stagingDir) ||
+    within(installDir, stagingDir) ||
+    within(stagingDir, installDir)
+  )
+    fail(
+      'Resolved installDir and stagingDir must be disjoint and outside this worktree.'
+    )
+  const canonicalSource = await canonicalDirectory(sourceDir)
+  if (
+    !within(canonicalRoot, canonicalSource) ||
+    canonicalSource === canonicalRoot
+  )
+    fail('Resolved buildDir must remain inside this worktree.')
+  await mkdir(stagingDir, { recursive: true })
+  if (
+    (await canonicalDirectory(stagePath)) !== stagingDir ||
+    (await canonicalDirectory(installPath)) !== installDir
+  )
+    fail(
+      'Trial target paths changed while preparing staging; inspect before retrying.'
+    )
+  if (
+    (await stat(stagingDir)).dev !== (await stat(path.dirname(installDir))).dev
+  )
+    fail(
+      'stagingDir must be on the same filesystem as installDir for an atomic swap.'
+    )
+
+  const compatibleNames = config.compatibleNames || [
+    JSON.parse(await readFile(path.join(root, 'manifest.json'), 'utf8')).name,
+  ]
+  const client = createTrialBrowser(browserMcp)
+  let leased = false
+  async function registered() {
+    const list = resultJson(
+      await client.call('browser_extension', { action: 'list' })
+    )
+    const entry = list.registered?.find((item) => item.id === extensionId)
+    if (!entry || (await canonicalDirectory(entry.path)) !== installDir)
+      fail(
+        `Extension ${extensionId} is not registered from the configured installDir; refusing to install a new identity.`,
+        2
+      )
+    return {
+      loaded: list.extensions?.find((item) => item.id === extensionId),
+      errors: list.errors || {},
+    }
+  }
+  async function inspect(label) {
+    const marker = `try-${Date.now()}`
     await client.call('browser_tabs', {
       action: 'new',
-      url: `chrome-extension://${extensionId}/library.html`,
+      url: `chrome-extension://${extensionId}/manifest.json?${marker}`,
     })
-  step(
-    `Done: ${extensionId} ${loaded.version} running ${build ? `${build.commit}${build.dirty ? '+dirty' : ''}` : 'a build without build-info'}; library unchanged.`
-  )
-} finally {
-  await client.call(
-    'browser_lease',
-    { action: 'release' },
-    { tolerate: '[a-z_]+' }
-  )
-  client.stop()
+    await client.call('browser_snapshot', { depth: 1 })
+    const library = resultJson(
+      await client.call('browser_evaluate', {
+        function: libraryInspector(databaseName),
+      })
+    )
+    if (
+      !library.counts ||
+      typeof library.counts !== 'object' ||
+      Array.isArray(library.counts) ||
+      !Object.keys(library.counts).length ||
+      Object.values(library.counts).some(
+        (n) => !Number.isSafeInteger(n) || n < 0
+      ) ||
+      !Array.isArray(library.jobs)
+    )
+      fail(
+        'Browser did not prove existing library store counts and import states.',
+        2
+      )
+    const tabs = await client.call('browser_tabs', { action: 'list' })
+    const own = new RegExp(`^- (\\d+): .*\\?${marker}\\)`, 'm').exec(tabs)
+    if (own)
+      await client.call('browser_tabs', {
+        action: 'close',
+        index: Number(own[1]),
+      })
+    const ownerTabs = tabs
+      .split('\n')
+      .filter(
+        (line) =>
+          line.includes(`chrome-extension://${extensionId}/`) &&
+          !line.includes(marker)
+      ).length
+    step(
+      `${label}: ${Object.entries(library.counts)
+        .map(([key, value]) => `${key} ${value}`)
+        .join(', ')}`
+    )
+    return { ...library, ownerTabs }
+  }
+  let primaryError
+  try {
+    await client.start(pkg.name || 'extension')
+    await client.call('browser_guide', {})
+    for (let attempt = 0; ; attempt++) {
+      const lease = await client.call(
+        'browser_lease',
+        {
+          action: 'acquire',
+          purpose: `${pkg.name || 'Extension'} local trial`,
+          ttl_s: 120,
+        },
+        { tolerate: 'lease_held' }
+      )
+      if (lease !== null) {
+        leased = true
+        break
+      }
+      if (attempt === 4)
+        fail('The browser stayed busy for five minutes; retry later.', 2)
+      step('Waiting for the browser lease')
+      await client.call('browser_wait', {
+        events: ['lease', 'control'],
+        timeout_s: 60,
+      })
+    }
+    const initial = await registered()
+    if (!initial.loaded?.enabled)
+      fail(
+        'The registered extension must already be enabled; first installation is a separate step.',
+        2
+      )
+    const recovered = await recoverStaging({ installDir, stagingDir })
+    if (recovered !== 'none')
+      step(`Recovered interrupted staging (${recovered}).`)
+    const installed = await readIdentity(installDir)
+    const { previous } = stagingPaths(stagingDir)
+    let candidate
+    if (flags.has('--rollback')) {
+      candidate = previous
+      try {
+        await stat(path.join(candidate, 'manifest.json'))
+      } catch {
+        fail('No previously staged build to restore.')
+      }
+    } else candidate = canonicalSource
+    const built = await readIdentity(candidate)
+    let expectedBuild = null
+    if (flags.has('--rollback')) {
+      try {
+        expectedBuild = JSON.parse(
+          await readFile(path.join(candidate, 'build-info.json'), 'utf8')
+        )
+      } catch (error) {
+        if (error.code !== 'ENOENT') throw error
+      }
+    }
+    checkIdentity(built, installed, { compatibleNames })
+    const before = await inspect('Library before')
+    if (before.jobs.includes('running'))
+      fail('An import is running; finish or pause it before loading.', 2)
+    if (!flags.has('--rollback')) {
+      candidate = path.join(stagingDir, `build-${Date.now()}`)
+      await cp(canonicalSource, candidate, { recursive: true })
+      expectedBuild = {
+        commit: git(['rev-parse', '--short', 'HEAD']) || 'unversioned',
+        dirty: !!git(['status', '--porcelain']),
+        builtAt: new Date().toISOString(),
+        worktree: root,
+      }
+      await writeFile(
+        path.join(candidate, 'build-info.json'),
+        JSON.stringify(expectedBuild, null, 2) + '\n'
+      )
+    }
+    if (
+      JSON.stringify(built.manifest.permissions) !==
+      JSON.stringify(installed.manifest.permissions)
+    )
+      console.warn(
+        'try: permissions changed; the browser may require re-enabling the extension.'
+      )
+    step('Stage complete build')
+    await swapIn({ installDir, stagingDir, candidate })
+    summary.staged = true
+    summary.loaded = null // A lost/refused reload response cannot prove what is running.
+    step('Reload configured extension')
+    await client.call('browser_extension', {
+      action: 'reload',
+      id: extensionId,
+    })
+    const { loaded, errors } = await registered()
+    if (!loaded?.enabled) fail('The reloaded extension is not enabled.', 3)
+    summary.loaded = true
+    if (loaded.version !== built.manifest.version)
+      fail(
+        'The reloaded extension version does not match the staged candidate.',
+        3
+      )
+    if (Object.keys(errors).length)
+      fail(
+        `Reload reports ${Object.keys(errors).length} error group(s); inspect browser extension logs.`,
+        3
+      )
+    const after = await inspect('Library after')
+    if (
+      expectedBuild &&
+      ['commit', 'dirty', 'builtAt', 'worktree'].some(
+        (key) => after.build?.[key] !== expectedBuild[key]
+      )
+    )
+      fail(
+        'The running build stamp does not match the staged candidate; inspect the configured target.',
+        3
+      )
+    const changed = Object.keys({ ...before.counts, ...after.counts }).filter(
+      (key) => before.counts[key] !== after.counts[key]
+    )
+    if (changed.length)
+      fail(
+        `Library counts changed after reload: ${changed.join(', ')}. Do not retry; inspect first.`,
+        4
+      )
+    if (before.ownerTabs)
+      await client.call('browser_tabs', {
+        action: 'new',
+        url: `chrome-extension://${extensionId}/library.html`,
+      })
+    summary.verified = true
+    step(`Done: ${extensionId} ${loaded.version}; library counts unchanged.`)
+  } catch (error) {
+    primaryError = error
+    throw error
+  } finally {
+    try {
+      if (leased) await client.call('browser_lease', { action: 'release' })
+    } catch (error) {
+      if (!primaryError) throw error
+      console.error(`try: lease release failed: ${error.message}`)
+    } finally {
+      client.stop()
+    }
+  }
 }
 
-function testFiles() {
-  const result = spawnSync('git', ['ls-files', 'tests/*.test.mjs'], {
-    cwd: root,
-    encoding: 'utf8',
-  })
-  return result.stdout.split('\n').filter(Boolean)
+try {
+  await main()
+} catch (error) {
+  console.error(`try: ${error.message}`)
+  summary.reason = 'failed'
+  process.exitCode = error.exitCode || 1
+} finally {
+  console.log(JSON.stringify({ localTrial: summary }))
 }

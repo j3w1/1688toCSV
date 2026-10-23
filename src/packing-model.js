@@ -87,25 +87,35 @@ export function refreshPreparationMaterials(
   const result = structuredClone(preparation)
   const source = new Map(snapshot.items.map((item) => [item.entryId, item]))
   for (const group of result.groups)
-    for (const variant of group.variants)
-      storeMaterials(
-        variant,
-        new Map(
-          variant.entryIds.map((id) => {
-            const current = variantMaterial(variant, id)
-            return [
-              id,
-              current.source === 'manual' || !source.has(id)
-                ? current
-                : {
-                    value:
-                      suggestions?.get(id) ?? suggestMaterial(source.get(id)),
-                    source: 'suggested',
-                  },
-            ]
-          })
+    for (const variant of group.variants) {
+      const entries = new Map(
+        variant.entryIds.map((id) => {
+          const current = variantMaterial(variant, id)
+          return [
+            id,
+            current.source === 'manual' || !source.has(id)
+              ? current
+              : {
+                  value:
+                    suggestions?.get(id) ?? suggestMaterial(source.get(id)),
+                  source: 'suggested',
+                },
+          ]
+        })
+      )
+      // Unknown suggestions do not author previously absent sibling fields.
+      // Existing suggestions still clear, and manual blanks remain explicit.
+      if (
+        !['material', 'materialSource', 'materialOverrides'].some((field) =>
+          Object.hasOwn(variant, field)
+        ) &&
+        [...entries.values()].every(
+          (value) => value.value === '' && value.source === 'suggested'
         )
       )
+        continue
+      storeMaterials(variant, entries)
+    }
   return result
 }
 
@@ -443,6 +453,9 @@ export function packingCheckpoint(
     sellerId: preparation.sellerId,
     updatedAt: preparation.updatedAt,
     groups: structuredClone(preparation.groups),
+    ...(preparation.restoreScopes !== undefined
+      ? { restoreScopes: structuredClone(preparation.restoreScopes) }
+      : {}),
   }
   if (includeDefaults && preparation.defaultPacking)
     checkpoint.defaults = packingCheckpoint(preparation.defaultPacking)
@@ -1131,6 +1144,41 @@ export function validatePreparation(input) {
   }
   if (input.packingPosition !== undefined)
     result.packingPosition = input.packingPosition
+  if (input.restoreScopes !== undefined) {
+    if (
+      !Array.isArray(input.restoreScopes) ||
+      input.restoreScopes.length > members.size ** 2
+    )
+      throw new Error(
+        'Packing restore scope evidence must be bounded to retained products'
+      )
+    const seen = new Set(),
+      covered = new Set()
+    result.restoreScopes = input.restoreScopes.map((scope) => {
+      if (
+        !Array.isArray(scope) ||
+        !scope.length ||
+        scope.length > members.size ||
+        new Set(scope).size !== scope.length ||
+        scope.some((id) => !members.has(id))
+      )
+        throw new Error(
+          'Packing restore scope evidence contains invalid products'
+        )
+      const key = JSON.stringify([...scope].sort())
+      if (seen.has(key))
+        throw new Error(
+          'Packing restore scope evidence contains duplicate scopes'
+        )
+      seen.add(key)
+      for (const id of scope) covered.add(id)
+      return [...scope]
+    })
+    if (covered.size !== members.size)
+      throw new Error(
+        'Packing restore scope evidence must cover every retained product'
+      )
+  }
   Object.assign(
     result,
     input.packingManualReordered === undefined
@@ -1159,6 +1207,9 @@ export function validatePreparation(input) {
       month: checkpoint.month,
       updatedAt: checkpoint.updatedAt,
       groups: checkpoint.groups,
+      ...(checkpoint.restoreScopes !== undefined
+        ? { restoreScopes: checkpoint.restoreScopes }
+        : {}),
     })
     result[field] = packingCheckpoint(validated)
     if (checkpoint.defaults !== undefined) {
@@ -1177,6 +1228,9 @@ export function validatePreparation(input) {
         month: defaults.month,
         updatedAt: defaults.updatedAt,
         groups: defaults.groups,
+        ...(defaults.restoreScopes !== undefined
+          ? { restoreScopes: defaults.restoreScopes }
+          : {}),
       })
       result[field].defaults = packingCheckpoint(validatedDefaults)
     }
@@ -1597,7 +1651,17 @@ export function codeOwnerEvidence(reservation, preparation, issuedCodes = []) {
     preparation.previousPacking,
     preparation.previousPacking?.defaults,
   ]
-    .filter((view) => view?.sellerId === reservation.sellerId)
+    .filter(
+      (view) =>
+        view?.sellerId === reservation.sellerId ||
+        (reservation.sharedProductId &&
+          view?.groups.some(
+            (group) =>
+              group.sharedProductId === reservation.sharedProductId &&
+              group.sharedStoreId === reservation.sharedStoreId &&
+              group.baseCode === reservation.code.slice(0, 10)
+          ))
+    )
     .map((view) => ({
       current: view === preparation,
       groups: view.groups.filter(
@@ -1805,15 +1869,28 @@ export function allocatePreparation(
   input,
   allocations,
   issuedCodes,
-  { snapshot } = {}
+  {
+    snapshot,
+    historicalReservations = [],
+    supplierIdentityEquivalences = [],
+  } = {}
 ) {
   const preparation = validatePreparation(input)
-  const state = mergePackingState(allocations, issuedCodes)
+  const state = withHistoricalReservations(
+    allocations,
+    issuedCodes,
+    historicalReservations
+  )
   const issuedByCode = new Map(
     state.issuedCodes.map((entry) => [
       JSON.stringify([entry.accountId, entry.kind, entry.code]),
       entry,
     ])
+  )
+  const historicalKeys = new Set(
+    historicalReservations.map((entry) =>
+      JSON.stringify([entry.accountId, entry.kind, entry.code])
+    )
   )
   const reserve = (code, group, variant) => {
     const entryIds =
@@ -1826,7 +1903,10 @@ export function allocatePreparation(
       orderId: preparation.orderId,
       groupId: group.id,
       ...(variant ? { variantId: variant.id } : {}),
-      sellerId: preparation.sellerId,
+      sellerId: packingCodeSellerId(preparation, group, {
+        ...state,
+        supplierIdentityEquivalences,
+      }),
       month: groupPackingMonth(preparation, group),
       ...(group.sharedProductId
         ? {
@@ -1873,15 +1953,19 @@ export function allocatePreparation(
       reservation.code,
     ])
     const existing = issuedByCode.get(key)
-    issuedByCode.set(key, mergeCodeOwners(existing, reservation))
-    state.issuedCodes.push(reservation)
+    issuedByCode.set(
+      key,
+      historicalKeys.has(key)
+        ? mergeHistoricalCodeOwners(existing, reservation)
+        : mergeCodeOwners(existing, reservation)
+    )
   }
-  const claimGroup = (allocation, number) => {
+  const claimGroup = (allocation, number, sellerId = preparation.sellerId) => {
     let group = allocation.groups.find((entry) => entry.number === number)
-    if (group && group.sellerId !== preparation.sellerId)
+    if (group && group.sellerId !== sellerId)
       throw new Error('This monthly group belongs to another seller')
     if (!group) {
-      group = { number, sellerId: preparation.sellerId, nextItem: 1 }
+      group = { number, sellerId, nextItem: 1 }
       allocation.groups.push(group)
     }
     return group
@@ -1916,7 +2000,14 @@ export function allocatePreparation(
       group.baseCode = `${codePrefix(month)}${String(slot.number).padStart(2, '0')}${String(slot.nextItem).padStart(2, '0')}`
     }
     reserve(group.baseCode, group)
-    const slot = claimGroup(allocation, Number(group.baseCode.slice(6, 8)))
+    const slot = claimGroup(
+      allocation,
+      Number(group.baseCode.slice(6, 8)),
+      packingCodeSellerId(preparation, group, {
+        ...state,
+        supplierIdentityEquivalences,
+      })
+    )
     slot.nextItem = Math.max(
       slot.nextItem,
       Number(group.baseCode.slice(8, 10)) + 1
@@ -1925,11 +2016,17 @@ export function allocatePreparation(
       if (!variant.needsSizeMapping)
         reserve(barcodeValue(group, variant), group, variant)
   }
-  const validated = mergePackingState(state.allocations, state.issuedCodes)
+  const validated = mergePackingState(state.allocations, [
+    ...issuedByCode.values(),
+  ])
   return { preparation: validatePreparation(preparation), ...validated }
 }
 
-export function validatePreparationReservations(preparation, state) {
+export function validatePreparationReservations(
+  preparation,
+  state,
+  options = {}
+) {
   if (
     preparation.revision < 1 ||
     preparation.groups.some((group) => !group.baseCode)
@@ -1938,7 +2035,8 @@ export function validatePreparationReservations(preparation, state) {
   const allocated = allocatePreparation(
     preparation,
     state.allocations,
-    state.issuedCodes
+    state.issuedCodes,
+    options
   )
   if (
     allocated.issuedCodes.length !== state.issuedCodes.length ||
@@ -1970,7 +2068,8 @@ export function validatePreparationReservations(preparation, state) {
 export function activePackingState(
   preparations,
   allocations = [],
-  issuedCodes = []
+  issuedCodes = [],
+  { historicalReservations = [], supplierIdentityEquivalences = [] } = {}
 ) {
   // Keep seller/month slots stable, but discard item counters from retired codes.
   const state = mergePackingState(allocations, [])
@@ -2005,12 +2104,17 @@ export function activePackingState(
         months.set(key, allocation)
         state.allocations.push(allocation)
       }
+      const sellerId = packingCodeSellerId(preparation, group, {
+        allocations: state.allocations,
+        issuedCodes,
+        supplierIdentityEquivalences,
+      })
       const number = Number(group.baseCode.slice(6, 8))
       let slot = allocation.groups.find((entry) => entry.number === number)
-      if (slot && slot.sellerId !== preparation.sellerId)
+      if (slot && slot.sellerId !== sellerId)
         throw new Error('This monthly group belongs to another seller')
       if (!slot) {
-        slot = { number, sellerId: preparation.sellerId, nextItem: 1 }
+        slot = { number, sellerId, nextItem: 1 }
         allocation.groups.push(slot)
       }
       slot.nextItem = Math.max(
@@ -2021,7 +2125,7 @@ export function activePackingState(
         accountId: preparation.accountId,
         orderId: preparation.orderId,
         groupId: group.id,
-        sellerId: preparation.sellerId,
+        sellerId,
         month,
         ...(group.sharedProductId
           ? {
@@ -2079,5 +2183,143 @@ export function activePackingState(
   }
   // Validate duplicates once for the complete final set; rebuilding must stay
   // linear in product count rather than revalidating every growing prefix.
-  return mergePackingState(state.allocations, current)
+  return withHistoricalReservations(
+    state.allocations,
+    current,
+    historicalReservations
+  )
+}
+
+/** Sealed history occupies its old slots independently of ordinary checkpoints. */
+function withHistoricalReservations(
+  allocations,
+  issuedCodes,
+  historicalReservations
+) {
+  const state = mergePackingState(allocations, [])
+  const reservations = historicalReservations.map(validateIssuedCode)
+  for (const reservation of reservations) {
+    let allocation = state.allocations.find(
+      (value) =>
+        value.accountId === reservation.accountId &&
+        value.month === reservation.month
+    )
+    if (!allocation) {
+      allocation = {
+        accountId: reservation.accountId,
+        month: reservation.month,
+        groups: [],
+      }
+      state.allocations.push(allocation)
+    }
+    const number = Number(reservation.code.slice(6, 8))
+    let slot = allocation.groups.find((value) => value.number === number)
+    if (slot && slot.sellerId !== reservation.sellerId)
+      throw new Error('Historical code group belongs to another seller')
+    if (!slot) {
+      slot = { number, sellerId: reservation.sellerId, nextItem: 1 }
+      allocation.groups.push(slot)
+    }
+    slot.nextItem = Math.max(
+      slot.nextItem,
+      Number(reservation.code.slice(8, 10)) + 1
+    )
+  }
+  const owners = new Map()
+  for (const reservation of [...reservations, ...issuedCodes]) {
+    const normalized = validateIssuedCode(reservation)
+    const key = JSON.stringify([
+      normalized.accountId,
+      normalized.kind,
+      normalized.code,
+    ])
+    owners.set(key, mergeHistoricalCodeOwners(owners.get(key), normalized))
+  }
+  return mergePackingState(state.allocations, [...owners.values()])
+}
+
+// Historical aliases are evidence, not current membership. A reviewed unconsumed
+// link may promote an existing owner to a shared identity, but never steal it.
+function mergeHistoricalCodeOwners(existing, incoming) {
+  if (!existing || sameCodeOwner(existing, incoming))
+    return mergeCodeOwners(existing, incoming)
+  if (
+    !['accountId', 'kind', 'code', 'sellerId', 'month'].every(
+      (field) => existing[field] === incoming[field]
+    ) ||
+    !codeReservationMembers(existing).some((left) =>
+      codeReservationMembers(incoming).some((right) => sameOwner(left, right))
+    )
+  )
+    throw new CodeConflictError(existing, incoming)
+  const canonical = incoming.sharedProductId
+    ? incoming
+    : existing.sharedProductId
+      ? existing
+      : incoming
+  if (!canonical.sharedProductId) return mergeCodeOwners(existing, incoming)
+  const members = new Map()
+  for (const owner of [
+    ...codeReservationMembers(existing),
+    ...codeReservationMembers(incoming),
+  ]) {
+    const key = JSON.stringify([owner.orderId, owner.groupId, owner.variantId])
+    const old = members.get(key)
+    if (!old?.ownerSnapshot)
+      members.set(key, {
+        orderId: owner.orderId,
+        groupId: owner.groupId,
+        ...(owner.variantId ? { variantId: owner.variantId } : {}),
+        ...(owner.ownerSnapshot ? { ownerSnapshot: owner.ownerSnapshot } : {}),
+      })
+  }
+  return { ...canonical, members: [...members.values()] }
+}
+
+/** A code keeps its recorded namespace owner; reviewed aliases do not rename it. */
+export function packingCodeSellerId(
+  preparation,
+  group,
+  { allocations = [], issuedCodes = [], supplierIdentityEquivalences = [] } = {}
+) {
+  if (!group.sharedProductId) return preparation.sellerId
+  const committed = issuedCodes.find(
+    (entry) =>
+      entry.accountId === preparation.accountId &&
+      entry.kind === 'base' &&
+      entry.code === group.baseCode &&
+      entry.sharedProductId === group.sharedProductId &&
+      entry.sharedStoreId === group.sharedStoreId
+  )
+  if (committed) return committed.sellerId
+  const owners = [
+    ...new Set(
+      supplierIdentityEquivalences
+        .filter(
+          (review) =>
+            review.accountId === preparation.accountId &&
+            review.storeId === group.sharedStoreId &&
+            review.provenance === 'manual-confirmed' &&
+            review.codeOwners?.some(
+              (owner) => owner.baseCode === group.baseCode
+            )
+        )
+        .map((review) => review.legacySellerId)
+    ),
+  ]
+  if (owners.length > 1)
+    throw new Error('Reviewed supplier equivalence has conflicting code owners')
+  const owner = owners[0] ?? preparation.sellerId
+  const slot = allocations
+    .find(
+      (allocation) =>
+        allocation.accountId === preparation.accountId &&
+        allocation.month === groupPackingMonth(preparation, group)
+    )
+    ?.groups.find((slot) => slot.number === Number(group.baseCode.slice(6, 8)))
+  if (owners.length && slot && slot.sellerId !== owner)
+    throw new Error(
+      'Reviewed supplier equivalence does not own this code prefix'
+    )
+  return owner
 }

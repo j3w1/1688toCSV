@@ -1,11 +1,14 @@
 import { readFile } from 'node:fs/promises'
 import { test, expect } from './extension-fixture.mjs'
 import { createDemoRecords } from '../../preview/library-fixture.js'
+import { createSmartContainer } from './smart-workspace-helpers.mjs'
 
 async function open(extension) {
   const records = await extension.inspector.evaluate(
     `(${createDemoRecords.toString()})(document)`
   )
+  for (const [index, record] of records.entries())
+    record.snapshot.sellerMemberLogin = `synthetic-print-supplier-${index}`
   const restored = await extension.inspector.evaluate(
     (orders) =>
       chrome.runtime.sendMessage({
@@ -31,7 +34,7 @@ async function open(extension) {
   await expect(page.locator('#order-count')).toHaveText('3')
   const rows = page.locator('#sheet-body tr[data-selection-key]')
   await expect(rows).toHaveCount(8)
-  return { page, rows }
+  return { page, rows, records }
 }
 
 // The disposable profile saves downloads under their suggested names.
@@ -51,81 +54,83 @@ async function savedPath(extension, index) {
 }
 
 async function assign(page, rows, indexes) {
-  await rows.nth(indexes[0]).locator('td.price-cell').click()
-  for (const index of indexes.slice(1))
-    await rows
-      .nth(index)
-      .locator('td.price-cell')
-      .click({ modifiers: ['Control'] })
-  await page.locator('#prepare-orders').click()
-  await page
-    .getByRole('button', { name: 'Assign codes and prepare', exact: true })
-    .click()
-  await expect(page.locator('.preparation-save-status')).toHaveText(
-    'Saved automatically'
-  )
-  // Synthetic products may lack a suggested Spanish name; labels need one.
-  const names = page.locator('#packing-view .group-name-editor')
-  for (let index = 0; index < (await names.count()); index++)
-    if (!(await names.nth(index).inputValue()))
-      await names.nth(index).fill(`PRODUCTO ${index + 1}`)
-  const categories = page.locator(
-    '#packing-view .preparation-group [data-packing-field="category"]'
-  )
-  for (let index = 0; index < (await categories.count()); index++)
-    if (!(await categories.nth(index).inputValue()))
-      await categories.nth(index).fill('测试')
-  await expect(page.locator('.preparation-save-status')).toHaveText(
-    'Saved automatically'
-  )
-  await page.locator('#view-orders').click()
+  for (const index of indexes)
+    await rows.nth(index).locator('.row-number input[type="checkbox"]').check()
+  await page.locator('[data-action="review-purchase-codes"]').click()
+  await page.locator('[data-action="assign-purchase-codes"]').click()
+  await expect(page.locator('.purchase-code-review')).toHaveCount(0)
+  for (const [at, index] of indexes.entries()) {
+    await rows.nth(index).locator('[data-action="edit-order-product"]').click()
+    const editor = page.locator('.product-authoring-dialog')
+    const name = editor.getByRole('textbox', {
+        name: 'Spanish name',
+        exact: true,
+      }),
+      category = editor.getByRole('textbox', {
+        name: 'Chinese category',
+        exact: true,
+      })
+    if (!(await name.inputValue())) await name.fill(`PRODUCTO ${at + 1}`)
+    if (!(await category.inputValue())) await category.fill('测试')
+    await editor.getByRole('button', { name: 'Close', exact: true }).click()
+    await expect(editor).toHaveCount(0)
+  }
   await expect(page.locator('#orders-view')).toBeVisible()
 }
 
-test('the Packing list tab reopens the month without the Orders selection and keeps Prepare usable', async ({
+test('Packing reopens its named container independently of Orders product selection and empty drafts retain the same shell', async ({
   extension,
 }) => {
-  const { page, rows } = await open(extension)
-  await page.locator('#packing-month').fill('2026-10')
-  await page.locator('#packing-month').blur()
+  const { page, rows, records } = await open(extension)
   await assign(page, rows, [0])
-  // Select an unassigned product, then activate the tab twice quickly.
-  await rows.nth(2).locator('td.price-cell').click()
-  await expect(rows.nth(2)).toHaveAttribute('aria-selected', 'true')
+  await rows.nth(2).locator('.row-number input[type="checkbox"]').check()
+  const id = await createSmartContainer(extension, [
+    {
+      accountId: records[0].accountId || 'local',
+      orderId: records[0].snapshot.orderId,
+    },
+  ])
   await page.locator('#view-packing').click()
+  await page.locator('[data-action="choose-container"]').selectOption(id)
   await page.locator('#view-packing').click()
   await expect(page.locator('#packing-view')).toBeVisible()
-  await expect(
-    page.getByRole('dialog', { name: 'Assign product codes?', exact: true })
-  ).toHaveCount(0)
-  await expect(page.locator('#packing-view .preparation-group')).toHaveCount(1)
+  await expect(page.locator('.purchase-code-review')).toHaveCount(0)
+  await expect(page.locator('#packing-view .container-order')).toHaveCount(1)
   await expect(page.locator('#view-packing')).toHaveAttribute(
     'aria-current',
     'page'
   )
   await page.locator('#view-orders').click()
   await expect(rows.nth(2)).toHaveAttribute('aria-selected', 'true')
-  // A month without assigned products explains itself and leaves Prepare usable.
-  await page.locator('#packing-month').fill('2026-12')
-  await page.locator('#packing-month').blur()
+  const empty = await extension.inspector.evaluate(async () => {
+    const created = await (
+      await window.testRepository
+    ).createContainer({
+      name: 'Synthetic empty December',
+      period: '2026-12',
+      intentId: crypto.randomUUID(),
+    })
+    return (created.container || created).id
+  })
   await page.locator('#view-packing').click()
-  await expect(page.locator('#feedback, .error-notice').first()).toContainText(
-    'No products are assigned to this packing month'
+  await page.locator('[data-action="choose-container"]').selectOption(empty)
+  await expect(page.locator('.container-heading')).toContainText(
+    'Synthetic empty December'
   )
-  await expect(page.locator('#orders-view')).toBeVisible()
+  await expect(page.locator('#packing-view .container-order')).toHaveCount(0)
+  await expect(
+    page.locator('[data-action="prepare-packing-list"]')
+  ).toHaveCount(0)
+  await page.locator('#view-orders').click()
   await expect(rows.nth(2)).toHaveAttribute('aria-selected', 'true')
-  await expect(page.locator('#prepare-orders')).toBeEnabled()
 })
 
 test('selected amounts stay visible in the action bar on narrow screens', async ({
   extension,
 }) => {
   const { page, rows } = await open(extension)
-  await rows.nth(0).locator('td.price-cell').click()
-  await rows
-    .nth(1)
-    .locator('td.price-cell')
-    .click({ modifiers: ['Control'] })
+  await rows.nth(0).locator('.row-number input[type="checkbox"]').check()
+  await rows.nth(1).locator('.row-number input[type="checkbox"]').check()
   for (const width of [390, 320]) {
     await page.setViewportSize({ width, height: 800 })
     for (const key of ['rows', 'quantity', 'gross', 'after-discounts'])
@@ -144,8 +149,6 @@ test('labels export print-ready A4 PDFs with proportional spares, caps, warnings
   extension,
 }) => {
   const { page, rows } = await open(extension)
-  await page.locator('#packing-month').fill('2026-10')
-  await page.locator('#packing-month').blur()
   await assign(page, rows, [0, 1])
   // The two prepared rows stay selected after returning to Orders.
   await expect(rows.nth(0)).toHaveAttribute('aria-selected', 'true')
@@ -300,8 +303,6 @@ test('an export in progress freezes its inputs, and Cancel or fractional quantit
   extension,
 }) => {
   const { page, rows } = await open(extension)
-  await page.locator('#packing-month').fill('2026-10')
-  await page.locator('#packing-month').blur()
   await assign(page, rows, [0])
   await page.locator('#orders-print-actions .copy-actions-trigger').click()
   await page.locator('#print-labels').click()

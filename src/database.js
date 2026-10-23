@@ -1,3 +1,32 @@
+import * as purchaseCodes from './purchase-codes.js'
+import { createLibraryChanges } from './library-changes.js'
+import { createMaterialSuggester } from './material-vocabulary.js'
+import {
+  createContainerRepository,
+  OPERATIONAL_STORES,
+} from './container-repository.js'
+import {
+  createCartonReportRepository,
+  validateReportAsset,
+  encodeReportAsset,
+  validateOperationalBackup,
+} from './carton-report-repository.js'
+import {
+  validateContainerRecord,
+  reconciliationRevisions,
+} from './container-model.js'
+import {
+  sourceRevision,
+  orderKey,
+  stableValue,
+  batchOrderIds,
+  batchNeedsLegacyReview,
+} from './inventory-model.js'
+import {
+  validateInventoryDispositions,
+  resolvedPurchaseDate,
+  mergeInventoryMetadata,
+} from './order-eligibility.js'
 import {
   otherOrderSnapshot,
   validateOtherPhoto,
@@ -7,6 +36,18 @@ import {
 
 const SNAPSHOT_VERSION = 1
 const BACKUP_FORMAT = '1688-order-library'
+const inventoryMetadataFields = [
+  'inventoryDispositions',
+  'inventoryDispositionsUpdatedAt',
+  'inventoryDispositionClears',
+  'purchaseDateResolution',
+  'purchaseDateResolutionUpdatedAt',
+  'supplierIdentityResolution',
+  'supplierIdentityResolutionUpdatedAt',
+  'supplierCodeIdentityReview',
+  'supplierCodeIdentityReviewUpdatedAt',
+  'inventoryMetadataHistory',
+]
 import {
   OPERATIONS_METADATA_FIELDS,
   validateOperationsMetadata,
@@ -35,10 +76,16 @@ import {
 } from './carton-confirmations.js'
 import { createCartonBatchesRepository } from './carton-batches-repository.js'
 import {
+  transitionPhysicalMark,
+  physicalMarkReadback,
+  assertPhysicalMarkCommandContext,
+} from './physical-mark-aliases.js'
+import {
   validateCartonBatch,
   createLegacyCartonBatches,
   cartonBatchIssues,
   assertCartonBatchEvidence,
+  cartonBatchMarkOwnerChoices,
 } from './carton-batches.js'
 const productAnnotationFields = [
   [
@@ -617,6 +664,84 @@ function validateRecord(input, sourceSnapshots = []) {
     if (currentIds.has(id))
       throw new Error('A removed row is still present in the order')
   }
+  if (input.supplierIdentityResolution !== undefined) {
+    const value = input.supplierIdentityResolution
+    if (
+      typeof value.sellerId !== 'string' ||
+      !value.sellerId.trim() ||
+      value.sellerId.length > 160 ||
+      /[\u0000-\u001f]/.test(value.sellerId)
+    )
+      throw new Error('Invalid authored supplier identity')
+    record.supplierIdentityResolution = {
+      sellerId: value.sellerId,
+      provenance: 'manual-confirmed',
+      updatedAt: date(
+        value.updatedAt,
+        'Supplier identity resolution updatedAt'
+      ),
+      ...(value.reason
+        ? { reason: string(value.reason, 'Supplier resolution reason') }
+        : {}),
+    }
+  }
+  if (input.supplierIdentityResolutionUpdatedAt !== undefined)
+    record.supplierIdentityResolutionUpdatedAt = date(
+      input.supplierIdentityResolutionUpdatedAt,
+      'Supplier identity clock'
+    )
+  if (input.supplierCodeIdentityReview !== undefined) {
+    object(
+      input.supplierCodeIdentityReview,
+      'Reviewed legacy supplier equivalence'
+    )
+    record.supplierCodeIdentityReview = structuredClone(
+      input.supplierCodeIdentityReview
+    )
+  }
+  if (input.supplierCodeIdentityReviewUpdatedAt !== undefined)
+    record.supplierCodeIdentityReviewUpdatedAt = date(
+      input.supplierCodeIdentityReviewUpdatedAt,
+      'Legacy supplier review clock'
+    )
+  if (input.inventoryMetadataHistory !== undefined) {
+    if (!Array.isArray(input.inventoryMetadataHistory))
+      throw new Error('Inventory metadata history must be an array')
+    record.inventoryMetadataHistory = structuredClone(
+      input.inventoryMetadataHistory
+    )
+  }
+  if (input.inventoryDispositions !== undefined)
+    record.inventoryDispositions = validateInventoryDispositions(
+      input.inventoryDispositions,
+      record
+    )
+  if (input.inventoryDispositionsUpdatedAt !== undefined)
+    record.inventoryDispositionsUpdatedAt = date(
+      input.inventoryDispositionsUpdatedAt,
+      'Inventory dispositions updatedAt'
+    )
+  if (input.inventoryDispositionClears !== undefined)
+    record.inventoryDispositionClears = strings(
+      input.inventoryDispositionClears,
+      'Inventory disposition clears'
+    )
+  if (input.purchaseDateResolution !== undefined) {
+    const value = input.purchaseDateResolution
+    record.purchaseDateResolution = {
+      date: resolvedPurchaseDate(value.date),
+      provenance: 'manual-confirmed',
+      updatedAt: date(value.updatedAt, 'Purchase date resolution updatedAt'),
+      ...(value.reason
+        ? { reason: string(value.reason, 'Purchase date reason') }
+        : {}),
+    }
+  }
+  if (input.purchaseDateResolutionUpdatedAt !== undefined)
+    record.purchaseDateResolutionUpdatedAt = date(
+      input.purchaseDateResolutionUpdatedAt,
+      'Purchase date clock'
+    )
   return record
 }
 
@@ -707,6 +832,21 @@ function reconcile(snapshot, previous) {
     previous?.snapshot.items.map((item) => [item.entryId, item]) ?? []
   )
   const currentIds = new Set(snapshot.items.map((item) => item.entryId))
+  if (previous?.inventoryDispositions) {
+    try {
+      validateInventoryDispositions(previous.inventoryDispositions, {
+        snapshot,
+      })
+    } catch (cause) {
+      const error = new Error(
+        'The refreshed source conflicts with an authored inventory exclusion. Review that exclusion in Orders before refreshing again.',
+        { cause }
+      )
+      error.code = 'INVENTORY_DISPOSITION_SOURCE_CONFLICT'
+      error.detail = cause.detail
+      throw error
+    }
+  }
   return {
     changed: true,
     order: {
@@ -716,6 +856,11 @@ function reconcile(snapshot, previous) {
       lastCheckedAt: snapshot.observedAt,
       notes: previous?.notes ?? '',
       tags: previous?.tags ?? [],
+      ...Object.fromEntries(
+        inventoryMetadataFields
+          .filter((field) => previous?.[field] !== undefined)
+          .map((field) => [field, previous[field]])
+      ),
       ...Object.fromEntries(
         [...OPERATIONS_METADATA_FIELDS, 'paymentLinks', 'paymentLinksUpdatedAt']
           .filter((field) => previous?.[field] !== undefined)
@@ -760,6 +905,18 @@ function reconcile(snapshot, previous) {
 
 /** Partial packing imports preserve known entries without claiming unknown clears. */
 export function mergeProductAnnotations(previous, incoming, next = previous) {
+  next = mergeInventoryMetadata(previous, incoming, next)
+  if (
+    (incoming.inventoryDispositionsUpdatedAt || '') >=
+      (previous.inventoryDispositionsUpdatedAt || '') &&
+    incoming.inventoryDispositionsUpdatedAt
+  )
+    next = {
+      ...next,
+      inventoryDispositionClears: structuredClone(
+        incoming.inventoryDispositionClears || []
+      ),
+    }
   for (const [field, clock, partial, kind] of productAnnotationFields) {
     const previousClock = previous[clock] || ''
     const incomingClock = incoming[clock] || ''
@@ -848,7 +1005,10 @@ async function transaction(database, stores, mode, run) {
 
 export function validateBackup(input) {
   object(input, 'Backup')
-  if (input.format !== BACKUP_FORMAT || ![1, 2, 3, 4].includes(input.version))
+  if (
+    input.format !== BACKUP_FORMAT ||
+    ![1, 2, 3, 4, 5].includes(input.version)
+  )
     throw new Error('Unsupported order-library backup')
   date(input.exportedAt, 'exportedAt')
   if (!Array.isArray(input.orders) || !Array.isArray(input.history))
@@ -984,11 +1144,27 @@ export function validateBackup(input) {
   const inPackingScope = (record) =>
     !scopedOrderKeys ||
     scopedOrderKeys.has(JSON.stringify(keyFor(record.snapshot)))
-  if (input.version === 4 && !Array.isArray(input.cartonBatches))
+  if (input.version >= 4 && !Array.isArray(input.cartonBatches))
     throw new Error('Backup cartonBatches must be an array')
   const cartonBatches = (
     input.cartonBatches ?? createLegacyCartonBatches(orders, preparations)
-  ).map(validateCartonBatch)
+  ).map((batch) =>
+    validateCartonBatch(
+      input.version < 5 && batchNeedsLegacyReview(batch)
+        ? {
+            ...batch,
+            needsReview: true,
+            legacyReview: {
+              kind:
+                batchOrderIds(batch).length !== 1
+                  ? 'cross-order'
+                  : 'legacy-loading',
+              reason: 'Retained historical evidence requires explicit review.',
+            },
+          }
+        : batch
+    )
+  )
   if (
     new Set(cartonBatches.map((batch) => batch.id)).size !==
     cartonBatches.length
@@ -1051,6 +1227,7 @@ export function validateBackup(input) {
     packingPreferences,
     packingScope,
     cartonBatches,
+    ...validateOperationalBackup(input),
   }
 }
 
@@ -1084,8 +1261,9 @@ function validatePreparationMembership(preparation, order, history) {
 
 /** Extension-origin IndexedDB is the only durable store for orders and import jobs. */
 export async function openDatabase({ name = '1688-order-library' } = {}) {
+  const physicalMarkBaselines = new WeakMap()
   const database = await new Promise((resolve, reject) => {
-    const request = globalThis.indexedDB.open(name, 4)
+    const request = globalThis.indexedDB.open(name, 5)
     let blocked = false
     request.onupgradeneeded = (event) => {
       const db = request.result
@@ -1151,6 +1329,63 @@ export async function openDatabase({ name = '1688-order-library' } = {}) {
             }
           })
       }
+      if (event.oldVersion < 5) {
+        for (const store of [
+          'containers',
+          'packingReports',
+          'packingReportSources',
+          'orderCartonDrafts',
+          'shipmentLocks',
+          'operationIntents',
+        ])
+          db.createObjectStore(store, {
+            keyPath: store === 'packingReportSources' ? 'rawAssetRef' : 'id',
+          })
+        const tx = request.transaction
+        const cursor = tx.objectStore('cartonBatches').openCursor()
+        cursor.onsuccess = () => {
+          const entry = cursor.result
+          if (!entry) return
+          const batch = entry.value,
+            owners = batchOrderIds(batch)
+          const review = owners.length !== 1 || Number(batch.loaded || 0) > 0
+          const next = {
+            ...batch,
+            ...(owners.length === 1
+              ? {
+                  orderId: owners[0],
+                  packingBasis:
+                    batch.packingBasis ||
+                    (batch.count === 1 ? 'exact' : 'aggregate'),
+                  unresolvedContents: batch.unresolvedContents || [],
+                  volumeBasis: batch.volumeBasis || 'carton',
+                }
+              : {}),
+            ...(review
+              ? {
+                  needsReview: true,
+                  legacyReview: {
+                    kind:
+                      owners.length !== 1 ? 'cross-order' : 'legacy-loading',
+                    reason:
+                      'Review retained historical physical evidence; no shipment was invented.',
+                  },
+                }
+              : {}),
+          }
+          if (
+            Number.isSafeInteger(batch.count) &&
+            batch.count >= 0 &&
+            batch.count <= 10000
+          )
+            next.entitlementIndices ||= Array.from(
+              { length: batch.count },
+              (_, index) => index
+            )
+          entry.update(next)
+          entry.continue()
+        }
+      }
     }
     request.onsuccess = () => {
       if (blocked) request.result.close()
@@ -1166,21 +1401,218 @@ export async function openDatabase({ name = '1688-order-library' } = {}) {
       )
     }
   })
-  database.onversionchange = () => database.close()
-  const read = (stores, run) => transaction(database, stores, 'readonly', run)
-  const write = (stores, run) => transaction(database, stores, 'readwrite', run)
+  const changes = createLibraryChanges(database.name)
+  const close = () => {
+    changes.close()
+    database.close()
+  }
+  database.onversionchange = close
+  const read = (stores, run) =>
+    transaction(
+      database,
+      [...new Set([...stores, ...OPERATIONAL_STORES])],
+      'readonly',
+      run
+    )
+  let containerRepository
+  const write = (stores, run, { notify = true } = {}) => {
+    let implicitStores = []
+    return transaction(
+      database,
+      [...new Set([...stores, ...OPERATIONAL_STORES])],
+      'readwrite',
+      async (tx) => {
+        physicalMarkBaselines.set(
+          tx,
+          await requested(tx.objectStore('cartonBatches').getAll())
+        )
+        const result = await run(tx)
+        if (
+          stores.some((store) =>
+            [
+              'orders',
+              'preparations',
+              'cartonBatches',
+              'containers',
+              'shipmentLocks',
+              'packingAllocations',
+              'issuedCodes',
+            ].includes(store)
+          )
+        ) {
+          implicitStores = await synchronizePhysicalMarkOwnership(tx, result)
+        }
+        // Legacy source, payment and order-metadata writers share this guard.
+        // Coupled container operations validate their complete graph themselves.
+        if (stores.includes('orders') && !stores.includes('containers'))
+          containerRepository.graph(await containerRepository.state(tx))
+        return result
+      }
+    ).then((result) => {
+      if (typeof notify === 'function' ? notify(result) : notify)
+        changes.publish([...new Set([...stores, ...implicitStores])])
+      return result
+    })
+  }
   const cartonBatchesRepository = createCartonBatchesRepository({
     read,
     write,
     requested,
     nextEditTimestamp,
+    guardChanges: async (tx, changes) =>
+      containerRepository.guardChanges(
+        await containerRepository.state(tx),
+        changes
+      ),
   })
+  containerRepository = createContainerRepository({
+    read,
+    write,
+    requested,
+    nextEditTimestamp,
+    codeHooks: {
+      ...purchaseCodes,
+      synchronizePhysicalMarkOwnership,
+      async commitPreparedState(tx, effective, previous) {
+        purchaseCodes.assertConsumedCodeChanges({
+          previous: previous.preparations,
+          preparations: effective.preparations,
+          locks: previous.locks,
+          amendment: true,
+        })
+        purchaseCodes.assertPurchaseCodeMonths({
+          records: effective.records,
+          previous: previous.preparations,
+          preparations: effective.preparations,
+        })
+        validateSharedProducts(effective.preparations, {
+          orders: effective.records,
+          issuedCodes: previous.issuedCodes,
+        })
+        const next = activePackingState(
+          effective.preparations,
+          previous.allocations,
+          previous.issuedCodes,
+          {
+            historicalReservations: purchaseCodes
+              .historicalCodeReservations(effective.locks)
+              .concat(purchaseCodes.physicalMarkReservations(effective)),
+            supplierIdentityEquivalences:
+              purchaseCodes.supplierCodeIdentityEquivalences(effective.records),
+          }
+        )
+        tx.objectStore('packingAllocations').clear()
+        tx.objectStore('issuedCodes').clear()
+        for (const value of next.allocations)
+          tx.objectStore('packingAllocations').put(value)
+        for (const value of next.issuedCodes)
+          tx.objectStore('issuedCodes').put(value)
+      },
+    },
+  })
+  const reportRepository = createCartonReportRepository({
+    read,
+    write,
+    requested,
+    nextEditTimestamp,
+    containerRepository,
+  })
+
+  async function synchronizePhysicalMarkOwnership(tx, result) {
+    const final = await containerRepository.state(tx)
+    if (!final.batches.some((batch) => batch.physicalMark)) return []
+    const batches = purchaseCodes.retirePhysicalMarkAliases(
+      final,
+      nextEditTimestamp,
+      physicalMarkBaselines.get(tx)
+    )
+    for (let index = 0; index < batches.length; index++)
+      if (batches[index] !== final.batches[index])
+        tx.objectStore('cartonBatches').put(batches[index])
+    physicalMarkBaselines.set(tx, batches)
+    const current = activePackingState(
+      final.preparations,
+      final.allocations,
+      final.issuedCodes,
+      {
+        historicalReservations: [
+          ...purchaseCodes.historicalCodeReservations(final.locks),
+          ...purchaseCodes.physicalMarkReservations({ ...final, batches }),
+        ],
+        supplierIdentityEquivalences:
+          purchaseCodes.supplierCodeIdentityEquivalences(final.records),
+      }
+    )
+    tx.objectStore('issuedCodes').clear()
+    tx.objectStore('packingAllocations').clear()
+    for (const value of current.issuedCodes)
+      tx.objectStore('issuedCodes').put(value)
+    for (const value of current.allocations)
+      tx.objectStore('packingAllocations').put(value)
+    if (
+      result?.revisions &&
+      result.record &&
+      !result.contextContainerId &&
+      !result.amendmentContext
+    ) {
+      result.revisions = reconciliationRevisions(
+        { ...final, batches },
+        result.record.snapshot
+      )
+      if (result.batches)
+        result.batches = batches
+          .filter(
+            (batch) =>
+              batch.accountId === result.record.snapshot.accountId &&
+              batchOrderIds(batch).includes(result.record.snapshot.orderId)
+          )
+          .map((batch) => ({
+            ...batch,
+            ...physicalMarkReadback(batch, final.preparations),
+            ...(batch.physicalMark
+              ? {
+                  physicalMarkOwnerChoices: cartonBatchMarkOwnerChoices(
+                    batch,
+                    final.records,
+                    final.preparations,
+                    batches
+                  ),
+                }
+              : {}),
+          }))
+    }
+    return [
+      'issuedCodes',
+      'packingAllocations',
+      ...(batches.some((batch, index) => batch !== final.batches[index])
+        ? ['cartonBatches']
+        : []),
+    ]
+  }
 
   async function replaceActiveCodes(
     tx,
     allocationInputs,
     incomingEvidence = []
   ) {
+    const preparations = await requested(
+      tx.objectStore('preparations').getAll()
+    )
+    const physicalState = {
+      preparations,
+      records: await requested(tx.objectStore('orders').getAll()),
+      batches: await requested(tx.objectStore('cartonBatches').getAll()),
+      locks: await requested(tx.objectStore('shipmentLocks').getAll()),
+    }
+    const recovered = purchaseCodes.recoverPhysicalMarkAliases(
+      physicalState,
+      physicalMarkBaselines.get(tx),
+      null,
+      // Restore has not loaded its operational locks yet. This projection is
+      // used only to allocate; the shared final transaction guard corroborates
+      // every imported claim against the actual stored locks before commit.
+      { validateClaims: false }
+    )
     const state = activePackingState(
       await requested(tx.objectStore('preparations').getAll()),
       allocationInputs ??
@@ -1188,7 +1620,19 @@ export async function openDatabase({ name = '1688-order-library' } = {}) {
       [
         ...incomingEvidence,
         ...(await requested(tx.objectStore('issuedCodes').getAll())),
-      ]
+      ],
+      {
+        historicalReservations: purchaseCodes
+          .historicalCodeReservations(
+            await requested(tx.objectStore('shipmentLocks').getAll())
+          )
+          .concat(
+            purchaseCodes.physicalMarkReservations({
+              ...physicalState,
+              batches: recovered,
+            })
+          ),
+      }
     )
     tx.objectStore('issuedCodes').clear()
     tx.objectStore('packingAllocations').clear()
@@ -1199,20 +1643,25 @@ export async function openDatabase({ name = '1688-order-library' } = {}) {
     return state
   }
 
-  async function packingPreferencesFor(tx) {
-    const store = tx.objectStore('packingPreferences')
-    const previous = await requested(store.get('packing'))
-    const value = upgradeWorkspaceColors(
+  function initializedPackingPreferences(value) {
+    return upgradeWorkspaceColors(
       initializeVocabulary(
-        previous?.value
-          ? previous.value.sizeVocabulary === undefined
-            ? validatePackingPreferences(previous.value)
-            : previous.value
+        value
+          ? value.sizeVocabulary === undefined
+            ? validatePackingPreferences(value)
+            : value
           : validatePackingPreferences()
       )
     )
+  }
+
+  async function packingPreferencesFor(tx) {
+    const store = tx.objectStore('packingPreferences')
+    const previous = await requested(store.get('packing'))
+    const value = initializedPackingPreferences(previous?.value)
     if (!previous || value !== previous.value)
       store.put({
+        ...previous,
         id: 'packing',
         value,
         // Seeding is not an authored preference edit and must not outrank a
@@ -1398,6 +1847,7 @@ export async function openDatabase({ name = '1688-order-library' } = {}) {
       const store = tx.objectStore('packingPreferences')
       const previous = await requested(store.get('packing'))
       store.put({
+        ...previous,
         id: 'packing',
         value: next,
         updatedAt: touch
@@ -1412,13 +1862,25 @@ export async function openDatabase({ name = '1688-order-library' } = {}) {
     tx,
     preparation,
     suggest,
-    { replaceAutomatic = false } = {}
+    { replaceAutomatic = false, snapshot, materialSuggester } = {}
   ) {
     if (!preparation) return false
-    const refreshed = refreshPreparationNames(preparation, suggest, {
+    let refreshed = refreshPreparationNames(preparation, suggest, {
       replaceAutomatic,
     })
-    if (refreshed === preparation) return false
+    if (snapshot)
+      refreshed = refreshPreparationMaterials(
+        refreshed,
+        snapshot,
+        materialSuggester &&
+          new Map(
+            snapshot.items.map((item) => [
+              item.entryId,
+              materialSuggester(item),
+            ])
+          )
+      )
+    if (JSON.stringify(refreshed) === JSON.stringify(preparation)) return false
     // Invalidate open drafts without promoting derived names over newer
     // authoring in a backup. updatedAt remains the user's edit timestamp.
     tx.objectStore('preparations').put({
@@ -1430,10 +1892,20 @@ export async function openDatabase({ name = '1688-order-library' } = {}) {
 
   async function refreshNames(tx, preferences, options) {
     const suggest = createNameSuggester(preferences.vocabulary)
+    const materialSuggester = createMaterialSuggester(
+      preferences.materialVocabulary
+    )
     let orders = 0
     let preparations = 0
     const store = tx.objectStore('orders')
-    for (const order of await requested(store.getAll())) {
+    const records = await requested(store.getAll())
+    const snapshots = new Map(
+      records.map((record) => [
+        JSON.stringify(keyFor(record.snapshot)),
+        record.snapshot,
+      ])
+    )
+    for (const order of records) {
       const namingSuggestions = orderNamingSuggestions(order.snapshot, suggest)
       if (
         JSON.stringify(order.namingSuggestions) !==
@@ -1446,7 +1918,15 @@ export async function openDatabase({ name = '1688-order-library' } = {}) {
     for (const preparation of await requested(
       tx.objectStore('preparations').getAll()
     ))
-      if (refreshPreparedNames(tx, preparation, suggest, options))
+      if (
+        refreshPreparedNames(tx, preparation, suggest, {
+          ...options,
+          snapshot: snapshots.get(
+            JSON.stringify([preparation.accountId, preparation.orderId])
+          ),
+          materialSuggester,
+        })
+      )
         preparations += 1
     return { orders, preparations }
   }
@@ -1465,7 +1945,10 @@ export async function openDatabase({ name = '1688-order-library' } = {}) {
       suffixBaselines = [],
       expectedSnapshots = [],
       allowSharedProductEdits = false,
-    } = {}
+      contextContainerId,
+      expectedAmendment,
+    } = {},
+    txOverride
   ) {
     if (!Array.isArray(inputs) || !inputs.length)
       throw new Error('Choose at least one order to prepare')
@@ -1479,7 +1962,9 @@ export async function openDatabase({ name = '1688-order-library' } = {}) {
       if (expected.productFeatures !== undefined)
         object(expected.productFeatures, 'Expected product features')
     }
-    const drafts = inputs.map(validatePreparation)
+    const drafts = inputs.map((input) =>
+      validatePreparation(clearPreparationRestoreScopes(input))
+    )
     if (
       !Array.isArray(expectedRevisions) ||
       expectedRevisions.length !== drafts.length ||
@@ -1550,7 +2035,9 @@ export async function openDatabase({ name = '1688-order-library' } = {}) {
     }
     const previousOrderIds = checkpointScope(capturePrevious, 'capturePrevious')
     const defaultOrderIds = checkpointScope(resetDefaults, 'resetDefaults')
-    return (preview ? read : write)(
+    return (
+      txOverride ? (_stores, run) => run(txOverride) : preview ? read : write
+    )(
       [
         'orders',
         'history',
@@ -1571,12 +2058,59 @@ export async function openDatabase({ name = '1688-order-library' } = {}) {
         let issuedCodes = await requested(
           tx.objectStore('issuedCodes').getAll()
         )
-        const previousPreparations = await requested(store.getAll())
+        const rawState = contextContainerId
+          ? await containerRepository.state(tx)
+          : null
+        const proof =
+          expectedAmendment ||
+          inputs[0]?.amendmentContext ||
+          expectedSnapshots[0]?.amendmentContext
+        const activeContext = contextContainerId
+          ? containerRepository.amendmentFor(rawState, {
+              contextContainerId,
+              expectedAmendment: proof,
+            })
+          : null
+        if (activeContext)
+          for (const change of cartonBatchChanges)
+            assertPhysicalMarkCommandContext(change, { contextContainerId })
+        if (activeContext)
+          for (const draft of drafts)
+            containerRepository.amendmentFor(rawState, {
+              ...draft,
+              contextContainerId,
+              expectedAmendment: proof,
+            })
+        const stagedState = activeContext
+          ? containerRepository.overlay(rawState, activeContext)
+          : null
+        const previousPreparations =
+          stagedState?.preparations || (await requested(store.getAll()))
         for (const expected of expectedSnapshots) {
-          const order = await requested(
-            tx.objectStore('orders').get([expected.accountId, expected.orderId])
+          const order = stagedState
+            ? stagedState.records.find(
+                (record) =>
+                  record.snapshot.accountId === expected.accountId &&
+                  record.snapshot.orderId === expected.orderId
+              )
+            : await requested(
+                tx
+                  .objectStore('orders')
+                  .get([expected.accountId, expected.orderId])
+              )
+          if (
+            !order ||
+            order.snapshot.observedAt !== expected.observedAt ||
+            (expected.sourceRevision &&
+              sourceRevision(
+                order,
+                previousPreparations.find(
+                  (prep) =>
+                    prep.accountId === expected.accountId &&
+                    prep.orderId === expected.orderId
+                )
+              ) !== expected.sourceRevision)
           )
-          if (!order || order.snapshot.observedAt !== expected.observedAt)
             throw new Error(
               'The source order changed. Review the linked products again.'
             )
@@ -1604,12 +2138,17 @@ export async function openDatabase({ name = '1688-order-library' } = {}) {
             entry,
           ])
         )
-        const orders = await requested(tx.objectStore('orders').getAll())
+        const orders =
+          stagedState?.records ||
+          (await requested(tx.objectStore('orders').getAll()))
         const ordersByKey = new Map(
           orders.map((order) => [
             JSON.stringify([order.snapshot.accountId, order.snapshot.orderId]),
             order,
           ])
+        )
+        const materialSuggester = createMaterialSuggester(
+          preferences?.value.materialVocabulary
         )
         for (const [index, draft] of drafts.entries()) {
           const previous = previousByKey.get(keys[index])
@@ -1631,6 +2170,16 @@ export async function openDatabase({ name = '1688-order-library' } = {}) {
             restored: restoredByKey.get(keys[index]),
             sizeVocabulary: preferences?.value.sizeVocabulary,
           })
+          drafts[index] = refreshPreparationMaterials(
+            draft,
+            order.snapshot,
+            new Map(
+              order.snapshot.items.map((item) => [
+                item.entryId,
+                materialSuggester(item),
+              ])
+            )
+          )
         }
         const measurementResults = []
         for (const { orderId, accountId, edits } of measurementBatches)
@@ -1649,6 +2198,59 @@ export async function openDatabase({ name = '1688-order-library' } = {}) {
           ],
           { orders }
         )
+        const locks = await requested(tx.objectStore('shipmentLocks').getAll())
+        purchaseCodes.assertPurchaseCodeMonths({
+          records: orders,
+          previous: previousPreparations,
+          preparations: drafts,
+        })
+        purchaseCodes.assertConsumedCodeChanges({
+          previous: previousPreparations,
+          preparations: drafts,
+          locks,
+          amendment: !!activeContext,
+        })
+        const physicalBefore =
+          stagedState?.batches ||
+          (await requested(tx.objectStore('cartonBatches').getAll()))
+        const projectedPreparations = [
+          ...previousPreparations.filter(
+            (entry) =>
+              !selectedKeys.has(
+                JSON.stringify([entry.accountId, entry.orderId])
+              )
+          ),
+          ...drafts,
+        ]
+        const physicalProjected = physicalBefore.map((batch) => {
+          const change = cartonBatchChanges.find(
+            (value) => (value.after || value.batch)?.id === batch.id
+          )
+          return transitionPhysicalMark(
+            batch,
+            change?.after || change?.batch || batch,
+            previousPreparations,
+            projectedPreparations,
+            { issuedCodes }
+          )
+        })
+        const physicalAfter = purchaseCodes.recoverPhysicalMarkAliases(
+          {
+            preparations: projectedPreparations,
+            records: orders,
+            batches: physicalProjected,
+            locks,
+          },
+          physicalBefore
+        )
+        const historicalReservations = [
+          ...purchaseCodes.historicalCodeReservations(locks),
+          ...purchaseCodes.physicalMarkReservations({
+            preparations: projectedPreparations,
+            records: orders,
+            batches: physicalAfter,
+          }),
+        ]
         // Reserve the complete final set of explicit codes before allocating blanks.
         // This makes swaps and bulk edits atomic and ignores retired assignments.
         const current = activePackingState(
@@ -1665,7 +2267,12 @@ export async function openDatabase({ name = '1688-order-library' } = {}) {
             })),
           ],
           allocations,
-          issuedCodes
+          issuedCodes,
+          {
+            historicalReservations,
+            supplierIdentityEquivalences:
+              purchaseCodes.supplierCodeIdentityEquivalences(orders),
+          }
         )
         allocations = current.allocations
         issuedCodes = current.issuedCodes
@@ -1703,7 +2310,12 @@ export async function openDatabase({ name = '1688-order-library' } = {}) {
             preserveNaming ? draft : recordNamingEdits(draft, previous),
             allocations,
             issuedCodes,
-            { snapshot: order.snapshot }
+            {
+              snapshot: order.snapshot,
+              historicalReservations,
+              supplierIdentityEquivalences:
+                purchaseCodes.supplierCodeIdentityEquivalences(orders),
+            }
           )
           const preparation = {
             ...result.preparation,
@@ -1753,11 +2365,19 @@ export async function openDatabase({ name = '1688-order-library' } = {}) {
         const affected = physical.filter(
           (batch) =>
             !batch.deletedAt &&
-            !batch.needsReview &&
             !changedBatchIds.has(batch.id) &&
-            !cartonBatchIssues(batch, orders, previousPreparations, physical)
-              .length &&
-            cartonBatchIssues(batch, orders, nextPreparations, physical).length
+            ((!batch.needsReview &&
+              !cartonBatchIssues(batch, orders, previousPreparations, physical)
+                .length &&
+              cartonBatchIssues(batch, orders, nextPreparations, physical)
+                .length) ||
+              stableValue(batch.physicalMark) !==
+                stableValue(
+                  // Released-alias recovery is a lifecycle change, not an
+                  // unreviewed grouping edit by the new independent owner.
+                  physicalProjected.find((value) => value.id === batch.id)
+                    ?.physicalMark
+                ))
         )
         if (affected.length && !(preview && allowCartonReview)) {
           const error = new Error(
@@ -1768,6 +2388,112 @@ export async function openDatabase({ name = '1688-order-library' } = {}) {
           throw error
         }
         // No writes occur until every draft, reservation and physical batch has been checked.
+        if (!preview && activeContext) {
+          const original = new Map(
+            rawState.preparations.map((prep) => [
+              JSON.stringify([prep.accountId, prep.orderId]),
+              prep,
+            ])
+          )
+          activeContext.draft.preparationChanges = [
+            ...(activeContext.draft.preparationChanges || []).filter(
+              (change) =>
+                !selectedKeys.has(
+                  JSON.stringify([change.after.accountId, change.after.orderId])
+                )
+            ),
+            ...results.map((after) => ({
+              after,
+              expectedRevision:
+                original.get(JSON.stringify([after.accountId, after.orderId]))
+                  ?.revision || 0,
+            })),
+          ]
+          for (const result of measurementResults)
+            if (result.changed) {
+              const before = rawState.records.find(
+                  (record) =>
+                    record.snapshot.accountId ===
+                      result.order.snapshot.accountId &&
+                    record.snapshot.orderId === result.order.snapshot.orderId
+                ),
+                prep = rawState.preparations.find(
+                  (prep) =>
+                    prep.accountId === before.snapshot.accountId &&
+                    prep.orderId === before.snapshot.orderId
+                )
+              activeContext.draft.orderChanges = [
+                ...(activeContext.draft.orderChanges || []).filter(
+                  (change) =>
+                    change.after.snapshot.orderId !== before.snapshot.orderId ||
+                    change.after.snapshot.accountId !==
+                      before.snapshot.accountId
+                ),
+                {
+                  after: result.order,
+                  expectedSource: sourceRevision(before, prep),
+                },
+              ]
+            }
+          let effective = containerRepository.overlay(rawState, activeContext)
+          for (const owner of [
+            ...new Set(
+              cartonBatchChanges.map(
+                (change) => (change.after || change.batch).orderId
+              )
+            ),
+          ]) {
+            const group = cartonBatchChanges.filter(
+                (change) => (change.after || change.batch).orderId === owner
+              ),
+              reference = { accountId: drafts[0].accountId, orderId: owner }
+            containerRepository.amendmentFor(
+              rawState,
+              { ...reference, contextContainerId, expectedAmendment: proof },
+              { physical: true }
+            )
+            const changes = containerRepository.normalizedChanges(
+              effective,
+              reference,
+              group,
+              { contextContainerId, previousPreparations }
+            )
+            containerRepository.validateChanges(effective, reference, changes, {
+              contextContainerId,
+            })
+            activeContext.draft.cartonChanges = [
+              ...(activeContext.draft.cartonChanges || []).filter(
+                (change) =>
+                  !changes.some((value) => value.after.id === change.after.id)
+              ),
+              ...changes.map((change) => ({
+                ...change,
+                expectedRevision:
+                  rawState.batches.find((batch) => batch.id === change.after.id)
+                    ?.revision || 0,
+              })),
+            ]
+            effective = containerRepository.overlay(rawState, activeContext)
+          }
+          for (const member of activeContext.draft.orders)
+            if (
+              selectedKeys.has(
+                JSON.stringify([member.accountId, member.orderId])
+              )
+            )
+              containerRepository.refreshedMember(
+                rawState,
+                activeContext,
+                member
+              )
+          activeContext.revision++
+          activeContext.updatedAt = nextEditTimestamp(activeContext.updatedAt)
+          tx.objectStore('containers').put(activeContext)
+          return results.map((result) => ({
+            ...result,
+            amendmentContext: containerRepository.amendmentToken(activeContext),
+          }))
+        }
         if (!preview) {
           if (cartonBatchChanges.length)
             await cartonBatchesRepository.apply(tx, cartonBatchChanges, {
@@ -1791,7 +2517,154 @@ export async function openDatabase({ name = '1688-order-library' } = {}) {
   }
 
   return {
+    ...containerRepository.api,
+    ...reportRepository.api,
     ...cartonBatchesRepository.api,
+    reviewLegacySupplierIdentity(input) {
+      return read(OPERATIONAL_STORES, async (tx) => {
+        const current = await containerRepository.state(tx),
+          container = input.contextContainerId
+            ? current.containers.find(
+                (value) => value.id === input.contextContainerId
+              )
+            : null
+        if (input.contextContainerId && !container?.amendment)
+          throw Object.assign(
+            new Error('This amendment is no longer active.'),
+            { code: 'AMENDMENT_CONTEXT_CONFLICT' }
+          )
+        const state = container
+          ? containerRepository.overlay(current, container)
+          : current
+        const relatedLocks = state.locks.filter(
+          (lock) =>
+            lock.kind === 'code-consumption' &&
+            (orderKey(lock) === orderKey(input) ||
+              lock.lineages.some((lineage) =>
+                lineage.members.some(
+                  (member) => orderKey(member) === orderKey(input)
+                )
+              ))
+        )
+        state.affectedShipmentRevisions = [
+          ...new Map(
+            [
+              ...state.containers.flatMap((owner) =>
+                (owner.revisions || [])
+                  .filter((revision) =>
+                    revision.orders.some(
+                      (order) => orderKey(order) === orderKey(input)
+                    )
+                  )
+                  .map((revision) => ({
+                    containerId: owner.id,
+                    revisionId: revision.revisionId,
+                    orderId: input.orderId,
+                  }))
+              ),
+              ...relatedLocks.map((lock) => ({
+                containerId: lock.firstContainerId,
+                revisionId: lock.firstRevisionId,
+                orderId: input.orderId,
+              })),
+            ].map((value) => [JSON.stringify(value), value])
+          ).values(),
+        ]
+        const review = purchaseCodes.planLegacySupplierIdentityReview(
+          state,
+          input
+        )
+        return {
+          ...review,
+          ...(container
+            ? {
+                amendmentContext: containerRepository.amendmentToken(container),
+              }
+            : {}),
+        }
+      })
+    },
+    confirmLegacySupplierIdentity(input) {
+      return containerRepository.mutate(
+        'confirmLegacySupplierIdentity',
+        input,
+        async (tx, loaded) => {
+          const plan = input.plan?.plan || input.plan,
+            reference = { accountId: plan?.accountId, orderId: plan?.orderId }
+          return containerRepository.saveOrderMetadata(
+            tx,
+            loaded,
+            { ...input, ...reference },
+            'supplierCodeIdentityReview',
+            (record, effective) => {
+              const fresh = purchaseCodes.planLegacySupplierIdentityReview(
+                effective,
+                reference
+              )
+              if (
+                stableValue(
+                  input.expectedRevisions || fresh.expectedRevisions
+                ) !== stableValue(fresh.expectedRevisions)
+              )
+                throw Object.assign(
+                  new Error(
+                    'The preparation changed during the legacy identity review.'
+                  ),
+                  { code: 'PACKING_REVISION_CONFLICT' }
+                )
+              const after = purchaseCodes.applyLegacySupplierIdentityReview({
+                state: effective,
+                plan,
+                confirmed: true,
+                reason: input.reason,
+                amendment: !!input.contextContainerId,
+                updatedAt: nextEditTimestamp(
+                  record.supplierCodeIdentityReviewUpdatedAt
+                ),
+              })
+              after.supplierCodeIdentityReviewUpdatedAt =
+                after.supplierCodeIdentityReview.updatedAt
+              return after
+            }
+          )
+        }
+      )
+    },
+    reviewPurchaseCodes(selection) {
+      return read(OPERATIONAL_STORES, async (tx) =>
+        purchaseCodes.planPurchaseCodeReview(
+          await containerRepository.state(tx),
+          selection
+        )
+      )
+    },
+    assignPurchaseCodes(input) {
+      return containerRepository.mutate(
+        'assignPurchaseCodes',
+        input,
+        async (tx, loaded) => {
+          const plan = input.plan
+          if (
+            !plan ||
+            !Array.isArray(plan.preparations) ||
+            plan.issues?.some((issue) => issue.severity === 'error')
+          )
+            throw new Error(
+              'Review valid purchase code assignments before committing.'
+            )
+          return savePreparations(
+            plan.preparations,
+            {
+              expectedRevisions:
+                input.expectedRevisions || plan.expectedRevisions,
+              expectedSnapshots: plan.expectedSnapshots,
+            },
+            tx
+          )
+        }
+      )
+    },
+
     ...createOperationsRepository({
       read,
       write,
@@ -1840,6 +2713,8 @@ export async function openDatabase({ name = '1688-order-library' } = {}) {
         )
         for (const image of images) tx.objectStore('images').put(image)
         orders.add(record)
+        for (const batch of sourceSpreadsheetBatches(record))
+          tx.objectStore('cartonBatches').add(batch)
         return record
       })
     },
@@ -2071,7 +2946,13 @@ export async function openDatabase({ name = '1688-order-library' } = {}) {
               await requested(
                 tx.objectStore('preparations').get(keyFor(snapshot))
               ),
-              suggest
+              suggest,
+              {
+                snapshot: result.order.snapshot,
+                materialSuggester: createMaterialSuggester(
+                  preferences.materialVocabulary
+                ),
+              }
             )
           }
           return { changed: result.changed, order: result.order }
@@ -2413,6 +3294,37 @@ export async function openDatabase({ name = '1688-order-library' } = {}) {
         async (tx) => {
           const allOrders = await requested(tx.objectStore('orders').getAll())
           const removed = new Set(ids)
+          const shipments = await requested(
+            tx.objectStore('containers').getAll()
+          )
+          const shipmentLocks = await requested(
+            tx.objectStore('shipmentLocks').getAll()
+          )
+          if (
+            shipmentLocks.some(
+              (lock) =>
+                lock.accountId === accountId &&
+                (removed.has(lock.orderId) ||
+                  lock.lineages.some((lineage) =>
+                    lineage.members.some((member) =>
+                      removed.has(member.orderId)
+                    )
+                  ))
+            ) ||
+            shipments.some(
+              (container) =>
+                container.accountId === accountId &&
+                [
+                  ...(container.draft?.orders || []),
+                  ...(container.revisions || []).flatMap(
+                    (revision) => revision.orders || []
+                  ),
+                ].some((order) => removed.has(order.orderId))
+            )
+          )
+            throw new Error(
+              'Historical shipments require these source purchases and originals; they cannot be deleted.'
+            )
           const cartonBatches = await requested(
             tx.objectStore('cartonBatches').getAll()
           )
@@ -2471,28 +3383,33 @@ export async function openDatabase({ name = '1688-order-library' } = {}) {
                 entry.snapshot.observedAt,
               ])
           }
-          const localPhotos = (records) =>
-            new Set(
-              records
-                .flatMap(({ snapshot }) => [
-                  ...snapshot.items.flatMap((item) => [
-                    item.thumbnail,
-                    ...(item.photos || []),
-                  ]),
-                  ...(snapshot.spreadsheet?.rows || []).flatMap(
-                    (row) => row.photos || []
-                  ),
-                ])
-                .filter((photo) => localImageReference.test(photo))
+          const activeCodes = await replaceActiveCodes(tx)
+          const candidates = new Set(
+            [...collectImageReferences({ orders: deletedRecords })].filter(
+              (photo) => localImageReference.test(photo)
             )
-          const candidates = localPhotos(deletedRecords)
+          )
           if (candidates.size) {
             // Only collect assets owned by the removed orders. Other cached
             // photos stay intact, and another order/history can share an original.
-            const retained = localPhotos([
-              ...(await requested(tx.objectStore('orders').getAll())),
-              ...(await requested(tx.objectStore('history').getAll())),
-            ])
+            const retained = collectImageReferences({
+              orders: await requested(tx.objectStore('orders').getAll()),
+              history: await requested(tx.objectStore('history').getAll()),
+              issuedCodes: activeCodes.issuedCodes,
+              containers: await requested(
+                tx.objectStore('containers').getAll()
+              ),
+              shipmentLocks,
+              packingReports: await requested(
+                tx.objectStore('packingReports').getAll()
+              ),
+              orderCartonDrafts: [
+                ...(await requested(
+                  tx.objectStore('orderCartonDrafts').getAll()
+                )),
+                ...(await requested(tx.objectStore('cartonBatches').getAll())),
+              ],
+            })
             for (const photo of candidates)
               if (!retained.has(photo)) tx.objectStore('images').delete(photo)
           }
@@ -2500,7 +3417,6 @@ export async function openDatabase({ name = '1688-order-library' } = {}) {
             previousRecords,
             touch: true,
           })
-          await replaceActiveCodes(tx)
         }
       )
     },
@@ -2514,6 +3430,9 @@ export async function openDatabase({ name = '1688-order-library' } = {}) {
                 identifier(id, 'Backup order ID')
               )
             )
+      const requestedOrderRefs = includedIds
+        ? [...includedIds].map((orderId) => ({ accountId, orderId }))
+        : null
       return write(
         [
           'orders',
@@ -2529,7 +3448,6 @@ export async function openDatabase({ name = '1688-order-library' } = {}) {
           const physical = await cartonBatchesRepository.seed(tx)
           let orders = await requested(tx.objectStore('orders').getAll())
           let history = await requested(tx.objectStore('history').getAll())
-          let images = await requested(tx.objectStore('images').getAll())
           let preparations = await requested(
             tx.objectStore('preparations').getAll()
           )
@@ -2542,6 +3460,85 @@ export async function openDatabase({ name = '1688-order-library' } = {}) {
           const preferences = await requested(
             tx.objectStore('packingPreferences').get('packing')
           )
+          const operational = await reportRepository.exportOperational(tx)
+          const operationalContainers = operational.containers
+          if (includedIds) {
+            let changed = true
+            while (changed) {
+              changed = false
+              for (const container of operationalContainers.filter(
+                (container) => container.accountId === accountId
+              )) {
+                const refs = [
+                  ...(container.draft?.orders || []),
+                  ...(container.revisions || []).flatMap(
+                    (revision) => revision.orders || []
+                  ),
+                ]
+                if (refs.some((order) => includedIds.has(order.orderId)))
+                  for (const order of refs)
+                    if (!includedIds.has(order.orderId)) {
+                      includedIds.add(order.orderId)
+                      changed = true
+                    }
+              }
+              const retain = (reference) => {
+                if (
+                  (reference.accountId || 'local') === accountId &&
+                  !includedIds.has(reference.orderId)
+                ) {
+                  includedIds.add(reference.orderId)
+                  changed = true
+                }
+              }
+              for (const batch of physical.batches) {
+                if (batch.accountId !== accountId) continue
+                const owners = batchOrderIds(batch)
+                if (owners.some((id) => includedIds.has(id))) {
+                  owners.forEach((orderId) => retain({ accountId, orderId }))
+                  for (const alias of batch.physicalMark?.supersededAliases ||
+                    [])
+                    for (const conflict of alias.conflicts)
+                      if (conflict.accountId === batch.accountId)
+                        retain(conflict)
+                }
+              }
+              for (const lock of operational.shipmentLocks) {
+                const members = [
+                  lock,
+                  ...lock.lineages.flatMap((lineage) => lineage.members),
+                ]
+                if (
+                  members.some(
+                    (member) =>
+                      member.accountId === accountId &&
+                      includedIds.has(member.orderId)
+                  )
+                )
+                  members.forEach(retain)
+              }
+              for (const code of issuedCodes) {
+                const members = [code, ...(code.members || [])]
+                if (
+                  members.some(
+                    (member) =>
+                      member.accountId === accountId &&
+                      includedIds.has(member.orderId)
+                  )
+                )
+                  members.forEach(retain)
+              }
+              for (const record of paymentSourceDependencies(
+                orders,
+                orders.filter(
+                  (entry) =>
+                    entry.snapshot.accountId === accountId &&
+                    includedIds.has(entry.snapshot.orderId)
+                )
+              ))
+                retain(record.snapshot)
+            }
+          }
           if (includedIds) {
             const dependencies = paymentSourceDependencies(
               orders,
@@ -2565,38 +3562,126 @@ export async function openDatabase({ name = '1688-order-library' } = {}) {
             preparations = preparations.filter((entry) =>
               includedKeys.has(JSON.stringify([entry.accountId, entry.orderId]))
             )
-            const photoUrls = new Set([
-              ...[...orders, ...history].flatMap((entry) =>
-                entry.snapshot.items.flatMap((item) => [
-                  item.thumbnail,
-                  ...(item.photos || []),
-                ])
-              ),
-              ...issuedCodes
-                .filter(included)
-                .flatMap((entry) => entry.ownerSnapshot?.photos || []),
-            ])
-            images = images.filter((entry) => photoUrls.has(entry.url))
           }
+          const includes = (reference) =>
+            !includedIds ||
+            ((reference.accountId || 'local') === accountId &&
+              includedIds.has(reference.orderId))
+          if (includedIds) {
+            operational.containers = operational.containers.filter(
+              (container) =>
+                [
+                  ...(container.draft?.orders || []),
+                  ...container.revisions.flatMap((revision) => revision.orders),
+                ].some(includes)
+            )
+            operational.packingReports = operational.packingReports.filter(
+              (report) => includes(report.orderKey)
+            )
+            operational.orderCartonDrafts =
+              operational.orderCartonDrafts.filter(includes)
+            operational.shipmentLocks =
+              operational.shipmentLocks.filter(includes)
+            operational.reportSources = operational.reportSources.filter(
+              (source) => source.owners.some(includes)
+            )
+            operational.operationIntents = []
+          }
+          const scopedCodes = issuedCodes.filter(
+            (code) => includes(code) || (code.members || []).some(includes)
+          )
+          const slots = new Set(
+            scopedCodes.map((code) =>
+              JSON.stringify([
+                code.accountId,
+                code.month,
+                Number(code.code.slice(6, 8)),
+              ])
+            )
+          )
+          const scopedAllocations = includedIds
+            ? allocations
+                .map((allocation) => ({
+                  ...allocation,
+                  groups: allocation.groups.filter((group) =>
+                    slots.has(
+                      JSON.stringify([
+                        allocation.accountId,
+                        allocation.month,
+                        group.number,
+                      ])
+                    )
+                  ),
+                }))
+                .filter((allocation) => allocation.groups.length)
+            : allocations
           const backup = {
             format: BACKUP_FORMAT,
-            version: 4,
+            version: 5,
             exportedAt: new Date().toISOString(),
             orders,
             history,
-            images,
+            images: [],
             preparations,
+            ...(requestedOrderRefs
+              ? {
+                  requestedOrderRefs,
+                  dependencyOrderRefs: orders
+                    .filter(
+                      (record) =>
+                        !requestedOrderRefs.some(
+                          (ref) =>
+                            ref.accountId === record.snapshot.accountId &&
+                            ref.orderId === record.snapshot.orderId
+                        )
+                    )
+                    .map(({ snapshot }) => ({
+                      accountId: snapshot.accountId,
+                      orderId: snapshot.orderId,
+                    })),
+                }
+              : {}),
             cartonBatches: physical.batches.filter(
               (batch) =>
                 !includedIds ||
                 (batch.accountId === accountId &&
-                  batch.contents.every((item) => includedIds.has(item.orderId)))
+                  batchOrderIds(batch).length > 0 &&
+                  batchOrderIds(batch).every((orderId) =>
+                    includedIds.has(orderId)
+                  ))
             ),
-            ...activePackingState(preparations, allocations, issuedCodes),
+            ...activePackingState(
+              preparations,
+              scopedAllocations,
+              scopedCodes,
+              {
+                historicalReservations:
+                  purchaseCodes.historicalCodeReservations(
+                    operational.shipmentLocks
+                  ),
+                supplierIdentityEquivalences:
+                  purchaseCodes.supplierCodeIdentityEquivalences(orders),
+              }
+            ),
             packingPreferences: preferences
               ? { value: preferences.value, updatedAt: preferences.updatedAt }
               : null,
           }
+          Object.assign(backup, operational)
+          const photoUrls = collectImageReferences({
+            ...backup,
+            orderCartonDrafts: [
+              ...backup.orderCartonDrafts,
+              ...backup.cartonBatches,
+            ],
+          })
+          const imageStore = tx.objectStore('images')
+          const imageKeys = await requested(imageStore.getAllKeys())
+          backup.images = await Promise.all(
+            imageKeys
+              .filter((url) => photoUrls.has(imageCacheKey(url)))
+              .map((url) => requested(imageStore.get(url)))
+          )
           // Scope physical cartons only after the packing planner has seen
           // every intersecting batch, so omitted linked purchases are reported.
           return packingScope
@@ -2605,7 +3690,8 @@ export async function openDatabase({ name = '1688-order-library' } = {}) {
                 packingScope
               )
             : backup
-        }
+        },
+        { notify: false }
       )
     },
 
@@ -2613,6 +3699,8 @@ export async function openDatabase({ name = '1688-order-library' } = {}) {
       // Validate every record before opening a write transaction. A malformed
       // trailing record must never leave a partially restored library.
       const backup = validateBackup(input)
+      for (const asset of backup.reportSources || [])
+        await validateReportAsset(asset)
       for (const record of [...backup.orders, ...backup.history])
         await validateOtherSnapshotPhotos(record.snapshot)
       return write(
@@ -2636,6 +3724,12 @@ export async function openDatabase({ name = '1688-order-library' } = {}) {
             [...allocations, ...backup.allocations],
             []
           )
+          const emptyBeforeRestore =
+            backup.packingScope &&
+            backup.packingPreferences &&
+            (await requested(orders.count())) === 0 &&
+            (await requested(history.count())) === 0 &&
+            (await requested(tx.objectStore('preparations').count())) === 0
           for (const incoming of backup.preparations) {
             const store = tx.objectStore('preparations')
             const previous = await requested(
@@ -2660,29 +3754,26 @@ export async function openDatabase({ name = '1688-order-library' } = {}) {
                 revision: Math.max(incoming.revision, previous.revision) + 1,
               })
             else if (incoming.updatedAt === previous.updatedAt) {
-              if (
-                JSON.stringify(preparationAuthoring(incoming)) !==
-                JSON.stringify(preparationAuthoring(previous))
-              ) {
-                if (isPackingPreparationSubset(previous, incoming))
-                  store.put({
-                    ...incoming,
-                    revision:
-                      Math.max(previous.revision, incoming.revision) + 1,
-                  })
-                else if (!isPackingPreparationSubset(incoming, previous))
-                  throw new Error(
-                    'Backup conflict: preparation edits have the same timestamp'
-                  )
-              }
+              const merged = mergePackingPreparation(
+                previous,
+                incoming,
+                preparationRestoreEntryIds(incoming)
+              )
+              if (merged !== previous) store.put(merged)
             }
           }
           if (backup.packingPreferences) {
             const store = tx.objectStore('packingPreferences')
             const previous = await requested(store.get('packing'))
             if (
-              !previous ||
-              previous.updatedAt === '1970-01-01T00:00:00.000Z' ||
+              (!previous && (!backup.packingScope || emptyBeforeRestore)) ||
+              (previous?.updatedAt === '1970-01-01T00:00:00.000Z' &&
+                (!backup.packingScope ||
+                  (emptyBeforeRestore &&
+                    !previous.initializedFromBackup &&
+                    JSON.stringify(
+                      initializedPackingPreferences(previous.value)
+                    ) === JSON.stringify(initializedPackingPreferences())))) ||
               (!backup.packingScope &&
                 previous.updatedAt < backup.packingPreferences.updatedAt)
             )
@@ -2693,6 +3784,7 @@ export async function openDatabase({ name = '1688-order-library' } = {}) {
                 updatedAt: backup.packingScope
                   ? '1970-01-01T00:00:00.000Z'
                   : backup.packingPreferences.updatedAt,
+                initializedFromBackup: true,
               })
           }
           let imported = 0
@@ -2761,6 +3853,24 @@ export async function openDatabase({ name = '1688-order-library' } = {}) {
             const key = [...keyFor(record.snapshot), record.snapshot.observedAt]
             if (!(await requested(history.getKey(key)))) history.put(record)
           }
+          const existingPhysical = await requested(
+            tx.objectStore('cartonBatches').getAll()
+          )
+          if (
+            (backup.cartonBatches || []).some(
+              (batch) =>
+                !batch.deletedAt &&
+                existingPhysical.some(
+                  (local) => local.id === batch.id && local.deletedAt
+                )
+            )
+          )
+            throw Object.assign(
+              new Error(
+                'Restore conflicts with a retained carton deletion; review it explicitly.'
+              ),
+              { code: 'RESTORE_CARTON_TOMBSTONE' }
+            )
           await cartonBatchesRepository.restore(tx, backup.cartonBatches || [])
           await shareRestoredWechat(tx)
           const mergedOrders = await requested(orders.getAll())
@@ -2773,6 +3883,14 @@ export async function openDatabase({ name = '1688-order-library' } = {}) {
             const existing = await requested(
               tx.objectStore('images').get(image.url)
             )
+            if (
+              localImageReference.test(image.url) &&
+              existing &&
+              existing.dataUrl !== image.dataUrl
+            )
+              throw new Error(
+                'Restore conflicts with an original imported photo; its retained bytes cannot be replaced.'
+              )
             if (!existing || existing.storedAt < image.storedAt)
               tx.objectStore('images').put(image)
           }
@@ -2850,23 +3968,49 @@ export async function openDatabase({ name = '1688-order-library' } = {}) {
           // catalog that originally suggested them. Preserve that saved artwork.
           if (!backup.packingScope)
             await refreshNames(tx, preferences, { replaceAutomatic: true })
+          await reportRepository.restoreOperational(tx, backup)
           return { imported, updated }
         }
       )
     },
 
-    async getPreparation(orderId, { accountId = 'local' } = {}) {
-      return read(['preparations'], (tx) =>
-        requested(tx.objectStore('preparations').get([accountId, orderId]))
-      )
-    },
-
-    async listPreparations({ accountId = 'local' } = {}) {
-      return read(['preparations'], (tx) =>
-        requested(
-          tx.objectStore('preparations').index('account').getAll(accountId)
+    async getPreparation(
+      orderId,
+      { accountId = 'local', contextContainerId } = {}
+    ) {
+      if (!contextContainerId)
+        return read(['preparations'], (tx) =>
+          requested(tx.objectStore('preparations').get([accountId, orderId]))
         )
-      )
+      return read(OPERATIONAL_STORES, async (tx) => {
+        const context = await containerRepository.context(
+          tx,
+          { accountId, orderId },
+          { contextContainerId }
+        )
+        return context.preparation
+      })
+    },
+    async listPreparations({ accountId = 'local', contextContainerId } = {}) {
+      return read(OPERATIONAL_STORES, async (tx) => {
+        if (!contextContainerId)
+          return requested(
+            tx.objectStore('preparations').index('account').getAll(accountId)
+          )
+        const loaded = await containerRepository.state(tx),
+          container = loaded.containers.find(
+            (value) => value.id === contextContainerId
+          )
+        if (!container?.amendment)
+          throw new Error('This amendment is no longer active.')
+        return containerRepository
+          .overlay(loaded, container)
+          .preparations.filter((prep) => prep.accountId === accountId)
+          .map((prep) => ({
+            ...prep,
+            amendmentContext: containerRepository.amendmentToken(container),
+          }))
+      })
     },
 
     async getReservedBarcodes(baseCode, { accountId = 'local' } = {}) {
@@ -3040,15 +4184,19 @@ export async function openDatabase({ name = '1688-order-library' } = {}) {
       )[0]
     },
 
-    savePreparations,
+    savePreparations(inputs, options) {
+      return savePreparations(inputs, options)
+    },
 
     async previewPreparations(inputs, options = {}) {
       return savePreparations(inputs, { ...options, preview: true })
     },
 
     async getPackingPreferences() {
-      return write(['packingPreferences', 'orders'], async (tx) =>
-        syncTagCatalogs(tx, await packingPreferencesFor(tx))
+      return write(
+        ['packingPreferences', 'orders'],
+        async (tx) => syncTagCatalogs(tx, await packingPreferencesFor(tx)),
+        { notify: false }
       )
     },
 
@@ -3067,12 +4215,17 @@ export async function openDatabase({ name = '1688-order-library' } = {}) {
     async setWorkspaceColorScheme(colorScheme) {
       if (!['light', 'dark', 'system'].includes(colorScheme))
         throw new Error('The workspace color scheme is invalid.')
-      return write(['packingPreferences'], async (tx) => {
-        const store = tx.objectStore('packingPreferences')
-        const previous = await requested(store.get('workspace-display'))
-        if (previous?.colorScheme !== colorScheme)
+      await write(
+        ['packingPreferences'],
+        async (tx) => {
+          const store = tx.objectStore('packingPreferences')
+          const previous = await requested(store.get('workspace-display'))
+          if (previous?.colorScheme === colorScheme) return false
           store.put({ id: 'workspace-display', colorScheme })
-      })
+          return true
+        },
+        { notify: (changed) => changed }
+      )
     },
 
     async savePackingPreferences(input, { tagCatalogBaseline } = {}) {
@@ -3140,6 +4293,17 @@ export async function openDatabase({ name = '1688-order-library' } = {}) {
     async putImage(input) {
       const image = validateImage(input)
       return write(['images'], async (tx) => {
+        const previous = await requested(
+          tx.objectStore('images').get(image.url)
+        )
+        if (
+          localImageReference.test(image.url) &&
+          previous &&
+          previous.dataUrl !== image.dataUrl
+        )
+          throw new Error(
+            'An original imported photo cannot be replaced under the same local reference.'
+          )
         await requested(tx.objectStore('images').put(image))
         return image
       })
@@ -3169,9 +4333,8 @@ export async function openDatabase({ name = '1688-order-library' } = {}) {
       )
     },
 
-    close() {
-      database.close()
-    },
+    subscribe: changes.subscribe,
+    close,
   }
 }
 import {
@@ -3189,7 +4352,11 @@ import {
   mergeAdditionalCharges,
   orderCostAdjustments,
 } from './order-charges.js'
-import { localImageReference } from './images.js'
+import {
+  localImageReference,
+  imageCacheKey,
+  collectImageReferences,
+} from './images.js'
 import {
   createStoreOrder,
   validateStoreIdentity,
@@ -3200,8 +4367,9 @@ import {
 } from './store-order.js'
 import {
   createPackingBackup,
-  isPackingPreparationSubset,
   mergePackingPreparation,
+  preparationRestoreEntryIds,
+  clearPreparationRestoreScopes,
   selectPackingOrder,
   selectPackingPreparation,
   validatePackingScope,
@@ -3210,13 +4378,13 @@ import {
   createNameSuggester,
   initializeVocabulary,
   orderNamingSuggestions,
-  preparationAuthoring,
   recordNamingEdits,
   refreshPreparationNames,
 } from './product-vocabulary.js'
 import {
   activePackingState,
   allocatePreparation,
+  refreshPreparationMaterials,
   barcodeValue,
   codeOwnerEvidence,
   codeReservationMembers,
@@ -3231,3 +4399,45 @@ import {
   validatePreparationSuffixEdits,
   validatePreparationReservations,
 } from './packing-model.js'
+
+function sourceSpreadsheetBatches(record) {
+  const snapshot = record.snapshot
+  if (snapshot.sourceType !== 'spreadsheet') return []
+  return (snapshot.spreadsheet.rows || [])
+    .filter((row) => row.boxes)
+    .map((row) => {
+      const items = snapshot.items.filter((item) => item.sourceRow === row.row),
+        count = Number(row.boxes)
+      return validateCartonBatch({
+        id: `source:${snapshot.accountId}/${snapshot.orderId}/${row.row}`,
+        accountId: snapshot.accountId,
+        orderId: snapshot.orderId,
+        storeId: repeatProductStoreIdentity(snapshot),
+        groups: [],
+        contents: items.map((item) => ({
+          orderId: snapshot.orderId,
+          entryId: item.entryId,
+          quantity: item.quantity,
+        })),
+        count,
+        packingBasis:
+          count === 1
+            ? 'exact'
+            : items.length === 1 && row.perbox
+              ? 'uniform'
+              : 'aggregate',
+        unresolvedContents: [],
+        len: row.len || '',
+        wid: row.wid || '',
+        ht: row.ht || '',
+        weight: row.kg || '',
+        weightBasis: 'carton',
+        suppliedCbm: row.cbm || '',
+        volumeBasis: 'carton',
+        labelOrigin: 'internal',
+        provenance: { kind: 'supplier-source', row: row.row },
+        revision: 1,
+        updatedAt: snapshot.observedAt,
+      })
+    })
+}

@@ -721,7 +721,7 @@ test('hundreds of carton batches use bounded range formulas instead of exceeding
   assert.ok(total.formula.length < 100)
 })
 
-test('two sheet drawings use independent relationships with globally unique media IDs', async () => {
+test('two sheet drawings share identical media while retaining every product and physical carton placement', async () => {
   const png = new Uint8Array(24)
   png.set([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a])
   new DataView(png.buffer).setUint32(16, 32)
@@ -744,7 +744,24 @@ test('two sheet drawings use independent relationships with globally unique medi
           ?.content
       )
   assert.match(part('xl/worksheets/_rels/sheet2.xml.rels'), /drawing2.xml/)
-  assert.match(part('xl/drawings/drawing2.xml'), /r:embed="image10"/)
-  assert.match(part('xl/drawings/_rels/drawing2.xml.rels'), /image10.png/)
+  assert.equal(
+    archive.FullPaths.filter((name) => /xl\/media\/image\d+\.png$/.test(name))
+      .length,
+    1
+  )
+  for (const [sheet, placements] of [
+    [1, 9],
+    [2, 1],
+  ]) {
+    const drawing = part(`xl/drawings/drawing${sheet}.xml`)
+    assert.equal(
+      (drawing.match(/<xdr:oneCellAnchor>/g) || []).length,
+      placements
+    )
+    assert.equal((drawing.match(/r:embed="image1"/g) || []).length, placements)
+    const relationships = part(`xl/drawings/_rels/drawing${sheet}.xml.rels`)
+    assert.equal((relationships.match(/Type="[^"]+\/image"/g) || []).length, 1)
+    assert.match(relationships, /Target="\.\.\/media\/image1.png"/)
+  }
   assert.match(part('[Content_Types].xml'), /sheet2.xml/)
 })

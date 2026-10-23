@@ -23,7 +23,7 @@ async function build(directory, version, extra = {}) {
   await mkdir(directory, { recursive: true })
   await writeFile(
     path.join(directory, 'manifest.json'),
-    JSON.stringify({ name: '1688toCSV', version, ...extra })
+    JSON.stringify({ name: '1688toPL', version, ...extra })
   )
 }
 const version = async (directory) =>
@@ -125,20 +125,72 @@ test('identity checks refuse another extension or a changed key, also for rollba
   )
   assert.throws(
     () => checkIdentity(installedOf(other), installed),
-    /not the 1688toCSV/
+    /not the configured extension/
   )
   assert.throws(
     () => checkIdentity(installedOf(keyed), installed),
     /could change the extension id/
   )
   assert.doesNotThrow(() =>
-    checkIdentity({ name: '1688toCSV', key: null }, installed)
+    checkIdentity({ name: '1688toPL', key: null }, installed)
   )
   function installedOf(directory) {
     return directory === other
       ? { name: 'Other', key: null }
-      : { name: '1688toCSV', key: 'ABC' }
+      : { name: '1688toPL', key: 'ABC' }
   }
   // readIdentity reports the key that a stale rollback copy would carry.
   assert.equal((await readIdentity(keyed)).key, 'ABC')
+})
+
+test('the brand rename and rollback retain the installed extension key', () => {
+  const before = { name: '1688toCSV', key: 'ABC' },
+    after = { name: '1688toPL', key: 'ABC' }
+  const reviewed = { compatibleNames: ['1688toCSV', '1688toPL'] }
+  assert.throws(() => checkIdentity(after, before), /not the configured/)
+  assert.doesNotThrow(() => checkIdentity(after, before, reviewed))
+  assert.doesNotThrow(() => checkIdentity(before, after, reviewed))
+  assert.throws(
+    () => checkIdentity({ ...after, key: null }, before, reviewed),
+    /could change the extension id/
+  )
+  assert.throws(
+    () => checkIdentity(after, { ...before, name: 'Other' }),
+    /not the configured extension/
+  )
+})
+
+test('recovery refuses another target or journal paths outside staging without changing files', async (t) => {
+  const { root, installDir, stagingDir } = await setup()
+  t.after(() => rm(root, { recursive: true, force: true }))
+  const protectedFile = path.join(root, 'retained-synthetic.txt')
+  await writeFile(protectedFile, 'retain')
+  const journal = stagingPaths(stagingDir).journal
+  await writeFile(
+    journal,
+    JSON.stringify({
+      installDir: path.join(root, 'different'),
+      swap: path.join(stagingDir, 'swap'),
+    })
+  )
+  await assert.rejects(
+    recoverStaging({ installDir, stagingDir }),
+    /another installDir/
+  )
+  await writeFile(
+    journal,
+    JSON.stringify({ installDir, candidate: protectedFile })
+  )
+  await assert.rejects(
+    recoverStaging({ installDir, stagingDir }),
+    /outside stagingDir/
+  )
+  assert.equal(await readFile(protectedFile, 'utf8'), 'retain')
+  assert.equal(await version(installDir), 'old')
+  await writeFile(journal, '{invalid')
+  await assert.rejects(
+    recoverStaging({ installDir, stagingDir }),
+    /journal is unreadable/
+  )
+  assert.equal(await readFile(journal, 'utf8'), '{invalid')
 })

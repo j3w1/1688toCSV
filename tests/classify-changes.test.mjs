@@ -88,7 +88,7 @@ test('manual runs and unavailable comparisons require all checks', () => {
 })
 
 test('git comparisons cover initial push, rename, deletion, and PR merge base', () => {
-  const cwd = mkdtempSync(join(tmpdir(), '1688tocsv-routing-'))
+  const cwd = mkdtempSync(join(tmpdir(), '1688topl-routing-'))
   const git = (...args) =>
     execFileSync('git', args, {
       cwd,

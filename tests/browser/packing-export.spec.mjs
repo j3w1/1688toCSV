@@ -2,13 +2,24 @@ import { test, expect } from './extension-fixture.mjs'
 import { createDemoRecords } from '../../preview/library-fixture.js'
 import { readFile, mkdir, writeFile } from 'node:fs/promises'
 import XLSX from 'xlsx'
+import {
+  assignSelectedPurchaseCodes,
+  loadedSourceContainer,
+  editOrderProduct,
+  closeOrderProduct,
+} from './smart-workspace-helpers.mjs'
 
-test('packing export previews persistent columns, order, scope and layout before downloading a themed editable workbook', async ({
+test('container export preserves advanced columns/order/layout and exact theme/media while selection cannot narrow the complete revision', async ({
   extension,
 }) => {
   const [record] = await extension.inspector.evaluate(
     `(${createDemoRecords.toString()})(document)`
   )
+  record.snapshot.sellerMemberLogin = 'synthetic-frozen-export-supplier'
+  record.additionalCharges = [
+    { id: 'synthetic-handling', reason: 'Internal handling', amount: '12.00' },
+  ]
+  record.additionalChargesUpdatedAt = new Date().toISOString()
   const restored = await extension.inspector.evaluate(
     (record) =>
       chrome.runtime.sendMessage({
@@ -48,17 +59,39 @@ test('packing export previews persistent columns, order, scope and layout before
     )
     .toBe('#5c3700')
   await page.locator('#select-rows').click()
-  await page.locator('#prepare-orders').click()
-  await page.locator('[data-action="review-proceed"]').click()
+  await assignSelectedPurchaseCodes(page)
+  for (let index = 0; index < 3; index++) {
+    const editor = await editOrderProduct(page, index, {
+      'Spanish name': `SYNTHETIC ${index + 1}`,
+      'Chinese category': '合成品',
+    })
+    await closeOrderProduct(editor)
+  }
+  const containerId = await loadedSourceContainer(extension, [
+    {
+      accountId: record.accountId || record.snapshot.accountId || 'local',
+      orderId: record.snapshot.orderId,
+    },
+  ])
+  await page.goto(
+    `${extension.extensionBaseUrl}/library.html#workspace=packing&containerId=${containerId}&view=packing-list`
+  )
   const view = page.locator('#packing-view')
   await expect(view).toBeVisible()
   await view
-    .getByRole('button', { name: 'Clear selection', exact: true })
-    .click()
-  await view.locator('.group-select').first().click()
+    .locator('tr[data-container-row] input[type="checkbox"]')
+    .first()
+    .check()
   await view.locator('[data-action="export-packing-list"]').click()
   const dialog = page.locator('.packing-export-dialog')
   await expect(dialog).toBeVisible()
+  await expect(
+    dialog.getByRole('checkbox', {
+      name: 'Include detailed automation JSON',
+      exact: true,
+    })
+  ).not.toBeChecked()
+  await expect(dialog).toContainText('regardless of Excel columns')
   await expect(
     dialog.locator('.packing-export-preview .packing-export-headings th')
   ).toHaveCount(13)
@@ -146,8 +179,8 @@ test('packing export previews persistent columns, order, scope and layout before
   await expect(
     dialog.locator('.packing-export-preview .packing-export-headings th')
   ).toHaveCount(4)
-  await dialog.getByRole('radio', { name: 'Products', exact: true }).check()
-  await dialog.locator('[data-option="scope"][data-value="selected"]').click()
+  await dialog.getByRole('radio', { name: 'Packing list', exact: true }).check()
+  await expect(dialog.locator('[data-option="scope"]')).toHaveCount(0)
   await dialog
     .locator('[data-option="photoSize"][data-value="compact"]')
     .click()
@@ -156,7 +189,7 @@ test('packing export previews persistent columns, order, scope and layout before
   await dialog.getByLabel('Column filters', { exact: true }).uncheck()
   await expect(
     dialog.locator('.packing-export-footer [role="status"]')
-  ).toHaveText('Products: 1 · Columns: 5')
+  ).toHaveText('Products: 3 · Columns: 5')
   await mkdir('work', { recursive: true })
   await dialog.screenshot({ path: 'work/packing-export-popup-wide.png' })
   await page.setViewportSize({ width: 390, height: 844 })
@@ -183,9 +216,7 @@ test('packing export previews persistent columns, order, scope and layout before
       .locator('.packing-export-preview .packing-export-headings th')
       .first()
   ).toHaveText('Qty')
-  await expect(
-    dialog.locator('[data-option="scope"][data-value="selected"]')
-  ).toHaveAttribute('aria-pressed', 'true')
+  await expect(dialog.locator('[data-option="scope"]')).toHaveCount(0)
   await expect(
     dialog.locator('[data-option="photoSize"][data-value="compact"]')
   ).toHaveAttribute('aria-pressed', 'true')
@@ -216,7 +247,15 @@ test('packing export previews persistent columns, order, scope and layout before
       .toUpperCase(),
     body: 'FFFFFF',
   }))
+  await dialog
+    .getByRole('checkbox', {
+      name: 'Include detailed automation JSON',
+      exact: true,
+    })
+    .check()
+  const downloading = page.waitForEvent('download')
   await download.click()
+  await downloading
   await expect(dialog).toHaveCount(0)
   let files
   await expect
@@ -233,8 +272,13 @@ test('packing export previews persistent columns, order, scope and layout before
   await writeFile('work/packing-export-selected-synthetic.xlsx', bytes)
   const workbook = XLSX.read(bytes, { type: 'buffer' }),
     sheet = workbook.Sheets[workbook.SheetNames[0]]
-  expect(workbook.SheetNames).toEqual(['Products', 'Cartons'])
-  expect(XLSX.utils.sheet_to_json(sheet, { header: 1 })[4]).toEqual([
+  expect(workbook.SheetNames).toEqual(['Packing list', 'Cartons', 'Se quedó'])
+  const productRows = XLSX.utils.sheet_to_json(sheet, { header: 1 }),
+    headerIndex = productRows.findIndex(
+      (row) => row.includes('Qty') && row.includes('Code')
+    )
+  expect(headerIndex).toBeGreaterThanOrEqual(0)
+  expect(productRows[headerIndex]).toEqual([
     'Qty',
     'Code',
     'Details',
@@ -253,8 +297,19 @@ test('packing export previews persistent columns, order, scope and layout before
   expect(xml('/xl/styles.xml')).toContain('EFEBE6')
   expect(xml('/xl/styles.xml')).toContain('DED7CC')
   expect(xml('/xl/styles.xml')).toContain(theme.body)
+  const descriptionIndex = productRows.findIndex(
+    (row) =>
+      row[2] === record.snapshot.items[0].description &&
+      String(row[0]) === record.snapshot.items[0].quantity
+  )
+  expect(descriptionIndex).toBeGreaterThan(headerIndex)
+  expect(productRows[descriptionIndex - 1][0]).toContain(
+    record.snapshot.orderId
+  )
   const descriptionStyle = Number(
-    xml('/xl/worksheets/sheet1.xml').match(/<c r="C7" s="(\d+)"/)[1]
+    xml('/xl/worksheets/sheet1.xml').match(
+      new RegExp(`<c r="C${descriptionIndex + 1}" s="(\\d+)"`)
+    )[1]
   )
   const cellStyles = xml('/xl/styles.xml')
     .match(/<cellXfs\b[^>]*>([\s\S]*?)<\/cellXfs>/)[1]
@@ -263,7 +318,9 @@ test('packing export previews persistent columns, order, scope and layout before
   const fonts = [...xml('/xl/styles.xml').matchAll(/<font>([\s\S]*?)<\/font>/g)]
   expect(fonts[fontId][1]).toContain('<sz val="10"')
   const headerStyle = Number(
-    xml('/xl/worksheets/sheet1.xml').match(/<c r="A5" s="(\d+)"/)[1]
+    xml('/xl/worksheets/sheet1.xml').match(
+      new RegExp(`<c r="A${headerIndex + 1}" s="(\\d+)"`)
+    )[1]
   )
   const headerFont = Number(cellStyles[headerStyle].match(/fontId="(\d+)"/)[1])
   const headerFill = Number(cellStyles[headerStyle].match(/fillId="(\d+)"/)[1])
@@ -274,10 +331,32 @@ test('packing export previews persistent columns, order, scope and layout before
   expect(xml('/xl/worksheets/sheet1.xml')).not.toContain('<autoFilter ')
   expect(xml('/xl/worksheets/sheet1.xml')).not.toContain('#REF!')
   const summary = JSON.parse(await readFile(summaryFile.filename, 'utf8'))
-  expect(summary.products).toHaveLength(1)
+  expect(summary.products).toHaveLength(3)
+  expect(summary.scope).toBe('container-revision')
+  expect(summary.containerId).toBe(containerId)
+  expect(summary.revisionId).toBeNull()
+  expect(summary.draft).toBe(true)
+  expect(Number.isSafeInteger(summary.revision)).toBe(true)
+  expect(summary.revision).toBeGreaterThan(0)
+  const actualDraft = await extension.inspector.evaluate(
+    async (id) => (await window.testRepository).getContainerView({ id }),
+    containerId
+  )
+  expect(summary.revision).toBe(actualDraft.container.revision)
+  expect(summary.sealedAt).toBeNull()
+  expect(summary.products[0]).toHaveProperty('sourceUnitPrice')
+  expect(
+    summary.products.flatMap((row) => row.additionalChargeReasons || [])
+  ).toEqual(Array(3).fill('Internal handling (¥12.00)'))
   await page.reload()
   await page.locator('#view-packing').click()
   await page.locator('[data-action="export-packing-list"]').click()
+  await expect(
+    dialog.getByRole('checkbox', {
+      name: 'Include detailed automation JSON',
+      exact: true,
+    })
+  ).not.toBeChecked()
   await expect(
     dialog.locator('.packing-export-preview .packing-export-headings th')
   ).toHaveCount(5)
@@ -297,10 +376,8 @@ test('packing export previews persistent columns, order, scope and layout before
   await expect(
     dialog.locator('.packing-export-preview .packing-export-headings th')
   ).toHaveCount(16)
-  await dialog.getByRole('radio', { name: 'Products', exact: true }).check()
-  await expect(
-    dialog.locator('[data-option="scope"][data-value="selected"]')
-  ).toHaveAttribute('aria-pressed', 'true')
+  await dialog.getByRole('radio', { name: 'Packing list', exact: true }).check()
+  await expect(dialog.locator('[data-option="scope"]')).toHaveCount(0)
   await expect(
     dialog.locator('[data-option="photoSize"][data-value="compact"]')
   ).toHaveAttribute('aria-pressed', 'true')
@@ -313,8 +390,43 @@ test('packing export previews persistent columns, order, scope and layout before
   await expect(
     dialog.getByLabel('Column filters', { exact: true })
   ).not.toBeChecked()
+  // A narrow Excel export does not silently write the detailed companion file.
   await dialog
-    .getByRole('button', { name: 'Close export', exact: true })
+    .getByRole('checkbox', {
+      name: 'Include detailed automation JSON',
+      exact: true,
+    })
+    .uncheck()
+  await dialog
+    .getByRole('button', { name: 'Clear columns', exact: true })
     .click()
+  await dialog.locator('input[value="spanishName"]').check()
+  await dialog.locator('input[value="quantity"]').check()
+  const narrowDownloading = page.waitForEvent('download')
+  await download.click()
+  await narrowDownloading
+  await expect(dialog).toHaveCount(0)
+  await expect
+    .poll(async () => {
+      files = await extension.inspector.evaluate(() =>
+        chrome.downloads.search({})
+      )
+      return files.filter((file) => file.state === 'complete').length
+    })
+    .toBe(3)
+  expect(files.filter((file) => file.filename.endsWith('.json'))).toHaveLength(
+    1
+  )
+  const narrowFile = files
+    .filter((file) => file.filename.endsWith('.xlsx'))
+    .sort((a, b) => b.id - a.id)[0]
+  const narrowBook = XLSX.read(await readFile(narrowFile.filename), {
+    type: 'buffer',
+  })
+  expect(
+    XLSX.utils
+      .sheet_to_json(narrowBook.Sheets['Packing list'], { header: 1 })
+      .find((row) => row.includes('Product') && row.includes('Qty'))
+  ).toEqual(['Product', 'Qty'])
   await page.close()
 })

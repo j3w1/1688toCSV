@@ -1,467 +1,255 @@
-import { test, expect, holdPreparationWrites } from './extension-fixture.mjs'
-import { createDemoRecords } from '../../preview/library-fixture.js'
+import { test, expect } from './extension-fixture.mjs'
 import {
-  packingRemovalAction,
-  finishOrganizing,
-  openOrganizing,
-} from './packing-organize-helpers.mjs'
+  seedSmartOrder,
+  openSmartLibrary,
+  createContainerThroughUI,
+  libraryBackup,
+  editOrderProduct,
+  closeOrderProduct,
+  sealContainerThroughUI,
+} from './smart-workspace-helpers.mjs'
 
-async function backup(extension) {
-  const response = await extension.inspector.evaluate(() =>
-    chrome.runtime.sendMessage({ type: 'BACKUP_EXPORT' })
-  )
-  expect(response.ok, response.error).toBe(true)
-  return response.data
+async function setup(extension) {
+  const refs = []
+  for (const orderId of ['710000000000000001', '710000000000000002'])
+    refs.push(await seedSmartOrder(extension, { orderId, physical: true }))
+  const page = await openSmartLibrary(extension)
+  const id = await createContainerThroughUI(page, refs)
+  return { page, refs, id, view: page.locator('#packing-view') }
 }
-
-async function openPacking(page, groupCount = 2) {
-  await page.getByLabel('Packing month', { exact: true }).fill('2026-10')
-  await page
-    .getByRole('button', { name: 'Prepare packing list', exact: true })
-    .click()
-  const view = page.locator('#packing-view')
-  const review = page.getByRole('dialog', {
-    name: 'Assign product codes?',
-    exact: true,
-  })
-  await expect
-    .poll(async () => (await view.isVisible()) || (await review.isVisible()))
-    .toBe(true)
-  if (await review.isVisible())
-    await review
-      .getByRole('button', { name: 'Assign codes and prepare', exact: true })
-      .click()
-  await expect(view).toBeVisible()
-  await expect(view.locator('.preparation-group')).toHaveCount(groupCount)
-  await expect(view.locator('.preparation-save-status')).toHaveText(
-    'Saved automatically'
+const current = (extension, id) =>
+  extension.inspector.evaluate(
+    async (id) => (await window.testRepository).getContainerView({ id }),
+    id
   )
-  return view
-}
+const immutableGoods = ({
+  orders,
+  preparations,
+  issuedCodes,
+  cartonBatches,
+}) => ({ orders, preparations, issuedCodes, cartonBatches })
 
-async function seedPacking(extension) {
-  const [record] = await extension.inspector.evaluate(
-    `(${createDemoRecords.toString()})(document)`
-  )
-  record.snapshot.sellerName = 'Synthetic removal store'
-  record.snapshot.sellerMemberLogin = 'synthetic-removal'
-  record.snapshot.sellerShopOrigin = 'https://synthetic-removal.1688.com'
-  for (const [index, item] of record.snapshot.items.entries()) {
-    item.title = index < 2 ? '合成玻璃罐' : '合成收纳盒'
-    item.productNumber = index < 2 ? 'TEST-JAR' : 'TEST-BOX'
-    item.skuProperties = [
-      { label: '颜色', value: index === 0 ? '红色' : '白色' },
-    ]
-    item.description = `${item.title}\n颜色：${item.skuProperties[0].value}`
-  }
-  const response = await extension.inspector.evaluate(
-    (record) =>
-      chrome.runtime.sendMessage({
-        type: 'BACKUP_RESTORE',
-        backup: {
-          format: '1688-order-library',
-          version: 1,
-          exportedAt: new Date().toISOString(),
-          orders: [record],
-          history: [],
-          images: [],
-        },
-      }),
-    record
-  )
-  expect(response.ok, response.error).toBe(true)
-  const page = await extension.context.newPage()
-  await page.clock.setFixedTime(new Date('2026-10-15T04:00:00Z'))
-  await page.goto(`${extension.extensionBaseUrl}/library.html`)
-  const rows = page.locator('#sheet-body tr[data-selection-key]')
-  await expect(rows).toHaveCount(3)
-  await rows.first().focus()
-  await page.keyboard.press('Control+a')
-  return { page, view: await openPacking(page), record }
-}
-
-function memberships(preparation) {
-  return preparation.groups.flatMap((group) =>
-    group.variants.flatMap((variant) => variant.entryIds)
-  )
-}
-
-async function removalAction(container, name) {
-  return packingRemovalAction(
-    container,
-    name === 'Remove product' ? 'product' : 'group'
-  )
-}
-
-test('packing keeps management controls in Organize and removes normal action gutters for pointer, keyboard and touch', async ({
+test('pointer, keyboard and touch expose whole-order removal without product trash, drag or Organize controls', async ({
   extension,
 }) => {
-  const { page, view } = await seedPacking(extension)
-  const group = view.locator('.preparation-group').first()
-  const row = group.locator('tr[data-variant-id]').first()
-  await expect(row.locator(':scope > td')).toHaveCount(4)
-  await expect(row.locator(':scope > td').first()).toHaveClass('variant-photos')
-  await expect(group.getByRole('columnheader')).toHaveText([
-    'Photo',
-    'Product variant',
-    'Carton details',
-    'Barcode',
-  ])
-  expect(
-    (await group.locator('thead').boundingBox()).height
-  ).toBeLessThanOrEqual(1)
-  await expect(
-    view.locator(
-      '.reorder-handle, .packing-item-actions, .packing-remove-button'
-    )
-  ).toHaveCount(0)
-  await expect(group.locator('.product-overview > :first-child')).toHaveClass(
-    'product-summary'
+  const { page, view, id } = await setup(extension)
+  const before = await libraryBackup(extension)
+  for (const width of [1440, 768, 390]) {
+    await page.setViewportSize({ width, height: 900 })
+    await expect(
+      view.locator(
+        '.reorder-handle,.packing-item-actions,.packing-remove-button,[data-action="organize-packing"],[data-action="remove-product"]'
+      )
+    ).toHaveCount(0)
+    await expect(
+      view.locator('[data-action="remove-container-order"]')
+    ).toHaveCount(2)
+    const remove = view
+      .locator('[data-action="remove-container-order"]')
+      .first()
+    await remove.scrollIntoViewIfNeeded()
+    const box = await remove.boundingBox()
+    expect(box.width).toBeGreaterThanOrEqual(24)
+    expect(box.height).toBeGreaterThanOrEqual(24)
+  }
+  await view.locator('[data-action="remove-container-order"]').first().focus()
+  await page.keyboard.press('Enter')
+  await expect
+    .poll(async () => (await current(extension, id)).orders.length)
+    .toBe(1)
+  expect(immutableGoods(await libraryBackup(extension))).toEqual(
+    immutableGoods(before)
   )
-  await openOrganizing(page)
-  const cards = view.locator('.packing-organize-group')
-  await expect(cards).toHaveCount(2)
-  await expect(view.locator('.variants, .variant-carton-columns')).toHaveCount(
-    0
+  const touch = await extension.context.newPage()
+  await touch.setViewportSize({ width: 390, height: 844 })
+  await touch.goto(page.url())
+  const button = touch.locator('[data-action="remove-container-order"]')
+  // The pointer-event path used by touch remains available without hovering.
+  await button.dispatchEvent('pointerdown', {
+    pointerType: 'touch',
+    isPrimary: true,
+  })
+  await button.click()
+  await expect
+    .poll(async () => (await current(extension, id)).orders.length)
+    .toBe(0)
+  expect(immutableGoods(await libraryBackup(extension))).toEqual(
+    immutableGoods(before)
   )
-  await expect(view.locator('.packing-organize-remove')).toBeDisabled()
-  const grip = cards.first().locator('.reorder-handle')
-  await expect(grip).toBeVisible()
-  await expect(grip).toHaveCSS('opacity', '1')
-  await expect(grip).toHaveCSS('touch-action', 'none')
-  await expect(grip).toHaveAccessibleName(/use Up or Down arrows/)
-  await cards.first().locator('input[type="checkbox"]').check()
-  await expect(view.locator('.packing-organize-remove')).toBeEnabled()
-  await expect(cards.first().locator('.packing-remove-button')).toHaveCount(0)
-  await cards
+})
+
+test('physical/output checkboxes select independently and never change membership or source edits', async ({
+  extension,
+}) => {
+  const { page, view, id } = await setup(extension)
+  const before = await libraryBackup(extension)
+  await view
+    .locator('.container-order [data-action="expand-container-order"]')
     .first()
-    .getByRole('button', { name: 'Products', exact: true })
     .click()
-  await expect(view.locator('.packing-organize-product')).toHaveCount(2)
-  await view
-    .locator('.packing-organize-product')
-    .first()
-    .locator('input[type="checkbox"]')
-    .check()
-  await page.setViewportSize({ width: 390, height: 844 })
-  const remove = view.locator('.packing-organize-remove')
-  const bounds = await remove.boundingBox()
-  expect(bounds.x).toBeGreaterThanOrEqual(0)
-  expect(bounds.x + bounds.width).toBeLessThanOrEqual(390)
-  await remove.focus()
-  await remove.press('Enter')
-  const review = page.getByRole('dialog', {
-    name: 'Remove from packing?',
-    exact: true,
-  })
-  await expect(review).toBeVisible()
-  await expect(review.locator('.packing-review-item')).toHaveCount(2)
-  await expect(
-    review
-      .locator('.packing-review-item')
-      .filter({ hasText: 'Removed from packing' })
-  ).toHaveCount(1)
-  await review.getByRole('button', { name: 'Cancel', exact: true }).click()
-  await expect(review).toBeHidden()
-  const session = await extension.context.newCDPSession(page)
-  try {
-    await session.send('Emulation.setTouchEmulationEnabled', { enabled: true })
-    await expect
-      .poll(() => page.evaluate(() => matchMedia('(pointer: coarse)').matches))
-      .toBe(true)
-    for (const control of [
-      view.locator('.packing-organize-product .reorder-handle').first(),
-      remove,
-    ]) {
-      await expect(control).toBeVisible()
-      expect((await control.boundingBox()).height).toBeGreaterThanOrEqual(44)
-    }
-  } finally {
-    await session.detach()
-  }
-  await finishOrganizing(page)
-  await expect(group.locator('tr[data-variant-id]')).toHaveCount(2)
-  await expect(
-    view.locator('.reorder-handle, .packing-remove-button')
-  ).toHaveCount(0)
-})
-
-test('group selection adds and removes independently without modifiers or interfering with editors', async ({
-  extension,
-}) => {
-  const { page, view } = await seedPacking(extension)
-  await view
-    .getByRole('button', { name: 'Clear selection', exact: true })
-    .click()
-  const groups = view.locator('.preparation-group')
-  const first = groups.first().locator('.group-select')
-  const second = groups.nth(1).locator('.group-select')
-  const backupButton = view.getByRole('button', {
-    name: 'Back up packing',
-    exact: true,
-    includeHidden: true,
-  })
-  await expect(backupButton).toBeEnabled()
-  await first.click()
-  await second.click()
-  await expect(first).toHaveAttribute('aria-pressed', 'true')
-  await expect(second).toHaveAttribute('aria-pressed', 'true')
-  await expect(view.locator('.preparation-copy-scope')).toHaveText(
-    '3 selected products · 1 orders'
-  )
-  await expect(backupButton).toBeEnabled()
-  await groups.first().getByLabel('Product code', { exact: true }).click()
-  await expect(first).toHaveAttribute('aria-pressed', 'true')
-  await expect(second).toHaveAttribute('aria-pressed', 'true')
-  await first.click()
-  await expect(first).toHaveAttribute('aria-pressed', 'false')
-  await expect(second).toHaveAttribute('aria-pressed', 'true')
-  await expect(view.locator('.preparation-copy-scope')).toHaveText(
-    '1 selected products · 1 orders'
-  )
-  await second.click()
-  await expect(backupButton).toBeEnabled()
-  await first.focus()
-  await page.keyboard.press('Control+a')
-  await expect(first).toHaveAttribute('aria-pressed', 'true')
-  await expect(second).toHaveAttribute('aria-pressed', 'true')
-})
-
-test('new product removal returns it to unassigned and later sessions retain the baseline when excluding saved products', async ({
-  extension,
-}) => {
-  const { page, view } = await seedPacking(extension)
-  const before = await backup(extension)
-  const initial = before.preparations[0]
-  const [jar, box] = initial.groups
-  const removedIds = jar.variants[0].entryIds
-  const jarCard = view.locator(`[data-group-id="${jar.id}"]`)
-  await page.setViewportSize({ width: 390, height: 844 })
-  const remove = await removalAction(jarCard, 'Remove product')
-  expect(
-    await remove.evaluate((node) => {
-      const rect = node.getBoundingClientRect()
-      return rect.left >= 0 && rect.right <= window.innerWidth
-    })
-  ).toBe(true)
-  await remove.click()
-  const review = page.getByRole('dialog', {
-    name: 'Remove from packing?',
-    exact: true,
-  })
-  await expect(review.locator('.packing-review-item')).toHaveCount(2)
-  await expect(
-    review
-      .locator('.packing-review-item')
-      .filter({ hasText: 'Removed from packing' })
-  ).toHaveCount(removedIds.length)
-  await expect(review.locator('.preparation-photo')).toHaveCount(2)
-  const keptSibling = review
-    .locator('.packing-review-item')
-    .filter({ hasText: 'This product stays in packing' })
-  await expect(keptSibling).toHaveCount(1)
-  await expect(keptSibling).toContainText('2 product rows · 2 variants')
-  await expect(keptSibling).toContainText('1 product rows · 1 variants')
-  await expect(review).toContainText('Original order data is kept')
-  await review.getByRole('button', { name: 'Cancel', exact: true }).click()
-  await finishOrganizing(page)
-  expect((await backup(extension)).preparations).toEqual(before.preparations)
-  await removalAction(jarCard, 'Remove product')
-  await remove.click()
-  await review
-    .getByRole('button', { name: 'Remove from packing', exact: true })
-    .click()
-  await finishOrganizing(page)
-  const remaining = memberships(initial).filter(
-    (id) => !removedIds.includes(id)
-  )
-  await expect
-    .poll(async () => memberships((await backup(extension)).preparations[0]))
-    .toEqual(remaining)
-  await expect(jarCard.locator('.variants tbody tr')).toHaveCount(1)
-  const afterProduct = await backup(extension)
-  expect(afterProduct.orders).toEqual(before.orders)
-  expect(
-    afterProduct.issuedCodes.some(
-      (entry) => entry.variantId === jar.variants[0].id
-    )
-  ).toBe(false)
-  expect(afterProduct.allocations).toEqual(before.allocations)
-  await page.reload()
-  await openPacking(page)
-  await expect(jarCard.locator('.variants tbody tr')).toHaveCount(1)
-  await (await removalAction(jarCard, 'Remove group')).click()
-  await expect(review.locator('.packing-review-item')).toHaveCount(1)
-  await review
-    .getByRole('button', { name: 'Remove from packing', exact: true })
-    .click()
-  await finishOrganizing(page)
-  await expect(view.locator('.preparation-group')).toHaveCount(1)
-  const afterGroup = await backup(extension)
-  expect(afterGroup.preparations[0].groups.map((group) => group.id)).toEqual([
-    jar.id,
-    box.id,
-  ])
-  expect(
-    afterGroup.preparations[0].defaultPacking.groups.map((group) => group.id)
-  ).toEqual([jar.id, box.id])
-  expect(afterGroup.orders).toEqual(before.orders)
-  expect(afterGroup.issuedCodes).toEqual(afterProduct.issuedCodes)
-  await page.reload()
-  await expect(page.locator('#sheet-body tr[data-selection-key]')).toHaveCount(
-    3
-  )
-  await openPacking(page, 2)
-  await expect(
-    view.getByRole('button', { name: 'Reset order and codes', exact: true })
-  ).toBeDisabled()
-  expect(memberships((await backup(extension)).preparations[0])).toEqual(
-    remaining
+  const rows = view.locator('tr[data-container-row]')
+  await expect(rows).toHaveCount(6)
+  await rows.nth(0).getByRole('checkbox').check()
+  await rows.nth(1).getByRole('checkbox').check()
+  await rows.nth(0).getByRole('checkbox').uncheck()
+  await expect(rows.nth(1).getByRole('checkbox')).toBeChecked()
+  await rows.nth(1).locator('td').nth(1).click()
+  const details = page.locator('.container-carton-details')
+  await expect(details).toBeVisible()
+  await expect(details.locator('input,textarea,select')).toHaveCount(0)
+  await details.getByRole('button', { name: 'Close', exact: true }).click()
+  await expect(rows.nth(1).getByRole('checkbox')).toBeChecked()
+  expect((await current(extension, id)).orders).toHaveLength(2)
+  expect(immutableGoods(await libraryBackup(extension))).toEqual(
+    immutableGoods(before)
   )
 })
 
-test('removing the last group keeps an empty saved packing while original products can be selected again', async ({
+test('removing a whole order releases its draft reservation while retaining authored names, source rows and code owners', async ({
   extension,
 }) => {
-  const { page, view } = await seedPacking(extension)
-  const original = await backup(extension)
-  for (let count = 2; count > 0; count--) {
-    await (await removalAction(view, 'Remove group')).click()
-    const review = page.getByRole('dialog', {
-      name: 'Remove from packing?',
-      exact: true,
-    })
-    await review
-      .getByRole('button', { name: 'Remove from packing', exact: true })
-      .click()
-    await finishOrganizing(page)
-    await expect(view.locator('.preparation-group')).toHaveCount(count - 1)
-  }
-  await expect
-    .poll(async () => (await backup(extension)).preparations[0].groups)
-    .toEqual([])
-  const removed = await backup(extension)
-  expect(removed.preparations).toHaveLength(1)
-  expect(removed.preparations[0].defaultPacking.groups).toEqual([])
-  expect(removed.orders).toEqual(original.orders)
-  expect(removed.issuedCodes).toEqual([])
-  await page.reload()
-  const rows = page.locator('#sheet-body tr[data-selection-key]')
-  await expect(rows).toHaveCount(3)
-  const launch = page.getByRole('button', {
-    name: 'Prepare packing list',
-    exact: true,
-  })
-  await expect(launch).toBeDisabled()
-  await rows.first().focus()
-  await page.keyboard.press('Space')
-  await openPacking(page, 1)
-  const added = await backup(extension)
-  expect(memberships(added.preparations[0])).toEqual([
-    original.orders[0].snapshot.items[0].entryId,
-  ])
-  const originalCodes = original.preparations[0].groups.map(
-    (group) => group.baseCode
+  const { page, view, refs, id } = await setup(extension)
+  await page.locator('#view-orders').click()
+  const editor = await editOrderProduct(
+    page,
+    { ...refs[0], entryId: '2001' },
+    { 'Spanish name': 'KEPT AUTHORING' }
   )
-  expect(originalCodes).toContain(added.preparations[0].groups[0].baseCode)
-  expect(
-    added.issuedCodes.every(
-      (entry) => entry.groupId === added.preparations[0].groups[0].id
-    )
-  ).toBe(true)
-})
-
-test('reset shows position and barcode changes and becomes unavailable after the saved defaults are restored', async ({
-  extension,
-}) => {
-  const { page, view } = await seedPacking(extension)
-  const reset = view.getByRole('button', {
-    name: 'Reset order and codes',
-    exact: true,
-  })
-  await expect(reset).toBeDisabled()
-  const original = await backup(extension)
-  const [jar, box] = original.preparations[0].groups
-  const firstVariant = jar.variants[0]
-  const originalBarcode = `${jar.baseCode}${firstVariant.variantSuffix}${firstVariant.sizeSuffix}`
+  await closeOrderProduct(editor)
+  const before = await libraryBackup(extension)
+  await page.locator('#view-packing').click()
   await view
-    .locator(`[data-group-id="${jar.id}"]`)
-    .getByLabel(`Variant code ${firstVariant.id}`, { exact: true })
-    .fill('ZZ')
-  await expect(view.locator('.preparation-save-status')).toHaveText(
-    'Saved automatically'
-  )
-  await openOrganizing(page)
-  await view
-    .locator(
-      `.packing-organize-group[data-group-id="${jar.id}"] .reorder-handle`
-    )
-    .press('ArrowDown')
+    .locator('.container-order')
+    .filter({ hasText: refs[0].orderId })
+    .locator('[data-action="remove-container-order"]')
+    .click()
   await expect
     .poll(async () =>
-      (await backup(extension)).preparations[0].groups.map((group) => group.id)
+      (await current(extension, id)).orders.map((order) => order.orderId)
     )
-    .toEqual([box.id, jar.id])
-  await finishOrganizing(page)
-  await expect(reset).toBeEnabled()
-  const changed = await backup(extension)
-  await reset.click()
-  const review = page.getByRole('dialog', {
-    name: 'Reset order and codes?',
-    exact: true,
-  })
-  await expect(review.locator('.packing-review-item')).toHaveCount(2)
-  const firstChange = review.locator('.packing-review-item').first()
-  const position = firstChange
-    .locator('.packing-value-row')
-    .filter({ has: page.getByText('Position', { exact: true }) })
-  await expect(
-    position.locator('.packing-value-before .packing-value-content')
-  ).toHaveText('2')
-  await expect(
-    position.locator('.packing-value-after .packing-value-content')
-  ).toHaveText('1')
-  const barcode = firstChange.locator('.packing-value-row').filter({
-    has: page.getByText(`${jar.baseCode}ZZ${firstVariant.sizeSuffix}`, {
-      exact: true,
-    }),
-  })
-  await expect(barcode.locator('.packing-value-after .ce-code')).toHaveText(
-    originalBarcode
+    .toEqual([refs[1].orderId])
+  expect(immutableGoods(await libraryBackup(extension))).toEqual(
+    immutableGoods(before)
   )
-  await review.getByRole('button', { name: 'Cancel', exact: true }).click()
-  await finishOrganizing(page)
-  expect((await backup(extension)).preparations).toEqual(changed.preparations)
-  await holdPreparationWrites(page)
-  await reset.click()
-  await review
-    .getByRole('button', { name: 'Reset order and codes', exact: true })
-    .click()
-  const fields = view.locator('#preparation-content')
-  try {
-    await expect
-      .poll(() => page.evaluate(() => window.preparationSaveStarted))
-      .toBe(true)
-    await expect(fields).toHaveJSProperty('disabled', true)
-    // Reset is still actionable in the old draft but temporarily inherits the
-    // fieldset's disabled state while the real database transaction is held.
-    await expect(reset).toHaveJSProperty('disabled', false)
-    await expect(reset).toBeDisabled()
-  } finally {
-    await page.evaluate(() => (window.holdPreparationSave = false))
+  // Inclusion in a second real draft proves release; the kept sibling stays reserved.
+  const second = await createContainerThroughUI(
+    page,
+    [refs[0]],
+    'Released order destination'
+  )
+  expect(
+    (await current(extension, second)).orders.map((order) => order.orderId)
+  ).toEqual([refs[0].orderId])
+  expect(
+    (await current(extension, id)).orders.map((order) => order.orderId)
+  ).toEqual([refs[1].orderId])
+  expect(immutableGoods(await libraryBackup(extension))).toEqual(
+    immutableGoods(before)
+  )
+})
+
+test('removing the final order preserves an empty named draft and reinclusion restores the same physical identities', async ({
+  extension,
+}) => {
+  const { page, view, refs, id } = await setup(extension)
+  const before = await current(extension, id),
+    baseline = await libraryBackup(extension)
+  for (let index = 0; index < refs.length; index++) {
+    await view.locator('[data-action="remove-container-order"]').first().click()
+    await expect(
+      view.locator('[data-action="remove-container-order"]')
+    ).toHaveCount(refs.length - index - 1)
   }
-  // Playwright's toBeEnabled() ignores FIELDSET. Read its native property so
-  // a pending save cannot satisfy the final no-op/backup assertions below.
-  await expect(fields).toHaveJSProperty('disabled', false)
-  await expect(reset).toBeDisabled()
-  const restored = await backup(extension)
-  expect(restored.preparations[0].groups).toEqual(
-    original.preparations[0].groups
-  )
-  expect(restored.issuedCodes.map(({ code }) => code).sort()).toEqual(
-    original.issuedCodes.map(({ code }) => code).sort()
-  )
+  const empty = await current(extension, id)
+  expect(empty.container.id).toBe(id)
+  expect(empty.orders).toEqual([])
+  expect(empty.cartons).toEqual([])
   await page.reload()
-  await openPacking(page)
-  await expect(reset).toBeDisabled()
+  await expect(view.locator('[data-action="choose-container"]')).toHaveValue(id)
+  await view.locator('[data-action="include-container-orders"]').click()
+  const inclusion = page.locator('.container-inclusion-dialog')
+  for (const ref of refs)
+    await inclusion
+      .locator(`[data-order-id="${ref.orderId}"]`)
+      .getByRole('checkbox')
+      .check()
+  await inclusion.locator('[data-action="confirm-container-orders"]').click()
+  await expect(inclusion).toBeHidden()
+  const rejoined = await current(extension, id)
+  expect(rejoined.cartons.map((carton) => carton.id).sort()).toEqual(
+    before.cartons.map((carton) => carton.id).sort()
+  )
+  expect(
+    rejoined.cartons.every((carton) => carton.state === 'unconfirmed')
+  ).toBe(true)
+  expect(immutableGoods(await libraryBackup(extension))).toEqual(
+    immutableGoods(baseline)
+  )
+})
+
+test('loading reset is reversible and sealed membership requires amendment instead of product removal', async ({
+  extension,
+}) => {
+  const { page, view, id } = await setup(extension)
+  const before = await libraryBackup(extension)
+  await view.locator('[data-action="mark-all-loaded"]').click()
+  await expect
+    .poll(async () =>
+      (await current(extension, id)).cartons.every(
+        (carton) => carton.state === 'loaded'
+      )
+    )
+    .toBe(true)
+  await view.locator('[data-action="undo-container-loading"]').click()
+  await expect
+    .poll(async () =>
+      (await current(extension, id)).cartons.every(
+        (carton) => carton.state === 'unconfirmed'
+      )
+    )
+    .toBe(true)
+  await expect(
+    view.locator('[data-action="undo-container-loading"]')
+  ).toBeDisabled()
+  await view.locator('[data-action="redo-container-loading"]').click()
+  await sealContainerThroughUI(page, { markAll: false })
+  await expect(
+    view.locator('[data-action="remove-container-order"]')
+  ).toHaveCount(0)
+  await expect(view.locator('[data-action="mark-all-loaded"]')).toBeHidden()
+  await expect(view.locator('[data-action="amend-container"]')).toBeEnabled()
+  const sealed = await extension.inspector.evaluate(
+    async (id) => (await window.testRepository).getContainerManifest({ id }),
+    id
+  )
+  const rejection = await extension.inspector.evaluate(async (id) => {
+    const repository = await window.testRepository,
+      view = await repository.getContainerView({ id }),
+      cartonId = view.cartons[0]?.id
+    if (typeof cartonId !== 'string' || !cartonId)
+      throw new Error(
+        'The synthetic sealed fixture needs a physical carton ID.'
+      )
+    try {
+      await repository.setContainerLoading({
+        id,
+        decisions: [{ cartonId, state: 'unconfirmed' }],
+        expectedRevision: view.container.revision,
+        intentId: crypto.randomUUID(),
+      })
+      return null
+    } catch (error) {
+      return error.message
+    }
+  }, id)
+  expect(rejection).toMatch(/sealed|amend|draft/i)
+  expect(
+    await extension.inspector.evaluate(
+      async (id) => (await window.testRepository).getContainerManifest({ id }),
+      id
+    )
+  ).toEqual(sealed)
+  expect(immutableGoods(await libraryBackup(extension))).toEqual(
+    immutableGoods(before)
+  )
 })

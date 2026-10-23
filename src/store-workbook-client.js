@@ -1,7 +1,7 @@
 /** One disposable worker per file. No workbook bytes leave the browser. */
 export async function readStoreWorkbookAsync(
   buffer,
-  { filename, signal } = {}
+  { filename, signal, reportEvidence = false, limits } = {}
 ) {
   const worker = new Worker('store-workbook-worker.js')
   try {
@@ -27,7 +27,15 @@ export async function readStoreWorkbookAsync(
         () => finish(reject, new Error('Spreadsheet could not be read.')),
         { once: true }
       )
-      worker.postMessage({ buffer, filename }, [buffer])
+      const transferred = reportEvidence ? buffer.slice(0) : buffer
+      worker.postMessage(
+        {
+          buffer: transferred,
+          filename,
+          ...(reportEvidence ? { reportEvidence, limits } : {}),
+        },
+        [transferred]
+      )
     })
   } finally {
     worker.terminate()

@@ -75,10 +75,29 @@ export async function workbookCodeImage(
 export function createPackingWorkbookImages(loadImage, renderCartonMark) {
   const photos = new Map()
   const marks = new Map()
+  const codes = new Map()
   return async (row, limits) => {
-    const code = limits.code
-      ? await workbookCodeImage(row.barcode || row.baseCode, limits.code)
-      : undefined
+    const value = row.barcode || row.baseCode
+    let code
+    if (limits.code && value) {
+      const key = JSON.stringify([
+        value,
+        limits.code.maxWidth ?? 512,
+        limits.code.maxHeight ?? 128,
+      ])
+      let pending = codes.get(key)
+      if (!pending) {
+        if (codes.size >= 24) codes.delete(codes.keys().next().value)
+        pending = workbookCodeImage(value, limits.code)
+        codes.set(key, pending)
+      }
+      try {
+        code = await pending
+      } catch (error) {
+        if (codes.get(key) === pending) codes.delete(key)
+        throw error
+      }
+    }
     const result = { code }
     if (
       limits.mark &&

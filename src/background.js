@@ -36,7 +36,7 @@ async function broadcast(type) {
 }
 const changed = () => broadcast('LIBRARY_CHANGED')
 const progress = () => broadcast('IMPORT_PROGRESS')
-const marker = (id) => `#1688tocsv-import=${encodeURIComponent(id)}`
+const marker = (id) => `#1688topl-import=${encodeURIComponent(id)}`
 const blankUrl = (url) => !url || url === 'about:blank'
 const missingTab = (error) =>
   /no tab(?: with (?:id|given id))?\b|invalid tab id|unknown tab id/i.test(
@@ -50,7 +50,12 @@ function owns(tab, id) {
     // unrelated destination means the user or sign-in flow owns the tab now.
     if (!blankUrl(tab.pendingUrl) && !detailUrl(tab.pendingUrl)) return false
     const url = detailTabUrl(tab)
-    return Boolean(detailUrl(url)) && new URL(url).hash === marker(id)
+    return (
+      Boolean(detailUrl(url)) &&
+      [marker(id), `#1688tocsv-import=${encodeURIComponent(id)}`].includes(
+        new URL(url).hash
+      )
+    )
   } catch {
     return false
   }

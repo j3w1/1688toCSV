@@ -230,7 +230,7 @@ test('theme controls fit a narrow viewport and remain usable when preference sto
   expect(errors).toEqual([])
 })
 
-test('preference checkboxes keep generous labels and native keyboard focus without row checkboxes', async ({
+test('preference checkboxes keep generous labels and native keyboard focus alongside explicit row checkboxes', async ({
   extension,
 }) => {
   const records = await extension.inspector.evaluate(
@@ -257,11 +257,19 @@ test('preference checkboxes keep generous labels and native keyboard focus witho
   await expect(page.locator('#sheet-body tr[data-selection-key]')).toHaveCount(
     8
   )
+  const productChecks = page.locator(
+    '#sheet-body .row-number input[type=checkbox]'
+  )
+  await expect(productChecks).toHaveCount(8)
+  await expect(page.locator('.order-card input[type=checkbox]')).toHaveCount(2)
+  await productChecks.first().focus()
+  await productChecks.first().press('Space')
+  await expect(productChecks.first()).toBeChecked()
   await expect(
-    page.locator(
-      '#sheet-body input[type=checkbox], .order-card input[type=checkbox]'
-    )
-  ).toHaveCount(0)
+    page.locator('#sheet-body tr[aria-selected="true"]')
+  ).toHaveCount(1)
+  await productChecks.first().press('Space')
+  await expect(productChecks.first()).not.toBeChecked()
   await revealCopyActions(page)
   const headers = page.getByLabel('Headers', { exact: true })
   const target = headers.locator('..')

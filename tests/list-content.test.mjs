@@ -66,7 +66,7 @@ test('list controls recover after delayed shadow hydration beyond fifteen second
   )
   assert.equal(tasks.size, 0, 'Readiness retries stop after controls mount')
   vm.runInContext(
-    'globalThis[Symbol.for("1688tocsv.listController")]()',
+    'globalThis[Symbol.for("1688topl.listController")]()',
     context
   )
   assert.equal(document.body.children.length, 1)

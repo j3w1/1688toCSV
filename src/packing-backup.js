@@ -5,11 +5,18 @@ import {
   validatePreparation,
   mergeVariantMaterials,
 } from './packing-model.js'
+import { physicalMarkReservations } from './purchase-codes.js'
 import { preparationAuthoring } from './product-vocabulary.js'
 import { paymentSourceDependencies } from './payment-links.js'
 import { cartonBatchesForItems } from './carton-confirmations.js'
 import { batchInPackingScope, cartonBatchMark } from './carton-batches.js'
+import { batchOrderIds } from './inventory-model.js'
 import { repeatProductStoreIdentity } from './repeat-products.js'
+import {
+  collectImageReferences,
+  imageCacheKey,
+  localImageReference,
+} from './images.js'
 
 const key = (entry) =>
   JSON.stringify([entry.accountId ?? 'local', entry.orderId])
@@ -17,6 +24,48 @@ const entryIds = (preparation) =>
   preparation.groups.flatMap((group) =>
     group.variants.flatMap((variant) => variant.entryIds)
   )
+
+export function preparationRestoreEntryIds(preparation) {
+  return [
+    ...new Set(
+      [
+        preparation,
+        preparation.defaultPacking,
+        preparation.previousPacking,
+        preparation.previousPacking?.defaults,
+      ]
+        .filter(Boolean)
+        .flatMap(entryIds)
+    ),
+  ]
+}
+
+/** A local authoring save establishes the resulting order, superseding restore evidence. */
+export function clearPreparationRestoreScopes(preparation) {
+  const { restoreScopes, ...result } = preparation
+  for (const field of ['defaultPacking', 'previousPacking', 'defaults'])
+    if (result[field])
+      result[field] = clearPreparationRestoreScopes(result[field])
+  return result
+}
+
+function compactRestoreScopes(scopes) {
+  const unique = new Map()
+  for (const scope of scopes)
+    if (scope.length) unique.set(JSON.stringify([...scope].sort()), scope)
+  return [...unique.values()].filter(
+    (scope, index, all) =>
+      !all.some(
+        (other, otherIndex) =>
+          otherIndex !== index &&
+          scope.length < other.length &&
+          scope.every((id) => other.includes(id))
+      )
+  )
+}
+
+const restoreScopes = (checkpoint) =>
+  checkpoint?.restoreScopes ?? (checkpoint ? [entryIds(checkpoint)] : [])
 
 /** Check the saved selection against both source rows and actual prepared membership. */
 export function validatePackingScope(input, orders, preparations) {
@@ -199,8 +248,15 @@ export function selectPackingPreparation(preparation, ids) {
     result.defaultPacking,
     result.previousPacking,
     result.previousPacking?.defaults,
-  ].filter(Boolean))
+  ].filter(Boolean)) {
     target.groups = selectedGroups(target.groups, selected)
+    if (target.restoreScopes)
+      target.restoreScopes = compactRestoreScopes(
+        target.restoreScopes.map((scope) =>
+          scope.filter((id) => selected.has(id))
+        )
+      )
+  }
   return result
 }
 
@@ -409,6 +465,226 @@ export function createPackingBackup(backup, selection) {
   const selected = new Map(
     scope.orders.map((order) => [key(order), order.entryIds])
   )
+  if (backup.version >= 5) {
+    const related =
+      (backup.containers || []).some((container) =>
+        [
+          ...(container.draft?.orders || []),
+          ...(container.revisions || []).flatMap(
+            (revision) => revision.orders || []
+          ),
+        ].some((order) => selected.has(key(order)))
+      ) ||
+      (backup.packingReports || []).some((report) =>
+        selected.has(key(report.orderKey))
+      ) ||
+      (backup.orderCartonDrafts || []).some((draft) =>
+        selected.has(key(draft))
+      ) ||
+      (backup.shipmentLocks || []).some((lock) => selected.has(key(lock))) ||
+      // All retained physical facts, including known-month tombstones, need
+      // complete source/history and superseding-owner dependency closure.
+      (backup.cartonBatches || []).some((batch) =>
+        batchOrderIds(batch).some((orderId) =>
+          selected.has(key({ accountId: batch.accountId, orderId }))
+        )
+      )
+    if (related) {
+      const required = new Set(selected.keys())
+      for (const order of scope.orders) {
+        const source = backup.orders.find(
+          (record) => key(record.snapshot) === key(order)
+        )
+        if (
+          source.snapshot.items.some(
+            (item) => !order.entryIds.includes(item.entryId)
+          )
+        )
+          throw Object.assign(
+            new Error(
+              'Review a complete-order backup scope to retain physical cartons, reports and historical shipment evidence.'
+            ),
+            {
+              code: 'PACKING_BACKUP_DEPENDENCY_REVIEW',
+              requiredOrderRefs: scope.orders.map(({ accountId, orderId }) => ({
+                accountId,
+                orderId,
+              })),
+            }
+          )
+      }
+      let changed = true
+      while (changed) {
+        changed = false
+        const retain = (reference) => {
+          const id = key(reference)
+          if (!required.has(id)) {
+            required.add(id)
+            changed = true
+          }
+        }
+        for (const batch of backup.cartonBatches || []) {
+          const owners = batchOrderIds(batch).map((orderId) => ({
+            accountId: batch.accountId,
+            orderId,
+          }))
+          if (!owners.some((owner) => required.has(key(owner)))) continue
+          owners.forEach(retain)
+          for (const alias of batch.physicalMark?.supersededAliases || [])
+            for (const conflict of alias.conflicts)
+              if (conflict.accountId === batch.accountId) retain(conflict)
+        }
+        for (const container of backup.containers || []) {
+          const references = [
+            ...(container.draft?.orders || []),
+            ...(container.revisions || []).flatMap(
+              (revision) => revision.orders || []
+            ),
+          ]
+          if (references.some((order) => required.has(key(order))))
+            references.forEach(retain)
+        }
+        for (const lock of backup.shipmentLocks || [])
+          if (
+            required.has(key(lock)) ||
+            lock.lineages?.some((lineage) =>
+              lineage.members?.some((member) => required.has(key(member)))
+            )
+          ) {
+            retain(lock)
+            for (const lineage of lock.lineages || [])
+              for (const member of lineage.members || []) retain(member)
+          }
+        for (const code of backup.issuedCodes || [])
+          if (
+            required.has(key(code)) ||
+            code.members?.some((member) => required.has(key(member)))
+          ) {
+            retain(code)
+            for (const member of code.members || []) retain(member)
+          }
+        const selectedSources = backup.orders.filter((record) =>
+          required.has(key(record.snapshot))
+        )
+        for (const dependency of paymentSourceDependencies(
+          backup.orders,
+          selectedSources
+        ))
+          retain(dependency.snapshot)
+      }
+      const orders = backup.orders.filter((record) =>
+          required.has(key(record.snapshot))
+        ),
+        history = backup.history.filter((record) =>
+          required.has(key(record.snapshot))
+        ),
+        preparations = backup.preparations.filter((prep) =>
+          required.has(key(prep))
+        )
+      const issuedCodes = structuredClone(
+        (backup.issuedCodes || []).filter(
+          (code) =>
+            required.has(key(code)) ||
+            code.members?.some((member) => required.has(key(member)))
+        )
+      )
+      const allocationSlots = new Set(
+        issuedCodes.map((code) =>
+          JSON.stringify([
+            code.accountId || 'local',
+            code.month,
+            Number(code.code.slice(6, 8)),
+          ])
+        )
+      )
+      const allocations = structuredClone(
+        (backup.allocations || [])
+          .map((allocation) => ({
+            ...allocation,
+            groups: allocation.groups.filter((group) =>
+              allocationSlots.has(
+                JSON.stringify([
+                  allocation.accountId || 'local',
+                  allocation.month,
+                  group.number,
+                ])
+              )
+            ),
+          }))
+          .filter((allocation) => allocation.groups.length)
+      )
+      const containers = (backup.containers || []).filter((container) =>
+        [
+          ...(container.draft?.orders || []),
+          ...(container.revisions || []).flatMap(
+            (revision) => revision.orders || []
+          ),
+        ].some((order) => required.has(key(order)))
+      )
+      const packingReports = (backup.packingReports || []).filter((report) =>
+          required.has(key(report.orderKey))
+        ),
+        reportSources = (backup.reportSources || []).filter((source) =>
+          source.owners?.some((owner) => required.has(key(owner)))
+        )
+      const result = {
+        ...structuredClone(backup),
+        orders,
+        history,
+        preparations,
+        issuedCodes,
+        allocations,
+        cartonBatches: structuredClone(
+          (backup.cartonBatches || []).filter(
+            (batch) =>
+              required.has(key(batch)) ||
+              batch.contents?.some((row) =>
+                required.has(key({ ...row, accountId: batch.accountId }))
+              )
+          )
+        ),
+        containers: structuredClone(containers),
+        packingReports: structuredClone(packingReports),
+        reportSources: structuredClone(reportSources),
+        orderCartonDrafts: structuredClone(
+          (backup.orderCartonDrafts || []).filter((draft) =>
+            required.has(key(draft))
+          )
+        ),
+        shipmentLocks: structuredClone(
+          (backup.shipmentLocks || []).filter((lock) => required.has(key(lock)))
+        ),
+        operationIntents: [],
+        packingPreferences: packingPreferences(
+          backup.packingPreferences,
+          orders
+        ),
+        requestedPackingScope: scope,
+        dependencyOrderRefs: orders
+          .filter((record) => !selected.has(key(record.snapshot)))
+          .map(({ snapshot }) => ({
+            accountId: snapshot.accountId,
+            orderId: snapshot.orderId,
+          })),
+      }
+      delete result.packingScope
+      const refs = collectImageReferences({
+        ...result,
+        issuedCodes,
+        orderCartonDrafts: [
+          ...result.orderCartonDrafts,
+          ...result.cartonBatches,
+        ],
+      })
+      result.images = structuredClone(
+        (backup.images || []).filter((image) =>
+          refs.has(imageCacheKey(image.url))
+        )
+      )
+      return result
+    }
+  }
+
   const selectedOrders = backup.orders
     .filter((order) => selected.has(key(order.snapshot)))
     .map((order) =>
@@ -440,32 +716,58 @@ export function createPackingBackup(backup, selection) {
       )
     ),
     history = cartonSourceHistory(backup, cartonBatches, selectedOrders)
-  const urls = new Set(
-    orders.flatMap((order) =>
-      order.snapshot.items
-        .filter((item) =>
-          selected.get(key(order.snapshot))?.includes(item.entryId)
-        )
-        .flatMap((item) => [item.thumbnail, ...(item.photos || [])])
-    )
+  const state = activePackingState(
+    preparations,
+    [],
+    (backup.issuedCodes || []).filter(
+      (entry) => entry.sharedProductId || (entry.members || []).length > 1
+    ),
+    {
+      historicalReservations: physicalMarkReservations({
+        preparations,
+        records: orders,
+        batches: cartonBatches,
+      }),
+    }
   )
+  const urls = collectImageReferences({
+    orderCartonDrafts: cartonBatches,
+    orders: selectedOrders.map(({ snapshot }) => ({
+      snapshot: {
+        items: snapshot.items.filter((item) =>
+          selected.get(key(snapshot)).includes(item.entryId)
+        ),
+      },
+    })),
+    issuedCodes: state.issuedCodes,
+  })
   // Full source rows are retained to reconcile money. Local originals have no
   // remote fallback, so keep every original referenced by those dependencies.
-  for (const order of [...orders, ...history])
-    for (const item of order.snapshot.items)
-      for (const url of [item.thumbnail, ...(item.photos || [])])
-        if (url?.startsWith('local-image:')) urls.add(url)
+  for (const url of collectImageReferences({ orders, history }))
+    if (localImageReference.test(url)) urls.add(url)
   return {
     format: '1688-order-library',
-    version: 4,
+    version: backup.version >= 5 ? 5 : 4,
+    ...(backup.version >= 5
+      ? {
+          containers: [],
+          packingReports: [],
+          reportSources: [],
+          orderCartonDrafts: [],
+          shipmentLocks: [],
+          operationIntents: [],
+        }
+      : {}),
     exportedAt: backup.exportedAt,
     orders,
     // Physical allocations can predate reduced current purchase quantities.
     history,
     preparations,
-    ...activePackingState(preparations),
+    ...state,
     images: structuredClone(
-      (backup.images || []).filter((image) => urls.has(image.url))
+      (backup.images || []).filter((image) =>
+        urls.has(imageCacheKey(image.url))
+      )
     ),
     packingPreferences: packingPreferences(backup.packingPreferences, orders),
     packingScope: scope,
@@ -515,11 +817,167 @@ function groupsWithMonths(preparation) {
 }
 
 function normalizedAuthoring(preparation) {
-  const result = { ...preparation, groups: groupsWithMonths(preparation) }
+  const { restoreScopes, ...result } = preparation
+  result.groups = groupsWithMonths(preparation)
   for (const field of ['defaultPacking', 'previousPacking', 'defaults'])
     if (preparation[field])
       result[field] = normalizedAuthoring(preparation[field])
   return preparationAuthoring(result)
+}
+
+function currentAuthoring(checkpoint, ids) {
+  const { defaultPacking, previousPacking, defaults, ...current } = checkpoint
+  return normalizedAuthoring({
+    ...current,
+    groups: selectedGroups(current.groups, new Set(ids)),
+  })
+}
+
+function sameTimeConflict() {
+  throw new Error('Backup conflict: preparation edits have the same timestamp')
+}
+
+function sameCurrentValues(previous, incoming, ids) {
+  const old = currentAuthoring(previous, ids),
+    next = currentAuthoring(incoming, ids)
+  if (old.groups.length !== next.groups.length) return false
+  const groups = new Map(old.groups.map((group) => [group.id, group]))
+  old.groups = next.groups.map((group) => {
+    const previous = groups.get(group.id)
+    if (!previous || previous.variants.length !== group.variants.length)
+      return null
+    const variants = new Map(
+      previous.variants.map((variant) => [variant.id, variant])
+    )
+    return {
+      ...previous,
+      variants: group.variants.map((variant) => {
+        const old = variants.get(variant.id),
+          ids = new Set(old?.entryIds)
+        if (
+          !old ||
+          ids.size !== variant.entryIds.length ||
+          variant.entryIds.some((id) => !ids.has(id))
+        )
+          return null
+        return { ...old, entryIds: variant.entryIds }
+      }),
+    }
+  })
+  return JSON.stringify(old) === JSON.stringify(next)
+}
+
+/** Every checkpoint has its own known rows and original scoped order. */
+function assertSameTimeCheckpoint(previous, incoming, ids) {
+  if (!previous || !incoming) {
+    if (previous || incoming) sameTimeConflict()
+    return
+  }
+  const known = new Set(entryIds(previous))
+  if (
+    !sameCurrentValues(
+      previous,
+      incoming,
+      ids.filter((id) => known.has(id))
+    )
+  )
+    sameTimeConflict()
+  for (const field of ['defaultPacking', 'previousPacking', 'defaults'])
+    assertSameTimeCheckpoint(previous[field], incoming[field], ids)
+}
+
+/** Apply only order relations actually present together in an original scope. */
+function orderFromRestoreScopes(values, sequences, key = (value) => value.id) {
+  const byId = new Map(values.map((value) => [key(value), value]))
+  const next = new Map(values.map((value) => [key(value), new Set()]))
+  const degrees = new Map(values.map((value) => [key(value), 0]))
+  for (const sequence of sequences) {
+    const ids = sequence.filter((id) => byId.has(id))
+    for (let index = 1; index < ids.length; index++) {
+      const before = ids[index - 1],
+        after = ids[index]
+      if (!next.get(before).has(after)) {
+        next.get(before).add(after)
+        degrees.set(after, degrees.get(after) + 1)
+      }
+    }
+  }
+  const ready = values.filter((value) => degrees.get(key(value)) === 0).map(key)
+  const result = []
+  for (let cursor = 0; cursor < ready.length; cursor++) {
+    const id = ready[cursor]
+    result.push(byId.get(id))
+    for (const after of next.get(id)) {
+      degrees.set(after, degrees.get(after) - 1)
+      if (degrees.get(after) === 0) ready.push(after)
+    }
+  }
+  if (result.length !== values.length) sameTimeConflict()
+  return result
+}
+
+function mergeCheckpointRestoreOrder(previous, incoming, result) {
+  const scopes = compactRestoreScopes([
+    ...restoreScopes(previous),
+    ...restoreScopes(incoming),
+  ])
+  const layouts = [previous, incoming]
+    .filter(Boolean)
+    .flatMap((checkpoint) =>
+      restoreScopes(checkpoint).map((scope) =>
+        selectedGroups(checkpoint.groups, new Set(scope))
+      )
+    )
+  result.groups = orderFromRestoreScopes(
+    result.groups,
+    layouts.map((groups) => groups.map((group) => group.id))
+  ).map((group) => {
+    const sources = layouts.flatMap((groups) =>
+      groups.filter((value) => value.id === group.id)
+    )
+    return {
+      ...group,
+      variants: orderFromRestoreScopes(
+        group.variants,
+        sources.map((source) => source.variants.map((variant) => variant.id))
+      ).map((variant) => ({
+        ...variant,
+        entryIds: orderFromRestoreScopes(
+          variant.entryIds,
+          sources.flatMap((source) =>
+            source.variants
+              .filter((value) => value.id === variant.id)
+              .map((value) => value.entryIds)
+          ),
+          (id) => id
+        ),
+      })),
+    }
+  })
+  if (scopes.length <= 1) delete result.restoreScopes
+  else result.restoreScopes = scopes
+  return result
+}
+
+function sameRestoreScopes(previous, result) {
+  return (
+    JSON.stringify(
+      [
+        previous,
+        previous.defaultPacking,
+        previous.previousPacking,
+        previous.previousPacking?.defaults,
+      ].map((checkpoint) => checkpoint?.restoreScopes)
+    ) ===
+    JSON.stringify(
+      [
+        result,
+        result.defaultPacking,
+        result.previousPacking,
+        result.previousPacking?.defaults,
+      ].map((checkpoint) => checkpoint?.restoreScopes)
+    )
+  )
 }
 
 /** An unchanged scoped copy can be completed by its exact same-time source. */
@@ -633,17 +1091,8 @@ export function mergePackingPreparation(previous, incoming, ids) {
   const scoped = selectPackingPreparation(incoming, ids)
   if (!previous) return scoped
   if (incoming.updatedAt < previous.updatedAt) return previous
-  if (incoming.updatedAt === previous.updatedAt) {
-    if (
-      JSON.stringify(
-        normalizedAuthoring(selectPackingPreparation(previous, ids))
-      ) !== JSON.stringify(normalizedAuthoring(scoped))
-    )
-      throw new Error(
-        'Backup conflict: preparation edits have the same timestamp'
-      )
-    return previous
-  }
+  const sameTime = incoming.updatedAt === previous.updatedAt
+  if (sameTime) assertSameTimeCheckpoint(previous, scoped, ids)
   if (
     previous.sellerId !== incoming.sellerId &&
     entryIds(previous).some((id) => !selected.has(id))
@@ -685,8 +1134,23 @@ export function mergePackingPreparation(previous, incoming, ids) {
           selected
         ),
       }
+      if (sameTime)
+        mergeCheckpointRestoreOrder(older, newer, checkpoint.defaults)
     }
-    result[field] = checkpoint
+    result[field] = sameTime
+      ? mergeCheckpointRestoreOrder(old, next, checkpoint)
+      : checkpoint
+  }
+  if (sameTime) {
+    mergeCheckpointRestoreOrder(previous, scoped, result)
+    if (
+      JSON.stringify(normalizedAuthoring(result)) ===
+        JSON.stringify(normalizedAuthoring(previous)) &&
+      sameRestoreScopes(previous, result)
+    )
+      return previous
+  } else {
+    return validatePreparation(clearPreparationRestoreScopes(result))
   }
   return validatePreparation(result)
 }

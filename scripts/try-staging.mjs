@@ -22,12 +22,18 @@ export async function readIdentity(directory) {
 }
 
 /** Refuse a build that could change the extension or its id. */
-export function checkIdentity(candidate, installed) {
-  if (candidate.name !== '1688toCSV')
-    throw new Error('the candidate is not the 1688toCSV extension.')
-  if (candidate.name !== installed.name || candidate.key !== installed.key)
+export function checkIdentity(
+  candidate,
+  installed,
+  { compatibleNames: names = [installed.name] } = {}
+) {
+  if (!names.includes(candidate.name) || !names.includes(installed.name))
+    throw new Error('the candidate is not the configured extension.')
+  // A reviewed display-name transition comes from the project/target metadata.
+  // The key and registered install path still determine extension identity.
+  if (candidate.key !== installed.key)
     throw new Error(
-      'the candidate manifest name or key differs from the installed build; that could change the extension id.'
+      'the candidate manifest key differs from the installed build; that could change the extension id.'
     )
 }
 
@@ -47,9 +53,28 @@ export async function recoverStaging({ installDir, stagingDir }) {
   let journal
   try {
     journal = JSON.parse(await readFile(journalPath(stagingDir), 'utf8'))
-  } catch {
-    return 'none'
+  } catch (error) {
+    if (error.code === 'ENOENT') return 'none'
+    throw new Error(
+      'The staging journal is unreadable; preserve it and inspect before retrying.'
+    )
   }
+  if (
+    journal.installDir &&
+    path.resolve(journal.installDir) !== path.resolve(installDir)
+  )
+    throw new Error(
+      'The staging journal belongs to another installDir; nothing was recovered.'
+    )
+  for (const field of ['swap', 'candidate'])
+    if (
+      journal[field] &&
+      (!path.isAbsolute(journal[field]) ||
+        path.dirname(journal[field]) !== path.resolve(stagingDir))
+    )
+      throw new Error(
+        'The staging journal points outside stagingDir; nothing was recovered.'
+      )
   const installed = await exists(installDir)
   const swapped = journal.swap && (await exists(journal.swap))
   let outcome = 'none'
@@ -82,7 +107,7 @@ export async function swapIn({
   label = Date.now(),
 }) {
   const swap = path.join(stagingDir, `swap-${label}`)
-  await writeJournal(stagingDir, { swap, candidate })
+  await writeJournal(stagingDir, { installDir, swap, candidate })
   await rename(installDir, swap)
   try {
     await rename(candidate, installDir)

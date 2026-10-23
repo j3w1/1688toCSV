@@ -283,7 +283,7 @@ test('reader progress is compact, tab/frame/order scoped, read-only and availabl
     id: 'synthetic',
     tab: { id: 11 },
     frameId: 0,
-    url: `${url('10001')}#1688tocsv-import=job`,
+    url: `${url('10001')}#1688topl-import=job`,
   }
   const job = {
     id: 'job',
@@ -321,8 +321,8 @@ test('reader progress is compact, tab/frame/order scoped, read-only and availabl
     { ...reader, tab: { id: 12 } },
     { ...reader, frameId: 1 },
     { ...reader, url: url('10001') },
-    { ...reader, url: `${url('10003')}#1688tocsv-import=job` },
-    { ...reader, url: `${url('10001')}#1688tocsv-import=other` },
+    { ...reader, url: `${url('10003')}#1688topl-import=job` },
+    { ...reader, url: `${url('10001')}#1688topl-import=other` },
   ])
     assert.equal((await s.send({ type: 'READER_STATUS' }, wrong)).data, null)
   assert.equal((await s.send({ type: 'READER_STATUS' }, sender)).ok, false)
@@ -578,11 +578,17 @@ test('marker recovers a tab created before checkpoint and never closes navigated
   const s = setup()
   await s.send({ type: 'JOBS_QUERY' })
   const adapter = s.adapter(),
-    marker = '#1688tocsv-import=job-known'
+    marker = '#1688topl-import=job-known'
   s.tabs.set(55, { id: 55, url: url('10001') + marker, status: 'complete' })
   assert.equal(await adapter.openDetailTab(url('10002'), 'job-known'), 55)
   assert.equal(s.tabs.get(55).url, url('10002') + marker)
   assert.equal(s.calls.filter((x) => x[0] === 'create').length, 0)
+  s.tabs.set(55, {
+    id: 55,
+    url: url('10002') + '#1688tocsv-import=job-known',
+    status: 'complete',
+  })
+  assert.equal(await adapter.openDetailTab(url('10002'), 'job-known'), 55)
   await adapter.closeDetailTab(null, 'job-known')
   assert.equal(s.tabs.has(55), false)
   s.tabs.set(56, { id: 56, url: url('10001'), status: 'complete' })
@@ -601,7 +607,7 @@ test('tab lookup distinguishes missing IDs from browser API failures', async () 
   assert.equal(await adapter.getDetailTab(55, 'job-known'), null)
   s.tabs.set(55, {
     id: 55,
-    url: url('10001') + '#1688tocsv-import=job-known',
+    url: url('10001') + '#1688topl-import=job-known',
     status: 'complete',
   })
   const failure = new Error('The browser could not inspect this tab')
