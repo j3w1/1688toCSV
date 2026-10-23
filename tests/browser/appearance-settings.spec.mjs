@@ -1172,6 +1172,12 @@ test('color-rule validation identifies the offending rule and settings remain us
   await dialog
     .getByLabel('Dark palette', { exact: true })
     .selectOption('apricot')
+  // Validation feedback owns the first Escape before the Settings dialog.
+  const notice = dialog.locator('.error-notice')
+  await expect(notice).toContainText('黑色')
+  await page.keyboard.press('Escape')
+  await expect(notice).toHaveCount(0)
+  await expect(dialog).toBeVisible()
   await page.keyboard.press('Escape')
   await expect(dialog).not.toBeVisible()
   await expect(page.locator('html')).toHaveCSS(
