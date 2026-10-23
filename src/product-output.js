@@ -1,5 +1,11 @@
 import { element as el, copied, pinDialogActions, yieldUI } from './ui.js'
-import { message as m, bindAttribute, getLanguage, t } from './i18n.js'
+import {
+  message as m,
+  bindAttribute,
+  bindText,
+  getLanguage,
+  t,
+} from './i18n.js'
 import { DEFAULT_LABEL_SETTINGS, renderLabel } from './labels.js'
 import { openImageCopyDialog, imageBatchPlans } from './image-copy-dialog.js'
 import {
@@ -33,9 +39,14 @@ function freeze(value) {
 
 /** Reject incomplete contexts; a filter/selection is never manifest membership. */
 export function captureContainerOutput(manifest) {
+  const revision = manifest?.revision ?? manifest?.container?.revision,
+    identifiedDraft =
+      manifest?.draft === true &&
+      Number.isSafeInteger(revision) &&
+      revision >= 0
   if (
     !manifest?.container?.id ||
-    !manifest.revisionId ||
+    (!manifest.revisionId && !identifiedDraft) ||
     !Array.isArray(manifest.products) ||
     !Array.isArray(manifest.cartons) ||
     !Array.isArray(manifest.leftBehind?.products) ||
@@ -47,6 +58,7 @@ export function captureContainerOutput(manifest) {
   return freeze(
     structuredClone({
       ...manifest,
+      revision,
       kind: 'container-revision',
       containerId: manifest.container.id,
     })
@@ -282,8 +294,14 @@ export function createProductOutput({
   function annotateDialog(context, dialog) {
     if (context.kind !== 'container-revision' || !dialog) return
     const note = el('div', undefined, 'container-output-context')
+    const identity = el('p')
+    bindText(
+      identity,
+      () =>
+        `${context.container.name} · ${context.draft ? `${m('DRAFT — unsealed container')} · ${context.revision}` : context.revisionId}`
+    )
     note.append(
-      el('p', `${context.container.name} · ${context.revisionId}`),
+      identity,
       el(
         'p',
         m(
