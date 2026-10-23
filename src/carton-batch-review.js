@@ -5,16 +5,26 @@ export function cartonBatchReviewChanges(plan) {
   return (plan?.reviews || []).map((review, index) => ({
     name: m('Carton batch {0}', { 0: index + 1 }),
     orderId: review.contents[0]?.orderId,
+    batchId: review.id,
+    ...(review.physicalMark ? {
+      physicalMark: structuredClone(review.physicalMark),
+      resolutionRequired: review.resolutionRequired,
+      resolutionChoices: review.resolutionChoices,
+    } : {}),
     values: [
       {
         label: m('Carton mark'),
         before: review.beforeMarkCode || review.beforeCodes.join(', '),
         after:
-          review.kind === 'reanchor'
+          review.physicalMark ? review.physicalMark.code : review.kind === 'reanchor'
             ? review.afterMarkCode || review.afterCodes.join(', ')
             : review.beforeMarkCode || review.beforeCodes.join(', '),
         kind: 'code',
       },
+      ...(review.physicalMark ? [{
+        label: m('Product code'), before: review.beforeMarkCode,
+        after: review.currentProductCode || review.afterCodes.join(', '), kind: 'code',
+      }] : []),
       {
         label: m('Packing month'),
         before: review.month,

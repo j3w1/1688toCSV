@@ -1,6 +1,8 @@
 import { groupPackingMonth } from './packing-model.js'
 import { cartonBatchIssues, cartonBatchMark } from './carton-batches.js'
 import { repeatProductStoreIdentity } from './repeat-products.js'
+import { transitionPhysicalMark, PHYSICAL_MARK_CHOICES } from './physical-mark-aliases.js'
+export { resolvePhysicalMarkChange } from './physical-mark-aliases.js'
 
 const key = (accountId, orderId, entryId) =>
   JSON.stringify([accountId || 'local', orderId, entryId])
@@ -108,7 +110,7 @@ export function planCartonBatchChanges({
       afterPreparations,
       batches
     )
-    if (!resultingIssues.length) continue
+    if (!resultingIssues.length && !ownershipChanged) continue
     // A source-refresh/legacy issue alone must not block unrelated subsequent edits.
     if ((batch.needsReview || originalIssues.length) && !ownershipChanged)
       continue
@@ -120,6 +122,11 @@ export function planCartonBatchChanges({
         ? destinationGroups
         : structuredClone(batch.groups),
     }
+    // One complete same-order destination is an ownership reanchor, never a
+    // claim that the operator has replaced the mark already on the cartons.
+    if (!nextMark && previousMark && destinationGroups.length === 1 &&
+        destinationGroups[0].orderId === previousMark.orderId)
+      candidate.mark = structuredClone(destinationGroups[0])
     const mark = cartonBatchMark(batch),
       intactMark =
         nextMark &&
@@ -145,13 +152,14 @@ export function planCartonBatchChanges({
     const canReanchor =
       intact &&
       sameMonth &&
-      (intactMark || legacyReanchor) &&
+      (intactMark || legacyReanchor || Boolean(previousMark && candidate.mark &&
+        destinationGroups.length === 1 && destinationGroups[0].orderId === previousMark.orderId)) &&
       !candidateIssues.length
     // Uncertain partitions retain their exact original physical evidence, not a split
     // copy of counts or confirmations attributed to every resulting code group.
-    const proposed = canReanchor
+    const proposed = transitionPhysicalMark(batch, canReanchor
       ? candidate
-      : { ...structuredClone(batch), needsReview: true }
+      : { ...structuredClone(batch), needsReview: true }, beforePreparations, afterPreparations)
     const reason = !intact
       ? 'missing-products'
       : !sameMonth
@@ -190,6 +198,13 @@ export function planCartonBatchChanges({
       contents: structuredClone(batch.contents),
       issues: canReanchor ? [] : [...new Set(candidateIssues)],
       needsReview: Boolean(proposed.needsReview),
+      ...(proposed.physicalMark ? {
+        physicalMark: structuredClone(proposed.physicalMark),
+        physicalMarkCode: proposed.physicalMark.code,
+        currentProductCode: proposed.physicalMark.productCode,
+        resolutionRequired: !proposed.physicalMark.resolution,
+        resolutionChoices: [...PHYSICAL_MARK_CHOICES],
+      } : {}),
     })
   }
   return { changes, before, after, reviews }
