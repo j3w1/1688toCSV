@@ -1535,6 +1535,70 @@ function setup() {
   }
 }
 
+test('Packing filters only row facts and full logical selection spans the virtual window without domain writes', async (testContext) => {
+  const { document, window } = dom(testContext),
+    fixture = setup(),
+    state = view(),
+    original = {
+      snapshot: {
+        items: [{ entryId: 'e149', description: 'TARGET ONLY LAST' }],
+      },
+    }
+  state.products = Array.from({ length: 150 }, (_, index) => ({
+    accountId: 'local',
+    orderId: '1001',
+    entryId: `e${index}`,
+    description: index === 149 ? 'TARGET ONLY LAST' : `Other source ${index}`,
+    barcode: `CE2609${String(index).padStart(4, '0')}`,
+    quantity: '10',
+    loadedQuantity: '10',
+    price: '2.00',
+    record: original,
+  }))
+  fixture.setView(state)
+  const host = document.getElementById('host'),
+    workspace = createContainerWorkspace({
+      host,
+      repository: fixture.repository,
+      output: {},
+    })
+  await workspace.open('c1')
+  workspace.show('packing-list')
+  assert.equal(host.querySelectorAll('tr[data-container-row]').length, 100)
+  host.querySelector('[data-action="select-all-rows"]').click()
+  await new Promise((resolve) => setTimeout(resolve, 0))
+  assert.equal(
+    host.querySelector('[data-selected-count]').dataset.selectedCount,
+    '150'
+  )
+  const search = host.querySelector('input[type="search"]')
+  search.value = 'TARGET ONLY LAST'
+  search.dispatchEvent(new window.Event('input'))
+  assert.equal(host.querySelectorAll('tr[data-container-row]').length, 1)
+  assert.equal(
+    host.querySelector('tr[data-container-row]').dataset.containerRow,
+    JSON.stringify(['local', '1001', 'e149'])
+  )
+  assert.equal(
+    host.querySelector('[data-selected-count]').dataset.selectedCount,
+    '150'
+  )
+  host.querySelector('[data-action="clear-selection"]').click()
+  await new Promise((resolve) => setTimeout(resolve, 0))
+  assert.equal(
+    host.querySelector('[data-selected-count]').dataset.selectedCount,
+    '0'
+  )
+  host.querySelector('[data-action="select-all-rows"]').click()
+  await new Promise((resolve) => setTimeout(resolve, 0))
+  assert.equal(
+    host.querySelector('[data-selected-count]').dataset.selectedCount,
+    '1'
+  )
+  assert.equal(fixture.writes.length, 0)
+  workspace.dispose()
+})
+
 test('mark-all-loaded uses complete included order scope regardless mounted or selected rows', async () => {
   const { controller, writes } = setup()
   await controller.open('c1')

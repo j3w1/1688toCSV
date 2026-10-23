@@ -880,6 +880,7 @@ test('Packing copy completion waits for the real clipboard and retains captured 
   await view
     .getByRole('searchbox', { name: 'Filter container display', exact: true })
     .fill('2002')
+  await expect(rows).toHaveCount(1)
   await page.evaluate(() => window.clipboardReady.resolve())
   await expect(copy).toContainText('Copied')
   expect(await page.evaluate(() => navigator.clipboard.readText())).toBe(
