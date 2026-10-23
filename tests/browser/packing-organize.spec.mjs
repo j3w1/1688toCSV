@@ -42,8 +42,7 @@ async function setup(extension) {
   await page.goto(`${extension.extensionBaseUrl}/library.html`)
   const rows = page.locator('#sheet-body tr[data-selection-key]')
   await expect(rows).toHaveCount(3)
-  await rows.first().focus()
-  await page.keyboard.press('Control+a')
+  await page.locator('#select-rows').click()
   await assignSelectedPurchaseCodes(page)
   const id = await loadedSourceContainer(extension, [
       { accountId: 'local', orderId: record.snapshot.orderId },

@@ -143,9 +143,7 @@ test('manual other-source order follows packing, labels, carton marks and full/s
       (record) => record.snapshot.orderId === legacy[0].snapshot.orderId
     ).snapshot
   ).toEqual(legacy[0].snapshot)
-  const row = page.locator('#sheet-body tr[data-selection-key]').first()
-  await row.focus()
-  await row.press('Control+a')
+  await page.locator('#select-rows').click()
   await assignSelectedPurchaseCodes(page)
   await expect(page.locator('#orders-view')).toBeVisible()
   await expect(page.locator('#sheet-body')).toContainText('EXT-MANUAL-1')
