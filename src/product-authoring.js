@@ -229,7 +229,8 @@ export async function createProductAuthoring({
     editor
   const sessions = new Map(),
     cartonFields = new Map()
-  const histories = new Map()
+  const histories = new Map(),
+    historyBaselines = new WeakMap()
   const amendmentFor = (ref) =>
     preparations.get(orderKey(ref))?.amendmentContext
   const sameAmendment = (a, b) =>
@@ -240,8 +241,38 @@ export async function createProductAuthoring({
       [...preparations.values()].find((prep) => prep.amendmentContext)
         ?.amendmentContext || null,
     ])
-    if (!histories.has(key)) histories.set(key, createPreparationHistory())
+    if (!histories.has(key)) {
+      const stack = createPreparationHistory()
+      histories.set(key, stack)
+      historyBaselines.set(stack, new Map())
+    }
     return histories.get(key)
+  }
+  const historyGuard = (preparation, observedAt) => ({
+    revision: preparation.revision,
+    observedAt,
+    amendmentContext: structuredClone(preparation.amendmentContext),
+  })
+  const sameHistoryGuard = (left, right) =>
+    left &&
+    right &&
+    left.revision === right.revision &&
+    left.observedAt === right.observedAt &&
+    sameAmendment(left.amendmentContext, right.amendmentContext)
+  function beginLocalHistory(stack, preparation, observedAt) {
+    const guards = historyBaselines.get(stack),
+      key = orderKey(preparation),
+      captured = historyGuard(preparation, observedAt)
+    // A deliberate new edit may adopt a foreign saved context. Older history
+    // for that order cannot cross this discontinuity; reload alone keeps it.
+    if (guards.has(key) && !sameHistoryGuard(guards.get(key), captured))
+      stack.clear(key)
+    guards.set(key, captured)
+  }
+  function acknowledgeHistory(stack, preparation, observedAt) {
+    historyBaselines
+      .get(stack)
+      .set(orderKey(preparation), historyGuard(preparation, observedAt))
   }
   const sessionKey = (ref, contextContainerId = getContextContainerId()) =>
     JSON.stringify([
@@ -339,6 +370,7 @@ export async function createProductAuthoring({
       ) {
         session.draft = structuredClone(latest)
         session.saved = structuredClone(latest)
+        session.sourceObservedAt = recordFor(latest)?.snapshot.observedAt
       }
     }
   }
@@ -526,6 +558,7 @@ export async function createProductAuthoring({
       session = {
         draft,
         saved: structuredClone(saved),
+        sourceObservedAt: recordFor(saved)?.snapshot.observedAt,
         contextContainerId: getContextContainerId(),
         amendmentContext: structuredClone(saved.amendmentContext),
         dirty: !samePreparation(draft, saved),
@@ -572,7 +605,9 @@ export async function createProductAuthoring({
       snapshot: recordFor(submitted)?.snapshot,
       sizeVocabulary: preferences.sizeVocabulary,
     })
-    const version = session.generation
+    const version = session.generation,
+      stack = session.history || history(),
+      observedAt = session.sourceObservedAt
     session.notify?.('Saving…')
     session.work = repository.savePreparations([submitted], {
       ...(session.contextContainerId
@@ -586,7 +621,7 @@ export async function createProductAuthoring({
         {
           accountId: submitted.accountId,
           orderId: submitted.orderId,
-          observedAt: recordFor(submitted)?.snapshot.observedAt,
+          observedAt,
         },
       ],
     })
@@ -594,6 +629,7 @@ export async function createProductAuthoring({
       const [result] = await session.work
       acknowledgePreparation(session.draft, submitted, result)
       session.saved = structuredClone(result)
+      acknowledgeHistory(stack, result, observedAt)
       if (isCurrentSession(session)) {
         preparations.set(orderKey(result), result)
         rebuild()
@@ -631,7 +667,10 @@ export async function createProductAuthoring({
     const before = preparationHistorySnapshot(session.draft)
     change(session.draft)
     if (before === preparationHistorySnapshot(session.draft)) return
-    history().record(
+    const stack = history()
+    beginLocalHistory(stack, session.saved, session.sourceObservedAt)
+    session.history = stack
+    stack.record(
       orderKey(session.draft),
       before,
       preparationHistorySnapshot(session.draft),
@@ -707,6 +746,9 @@ export async function createProductAuthoring({
     preparations.set(orderKey(latest), latest)
     session.saved = structuredClone(latest)
     session.amendmentContext = structuredClone(latest.amendmentContext)
+    session.sourceObservedAt = recordFor(latest)?.snapshot.observedAt
+    session.history = history()
+    beginLocalHistory(session.history, latest, session.sourceObservedAt)
     if (choice === 'saved') {
       session.draft = structuredClone(latest)
       session.dirty = false
@@ -724,12 +766,28 @@ export async function createProductAuthoring({
   }
   async function travel(direction) {
     await flushSaves()
-    const result = history().peek(direction)
+    const stack = history(),
+      result = stack.peek(direction)
     if (!result) return
     const entries = result.changes || [result]
     const before = entries.map((entry) => preparations.get(entry.orderId))
     if (before.some((draft) => !draft))
       throw new Error('This edit session is no longer available.')
+    const guards = entries.map((entry) =>
+      structuredClone(historyBaselines.get(stack).get(entry.orderId))
+    )
+    if (
+      before.some(
+        (draft, index) =>
+          !sameHistoryGuard(
+            guards[index],
+            historyGuard(draft, recordFor(draft)?.snapshot.observedAt)
+          )
+      )
+    )
+      throw new Error(
+        'Preparation changed in another tab. Reload it before saving your edits.'
+      )
     const candidates = entries.map((entry, index) =>
       restorePreparationHistory(entry.value, before[index])
     )
@@ -750,13 +808,24 @@ export async function createProductAuthoring({
     })
     try {
       const results = await repository.savePreparations(candidates, {
-        ...amendmentOptions(candidates[0]),
-        expectedRevisions: before.map((draft) => draft.revision),
+        ...(getContextContainerId()
+          ? {
+              contextContainerId: getContextContainerId(),
+              expectedAmendment: guards[0].amendmentContext,
+            }
+          : {}),
+        expectedRevisions: guards.map((guard) => guard.revision),
+        expectedSnapshots: before.map((draft, index) => ({
+          accountId: draft.accountId,
+          orderId: draft.orderId,
+          observedAt: guards[index].observedAt,
+        })),
         suffixBaselines: candidates,
         preserveNaming: true,
       })
-      history()[direction]()
-      for (const saved of results) {
+      stack[direction]()
+      for (const [index, saved] of results.entries()) {
+        acknowledgeHistory(stack, saved, guards[index].observedAt)
         preparations.set(orderKey(saved), saved)
         const session = sessions.get(sessionKey(saved))
         if (session) {
@@ -1455,9 +1524,12 @@ export async function createProductAuthoring({
     mappingStatus.setAttribute('role', 'status')
     status.id = `orders-authoring-status-${crypto.randomUUID()}`
     session.notify = (message) => {
-      const savedVariant = session.saved?.groups
-        .find((entry) => entry.id === group.id)
-        ?.variants.find((entry) => entry.id === variant.id)
+      const savedGroup = session.saved?.groups.find(
+          (entry) => entry.id === group.id
+        ),
+        savedVariant = savedGroup?.variants.find(
+          (entry) => entry.id === variant.id
+        )
       mappingStatus.hidden = !(
         variant.needsSizeMapping || savedVariant?.needsSizeMapping
       )
@@ -1473,17 +1545,39 @@ export async function createProductAuthoring({
         if (resolveControl) resolveControl.hidden = true
         return
       }
-      const issue = session.error.packingIssue,
-        fieldName =
-          issue?.field === 'variant'
-            ? 'Variant ending'
-            : issue?.field === 'size'
-              ? 'Size ending'
-              : 'Product code',
-        field = fields.find((field) => field.label === fieldName)
-      if (field) {
-        field.input.setAttribute('aria-invalid', 'true')
-        field.input.setAttribute('aria-errormessage', status.id)
+      const fieldName = {
+          variant: 'Variant ending',
+          variantSuffix: 'Variant ending',
+          size: 'Size ending',
+          sizeSuffix: 'Size ending',
+          code: 'Product code',
+          baseCode: 'Product code',
+          name: 'Spanish name',
+          category: 'Chinese category',
+        }[session.error.packingIssue?.field],
+        affected = new Set(
+          fieldName
+            ? [fieldName]
+            : group.baseCode !== savedGroup?.baseCode
+              ? ['Product code']
+              : [
+                  ...(variant.variantSuffix !== savedVariant?.variantSuffix
+                    ? ['Variant ending']
+                    : []),
+                  ...(variant.sizeSuffix !== savedVariant?.sizeSuffix
+                    ? ['Size ending']
+                    : []),
+                ]
+        )
+      if (!affected.size) affected.add('Product code')
+      for (const field of fields) {
+        if (affected.has(field.label)) {
+          field.input.setAttribute('aria-invalid', 'true')
+          field.input.setAttribute('aria-errormessage', status.id)
+        } else {
+          field.input.removeAttribute('aria-invalid')
+          field.input.removeAttribute('aria-errormessage')
+        }
       }
       const conflict = Boolean(
         session.error.conflict || /CE\d{8}/.test(session.error.message)
@@ -1810,6 +1904,8 @@ export async function createProductAuthoring({
     const match = membership.get(entryKey(ref))
     if (!match) throw new Error('Review product codes in Orders first.')
     let prep = structuredClone(match.prep)
+    const stack = history(),
+      observedAt = recordFor(prep)?.snapshot.observedAt
     const host = $('label-content')
     host.replaceChildren(
       el('h2', uiMessage(kind === 'mark' ? 'Carton mark' : 'Barcode label'))
@@ -1876,10 +1972,21 @@ export async function createProductAuthoring({
         return model()
       },
       onCommit: async (next) => {
+        const before = prep
         const [result] = await repository.savePreparations([candidate(next)], {
           ...amendmentOptions(candidate(next)),
           expectedRevisions: [prep.revision],
+          expectedSnapshots: [
+            { accountId: prep.accountId, orderId: prep.orderId, observedAt },
+          ],
         })
+        beginLocalHistory(stack, before, observedAt)
+        stack.record(
+          orderKey(result),
+          preparationHistorySnapshot(before),
+          preparationHistorySnapshot(result)
+        )
+        acknowledgeHistory(stack, result, observedAt)
         prep = result
         preparations.set(orderKey(result), result)
         rebuild()
@@ -1999,7 +2106,8 @@ export async function createProductAuthoring({
       if (!entry.variants.some((variant) => variant.id === match.variant.id))
         entry.variants.push(match.variant)
     }
-    const entries = [...selected.values()]
+    const entries = [...selected.values()],
+      stack = history()
     const baselines = new Map(
         entries.map((entry) => [
           orderKey(entry.draft),
@@ -2014,10 +2122,29 @@ export async function createProductAuthoring({
           observedAt: recordFor(draft)?.snapshot.observedAt,
         })),
       }
-    for (const entry of entries)
-      entry.complete = entry.group.variants
-        .flatMap((variant) => variant.entryIds)
-        .every((entryId) => chosen.has(entryKey({ ...entry.draft, entryId })))
+    for (const entry of entries) {
+      const source = new Set(
+        recordFor(entry.draft)?.snapshot.items.map((item) => item.entryId) || []
+      )
+      const groupAvailable = entry.group.variants.every((variant) =>
+        variant.entryIds.every((entryId) => {
+          const owner = membership.get(entryKey({ ...entry.draft, entryId }))
+          return (
+            source.has(entryId) &&
+            owner?.group.id === entry.group.id &&
+            owner.variant.id === variant.id
+          )
+        })
+      )
+      const selectedVariantsComplete = entry.variants.every((variant) =>
+        variant.entryIds.every((entryId) =>
+          chosen.has(entryKey({ ...entry.draft, entryId }))
+        )
+      )
+      // Scope completeness and chosen variants are distinct. Partial variants
+      // may not move hidden shared source rows; split may select whole variants.
+      entry.complete = groupAvailable && selectedVariantsComplete
+    }
     const available = groupingAvailability(entries),
       modal = el('dialog', undefined, 'orders-grouping-dialog'),
       status = el('p')
@@ -2062,14 +2189,25 @@ export async function createProductAuthoring({
           ...groupingContext,
           expectedRevisions: before.map((draft) => draft.revision),
         })
-        history().recordBatch(
+        for (const [index, draft] of before.entries())
+          beginLocalHistory(
+            stack,
+            draft,
+            groupingContext.expectedSnapshots[index].observedAt
+          )
+        stack.recordBatch(
           results.map((result, index) => ({
             orderId: orderKey(result),
             before: preparationHistorySnapshot(before[index]),
             after: preparationHistorySnapshot(result),
           }))
         )
-        for (const result of results) {
+        for (const [index, result] of results.entries()) {
+          acknowledgeHistory(
+            stack,
+            result,
+            groupingContext.expectedSnapshots[index].observedAt
+          )
           preparations.set(orderKey(result), result)
           sessions.delete(sessionKey(result))
         }
@@ -2089,7 +2227,8 @@ export async function createProductAuthoring({
     modal.showModal()
   }
   async function resolveCodeConflict(candidate, error, target = {}) {
-    const conflictContext = amendmentOptions(candidate)
+    const conflictContext = amendmentOptions(candidate),
+      stack = history()
     const code =
       error?.conflict?.code || error?.message?.match(/CE\d{8}[A-Z0-9]*/)?.[0]
     if (!code) throw error
@@ -2359,14 +2498,25 @@ export async function createProductAuthoring({
             ...conflictContext,
             expectedRevisions: values.map((value) => value.revision),
           })
-          history().recordBatch(
+          for (const [index, draft] of before.entries())
+            beginLocalHistory(
+              stack,
+              draft,
+              conflictContext.expectedSnapshots[index].observedAt
+            )
+          stack.recordBatch(
             results.map((value, index) => ({
               orderId: orderKey(value),
               before: preparationHistorySnapshot(before[index]),
               after: preparationHistorySnapshot(value),
             }))
           )
-          for (const value of results) {
+          for (const [index, value] of results.entries()) {
+            acknowledgeHistory(
+              stack,
+              value,
+              conflictContext.expectedSnapshots[index].observedAt
+            )
             preparations.set(orderKey(value), value)
             const session = sessions.get(sessionKey(value))
             if (session) {
@@ -2972,9 +3122,15 @@ export async function createProductAuthoring({
     refreshPhoto: (item, thumbnail) => media.updatePhoto(item, thumbnail),
     updateActions() {},
     orderRows: (rows) => [...rows],
-    canCopyLabels: (rows) =>
-      labelRows(rows).length > 0 &&
-      labelRows(rows).every((row) => Boolean(preparedRows([row])[0].barcode)),
+    canCopyLabels(rows) {
+      const eligible = labelRows(rows)
+      // A base identity permits an actionable request; the output controller
+      // validates variant mappings and artwork before copying or printing.
+      return (
+        eligible.length > 0 &&
+        preparedRows(eligible).every((row) => Boolean(row.baseCode))
+      )
+    },
     labelRows,
     rowsForRefs(refs) {
       const rows = [],

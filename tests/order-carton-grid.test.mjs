@@ -31,6 +31,43 @@ test('measurement notices keep whole-set totals distinct from original supplied 
   assert.equal(warning.suppliedCbm, '0.21')
 })
 
+test('an exception volume notice identifies the stable carton and inherited dimensions in every live language', (context) => {
+  const previous = getLanguage()
+  context.after(() => setLanguage(previous, { persist: false }))
+  const warning = Object.freeze({
+    unitIndex: 6,
+    dimensionSource: 'set',
+    dimensionVolume: '0.125000000000000001',
+    usedVolume: '0.125000000000000001',
+    suppliedVolume: '0.30',
+    suppliedCbm: '0.30',
+    suppliedVolumeBasis: 'carton',
+    count: 1,
+  })
+  setLanguage('en', { persist: false })
+  const notices = measurementWarningMessages(warning, message)
+  assert.match(
+    String(notices[0]),
+    /0\.125000000000000001 m³ is used for carton 7/
+  )
+  assert.match(String(notices[0]), /supplied volume 0\.30 m³ remains recorded/)
+  assert.match(String(notices[1]), /0\.30 m³ · Per carton · 1 cartons/)
+  assert.match(String(notices[2]), /Carton 7 inherits the set dimensions/)
+  assert.match(String(notices[2]), /separately measured dimensions/)
+  setLanguage('es', { persist: false })
+  assert.match(String(notices[0]), /para la caja 7/)
+  assert.match(String(notices[2]), /medidas individuales/)
+  setLanguage('zh', { persist: false })
+  assert.match(String(notices[0]), /第 7 箱采用实测体积/)
+  assert.match(String(notices[2]), /单独测量的尺寸/)
+  assert.equal(warning.suppliedCbm, '0.30')
+  const ownDimensions = measurementWarningMessages(
+    { ...warning, dimensionSource: 'unit' },
+    message
+  )
+  assert.equal(ownDimensions.length, 2)
+})
+
 test('packing patterns never multiply aggregate totals and retain known uneven or shared references', () => {
   const aggregate = {
     entryId: 'a',

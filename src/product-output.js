@@ -256,7 +256,10 @@ export function createProductOutput({
               ? {
                   containerId: context.containerId,
                   revisionId: context.revisionId,
-                  view: 'packing-list',
+                  view:
+                    context.outputSide === 'left-behind'
+                      ? 'left-behind'
+                      : 'packing-list',
                 }
               : undefined
           )
@@ -607,6 +610,7 @@ export function createProductOutput({
             ).blob,
           headers: headers(),
           badges: createExcelImageBadges(context.preferences || {}),
+          errorOptions: (error) => labelFailure(error, context).noticeOptions,
         })
       )
     return copySourceImages(context.products, {

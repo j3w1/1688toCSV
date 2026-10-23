@@ -12,6 +12,16 @@ export const SMART_CARTON_MESSAGES = Object.fromEntries(
       '供应商原始体积：{0} m³ · {1} · {2} 箱。',
     ],
     [
+      'Measured volume {0} m³ is used for carton {2}; supplied volume {1} m³ remains recorded.',
+      'Se usa el volumen medido de {0} m³ para la caja {2}; se conserva el volumen aportado de {1} m³.',
+      '第 {2} 箱采用实测体积 {0} m³；保留供应商提供的体积 {1} m³。',
+    ],
+    [
+      'Carton {0} inherits the set dimensions. Review separately measured dimensions for this carton to explain the supplier difference.',
+      'La caja {0} hereda las dimensiones del conjunto. Revisa sus medidas individuales para aclarar la diferencia con el dato del proveedor.',
+      '第 {0} 箱沿用整组纸箱尺寸。请核对该箱单独测量的尺寸，以说明与供应商数据的差异。',
+    ],
+    [
       'The container changed before output was captured. Review the current revision and try again.',
       'El contenedor cambió antes de capturar la salida. Revisa la versión actual e inténtalo de nuevo.',
       '生成输出前货柜已发生变化。请核对当前版本后重试。',
@@ -1155,13 +1165,16 @@ export const SMART_CARTON_MESSAGES = Object.fromEntries(
 
 /** Format authoritative whole-set values; supplied evidence keeps its own basis. */
 export function measurementWarningMessages(warning, message) {
+  const unit = Number.isSafeInteger(warning.unitIndex) && warning.unitIndex >= 0
   const result = [
     message(
-      'Measured volume {0} m³ is used for this set of {2} cartons; supplied volume {1} m³ remains recorded.',
+      unit
+        ? 'Measured volume {0} m³ is used for carton {2}; supplied volume {1} m³ remains recorded.'
+        : 'Measured volume {0} m³ is used for this set of {2} cartons; supplied volume {1} m³ remains recorded.',
       {
         0: warning.usedVolume ?? warning.dimensionVolume ?? '—',
         1: warning.suppliedVolume ?? '—',
-        2: warning.count ?? '—',
+        2: unit ? String(warning.unitIndex + 1) : (warning.count ?? '—'),
       }
     ),
   ]
@@ -1177,6 +1190,13 @@ export function measurementWarningMessages(warning, message) {
               : '—',
         2: warning.count ?? '—',
       })
+    )
+  if (unit && warning.dimensionSource === 'set')
+    result.push(
+      message(
+        'Carton {0} inherits the set dimensions. Review separately measured dimensions for this carton to explain the supplier difference.',
+        { 0: String(warning.unitIndex + 1) }
+      )
     )
   return result
 }

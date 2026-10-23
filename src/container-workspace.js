@@ -653,7 +653,8 @@ export function createContainerWorkspace({
   }
   function updateSelectionControls() {
     for (const key of ['loaded', 'left', 'reset'])
-      buttons.get(key).disabled = !selected.size || controller.busy()
+      buttons.get(key).disabled =
+        controller.busy() || currentView !== 'loading' || !selected.size
     for (const row of body.querySelectorAll('[data-container-row]')) {
       const chosen = selected.has(row.dataset.containerRow)
       const check = row.querySelector('input[type="checkbox"]')
@@ -870,6 +871,9 @@ export function createContainerWorkspace({
             : !editable
         button.disabled =
           busy ||
+          (key === 'all' &&
+            (!view.cartons.length ||
+              view.cartons.every((carton) => carton.state === 'loaded'))) ||
           (['loaded', 'left', 'reset'].includes(key) && !selected.size) ||
           (key === 'undo' && !controller.canUndo()) ||
           (key === 'redo' && !controller.canRedo())

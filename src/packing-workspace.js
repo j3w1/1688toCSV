@@ -392,7 +392,9 @@ export async function startPackingWorkspace({
   }
   async function editInOrders(ref, route) {
     await flush()
-    returnTo = structuredClone(route || containers.route())
+    const currentRoute =
+      route || (workspace === 'packing' ? containers.route() : undefined)
+    if (currentRoute?.containerId) returnTo = structuredClone(currentRoute)
     paint()
     if (ref.view === 'cartons' || ref.cartonId) return openOrder(ref)
     await showOrders('products')
