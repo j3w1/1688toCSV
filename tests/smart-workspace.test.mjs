@@ -2305,6 +2305,39 @@ test('pending variant sizes block barcode output while a known base carton mark 
   assert.equal(context.products[0].barcode, '')
 })
 
+test('captured manual-source label and mark summaries preserve the exact original reference field', () => {
+  const row = {
+    ...ref,
+    entryId: '2001',
+    groupId: 'g1',
+    variantId: 'v1',
+    source: 'other',
+    orderReference: 'EXT-MANUAL-1',
+    barcode: 'CE26090101',
+    baseCode: 'CE26090101',
+    spanishName: 'SYNTHETIC',
+    chineseCategory: '合成',
+    quantity: '2',
+  }
+  for (const kind of ['barcode', 'mark']) {
+    const item = outputLabelModels(
+      { kind: 'orders-selection', products: [row] },
+      kind
+    )[0]
+    assert.deepEqual(item.orders[0], {
+      accountId: 'local',
+      orderId: ref.orderId,
+      seller: '',
+      source: 'other',
+      reference: 'EXT-MANUAL-1',
+    })
+  }
+  const explicit = outputLabelModels({
+    products: [{ ...row, reference: 'DIRECT-REFERENCE' }],
+  })[0]
+  assert.equal(explicit.orders[0].reference, 'DIRECT-REFERENCE')
+})
+
 test('active shell removes obsolete workflow actions and Packing authoring dependencies', () => {
   const shell = readFileSync(
       new URL('../src/packing-workspace.js', import.meta.url),

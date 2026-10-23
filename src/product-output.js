@@ -119,7 +119,7 @@ export function outputLabelModels(context, kind = 'barcode') {
       accountId: row.accountId || 'local',
       seller: row.sellerName || '',
       ...(row.source === 'other'
-        ? { source: 'other', reference: row.reference }
+        ? { source: 'other', reference: row.reference ?? row.orderReference }
         : {}),
     }
     const ref = {
