@@ -2,9 +2,9 @@
 export const SMART_CARTON_MESSAGES = Object.fromEntries(
   [
     [
-      'Measured volume {0} m³ is used; supplied volume {1} m³ remains recorded.',
-      'Se usa el volumen medido de {0} m³; se conserva el volumen aportado de {1} m³.',
-      '采用实测体积 {0} m³；保留供应商提供的体积 {1} m³。',
+      'Measured volume {0} m³ is used for this set of {2} cartons; supplied volume {1} m³ remains recorded.',
+      'Se usa el volumen medido de {0} m³ para este conjunto de {2} cajas; se conserva el volumen aportado de {1} m³.',
+      '这 {2} 箱合计采用实测体积 {0} m³；保留供应商提供的体积 {1} m³。',
     ],
     [
       'Supplied evidence: {0} m³ · {1} · {2} cartons.',
@@ -1157,10 +1157,11 @@ export const SMART_CARTON_MESSAGES = Object.fromEntries(
 export function measurementWarningMessages(warning, message) {
   const result = [
     message(
-      'Measured volume {0} m³ is used; supplied volume {1} m³ remains recorded.',
+      'Measured volume {0} m³ is used for this set of {2} cartons; supplied volume {1} m³ remains recorded.',
       {
         0: warning.usedVolume ?? warning.dimensionVolume ?? '—',
         1: warning.suppliedVolume ?? '—',
+        2: warning.count ?? '—',
       }
     ),
   ]
