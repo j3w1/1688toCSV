@@ -1,6 +1,51 @@
 // UI text only. Supplier/source strings never pass through this catalog.
 export const SMART_CARTON_MESSAGES = Object.fromEntries(
   [
+    [
+      'The recorded mark {code} needs historical ownership review. Print the current product mark and confirm physical relabeling.',
+      'La marca registrada {code} requiere revisar su propiedad histórica. Imprime la marca del producto actual y confirma el cambio físico de etiqueta.',
+      '已记录的箱唛 {code} 需要核对历史归属。请打印当前商品箱唛，并确认已实际更换标签。',
+    ],
+    [
+      'The recorded mark {code} is currently reserved by purchase {order}. This restriction clears when that purchase releases the code. Print the current product mark to relabel now.',
+      'La compra {order} tiene reservada actualmente la marca registrada {code}. Esta restricción termina cuando esa compra libera el código. Imprime la marca del producto actual para reetiquetar ahora.',
+      '已记录的箱唛 {code} 目前由采购订单 {order} 预留。该订单释放编码后，此限制即会解除。如需立即更换标签，请打印当前商品箱唛。',
+    ],
+    [
+      'Order {order} currently owns {code}. This restriction clears if that purchase releases the code before sealing. Print a current product mark and confirm physical relabeling, or review again after release.',
+      'El pedido {order} tiene actualmente el código {code}. Esta restricción termina si esa compra libera el código antes de sellar. Imprime una marca del producto actual y confirma el cambio físico de etiqueta, o vuelve a revisar después de la liberación.',
+      '订单 {order} 目前拥有编码 {code}。如果该采购订单在封存前释放编码，此限制即会解除。请打印当前商品箱唛并确认已实际更换标签，或在编码释放后重新核对。',
+    ],
+    [
+      'Shipment {shipment} permanently reserves {code} for other goods. Print a current product mark and confirm physical relabeling.',
+      'El embarque {shipment} reserva permanentemente el código {code} para otros productos. Imprime una marca del producto actual y confirma el cambio físico de etiqueta.',
+      '货柜 {shipment} 已为其他商品永久保留编码 {code}。请打印当前商品箱唛，并确认已实际更换标签。',
+    ],
+    [
+      'This older archive has no corroborated primary-reservation witness. Review the historical evidence and confirm fresh physical relabeling before keeping, printing or sealing these cartons.',
+      'Este archivo antiguo no tiene evidencia corroborada de la reserva principal. Revisa el historial y confirma un nuevo cambio físico de etiqueta antes de conservar la marca, imprimir o sellar estas cajas.',
+      '此旧版备份缺少已核实的主编码预留证据。保留箱唛、打印或封存这些纸箱前，请核对历史证据，并重新确认已实际更换标签。',
+    ],
+    [
+      'Retained ownership evidence',
+      'Evidencia de propiedad conservada',
+      '保留的归属证据',
+    ],
+    [
+      'Retained code owner: {order} / {group}',
+      'Propietario del código conservado: {order} / {group}',
+      '保留的编码归属：{order} / {group}',
+    ],
+    [
+      'Retained shipment {shipment} (revision {revision})',
+      'Embarque conservado {shipment} (revisión {revision})',
+      '保留的货柜 {shipment}（版本 {revision}）',
+    ],
+    [
+      'Recorded related product: {code} ({order} / {group})',
+      'Producto relacionado registrado: {code} ({order} / {group})',
+      '已记录的关联商品：{code}（{order} / {group}）',
+    ],
     ['Draft revision {0}', 'Revisión de borrador {0}', '草稿版本 {0}'],
     [
       'The recorded mark {code} belongs to shipment {shipment} (revision {revision}). Print the current product mark and confirm physical relabeling.',

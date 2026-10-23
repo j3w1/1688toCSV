@@ -35,6 +35,8 @@ import {
   transitionPhysicalMark,
   retainCartonEvidence,
   physicalMarkReadback,
+  physicalMarkSupersessionState,
+  physicalMarkResolutionChoices,
 } from '../src/physical-mark-aliases.js'
 import {
   syntheticOrder,
@@ -241,6 +243,9 @@ test('superseded mark controls retain exact owner evidence and live input while 
       physicalMarkCode: 'CE26090102',
       currentProductCode: 'CE26090104',
       physicalMarkRelabelOnly: true,
+      physicalMarkConflictKind: 'permanent',
+      physicalMarkConflictReason:
+        'Shipment actual-shipment permanently reserves CE26090102 for other goods. Print a current product mark and confirm physical relabeling.',
       physicalMarkResolutionChoices: ['relabel-reprint'],
       physicalMarkSupersessions: [
         {
@@ -315,11 +320,119 @@ test('superseded mark controls retain exact owner evidence and live input while 
     assert.equal(recorded.disabled, true)
     assert.match(evidence.textContent, /actual-shipment.*actual-revision/)
     assert.match(evidence.textContent, /手工来源 Supplier Ω/)
-    if (language === 'es') assert.match(recorded.title, /pertenece al embarque/)
-    if (language === 'zh') assert.match(recorded.title, /属于货柜/)
+    if (language === 'es')
+      assert.match(recorded.title, /reserva permanentemente/)
+    if (language === 'zh') assert.match(recorded.title, /永久保留/)
   }
   assert.deepEqual(review, original)
   stop()
+})
+
+test('canonical ownership states control mark choices and printing without treating retained inactive history as a current restriction', async (context) => {
+  const { document, window } = dom(context),
+    host = document.getElementById('host'),
+    previous = getLanguage()
+  context.after(() => setLanguage(previous, { persist: false }))
+  for (const kind of ['none', 'temporary', 'permanent', 'historical-review']) {
+    const batch = {
+        id: `ownership-${kind}`,
+        physicalMark: {
+          code: 'CE26090102',
+          productCode: 'CE26090104',
+          supersededAliases: [
+            {
+              code: 'CE26090102',
+              active: kind === 'temporary' || kind === 'permanent',
+              reviewRequired: kind === 'historical-review',
+              reason: 'Retained original ownership evidence Ω',
+              conflicts: [
+                {
+                  accountId: 'local',
+                  orderId: '1002',
+                  groupId: 'other-owner',
+                  kind:
+                    kind === 'permanent'
+                      ? 'code-consumption'
+                      : 'current-primary',
+                  ...(kind === 'permanent'
+                    ? {
+                        containerId: 'sealed-shipment',
+                        revisionId: 'sealed-r1',
+                      }
+                    : {}),
+                },
+              ],
+              currentProducts: [],
+            },
+          ],
+        },
+      },
+      state = physicalMarkSupersessionState(batch),
+      review = {
+        ...batch,
+        ...state,
+        physicalMarkCode: batch.physicalMark.code,
+        currentProductCode: batch.physicalMark.productCode,
+        physicalMarkSupersessions: structuredClone(
+          batch.physicalMark.supersededAliases
+        ),
+        resolutionRequired: true,
+        resolutionChoices: physicalMarkResolutionChoices(batch),
+      },
+      original = structuredClone(review),
+      apply = document.createElement('button'),
+      printed = [],
+      stop = mountPhysicalMarkChoices({
+        host,
+        apply,
+        reviews: [review],
+        onPrintMark: async (value) => printed.push(value),
+      }),
+      keep = host.querySelector('[data-choice="keep-recorded-mark"]'),
+      recorded = host.querySelector('[data-mark-role="recorded"]'),
+      current = host.querySelector('[data-mark-role="current-product"]')
+    assert.equal(state.physicalMarkConflictKind, kind)
+    assert.equal(keep.disabled, kind !== 'none')
+    assert.equal(recorded.disabled, kind !== 'none')
+    assert.equal(current.disabled, false)
+    assert.equal(review.physicalMark.supersededAliases.length, 1)
+    for (const language of ['en', 'es', 'zh']) {
+      setLanguage(language, { persist: false })
+      assert.equal(keep.disabled, kind !== 'none')
+      assert.equal(recorded.disabled, kind !== 'none')
+      if (kind === 'none')
+        assert.equal(host.querySelector('[data-mark-supersession]'), null)
+      else {
+        const evidence = host.querySelector('[data-mark-supersession]')
+        assert.equal(evidence.dataset.markConflictKind, kind)
+        assert.match(
+          evidence.textContent,
+          /Retained original ownership evidence Ω/
+        )
+        if (language === 'en')
+          assert.ok(
+            evidence.textContent.includes(state.physicalMarkConflictReason)
+          )
+        if (language === 'es' && kind === 'temporary')
+          assert.match(recorded.title, /antes de sellar/)
+        if (language === 'zh' && kind === 'historical-review')
+          assert.match(recorded.title, /旧版备份/)
+      }
+    }
+    recorded.onclick()
+    await new Promise((resolve) => setTimeout(resolve, 0))
+    assert.equal(printed.length, kind === 'none' ? 1 : 0)
+    if (kind === 'none') {
+      keep.checked = true
+      keep.dispatchEvent(new window.Event('change'))
+      const reason = host.querySelector('textarea')
+      reason.value = 'The unconsumed foreign purchase released this code'
+      reason.dispatchEvent(new window.Event('input'))
+      assert.equal(apply.disabled, false)
+    }
+    assert.deepEqual(review, original)
+    stop()
+  }
 })
 
 test('saved superseded mark review carries authoritative choices through failed writes and requires fresh physical relabeling', async (context) => {
@@ -602,6 +715,60 @@ test('physical mark output uses recorded artwork after its group is gone, counts
     record.snapshot.items[0].thumbnail
   )
   assert.deepEqual(context, superseded)
+  for (const kind of ['none', 'temporary', 'historical-review']) {
+    const entry = batch.physicalMark.supersededAliases[0]
+    entry.active = kind === 'temporary'
+    entry.reviewRequired = kind === 'historical-review'
+    entry.conflicts = [
+      {
+        accountId: 'local',
+        orderId: 'unconsumed-order',
+        groupId: 'unconsumed-owner',
+        kind: 'current-primary',
+      },
+    ]
+    Object.assign(batch, physicalMarkSupersessionState(batch))
+    batch.physicalMarkSupersessions = structuredClone(
+      batch.physicalMark.supersededAliases
+    )
+    batch.revision++
+    context.revisions.cartons[batch.id] = batch.revision
+    const beforeState = structuredClone(context)
+    assert.equal(batch.physicalMarkConflictKind, kind)
+    if (kind === 'none') {
+      const released = await output.orderCartonContext({
+          ...ref,
+          role: 'recorded',
+        }),
+        releasedModel = outputLabelModels(released, 'mark')[0]
+      assert.equal(releasedModel.code, batch.physicalMark.code)
+      assert.equal(batch.physicalMark.supersededAliases.length, 1)
+      const regenerated = await output.orderCartonContext(releasedModel.refs[0])
+      assert.equal(
+        outputLabelModels(regenerated, 'mark')[0].code,
+        batch.physicalMark.code
+      )
+    } else
+      await assert.rejects(
+        output.orderCartonContext({ ...ref, role: 'recorded' }),
+        (error) => {
+          assert.equal(error.code, 'PHYSICAL_MARK_RELABEL_REQUIRED')
+          assert.match(
+            error.message,
+            kind === 'temporary'
+              ? /currently reserved by purchase unconsumed-order/
+              : /historical ownership review/
+          )
+          return true
+        }
+      )
+    const safeCurrent = await output.orderCartonContext({
+      ...ref,
+      role: 'current-product',
+    })
+    assert.equal(outputLabelModels(safeCurrent, 'mark')[0].code, group.baseCode)
+    assert.deepEqual(context, beforeState)
+  }
   assert.deepEqual({ record, preparation }, original)
 })
 

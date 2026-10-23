@@ -40,39 +40,22 @@ export const CARTON_GRID_COLUMNS = [
 ]
 
 function supersededMarkMessages(review) {
-  const messages = []
-  for (const entry of review.physicalMarkSupersessions || [])
-    for (const conflict of entry.conflicts || [])
-      messages.push(
-        conflict.containerId
-          ? m(
-              'The recorded mark {code} belongs to shipment {shipment} (revision {revision}). Print the current product mark and confirm physical relabeling.',
-              {
-                code: entry.code,
-                shipment: conflict.containerId,
-                revision: conflict.revisionId || '—',
-              }
-            )
-          : m(
-              'The recorded mark {code} belongs to purchase {order}. Print the current product mark and confirm physical relabeling.',
-              { code: entry.code, order: conflict.orderId }
-            )
-      )
-  return messages.length
-    ? messages
-    : [
-        m(
-          'The recorded carton mark is superseded. Print the current product mark and confirm physical relabeling.'
-        ),
-      ]
+  return [
+    m(
+      review.physicalMarkConflictReason ||
+        'The recorded carton mark is superseded. Print the current product mark and confirm physical relabeling.'
+    ),
+  ]
 }
 
 function appendSupersededMarkEvidence(card, review) {
   if (!review.physicalMarkRelabelOnly) return
   const evidence = el('div', undefined, 'physical-mark-supersession')
   evidence.dataset.markSupersession = 'true'
+  evidence.dataset.markConflictKind = review.physicalMarkConflictKind || ''
   for (const message of supersededMarkMessages(review))
     evidence.append(el('p', message))
+  evidence.append(el('strong', m('Retained ownership evidence')))
   for (const entry of review.physicalMarkSupersessions || []) {
     if (entry.reason) {
       const reason = el('p')
@@ -83,17 +66,28 @@ function appendSupersededMarkEvidence(card, review) {
       evidence.append(
         el(
           'p',
-          m('Code owner: {order} / {group}', {
+          m('Retained code owner: {order} / {group}', {
             order: conflict.orderId,
             group: conflict.groupId,
           })
         )
       )
+    for (const conflict of entry.conflicts || [])
+      if (conflict.containerId)
+        evidence.append(
+          el(
+            'p',
+            m('Retained shipment {shipment} (revision {revision})', {
+              shipment: conflict.containerId,
+              revision: conflict.revisionId || '—',
+            })
+          )
+        )
     for (const current of entry.currentProducts || [])
       evidence.append(
         el(
           'p',
-          m('Current product: {code} ({order} / {group})', {
+          m('Recorded related product: {code} ({order} / {group})', {
             code: current.productCode,
             order: current.mark.orderId,
             group: current.mark.groupId,
@@ -541,6 +535,10 @@ export async function openPhysicalMarkReview({
         physicalMarkCode: batch.physicalMarkCode || batch.physicalMark.code,
         physicalMarkRelabelOnly: batch.physicalMarkRelabelOnly,
         physicalMarkSupersessions: batch.physicalMarkSupersessions,
+        physicalMarkConflictKind: batch.physicalMarkConflictKind,
+        physicalMarkConflictReason: batch.physicalMarkConflictReason,
+        physicalMarkHistoricalReviewRequired:
+          batch.physicalMarkHistoricalReviewRequired,
         resolutionChoices: batch.physicalMarkResolutionChoices,
         currentProductCode:
           batch.currentProductCode || batch.physicalMark.productCode,
