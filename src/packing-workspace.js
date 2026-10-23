@@ -29,6 +29,7 @@ export async function startPackingWorkspace({
   getSelectedRows = getRows,
   getSelectedOrders = () => [],
   headers,
+  setHeaders,
   changed,
   feedback,
   loadImage,
@@ -98,6 +99,7 @@ export async function startPackingWorkspace({
     authoring,
     loadImage,
     headers,
+    setHeaders,
     feedback,
     editInOrders,
     workbookAdapter: {

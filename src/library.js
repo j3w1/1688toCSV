@@ -3541,6 +3541,10 @@ export async function startLibrary(
       getSelectedRows: () =>
         filteredRows().filter((row) => selectedRows.has(keyFor(row))),
       headers: () => $('include-headers').checked,
+      setHeaders: (value) => {
+        $('include-headers').checked = value
+        $('include-headers').dispatchEvent(new Event('change'))
+      },
       changed: ({ reload = false } = {}) => {
         if (reload) return refresh()
         renderOrders()

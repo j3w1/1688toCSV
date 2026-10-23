@@ -120,8 +120,8 @@ async function physicalFixture(extension, record, specifications) {
         ...ref,
         count: 1,
         packingBasis: 'exact',
-        labelOrigin: 'reported',
-        cartonNumber: String(index + 1),
+        labelOrigin: entry.count > 1 ? 'internal' : 'reported',
+        ...(entry.count > 1 ? {} : { cartonNumber: String(index + 1) }),
         len: '',
         wid: '',
         ht: '',
@@ -175,7 +175,6 @@ async function physicalFixture(extension, record, specifications) {
 const aggregate = () => ({
   count: 6,
   packingBasis: 'aggregate',
-  cartonNumber: 'C001',
   len: '40',
   wid: '30',
   ht: '25',
@@ -236,6 +235,12 @@ test('confirmed six-carton aggregate retains S/M/L source totals, truthful unkno
   expect(manifest.cartons).toHaveLength(6)
   expect(new Set(manifest.cartons.map((carton) => carton.id)).size).toBe(6)
   expect(
+    manifest.cartons.every((carton) => carton.reference.startsWith('Internal '))
+  ).toBe(true)
+  expect(
+    manifest.cartons.every((carton) => carton.labelOrigin === 'internal')
+  ).toBe(true)
+  expect(
     manifest.cartons.every(
       (carton) => carton.contents === null || !carton.contents?.length
     )
@@ -267,7 +272,10 @@ test('confirmed six-carton aggregate retains S/M/L source totals, truthful unkno
   expect(workbook.SheetNames).toEqual(['Packing list', 'Cartons', 'Se quedó'])
   for (const code of ['CE26101001S', 'CE26101001M', 'CE26101001L'])
     expect(productRows.flat()).toContain(code)
-  expect(cartonRows.flat().join(' ')).toContain('C001')
+  for (const carton of manifest.cartons)
+    expect(
+      cartonRows.flat().some((cell) => String(cell).includes(carton.reference))
+    ).toBe(true)
   const header = productRows.find(
       (row) => row.includes('Code') && row.includes('Cartons')
     ),
@@ -281,7 +289,11 @@ test('confirmed six-carton aggregate retains S/M/L source totals, truthful unkno
   ]) {
     expect(column).toBeGreaterThanOrEqual(0)
     for (const value of codes) {
-      expect(String(value[column])).toContain('C001')
+      if (column === header.indexOf('Cartons')) {
+        expect(String(value[column])).toContain('Internal')
+        for (const carton of manifest.cartons)
+          expect(String(value[column])).toContain(carton.reference)
+      } else expect(String(value[column])).toBe('CE26101001')
       expect(
         products[
           XLSX.utils.encode_cell({ r: productRows.indexOf(value), c: column })

@@ -8,6 +8,7 @@ import {
 import {
   captureContainerOutput,
   outputLabelModels,
+  createProductOutput,
 } from '../src/product-output.js'
 import { parseHTML } from 'linkedom'
 import { openProductDetails } from '../src/product-details.js'
@@ -1932,6 +1933,43 @@ test('unsealed output captures its actual numeric draft revision without fabrica
       }),
     /complete container revision/
   )
+})
+
+test('chosen-column output exposes the shared Headers preference and the captured row count across reopening and languages', async (testContext) => {
+  const { document, window } = authoringEnvironment(testContext),
+    context = captureContainerOutput(syntheticManifest()),
+    previousLanguage = getLanguage()
+  let includeHeaders = true
+  const output = createProductOutput({
+    repository: {},
+    authoring: {},
+    headers: () => includeHeaders,
+    setHeaders: (value) => {
+      includeHeaders = value
+    },
+  })
+  testContext.after(() => setLanguage(previousLanguage, { persist: false }))
+  await output.copyPreparation(context)
+  let modal = document.querySelector('.preparation-column-dialog'),
+    header = modal.querySelector('input[aria-label="Headers"]')
+  assert.equal(header.checked, true)
+  assert.equal(
+    modal.querySelector('.copy-row-count').textContent,
+    `Copy ${context.products.length} product rows`
+  )
+  header.checked = false
+  header.dispatchEvent(new window.Event('change'))
+  assert.equal(includeHeaders, false)
+  modal.close()
+  await output.copyPreparation(context)
+  modal = document.querySelector('.preparation-column-dialog')
+  header = modal.querySelector('input[aria-label="Headers"]')
+  assert.equal(header.checked, false)
+  modal.querySelector('.popup-language-toggle [data-language="zh"]').click()
+  assert.notEqual(header.getAttribute('aria-label'), 'Headers')
+  assert.equal(getLanguage(), previousLanguage)
+  assert.equal(header.checked, false)
+  modal.close()
 })
 
 test('shared-code labels retain separate source refs and exact source-line quantities', () => {
