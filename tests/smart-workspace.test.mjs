@@ -1097,6 +1097,30 @@ test('intentional blank Spanish names and pending size mappings remain label blo
   authoring.dispose()
 })
 
+test('an Orders code badge displays its exact barcode once and keeps its copy feedback separate', async (testContext) => {
+  const { document } = authoringEnvironment(testContext),
+    manifest = syntheticManifest(),
+    { record, preparation } = manifest.orders[0],
+    ref = { accountId: 'local', orderId: '1001', entryId: '2001' },
+    authoring = await createProductAuthoring({
+      repository: {
+        listPreparations: async () => [structuredClone(preparation)],
+        getPackingPreferences: async () => validatePackingPreferences({}),
+      },
+      getRecords: () => [record],
+    }),
+    host = document.createElement('div'),
+    expected = authoring.preparedRows([ref])[0].barcode
+  document.body.append(host)
+  authoring.decorateRow(host, ref)
+  const code = host.querySelector('.row-code-copy')
+  assert.ok(expected)
+  assert.equal(code.textContent, expected)
+  assert.equal(code.querySelectorAll('[data-code-part="product"]').length, 1)
+  assert.equal(code.querySelectorAll('.copy-text-feedback').length, 1)
+  authoring.dispose()
+})
+
 test('measurements on calculated capacity proposals stay in the same draft until one physical confirmation', async (testContext) => {
   const fixture = exceptionSessionFixture()
   fixture.context.batches = []

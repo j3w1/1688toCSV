@@ -870,8 +870,8 @@ test('selected import reaches persistent spreadsheet and clipboard through real 
   await expandOrderMonths(list)
   await list
     .getByRole('option', { name: `Order ${ids[0]}`, exact: true })
-    .locator('.order-card-meta')
-    .click()
+    .getByRole('checkbox')
+    .check()
   await list
     .getByRole('combobox', { name: 'Search products and orders', exact: true })
     .fill('no matching synthetic product')

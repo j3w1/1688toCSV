@@ -7,6 +7,7 @@ import { preparationHelp } from './preparation-help.js'
 import { mountProductTags } from './product-tags-ui.js'
 import { mountCartonDetails } from './carton-details-ui.js'
 import { setCodeText } from './code-display.js'
+import { showErrorNotice } from './error-notice.js'
 
 /** Display helpers never rewrite the source row or the values exported to Excel. */
 export function createProductDescription(item) {
@@ -239,10 +240,11 @@ export function openProductDetails(
     const edit = el('button', message('Edit cartons'))
     decorateIcon(edit, 'carton')
     edit.addEventListener('click', () => {
-      void carton
-        .openBatches()
-        .then(() => bindText(summary, carton.summary))
-        .catch((error) => bindText(summary, message(error.message)))
+      void closeDetails(() =>
+        Promise.resolve()
+          .then(() => carton.openBatches())
+          .catch((error) => showErrorNotice(error))
+      )
     })
     panel.append(code, summary, edit)
     cartonHost.append(panel)

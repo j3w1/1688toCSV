@@ -115,7 +115,9 @@ function inlineField(
   if (multiline) {
     const textarea = el('textarea')
     textarea.id = input.id
-    textarea.value = input.value
+    // Text inputs strip line breaks before a textarea can receive them.
+    // Preserve the authored/source value when mounting multiline controls.
+    textarea.value = value ?? ''
     textarea.rows = 2
     textarea.addEventListener('input', (event) => {
       if (!event.isComposing) change(textarea.value)
@@ -1007,6 +1009,7 @@ export async function createProductAuthoring({
       )
     const label = (text, input) => {
       const node = el('label', uiMessage(text))
+      bindAttribute(input, 'aria-label', uiMessage(text))
       node.append(input)
       modal.append(node)
     }
@@ -1364,6 +1367,25 @@ export async function createProductAuthoring({
       close = el('button', uiMessage('Close')),
       undo = el('button', uiMessage('Undo')),
       redo = el('button', uiMessage('Redo'))
+    session.modal = modal
+    let removed = false
+    function removeEditor() {
+      if (removed) return
+      removed = true
+      if (session.modal === modal) {
+        session.modal = undefined
+        session.mounted = false
+        session.notify = undefined
+      }
+      media.forget(modal)
+      modal.remove()
+    }
+    function dismissEditor() {
+      modal.close()
+      // A native close event is queued. Release this editor before a replacement
+      // mounts, so the old event cannot clear its new session observer.
+      removeEditor()
+    }
     modal.dataset.action = 'edit-order-product'
     modal.append(el('h2', uiMessage('Edit product in Orders')))
     authoringLanguages(modal)
@@ -1548,7 +1570,7 @@ export async function createProductAuthoring({
           session.draft = candidate
         })
         await flushSession(session)
-        modal.close()
+        dismissEditor()
         await openEditor(ref)
       })
       control.dataset.sizeMode = mode
@@ -1608,7 +1630,7 @@ export async function createProductAuthoring({
             }
           })
           await flushSession(session)
-          modal.close()
+          dismissEditor()
           await openEditor(ref)
         })
       )
@@ -1619,7 +1641,7 @@ export async function createProductAuthoring({
       tools.append(
         button(title, async () => {
           await flushSession(session)
-          modal.close()
+          dismissEditor()
           await openLabel(ref, kind)
         })
       )
@@ -1627,7 +1649,7 @@ export async function createProductAuthoring({
       tools.append(
         button('Edit cartons', async () => {
           await flushSession(session)
-          modal.close()
+          dismissEditor()
           await onCartons(ref)
         })
       )
@@ -1645,7 +1667,7 @@ export async function createProductAuthoring({
         onSaved: async () => {
           await reload()
           await changed({ reload: true })
-          modal.close()
+          dismissEditor()
         },
         onError: (error) => bindText(status, uiMessage(error.message)),
       })
@@ -1655,7 +1677,7 @@ export async function createProductAuthoring({
         variantId: variant.id,
       })
       if (result) {
-        modal.close()
+        dismissEditor()
         await openEditor(ref)
       }
     })
@@ -1664,7 +1686,7 @@ export async function createProductAuthoring({
     tools.append(resolve)
     const recovered = button('Review recovered product edits', async () => {
       if (await reviewRecovered(session)) {
-        modal.close()
+        dismissEditor()
         await openEditor(ref)
       }
     })
@@ -1673,7 +1695,7 @@ export async function createProductAuthoring({
     const finish = async () => {
       try {
         await flushSession(session)
-        modal.close()
+        dismissEditor()
       } catch (error) {
         session.error = error
         session.notify(error.message)
@@ -1690,25 +1712,20 @@ export async function createProductAuthoring({
     undo.onclick = () =>
       void travel('undo')
         .then(() => {
-          modal.close()
+          dismissEditor()
           return openEditor(ref)
         })
         .catch((error) => bindText(status, uiMessage(error.message)))
     redo.onclick = () =>
       void travel('redo')
         .then(() => {
-          modal.close()
+          dismissEditor()
           return openEditor(ref)
         })
         .catch((error) => bindText(status, uiMessage(error.message)))
     status.setAttribute('role', 'status')
     modal.append(content, tools, status, undo, redo, close)
-    modal.onclose = () => {
-      session.mounted = false
-      session.notify = undefined
-      media.forget(modal)
-      modal.remove()
-    }
+    modal.onclose = removeEditor
     document.body.append(modal)
     modal.showModal()
     if (ref.field) {
@@ -1848,12 +1865,9 @@ export async function createProductAuthoring({
       bar = el('div', undefined, 'row-preparation')
     if (projected.barcode) {
       const copy = copyTextButton(projected.barcode, {
-          label: uiMessage('Copy code'),
-          className: 'row-code-copy ce-code',
-        }),
-        code = el('span')
-      setCodeText(code, projected.barcode)
-      copy.firstChild.replaceWith(code)
+        label: uiMessage('Copy code'),
+        className: 'row-code-copy ce-code',
+      })
       bar.append(copy)
     }
     if (projected.spanishName)

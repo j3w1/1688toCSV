@@ -8,6 +8,7 @@ import {
   realOrderContext,
   createContainerThroughUI,
   sealContainerThroughUI,
+  savedBrowserDownload,
 } from './smart-workspace-helpers.mjs'
 import { readFile } from 'node:fs/promises'
 import * as XLSX from 'xlsx'
@@ -432,7 +433,7 @@ test('filtered selected display still exports the full three-sheet loaded revisi
   const downloading = page.waitForEvent('download')
   await dialog.locator('[data-action="download-packing-list"]').click()
   const download = await downloading,
-    bytes = await readFile(await download.path()),
+    bytes = await readFile(await savedBrowserDownload(extension, download)),
     workbook = XLSX.read(bytes, { type: 'buffer' })
   expect(workbook.SheetNames).toEqual(['Packing list', 'Cartons', 'Se quedó'])
   const rows = XLSX.utils
@@ -696,6 +697,9 @@ test('a delayed old amendment preparation save rejects after cancel/reopen and c
       .getByRole('button', { name: 'Begin amendment', exact: true })
       .click()
     await expect(dialog).toBeHidden()
+    await expect(
+      page.locator('[data-action="cancel-container-amendment"]')
+    ).toBeVisible()
   }
   await begin('Synthetic first amendment')
   const oldToken = await extension.inspector.evaluate(
