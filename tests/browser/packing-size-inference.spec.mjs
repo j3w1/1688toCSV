@@ -235,11 +235,13 @@ test('size handling reviews only changed full barcodes and cancellation preserve
   await review
     .getByRole('button', { name: 'Apply size handling', exact: true })
     .click()
-  expect(
-    (await backup(extension)).preparations[0].groups[0].variants.map(
-      (variant) => variant.sizeSuffix
+  await expect
+    .poll(async () =>
+      (await backup(extension)).preparations[0].groups[0].variants.map(
+        (variant) => variant.sizeSuffix
+      )
     )
-  ).toEqual(['S', 'L'])
+    .toEqual(['S', 'L'])
   expect((await backup(extension)).orders).toEqual(before.orders)
 })
 
@@ -434,6 +436,14 @@ test('orphan historical reservations cannot block reviewed size suggestions or c
   await expect(
     page.getByRole('dialog', { name: 'Resolve code conflict', exact: true })
   ).toHaveCount(0)
+  await expect
+    .poll(
+      async () =>
+        (await backup(extension)).issuedCodes.find(
+          (code) => code.code === oldCode
+        )?.variantId
+    )
+    .toBe(original.variants[0].id)
   const after = await backup(extension),
     updated = after.preparations[0].groups[0]
   expect(updated.baseCode).toBe(original.baseCode)

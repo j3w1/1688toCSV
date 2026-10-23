@@ -34,6 +34,7 @@ import {
 } from './preparation-history.js'
 import { preparationOrderFields } from './preparation-clipboard.js'
 import { paymentCostAdjustments } from './payment-links.js'
+import { productAttributes, translateAttribute } from './product-attributes.js'
 import { hasProductFeatureCosts } from './product-features.js'
 import {
   suggestMaterial,
@@ -648,6 +649,14 @@ export async function createProductAuthoring({
       await changed()
     } catch (error) {
       session.error = error
+      if (
+        ['PACKING_REVISION_CONFLICT', 'AMENDMENT_CONTEXT_CONFLICT'].includes(
+          error.code
+        ) ||
+        error.message ===
+          'The source order changed. Review the linked products again.'
+      )
+        session.stale = true
       session.notify?.(error.message)
       retain(session)
       throw error
@@ -1483,6 +1492,7 @@ export async function createProductAuthoring({
         session.mounted = false
         session.notify = undefined
       }
+      stopSourceFacts()
       media.forget(modal)
       modal.remove()
     }
@@ -1497,21 +1507,29 @@ export async function createProductAuthoring({
     authoringLanguages(modal)
     const row = preparedRows([ref])[0]
     modal.append(el('p', row.description || row.title))
-    const sourceFacts = el('div', undefined, 'product-authoring-source-facts')
-    for (const [value, label] of [
-      [variant.variant, 'Copy value'],
-      [variant.size, 'Copy size'],
-      [
-        recordFor(ref)?.snapshot.items.find(
-          (item) => item.entryId === ref.entryId
-        )?.quantity,
-        'Copy quantity',
-      ],
-    ])
-      if (value !== undefined && value !== '')
-        sourceFacts.append(
-          copyTextButton(String(value), { label: uiMessage(label) })
-        )
+    const sourceFacts = el('div', undefined, 'product-authoring-source-facts'),
+      sourceItem = recordFor(ref)?.snapshot.items.find(
+        (item) => item.entryId === ref.entryId
+      ),
+      attributes = productAttributes(sourceItem).fields
+    const paintSourceFacts = () => {
+      sourceFacts.replaceChildren()
+      const facts = attributes.map((attribute) => [
+        translateAttribute(attribute, getLanguage()).value,
+        attribute.kind === 'size' ? 'Copy size' : 'Copy value',
+      ])
+      if (!attributes.length) facts.push([variant.variant, 'Copy value'])
+      if (!attributes.some((field) => field.kind === 'size'))
+        facts.push([variant.size, 'Copy size'])
+      facts.push([sourceItem?.quantity, 'Copy quantity'])
+      for (const [value, label] of facts)
+        if (value !== undefined && value !== '')
+          sourceFacts.append(
+            copyTextButton(String(value), { label: uiMessage(label) })
+          )
+    }
+    const stopSourceFacts = onLanguageChange(paintSourceFacts)
+    paintSourceFacts()
     modal.append(sourceFacts)
     if (ref.thumbnail) modal.append(media.photo(ref))
     const fields = []
@@ -2282,7 +2300,7 @@ export async function createProductAuthoring({
         requested.groupId ||
         candidate.groups.find((group) => group.baseCode === code.slice(0, 10))
           ?.id,
-      editedVariantId = requested.variantId || target.variantId,
+      editedVariantId = target.variantId || requested.variantId,
       variantConflict = code.length > 10 && editedVariantId,
       controls = [],
       comparisons = []
@@ -2386,12 +2404,19 @@ export async function createProductAuthoring({
               before: savedGroup?.variants.find(
                 (entry) => entry.id === variant.id
               )
-                ? barcodeValue(
-                    savedGroup,
-                    savedGroup.variants.find((entry) => entry.id === variant.id)
-                  )
+                ? savedGroup.variants.find((entry) => entry.id === variant.id)
+                    .needsSizeMapping
+                  ? ''
+                  : barcodeValue(
+                      savedGroup,
+                      savedGroup.variants.find(
+                        (entry) => entry.id === variant.id
+                      )
+                    )
                 : '',
-              after: barcodeValue(group, variant),
+              after: variant.needsSizeMapping
+                ? ''
+                : barcodeValue(group, variant),
             })),
           ])
         )

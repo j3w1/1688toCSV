@@ -576,6 +576,7 @@ async function historyFixture(context, { compound = false } = {}) {
     saved,
     original,
     writes,
+    repository,
     authoring,
     edit,
   }
@@ -609,6 +610,50 @@ test('closed-form history rejects a refreshed foreign owner and new adopted edit
     writes.at(-1).options.expectedSnapshots[0].observedAt,
     source[1].snapshot.observedAt
   )
+})
+
+test('a rejected foreign revision keeps local input and exposes the explicit recovered-edit review instead of trapping Close', async (context) => {
+  const fixture = await historyFixture(context),
+    { document, window, saved, authoring, repository } = fixture
+  await authoring.openEditor({
+    accountId: 'local',
+    orderId: '1001',
+    entryId: '2001',
+  })
+  const modal = document.querySelector('[data-action="edit-order-product"]'),
+    input = modal.querySelector('[data-authoring-field="spanish-name"]')
+  input.value = 'LOCAL DRAFT'
+  input.dispatchEvent(new window.Event('input'))
+  saved.get('1001').revision++
+  saved.get('1001').groups[0].variants[0].spanishName = 'NEWER SAVED'
+  const foreign = structuredClone(saved.get('1001'))
+  repository.savePreparations = async () => {
+    throw Object.assign(new Error('Preparation changed in another tab.'), {
+      code: 'PACKING_REVISION_CONFLICT',
+    })
+  }
+  await assert.rejects(authoring.flush(), /changed in another tab/)
+  ;[...modal.querySelectorAll('button')]
+    .find((button) => button.textContent === 'Close')
+    .click()
+  await new Promise((resolve) => setTimeout(resolve, 0))
+  const recovery = [...modal.querySelectorAll('button')].find(
+    (button) => button.textContent === 'Review recovered product edits'
+  )
+  assert.equal(recovery.hidden, false)
+  assert.equal(input.value, 'LOCAL DRAFT')
+  recovery.click()
+  await new Promise((resolve) => setTimeout(resolve, 0))
+  const review = document.querySelector('.packing-change-dialog')
+  assert.ok(review)
+  assert.match(review.textContent, /NEWER SAVED/)
+  assert.match(review.textContent, /LOCAL DRAFT/)
+  assert.deepEqual(saved.get('1001'), foreign)
+  ;[...review.querySelectorAll('button')]
+    .find((button) => button.textContent === 'Cancel')
+    .click()
+  await new Promise((resolve) => setTimeout(resolve, 0))
+  modal.close()
 })
 
 test('history keeps its captured source clock across an advisory reload even when the preparation revision is unchanged', async (context) => {
@@ -957,6 +1002,54 @@ function exceptionSessionFixture(options = {}) {
       }),
   }
 }
+
+test('physical confirmation disables only its action and clears the acknowledged planner before recovery observers can persist it', async (context) => {
+  const { document } = dom(context),
+    fixture = exceptionSessionFixture()
+  let release
+  const waiting = new Promise((resolve) => {
+    release = resolve
+  })
+  fixture.repository.confirmOrderCartons = async (args) => {
+    fixture.confirmed.push(structuredClone(args))
+    await waiting
+  }
+  const session = await fixture.create(),
+    grid = mountOrderCartonGrid(document.getElementById('host'), {
+      session,
+      kind: 'cartons',
+    }),
+    button = document.querySelector('[data-action="confirm-order-cartons"]')
+  await session.commitCell(fixture.batch.id, 'weight', '0')
+  const pending = session.confirm()
+  await new Promise((resolve) => setTimeout(resolve, 0))
+  assert.equal(button.disabled, true)
+  assert.equal(
+    document.querySelector('[data-grid-column="weight"]').disabled,
+    false
+  )
+  let observed = false
+  const stop = session.subscribe(() => {
+    if (
+      fixture.confirmed.length &&
+      !Object.keys(session.state().rawCells).length &&
+      !observed
+    ) {
+      observed = true
+      session.setActiveCell(fixture.batch.id, 'weight')
+    }
+  })
+  release()
+  await pending
+  await session.flush()
+  assert.equal(observed, true)
+  assert.equal(button.disabled, false)
+  assert.deepEqual(fixture.drafts.at(-1).draft.plannerDraft.cartons, [])
+  assert.deepEqual(fixture.drafts.at(-1).draft.rawCells, {})
+  stop()
+  grid.destroy()
+  session.dispose()
+})
 
 test('compound capacity Undo replays its known baseline even when the retained textarea still needs a new paste preview', async (testContext) => {
   const fixture = exceptionSessionFixture(),
@@ -1413,6 +1506,58 @@ test('same-base variant collisions mark the edited ending and retain saved sibli
   assert.deepEqual(preparation, before)
   document.querySelector('[data-action="edit-order-product"]').close()
   authoring.dispose()
+})
+
+test('Orders authoring copies translated source attributes and exact quantity while language changes retain pending editors and originals', async (context) => {
+  const { document, window } = authoringEnvironment(context),
+    { record, preparation } = syntheticManifest().orders[0],
+    item = record.snapshot.items[0],
+    previous = getLanguage()
+  Object.assign(item, {
+    description: 'Synthetic cups\n颜色：白色\n尺寸：20cm',
+    skuProperties: [
+      { label: '颜色', value: '白色' },
+      { label: '尺寸', value: '20cm' },
+    ],
+  })
+  const original = structuredClone(record),
+    authoring = await createProductAuthoring({
+      repository: {
+        listPreparations: async () => [structuredClone(preparation)],
+        getPackingPreferences: async () => validatePackingPreferences({}),
+      },
+      getRecords: () => [record],
+    })
+  context.after(() => {
+    authoring.dispose()
+    setLanguage(previous, { persist: false })
+  })
+  setLanguage('en', { persist: false })
+  await authoring.openEditor({
+    accountId: 'local',
+    orderId: '1001',
+    entryId: item.entryId,
+  })
+  const modal = document.querySelector('[data-action="edit-order-product"]'),
+    input = modal.querySelector('[data-authoring-field="spanish-name"]'),
+    labels = () =>
+      [...modal.querySelectorAll('.product-authoring-source-facts button')].map(
+        (button) => button.getAttribute('aria-label')
+      )
+  assert.ok(labels().includes('Copy value: White'))
+  assert.ok(labels().includes('Copy size: 20cm'))
+  assert.ok(labels().includes('Copy quantity: 100'))
+  input.value = 'Retained pending source name'
+  input.dispatchEvent(new window.Event('input'))
+  setLanguage('es', { persist: false })
+  assert.ok(labels().includes('Copiar valor: Blanco'))
+  assert.equal(
+    modal.querySelector('[data-authoring-field="spanish-name"]'),
+    input
+  )
+  assert.equal(input.value, 'Retained pending source name')
+  assert.deepEqual(record, original)
+  modal.close()
 })
 
 test('grouping separates complete source scope from chosen variants and protects unselected shared source rows', async (testContext) => {
