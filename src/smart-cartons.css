@@ -460,6 +460,20 @@
     flex-wrap: nowrap;
     flex: none;
   }
+  #orders-actions .action-bar-actions {
+    flex-wrap: wrap;
+    overflow: visible;
+    padding-block-end: 0;
+    gap: 4px;
+  }
+  #orders-actions .action-bar-export {
+    flex: 1 1 100%;
+    min-inline-size: 0;
+    max-inline-size: 100%;
+    overflow-x: auto;
+    scrollbar-width: thin;
+    padding-block-end: 4px;
+  }
   #orders-actions .orders-product-actions > button {
     flex: none;
   }
