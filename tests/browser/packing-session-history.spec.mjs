@@ -287,10 +287,15 @@ test('removing an included order preserves its authored history and does not res
   await page.locator('#view-orders').click()
   await editOrderProduct(page, { ...refs[0], entryId: '2001' })
   await travel(page, 'Undo')
-  expect(
-    (await libraryBackup(extension)).preparations[0].groups[0].variants[0]
-      .spanishName
-  ).not.toBe('KEPT NAME')
+  const restored = (await libraryBackup(extension)).preparations.find(
+    (prep) => prep.orderId === refs[0].orderId
+  )
+  const original = before.preparations.find(
+    (prep) => prep.orderId === refs[0].orderId
+  )
+  expect(restored.groups[0].variants[0].spanishName).toBe(
+    original.groups[0].variants[0].spanishName
+  )
   expect(
     (await viewState(extension, id)).orders.map((order) => order.orderId)
   ).toEqual([refs[1].orderId])
