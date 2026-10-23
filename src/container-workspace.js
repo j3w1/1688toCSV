@@ -314,6 +314,7 @@ export function createContainerWorkspace({
     expandedOrders = new Set(),
     targetOrder,
     lastSelection
+  const viewSelections = new Map()
   let selectorGeneration = 0
   const countDraftKey = '1688-container-loading-count-drafts'
   let countDrafts = new Map()
@@ -570,7 +571,10 @@ export function createContainerWorkspace({
       async () => {
         const scope = captureCopyScope()
         await controller.flush()
-        return output.copyLabels('barcode', await selectedOutput(scope))
+        return output.copyLabels(
+          'barcode',
+          await selectedOutput(scope, { kind: 'barcode' })
+        )
       }
     ),
     marks = action(
@@ -580,7 +584,10 @@ export function createContainerWorkspace({
       async () => {
         const scope = captureCopyScope()
         await controller.flush()
-        return output.copyLabels('mark', await selectedOutput(scope))
+        return output.copyLabels(
+          'mark',
+          await selectedOutput(scope, { kind: 'mark' })
+        )
       }
     ),
     copyMenu = mountProductCopyActions(copyHost, {
@@ -601,7 +608,7 @@ export function createContainerWorkspace({
     action(printHost, title, name, async () => {
       const scope = captureCopyScope()
       await controller.flush()
-      return output.printLabels(kind, await selectedOutput(scope))
+      return output.printLabels(kind, await selectedOutput(scope, { kind }))
     })
   )
   printButtons.push(
@@ -674,6 +681,7 @@ export function createContainerWorkspace({
   function captureCopyScope() {
     return {
       route: clone(controller.route()),
+      view: currentView,
       partial: selected.size > 0 && currentView !== 'loading',
       keys: [
         ...new Set(
@@ -684,14 +692,40 @@ export function createContainerWorkspace({
       ],
     }
   }
-  async function selectedOutput(scope = captureCopyScope()) {
+  async function selectedOutput(scope = captureCopyScope(), { kind } = {}) {
     const context = await output.containerContext(scope.route)
-    if (!scope.partial) return context
+    const left = scope.view === 'left-behind',
+      sideProducts = left ? context.leftBehind.products : context.products,
+      sideCartons = left ? context.leftBehind.cartons : context.cartons
+    if (!scope.partial)
+      return left
+        ? {
+            ...context,
+            products: sideProducts,
+            cartons: sideCartons,
+            outputSide: 'left-behind',
+          }
+        : context
     const keys = new Set(scope.keys)
-    const products = context.products.filter((row) =>
+    const products = sideProducts.filter((row) =>
       keys.has(refKey(row) + '/' + row.entryId)
     )
-    return { ...context, products, partial: true }
+    let cartons = sideCartons
+    if (kind === 'mark') {
+      if (products.some((row) => !Array.isArray(row.cartonReferences)))
+        throw new Error(
+          'Review carton participation before copying or printing a partial mark selection.'
+        )
+      const refs = new Set(products.flatMap((row) => row.cartonReferences))
+      cartons = sideCartons.filter((row) => refs.has(idFor(row)))
+    }
+    return {
+      ...context,
+      products,
+      cartons,
+      partial: true,
+      ...(left ? { outputSide: 'left-behind' } : {}),
+    }
   }
   async function capturedCopy(format) {
     const scope = captureCopyScope()
@@ -734,8 +768,16 @@ export function createContainerWorkspace({
     const version = ++selectorGeneration
     await controller.flush()
     if (version !== selectorGeneration) return
-    selected.clear()
-    expandedOrders.clear()
+    const before = controller.route()
+    if (
+      before?.containerId !== id ||
+      (before?.revisionId || null) !== (revisionId || null)
+    ) {
+      selected = new Set()
+      viewSelections.clear()
+      lastSelection = null
+      expandedOrders.clear()
+    }
     const [opened, containers] = await Promise.all([
       controller.open(id, revisionId),
       knownContainers
@@ -758,9 +800,13 @@ export function createContainerWorkspace({
     }
   }
   function show(value) {
+    viewSelections.set(currentView, {
+      selected: new Set(selected),
+      anchor: lastSelection,
+    })
     currentView = value
-    selected.clear()
-    lastSelection = null
+    selected = new Set(viewSelections.get(value)?.selected || [])
+    lastSelection = viewSelections.get(value)?.anchor || null
     render()
     onRoute({ ...controller.route(), workspace: 'packing', view: value })
   }
@@ -1687,6 +1733,8 @@ export async function mountBacklog(
       entries.map(({ order }) => {
         const tr = el('tr'),
           ref = orderRef(order)
+        tr.dataset.orderId = ref.orderId
+        tr.dataset.accountId = ref.accountId
         tr.tabIndex = 0
         const statuses = {
           'not-shipped': 'Not shipped',
@@ -1722,6 +1770,22 @@ export async function mountBacklog(
             '—',
         ])
           tr.append(el('td', String(value ?? '—')))
+        if (
+          [...(order.issues || []), ...(order.warnings || [])].some(
+            (issue) =>
+              (typeof issue === 'string' ? issue : issue.code) ===
+              'SIZE_MAPPING_REQUIRED'
+          )
+        ) {
+          const pending = el(
+            'small',
+            m('Map this variant size before generating labels'),
+            'size-mapping-status'
+          )
+          pending.setAttribute('role', 'status')
+          pending.dataset.issueCode = 'SIZE_MAPPING_REQUIRED'
+          tr.children[2].append(pending)
+        }
         if (order.carryover) tr.classList.add('backlog-carryover')
         tr.onclick = (event) => {
           if (!event.target.closest('button,input,a')) onOrder(ref)

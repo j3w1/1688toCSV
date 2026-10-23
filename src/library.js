@@ -1900,6 +1900,16 @@ export async function startLibrary(
       tr.onkeydown = (event) => {
         if (
           event.target === tr &&
+          event.key === ' ' &&
+          !event.isComposing &&
+          !event.altKey
+        ) {
+          event.preventDefault()
+          productSelection.select(keyFor(row), event)
+          return
+        }
+        if (
+          event.target === tr &&
           navigateInspectionRow(event, keyFor(row), productKeys, (key) =>
             productTable.ensureVisible(key)
           )
@@ -3541,6 +3551,10 @@ export async function startLibrary(
       getSelectedRows: () =>
         filteredRows().filter((row) => selectedRows.has(keyFor(row))),
       headers: () => $('include-headers').checked,
+      setHeaders: (value) => {
+        $('include-headers').checked = value
+        $('include-headers').dispatchEvent(new Event('change'))
+      },
       changed: ({ reload = false } = {}) => {
         if (reload) return refresh()
         renderOrders()

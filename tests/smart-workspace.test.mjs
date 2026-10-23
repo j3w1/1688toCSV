@@ -4,10 +4,12 @@ import { readFileSync } from 'node:fs'
 import {
   createContainerController,
   createContainerWorkspace,
+  mountBacklog,
 } from '../src/container-workspace.js'
 import {
   captureContainerOutput,
   outputLabelModels,
+  createProductOutput,
 } from '../src/product-output.js'
 import { parseHTML } from 'linkedom'
 import { openProductDetails } from '../src/product-details.js'
@@ -1035,6 +1037,7 @@ test('reloading a draft after a foreign physical revision requires review and pr
   fixture.context.revisions.cartons[fixture.batch.id] = 2
   session = await fixture.create()
   assert.equal(session.rawCell(fixture.batch.id, 'weight'), '6')
+  await session.refresh()
   assert.equal(session.recoveredDrafts().length, 1)
   assert.ok(
     Object.values(session.recoveredDrafts()[0].value.rawCells).includes('-')
@@ -1119,6 +1122,108 @@ test('an Orders code badge displays its exact barcode once and keeps its copy fe
   assert.equal(code.querySelectorAll('[data-code-part="product"]').length, 1)
   assert.equal(code.querySelectorAll('.copy-text-feedback').length, 1)
   authoring.dispose()
+})
+
+test('an assigned base with unresolved size stays visibly pending and never becomes a guessed variant barcode', async (testContext) => {
+  const { document } = authoringEnvironment(testContext),
+    { record, preparation } = syntheticManifest().orders[0],
+    ref = { accountId: 'local', orderId: '1001', entryId: '2001' },
+    original = structuredClone(record)
+  preparation.groups[0].variants[0].needsSizeMapping = true
+  const authoring = await createProductAuthoring({
+      repository: {
+        listPreparations: async () => [structuredClone(preparation)],
+        getPackingPreferences: async () => validatePackingPreferences({}),
+      },
+      getRecords: () => [record],
+    }),
+    host = document.createElement('div')
+  document.body.append(host)
+  authoring.decorateRow(host, ref)
+  assert.equal(host.querySelector('.row-code-copy'), null)
+  assert.equal(
+    host.querySelector('.row-base-code').textContent,
+    preparation.groups[0].baseCode
+  )
+  assert.match(
+    host.querySelector('.size-mapping-status[role="status"]').textContent,
+    /Map this variant size/
+  )
+  assert.throws(
+    () => outputLabelModels({ products: authoring.preparedRows([ref]) }),
+    /Map this variant size before generating labels/
+  )
+  assert.deepEqual(record, original)
+  authoring.dispose()
+})
+
+test('Orders reuses automatic source material suggestions and preserves a deliberate manual clear without writes on inspection', async (testContext) => {
+  const { document } = authoringEnvironment(testContext),
+    { record, preparation } = syntheticManifest().orders[0],
+    variant = preparation.groups[0].variants[0],
+    ref = { accountId: 'local', orderId: '1001', entryId: '2001' }
+  delete variant.material
+  delete variant.materialSource
+  delete variant.materialOverrides
+  record.snapshot.items[0].skuProperties = [{ label: '材质', value: '玻璃' }]
+  const original = structuredClone(record),
+    authoring = await createProductAuthoring({
+      repository: {
+        listPreparations: async () => [structuredClone(preparation)],
+        getPackingPreferences: async () => validatePackingPreferences({}),
+      },
+      getRecords: () => [record],
+    })
+  assert.equal(authoring.preparedRows([ref])[0].material, '玻璃')
+  await authoring.openEditor(ref)
+  assert.equal(
+    document.querySelector('[data-authoring-field="material"]').value,
+    'Glass'
+  )
+  document.querySelector('[data-action="edit-order-product"]').close()
+  variant.material = ''
+  variant.materialSource = 'manual'
+  await authoring.reload()
+  assert.equal(authoring.preparedRows([ref])[0].material, '')
+  await authoring.openEditor(ref)
+  assert.equal(
+    document.querySelector('[data-authoring-field="material"]').value,
+    ''
+  )
+  assert.deepEqual(record, original)
+  document.querySelector('[data-action="edit-order-product"]').close()
+  authoring.dispose()
+})
+
+test('Backlog exposes the repository size-mapping warning without changing shipment or remainder facts', async (testContext) => {
+  const { document } = dom(testContext),
+    record = syntheticOrder('1001'),
+    order = {
+      accountId: 'local',
+      orderId: '1001',
+      record,
+      remainingQuantity: '100',
+      knownCartons: 5,
+      shipmentStatus: 'not-shipped',
+      packingReadiness: 'ready',
+      issues: ['SIZE_MAPPING_REQUIRED'],
+    },
+    before = structuredClone(order),
+    backlog = await mountBacklog(document.getElementById('host'), {
+      repository: {
+        getBacklog: async () => ({
+          orders: [order],
+          totals: { quantity: '100', cartons: 5 },
+        }),
+      },
+    })
+  assert.match(
+    document.querySelector('tbody [role="status"]').textContent,
+    /Map this variant size/
+  )
+  assert.match(document.querySelector('tbody tr').textContent, /100/)
+  assert.deepEqual(order, before)
+  backlog.destroy()
 })
 
 test('measurements on calculated capacity proposals stay in the same draft until one physical confirmation', async (testContext) => {
@@ -1642,6 +1747,16 @@ test('Packing filters only row facts and full logical selection spans the virtua
     host.querySelector('[data-selected-count]').dataset.selectedCount,
     '150'
   )
+  workspace.show('loading')
+  assert.equal(
+    host.querySelector('[data-selected-count]').dataset.selectedCount,
+    '0'
+  )
+  workspace.show('packing-list')
+  assert.equal(
+    host.querySelector('[data-selected-count]').dataset.selectedCount,
+    '150'
+  )
   const search = host.querySelector('input[type="search"]')
   search.value = 'TARGET ONLY LAST'
   search.dispatchEvent(new window.Event('input'))
@@ -1722,6 +1837,90 @@ test('direct container routes populate the selector and preserve a historical re
   await workspace.reload()
   assert.equal(reads.at(-1).revisionId, 'c1-r1')
   assert.equal(workspace.route().revisionId, 'c1-r1')
+  assert.equal(fixture.writes.length, 0)
+  workspace.dispose()
+})
+
+test('partial marks use captured physical participation, Se quedó copies its own side and workbook export keeps the full revision', async (testContext) => {
+  const { document, window } = dom(testContext),
+    fixture = setup(),
+    state = view(),
+    calls = []
+  state.draft = false
+  state.products = [
+    {
+      ...ref,
+      entryId: 'a',
+      quantity: '10',
+      barcode: 'CE26090101',
+      cartonReferences: ['box1'],
+    },
+    {
+      ...ref,
+      entryId: 'b',
+      quantity: '20',
+      barcode: 'CE26090102',
+      cartonReferences: ['box2'],
+    },
+  ]
+  state.cartons = [
+    { id: 'box1', batchId: 'b1', state: 'loaded' },
+    { id: 'box2', batchId: 'b2', state: 'loaded' },
+  ]
+  state.leftBehind.products = [
+    { ...ref, entryId: 'c', quantity: '5', cartonReferences: ['box3'] },
+  ]
+  state.leftBehind.cartons = [
+    { id: 'box3', batchId: 'b3', state: 'left-behind' },
+  ]
+  fixture.setView(state)
+  const workspace = createContainerWorkspace({
+    host: document.getElementById('host'),
+    repository: fixture.repository,
+    output: {
+      containerContext: async () => captureContainerOutput(state),
+      copyLabels: async (kind, context) => calls.push({ kind, context }),
+      copy: async (context, format) => calls.push({ kind: format, context }),
+      openWorkbook: async (context) =>
+        calls.push({ kind: 'workbook', context }),
+    },
+  })
+  await workspace.open('c1')
+  workspace.show('packing-list')
+  const check = document.querySelector(
+    'tr[data-container-row] input[type="checkbox"]'
+  )
+  check.checked = true
+  check.dispatchEvent(new window.Event('click', { bubbles: true }))
+  document.querySelector('[data-action="copy-container-marks"]').click()
+  await new Promise((resolve) => setTimeout(resolve, 0))
+  assert.deepEqual(
+    calls[0].context.products.map((row) => row.entryId),
+    ['a']
+  )
+  assert.deepEqual(
+    calls[0].context.cartons.map((row) => row.id),
+    ['box1']
+  )
+  assert.equal(calls[0].context.partial, true)
+  assert.equal(calls[0].context.revisionId, state.revisionId)
+  workspace.show('left-behind')
+  document.querySelector('[data-action="copy-values"]').click()
+  await new Promise((resolve) => setTimeout(resolve, 0))
+  assert.deepEqual(
+    calls[1].context.products.map((row) => row.entryId),
+    ['c']
+  )
+  assert.deepEqual(
+    calls[1].context.cartons.map((row) => row.id),
+    ['box3']
+  )
+  assert.equal(calls[1].context.outputSide, 'left-behind')
+  document.querySelector('[data-action="export-packing-list"]').click()
+  await new Promise((resolve) => setTimeout(resolve, 0))
+  assert.equal(calls[2].kind, 'workbook')
+  assert.equal(calls[2].context.products.length, 2)
+  assert.equal(calls[2].context.cartons.length, 2)
   assert.equal(fixture.writes.length, 0)
   workspace.dispose()
 })
@@ -1932,6 +2131,68 @@ test('unsealed output captures its actual numeric draft revision without fabrica
       }),
     /complete container revision/
   )
+})
+
+test('chosen-column output exposes the shared Headers preference and the captured row count across reopening and languages', async (testContext) => {
+  const { document, window } = authoringEnvironment(testContext),
+    context = captureContainerOutput(syntheticManifest()),
+    previousLanguage = getLanguage()
+  let includeHeaders = true
+  const output = createProductOutput({
+    repository: {},
+    authoring: {},
+    headers: () => includeHeaders,
+    setHeaders: (value) => {
+      includeHeaders = value
+    },
+  })
+  testContext.after(() => setLanguage(previousLanguage, { persist: false }))
+  await output.copyPreparation(context)
+  let modal = document.querySelector('.preparation-column-dialog'),
+    header = modal.querySelector('input[aria-label="Headers"]')
+  assert.equal(header.checked, true)
+  assert.equal(
+    modal.querySelector('.copy-row-count').textContent,
+    `Copy ${context.products.length} product rows`
+  )
+  header.checked = false
+  header.dispatchEvent(new window.Event('change'))
+  assert.equal(includeHeaders, false)
+  modal.close()
+  await output.copyPreparation(context)
+  modal = document.querySelector('.preparation-column-dialog')
+  header = modal.querySelector('input[aria-label="Headers"]')
+  assert.equal(header.checked, false)
+  modal.querySelector('.popup-language-toggle [data-language="zh"]').click()
+  assert.notEqual(header.getAttribute('aria-label'), 'Headers')
+  assert.equal(getLanguage(), previousLanguage)
+  assert.equal(header.checked, false)
+  modal.close()
+})
+
+test('chosen-column barcode copying refuses an unresolved variant before any clipboard write', async (testContext) => {
+  const { document } = authoringEnvironment(testContext),
+    source = syntheticManifest()
+  source.products[0].needsSizeMapping = true
+  source.products[0].barcode = ''
+  const context = captureContainerOutput(source),
+    output = createProductOutput({ repository: {}, authoring: {} })
+  await output.copyPreparation(context)
+  const modal = document.querySelector('.preparation-column-dialog'),
+    copy = modal.querySelector('button.primary')
+  assert.equal(modal.querySelector('input[value="barcode"]').checked, true)
+  copy.click()
+  await new Promise((resolve) => setTimeout(resolve, 0))
+  assert.match(
+    document.body.textContent,
+    /Map this variant size before generating labels/
+  )
+  assert.equal(copy.classList.contains('copy-failed'), true)
+  assert.equal(
+    modal.querySelector('input[aria-label="Headers"]').disabled,
+    false
+  )
+  modal.close()
 })
 
 test('shared-code labels retain separate source refs and exact source-line quantities', () => {

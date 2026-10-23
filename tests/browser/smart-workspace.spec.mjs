@@ -11,6 +11,7 @@ import {
   savedBrowserDownload,
 } from './smart-workspace-helpers.mjs'
 import { readFile } from 'node:fs/promises'
+import { basename } from 'node:path'
 import * as XLSX from 'xlsx'
 
 test('operator enters Pcs/box once, reviews the prefilled remainder once and loads/seals the confirmed order', async ({
@@ -905,4 +906,99 @@ test('Packing copy completion waits for the real clipboard and retains captured 
   expect(await page.evaluate(() => navigator.clipboard.readText())).toBe(
     'CE26090102'
   )
+})
+
+test('unsealed container barcode and mark PDFs visibly retain DRAFT and exact revision identity; sealing rejects their old draft regeneration', async ({
+  extension,
+}) => {
+  test.setTimeout(60_000)
+  const ref = await seedSmartOrder(extension, { count: 1, physical: true }),
+    page = await openSmartLibrary(extension),
+    id = await createContainerThroughUI(page, [ref], 'Synthetic draft print'),
+    packing = page.locator('#packing-view')
+  await packing.locator('[data-action="mark-all-loaded"]').click()
+  await expect(packing.locator('#container-content')).toHaveAttribute(
+    'aria-busy',
+    'false'
+  )
+  await packing
+    .locator('[data-action="container-view"][data-view="packing-list"]')
+    .click()
+  const before = await extension.inspector.evaluate(
+    async (id) => (await window.testRepository).getContainerManifest({ id }),
+    id
+  )
+  expect(before.draft).toBe(true)
+  expect(before.revisionId).toBeNull()
+  for (const [action, title, kind] of [
+    ['print-labels', 'Print labels', 'labels'],
+    ['print-carton-marks', 'Print carton marks', 'carton-marks'],
+  ]) {
+    await packing.locator('[data-action="open-print-menu"]').click()
+    await packing.locator(`[data-action="${action}"]`).click()
+    const dialog = page.getByRole('dialog', { name: title, exact: true })
+    await expect(dialog.locator('.container-output-context')).toContainText(
+      'DRAFT'
+    )
+    const downloading = page.waitForEvent('download', (download) =>
+      download.suggestedFilename().endsWith('.pdf')
+    )
+    await dialog.locator('[data-action="export-pdf"]').click()
+    const download = await downloading,
+      path = await savedBrowserDownload(extension, download),
+      bytes = await readFile(path)
+    expect(basename(path)).toMatch(/^DRAFT-.*\.pdf$/)
+    expect(bytes.subarray(0, 5).toString('ascii')).toBe('%PDF-')
+    let summaryFile
+    await expect
+      .poll(async () => {
+        const files = await extension.inspector.evaluate(() =>
+          chrome.downloads.search({})
+        )
+        summaryFile = files.find(
+          (file) =>
+            file.state === 'complete' &&
+            file.filename === path.replace(/\.pdf$/, '.json')
+        )
+        return Boolean(summaryFile)
+      })
+      .toBe(true)
+    const summary = JSON.parse(await readFile(summaryFile.filename, 'utf8'))
+    expect(summary).toMatchObject({
+      kind,
+      containerId: id,
+      revisionId: null,
+      draft: true,
+      draftRevision: before.revision,
+    })
+    expect(
+      bytes.toString('latin1').match(/\(DRAFT - UNSEALED \/ UNVERIFIED\) Tj/g)
+    ).toHaveLength(summary.pages)
+    expect(summary.files).toEqual([
+      basename(path),
+      basename(summaryFile.filename),
+    ])
+    await dialog.locator('[data-action="close-print-dialog"]').click()
+  }
+  expect(
+    await extension.inspector.evaluate(
+      async (id) => (await window.testRepository).getContainerManifest({ id }),
+      id
+    )
+  ).toEqual(before)
+  await sealContainerThroughUI(page, { markAll: false })
+  await packing.locator('[data-action="open-print-menu"]').click()
+  await packing.locator('[data-action="print-recent"]').click()
+  const recent = page.getByRole('dialog', {
+    name: 'Recent print jobs',
+    exact: true,
+  })
+  await recent
+    .getByRole('button', { name: /^Regenerate the print job of / })
+    .first()
+    .click()
+  await expect(recent).toContainText(
+    'This draft print reference has changed or is no longer available.'
+  )
+  await expect(page.locator('.print-dialog')).toHaveCount(0)
 })

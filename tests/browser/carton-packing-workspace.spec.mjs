@@ -91,7 +91,7 @@ test('capacities autosave in the order grid before code assignment, retain inval
   await expect
     .poll(async () =>
       String(
-        (await realOrderContext(extension, ref)).record.unitsPerCarton[
+        (await realOrderContext(extension, ref)).record.unitsPerCarton?.[
           items[0].entryId
         ]
       )
@@ -105,7 +105,7 @@ test('capacities autosave in the order grid before code assignment, retain inval
   await expect(capacity(grid, ref, items[0])).toHaveValue('-')
   expect(
     String(
-      (await realOrderContext(extension, ref)).record.unitsPerCarton[
+      (await realOrderContext(extension, ref)).record.unitsPerCarton?.[
         items[0].entryId
       ]
     )
@@ -186,7 +186,7 @@ test('shared codes retain each source capacity, unknown capacity remains visible
   await expect
     .poll(async () =>
       Object.values(
-        (await realOrderContext(extension, ref)).record.unitsPerCarton
+        (await realOrderContext(extension, ref)).record.unitsPerCarton || {}
       ).map(String)
     )
     .toEqual(['10', '12', '20'])
@@ -248,7 +248,7 @@ test('capacity changes refresh unedited grids in another tab without creating ca
   await expect
     .poll(async () =>
       String(
-        (await realOrderContext(extension, ref)).record.unitsPerCarton[
+        (await realOrderContext(extension, ref)).record.unitsPerCarton?.[
           item.entryId
         ]
       )

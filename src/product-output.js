@@ -1,4 +1,10 @@
-import { element as el, copied, pinDialogActions, yieldUI } from './ui.js'
+import {
+  element as el,
+  copied,
+  pinDialogActions,
+  yieldUI,
+  resetCopyFeedback,
+} from './ui.js'
 import {
   message as m,
   bindAttribute,
@@ -210,6 +216,7 @@ export function createProductOutput({
   authoring,
   loadImage,
   headers = () => true,
+  setHeaders = () => {},
   feedback = () => {},
   workbookAdapter,
   editInOrders = (ref) => authoring.openEditor(ref),
@@ -306,6 +313,7 @@ export function createProductOutput({
     )
     note.append(
       identity,
+      ...(context.outputSide === 'left-behind' ? [el('p', m('Se quedó'))] : []),
       el(
         'p',
         m(
@@ -485,30 +493,76 @@ export function createProductOutput({
           : 'Copy container product rows'
       )
     )
-    const fields = createPreparationColumnPicker(modal, (columns) => {
-      copy.disabled = !columns.length
-    })
     const copy = el('button', m('Copy chosen columns'), 'primary'),
-      close = el('button', m('Close'))
+      close = el('button', m('Close')),
+      headerLabel = el('label', m('Headers'), 'check'),
+      header = el('input')
+    let version = 0,
+      copying = false
+    header.type = 'checkbox'
+    header.checked = headers()
+    bindAttribute(header, 'aria-label', m('Headers'))
+    headerLabel.prepend(header)
+    modal.append(headerLabel)
+    modal.append(
+      el(
+        'p',
+        m('Copy {0} product rows', { 0: context.products.length }),
+        'copy-row-count'
+      )
+    )
+    const changed = () => {
+      version++
+      if (!copying) resetCopyFeedback(copy)
+      copy.disabled = copying || !fields.selected().length
+    }
+    header.onchange = () => {
+      setHeaders(header.checked)
+      changed()
+    }
+    const fields = createPreparationColumnPicker(modal, changed)
     copy.disabled = !fields.selected().length
     copy.onclick = () =>
-      void copied(copy, () => {
+      void (async () => {
+        if (copying) return
+        copying = true
+        header.disabled = true
+        const capturedVersion = version
         const translate = (source, params) =>
           t(source, params, getLanguage(modal))
-        return writeTable(
-          preparationTable(
-            rows.map((row, index) => ({
-              ...row,
-              ...preparationFeatureFields(featureSources[index], translate),
-            })),
-            fields.selected(),
-            headers(),
-            translate
-          )
-        )
-      })
+        try {
+          await copied(copy, async () => {
+            if (
+              fields.selected().includes('barcode') &&
+              context.products.some((row) => row.needsSizeMapping)
+            )
+              throw new Error(
+                translate('Map this variant size before generating labels')
+              )
+            const table = preparationTable(
+              rows.map((row, index) => ({
+                ...row,
+                ...preparationFeatureFields(featureSources[index], translate),
+              })),
+              fields.selected(),
+              header.checked,
+              translate
+            )
+            await writeTable(table)
+            return capturedVersion === version
+          })
+        } finally {
+          copying = false
+          header.disabled = false
+          copy.disabled = !fields.selected().length
+        }
+      })()
     close.onclick = () => modal.close()
-    actions.append(popupLanguageToggle(modal), close, copy)
+    actions.append(
+      popupLanguageToggle(modal, { onChange: changed }),
+      close,
+      copy
+    )
     modal.append(actions)
     pinDialogActions(modal, actions)
     modal.onclose = () => {

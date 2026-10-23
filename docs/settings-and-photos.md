@@ -10,6 +10,8 @@ The header **A / 文 / Ñ** switches English, Chinese and Spanish while preservi
 
 Current mode/language, purchase-month filters, Headers, copy/export choices and Activity read state are browser preferences. Label rules, themes, badge colors and tag definitions belong to library settings and full backups. A floating panel's minimized state lasts for its browser-tab session.
 
+**Chosen columns** exposes the same **Headers** preference in Orders and Packing. The popup shows its captured product-row count; later display selections do not change the copy in progress.
+
 ## Local recognition rules
 
 All helpers run locally; there is no remote translation or AI service. They preserve source descriptions and money.
