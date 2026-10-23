@@ -1,4 +1,5 @@
 import * as purchaseCodes from './purchase-codes.js'
+import { createLibraryChanges } from './library-changes.js'
 import {
   createContainerRepository,
   OPERATIONAL_STORES,
@@ -1389,7 +1390,12 @@ export async function openDatabase({ name = '1688-order-library' } = {}) {
       )
     }
   })
-  database.onversionchange = () => database.close()
+  const changes = createLibraryChanges(database.name)
+  const close = () => {
+    changes.close()
+    database.close()
+  }
+  database.onversionchange = close
   const read = (stores, run) =>
     transaction(
       database,
@@ -1398,7 +1404,7 @@ export async function openDatabase({ name = '1688-order-library' } = {}) {
       run
     )
   let containerRepository
-  const write = (stores, run) =>
+  const write = (stores, run, { notify = true } = {}) =>
     transaction(
       database,
       [...new Set([...stores, ...OPERATIONAL_STORES])],
@@ -1411,7 +1417,10 @@ export async function openDatabase({ name = '1688-order-library' } = {}) {
           containerRepository.graph(await containerRepository.state(tx))
         return result
       }
-    )
+    ).then((result) => {
+      if (notify) changes.publish(stores)
+      return result
+    })
   const cartonBatchesRepository = createCartonBatchesRepository({
     read,
     write,
@@ -3412,7 +3421,8 @@ export async function openDatabase({ name = '1688-order-library' } = {}) {
                 packingScope
               )
             : backup
-        }
+        },
+        { notify: false }
       )
     },
 
@@ -4047,9 +4057,8 @@ export async function openDatabase({ name = '1688-order-library' } = {}) {
       )
     },
 
-    close() {
-      database.close()
-    },
+    subscribe: changes.subscribe,
+    close,
   }
 }
 import {

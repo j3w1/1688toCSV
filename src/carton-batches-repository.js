@@ -173,28 +173,32 @@ export function createCartonBatchesRepository({
         storeId,
         includeDeleted = false,
       } = {}) {
-        return write(stores, async (tx) => {
-          const loaded = await seed(tx)
-          return loaded.batches
-            .filter(
-              (batch) =>
-                batch.accountId === accountId &&
-                (!month || batch.month === month) &&
-                (!storeId || batch.storeId === storeId) &&
-                (includeDeleted || !batch.deletedAt)
-            )
-            .map((batch) => ({
-              ...batch,
-              ...(cartonBatchIssues(
-                batch,
-                loaded.records,
-                loaded.preparations,
-                loaded.batches
-              ).length
-                ? { needsReview: true }
-                : {}),
-            }))
-        })
+        return write(
+          stores,
+          async (tx) => {
+            const loaded = await seed(tx)
+            return loaded.batches
+              .filter(
+                (batch) =>
+                  batch.accountId === accountId &&
+                  (!month || batch.month === month) &&
+                  (!storeId || batch.storeId === storeId) &&
+                  (includeDeleted || !batch.deletedAt)
+              )
+              .map((batch) => ({
+                ...batch,
+                ...(cartonBatchIssues(
+                  batch,
+                  loaded.records,
+                  loaded.preparations,
+                  loaded.batches
+                ).length
+                  ? { needsReview: true }
+                  : {}),
+              }))
+          },
+          { notify: false }
+        )
       },
       async saveCartonBatch(
         batch,
