@@ -34,7 +34,7 @@ export async function databaseBrowser() {
   await once(server, 'listening')
   let browser
   try {
-    browser = await chromium.launch({ headless: true })
+    browser = await chromium.launch({ channel: 'chromium', headless: true })
     const context = await browser.newContext()
     const origin = `http://127.0.0.1:${server.address().port}`
     const page = await context.newPage()
