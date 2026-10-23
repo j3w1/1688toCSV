@@ -3,6 +3,7 @@ import { repeatProductStoreIdentity } from './repeat-products.js'
 import { productCartonDetails } from './carton-details.js'
 import { cartonBreakdown } from './carton-packing.js'
 import { unresolvedCoverageFeasible } from './carton-reconciliation.js'
+import { validatePhysicalMark, physicalMarkReadback } from './physical-mark-aliases.js'
 
 const sourceKey = (orderId, entryId) => JSON.stringify([orderId, entryId])
 const referenceKey = (reference) =>
@@ -488,6 +489,8 @@ export function validateCartonBatch(input) {
       if (input[field] !== undefined)
         result[field] = structuredClone(input[field])
   if (input.needsReview) result.needsReview = true
+  if (input.physicalMark !== undefined)
+    result.physicalMark = validatePhysicalMark(input.physicalMark)
   return result
 }
 
@@ -1032,8 +1035,9 @@ export function cartonBatchProjection(batches, records, preparations) {
       const issues = cartonBatchIssues(batch, records, preparations, batches)
       return {
         ...batch,
+        ...physicalMarkReadback(batch, preparations),
         mark,
-        baseCode: markGroup?.baseCode || '',
+        baseCode: batch.physicalMark?.code || markGroup?.baseCode || '',
         category: markGroup?.category || '',
         sellerName:
           scope?.sellerName ||
