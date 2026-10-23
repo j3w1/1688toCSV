@@ -251,6 +251,14 @@
   inline-size: 96px;
   block-size: 96px;
 }
+.purchase-code-review-items .photo-copy-tile > .photo-copy-button.icon-button {
+  inline-size: 16px;
+}
+@media (pointer: coarse) {
+  .purchase-code-review-items .photo-copy-tile > .photo-copy-button.icon-button {
+    inline-size: 44px;
+  }
+}
 .purchase-code-review-items article p {
   margin: 0;
 }
