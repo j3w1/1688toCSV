@@ -654,6 +654,187 @@ test('native guarded resolution refuses stale source, forged attestation and for
   }
 })
 
+test('native legacy owner correction reopens the physical mark relation and retains original evidence before a fresh keep and seal', async () => {
+  const browser = await databaseBrowser()
+  try {
+    const input = independentMarkFixture(),
+      prep = input.preparations[0]
+    input.batches[0].groups = [{ orderId: '1001', groupId: prep.groups[1].id }]
+    input.batches[0].contents = [
+      { orderId: '1001', entryId: '2002', quantity: '30' },
+    ]
+    const state = await openFixture(browser, input),
+      next = await regroupSelection(
+        state.preparations[0].groups.slice(0, 2).map((group) => ({
+          draft: state.preparations[0],
+          group,
+          variants: group.variants,
+          complete: true,
+        })),
+        'merge',
+        { getReservedBarcodes: async () => [] }
+      ),
+      plan = resolvePhysicalMarkChange(
+        planCartonBatchChanges({
+          batches: state.batches,
+          records: state.records,
+          beforePreparations: state.preparations,
+          afterPreparations: next,
+        }),
+        {
+          batchId: state.batches[0].id,
+          choice: 'keep-recorded-mark',
+          reason: 'Keep original recorded marks',
+        }
+      )
+    await saveMerge(browser, state, next, plan)
+    const result = await browser.page.evaluate(async () => {
+      const before = await aliasDb.getOrderReconciliation({ orderId: '1001' }),
+        batch = before.batches[0],
+        target = before.preparation.groups.find((group) =>
+          group.variants.some((variant) => variant.entryIds.includes('2003'))
+        ),
+        review = await aliasDb.reviewLegacyCarton({
+          batchId: batch.id,
+          expectedRevision: batch.revision,
+        })
+      await aliasDb.resolveLegacyCarton({
+        batchId: batch.id,
+        expectedRevision: batch.revision,
+        resolution: 'owner-corrected',
+        ownerRef: { accountId: 'local', orderId: '1001' },
+        mark: { orderId: '1001', groupId: target.id },
+        contents: [{ orderId: '1001', entryId: '2003', quantity: '30' }],
+        reason: 'Reviewed original transcription against actual contents',
+        attestNotShipped: true,
+        expectedOrderRevisions: review.expectedOrderRevisions,
+      })
+      const corrected = await aliasDb.getOrderReconciliation({
+          orderId: '1001',
+        }),
+        container = await aliasDb.createContainer({
+          name: 'Legacy corrected ownership',
+        })
+      let view = await aliasDb.includeContainerOrders({
+        id: container.id,
+        expectedRevision: container.revision,
+        orderRefs: [{ orderId: '1001' }],
+      })
+      view = await aliasDb.markContainerLoaded({
+        id: container.id,
+        expectedRevision: view.container.revision,
+      })
+      const pending = await aliasDb.reviewContainerSeal({
+        id: container.id,
+        expectedRevision: view.container.revision,
+      })
+      await aliasDb.cancelContainer({
+        id: container.id,
+        expectedRevision: view.container.revision,
+      })
+      const kept = await aliasDb.resolveCartonPhysicalMark({
+        orderId: '1001',
+        batchId: batch.id,
+        expectedRevisions: corrected.revisions,
+        choice: 'keep-recorded-mark',
+        reason: 'Fresh decision for the corrected product',
+      })
+      const notShippedReview = await aliasDb.reviewLegacyCarton({
+        batchId: batch.id,
+        expectedRevision: kept.batches[0].revision,
+      })
+      await aliasDb.resolveLegacyCarton({
+        batchId: batch.id,
+        expectedRevision: kept.batches[0].revision,
+        resolution: 'not-shipped',
+        reason: 'Independent legacy loading review',
+        attestNotShipped: true,
+        expectedOrderRevisions: notShippedReview.expectedOrderRevisions,
+      })
+      const sameRelation = await aliasDb.getOrderReconciliation({
+        orderId: '1001',
+      })
+      const finalContainer = await aliasDb.createContainer({
+        name: 'Fresh corrected mark',
+      })
+      view = await aliasDb.includeContainerOrders({
+        id: finalContainer.id,
+        expectedRevision: finalContainer.revision,
+        orderRefs: [{ orderId: '1001' }],
+      })
+      view = await aliasDb.markContainerLoaded({
+        id: finalContainer.id,
+        expectedRevision: view.container.revision,
+      })
+      const ready = await aliasDb.reviewContainerSeal({
+          id: finalContainer.id,
+          expectedRevision: view.container.revision,
+        }),
+        manifest = await aliasDb.sealContainer({
+          id: finalContainer.id,
+          expectedRevision: view.container.revision,
+          reviewToken: ready.reviewToken,
+        })
+      return {
+        before,
+        corrected,
+        kept,
+        sameRelation,
+        pending: pending.issues,
+        ready: ready.issues,
+        manifest,
+        backup: await aliasDb.exportBackup({}),
+      }
+    })
+    const old = result.before.batches[0],
+      corrected = result.corrected.batches[0]
+    assert.equal(corrected.currentProductCode, 'CE26101003')
+    assert.equal(corrected.physicalMark.code, 'CE26101002')
+    assert.equal(corrected.physicalMark.productCode, 'CE26101003')
+    assert.equal(corrected.physicalMark.resolution, null)
+    assert.equal(corrected.physicalMarkResolutionRequired, true)
+    assert.ok(corrected.physicalMark.relatedEntryIds.includes('2003'))
+    assert.equal(
+      corrected.physicalMark.history.at(-1).kind,
+      'product-code-change'
+    )
+    assert.deepEqual(
+      corrected.physicalMark.history.at(-1).resolution,
+      old.physicalMark.resolution
+    )
+    assert.deepEqual(corrected.physicalMark.artwork, old.physicalMark.artwork)
+    assert.deepEqual(corrected.sourceFacts, old.sourceFacts)
+    assert.equal(corrected.cartonHistory.length, old.cartonHistory.length + 1)
+    for (const field of [
+      'id',
+      'count',
+      'len',
+      'wid',
+      'ht',
+      'weight',
+      'weightBasis',
+      'received',
+      'loaded',
+    ])
+      assert.deepEqual(corrected[field], old[field], field)
+    assert.ok(result.pending.some((issue) => /PHYSICAL_MARK/.test(issue.code)))
+    assert.equal(
+      result.sameRelation.batches[0].physicalMarkResolutionRequired,
+      false
+    )
+    assert.deepEqual(
+      result.sameRelation.batches[0].physicalMark.resolution,
+      result.kept.batches[0].physicalMark.resolution
+    )
+    assert.deepEqual(result.ready, [])
+    assert.equal(result.manifest.cartons[0].markCode, 'CE26101002')
+    assert.equal(result.manifest.cartons[0].currentProductCode, 'CE26101003')
+    assert.deepEqual(result.backup.orders, state.records)
+  } finally {
+    await browser.close()
+  }
+})
+
 test('native current alias reserves through carton retirement, releases only after all goods cancel, and conflicts on revival or restore atomically', async () => {
   const browser = await databaseBrowser()
   try {

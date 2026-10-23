@@ -1991,6 +1991,18 @@ export function createContainerRepository({
             'LEGACY_RESOLUTION',
             'Choose an explicit supported legacy resolution.'
           )
+        next = validateCartonBatch(
+          retainCartonEvidence(
+            batch,
+            transitionPhysicalMark(
+              batch,
+              next,
+              loaded.preparations,
+              loaded.preparations,
+              { updatedAt, issuedCodes: loaded.issuedCodes }
+            )
+          )
+        )
         guardChanges(loaded, [{ after: next }], {
           contextContainerId: input.contextContainerId,
           legacyResolution: true,
