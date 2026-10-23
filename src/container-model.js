@@ -18,10 +18,12 @@ import {
 import { cartonBatchMetrics } from './carton-batches.js'
 import { shipmentMoney } from './shipment-money.js'
 import { productFeatures } from './product-features.js'
+import { createMaterialSuggester } from './material-vocabulary.js'
 import {
   validatePackingPreferences,
   barcodeValue,
   variantMaterial,
+  refreshPreparationMaterials,
 } from './packing-model.js'
 import { moneyToCents, centsToMoney } from './money.js'
 
@@ -108,7 +110,22 @@ export function captureContainerOrder(
       { ...owner, orderId }
     )
   const scope = orderScopeState(state, { accountId, orderId }),
-    { record, preparation } = scope,
+    { record } = scope,
+    suggestMaterial = createMaterialSuggester(
+      state.preferences?.materialVocabulary
+    ),
+    preparation =
+      scope.preparation &&
+      refreshPreparationMaterials(
+        scope.preparation,
+        record.snapshot,
+        new Map(
+          record.snapshot.items.map((item) => [
+            item.entryId,
+            suggestMaterial(item),
+          ])
+        )
+      ),
     batches = scope.batches.map((batch) => {
       if (batch.mark || batch.groups?.length || !preparation) return batch
       const groups = preparation.groups

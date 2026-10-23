@@ -9,20 +9,15 @@ import {
   libraryBackup as backup,
   loadedSourceContainer,
   openContainerOutput,
+  savedBrowserDownload,
 } from './smart-workspace-helpers.mjs'
 
 for (const theme of ['dark', 'light']) {
   test(`${theme} conflict comparisons stay in place while help opens and proposals show every barcode`, async ({
     extension,
   }) => {
-    const { page, view } = await openPacking(extension)
+    const { page, view } = await openPacking(extension, { theme })
     await page.setViewportSize({ width: 1400, height: 1000 })
-    if (
-      (await page
-        .locator('meta[name="color-scheme"]')
-        .getAttribute('content')) !== theme
-    )
-      await page.locator('#theme-toggle').click()
     const before = await backup(extension)
     const first = view
     const savedGroup = before.preparations[0].groups[0]
@@ -169,7 +164,7 @@ for (const theme of ['dark', 'light']) {
 
 async function openPacking(
   extension,
-  { orderCount = 1, openEditor = true } = {}
+  { orderCount = 1, openEditor = true, theme } = {}
 ) {
   const [record] = await extension.inspector.evaluate(
     `(${createDemoRecords.toString()})(document)`
@@ -216,6 +211,18 @@ async function openPacking(
   await page.goto(`${extension.extensionBaseUrl}/library.html`)
   const rows = page.locator('#sheet-body tr[data-selection-key]')
   await expect(rows).toHaveCount(Math.min(100, 3 * orderCount))
+  if (
+    theme &&
+    (await page
+      .locator('meta[name="color-scheme"]')
+      .getAttribute('content')) !== theme
+  )
+    await page.locator('#theme-toggle').click()
+  if (theme)
+    await expect(page.locator('meta[name="color-scheme"]')).toHaveAttribute(
+      'content',
+      theme
+    )
   await rows.first().focus()
   await page.keyboard.press('Control+a')
   await assignSelectedPurchaseCodes(page)
@@ -429,10 +436,20 @@ test('typing a product conflict hides stale preview immediately, keeps other fie
 test('same-product variant collisions can be corrected inside the resolver without changing the shared base', async ({
   extension,
 }) => {
-  const { page, view } = await openPacking(extension)
+  const { page, view, record } = await openPacking(extension)
   const before = await backup(extension),
-    group = before.preparations[0].groups[0],
-    [target, owner] = group.variants
+    group = before.preparations
+      .find((prep) => prep.orderId === record.snapshot.orderId)
+      .groups.find((group) =>
+        group.variants.some((variant) =>
+          variant.entryIds.includes(record.snapshot.items[0].entryId)
+        )
+      ),
+    target = group.variants.find((variant) =>
+      variant.entryIds.includes(record.snapshot.items[0].entryId)
+    ),
+    owner = group.variants.find((variant) => variant.id !== target.id)
+  expect(owner).toBeTruthy()
   await view
     .getByRole('textbox', { name: 'Size ending', exact: true })
     .fill(owner.sizeSuffix)
@@ -441,7 +458,30 @@ test('same-product variant collisions can be corrected inside the resolver witho
     exact: true,
   })
   await variant.fill(owner.variantSuffix)
-  await expect(variant).toHaveAttribute('aria-invalid', 'true')
+  try {
+    await expect(variant).toHaveAttribute('aria-invalid', 'true')
+  } catch (error) {
+    console.log(
+      'Variant collision diagnostic:',
+      JSON.stringify({
+        target: target.id,
+        owner: owner.id,
+        expectedCollision: owner.variantSuffix + owner.sizeSuffix,
+        fields: await view
+          .locator('[data-authoring-field]')
+          .evaluateAll((nodes) =>
+            nodes.map((node) => ({
+              field: node.dataset.authoringField,
+              value: node.value,
+              invalid: node.getAttribute('aria-invalid'),
+            }))
+          ),
+        status: await view.getByRole('status').allTextContents(),
+        storedCodes: codes(await backup(extension)),
+      })
+    )
+    throw error
+  }
   await view
     .getByRole('button', { name: 'Resolve code conflict', exact: true })
     .click()
@@ -449,13 +489,15 @@ test('same-product variant collisions can be corrected inside the resolver witho
   const targetCard = resolver.locator('.conflict-edit-card')
   await targetCard
     .getByRole('textbox', { name: 'Variant ending', exact: true })
-    .nth(0)
+    .nth(group.variants.findIndex((variant) => variant.id === target.id))
     .fill('ZZ')
   await resolver
     .getByRole('button', { name: 'Apply corrections', exact: true })
     .click()
   await expect(resolver).toBeHidden()
-  const saved = (await backup(extension)).preparations[0].groups[0]
+  const saved = (await backup(extension)).preparations
+    .find((prep) => prep.orderId === record.snapshot.orderId)
+    .groups.find((entry) => entry.id === group.id)
   expect(saved.baseCode).toBe(group.baseCode)
   expect(
     saved.variants.find((variant) => variant.id === target.id).variantSuffix
@@ -478,6 +520,9 @@ test('next available code proposal changes no persisted ownership until Apply', 
   await resolver
     .getByRole('button', { name: 'Use next available code', exact: true })
     .click()
+  await expect(resolver.getByRole('status')).toContainText(
+    'A free code is proposed'
+  )
   const proposed = await resolver
     .locator('.conflict-edit-card')
     .getByRole('textbox', { name: 'Product code', exact: true })
@@ -567,10 +612,15 @@ test('packing backup includes hidden/offscreen Orders and restore rejects a full
     buffer: Buffer.from(JSON.stringify(before)),
   })
   await expect(page.locator('.error-notice')).toContainText(
-    /packing backup|packing archive/i
+    'Restore it through Settings → Data → Restore'
   )
   expect((await backup(extension)).preparations).toEqual(before.preparations)
   expect((await backup(extension)).orders).toEqual(before.orders)
+  expect((await backup(extension)).issuedCodes).toEqual(before.issuedCodes)
+  expect((await backup(extension)).images).toEqual(before.images)
+  await expect(
+    page.getByRole('dialog', { name: 'Restore packing backup?', exact: true })
+  ).toHaveCount(0)
 })
 
 test('container output errors route authorship to Orders without introducing a second code editor', async ({
@@ -662,7 +712,9 @@ test(
     await page.locator('#backup-packing').click()
     const download = await pending
     expect(await download.failure()).toBeNull()
-    const content = await readFile(await download.path()),
+    const content = await readFile(
+        await savedBrowserDownload(extension, download)
+      ),
       saved = await readBackupFile(new Blob([content]))
     expect(saved.packingScope.mode).toBe('selection')
     expect(saved.packingScope.orders[0].entryIds).toEqual(
@@ -739,6 +791,12 @@ test('a delayed real label render cannot restore a conflicting preview and rever
   await expect
     .poll(() => page.evaluate(() => Boolean(window.finishConflictingLabel)))
     .toBe(true)
+  await label.getByRole('textbox', { name: 'Size code', exact: true }).focus()
+  await expect(copy).toBeEnabled({ timeout: 20000 })
+  const acknowledged = await backup(extension)
+  expect(acknowledged.preparations[0].groups[0].variants[0].variantSuffix).toBe(
+    'ZZ'
+  )
   await label
     .getByRole('textbox', { name: 'Size code', exact: true })
     .fill(owner.sizeSuffix)
@@ -751,14 +809,16 @@ test('a delayed real label render cannot restore a conflicting preview and rever
   await expect(variant).toHaveAttribute('aria-invalid', 'true')
   await expect(image).toBeHidden()
   await expect(image).not.toHaveAttribute('src')
-  expect((await backup(extension)).preparations).toEqual(before.preparations)
+  expect((await backup(extension)).preparations).toEqual(
+    acknowledged.preparations
+  )
   await variant.press('Escape')
-  await expect(variant).toHaveValue(group.variants[0].variantSuffix)
+  await expect(variant).toHaveValue('ZZ')
   await expect(copy).toBeEnabled({ timeout: 20000 })
   await expect(image).toBeVisible()
   const after = await backup(extension)
-  expect(after.preparations).toEqual(before.preparations)
-  expect(after.issuedCodes).toEqual(before.issuedCodes)
+  expect(after.preparations).toEqual(acknowledged.preparations)
+  expect(after.issuedCodes).toEqual(acknowledged.issuedCodes)
   expect(after.orders).toEqual(before.orders)
 })
 

@@ -410,8 +410,8 @@ export function validateMaterialVocabulary(input = MATERIAL_VOCABULARY) {
 }
 
 let aliases, byValue
-function indexVocabulary(vocabulary) {
-  aliases = vocabulary
+function vocabularyAliases(vocabulary) {
+  return vocabulary
     .flatMap((material) =>
       [
         ...new Set([
@@ -423,6 +423,9 @@ function indexVocabulary(vocabulary) {
       ].map((alias) => ({ alias: normalize(alias), material }))
     )
     .sort((a, b) => b.alias.length - a.alias.length)
+}
+function indexVocabulary(vocabulary) {
+  aliases = vocabularyAliases(vocabulary)
   byValue = new Map(aliases.map(({ alias, material }) => [alias, material]))
 }
 
@@ -454,12 +457,12 @@ const accessoryAfter =
 const auxiliaryBefore =
   /(?:带|配|附送|赠送|赠|送|搭配|装饰用)(?:透明|加厚|优质|金色|银色)?$/u
 
-function materialMatches(value, explicit = false) {
+function materialMatches(value, explicit = false, materialAliases = aliases) {
   const text = normalize(value)
   const found = []
   const occupied = []
   const imitations = new Set()
-  for (const { alias, material } of aliases) {
+  for (const { alias, material } of materialAliases) {
     // Bare Chinese characters are useful in an explicit material field, but in
     // a title they also occur in plant names, colors and unrelated product names.
     if (!explicit && /^[\p{Script=Han}]$/u.test(alias)) continue
@@ -531,6 +534,18 @@ function joinedMaterials(matches) {
 
 /** Suggest only materials stated by the seller, never an inferred composition. */
 export function suggestMaterial(item = {}) {
+  return suggestWithAliases(item, aliases)
+}
+
+/** Capture one vocabulary without changing another page or library's rules. */
+export function createMaterialSuggester(vocabulary = MATERIAL_VOCABULARY) {
+  const materialAliases = vocabularyAliases(
+    validateMaterialVocabulary(vocabulary)
+  )
+  return (item) => suggestWithAliases(item, materialAliases)
+}
+
+function suggestWithAliases(item = {}, materialAliases) {
   const explicitValues = []
   for (const property of Array.isArray(item.skuProperties)
     ? item.skuProperties
@@ -555,7 +570,7 @@ export function suggestMaterial(item = {}) {
     const value = explicitValues.join(' + ')
     return /或|随机|可选/u.test(value)
       ? ''
-      : joinedMaterials(materialMatches(value, true))
+      : joinedMaterials(materialMatches(value, true, materialAliases))
   }
   const title =
     String(item.title ?? '').trim() ||
@@ -573,13 +588,15 @@ export function suggestMaterial(item = {}) {
     )
   )
   const variantMatches = materialMatches(
-    variants.map((property) => property.value).join(' ; ')
+    variants.map((property) => property.value).join(' ; '),
+    false,
+    materialAliases
   )
   // Glue titles list compatible surfaces, not the glue's material. Several
   // incompatible composition keywords without a join are usually SEO or options.
   const titleMatches = /胶水|粘合剂|粘接剂|焊接剂/u.test(title)
     ? []
-    : materialMatches(title)
+    : materialMatches(title, false, materialAliases)
   const conflictingFamilies = [
     [
       'pvc',

@@ -21,6 +21,7 @@ function snapshot(
     sellerName: 'Synthetic operations store',
     sellerMemberLogin,
     status: 'Completed',
+    purchasedAt: '2026-10-01T12:00:00+08:00',
     observedAt: '2026-10-01T12:00:00.000Z',
     items: ['Cup', 'Plate'].map((title, index) => ({
       entryId: String(index + 1),
@@ -905,11 +906,17 @@ test('Orders supplier ellipses stay square and trailing with baseline and touch 
               title = button
                 .closest('.order-section-band')
                 .getBoundingClientRect(),
-              style = getComputedStyle(button)
+              style = getComputedStyle(button),
+              bandStyle = getComputedStyle(
+                button.closest('.order-section-band')
+              )
             return {
               width: box.width,
               height: box.height,
-              endGap: title.right - box.right,
+              // The Orders band has an intentional inset; the action belongs
+              // at its content edge, as in the previous header text track.
+              endGap:
+                title.right - parseFloat(bandStyle.paddingRight) - box.right,
               padding: style.paddingBlockStart,
               minHeight: style.minHeight,
             }
