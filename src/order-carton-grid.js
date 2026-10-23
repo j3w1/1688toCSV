@@ -78,7 +78,12 @@ export function mountPhysicalMarkChoices({
       ),
       confirmed = el('input'),
       status = el('p'),
-      choice = []
+      choice = [],
+      owner = el('select'),
+      ownerChoices = review.physicalMarkOwnerChoices || [],
+      requiresOwner = !(
+        review.currentProductCode || review.physicalMark?.productCode
+      )
     card.dataset.action = 'physical-mark-decision'
     card.dataset.batchId = id
     card.append(
@@ -105,6 +110,25 @@ export function mountPhysicalMarkChoices({
       setCodeText(code, value)
       row.append(el('strong', m(label)), code)
       card.append(row)
+    }
+    if (requiresOwner) {
+      owner.dataset.action = 'choose-physical-mark-owner'
+      bindAttribute(owner, 'aria-label', m('Choose the current product owner'))
+      owner.append(
+        new Option(String(m('Choose the current product owner')), '')
+      )
+      for (const candidate of ownerChoices)
+        owner.append(
+          new Option(
+            `${candidate.productCode} · ${candidate.artwork?.spanishName || candidate.artwork?.title || ''}`,
+            JSON.stringify(candidate.mark)
+          )
+        )
+      owner.value = ''
+      owner.onchange = update
+      const ownerLabel = el('label', m('Choose the current product owner'))
+      ownerLabel.append(owner)
+      card.append(ownerLabel)
     }
     for (const [value, title] of [
       ['keep-recorded-mark', 'Keep the recorded physical mark'],
@@ -149,18 +173,35 @@ export function mountPhysicalMarkChoices({
     status.setAttribute('role', 'status')
     card.append(label, attestation, status)
     section.append(card)
-    rows.push({ id, review, choice, reason, confirmed, attestation, status })
+    rows.push({
+      id,
+      review,
+      choice,
+      reason,
+      confirmed,
+      attestation,
+      status,
+      owner,
+      ownerChoices,
+      requiresOwner,
+    })
   }
   function update() {
     let valid = !composing.size
     const decisions = rows.map((row) => {
       const choice = row.choice.find((input) => input.checked)?.value || '',
         relabel = choice === 'relabel-reprint',
+        target = row.requiresOwner
+          ? row.ownerChoices.find(
+              (candidate) => JSON.stringify(candidate.mark) === row.owner.value
+            )
+          : null,
         ready = Boolean(
           choice &&
           row.reason.value.trim() &&
           row.reason.value.length <= 2000 &&
-          (row.review.currentProductCode ||
+          (target?.productCode ||
+            row.review.currentProductCode ||
             row.review.physicalMark?.productCode) &&
           (!relabel || (allowRelabel && row.confirmed.checked))
         )
@@ -171,9 +212,11 @@ export function mountPhysicalMarkChoices({
         m(
           ready
             ? 'Review this mark decision before applying.'
-            : relabel && !row.confirmed.checked
-              ? 'Confirm physical relabeling before applying this choice.'
-              : 'Choose a physical mark decision and enter its reason.'
+            : row.requiresOwner && !target
+              ? 'Choose the current product owner'
+              : relabel && !row.confirmed.checked
+                ? 'Confirm physical relabeling before applying this choice.'
+                : 'Choose a physical mark decision and enter its reason.'
         )
       )
       return {
@@ -181,6 +224,7 @@ export function mountPhysicalMarkChoices({
         choice,
         reason: row.reason.value,
         physicalRelabelConfirmed: relabel && row.confirmed.checked,
+        ...(target ? { targetMark: clone(target.mark) } : {}),
       }
     })
     apply.disabled = !valid
@@ -263,6 +307,20 @@ export async function openPhysicalMarkReview({
       button.type = 'button'
       button.dataset.action = 'print-order-carton-mark'
       button.dataset.markRole = role
+      const missingOwner =
+        role === 'current-product' &&
+        !(batch.currentProductCode || batch.physicalMark?.productCode)
+      button.disabled = missingOwner
+      if (missingOwner) {
+        button.dataset.ownerRequired = 'true'
+        bindAttribute(
+          button,
+          'title',
+          m(
+            'Choose and save the current product owner before printing its mark.'
+          )
+        )
+      }
       button.onclick = () =>
         void (async () => {
           printButtons.forEach((button) => {
@@ -281,7 +339,7 @@ export async function openPhysicalMarkReview({
             if (error.noticeOptions) showErrorNotice(error, { scope: modal })
           } finally {
             printButtons.forEach((button) => {
-              button.disabled = busy
+              button.disabled = busy || button.dataset.ownerRequired === 'true'
             })
           }
         })()
@@ -299,6 +357,7 @@ export async function openPhysicalMarkReview({
         id: batch.id,
         cartonNumber: batch.cartonNumber,
         physicalMark: batch.physicalMark,
+        physicalMarkOwnerChoices: batch.physicalMarkOwnerChoices,
         physicalMarkCode: batch.physicalMarkCode || batch.physicalMark.code,
         currentProductCode:
           batch.currentProductCode || batch.physicalMark.productCode,
@@ -312,7 +371,7 @@ export async function openPhysicalMarkReview({
     },
   })
   const unavailable = new Set(
-    [...host.querySelectorAll('input,textarea')].filter(
+    [...host.querySelectorAll('input,textarea,select')].filter(
       (field) => field.disabled
     )
   )
@@ -320,11 +379,11 @@ export async function openPhysicalMarkReview({
     busy = value
     save.disabled = value || !valid || Boolean(saved)
     close.disabled = value
-    for (const field of host.querySelectorAll('input,textarea'))
+    for (const field of host.querySelectorAll('input,textarea,select'))
       field.disabled = value || Boolean(saved) || unavailable.has(field)
     retry.disabled = value
     printButtons.forEach((button) => {
-      button.disabled = value
+      button.disabled = value || button.dataset.ownerRequired === 'true'
     })
   }
   const finish = async () => {

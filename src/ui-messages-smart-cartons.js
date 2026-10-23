@@ -1,6 +1,16 @@
 // UI text only. Supplier/source strings never pass through this catalog.
 export const SMART_CARTON_MESSAGES = Object.fromEntries(
   [
+    [
+      'Choose the current product owner',
+      'Elige el producto propietario actual',
+      '请选择当前归属商品',
+    ],
+    [
+      'Choose and save the current product owner before printing its mark.',
+      'Elige y guarda el producto propietario actual antes de imprimir su marca.',
+      '打印该箱唛前，请选择并保存当前归属商品。',
+    ],
     ['Print recorded mark', 'Imprimir marca registrada', '打印已记录箱唛'],
     [
       'Print current product mark',

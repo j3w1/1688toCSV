@@ -111,6 +111,53 @@ test('physical mark choices require each explicit decision, reason and fresh rel
   assert.equal(host.querySelector('.physical-mark-choices'), null)
 })
 
+test('a missing physical mark owner requires an explicit actual owner option without guessing from contents', (context) => {
+  const { document, window } = dom(context),
+    host = document.getElementById('host'),
+    apply = document.createElement('button'),
+    updates = [],
+    targetMark = { orderId: '1001', groupId: 'explicit-owner' },
+    reviews = [
+      {
+        id: 'physical',
+        resolutionRequired: true,
+        physicalMarkCode: 'CE26090102',
+        currentProductCode: '',
+        physicalMarkOwnerChoices: [
+          {
+            mark: targetMark,
+            productCode: 'CE26090101',
+            artwork: { spanishName: 'CURRENT PRODUCT' },
+          },
+        ],
+      },
+    ]
+  const stop = mountPhysicalMarkChoices({
+      host,
+      apply,
+      reviews,
+      onChange: (value) => updates.push(value),
+    }),
+    owner = host.querySelector('[data-action="choose-physical-mark-owner"]'),
+    keep = host.querySelector('[data-choice="keep-recorded-mark"]'),
+    reason = host.querySelector('textarea')
+  assert.equal(owner.value, '')
+  keep.checked = true
+  keep.dispatchEvent(new window.Event('change'))
+  reason.value = 'Explicitly reviewed actual owner'
+  reason.dispatchEvent(new window.Event('input'))
+  assert.equal(apply.disabled, true)
+  owner.value = JSON.stringify(targetMark)
+  owner.dispatchEvent(new window.Event('change'))
+  assert.equal(apply.disabled, false)
+  assert.deepEqual(updates.at(-1).decisions[0].targetMark, targetMark)
+  owner.value = JSON.stringify({ orderId: '1001', groupId: 'guessed-owner' })
+  owner.dispatchEvent(new window.Event('change'))
+  assert.equal(apply.disabled, true)
+  assert.equal(updates.at(-1).decisions[0].targetMark, undefined)
+  stop()
+})
+
 test('physical mark output uses recorded artwork after its group is gone, counts actual entitlements and rejects stale typed regeneration', async () => {
   const { record, preparation } = syntheticManifest().orders[0],
     group = preparation.groups[0],
