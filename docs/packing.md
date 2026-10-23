@@ -18,6 +18,8 @@ The existing label editor retains preview validation, physical label settings an
 
 Valid authoring edits autosave; later typing survives an earlier acknowledgement. Pending edits flush before navigation/output. Failed raw authoring drafts remain recoverable in this browser with their source revision. Undo/Redo is scoped to the current Orders session; carton-grid history additionally survives draft recovery. Another tab's changes require revision review rather than silent replacement.
 
+Background refresh preserves the revision, source clock and amendment epoch captured by product history. Undo/Redo rejects a changed owner, including after closing the form. Starting a new edit from the newly saved version clears stale history for that order; other orders retain their independent history.
+
 ## Organize and group
 
 **Grouping tools** belongs to Orders. It can share a barcode within a group, separate original source rows, move variants into a product group or merge eligible complete groups in one order. Review preserves individual financial/source rows and all physical evidence; guarded storage rejects incompatible or historically sealed changes. Repeat links use their own reviewed eligibility checks.
