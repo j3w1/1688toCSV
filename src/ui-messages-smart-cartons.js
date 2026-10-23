@@ -2,6 +2,11 @@
 export const SMART_CARTON_MESSAGES = Object.fromEntries(
   [
     [
+      'This keep-mark decision predates the latest supersession. Review the physical mark and make a fresh explicit choice.',
+      'Esta decisión de conservar la marca es anterior al último conflicto de propiedad. Revisa la marca física y toma una nueva decisión explícita.',
+      '此次保留箱唛的决定早于最近一次编码归属冲突。请重新核对实际箱唛，并明确作出新的选择。',
+    ],
+    [
       'The recorded mark {code} needs historical ownership review. Print the current product mark and confirm physical relabeling.',
       'La marca registrada {code} requiere revisar su propiedad histórica. Imprime la marca del producto actual y confirma el cambio físico de etiqueta.',
       '已记录的箱唛 {code} 需要核对历史归属。请打印当前商品箱唛，并确认已实际更换标签。',

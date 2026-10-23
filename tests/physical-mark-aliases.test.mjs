@@ -4381,7 +4381,7 @@ test('native repeated temporary supersession names the live holder and requires 
       return { record, preparation }
     })
     const result = await browser.page.evaluate(
-      async ({ foreign }) => {
+      async ({ foreign, original }) => {
         const context = () =>
             aliasDb.getOrderReconciliation({ orderId: '1001' }),
           backup = () => aliasDb.exportBackup({}),
@@ -4400,6 +4400,60 @@ test('native repeated temporary supersession names the live holder and requires 
             purchasedAt: '2026-10-07T12:00:00+08:00',
           })
         await keep('Initial explicit review of the actual recorded boxes')
+        let lastKept = await context()
+        const restoreKeep = async (saved, targetPreparation) => {
+          const current = await context()
+          await aliasDb.savePreparations(
+            [
+              {
+                ...(targetPreparation || current.preparation),
+                revision: current.preparation.revision,
+              },
+            ],
+            {
+              expectedRevisions: [current.preparation.revision],
+              cartonBatchChanges: [
+                {
+                  after: {
+                    ...current.batches[0],
+                    ...(targetPreparation
+                      ? { mark: saved.mark, groups: saved.groups }
+                      : {}),
+                    physicalMark: saved.physicalMark,
+                  },
+                  expectedRevision: current.batches[0].revision,
+                  restorePhysicalMarkHistory: true,
+                },
+              ],
+              allowCartonReview: true,
+            }
+          )
+        }
+        const undoFreshKeep = async (saved) => {
+          const current = await context()
+          await aliasDb.savePreparations(
+            [
+              {
+                ...original.preparations[0],
+                revision: current.preparation.revision,
+              },
+            ],
+            {
+              expectedRevisions: [current.preparation.revision],
+              cartonBatchChanges: [
+                {
+                  after: original.batches[0],
+                  expectedRevision: current.batches[0].revision,
+                },
+              ],
+              allowCartonReview: true,
+              suffixBaselines: [original.preparations[0]],
+            }
+          )
+          const undone = await context()
+          await restoreKeep(saved.batches[0], saved.preparation)
+          return { undone, restored: await context() }
+        }
         await aliasDb.restoreBackup({
           format: '1688-order-library',
           version: 1,
@@ -4437,10 +4491,24 @@ test('native repeated temporary supersession names the live holder and requires 
           await aliasDb.savePreparations([freed], {
             expectedRevisions: [current.revision],
           })
-          const released = await context()
+          const released = await context(),
+            beforeHistory = await backup()
+          let historyError
+          try {
+            await restoreKeep(lastKept.batches[0])
+          } catch (error) {
+            historyError = { code: error.code, message: error.message }
+          }
+          const afterHistory = await backup()
           if (index === 0) {
             await keep('Fresh explicit keep after the first unused release')
+            lastKept = await context()
+            const postEpisodeUndo = await undoFreshKeep(lastKept)
             episodes.push({
+              beforeHistory,
+              afterHistory,
+              historyError,
+              postEpisodeUndo,
               conflicted,
               released,
               kept: await context(),
@@ -4482,6 +4550,7 @@ test('native repeated temporary supersession names the live holder and requires 
           if (sealError) {
             await keep('Fresh explicit keep after the second unused release')
             reviewed = await context()
+            reviewed = (await undoFreshKeep(reviewed)).restored
             view = await aliasDb.getContainerView({ id: c.id })
             await aliasDb.removeContainerOrder({
               id: c.id,
@@ -4518,6 +4587,9 @@ test('native repeated temporary supersession names the live holder and requires 
             review,
             sealError,
             prematureManifest,
+            beforeHistory,
+            afterHistory,
+            historyError,
             beforeSeal,
             afterSeal,
             reviewed,
@@ -4533,7 +4605,7 @@ test('native repeated temporary supersession names the live holder and requires 
         restoredDb.close()
         return { before, episodes, final, restored }
       },
-      { foreign }
+      { foreign, original: state }
     )
     const [first, second] = result.episodes,
       batch = second.conflicted.batches[0],
@@ -4639,6 +4711,61 @@ test('native repeated temporary supersession names the live holder and requires 
         assert.equal(
           second.reviewed.batches[0].physicalMark.resolution.reason,
           'Fresh explicit keep after the second unused release'
+        )
+      }
+    )
+    await t.test(
+      'a guarded history restore refuses a pre-episode keep while a fresh post-episode keep still restores',
+      () => {
+        for (const episode of result.episodes) {
+          assert.equal(
+            episode.historyError?.code,
+            'PHYSICAL_MARK_REVIEW_REQUIRED'
+          )
+          assert.match(
+            episode.historyError?.message || '',
+            /predates.*supersession.*fresh/i
+          )
+          for (const field of [
+            'orders',
+            'preparations',
+            'cartonBatches',
+            'issuedCodes',
+            'allocations',
+            'containers',
+            'shipmentLocks',
+            'images',
+          ])
+            assert.deepEqual(
+              episode.afterHistory[field],
+              episode.beforeHistory[field],
+              field
+            )
+        }
+        assert.equal(
+          first.postEpisodeUndo.restored.batches[0].physicalMark.history.findLast(
+            (event) => event.kind === 'logical-history-restore'
+          )?.kind,
+          'logical-history-restore'
+        )
+        assert.deepEqual(
+          first.postEpisodeUndo.restored.batches[0].physicalMark.resolution,
+          first.kept.batches[0].physicalMark.resolution
+        )
+        assert.equal(first.postEpisodeUndo.undone.preparation.groups.length, 2)
+        assert.equal(
+          first.postEpisodeUndo.restored.preparation.groups.length,
+          1
+        )
+        assert.equal(
+          second.reviewed.batches[0].physicalMark.history.findLast(
+            (event) => event.kind === 'logical-history-restore'
+          )?.kind,
+          'logical-history-restore'
+        )
+        assert.equal(
+          second.reviewed.batches[0].physicalMarkResolutionRequired,
+          false
         )
       }
     )

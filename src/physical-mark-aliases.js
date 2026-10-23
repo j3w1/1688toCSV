@@ -613,6 +613,36 @@ export function transitionPhysicalMark(
       fail(
         'The actual physical code, recorded artwork or retained keep-mark history no longer matches. Review the physical mark again.'
       )
+    const latestSupersession = physicalMark.history.findLastIndex(
+        (event) =>
+          ['superseded', 'superseded-update'].includes(event.kind) &&
+          event.code === recorded &&
+          event.active !== false
+      ),
+      savedResolution = historical.physicalMark.resolution
+    if (
+      latestSupersession >= 0 &&
+      !physicalMark.history
+        .slice(latestSupersession + 1)
+        .some(
+          (event) =>
+            event.kind === 'resolution' &&
+            event.code === recorded &&
+            event.productCode === productCode &&
+            [
+              'choice',
+              'reason',
+              'physicalRelabelConfirmed',
+              'provenance',
+              'resolvedAt',
+            ].every(
+              (field) => event.resolution?.[field] === savedResolution[field]
+            )
+        )
+    )
+      fail(
+        'This keep-mark decision predates the latest supersession. Review the physical mark and make a fresh explicit choice.'
+      )
     physicalMark.resolution = clone(historical.physicalMark.resolution)
     physicalMark.history.push({
       kind: 'logical-history-restore',
