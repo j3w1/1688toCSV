@@ -1900,6 +1900,16 @@ export async function startLibrary(
       tr.onkeydown = (event) => {
         if (
           event.target === tr &&
+          event.key === ' ' &&
+          !event.isComposing &&
+          !event.altKey
+        ) {
+          event.preventDefault()
+          productSelection.select(keyFor(row), event)
+          return
+        }
+        if (
+          event.target === tr &&
           navigateInspectionRow(event, keyFor(row), productKeys, (key) =>
             productTable.ensureVisible(key)
           )

@@ -2,6 +2,11 @@
 export const SMART_CARTON_MESSAGES = Object.fromEntries(
   [
     [
+      'Review carton participation before copying or printing a partial mark selection.',
+      'Revisa qué cajas corresponden a los productos antes de copiar o imprimir una selección parcial de marcas.',
+      '复制或打印部分箱唛前，请核对所选产品对应的纸箱。',
+    ],
+    [
       'This dependency-complete archive includes container history and original media. Restore it through Settings → Data → Restore so those dependencies stay together.',
       'Este archivo completo incluye el historial de contenedores y las imágenes originales. Restáuralo mediante Ajustes → Datos → Restaurar para mantener juntas esas dependencias.',
       '此完整备份包含货柜历史和原始图片。请通过设置 → 数据 → 恢复还原，以保持这些依赖关系完整。',

@@ -24,6 +24,7 @@ import {
   validatePreparationSuffixEdits,
   setGroupSizeMode,
   regeneratePreparationCode,
+  refreshPreparationMaterials,
 } from './packing-model.js'
 import { acknowledgePreparation, samePreparation } from './preparation-save.js'
 import {
@@ -343,6 +344,7 @@ export async function createProductAuthoring({
   }
   function preparedRows(rows) {
     const records = getRecords()
+    const materials = new Map()
     const costOrders = new Set(
       records.flatMap((record) => [
         ...(record.additionalCharges?.length ||
@@ -390,6 +392,26 @@ export async function createProductAuthoring({
           materialSource: 'suggested',
           groupId: row.entryId,
         }
+      const key = orderKey(match.prep)
+      if (!materials.has(key)) {
+        const refreshed = record
+          ? refreshPreparationMaterials(match.prep, record.snapshot)
+          : match.prep
+        materials.set(
+          key,
+          new Map(
+            refreshed.groups.flatMap((group) =>
+              group.variants.flatMap((variant) =>
+                variant.entryIds.map((entryId) => [
+                  entryId,
+                  variantMaterial(variant, entryId),
+                ])
+              )
+            )
+          )
+        )
+      }
+      const material = materials.get(key).get(row.entryId)
       let code = ''
       try {
         code = barcodeValue(match.group, match.variant)
@@ -407,8 +429,8 @@ export async function createProductAuthoring({
         sourceSize: match.variant.size,
         variantSuffix: match.variant.variantSuffix,
         sizeSuffix: match.variant.sizeSuffix,
-        material: variantMaterial(match.variant, row.entryId).value,
-        materialSource: variantMaterial(match.variant, row.entryId).source,
+        material: material.value,
+        materialSource: material.source,
         ...(match.group.sharedProductId
           ? {
               sharedProductId: match.group.sharedProductId,
@@ -824,6 +846,11 @@ export async function createProductAuthoring({
         el('p', row.name || row.description || row.entryId || row.orderId),
         code
       )
+      if (row.after === '' && row.baseCode)
+        card.append(
+          el('small', uiMessage('Product code')),
+          el('p', uiMessage('Map this variant size before generating labels'))
+        )
       if (row.supplierIdentity) {
         const identity = row.supplierIdentity
         card.append(
@@ -856,7 +883,17 @@ export async function createProductAuthoring({
     items.setAttribute('role', 'list')
     bindAttribute(items, 'aria-label', uiMessage('Review purchase-month codes'))
     for (const issue of review.issues || []) {
-      content.append(el('p', uiMessage(issue.message || issue)))
+      const notice = el(
+        'p',
+        uiMessage(
+          issue.code === 'PURCHASE_SIZE_REQUIRED'
+            ? 'Map this variant size before generating labels'
+            : issue.message || issue
+        )
+      )
+      if (issue.code) notice.dataset.issueCode = issue.code
+      content.append(notice)
+      if (issue.code === 'PURCHASE_SIZE_REQUIRED') continue
       const ref = orderRefs.find(
         (ref) => !issue.orderId || ref.orderId === issue.orderId
       )
@@ -1410,8 +1447,22 @@ export async function createProductAuthoring({
     if (ref.thumbnail) modal.append(media.photo(ref))
     const fields = []
     let resolveControl
+    const mappingStatus = el(
+      'p',
+      uiMessage('Map this variant size before generating labels'),
+      'size-mapping-status'
+    )
+    mappingStatus.setAttribute('role', 'status')
     status.id = `orders-authoring-status-${crypto.randomUUID()}`
     session.notify = (message) => {
+      const savedVariant = session.saved?.groups
+        .find((entry) => entry.id === group.id)
+        ?.variants.find((entry) => entry.id === variant.id)
+      mappingStatus.hidden = !(
+        variant.needsSizeMapping || savedVariant?.needsSizeMapping
+      )
+      if (mappingStatus.hidden) delete mappingStatus.dataset.issueCode
+      else mappingStatus.dataset.issueCode = 'SIZE_MAPPING_REQUIRED'
       bindText(status, uiMessage(message))
       if (!session.error) {
         for (const field of fields) {
@@ -1499,8 +1550,20 @@ export async function createProductAuthoring({
     add('Chinese category', group.category || '', (value) => {
       group.category = value
     })
-    add('Material', variantMaterial(variant, ref.entryId).value, (value) =>
-      setVariantMaterial(variant, value, [ref.entryId])
+    const materialPreparation = refreshPreparationMaterials(
+        session.draft,
+        recordFor(ref).snapshot
+      ),
+      materialVariant = materialPreparation.groups
+        .find((entry) => entry.id === group.id)
+        .variants.find((entry) => entry.id === variant.id)
+    const editorMaterial = variantMaterial(materialVariant, ref.entryId)
+    add(
+      'Material',
+      editorMaterial.source === 'manual'
+        ? editorMaterial.value
+        : translateMaterial(editorMaterial.value, getLanguage()),
+      (value) => setVariantMaterial(variant, value, [ref.entryId])
     )
     add('Product code', group.baseCode, (value) => {
       group.baseCode = value.toUpperCase()
@@ -1724,7 +1787,7 @@ export async function createProductAuthoring({
         })
         .catch((error) => bindText(status, uiMessage(error.message)))
     status.setAttribute('role', 'status')
-    modal.append(content, tools, status, undo, redo, close)
+    modal.append(content, tools, status, mappingStatus, undo, redo, close)
     modal.onclose = removeEditor
     document.body.append(modal)
     modal.showModal()
@@ -1869,6 +1932,24 @@ export async function createProductAuthoring({
         className: 'row-code-copy ce-code',
       })
       bar.append(copy)
+    } else if (projected.baseCode) {
+      const base = copyTextButton(projected.baseCode, {
+        label: uiMessage('Product code'),
+        className: 'row-base-code ce-code',
+      })
+      base.dataset.codeKind = 'product'
+      bar.append(base)
+    }
+    if (projected.needsSizeMapping) {
+      const warning = el(
+        'span',
+        uiMessage('Map this variant size before generating labels'),
+        'size-mapping-status'
+      )
+      warning.setAttribute('role', 'status')
+      warning.dataset.issueCode = 'SIZE_MAPPING_REQUIRED'
+      warning.dataset.entryId = row.entryId
+      bar.append(warning)
     }
     if (projected.spanishName)
       bar.append(el('span', projected.spanishName, 'spanish-name'))

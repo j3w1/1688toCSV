@@ -313,6 +313,7 @@ export function createProductOutput({
     )
     note.append(
       identity,
+      ...(context.outputSide === 'left-behind' ? [el('p', m('Se quedó'))] : []),
       el(
         'p',
         m(
