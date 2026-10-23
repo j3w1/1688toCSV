@@ -1859,6 +1859,36 @@ test('immutable manifest capture retains all rows and historical values despite 
   }, TypeError)
 })
 
+test('unsealed output captures its actual numeric draft revision without fabricating a sealed identity', () => {
+  const draft = {
+      ...view(),
+      revisionId: null,
+      revision: 4,
+      draft: true,
+      status: 'draft',
+    },
+    output = captureContainerOutput(draft)
+  assert.equal(output.revisionId, null)
+  assert.equal(output.revision, 4)
+  assert.equal(output.draft, true)
+  assert.equal(output.containerId, 'c1')
+  draft.products.push({ orderId: 'later', entryId: 'later' })
+  assert.equal(output.products.length, 0)
+  assert.throws(
+    () => captureContainerOutput({ ...draft, draft: false, status: 'sealed' }),
+    /complete container revision/
+  )
+  assert.throws(
+    () =>
+      captureContainerOutput({
+        ...draft,
+        revision: '4',
+        container: { ...draft.container, revision: '4' },
+      }),
+    /complete container revision/
+  )
+})
+
 test('shared-code labels retain separate source refs and exact source-line quantities', () => {
   const manifest = view()
   manifest.products = [
