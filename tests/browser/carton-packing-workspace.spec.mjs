@@ -199,11 +199,13 @@ test('shared codes retain each source capacity, unknown capacity remains visible
   await expect(unknown.locator('[data-column="proposedCount"]')).toContainText(
     '—'
   )
-  expect(
-    Object.values(
-      (await realOrderContext(extension, ref)).record.unitsPerCarton
-    ).map(String)
-  ).toEqual(['10', '12'])
+  await expect
+    .poll(async () =>
+      Object.values(
+        (await realOrderContext(extension, ref)).record.unitsPerCarton
+      ).map(String)
+    )
+    .toEqual(['10', '12'])
   await setCapacity(grid, ref, items[2], '20')
   await grid.locator('[data-action="confirm-order-cartons"]').click()
   await expect

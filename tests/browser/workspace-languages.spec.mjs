@@ -366,14 +366,67 @@ test('order metadata appears once per section and identical delivery statuses us
   await expect(page.getByRole('tooltip')).toContainText('Saved in this browser')
   const updated = rows.filter({ has: page.locator('.row-number') }).first()
   const saved = rows.last()
+  const keys = [
+    await updated.getAttribute('data-selection-key'),
+    await saved.getAttribute('data-selection-key'),
+  ]
+  const backgrounds = async (theme, selected) => {
+    let sample
+    await expect
+      .poll(async () => {
+        sample = await page.evaluate(
+          ({ keys, theme, selected }) => {
+            const all = [
+              ...document.querySelectorAll(
+                '#sheet-body tr[data-selection-key]'
+              ),
+            ]
+            const nodes = keys.map((key) =>
+              all.find((node) => node.dataset.selectionKey === key)
+            )
+            const states = nodes.map((node, index) => {
+              if (!node) return { ready: false }
+              const rect = node.getBoundingClientRect()
+              const background = getComputedStyle(node).backgroundColor
+              return {
+                background,
+                ready:
+                  node.isConnected &&
+                  document.contains(node) &&
+                  node.ownerDocument === document &&
+                  node.dataset.selectionKey === keys[index] &&
+                  rect.width > 0 &&
+                  rect.height > 0 &&
+                  background.length > 0 &&
+                  !node.matches(':hover') &&
+                  node.getAttribute('aria-selected') ===
+                    String(index === 0 && selected) &&
+                  node.querySelector('.row-number input[type="checkbox"]')
+                    ?.checked === (index === 0 && selected),
+              }
+            })
+            return {
+              ready:
+                all.length === 6 &&
+                document.querySelectorAll('.order-section-band').length === 2 &&
+                document.querySelector('meta[name="color-scheme"]')?.content ===
+                  theme &&
+                states.every((state) => state.ready),
+              colors: states.map((state) => state.background),
+            }
+          },
+          { keys, theme, selected }
+        )
+        return sample.ready
+      })
+      .toBe(true)
+    return sample.colors
+  }
   for (const theme of ['dark', 'light']) {
     if (theme === 'light') await page.locator('#theme-toggle').click()
     await page.mouse.move(0, 0)
-    expect(
-      await updated.evaluate((node) => getComputedStyle(node).backgroundColor)
-    ).toBe(
-      await saved.evaluate((node) => getComputedStyle(node).backgroundColor)
-    )
+    const unselected = await backgrounds(theme, false)
+    expect(unselected[0]).toBe(unselected[1])
     await updated.getByRole('checkbox').click()
     await page.mouse.move(0, 0)
     await expect(updated).toHaveAttribute('aria-selected', 'true')
@@ -383,11 +436,8 @@ test('order metadata appears once per section and identical delivery statuses us
         .locator('.row-number')
         .evaluate((node) => getComputedStyle(node, '::after').visibility)
     ).toBe('visible')
-    expect(
-      await updated.evaluate((node) => getComputedStyle(node).backgroundColor)
-    ).not.toBe(
-      await saved.evaluate((node) => getComputedStyle(node).backgroundColor)
-    )
+    const selected = await backgrounds(theme, true)
+    expect(selected[0]).not.toBe(selected[1])
     await updated.getByRole('checkbox').click()
     await expect(updated).toHaveAttribute('aria-selected', 'false')
   }

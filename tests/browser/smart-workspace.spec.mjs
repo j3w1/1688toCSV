@@ -25,13 +25,32 @@ test('operator enters Pcs/box once, reviews the prefilled remainder once and loa
     capacity = row.locator('[data-grid-column="capacity"]')
   await capacity.fill('45')
   await capacity.blur()
+  let committed
   await expect
-    .poll(async () =>
-      String(
-        (await realOrderContext(extension, ref)).record.unitsPerCarton['2001']
-      )
-    )
-    .toBe('45')
+    .poll(async () => {
+      committed = await realOrderContext(extension, ref)
+      const { record } = committed
+      return {
+        accountId: record.accountId || record.snapshot.accountId,
+        orderId: record.snapshot.orderId,
+        entryPresent: record.snapshot.items.some(
+          (item) => item.entryId === '2001'
+        ),
+        capacityOwn: Object.hasOwn(record.unitsPerCarton || {}, '2001'),
+        capacity: String(record.unitsPerCarton?.['2001']),
+        newRevision: committed.revisions.source !== before.revisions.source,
+      }
+    })
+    .toEqual({
+      accountId: ref.accountId,
+      orderId: ref.orderId,
+      entryPresent: true,
+      capacityOwn: true,
+      capacity: '45',
+      newRevision: true,
+    })
+  expect(committed.record.snapshot).toEqual(before.record.snapshot)
+  expect(committed.record.productPhotos).toEqual(before.record.productPhotos)
   await expect(row.locator('[data-column="proposedCount"]')).toContainText('2')
   await expect(row.locator('[data-column="unassigned"]')).toContainText('10')
   const separate = row.locator('[data-action="separate-order-remainder"]')
