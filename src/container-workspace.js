@@ -24,18 +24,21 @@ export function createContainerController({
     route,
     generation = 0,
     pending,
+    opening,
     review,
     error
   const intents = new Map()
   const loadingHistory = { past: [], future: [] }
   function notify() {
     onChange(view && clone(view), {
-      pending: Boolean(pending),
+      pending: Boolean(pending || opening),
       error,
       route: route && clone(route),
     })
   }
   function requireDraft() {
+    if (opening)
+      throw new Error('Wait for the current container operation to finish.')
     if (!view || route.revisionId || (!view.draft && !view.container.amendment))
       throw new Error(
         'Open a draft or amendment before changing loading decisions.'
@@ -44,19 +47,34 @@ export function createContainerController({
   async function open(id, revisionId) {
     const version = ++generation
     const nextRoute = { containerId: id, ...(revisionId ? { revisionId } : {}) }
-    const next = await repository.getContainerView({ id, revisionId })
-    if (version !== generation) return false
-    route = nextRoute
-    view = clone(next)
-    review = undefined
-    error = undefined
-    loadingHistory.past = []
-    loadingHistory.future = []
+    let finish
+    const idle = new Promise((resolve) => {
+        finish = resolve
+      }),
+      work = Promise.resolve().then(() =>
+        repository.getContainerView({ id, revisionId })
+      ),
+      entry = { work, idle }
+    opening = entry
     notify()
-    return true
+    try {
+      const next = await work
+      if (version !== generation) return false
+      route = nextRoute
+      view = clone(next)
+      review = undefined
+      error = undefined
+      loadingHistory.past = []
+      loadingHistory.future = []
+      return true
+    } finally {
+      if (opening === entry) opening = undefined
+      finish()
+      if (version === generation) notify()
+    }
   }
   async function mutate(name, args = {}, { draft = true } = {}) {
-    if (pending)
+    if (pending || opening)
       throw new Error('Wait for the current container operation to finish.')
     if (draft) requireDraft()
     if (!view) throw new Error('Choose a container first.')
@@ -140,9 +158,10 @@ export function createContainerController({
     open,
     view: () => view && clone(view),
     route: () => route && clone(route),
-    busy: () => Boolean(pending),
+    busy: () => Boolean(pending || opening),
     async flush() {
-      if (pending) await pending.idle
+      while (pending || opening)
+        await Promise.all([pending?.idle, opening?.idle])
     },
     setLoading: (decisions) =>
       loadCommand('setContainerLoading', { decisions }),
@@ -294,6 +313,7 @@ export function createContainerWorkspace({
     expandedOrders = new Set(),
     targetOrder,
     lastSelection
+  let selectorGeneration = 0
   const buttons = new Map(),
     tabButtons = []
   let painting = false
@@ -606,15 +626,22 @@ export function createContainerWorkspace({
     return output.copy(await selectedOutput(scope), format)
   }
   async function reloadContainers(preferred) {
+    const version = ++selectorGeneration,
+      currentRoute = controller.route()
     const containers = await repository.listContainers({})
-    const current = preferred || controller.route()?.containerId
+    if (version !== selectorGeneration) return
+    const current = preferred || currentRoute?.containerId
     selector.replaceChildren(
       new Option(tMessage('Choose container'), ''),
       ...containers.map((container) => new Option(container.name, container.id))
     )
     selector.value = current || ''
     if (current && containers.some((container) => container.id === current))
-      await open(current)
+      await open(
+        current,
+        !preferred ? currentRoute?.revisionId : undefined,
+        containers
+      )
     else {
       heading.replaceChildren(el('h2', m('Choose or create a named container')))
       orders.replaceChildren()
@@ -630,11 +657,25 @@ export function createContainerWorkspace({
     )
   revisions.onchange = () =>
     void open(selector.value, revisions.value || undefined).catch(failure)
-  async function open(id, revisionId) {
+  async function open(id, revisionId, knownContainers) {
+    const version = ++selectorGeneration
     await controller.flush()
+    if (version !== selectorGeneration) return
     selected.clear()
     expandedOrders.clear()
-    if (await controller.open(id, revisionId)) {
+    const [opened, containers] = await Promise.all([
+      controller.open(id, revisionId),
+      knownContainers
+        ? Promise.resolve(knownContainers)
+        : repository.listContainers({}),
+    ])
+    if (opened && version === selectorGeneration) {
+      selector.replaceChildren(
+        new Option(tMessage('Choose container'), ''),
+        ...containers.map(
+          (container) => new Option(container.name, container.id)
+        )
+      )
       selector.value = id
       onRoute({
         ...controller.route(),
@@ -1391,6 +1432,7 @@ export function createContainerWorkspace({
     selectAll,
     clearSelection,
     dispose() {
+      selectorGeneration++
       controller.dispose()
       copyMenu.destroy()
       printMenu.destroy()

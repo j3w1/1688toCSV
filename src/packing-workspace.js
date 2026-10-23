@@ -584,30 +584,51 @@ export async function startPackingWorkspace({
       for (const session of sessions.values()) session.dispose()
       containers.dispose()
       authoring.dispose()
+      removeEventListener('hashchange', routeChanged)
     },
     { once: true }
   )
   paint()
-  const hash = new URLSearchParams(location.hash.slice(1))
-  if (hash.get('workspace') === 'packing' && hash.get('containerId'))
-    await showPacking({
-      containerId: hash.get('containerId'),
-      revisionId: hash.get('revisionId') || undefined,
-      view: hash.get('view') || 'loading',
-    })
-  else if (
-    hash.get('workspace') === 'orders' &&
-    hash.get('view') === 'cartons' &&
-    hash.get('orderId')
-  )
-    await openOrder({
-      accountId: hash.get('accountId') || 'local',
-      orderId: hash.get('orderId'),
-    })
-  else if (hash.get('workspace') === 'orders' && hash.get('view') === 'backlog')
-    await showOrders('backlog')
-  else if (hash.get('workspace') === 'orders' && hash.get('view') === 'cartons')
-    await showOrders('cartons')
+  let pendingHash, routeWork
+  async function applyHash(hash) {
+    if (hash.get('workspace') === 'packing')
+      return showPacking({
+        containerId: hash.get('containerId'),
+        revisionId: hash.get('revisionId') || undefined,
+        view: hash.get('view') || 'loading',
+      })
+    if (
+      hash.get('workspace') === 'orders' &&
+      hash.get('view') === 'cartons' &&
+      hash.get('orderId')
+    )
+      return openOrder({
+        accountId: hash.get('accountId') || 'local',
+        orderId: hash.get('orderId'),
+      })
+    return showOrders(
+      ['cartons', 'backlog'].includes(hash.get('view'))
+        ? hash.get('view')
+        : 'products'
+    )
+  }
+  function followHash() {
+    pendingHash = new URLSearchParams(location.hash.slice(1))
+    if (!routeWork)
+      routeWork = (async () => {
+        while (pendingHash) {
+          const hash = pendingHash
+          pendingHash = undefined
+          await applyHash(hash)
+        }
+      })().finally(() => {
+        routeWork = undefined
+      })
+    return routeWork
+  }
+  const routeChanged = () => void followHash().catch(failure)
+  addEventListener('hashchange', routeChanged)
+  await followHash()
   return {
     ...authoring,
     copyLabels: output.copyLabels,

@@ -1517,6 +1517,7 @@ function setup() {
     fail = false,
     reviewWait
   const repository = {
+    listContainers: async () => [structuredClone(current.container)],
     getContainerView: async ({ id }) =>
       structuredClone({ ...current, container: { ...current.container, id } }),
     getContainerManifest: async () => current,
@@ -1641,6 +1642,62 @@ test('Packing filters only row facts and full logical selection spans the virtua
     host.querySelector('[data-selected-count]').dataset.selectedCount,
     '1'
   )
+  assert.equal(fixture.writes.length, 0)
+  workspace.dispose()
+})
+
+test('a pending container read blocks old-view loading decisions until the selected route has settled', async () => {
+  const fixture = setup(),
+    read = fixture.repository.getContainerView
+  let release
+  const wait = new Promise((resolve) => {
+    release = resolve
+  })
+  fixture.repository.getContainerView = async (args) => {
+    if (args.id === 'c2') await wait
+    return read(args)
+  }
+  await fixture.controller.open('c1')
+  const opening = fixture.controller.open('c2')
+  assert.equal(fixture.controller.busy(), true)
+  await assert.rejects(
+    fixture.controller.markAllLoaded(),
+    /Wait for the current container operation/
+  )
+  assert.equal(fixture.writes.length, 0)
+  release()
+  await opening
+  await fixture.controller.markAllLoaded()
+  assert.equal(fixture.writes[0].args.id, 'c2')
+})
+
+test('direct container routes populate the selector and preserve a historical revision on view refresh', async (testContext) => {
+  const { document } = dom(testContext),
+    fixture = setup(),
+    state = view()
+  state.draft = false
+  state.revisionId = 'c1-r1'
+  state.container.revisions = ['c1-r1']
+  fixture.setView(state)
+  const reads = [],
+    read = fixture.repository.getContainerView
+  fixture.repository.getContainerView = async (args) => {
+    reads.push(args)
+    return read(args)
+  }
+  const workspace = createContainerWorkspace({
+    host: document.getElementById('host'),
+    repository: fixture.repository,
+    output: {},
+  })
+  await workspace.open('c1', 'c1-r1')
+  assert.equal(
+    document.querySelector('[data-action="choose-container"]').value,
+    'c1'
+  )
+  await workspace.reload()
+  assert.equal(reads.at(-1).revisionId, 'c1-r1')
+  assert.equal(workspace.route().revisionId, 'c1-r1')
   assert.equal(fixture.writes.length, 0)
   workspace.dispose()
 })
