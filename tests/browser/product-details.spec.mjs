@@ -4,6 +4,8 @@ import {
   assignSelectedPurchaseCodes,
   editOrderProduct,
   closeOrderProduct,
+  openOrderReconciliation,
+  realOrderContext,
 } from './smart-workspace-helpers.mjs'
 
 async function workspace(
@@ -125,8 +127,8 @@ test('table attributes translate, copy dimension numbers without their unit and 
   await expectCopied(page, specifications.getByRole('button'), '14*65')
   await expect(row).toHaveAttribute('aria-selected', 'false')
   await expect(page.locator('.product-details-dialog')).toHaveCount(0)
-  await row.focus()
-  await row.press('Space')
+  await row.getByRole('checkbox').focus()
+  await row.getByRole('checkbox').press('Space')
   await specifications.getByRole('button').dblclick()
   await expect(row).toHaveAttribute('aria-selected', 'true')
   await expect(page.locator('.product-details-dialog')).toHaveCount(0)
@@ -332,16 +334,16 @@ test('translated product details never rewrite saved label names or original ord
   expect(after.preparations).toEqual(before.preparations)
 })
 
-test('original product and carton panels stay compact, always visible and usable in all three languages and narrow layouts', async ({
+test('original product carton context stays read-only, compact and translated at wide and narrow widths, with one Orders reconciliation route', async ({
   extension,
 }) => {
-  test.setTimeout(60_000)
-  const { page } = await workspace(extension)
-  const before = await backup(extension)
-  for (const [language, heading, source] of [
-    ['en', 'Carton details', 'Volume not set'],
-    ['es', 'Datos de la caja', 'Volumen sin definir'],
-    ['zh', '纸箱信息', '未填写体积'],
+  const { page, record } = await workspace(extension),
+    before = await backup(extension),
+    ref = { accountId: 'local', orderId: record.snapshot.orderId }
+  for (const [language, editLabel] of [
+    ['en', 'Edit cartons'],
+    ['es', 'Editar cajas'],
+    ['zh', '编辑装箱'],
   ]) {
     await page.locator(`#language-toggle [data-language=${language}]`).click()
     await page
@@ -349,73 +351,47 @@ test('original product and carton panels stay compact, always visible and usable
       .first()
       .press('Enter')
     const details = page.locator('.product-details-dialog'),
-      carton = details.locator('.product-carton-details')
+      carton = details.locator('.product-carton-batch-context')
+    await expect(carton).toBeVisible()
     await expect(
-      carton.getByRole('heading', { name: heading, exact: true })
+      carton.getByRole('button', { name: editLabel, exact: true })
     ).toBeVisible()
     await expect(details.locator('details, summary')).toHaveCount(0)
-    await expect(carton.locator('input')).toHaveCount(5)
-    await expect(carton.locator('input[name=cbm]')).toHaveCount(0)
-    await expect(carton.locator('.product-carton-volume-source')).toHaveText(
-      source
-    )
-    await carton.locator('input[name=boxes]').focus()
+    await expect(carton.locator('input,select,textarea,form')).toHaveCount(0)
     for (const theme of ['light', 'dark']) {
       await page.evaluate((theme) => {
         document.querySelector('meta[name="color-scheme"]').content = theme
       }, theme)
       for (const width of [1280, 390]) {
         await page.setViewportSize({ width, height: 960 })
-        await page.mouse.move(1, 1)
         const layout = await details.evaluate((dialog) => {
-          const panel = dialog.querySelector('.product-carton-details'),
+          const panel = dialog.querySelector('.product-carton-batch-context'),
             box = panel.getBoundingClientRect(),
-            summary = dialog
+            body = dialog
               .querySelector('.product-details-body')
               .getBoundingClientRect(),
             photo = dialog
               .querySelector('.product-photo-button')
-              .getBoundingClientRect(),
-            dimensions = [
-              ...panel.querySelectorAll(
-                '.product-carton-dimension-fields input'
-              ),
-            ].map((input) => input.getBoundingClientRect()),
-            save = panel.querySelector('[type=submit]').getBoundingClientRect()
+              .getBoundingClientRect()
           return {
             overflow:
               dialog.scrollWidth > dialog.clientWidth ||
               panel.scrollWidth > panel.clientWidth,
-            fullWidth: Math.abs(box.width - summary.width),
+            fullWidth: Math.abs(box.width - body.width),
             photo: { width: photo.width, height: photo.height },
-            dimensions: dimensions.map(({ left, top, right }) => ({
-              left,
-              top,
-              right,
-            })),
             box: { left: box.left, right: box.right },
-            save: { left: save.left, right: save.right },
-            controls: [...panel.querySelectorAll('input, button')].map(
-              (node) => {
-                const rect = node.getBoundingClientRect()
-                return { left: rect.left, right: rect.right }
-              }
-            ),
-            inputBorders: [...panel.querySelectorAll('input')].map(
-              (input) => getComputedStyle(input).borderTopWidth
-            ),
+            controls: [...panel.querySelectorAll('button')].map((node) => {
+              const { left, right } = node.getBoundingClientRect()
+              return { left, right }
+            }),
           }
         })
         expect(layout.overflow).toBe(false)
         expect(layout.fullWidth).toBeLessThanOrEqual(1)
         expect(layout.photo.width).toBeLessThanOrEqual(96)
         expect(layout.photo.height).toBe(layout.photo.width)
-        expect(layout.inputBorders).toEqual(Array(5).fill('0px'))
-        expect(
-          Math.max(...layout.dimensions.map(({ top }) => top)) -
-            Math.min(...layout.dimensions.map(({ top }) => top))
-        ).toBeLessThanOrEqual(1)
-        for (const control of [...layout.controls, layout.save]) {
+        expect(layout.controls).toHaveLength(1)
+        for (const control of layout.controls) {
           expect(control.left).toBeGreaterThanOrEqual(layout.box.left)
           expect(control.right).toBeLessThanOrEqual(layout.box.right)
         }
@@ -432,10 +408,25 @@ test('original product and carton panels stay compact, always visible and usable
     await details.locator('.product-details-heading > button').click()
     await expect(details).toHaveCount(0)
   }
+  await page.locator('#language-toggle [data-language=en]').click()
+  await page
+    .locator('#sheet-body tr[data-selection-key]')
+    .first()
+    .press('Enter')
+  const details = page.locator('.product-details-dialog')
+  await details
+    .getByRole('button', { name: 'Edit cartons', exact: true })
+    .click()
+  await expect(details).toHaveCount(0)
+  const grid = await openOrderReconciliation(page, ref)
+  await expect(
+    grid.locator('[data-action="confirm-order-cartons"]')
+  ).toBeVisible()
   expect((await backup(extension)).orders).toEqual(before.orders)
+  expect((await backup(extension)).cartonBatches).toEqual(before.cartonBatches)
 })
 
-test('carton details validate XYZ, retain read-only supplied volume and recover pending and failed writes', async ({
+test('one Orders physical draft validates complete XYZ, retains original supplied volume and retries an aborted whole confirmation without partial writes', async ({
   extension,
 }) => {
   const manual = '0.123456789123456789',
@@ -443,74 +434,97 @@ test('carton details validate XYZ, retain read-only supplied volume and recover 
       cartonDetails: { cbm: manual },
     }),
     entryId = record.snapshot.items[0].entryId,
-    before = await backup(extension)
-  await page
-    .locator('#sheet-body tr[data-selection-key]')
-    .first()
-    .press('Enter')
-  const details = page.locator('.product-details-dialog'),
-    carton = details.locator('.product-carton-details'),
-    input = (name) => carton.locator(`input[name=${name}]`),
-    save = carton.getByRole('button', {
-      name: 'Save carton details',
-      exact: true,
-    })
-  for (const name of ['len', 'wid', 'ht'])
-    await expect(input(name)).toHaveValue('')
-  await expect(input('cbm')).toHaveCount(0)
-  await expect(carton.locator('.product-carton-volume-value')).toHaveText(
+    ref = { accountId: 'local', orderId: record.snapshot.orderId },
+    id = 'synthetic-details-physical-carton'
+  await page.locator('#select-rows').click()
+  await assignSelectedPurchaseCodes(page)
+  // Explicit synthetic physical evidence, through the real public repository:
+  // one known carton contains this complete source row, independent of old defaults.
+  await extension.inspector.evaluate(
+    async ({ ref, id, entryId, manual }) => {
+      const repository = await window.testRepository,
+        context = await repository.getOrderReconciliation(ref)
+      await repository.saveOrderCartonFacts({
+        ...ref,
+        changes: [
+          {
+            after: {
+              ...ref,
+              id,
+              count: 1,
+              packingBasis: 'exact',
+              labelOrigin: 'internal',
+              contents: [
+                {
+                  orderId: ref.orderId,
+                  entryId,
+                  quantity: context.record.snapshot.items.find(
+                    (item) => item.entryId === entryId
+                  ).quantity,
+                },
+              ],
+              groups: [],
+              len: '',
+              wid: '',
+              ht: '',
+              weight: '',
+              weightBasis: 'carton',
+              suppliedCbm: manual,
+              volumeBasis: 'carton',
+              received: null,
+              loaded: null,
+              provenance: {
+                kind: 'manual-confirmed',
+                source: 'Synthetic physical carton',
+              },
+            },
+            expectedRevision: 0,
+          },
+        ],
+        expectedRevisions: context.revisions,
+        intentId: crypto.randomUUID(),
+      })
+    },
+    { ref, id, entryId, manual }
+  )
+  const before = await backup(extension),
+    grid = await openOrderReconciliation(page, ref, 'cartons'),
+    row = grid.locator(`tr[data-grid-key="${id}"]`),
+    dimensions = row.locator('[data-grid-column="dimensions"]'),
+    weight = row.locator('[data-grid-column="weight"]'),
+    confirm = grid.locator('[data-action="confirm-order-cartons"]')
+  await expect(dimensions).toHaveValue('')
+  await expect(weight).toHaveValue('')
+  await expect(row.locator('[data-grid-column="suppliedCbm"]')).toHaveValue(
     manual
   )
-  await expect(carton.locator('.product-carton-volume-source')).toHaveText(
-    'Supplied volume'
+  await dimensions.fill('58.5')
+  await dimensions.blur()
+  await expect(dimensions).toHaveAttribute('aria-invalid', 'true')
+  await confirm.click()
+  expect((await backup(extension)).cartonBatches).toEqual(before.cartonBatches)
+  await dimensions.fill('58.5×35.2×0')
+  await dimensions.blur()
+  await expect(dimensions).toHaveAttribute('aria-invalid', 'true')
+  expect((await backup(extension)).cartonBatches).toEqual(before.cartonBatches)
+  await weight.fill('0')
+  await weight.blur()
+  await dimensions.fill('58.5×35.2×47')
+  await dimensions.blur()
+  await expect(dimensions).not.toHaveAttribute('aria-invalid', 'true')
+  await expect(grid.locator('.reconciliation-summary')).toContainText(
+    '0.0967824'
   )
-  await expect(carton.locator('.product-carton-supplied')).toHaveText(
-    `Supplied volume: ${manual} m³ · read-only`
-  )
-  await carton
-    .getByRole('button', { name: 'Increase Cartons', exact: true })
-    .click()
-  await expect(input('boxes')).toHaveValue('1')
-  await carton
-    .getByRole('button', { name: 'Increase Cartons', exact: true })
-    .click()
-  await carton
-    .getByRole('button', { name: 'Decrease Cartons', exact: true })
-    .click()
-  await expect(input('boxes')).toHaveValue('1')
-  await input('kg').fill('0')
-  await save.click()
-  await expect(carton.locator('.product-carton-status')).toHaveText('Saved')
-  let saved = await backup(extension)
-  expect(saved.orders[0].cartonDetails[entryId]).toEqual({
-    boxes: '1',
-    kg: '0',
-    cbm: manual,
-  })
-  await input('len').fill('58.5')
-  await save.click()
-  await expect(input('wid')).toBeFocused()
-  expect(
-    await input('wid').evaluate((input) => input.validity.valueMissing)
-  ).toBe(true)
-  expect((await backup(extension)).orders).toEqual(saved.orders)
-  await input('wid').fill('35.2')
-  await input('ht').fill('0')
-  await save.click()
-  await expect(input('ht')).toBeFocused()
-  expect(await input('ht').evaluate((input) => input.validationMessage)).toBe(
-    'Carton dimensions must be greater than zero'
-  )
-  await page.evaluate(() => {
+  await page.evaluate((id) => {
     window.holdCartonSave = true
     window.failCartonSave = true
     window.cartonSaveStarted = false
     const put = IDBObjectStore.prototype.put
     IDBObjectStore.prototype.put = function (...args) {
-      const result = put.apply(this, args)
+      const request = put.apply(this, args)
       if (
-        this.name === 'orders' &&
-        args[0].cartonDetails &&
+        this.name === 'cartonBatches' &&
+        args[0]?.id === id &&
         window.holdCartonSave
       ) {
         window.cartonSaveStarted = true
@@ -521,73 +535,87 @@ test('carton details validate XYZ, retain read-only supplied volume and recover 
             if (window.failCartonSave) transaction.abort()
             return
           }
-          const request = store.get([
-            args[0].snapshot.accountId,
-            args[0].snapshot.orderId,
-          ])
-          request.onsuccess = keepAlive
+          store.get(id).onsuccess = keepAlive
         }
         keepAlive()
       }
-      return result
+      return request
     }
-  })
-  await input('ht').fill('47')
-  await save.click()
+  }, id)
+  await confirm.click()
   await expect
     .poll(() => page.evaluate(() => window.cartonSaveStarted))
     .toBe(true)
-  await expect(save).toBeDisabled()
-  await expect(details).toHaveAttribute('aria-busy', 'true')
-  await expect(carton.locator('.product-carton-volume-value')).toHaveText(
-    '0.0967824'
-  )
-  await expect(carton.locator('.product-carton-volume-source')).toHaveText(
-    'Calculated from dimensions'
-  )
-  await expect(carton.locator('.product-carton-supplied')).toHaveText(
-    `Supplied volume: ${manual} m³ · read-only`
-  )
-  for (const control of ['boxes', 'kg', 'len', 'wid', 'ht'])
-    await expect(input(control)).toBeEnabled()
+  await expect(confirm).toBeDisabled()
+  await expect(dimensions).toBeEnabled()
+  await expect(weight).toBeEnabled()
   await page.keyboard.press('Escape')
-  await expect(details).toBeVisible()
+  await expect(grid).toBeVisible()
   await page.evaluate(() => {
     window.holdCartonSave = false
   })
-  await expect(carton.locator('.product-carton-status')).toContainText(
-    'Your draft is still here.'
+  await expect(page.locator('.error-notice')).toBeVisible()
+  await expect(confirm).toBeEnabled()
+  await expect(dimensions).toHaveValue('58.5×35.2×47')
+  await expect(weight).toHaveValue('0')
+  expect((await backup(extension)).cartonBatches).toEqual(before.cartonBatches)
+  expect((await backup(extension)).orders).toEqual(before.orders)
+  expect(
+    JSON.stringify((await realOrderContext(extension, ref)).draft)
+  ).toContain('58.5×35.2×47')
+  await page.evaluate(() => {
+    window.failCartonSave = false
+  })
+  await confirm.click()
+  await expect
+    .poll(
+      async () =>
+        (await realOrderContext(extension, ref)).batches.find(
+          (batch) => batch.id === id
+        ).ht
+    )
+    .toBe('47')
+  const saved = (await realOrderContext(extension, ref)).batches.find(
+    (batch) => batch.id === id
   )
-  await expect(input('cbm')).toHaveCount(0)
-  await expect(carton.locator('.product-carton-volume-value')).toHaveText(
-    '0.0967824'
-  )
-  await expect(input('len')).toHaveValue('58.5')
-  await expect(input('ht')).toHaveValue('47')
-  await expect(save).toBeEnabled()
-  expect((await backup(extension)).orders).toEqual(saved.orders)
-  await save.click()
-  await expect(carton.locator('.product-carton-status')).toHaveText('Saved')
-  saved = await backup(extension)
-  expect(saved.orders[0].cartonDetails[entryId]).toEqual({
-    boxes: '1',
-    kg: '0',
-    cbm: manual,
+  expect(saved).toMatchObject({
+    id,
+    count: 1,
     len: '58.5',
     wid: '35.2',
     ht: '47',
+    weight: '0',
+    suppliedCbm: manual,
   })
-  expect(saved.orders[0].snapshot).toEqual(before.orders[0].snapshot)
-  for (const name of ['kg', 'len', 'wid', 'ht']) await input(name).fill('')
-  await expect(carton.locator('.product-carton-volume-value')).toHaveText(
-    manual
+  expect((await backup(extension)).orders).toEqual(before.orders)
+  await dimensions.fill('')
+  await dimensions.blur()
+  await weight.fill('')
+  await weight.blur()
+  await expect(grid.locator('.reconciliation-summary')).toContainText(manual)
+  await confirm.click()
+  await expect
+    .poll(
+      async () =>
+        (await realOrderContext(extension, ref)).batches.find(
+          (batch) => batch.id === id
+        ).weight
+    )
+    .toBe('')
+  const cleared = (await realOrderContext(extension, ref)).batches.find(
+    (batch) => batch.id === id
   )
-  await expect(carton.locator('.product-carton-volume-source')).toHaveText(
-    'Supplied volume'
-  )
-  await expect(carton.locator('.product-carton-status')).toHaveText('Saved')
+  expect(cleared).toMatchObject({
+    id,
+    count: 1,
+    len: '',
+    wid: '',
+    ht: '',
+    weight: '',
+    suppliedCbm: manual,
+  })
   expect((await backup(extension)).orders[0].cartonDetails[entryId]).toEqual({
-    boxes: '1',
     cbm: manual,
   })
+  expect((await backup(extension)).orders[0].snapshot).toEqual(record.snapshot)
 })

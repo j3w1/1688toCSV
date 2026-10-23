@@ -84,7 +84,11 @@ test('one large Orders group keeps full logical selection and every source varia
   await expect(rows).toHaveCount(100)
   await expect(page.locator('#sheet-body').locator('..')).toHaveAttribute(
     'aria-rowcount',
-    '251'
+    '252'
+  )
+  // The logical grid includes its column heading and the purchase heading.
+  await expect(page.locator('#sheet-body .order-section-heading')).toHaveCount(
+    1
   )
   const sourceKey = (item) =>
       JSON.stringify(['local', record.snapshot.orderId, item.entryId]),

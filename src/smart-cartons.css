@@ -95,6 +95,10 @@
 .smart-grid-scroll [data-column='code'] .ce-code {
   --ce-code-size: 16px;
 }
+.smart-grid-scroll .carton-reference-copy {
+  float: inline-end;
+  margin-inline-start: 1rem;
+}
 .container-workspace #container-content {
   flex: 1 1 0;
   min-inline-size: 0;
@@ -242,6 +246,10 @@
 }
 .purchase-code-review-items article > .photo-copy-tile {
   grid-row: span 4;
+}
+.purchase-code-review-items .preparation-photo {
+  inline-size: 96px;
+  block-size: 96px;
 }
 .purchase-code-review-items article p {
   margin: 0;

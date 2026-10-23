@@ -162,6 +162,8 @@ async function reviewLegacy(page, view) {
     )
   await review.getByRole('checkbox').first().check()
   await review.locator('[data-action="resolve-legacy-carton"]').click()
+  await expect(review).toContainText('Legacy evidence review saved')
+  await review.getByRole('button', { name: 'Close', exact: true }).click()
   await expect(review).toBeHidden()
 }
 async function group(page, operation, indices) {

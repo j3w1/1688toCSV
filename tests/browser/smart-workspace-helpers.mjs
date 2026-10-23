@@ -195,6 +195,32 @@ export async function libraryBackup(extension) {
   return result.data
 }
 
+/** Native extension downloads use the browser's real suggested filename. */
+export async function savedBrowserDownload(extension, download) {
+  let saved
+  await expect
+    .poll(async () => {
+      const files = await extension.inspector.evaluate(() =>
+        chrome.downloads.search({})
+      )
+      saved = files.find(
+        (file) => file.url === download.url() && file.state === 'complete'
+      )
+      return Boolean(saved?.filename)
+    })
+    .toBe(true)
+  return saved.filename
+}
+
+export async function clearOrderProductSelection(page) {
+  const clear = page.locator('#clear-rows')
+  if (await clear.isEnabled()) await clear.click()
+  await expect(clear).toBeDisabled()
+  await expect(
+    page.locator('#sheet-body .row-number input:checked')
+  ).toHaveCount(0)
+}
+
 /** Real operator code review; no shipment month or hidden preparation screen. */
 export async function assignSelectedPurchaseCodes(page) {
   await page.locator('#review-purchase-codes').click()
@@ -290,7 +316,7 @@ export async function realOrderContext(extension, ref) {
 }
 
 export async function shareOrderBarcode(page, indices = [0, 1]) {
-  await page.locator('#clear-rows').click()
+  await clearOrderProductSelection(page)
   const rows = page.locator('#sheet-body tr[data-selection-key]')
   for (const index of indices)
     await rows.nth(index).getByRole('checkbox').check()

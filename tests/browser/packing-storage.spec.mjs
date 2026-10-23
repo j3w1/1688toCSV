@@ -64,6 +64,10 @@ async function openTestDatabase(extension) {
     // An explicit pre-SEAL archive exercises grandfathered mixed-month
     // checkpoints. Ordinary v5 writes never perform a shipment-month move.
     window.restoreLegacyMonthFixture = async (source) => {
+      await window.saveSyntheticSource(source, library)
+      const originalRecord = await library.getOrder(source.orderId, {
+        accountId: source.accountId || 'local',
+      })
       const initial = packingModel.allocatePreparation(
         { ...packingModel.createPreparation(source, '2026-10'), revision: 1 },
         [],
@@ -90,7 +94,7 @@ async function openTestDatabase(extension) {
         format: '1688-order-library',
         version: 4,
         exportedAt: '2026-10-22T12:00:00.000Z',
-        orders: [{ snapshot: source, changedEntryIds: [] }],
+        orders: [originalRecord],
         history: [],
         images: [],
         cartonBatches: [],

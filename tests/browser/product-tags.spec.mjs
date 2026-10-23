@@ -9,6 +9,7 @@ async function openWorkspace(extension, { sharedProduct = false } = {}) {
   const [record] = await extension.inspector.evaluate(
     `(${createDemoRecords.toString()})(document)`
   )
+  record.snapshot.sellerMemberLogin = 'synthetic-product-tags'
   if (sharedProduct) {
     record.snapshot.sellerMemberLogin = 'synthetic-product-tags'
     record.snapshot.sellerShopOrigin = 'https://synthetic-product-tags.1688.com'
@@ -336,12 +337,11 @@ test('shared packing barcode edits tags per original product and saves typed tag
     .getByRole('button', { name: 'Close product details', exact: true })
     .click()
   await expect(details).toHaveCount(0)
-  await expect(view.locator('.row-preparation')).not.toContainText(
-    'First original'
-  )
-  await expect(view.locator('.row-preparation')).not.toContainText(
-    'Second original'
-  )
+  await expect(view.locator('.row-preparation')).toHaveCount(3)
+  for (const row of await view.locator('.row-preparation').all()) {
+    await expect(row).not.toContainText('First original')
+    await expect(row).not.toContainText('Second original')
+  }
   const backup = await extension.inspector.evaluate(() =>
     chrome.runtime.sendMessage({ type: 'BACKUP_EXPORT' })
   )

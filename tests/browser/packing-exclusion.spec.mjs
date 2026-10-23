@@ -225,8 +225,17 @@ test('missing supplier identity blocks assignment until explicit authored eviden
     before = await backup(extension)
   await page.locator('#select-rows').click()
   await page.locator('#review-purchase-codes').click()
-  await expect(page.locator('.error-notice')).toBeVisible()
+  const blockedReview = page.locator('[data-action="purchase-code-review"]')
+  await expect(blockedReview).toContainText(
+    'Resolve the original supplier identity'
+  )
+  await expect(
+    blockedReview.locator('[data-action="assign-purchase-codes"]')
+  ).toBeDisabled()
   expect((await backup(extension)).issuedCodes).toEqual(before.issuedCodes)
+  await blockedReview
+    .getByRole('button', { name: 'Cancel', exact: true })
+    .click()
   const modal = await evidence(page, rows.first())
   await modal
     .getByLabel('Authored supplier identity', { exact: true })
