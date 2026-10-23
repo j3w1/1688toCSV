@@ -6,6 +6,7 @@ import {
   libraryBackup,
   editOrderProduct,
   closeOrderProduct,
+  revealOrderCard,
 } from './smart-workspace-helpers.mjs'
 import { revealCopyActions } from './copy-actions-helpers.mjs'
 
@@ -67,18 +68,57 @@ test('stable container ordering survives reload and copy without rewriting codes
     'clipboard-write',
   ])
   for (const row of await rows.all()) await row.getByRole('checkbox').check()
+  await revealCopyActions(page)
   await view.locator('[data-action="copy-values"]').click()
   await expect(view.locator('[data-action="copy-values"]')).toContainText(
     'Copied'
   )
-  const copied = (
-    await page.evaluate(() => navigator.clipboard.readText())
-  ).split('\r\n')
-  expect(copied).toHaveLength(9)
+  const values = (await page.evaluate(() => navigator.clipboard.readText()))
+    .split('\r\n')
+    .map((row) => row.split('\t'))
+  expect(values).toHaveLength(9)
   for (const [index, product] of frozen.products.entries()) {
-    expect(copied[index]).toContain(product.barcode)
-    expect(copied[index]).toContain(product.loadedQuantity || product.quantity)
+    expect(values[index]).toEqual([
+      '',
+      product.description.replace(/[\t\r\n]+/g, ' · '),
+      product.price,
+      product.quantity,
+      product.discount,
+    ])
+    expect(values[index].slice(2)).toEqual(['2.00', '100', '0.00'])
   }
+  await revealCopyActions(page)
+  const groupCopy = view.locator('[data-action="copy-group-codes"]')
+  await expect(groupCopy).toHaveAccessibleName('Copy group codes')
+  await groupCopy.click()
+  await expect(groupCopy).toContainText('Copied')
+  expect(
+    (await page.evaluate(() => navigator.clipboard.readText())).split('\r\n')
+  ).toEqual([...new Set(frozen.products.map((product) => product.baseCode))])
+  await revealCopyActions(page)
+  await view.getByRole('button', { name: 'Copy columns', exact: true }).click()
+  const picker = page.locator('.preparation-column-dialog')
+  await picker
+    .getByRole('button', { name: 'Clear columns', exact: true })
+    .click()
+  for (const name of ['Barcode', 'Quantity'])
+    await picker.getByRole('checkbox', { name, exact: true }).check()
+  await picker.getByRole('checkbox', { name: 'Headers', exact: true }).uncheck()
+  await picker
+    .getByRole('button', { name: 'Copy chosen columns', exact: true })
+    .click()
+  await expect(
+    picker.getByRole('button', { name: 'Copied', exact: true })
+  ).toBeVisible()
+  const copied = (await page.evaluate(() => navigator.clipboard.readText()))
+    .split('\r\n')
+    .map((row) => row.split('\t'))
+  expect(copied).toEqual(
+    frozen.products.map((product) => [
+      product.barcode,
+      product.loadedQuantity || product.quantity,
+    ])
+  )
   expect(await manifest(extension, id)).toEqual(frozen)
   const after = await libraryBackup(extension)
   expect(after.preparations).toEqual(before.preparations)
@@ -89,10 +129,11 @@ test('stable container ordering survives reload and copy without rewriting codes
 test('header Escape and Orders selection shortcuts remain independent from native text selection', async ({
   extension,
 }) => {
-  const { page, view } = await setup(extension)
+  const { page, view, refs } = await setup(extension)
   await page.locator('#theme-toggle').focus()
   await page.keyboard.press('Escape')
   await expect(page.locator('#orders-view')).toBeVisible()
+  await revealOrderCard(page, refs[0])
   const orders = page.locator('#order-list [data-selection-key]')
   await orders.first().focus()
   await page.keyboard.press('Control+a')
@@ -135,12 +176,16 @@ test('source links open the exact purchase and preserve independent product sele
 }) => {
   const { page, refs } = await setup(extension)
   await page.locator('#view-orders').click()
+  const card = await revealOrderCard(page, refs[0])
   const rows = page.locator('#sheet-body tr[data-selection-key]')
   await rows.first().getByRole('checkbox').check()
   const selected = await rows
     .locator('input[type="checkbox"]')
     .evaluateAll((nodes) => nodes.map((node) => node.checked))
-  const link = rows.first().locator('.order-source-link')
+  await expect(page.locator('#sheet-body .order-source-link')).toHaveCount(3)
+  const link = page.locator(
+    `#sheet-body .order-source-link[href$="orderId=${refs[0].orderId}"]`
+  )
   await expect(link).toHaveAttribute(
     'href',
     new RegExp(`orderId=${refs[0].orderId}$`)
@@ -163,11 +208,7 @@ test('source links open the exact purchase and preserve independent product sele
       .evaluateAll((nodes) => nodes.map((node) => node.checked))
   ).toEqual(selected)
   await expect(page.locator('#order-list .order-source-link')).toHaveCount(0)
-  await page
-    .locator(
-      `.order-card[data-order-id="${refs[0].orderId}"] .order-details-trigger`
-    )
-    .click()
+  await card.locator('.order-details-trigger').click()
   await expect(
     page.locator('#order-details .order-source-link')
   ).toHaveAttribute('href', new RegExp(`orderId=${refs[0].orderId}$`))
