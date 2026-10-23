@@ -113,6 +113,10 @@ test('copy column choices and Headers survive copying, reopening and a page relo
     .getByRole('button', { name: 'Copy preparation columns', exact: true })
     .click()
   const columns = page.locator('.preparation-column-dialog')
+  await expect(columns).toHaveRole('dialog')
+  await expect(columns).toHaveAccessibleName(
+    /^Copy (?:selected|container|\d+) product rows$/
+  )
   const chosen = ['Product code', 'Barcode', 'Quantity']
   const excluded = [
     'Description',
@@ -208,6 +212,10 @@ test('chosen size columns preserve source dimensions and separate saved barcode 
     .getByRole('button', { name: 'Copy preparation columns', exact: true })
     .click()
   const columns = page.locator('.preparation-column-dialog')
+  await expect(columns).toHaveRole('dialog')
+  await expect(columns).toHaveAccessibleName(
+    /^Copy (?:selected|container|\d+) product rows$/
+  )
   for (const name of ['Size', 'Size code']) {
     await expect(
       columns.getByRole('checkbox', { name, exact: true })
@@ -292,6 +300,10 @@ test('chosen columns search, keyboard selection and paste order persist with tra
   await revealCopyActions(page)
   await page.locator('#copy-preparation').click()
   const columns = page.locator('.preparation-column-dialog')
+  await expect(columns).toHaveRole('dialog')
+  await expect(columns).toHaveAccessibleName(
+    /^Copy (?:selected|container|\d+) product rows$/
+  )
   const search = columns.getByRole('combobox', { name: 'Search columns' })
   const copy = columns.getByRole('button', {
     name: 'Copy chosen columns',
