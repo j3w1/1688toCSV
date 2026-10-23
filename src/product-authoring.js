@@ -115,7 +115,9 @@ function inlineField(
   if (multiline) {
     const textarea = el('textarea')
     textarea.id = input.id
-    textarea.value = input.value
+    // Text inputs strip line breaks before a textarea can receive them.
+    // Preserve the authored/source value when mounting multiline controls.
+    textarea.value = value ?? ''
     textarea.rows = 2
     textarea.addEventListener('input', (event) => {
       if (!event.isComposing) change(textarea.value)

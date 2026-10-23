@@ -185,8 +185,7 @@ const aggregate = () => ({
     { item: 2, quantity: '30' },
   ],
 })
-const row = (grid, id = 'synthetic-physical-0') =>
-  grid.locator(`tr[data-grid-key="${id}"]`)
+const row = (grid, id) => grid.locator(`tr[data-grid-key="${id}"]`)
 async function stage(grid, column, value, id) {
   const input = row(grid, id).locator(`[data-grid-column="${column}"]`)
   await input.fill(value)
@@ -210,7 +209,9 @@ test('confirmed six-carton aggregate retains S/M/L source totals, truthful unkno
     'CE26101001L',
   ])
   await grid.locator('[data-action="reconciliation-cartons"]').click()
-  await expect(row(grid).locator('[data-column="count"]')).toContainText('6')
+  await expect(
+    row(grid, batch.id).locator('[data-column="count"]')
+  ).toContainText('6')
   await expect(grid.locator('.reconciliation-summary')).toContainText('57.2202')
   await expect(grid.locator('.reconciliation-summary')).toContainText('0.18')
   expect(batch.contents).toEqual(
@@ -302,22 +303,23 @@ test('an order draft pastes exact dimensions and preserves high precision, zero 
       defaults: { kg: '0', cbm: '0.2' },
     }),
     ref = refFor(record)
-  await physicalFixture(extension, record, [
+  const context = await physicalFixture(extension, record, [
     { weight: '0', suppliedCbm: '0.2', contents: [{ item: 0, quantity: '3' }] },
   ])
-  const before = await backup(extension)
+  const batchId = context.batches[0].id,
+    before = await backup(extension)
   let grid = await openOrderReconciliation(page, ref, 'cartons')
-  await expect(row(grid).locator('[data-grid-column="weight"]')).toHaveValue(
-    '0'
-  )
-  await stage(grid, 'dimensions', '40,5 × 30 × 25')
-  await stage(grid, 'weight', '1,23456789123456789')
+  await expect(
+    row(grid, batchId).locator('[data-grid-column="weight"]')
+  ).toHaveValue('0')
+  await stage(grid, 'dimensions', '40,5 × 30 × 25', batchId)
+  await stage(grid, 'weight', '1,23456789123456789', batchId)
   expect((await backup(extension)).cartonBatches).toEqual(before.cartonBatches)
   await page.reload()
   grid = await openOrderReconciliation(page, ref, 'cartons')
-  await expect(row(grid).locator('[data-grid-column="weight"]')).toHaveValue(
-    '1,23456789123456789'
-  )
+  await expect(
+    row(grid, batchId).locator('[data-grid-column="weight"]')
+  ).toHaveValue('1,23456789123456789')
   await grid.locator('[data-action="confirm-order-cartons"]').click()
   await expect
     .poll(
@@ -344,10 +346,13 @@ test('final dimension edits persist in the single order draft across close/reloa
 }) => {
   const { page, record } = await seed(extension),
     ref = refFor(record)
-  await physicalFixture(extension, record, [{ ...aggregate(), weight: '' }])
+  const context = await physicalFixture(extension, record, [
+      { ...aggregate(), weight: '' },
+    ]),
+    batchId = context.batches[0].id
   const before = await backup(extension)
   let grid = await openOrderReconciliation(page, ref, 'cartons')
-  await row(grid).locator('[data-column="label"]').click()
+  await row(grid, batchId).locator('[data-column="label"]').click()
   const detail = page.locator('[data-action="inspect-order-carton"]')
   await detail
     .getByLabel('Dimensions (cm)', { exact: true })
@@ -358,7 +363,7 @@ test('final dimension edits persist in the single order draft across close/reloa
   await page.reload()
   grid = await openOrderReconciliation(page, ref, 'cartons')
   await expect(
-    row(grid).locator('[data-grid-column="dimensions"]')
+    row(grid, batchId).locator('[data-grid-column="dimensions"]')
   ).toHaveValue('40 × 30 × 26,125')
   for (const width of [1440, 1000, 390]) {
     await page.setViewportSize({ width, height: 1000 })
@@ -411,6 +416,7 @@ test('numbered cartons retain exact cross-code minority contents and independent
         contents: [{ item: 0, quantity: '1' }],
       },
     ]),
+    batchId = context.batches.find((batch) => batch.cartonNumber === '001').id,
     before = await backup(extension)
   const sourceTile = page
       .locator('#sheet-body tr[data-selection-key]')
@@ -433,7 +439,7 @@ test('numbered cartons retain exact cross-code minority contents and independent
     true
   )
   const grid = await openOrderReconciliation(page, ref, 'cartons')
-  await row(grid).locator('[data-column="label"]').click()
+  await row(grid, batchId).locator('[data-column="label"]').click()
   const details = page.locator('[data-action="inspect-order-carton"]')
   await details.locator('[data-carton-identity="reference"]').fill('0001')
   await details
@@ -441,7 +447,7 @@ test('numbered cartons retain exact cross-code minority contents and independent
     .selectOption(context.preparation.groups[1].id)
   await details.getByRole('button', { name: 'Close', exact: true }).click()
   expect((await backup(extension)).cartonBatches).toEqual(before.cartonBatches)
-  await row(grid).locator('[data-grid-column="dimensions"]').focus()
+  await row(grid, batchId).locator('[data-grid-column="dimensions"]').focus()
   await grid.locator('[data-action="select-grid-rows"]').click()
   await grid.locator('[data-action="fill-grid-range"]').click()
   const alignment = page.locator('.grid-paste-preview')
@@ -455,13 +461,18 @@ test('numbered cartons retain exact cross-code minority contents and independent
     .poll(
       async () =>
         (await realOrderContext(extension, ref)).batches.find(
-          (batch) => batch.id === 'synthetic-physical-0'
+          (batch) => batch.id === batchId
         ).cartonNumber
     )
     .toBe('0001')
   const after = await backup(extension),
-    batches = after.cartonBatches.sort((a, b) => a.id.localeCompare(b.id))
+    batches = after.cartonBatches.sort((a, b) =>
+      a.cartonNumber.localeCompare(b.cartonNumber)
+    )
   expect(batches).toHaveLength(3)
+  expect(batches.map((batch) => batch.id).sort()).toEqual(
+    context.batches.map((batch) => batch.id).sort()
+  )
   expect(batches.map((batch) => batch.weight)).toEqual([
     '9.53',
     '11.25',
@@ -469,7 +480,7 @@ test('numbered cartons retain exact cross-code minority contents and independent
   ])
   expect(batches.map((batch) => batch.contents)).toEqual(
     before.cartonBatches
-      .sort((a, b) => a.id.localeCompare(b.id))
+      .sort((a, b) => a.cartonNumber.localeCompare(b.cartonNumber))
       .map((batch) => batch.contents)
   )
   expect(

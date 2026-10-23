@@ -193,7 +193,7 @@ test('same-revision monthly packing restores combine disjoint products and remai
     // Restore an explicit pre-SEAL mixed-month archive; a current v5 authoring
     // save cannot create a shipment-month code rewrite.
     const prior = await library.exportBackup(),
-      state = model.activePackingState([prepared], { orders: prior.orders })
+      state = model.activePackingState([prepared], [], [])
     library.close()
     window.library = await openDatabase({
       name: `legacy-monthly-backup-${crypto.randomUUID()}`,

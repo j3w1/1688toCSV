@@ -243,6 +243,10 @@
 .purchase-code-review-items article > .photo-copy-tile {
   grid-row: span 4;
 }
+.purchase-code-review-items .preparation-photo {
+  inline-size: 96px;
+  block-size: 96px;
+}
 .purchase-code-review-items article p {
   margin: 0;
 }
