@@ -211,7 +211,10 @@ test('atomic v5 scoped export retains the exact cross-purchase graph and disclos
     for (const field of ['cartonBatches', 'images'])
       expect(archive[field], field).toEqual(result.before[field])
   }
-  expect(result.partial.requestedPackingScope).toEqual(scope)
+  expect(result.partial.requestedPackingScope).toEqual({
+    ...scope,
+    mode: 'selection',
+  })
   expect(result.partial.dependencyOrderRefs).toEqual([dependency])
   expect(result.full.requestedPackingScope.orders).toEqual([
     requested,
@@ -274,7 +277,10 @@ test('a zero-piece carton-mark owner retains the complete v5 carton dependency a
     validateBackup(legacy)
     return { partial, legacy, before }
   })
-  expect(result.partial.requestedPackingScope).toEqual(scope)
+  expect(result.partial.requestedPackingScope).toEqual({
+    ...scope,
+    mode: 'selection',
+  })
   expect(result.partial.dependencyOrderRefs).toEqual([dependency])
   expect(
     result.partial.orders.map((order) => [
@@ -334,7 +340,7 @@ test('Back up packing downloads a self-contained archive with separate requested
     new File([await readFile(downloaded.filename)], 'synthetic-packing.json.gz')
   )
   expect(archive.version).toBe(5)
-  expect(archive.requestedPackingScope).toEqual(scope)
+  expect(archive.requestedPackingScope).toEqual({ ...scope, mode: 'selection' })
   expect(archive.dependencyOrderRefs).toEqual([dependency])
   expect(archive.packingScope).toBeUndefined()
   expect(archive.omittedCartonBatchIds || []).toEqual([])

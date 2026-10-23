@@ -354,6 +354,9 @@
   inline-size: 14px;
   block-size: 14px;
 }
+#orders-view .order-card-identity {
+  min-block-size: 26px;
+}
 @media (pointer: coarse) {
   #orders-view .order-card > input[type='checkbox'] {
     inline-size: 2rem;
