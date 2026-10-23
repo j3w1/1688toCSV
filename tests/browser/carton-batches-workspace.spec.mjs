@@ -519,6 +519,45 @@ test('numbered cartons retain exact cross-code minority contents and independent
       .map((batch) => batch.contents[0].quantity)
       .sort()
   ).toEqual(['1', '2'])
+  // Selecting another logical owner cannot attest that an existing physical
+  // label was replaced. Confirm that actual change in the one Orders review.
+  const pending = (await realOrderContext(extension, ref)).batches.find(
+    (batch) => batch.id === batchId
+  )
+  expect(pending.physicalMarkCode).toBe(context.preparation.groups[0].baseCode)
+  expect(pending.currentProductCode).toBe(
+    context.preparation.groups[1].baseCode
+  )
+  expect(pending.physicalMarkResolutionRequired).toBe(true)
+  await row(grid, batchId)
+    .locator('[data-action="review-carton-physical-mark"]')
+    .click()
+  const markReview = page.locator('[data-action="review-physical-mark"]')
+  await markReview.locator('[data-choice="relabel-reprint"]').check()
+  await markReview
+    .locator('[data-action="physical-mark-reason"]')
+    .fill(
+      'The independent mark was printed and physically applied to carton 0001'
+    )
+  await expect(
+    markReview.locator('[data-action="save-physical-mark-decision"]')
+  ).toBeDisabled()
+  await markReview.locator('[data-action="confirm-physical-relabel"]').check()
+  await markReview
+    .locator('[data-action="save-physical-mark-decision"]')
+    .click()
+  await expect(markReview).toBeHidden()
+  const relabeled = (await realOrderContext(extension, ref)).batches.find(
+    (batch) => batch.id === batchId
+  )
+  expect(relabeled.physicalMark).toMatchObject({
+    originalCode: context.preparation.groups[0].baseCode,
+    code: context.preparation.groups[1].baseCode,
+    resolution: { choice: 'relabel-reprint', physicalRelabelConfirmed: true },
+  })
+  expect(relabeled.contents).toEqual(pending.contents)
+  expect(relabeled.weight).toBe('9.53')
+  expect((await backup(extension)).preparations).toEqual(before.preparations)
   await createContainerThroughUI(page, [ref], 'Synthetic independent marks')
   await page.locator('[data-action="mark-all-loaded"]').click()
   await page.locator('#packing-view [data-action="open-print-menu"]').click()
