@@ -1716,7 +1716,18 @@ export async function createOrderCartonSession({
         !arrangementDirty &&
         !commandCursor
       )
-        context = latest
+        context = {
+          ...latest,
+          recoveredDrafts: [
+            ...new Map(
+              [
+                ...(latest.recoveredDrafts || []),
+                ...(context.recoveredDrafts || []),
+                ...clientRecovered,
+              ].map((envelope) => [JSON.stringify(envelope), envelope])
+            ).values(),
+          ],
+        }
       latestContext = latest
       notify('refresh')
     },

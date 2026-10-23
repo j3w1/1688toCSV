@@ -1036,6 +1036,7 @@ test('reloading a draft after a foreign physical revision requires review and pr
   fixture.context.revisions.cartons[fixture.batch.id] = 2
   session = await fixture.create()
   assert.equal(session.rawCell(fixture.batch.id, 'weight'), '6')
+  await session.refresh()
   assert.equal(session.recoveredDrafts().length, 1)
   assert.ok(
     Object.values(session.recoveredDrafts()[0].value.rawCells).includes('-')
