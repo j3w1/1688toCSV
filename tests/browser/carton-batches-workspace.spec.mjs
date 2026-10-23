@@ -555,8 +555,38 @@ test('numbered cartons retain exact cross-code minority contents and independent
     code: context.preparation.groups[1].baseCode,
     resolution: { choice: 'relabel-reprint', physicalRelabelConfirmed: true },
   })
-  expect(relabeled.contents).toEqual(pending.contents)
-  expect(relabeled.weight).toBe('9.53')
+  for (const field of [
+    'cartonNumber',
+    'count',
+    'contents',
+    'received',
+    'loaded',
+    'len',
+    'wid',
+    'ht',
+    'weight',
+    'weightBasis',
+    'volumeBasis',
+    'suppliedCbm',
+    'unitContents',
+    'sourceFacts',
+  ])
+    expect(relabeled[field], field).toEqual(pending[field])
+  expect(relabeled.physicalMark.originalArtwork).toEqual(
+    pending.physicalMark.originalArtwork
+  )
+  expect(relabeled.physicalMark.history).toEqual(
+    expect.arrayContaining([
+      expect.objectContaining({
+        kind: 'resolution',
+        code: context.preparation.groups[0].baseCode,
+        resolution: expect.objectContaining({
+          choice: 'relabel-reprint',
+          physicalRelabelConfirmed: true,
+        }),
+      }),
+    ])
+  )
   expect((await backup(extension)).preparations).toEqual(before.preparations)
   await createContainerThroughUI(page, [ref], 'Synthetic independent marks')
   await page.locator('[data-action="mark-all-loaded"]').click()
@@ -571,5 +601,10 @@ test('numbered cartons retain exact cross-code minority contents and independent
     'Quantity for CE26101002'
   )
   await expect(print.getByLabel(/^Quantity for /)).toHaveValue('3')
-  expect((await backup(extension)).orders[0].snapshot).toEqual(record.snapshot)
+  const outputState = await backup(extension)
+  expect(outputState.orders[0].snapshot).toEqual(record.snapshot)
+  expect(outputState.orders[0].productPhotos).toEqual(
+    before.orders[0].productPhotos
+  )
+  expect(outputState.images).toEqual(before.images)
 })
