@@ -67,12 +67,28 @@ test('stable container ordering survives reload and copy without rewriting codes
     'clipboard-read',
     'clipboard-write',
   ])
+  await page.bringToFront()
+  await expect.poll(() => page.evaluate(() => document.hasFocus())).toBe(true)
   for (const row of await rows.all()) await row.getByRole('checkbox').check()
   await revealCopyActions(page)
   await view.locator('[data-action="copy-values"]').click()
-  await expect(view.locator('[data-action="copy-values"]')).toContainText(
-    'Copied'
-  )
+  try {
+    await expect(view.locator('[data-action="copy-values"]')).toContainText(
+      'Copied'
+    )
+  } catch (error) {
+    const diagnostic = await page.evaluate(() => ({
+      focused: document.hasFocus(),
+      errors: [...document.querySelectorAll('.error-notice')].map(
+        (node) => node.textContent
+      ),
+      statuses: [
+        ...document.querySelectorAll('#container-content [role="status"]'),
+      ].map((node) => node.textContent),
+    }))
+    console.log('Packing copy failure diagnostic:', JSON.stringify(diagnostic))
+    throw error
+  }
   const values = (await page.evaluate(() => navigator.clipboard.readText()))
     .split('\r\n')
     .map((row) => row.split('\t'))
