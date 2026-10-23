@@ -1593,10 +1593,12 @@ export async function startLibrary(
         const cartons = node('button', uiMessage('Reconcile cartons'))
         cartons.dataset.action = 'open-order-cartons'
         cartons.onclick = () =>
-          packing?.openOrder({
-            accountId: record.accountId || 'local',
-            orderId: order.orderId,
-          })
+          void packing
+            ?.openOrder({
+              accountId: record.accountId || 'local',
+              orderId: order.orderId,
+            })
+            .catch((error) => feedback(error.message, true))
         card.prepend(orderCheck)
         card.append(cartons)
         card.onclick = (event) => {

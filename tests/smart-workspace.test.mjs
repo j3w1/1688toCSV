@@ -22,6 +22,8 @@ import {
   mountCartonHistory,
   createOrderCartonSession,
   openLegacyCartonReview,
+  captureGridTarget,
+  PRODUCT_GRID_COLUMNS,
 } from '../src/order-carton-grid.js'
 import * as actualPlanner from '../src/carton-reconciliation.js'
 import { applyCartonUnitException } from '../src/carton-batches.js'
@@ -728,6 +730,21 @@ function exceptionSessionFixture(options = {}) {
       confirmed.push(structuredClone(args))
       return {}
     },
+    async updateOrderCapacities({ values, expectedValues }) {
+      record.unitsPerCarton ||= {}
+      for (const [entryId, value] of Object.entries(values)) {
+        assert.equal(
+          record.unitsPerCarton[entryId] ?? null,
+          expectedValues[entryId]
+        )
+        if (value === null) delete record.unitsPerCarton[entryId]
+        else record.unitsPerCarton[entryId] = value
+      }
+      return {
+        record: structuredClone(record),
+        revisions: structuredClone(context.revisions),
+      }
+    },
   }
   return {
     record,
@@ -746,6 +763,35 @@ function exceptionSessionFixture(options = {}) {
       }),
   }
 }
+
+test('compound capacity Undo replays its known baseline even when the retained textarea still needs a new paste preview', async (testContext) => {
+  const fixture = exceptionSessionFixture(),
+    session = await fixture.create(),
+    rows = session.projection().products,
+    state = session.state(),
+    target = captureGridTarget({
+      orderRef: session.orderRef,
+      generation: state.generation,
+      viewVersion: state.viewVersion,
+      visibleKeys: rows.map((row) => row.key),
+      selectedKeys: rows.map((row) => row.key),
+      columns: PRODUCT_GRID_COLUMNS,
+      anchorKey: rows[0].key,
+      anchorColumn: 'capacity',
+    })
+  testContext.after(() => session.dispose())
+  session.retainPasteText('45')
+  const actualTarget = { ...target, generation: session.state().generation }
+  const plan = await session.previewPaste('45', actualTarget, rows)
+  await session.applyPaste(plan, actualTarget)
+  assert.equal(fixture.record.unitsPerCarton['2001'], '45')
+  await session.undo()
+  assert.deepEqual(fixture.record.unitsPerCarton, {})
+  assert.equal(session.state().alignment.requirePreview, true)
+  await session.redo()
+  assert.equal(fixture.record.unitsPerCarton['2001'], '45')
+  assert.equal(fixture.confirmed.length, 0)
+})
 
 test('physical recovery and one-order confirmation carry the originally captured amendment epoch', async (testContext) => {
   const fixture = exceptionSessionFixture({
