@@ -197,13 +197,32 @@ for (const language of ['en', 'es', 'zh']) {
           '#backup-packing',
         ]) {
           const action = page.locator(selector)
+          await expect(action).toBeEnabled()
           await action.focus()
+          await expect(action).toBeFocused()
+          await test.info().attach(`phone-focus-${selector.slice(1)}`, {
+            body: Buffer.from(
+              JSON.stringify(
+                await action.evaluate((button) => ({
+                  id: button.id,
+                  disabled: button.disabled,
+                  activeId: document.activeElement?.id,
+                  parent: button.parentElement.className,
+                  parentScrollLeft: button.parentElement.scrollLeft,
+                  parentWidth: button.parentElement.clientWidth,
+                  parentScrollWidth: button.parentElement.scrollWidth,
+                })),
+                null,
+                2
+              )
+            ),
+            contentType: 'application/json',
+          })
           const box = await action.boundingBox()
           expect(box.x).toBeGreaterThanOrEqual(0)
           expect(box.x + box.width).toBeLessThanOrEqual(width)
           expect(box.y).toBeGreaterThanOrEqual(0)
           expect(box.y + box.height).toBeLessThanOrEqual(height)
-          await expect(action).toBeFocused()
         }
       }
       if (font)
