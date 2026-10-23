@@ -562,6 +562,46 @@ test('physical mark output uses recorded artwork after its group is gone, counts
     output.orderCartonContext(oldModel.refs[0]),
     /captured carton mark changed/
   )
+  batch.physicalMarkRelabelOnly = true
+  batch.physicalMark.supersededAliases = [
+    {
+      code: batch.physicalMark.code,
+      at: '2026-10-23T06:00:00Z',
+      reason: 'The released code belongs to the sealed replacement purchase',
+      conflicts: [
+        {
+          accountId: 'local',
+          orderId: 'sealed-other-order',
+          groupId: 'sealed-owner',
+          kind: 'code-consumption',
+          containerId: 'sealed-shipment',
+          revisionId: 'sealed-revision',
+        },
+      ],
+    },
+  ]
+  batch.physicalMarkSupersessions = structuredClone(
+    batch.physicalMark.supersededAliases
+  )
+  const superseded = structuredClone(context)
+  for (const rejected of [{ ...ref, role: 'recorded' }, oldModel.refs[0]])
+    await assert.rejects(output.orderCartonContext(rejected), (error) => {
+      assert.equal(error.code, 'PHYSICAL_MARK_RELABEL_REQUIRED')
+      assert.match(error.message, /sealed-shipment.*sealed-revision/)
+      assert.equal(error.detail.code, batch.physicalMark.code)
+      return true
+    })
+  const freshCurrent = await output.orderCartonContext({
+    ...ref,
+    role: 'current-product',
+  })
+  assert.equal(outputLabelModels(freshCurrent, 'mark')[0].code, group.baseCode)
+  assert.equal(freshCurrent.products[0].entryId, '2001')
+  assert.equal(
+    freshCurrent.products[0].thumbnail,
+    record.snapshot.items[0].thumbnail
+  )
+  assert.deepEqual(context, superseded)
   assert.deepEqual({ record, preparation }, original)
 })
 
