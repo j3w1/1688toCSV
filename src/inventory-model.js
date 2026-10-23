@@ -600,6 +600,30 @@ export function projectBacklog(
         sum + (entry.remaining === null ? 0n : BigInt(entry.remaining)),
       0n
     )
+    const preparation = preparations.find((prep) => orderKey(prep) === key)
+    const sizeMappingEntryIds = [
+      ...new Set(
+        (preparation?.groups || [])
+          .flatMap((group) =>
+            group.variants
+              .filter((variant) => variant.needsSizeMapping)
+              .flatMap((variant) => variant.entryIds)
+          )
+          .filter((entryId) =>
+            items.some(
+              (entry) => entry.entryId === entryId && entry.remaining !== '0'
+            )
+          )
+      ),
+    ]
+    const warnings = sizeMappingEntryIds.map((entryId) => ({
+      code: 'SIZE_MAPPING_REQUIRED',
+      severity: 'warning',
+      accountId,
+      orderId,
+      entryId,
+      message: 'Map this variant size before generating labels',
+    }))
     if (eligible <= 0n && !issues.length) continue
     if (
       !includeFullyShipped &&
@@ -660,7 +684,9 @@ export function projectBacklog(
       accountId,
       orderId,
       record,
-      preparation: preparations.find((prep) => orderKey(prep) === key),
+      preparation,
+      sizeMappingEntryIds,
+      warnings,
       items,
       purchasedQuantity: String(
         items.reduce(

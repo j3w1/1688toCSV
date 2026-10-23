@@ -20,12 +20,14 @@ export async function databaseBrowser() {
   const server = createServer((request, response) => {
     response.writeHead(200, {
       'Content-Type':
-        request.url === '/test.js' ? 'text/javascript' : 'text/html',
+        request.url === '/test.js'
+          ? 'text/javascript; charset=utf-8'
+          : 'text/html; charset=utf-8',
     })
     response.end(
       request.url === '/test.js'
         ? script
-        : '<!doctype html><script src="/test.js"></script>'
+        : '<!doctype html><meta charset="utf-8"><script src="/test.js"></script>'
     )
   })
   server.listen(0, '127.0.0.1')
