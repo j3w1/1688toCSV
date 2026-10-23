@@ -6,6 +6,11 @@ import {
 } from '../../src/packing-model.js'
 import { validateCartonBatch } from '../../src/carton-batches.js'
 import { repeatProductStoreIdentity } from '../../src/repeat-products.js'
+import {
+  openOrderReconciliation,
+  productGridRow,
+  realOrderContext,
+} from './smart-workspace-helpers.mjs'
 
 async function backup(extension) {
   const response = await extension.inspector.evaluate(() =>
@@ -17,7 +22,13 @@ async function backup(extension) {
 
 async function seed(
   extension,
-  { quantity = 150, capacity, aggregateCount, unevenShared = false } = {}
+  {
+    quantity = 150,
+    capacity,
+    aggregateCount,
+    unevenShared = false,
+    unpackedCopy = false,
+  } = {}
 ) {
   const [record] = await extension.inspector.evaluate(
     `(${createDemoRecords.toString()})(document)`
@@ -131,15 +142,22 @@ async function seed(
         ],
       })
     )
+  // A second, unallocated purchase exercises nominal 155/10 arithmetic while
+  // the original aggregate remains immutable physical evidence.
+  const target = structuredClone(record)
+  if (unpackedCopy) {
+    target.snapshot.orderId = '900000000000000099'
+    target.snapshot.sourceUrl = `https://air.1688.com/app/ctf-page/trade-order-detail/index.html?orderId=${target.snapshot.orderId}`
+  }
   const restored = await extension.inspector.evaluate(
-    ({ record, allocation, batches }) =>
+    ({ records, allocation, batches }) =>
       chrome.runtime.sendMessage({
         type: 'BACKUP_RESTORE',
         backup: {
           format: '1688-order-library',
           version: 4,
           exportedAt: new Date().toISOString(),
-          orders: [record],
+          orders: records,
           preparations: [allocation.preparation],
           allocations: allocation.allocations,
           issuedCodes: allocation.issuedCodes,
@@ -148,38 +166,55 @@ async function seed(
           images: [],
         },
       }),
-    { record, allocation, batches }
+    { records: unpackedCopy ? [record, target] : [record], allocation, batches }
   )
   expect(restored.ok, restored.error).toBe(true)
   const page = await extension.context.newPage()
   await page.clock.setFixedTime(new Date('2026-10-15T04:00:00Z'))
   await page.setViewportSize({ width: 1440, height: 1000 })
   await page.goto(`${extension.extensionBaseUrl}/library.html`)
-  await expect(sourceRows(page)).toHaveCount(order.items.length)
-  // Opening preparation refreshes suggested materials and stores its initial
-  // default layout. Complete that normal setup before testing that capacity
-  // edits leave all preparation and physical-carton data unchanged.
-  await page.locator('#view-packing').click()
-  await expect(packingRows(page)).toHaveCount(order.items.length)
-  await page.locator('#view-orders').click()
-  return { page, record, before: await backup(extension) }
+  await expect(sourceRows(page)).toHaveCount(
+    order.items.length * (unpackedCopy ? 2 : 1)
+  )
+  const selected = unpackedCopy ? target : record,
+    ref = { accountId: order.accountId, orderId: selected.snapshot.orderId },
+    before = await backup(extension),
+    grid = await openOrderReconciliation(page, ref)
+  return { page, record: selected, ref, grid, before }
 }
 
 const sourceRows = (page) => page.locator('#sheet-body tr[data-selection-key]')
-const packingRows = (page) => page.locator('#packing-view .variants tbody tr')
-const capacityInput = (row) =>
-  row.getByRole('spinbutton', { name: 'Pcs/box', exact: true })
-// Reopening preparation saves its revision even when its authored data is
-// unchanged. Compare every preparation field except that save clock.
+const capacityInput = (row) => row.locator('[data-grid-column="capacity"]')
 const preparationData = (preparations) =>
   preparations.map(({ revision, updatedAt, ...data }) => data)
+const firstRow = (grid, record) =>
+  productGridRow(grid, {
+    accountId: record.snapshot.accountId,
+    orderId: record.snapshot.orderId,
+    entryId: record.snapshot.items[0].entryId,
+  })
+const savedOrder = (data, record) =>
+  data.orders.find(
+    (entry) => entry.snapshot.orderId === record.snapshot.orderId
+  )
 
-async function visibleSummary(row, text) {
-  const summary = row.locator('.carton-capacity-summary')
-  await expect(summary).toHaveText(text)
+async function savedCapacity(extension, record, value) {
+  await expect
+    .poll(
+      async () =>
+        savedOrder(await backup(extension), record).unitsPerCarton?.[
+          record.snapshot.items[0].entryId
+        ]
+    )
+    .toBe(value)
+}
+async function visibleSummary(row, count, loose) {
+  const summary = row.locator('[data-column="proposedCount"]')
+  await expect(summary).toHaveText(String(count))
+  await expect(
+    row.locator('[data-column="unassigned"] > button').first()
+  ).toHaveText(String(loose))
   await expect(summary).toBeVisible()
-  // A screen-reader-only summary also passes toBeVisible; the calculation must
-  // actually be readable beside the capacity rather than merely announced.
   await expect
     .poll(async () => (await summary.boundingBox())?.width ?? 0)
     .toBeGreaterThan(30)
@@ -187,202 +222,215 @@ async function visibleSummary(row, text) {
     .poll(async () => (await summary.boundingBox())?.height ?? 0)
     .toBeGreaterThan(10)
 }
+async function openProducts(page, ref) {
+  const grid = await openOrderReconciliation(page, ref)
+  await grid.locator('[data-action="reconciliation-products"]').click()
+  return grid
+}
+async function physicalRows(page, ref) {
+  const grid = await openOrderReconciliation(page, ref, 'cartons')
+  return grid.locator('tbody tr[data-grid-key]')
+}
 
 test('150 pieces at 10 per box immediately show 15 calculated cartons and retain the editable capacity across views and reload', async ({
   extension,
 }, testInfo) => {
-  const { page, record, before } = await seed(extension)
-  const source = sourceRows(page).first()
+  const { page, record, ref, grid, before } = await seed(extension)
+  const source = firstRow(grid, record)
   await expect(capacityInput(source)).toHaveValue('')
   await capacityInput(source).fill('10')
-  await visibleSummary(source, '15 calculated cartons')
-  await expect(source.locator('.carton-capacity-status')).toHaveText('Saved')
-  await page.locator('#view-packing').click()
-  const packed = packingRows(page).first()
-  await expect(capacityInput(packed)).toHaveValue('10')
-  await expect(capacityInput(packed)).toBeEditable()
-  await visibleSummary(packed, '15 calculated cartons')
-  await expect(page.locator('.packing-group-cartons-summary')).toContainText(
-    '15 calculated cartons'
-  )
-  const groupId = await page
-    .locator('.preparation-group')
-    .getAttribute('data-group-id')
-  await expect(
-    page.locator(`#packing-view [data-group-id="${groupId}"]`)
-  ).toHaveCount(1)
+  await capacityInput(source).press('Tab')
+  await visibleSummary(source, 15, 0)
+  await savedCapacity(extension, record, 10)
   await page.screenshot({ path: testInfo.outputPath('capacity-150-at-10.png') })
-  await page.locator('[data-language="es"]').click()
-  await visibleSummary(packed, '15 cajas calculadas')
-  await expect(page.locator('.packing-group-cartons-summary')).toContainText(
-    '15 cajas calculadas'
-  )
-  await page.locator('[data-language="en"]').click()
-  await expect(page.locator('.packing-carton-chip')).toHaveCount(0)
+  for (const language of ['es', 'en']) {
+    await page.locator(`[data-language="${language}"]`).click()
+    await visibleSummary(source, 15, 0)
+  }
+  // Packing consumes confirmed physical cartons; capacity-only proposals stay
+  // in Orders and never silently become physical inventory.
+  await page.locator('#view-packing').click()
+  await expect(
+    page.locator('#packing-view [data-grid-column="capacity"]')
+  ).toHaveCount(0)
   await page.locator('#view-orders').click()
+  await openProducts(page, ref)
   await expect(capacityInput(source)).toHaveValue('10')
+  await expect(capacityInput(source)).toBeEditable()
   await page.reload()
   await expect(capacityInput(source)).toHaveValue('10')
-  await visibleSummary(source, '15 calculated cartons')
+  await visibleSummary(source, 15, 0)
   const saved = await backup(extension)
-  expect(saved.orders[0].unitsPerCarton[record.snapshot.items[0].entryId]).toBe(
-    10
+  expect(
+    savedOrder(saved, record).unitsPerCarton[record.snapshot.items[0].entryId]
+  ).toBe(10)
+  expect(savedOrder(saved, record).snapshot).toEqual(
+    savedOrder(before, record).snapshot
   )
-  expect(saved.orders[0].snapshot).toEqual(before.orders[0].snapshot)
   expect(saved.cartonBatches).toEqual([])
 })
 
 test('an existing aggregate carton record keeps the saved capacity editable without changing its physical totals or confirmations', async ({
   extension,
 }) => {
-  const { page, record, before } = await seed(extension, {
+  const { page, record, ref, grid, before } = await seed(extension, {
     capacity: 10,
     aggregateCount: 15,
   })
-  const source = sourceRows(page).first()
+  const source = firstRow(grid, record)
   await expect(capacityInput(source)).toHaveValue('10')
-  await visibleSummary(source, '15 calculated cartons')
-  await page.locator('#view-packing').click()
-  const packed = packingRows(page).first()
-  await expect(capacityInput(packed)).toHaveValue('10')
-  await visibleSummary(packed, '15 calculated cartons')
-  await expect(page.locator('.packing-group-cartons-summary')).toContainText(
-    '15 calculated cartons · 15 recorded cartons'
+  await expect(capacityInput(source)).toBeEditable()
+  // All 150 pieces already belong to the saved aggregate: nominal capacity
+  // must not propose duplicate physical cartons or invent per-box contents.
+  await visibleSummary(source, 0, 0)
+  await expect(source.locator('[data-column="pattern"]')).toContainText(
+    '150 pieces in 15 cartons; per-carton contents unknown'
   )
-  await capacityInput(packed).fill('15')
-  await visibleSummary(packed, '10 calculated cartons')
-  await expect(packed.locator('.carton-capacity-status')).toHaveText('Saved')
-  await expect(page.locator('.packing-group-cartons-summary')).toContainText(
-    '10 calculated cartons · 15 recorded cartons'
+  await capacityInput(source).fill('15')
+  await capacityInput(source).press('Tab')
+  await savedCapacity(extension, record, 15)
+  await visibleSummary(source, 0, 0)
+  const cartons = await physicalRows(page, ref)
+  await expect(cartons).toHaveCount(1)
+  await expect(cartons.locator('[data-column="count"]')).toHaveText('15')
+  await expect(cartons.locator('[data-column="contents"]')).toContainText(
+    `${record.snapshot.items[0].entryId}: 150`
   )
-  await expect(
-    packed.locator('.carton-recorded-context').getByRole('button', {
-      name: 'Recorded cartons',
-      exact: true,
-    })
-  ).toContainText('15')
-  await expect(page.locator('.packing-carton-chip')).toContainText(
-    '15 Cartons · 150 Pieces'
-  )
-  await page.locator('#view-orders').click()
+  await openProducts(page, ref)
   await expect(capacityInput(source)).toHaveValue('15')
   await page.reload()
   await expect(capacityInput(source)).toHaveValue('15')
   const saved = await backup(extension)
-  expect(saved.orders[0].unitsPerCarton[record.snapshot.items[0].entryId]).toBe(
-    15
-  )
+  expect(
+    savedOrder(saved, record).unitsPerCarton[record.snapshot.items[0].entryId]
+  ).toBe(15)
   expect(saved.cartonBatches).toEqual(before.cartonBatches)
   expect(preparationData(saved.preparations)).toEqual(
     preparationData(before.preparations)
   )
-  expect(saved.orders[0].snapshot).toEqual(before.orders[0].snapshot)
+  expect(savedOrder(saved, record).snapshot).toEqual(
+    savedOrder(before, record).snapshot
+  )
 })
 
 test('uneven and shared exact cartons preserve their context and contents while each product capacity remains editable', async ({
   extension,
 }) => {
-  const { page, record, before } = await seed(extension, {
+  const { page, record, ref, grid, before } = await seed(extension, {
     unevenShared: true,
   })
-  await expect(
-    sourceRows(page).getByRole('spinbutton', { name: 'Pcs/box' })
-  ).toHaveCount(2)
-  await page.locator('#view-packing').click()
-  await expect(packingRows(page)).toHaveCount(2)
-  const packed = packingRows(page).first()
-  await expect(capacityInput(packed)).toBeEditable()
-  await expect(
-    packingRows(page).nth(1).getByRole('spinbutton', {
-      name: 'Pcs/box',
-      exact: true,
-    })
-  ).toBeEditable()
-  await capacityInput(packed).fill('10')
-  await visibleSummary(packed, '6 full cartons + 3 loose units')
-  await expect(packed.locator('.carton-capacity-status')).toHaveText('Saved')
-  await expect(packed.locator('.carton-recorded-context')).toContainText(
-    'Shared'
+  const products = grid.locator('tbody tr[data-grid-key]')
+  await expect(products).toHaveCount(2)
+  for (const row of await products.all())
+    await expect(capacityInput(row)).toBeEditable()
+  const source = firstRow(grid, record)
+  await capacityInput(source).fill('10')
+  await capacityInput(source).press('Tab')
+  await savedCapacity(extension, record, 10)
+  await visibleSummary(source, 0, 0)
+  await expect(source.locator('[data-column="pattern"]')).toContainText(
+    '9 of this product · 14 total in shared 6'
   )
-  await expect(page.locator('.packing-group-cartons-summary')).toContainText(
-    '6 recorded cartons'
+  const cartons = await physicalRows(page, ref)
+  await expect(cartons).toHaveCount(6)
+  await expect(cartons.first().locator('[data-column="label"]')).toHaveText('1')
+  await expect(cartons.first().locator('[data-column="contents"]')).toHaveText(
+    `${record.snapshot.items[0].entryId}: 13`
   )
-  await expect(page.locator('.packing-carton-chip')).toHaveCount(6)
-  await expect(page.locator('.packing-carton-chip').first()).toContainText(
-    '#1 · 13 Pieces'
+  await expect(cartons.last().locator('[data-column="label"]')).toHaveText('6')
+  await expect(cartons.last().locator('[data-column="contents"]')).toHaveText(
+    `${record.snapshot.items[0].entryId}: 9 · ${record.snapshot.items[1].entryId}: 5`
   )
-  await expect(page.locator('.packing-carton-chip').last()).toContainText(
-    '#6 · 14 Pieces'
+  await openProducts(page, ref)
+  await expect(capacityInput(source)).toHaveValue('10')
+  await expect(source.locator('[data-column="pattern"]')).toContainText(
+    '14 total in shared 6'
   )
-  await page.locator('#view-orders').click()
-  await expect(capacityInput(sourceRows(page).first())).toHaveValue('10')
-  await expect(
-    sourceRows(page).first().locator('.carton-recorded-context')
-  ).toContainText('Shared')
   const saved = await backup(extension)
-  expect(saved.orders[0].unitsPerCarton[record.snapshot.items[0].entryId]).toBe(
-    10
-  )
+  expect(
+    savedOrder(saved, record).unitsPerCarton[record.snapshot.items[0].entryId]
+  ).toBe(10)
   expect(saved.cartonBatches).toEqual(before.cartonBatches)
   expect(preparationData(saved.preparations)).toEqual(
     preparationData(before.preparations)
+  )
+  expect(saved.orders.map((record) => record.snapshot)).toEqual(
+    before.orders.map((record) => record.snapshot)
   )
 })
 
 test('a failed capacity autosave retains the 155/10 draft and its loose units until retry without inventing or editing cartons', async ({
   extension,
 }) => {
-  const { page, record, before } = await seed(extension, {
+  const { page, record, ref, grid, before } = await seed(extension, {
     quantity: 155,
     capacity: 5,
     aggregateCount: 15,
+    unpackedCopy: true,
   })
-  const source = sourceRows(page).first()
-  await page.evaluate((entryId) => {
-    window.failCapacityWrite = true
-    const put = IDBObjectStore.prototype.put
-    IDBObjectStore.prototype.put = function (...args) {
-      if (
-        window.failCapacityWrite &&
-        this.name === 'orders' &&
-        args[0]?.unitsPerCarton?.[entryId] === 10
-      )
-        throw new DOMException(
-          'Synthetic carton capacity storage unavailable',
-          'QuotaExceededError'
+  const source = firstRow(grid, record)
+  await page.evaluate(
+    ({ orderId, entryId }) => {
+      window.failCapacityWrite = true
+      const put = IDBObjectStore.prototype.put
+      IDBObjectStore.prototype.put = function (...args) {
+        if (
+          window.failCapacityWrite &&
+          this.name === 'orders' &&
+          args[0]?.snapshot?.orderId === orderId &&
+          args[0]?.unitsPerCarton?.[entryId] === 10
         )
-      return put.apply(this, args)
-    }
-  }, record.snapshot.items[0].entryId)
-  await capacityInput(source).fill('10')
-  await visibleSummary(source, '15 full cartons + 5 loose units')
-  await expect(source.locator('.carton-capacity-status')).toContainText(
-    'Synthetic carton capacity storage unavailable'
+          throw new DOMException(
+            'Synthetic carton capacity storage unavailable',
+            'QuotaExceededError'
+          )
+        return put.apply(this, args)
+      }
+    },
+    { orderId: ref.orderId, entryId: record.snapshot.items[0].entryId }
   )
+  await capacityInput(source).fill('10')
+  await capacityInput(source).press('Tab')
+  await expect(
+    page
+      .getByText('Synthetic carton capacity storage unavailable', {
+        exact: true,
+      })
+      .first()
+  ).toBeVisible()
+  await visibleSummary(source, 15, 5)
   await expect(capacityInput(source)).toHaveValue('10')
   await expect(capacityInput(source)).toBeEditable()
   const failed = await backup(extension)
   expect(
-    failed.orders[0].unitsPerCarton[record.snapshot.items[0].entryId]
+    savedOrder(failed, record).unitsPerCarton[record.snapshot.items[0].entryId]
   ).toBe(5)
   expect(failed.cartonBatches).toEqual(before.cartonBatches)
   await page.evaluate(() => {
     window.failCapacityWrite = false
   })
-  await capacityInput(source).press('Enter')
-  await expect(source.locator('.carton-capacity-status')).toHaveText('Saved')
-  await page.locator('#view-packing').click()
-  const packed = packingRows(page).first()
-  await expect(capacityInput(packed)).toHaveValue('10')
-  await visibleSummary(packed, '15 full cartons + 5 loose units')
-  await expect(page.locator('.packing-group-cartons-summary')).toContainText(
-    '15 recorded cartons'
-  )
-  await expect(page.locator('.packing-carton-chip')).toHaveCount(1)
+  await capacityInput(source).focus()
+  await capacityInput(source).press('Tab')
+  await savedCapacity(extension, record, 10)
+  await visibleSummary(source, 15, 5)
+  // Raw invalid input remains visible and cannot overwrite the saved capacity.
+  await capacityInput(source).fill('0')
+  await capacityInput(source).press('Tab')
+  await expect(capacityInput(source)).toHaveAttribute('aria-invalid', 'true')
+  await savedCapacity(extension, record, 10)
+  await capacityInput(source).fill('10')
+  await capacityInput(source).press('Tab')
+  await page.reload()
+  await expect(capacityInput(source)).toHaveValue('10')
+  await visibleSummary(source, 15, 5)
   const saved = await backup(extension)
-  expect(saved.orders[0].unitsPerCarton[record.snapshot.items[0].entryId]).toBe(
-    10
-  )
+  expect(
+    savedOrder(saved, record).unitsPerCarton[record.snapshot.items[0].entryId]
+  ).toBe(10)
   expect(saved.cartonBatches).toEqual(before.cartonBatches)
-  expect(saved.orders[0].snapshot).toEqual(before.orders[0].snapshot)
+  expect(saved.cartonBatches).toHaveLength(1)
+  expect(saved.orders.map((record) => record.snapshot)).toEqual(
+    before.orders.map((record) => record.snapshot)
+  )
+  expect((await realOrderContext(extension, ref)).batches).toEqual([])
 })

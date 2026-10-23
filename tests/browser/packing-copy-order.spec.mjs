@@ -106,7 +106,13 @@ test('Orders barcode and carton previews follow saved packing order across order
     )
   ).toEqual(
     records.flatMap(({ snapshot }) =>
-      snapshot.items.map((item) => `${snapshot.orderId}/${item.entryId}`)
+      snapshot.items.map((item) =>
+        JSON.stringify([
+          snapshot.accountId || 'local',
+          snapshot.orderId,
+          item.entryId,
+        ])
+      )
     )
   )
   await page.locator('#select-rows').click()

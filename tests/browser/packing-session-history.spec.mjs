@@ -309,7 +309,6 @@ test('removing an included order preserves its authored history and does not res
 }) => {
   const { page, refs, before } = await setup(extension, {
     count: 2,
-    physical: true,
   })
   await closeOrderProduct(
     await editOrderProduct(
@@ -321,8 +320,68 @@ test('removing an included order preserves its authored history and does not res
       }
     )
   )
-  const authored = await libraryBackup(extension),
-    id = await createContainerThroughUI(page, refs)
+  // Author before physical confirmation: changing a recorded carton mark
+  // requires its own review and is outside this container-removal regression.
+  await extension.inspector.evaluate(async (refs) => {
+    const repository = await window.testRepository
+    for (const ref of refs) {
+      let context = await repository.getOrderReconciliation(ref)
+      await repository.updateOrderCapacities({
+        ...ref,
+        values: Object.fromEntries(
+          context.record.snapshot.items.map(({ entryId }) => [entryId, '45'])
+        ),
+        expectedValues: Object.fromEntries(
+          context.record.snapshot.items.map(({ entryId }) => [entryId, null])
+        ),
+        expectedObservedAt: context.record.snapshot.observedAt,
+      })
+      context = await repository.getOrderReconciliation(ref)
+      let draft = window.testPlanner.createReconciliationDraft(context)
+      for (const product of window.testPlanner.reconcileOrder({
+        ...context,
+        draft,
+      }).products)
+        if (product.remainder && BigInt(product.remainder) > 0n)
+          draft = window.testPlanner.applyReconciliationCommand(
+            draft,
+            { type: 'separate', entryId: product.entryId },
+            context
+          )
+      await repository.confirmOrderCartons({
+        ...ref,
+        draft,
+        expectedRevisions: context.revisions,
+        intentId: crypto.randomUUID(),
+      })
+    }
+  }, refs)
+  const authored = await libraryBackup(extension)
+  const refused = await extension.inspector.evaluate(async (ref) => {
+    const repository = await window.testRepository,
+      context = await repository.getOrderReconciliation(ref),
+      candidate = structuredClone(context.preparation)
+    candidate.groups[0].baseCode = 'CE26099998'
+    try {
+      await repository.savePreparations([candidate], {
+        expectedRevisions: [candidate.revision],
+      })
+      return { rejected: false }
+    } catch (error) {
+      return { rejected: true, message: error.message }
+    }
+  }, refs[0])
+  expect(refused).toEqual({
+    rejected: true,
+    message:
+      'Review the affected cartons before changing their products or packing month.',
+  })
+  const guarded = await libraryBackup(extension)
+  expect(guarded.preparations).toEqual(authored.preparations)
+  expect(guarded.issuedCodes).toEqual(authored.issuedCodes)
+  expect(guarded.cartonBatches).toEqual(authored.cartonBatches)
+  expect(guarded.orders).toEqual(authored.orders)
+  const id = await createContainerThroughUI(page, refs)
   await page
     .locator('.container-order')
     .filter({ hasText: refs[0].orderId })
@@ -334,7 +393,10 @@ test('removing an included order preserves its authored history and does not res
   const after = await libraryBackup(extension)
   expect(groups(after)).toEqual(groups(authored))
   expect(after.issuedCodes).toEqual(authored.issuedCodes)
-  expect(after.orders).toEqual(before.orders)
+  expect(after.orders).toEqual(authored.orders)
+  expect(after.orders.map((record) => record.snapshot)).toEqual(
+    before.orders.map((record) => record.snapshot)
+  )
   await page.locator('#view-orders').click()
   await editOrderProduct(page, { ...refs[0], entryId: '2001' })
   await travel(page, 'Undo')

@@ -45,9 +45,15 @@ test('saving a naming rule updates unprepared products and searches immediately'
   await expect(
     page.locator('#sheet-body .row-preparation').first()
   ).toContainText('NOMBRE INMEDIATO')
-  await expect(
-    page.locator('#sheet-body .row-preparation').first()
-  ).toContainText('测试品')
+  // Category belongs to the saved naming rule; compact rows show its name.
+  const preferences = await extension.inspector.evaluate(async () =>
+    (await window.testRepository).getPackingPreferences()
+  )
+  expect(
+    preferences.vocabulary.find(
+      (rule) => rule.match === 'Synthetic unique naming title'
+    )
+  ).toMatchObject({ spanishName: 'NOMBRE INMEDIATO', category: '测试品' })
   await page.locator('#search').fill('NOMBRE INMEDIATO')
   await expect(page.locator('#sheet-body tr[data-selection-key]')).toHaveCount(
     3
