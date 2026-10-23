@@ -10,6 +10,7 @@ import {
   physicalMarkResolutionChoices,
   physicalMarkResolutionRequired,
   physicalMarkReadback,
+  physicalMarkSupersessionState,
 } from './physical-mark-aliases.js'
 export { resolvePhysicalMarkChange } from './physical-mark-aliases.js'
 
@@ -261,8 +262,7 @@ export function planCartonBatchChanges({
               proposed,
               afterPreparations
             ).currentProductArtwork,
-            physicalMarkRelabelOnly:
-              physicalMarkReadback(proposed).physicalMarkRelabelOnly,
+            ...physicalMarkSupersessionState(proposed),
             physicalMarkResolutionChoices:
               physicalMarkResolutionChoices(proposed),
             physicalMarkSupersessions:

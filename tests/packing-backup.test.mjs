@@ -1283,3 +1283,58 @@ test('legacy scoped backups retain complete scoped orders and history without im
   }
   assert.deepEqual(members(scoped.preparations[0]), ['2'])
 })
+
+test('known-month physical batches without reports or containers require complete-order scope and preserve physical history', () => {
+  const { backup } = fixture()
+  backup.version = 5
+  for (const field of [
+    'containers',
+    'packingReports',
+    'reportSources',
+    'orderCartonDrafts',
+    'shipmentLocks',
+    'operationIntents',
+  ])
+    backup[field] = []
+  backup.cartonBatches = [
+    {
+      id: 'known-month-evidence',
+      accountId: 'local',
+      orderId: '1001',
+      month: '2026-10',
+      storeId: '["1688","synthetic-seller"]',
+      groups: [
+        { orderId: '1001', groupId: backup.preparations[0].groups[0].id },
+      ],
+      contents: [{ orderId: '1001', entryId: '1', quantity: '1' }],
+      count: 1,
+      packingBasis: 'exact',
+      unresolvedContents: [],
+      len: '40',
+      wid: '30',
+      ht: '25',
+      weight: '12.2504',
+      weightBasis: 'carton',
+      suppliedCbm: '',
+      volumeBasis: 'carton',
+      received: 1,
+      loaded: 0,
+      revision: 1,
+      updatedAt: '2026-10-03T12:00:00.000Z',
+      sourceFacts: { originalCarton: '0001' },
+      cartonHistory: [{ id: 'actual-original', weight: '0' }],
+    },
+  ]
+  assert.throws(() => createPackingBackup(backup, selection(['1'])), {
+    code: 'PACKING_BACKUP_DEPENDENCY_REVIEW',
+  })
+  const result = createPackingBackup(backup, selection(['1', '2', '3']))
+  assert.deepEqual(result.requestedPackingScope.orders, [
+    { accountId: 'local', orderId: '1001', entryIds: ['1', '2', '3'] },
+  ])
+  assert.deepEqual(result.dependencyOrderRefs, [])
+  assert.deepEqual(result.cartonBatches, backup.cartonBatches)
+  assert.deepEqual(result.orders, backup.orders)
+  assert.deepEqual(result.images, backup.images)
+  assert.equal(result.packingScope, undefined)
+})

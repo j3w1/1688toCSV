@@ -40,6 +40,7 @@ import {
   syntheticBatch,
 } from './fixtures/container-fixture.mjs'
 import { databaseBrowser } from './fixtures/database-browser.mjs'
+import { createPackingBackup } from '../src/packing-backup.js'
 
 const time = '2026-10-23T05:00:00.000Z'
 function fixture({ legacy = false } = {}) {
@@ -1035,7 +1036,7 @@ test('native current alias reserves through carton retirement, releases after al
     )
     assert.equal(
       result.freeRevival.batches[0].physicalMark.retiredAt,
-      result.canceled.batches[0].physicalMark.retiredAt
+      undefined
     )
     assert.ok(
       result.freeRevival.batches[0].physicalMark.history.some(
@@ -1046,7 +1047,7 @@ test('native current alias reserves through carton retirement, releases after al
       result.freeRevival.issuedCodes.some(
         (entry) => entry.code === 'CE26101002' && entry.orderId === '1001'
       ),
-      false
+      true
     )
   } finally {
     await browser.close()
@@ -3280,6 +3281,1082 @@ test('native active boxes whose released alias was reused return with a pending 
     ])
       assert.deepEqual(result.afterKeep[field], result.beforeKeep[field], field)
     assert.deepEqual(result.ctx.record.snapshot, state.records[0].snapshot)
+  } finally {
+    await browser.close()
+  }
+})
+
+async function recoveryArchiveFixture(
+  browser,
+  {
+    sealedHolder = true,
+    removeHolder = false,
+    withDependencies = false,
+    stopBeforeRelabel = false,
+  } = {}
+) {
+  const input = fixture()
+  for (const item of input.records[0].snapshot.items)
+    item.thumbnail = `https://cbu01.alicdn.com/recovery-original-${item.entryId}.png`
+  const state = await openFixture(browser, input),
+    { next, plan } = await mergePlan(state)
+  await saveMerge(browser, state, next, plan)
+  const foreignRecord = syntheticOrder('1002', '30', {
+      purchasedAt: '2026-10-05T12:00:00+08:00',
+    }),
+    foreign = createPreparation(foreignRecord.snapshot, '2026-10')
+  foreignRecord.snapshot.items[0].thumbnail =
+    'https://cbu01.alicdn.com/recovery-foreign-original.png'
+  foreign.groups[0].baseCode = 'CE26101002'
+  const fresh = createPreparation(state.records[0].snapshot, '2026-10')
+  const support = syntheticOrder('1003', '7', {
+      purchasedAt: '2026-10-06T12:00:00+08:00',
+    }),
+    other = syntheticOrder('1002', '5', {
+      accountId: 'acct-b',
+      purchasedAt: '2026-10-06T12:00:00+08:00',
+    })
+  support.snapshot.items[0].thumbnail =
+    'https://cbu01.alicdn.com/recovery-support-original.png'
+  other.snapshot.items[0].thumbnail =
+    'https://cbu01.alicdn.com/recovery-other-account-original.png'
+  const supportPrep = createPreparation(support.snapshot, '2026-10'),
+    otherPrep = createPreparation(other.snapshot, '2026-10')
+  supportPrep.groups[0].baseCode = 'CE26101003'
+  otherPrep.groups[0].baseCode = 'CE26101002'
+  return browser.page.evaluate(
+    async ({
+      state,
+      foreignRecord,
+      foreign,
+      fresh,
+      sealedHolder,
+      removeHolder,
+      withDependencies,
+      support,
+      supportPrep,
+      other,
+      otherPrep,
+      stopBeforeRelabel,
+    }) => {
+      for (const record of [
+        ...state.records,
+        foreignRecord,
+        ...(withDependencies ? [support, other] : []),
+      ])
+        for (const item of record.snapshot.items)
+          await aliasDb.putImage({
+            url: item.thumbnail,
+            dataUrl: modules.fixture.SYNTHETIC_PHOTO,
+            storedAt: '2026-10-23T05:00:00.000Z',
+          })
+      let ctx = await aliasDb.getOrderReconciliation({ orderId: '1001' })
+      await aliasDb.removeCartonBatch(ctx.batches[0])
+      await aliasDb.removeOrders(['1001'])
+      await aliasDb.restoreBackup({
+        format: '1688-order-library',
+        version: 1,
+        exportedAt: '2026-10-23T05:00:00.000Z',
+        orders: [foreignRecord],
+        history: [],
+        images: [],
+      })
+      const [foreignSaved] = await aliasDb.savePreparations([foreign], {
+        expectedRevisions: [0],
+      })
+      if (withDependencies) {
+        await aliasDb.restoreBackup({
+          format: '1688-order-library',
+          version: 1,
+          exportedAt: '2026-10-23T05:00:00.000Z',
+          orders: [support, other],
+          history: [],
+          images: [],
+        })
+        const [saved] = await aliasDb.savePreparations(
+          [supportPrep, otherPrep],
+          { expectedRevisions: [0, 0] }
+        )
+        const mark = { orderId: '1003', groupId: saved.groups[0].id },
+          scope = await aliasDb.getOrderReconciliation({ orderId: '1003' })
+        await aliasDb.saveOrderCartonFacts({
+          orderId: '1003',
+          expectedRevisions: scope.revisions,
+          changes: [
+            {
+              after: modules.fixture.syntheticBatch('1003', 1, '7', {
+                month: '2026-10',
+                groups: [mark],
+                mark,
+                received: 1,
+                weight: '4.2501',
+                len: '40',
+                wid: '30',
+                ht: '25',
+                revision: 0,
+              }),
+              expectedRevision: 0,
+            },
+          ],
+        })
+      }
+      async function seal(orderId, name) {
+        const c = await aliasDb.createContainer({ name })
+        let v = await aliasDb.includeContainerOrders({
+          id: c.id,
+          expectedRevision: c.revision,
+          orderRefs: [
+            { orderId },
+            ...(withDependencies && orderId === '1002'
+              ? [{ orderId: '1003' }]
+              : []),
+          ],
+        })
+        v = await aliasDb.markContainerLoaded({
+          id: c.id,
+          expectedRevision: v.container.revision,
+        })
+        const r = await aliasDb.reviewContainerSeal({
+          id: c.id,
+          expectedRevision: v.container.revision,
+        })
+        if (!r.ready) throw new Error(JSON.stringify(r.issues))
+        return aliasDb.sealContainer({
+          id: c.id,
+          expectedRevision: v.container.revision,
+          reviewToken: r.reviewToken,
+        })
+      }
+      let foreignManifest
+      if (sealedHolder) {
+        ctx = await aliasDb.getOrderReconciliation({ orderId: '1002' })
+        const mark = { orderId: '1002', groupId: foreignSaved.groups[0].id }
+        await aliasDb.saveOrderCartonFacts({
+          orderId: '1002',
+          expectedRevisions: ctx.revisions,
+          changes: [
+            {
+              after: modules.fixture.syntheticBatch('1002', 1, '30', {
+                month: '2026-10',
+                groups: [mark],
+                mark,
+                received: 1,
+                weight: '8.2504',
+                len: '50',
+                wid: '40',
+                ht: '30',
+                revision: 0,
+              }),
+              expectedRevision: 0,
+            },
+          ],
+        })
+        foreignManifest = await seal('1002', 'Actual superseding holder')
+      }
+      await aliasDb.restoreBackup({
+        format: '1688-order-library',
+        version: 1,
+        exportedAt: '2026-10-23T05:00:00.000Z',
+        orders: state.records,
+        history: [],
+        images: [],
+      })
+      await aliasDb.savePreparations([fresh], { expectedRevisions: [0] })
+      const archives = []
+      async function capture(stage) {
+        const full = await aliasDb.exportBackup({})
+        archives.push({
+          stage,
+          full,
+          order: await aliasDb.exportBackup({ orderIds: ['1001'] }),
+        })
+      }
+      if (removeHolder) {
+        await capture('foreign-current')
+        const current = await aliasDb.getPreparation('1002')
+        await aliasDb.savePreparations([{ ...current, groups: [] }], {
+          expectedRevisions: [current.revision],
+        })
+        await capture('foreign-retired')
+        await aliasDb.removeOrders(['1002'])
+        await capture('foreign-deleted')
+        return { archives, original: state, foreignManifest }
+      }
+      await capture('tombstoned-before-relabel')
+      ctx = await aliasDb.getOrderReconciliation({ orderId: '1001' })
+      const batch = ctx.batches[0],
+        owner = batch.physicalMarkOwnerChoices[0],
+        after = { ...batch, groups: owner.groups, mark: owner.mark }
+      delete after.deletedAt
+      await aliasDb.saveOrderCartonFacts({
+        orderId: '1001',
+        expectedRevisions: ctx.revisions,
+        changes: [{ after, restore: true, expectedRevision: batch.revision }],
+      })
+      await capture('active-before-relabel')
+      if (stopBeforeRelabel)
+        return { archives, original: state, foreignManifest }
+      ctx = await aliasDb.getOrderReconciliation({ orderId: '1001' })
+      await aliasDb.resolveCartonPhysicalMark({
+        orderId: '1001',
+        batchId: batch.id,
+        expectedRevisions: ctx.revisions,
+        targetMark: owner.mark,
+        choice: 'relabel-reprint',
+        reason: 'Confirmed fresh current physical labels',
+        physicalRelabelConfirmed: true,
+      })
+      await capture('after-relabel')
+      await seal('1001', 'Recovered original shipment')
+      await capture('after-new-seal')
+      return { archives, original: state, foreignManifest }
+    },
+    {
+      state,
+      foreignRecord,
+      foreign,
+      fresh,
+      sealedHolder,
+      removeHolder,
+      withDependencies,
+      support,
+      supportPrep,
+      other,
+      otherPrep,
+      stopBeforeRelabel,
+    }
+  )
+}
+
+for (const archiveKind of ['order', 'packing'])
+  test(`native superseded recovery ${archiveKind} archives retain P1 requested scope and complete foreign dependencies before and after relabel/seal`, async () => {
+    const browser = await databaseBrowser()
+    try {
+      const result = await recoveryArchiveFixture(browser)
+      for (const stage of result.archives) {
+        const prep = stage.full.preparations.find((p) => p.orderId === '1001'),
+          selection = {
+            months: ['2026-10'],
+            orders: [
+              {
+                accountId: 'local',
+                orderId: '1001',
+                entryIds: prep.groups.flatMap((g) =>
+                  g.variants.flatMap((v) => v.entryIds)
+                ),
+              },
+            ],
+          }
+        const archive =
+          archiveKind === 'order'
+            ? stage.order
+            : createPackingBackup(stage.full, selection)
+        const restored = await browser.page.evaluate(
+          async ({ archive, name }) => {
+            const db = await modules.openDatabase({ name })
+            try {
+              await db.restoreBackup(archive)
+              return {
+                backup: await db.exportBackup({}),
+                state: await db.getOperationalState({}),
+              }
+            } finally {
+              db.close()
+            }
+          },
+          { archive, name: `synthetic-recovery-${archiveKind}-${stage.stage}` }
+        )
+        assert.deepEqual(
+          archive.orders.map((o) => o.snapshot.orderId).sort(),
+          ['1001', '1002'],
+          stage.stage
+        )
+        assert.deepEqual(
+          archiveKind === 'packing'
+            ? archive.requestedPackingScope.orders
+            : archive.requestedOrderRefs,
+          archiveKind === 'packing'
+            ? selection.orders
+            : [{ accountId: 'local', orderId: '1001' }]
+        )
+        assert.deepEqual(archive.dependencyOrderRefs, [
+          { accountId: 'local', orderId: '1002' },
+        ])
+        assert.equal(
+          JSON.stringify(restored.backup.containers),
+          JSON.stringify(stage.full.containers),
+          stage.stage
+        )
+        assert.equal(
+          JSON.stringify(restored.backup.shipmentLocks),
+          JSON.stringify(stage.full.shipmentLocks),
+          stage.stage
+        )
+        assert.deepEqual(restored.backup.orders, stage.full.orders)
+        assert.deepEqual(restored.backup.images, stage.full.images)
+        assert.equal(archive.images.length, 3)
+        assert.deepEqual(
+          restored.backup.cartonBatches,
+          stage.full.cartonBatches
+        )
+        const actual = restored.state.batches.find((b) => b.orderId === '1001')
+        assert.equal(
+          Boolean(actual.deletedAt),
+          stage.stage === 'tombstoned-before-relabel'
+        )
+        assert.equal(
+          actual.physicalMarkRelabelOnly,
+          stage.stage.endsWith('before-relabel')
+        )
+        assert.equal(actual.physicalMark.originalCode, 'CE26101002')
+        assert.equal(
+          restored.state.issuedCodes.find(
+            (c) => c.kind === 'base' && c.code === 'CE26101002'
+          ).orderId,
+          '1002'
+        )
+        if (archiveKind === 'packing')
+          assert.throws(
+            () =>
+              createPackingBackup(stage.full, {
+                ...selection,
+                orders: [
+                  {
+                    ...selection.orders[0],
+                    entryIds: selection.orders[0].entryIds.slice(0, 1),
+                  },
+                ],
+              }),
+            { code: 'PACKING_BACKUP_DEPENDENCY_REVIEW' }
+          )
+      }
+    } finally {
+      await browser.close()
+    }
+  })
+
+test('native witnessed supersession restores after an unconsumed foreign holder is deleted, re-reserves the free alias and permits keep', async () => {
+  const browser = await databaseBrowser()
+  try {
+    const result = await recoveryArchiveFixture(browser, {
+        sealedHolder: false,
+        removeHolder: true,
+      }),
+      full = result.archives.find((a) => a.stage === 'foreign-deleted').full
+    assert.deepEqual(
+      full.orders.map((o) => o.snapshot.orderId),
+      ['1001']
+    )
+    const restored = await browser.page.evaluate(async (full) => {
+      const db = await modules.openDatabase({
+        name: 'synthetic-historical-supersession-full',
+      })
+      try {
+        await db.restoreBackup(full)
+        return {
+          backup: await db.exportBackup({}),
+          state: await db.getOperationalState({}),
+        }
+      } finally {
+        db.close()
+      }
+    }, full)
+    const actual = restored.state.batches[0]
+    assert.equal(actual.physicalMarkRelabelOnly, false)
+    assert.equal(actual.physicalMarkConflictKind, 'none')
+    assert.equal(actual.physicalMark.supersededAliases[0].active, false)
+    assert.ok(actual.physicalMark.supersededAliases[0].reservationWitness)
+    assert.ok(actual.deletedAt)
+    assert.equal(actual.physicalMark.originalCode, 'CE26101002')
+    assert.equal(
+      restored.state.issuedCodes.find(
+        (c) => c.code === 'CE26101002' && c.kind === 'base'
+      ).orderId,
+      '1001'
+    )
+    assert.deepEqual(restored.backup.orders, full.orders)
+    assert.deepEqual(restored.backup.cartonBatches, full.cartonBatches)
+    assert.deepEqual(restored.backup.shipmentLocks, [])
+    assert.equal(
+      full.images.length,
+      3,
+      'The actual retired reservation witness retains the foreign original photo'
+    )
+    const kept = await browser.page.evaluate(async (full) => {
+      const db = await modules.openDatabase({
+        name: 'synthetic-historical-keep-after-release',
+      })
+      try {
+        await db.restoreBackup(full)
+        let ctx = await db.getOrderReconciliation({ orderId: '1001' }),
+          batch = ctx.batches[0],
+          owner = batch.physicalMarkOwnerChoices[0],
+          after = { ...batch, groups: owner.groups, mark: owner.mark }
+        delete after.deletedAt
+        await db.saveOrderCartonFacts({
+          orderId: '1001',
+          expectedRevisions: ctx.revisions,
+          changes: [{ after, restore: true, expectedRevision: batch.revision }],
+        })
+        ctx = await db.getOrderReconciliation({ orderId: '1001' })
+        const kept = await db.resolveCartonPhysicalMark({
+          orderId: '1001',
+          batchId: batch.id,
+          expectedRevisions: ctx.revisions,
+          targetMark: owner.mark,
+          choice: 'keep-recorded-mark',
+          reason:
+            'Actual unused foreign code is free and recorded boxes were kept',
+        })
+        const c = await db.createContainer({ name: 'Permitted returned alias' })
+        let v = await db.includeContainerOrders({
+          id: c.id,
+          expectedRevision: c.revision,
+          orderRefs: [{ orderId: '1001' }],
+        })
+        v = await db.markContainerLoaded({
+          id: c.id,
+          expectedRevision: v.container.revision,
+        })
+        const r = await db.reviewContainerSeal({
+          id: c.id,
+          expectedRevision: v.container.revision,
+        })
+        if (!r.ready) throw new Error(JSON.stringify(r.issues))
+        const manifest = await db.sealContainer({
+          id: c.id,
+          expectedRevision: v.container.revision,
+          reviewToken: r.reviewToken,
+        })
+        const final = await db.exportBackup({})
+        const copy = await modules.openDatabase({
+          name: 'synthetic-kept-returned-alias-full',
+        })
+        let roundtrip
+        try {
+          await copy.restoreBackup(final)
+          roundtrip = await copy.exportBackup({})
+        } finally {
+          copy.close()
+        }
+        return {
+          kept,
+          manifest,
+          final,
+          roundtrip,
+          state: await db.getOperationalState({}),
+        }
+      } finally {
+        db.close()
+      }
+    }, full)
+    assert.equal(
+      kept.kept.batches[0].physicalMark.resolution.choice,
+      'keep-recorded-mark'
+    )
+    assert.equal(kept.manifest.cartons[0].markCode, 'CE26101002')
+    assert.deepEqual(kept.roundtrip.containers, kept.final.containers)
+    assert.deepEqual(kept.roundtrip.shipmentLocks, kept.final.shipmentLocks)
+    assert.deepEqual(kept.roundtrip.cartonBatches, kept.final.cartonBatches)
+    assert.ok(
+      kept.state.locks.some(
+        (lock) =>
+          lock.kind === 'code-consumption' &&
+          lock.orderId === '1001' &&
+          lock.lineages.some((l) => l.baseCode === 'CE26101002')
+      )
+    )
+  } finally {
+    await browser.close()
+  }
+})
+
+test('native recovery archive dependency closure follows the actual foreign shipment across whole orders and excludes an unrelated account', async () => {
+  const browser = await databaseBrowser()
+  try {
+    const { archives } = await recoveryArchiveFixture(browser, {
+        withDependencies: true,
+      }),
+      stage = archives[0],
+      prep = stage.full.preparations.find(
+        (p) => p.accountId === 'local' && p.orderId === '1001'
+      )
+    const selection = {
+      months: ['2026-10'],
+      orders: [
+        {
+          accountId: 'local',
+          orderId: '1001',
+          entryIds: prep.groups.flatMap((g) =>
+            g.variants.flatMap((v) => v.entryIds)
+          ),
+        },
+      ],
+    }
+    for (const [kind, archive] of [
+      ['order', stage.order],
+      ['packing', createPackingBackup(stage.full, selection)],
+    ]) {
+      assert.deepEqual(
+        archive.orders.map((r) => [r.snapshot.accountId, r.snapshot.orderId]),
+        [
+          ['local', '1001'],
+          ['local', '1002'],
+          ['local', '1003'],
+        ]
+      )
+      assert.deepEqual(archive.dependencyOrderRefs, [
+        { accountId: 'local', orderId: '1002' },
+        { accountId: 'local', orderId: '1003' },
+      ])
+      assert.equal(
+        archive.preparations.some((p) => p.accountId === 'acct-b'),
+        false
+      )
+      assert.equal(
+        archive.issuedCodes.some((c) => c.accountId === 'acct-b'),
+        false
+      )
+      assert.equal(archive.images.length, 4)
+      assert.equal(
+        archive.images.some((image) => image.url.includes('other-account')),
+        false
+      )
+      const restored = await browser.page.evaluate(
+        async ({ archive, name }) => {
+          const db = await modules.openDatabase({ name })
+          try {
+            await db.restoreBackup(archive)
+            return db.exportBackup({})
+          } finally {
+            db.close()
+          }
+        },
+        { archive, name: `synthetic-transitive-recovery-${kind}` }
+      )
+      assert.equal(
+        JSON.stringify(restored.containers),
+        JSON.stringify(stage.full.containers)
+      )
+      assert.equal(
+        JSON.stringify(restored.shipmentLocks),
+        JSON.stringify(stage.full.shipmentLocks)
+      )
+      assert.deepEqual(
+        restored.orders,
+        stage.full.orders.filter((r) => r.snapshot.accountId === 'local')
+      )
+      assert.deepEqual(restored.images, archive.images)
+    }
+  } finally {
+    await browser.close()
+  }
+})
+
+test('native witnessless historical archive restores held, ignores forged clearance and completes only through a fresh confirmed physical review', async () => {
+  const browser = await databaseBrowser()
+  try {
+    const scenario = await recoveryArchiveFixture(browser, {
+        sealedHolder: false,
+        removeHolder: true,
+      }),
+      archive = structuredClone(
+        scenario.archives.find((a) => a.stage === 'foreign-deleted').full
+      )
+    const strip = (value) => {
+      if (!value || typeof value !== 'object') return
+      delete value.reservationWitness
+      delete value.active
+      delete value.reviewRequired
+      delete value.reviewedAt
+      Object.values(value).forEach(strip)
+    }
+    strip(archive.cartonBatches)
+    const result = await browser.page.evaluate(async (archive) => {
+      const db = await modules.openDatabase({
+        name: 'synthetic-old-witnessless-held',
+      })
+      try {
+        await db.restoreBackup(archive)
+        let ctx = await db.getOrderReconciliation({ orderId: '1001' }),
+          held = ctx.batches[0],
+          draft = structuredClone(held)
+        draft.physicalMark.supersededAliases[0].reviewRequired = false
+        draft.physicalMark.supersededAliases[0].active = false
+        await db.saveOrderCartonFacts({
+          orderId: '1001',
+          expectedRevisions: ctx.revisions,
+          changes: [{ after: draft, expectedRevision: held.revision }],
+        })
+        const ignored = await db.getOrderReconciliation({ orderId: '1001' }),
+          before = await db.exportBackup({})
+        let error
+        try {
+          await db.resolveCartonPhysicalMark({
+            orderId: '1001',
+            batchId: held.id,
+            expectedRevisions: ignored.revisions,
+            targetMark: ignored.batches[0].physicalMarkOwnerChoices[0].mark,
+            choice: 'keep-recorded-mark',
+            reason: 'Arbitrary old history cannot prove release',
+          })
+        } catch (failure) {
+          error = failure.code
+        }
+        const after = await db.exportBackup({}),
+          owner = ignored.batches[0].physicalMarkOwnerChoices[0],
+          restored = {
+            ...ignored.batches[0],
+            mark: owner.mark,
+            groups: owner.groups,
+          }
+        delete restored.deletedAt
+        await db.saveOrderCartonFacts({
+          orderId: '1001',
+          expectedRevisions: ignored.revisions,
+          changes: [
+            {
+              after: restored,
+              restore: true,
+              expectedRevision: restored.revision,
+            },
+          ],
+        })
+        ctx = await db.getOrderReconciliation({ orderId: '1001' })
+        const reviewed = await db.resolveCartonPhysicalMark({
+          orderId: '1001',
+          batchId: held.id,
+          expectedRevisions: ctx.revisions,
+          targetMark: owner.mark,
+          choice: 'relabel-reprint',
+          reason:
+            'Reviewed uncertain imported history and physically applied the current fresh labels',
+          physicalRelabelConfirmed: true,
+        })
+        const c = await db.createContainer({
+          name: 'Explicitly reviewed old archive',
+        })
+        let view = await db.includeContainerOrders({
+          id: c.id,
+          expectedRevision: c.revision,
+          orderRefs: [{ orderId: '1001' }],
+        })
+        view = await db.markContainerLoaded({
+          id: c.id,
+          expectedRevision: view.container.revision,
+        })
+        const sealReview = await db.reviewContainerSeal({
+          id: c.id,
+          expectedRevision: view.container.revision,
+        })
+        if (!sealReview.ready)
+          throw new Error(JSON.stringify(sealReview.issues))
+        const manifest = await db.sealContainer({
+          id: c.id,
+          expectedRevision: view.container.revision,
+          reviewToken: sealReview.reviewToken,
+        })
+        return {
+          held,
+          ignored,
+          error,
+          before,
+          after,
+          reviewed,
+          manifest,
+          backup: await db.exportBackup({}),
+        }
+      } finally {
+        db.close()
+      }
+    }, archive)
+    assert.equal(result.held.physicalMarkHistoricalReviewRequired, true)
+    assert.equal(result.held.physicalMarkConflictKind, 'historical-review')
+    assert.equal(
+      result.ignored.batches[0].physicalMarkHistoricalReviewRequired,
+      true
+    )
+    assert.equal(result.error, 'PHYSICAL_MARK_RELABEL_REQUIRED')
+    for (const field of [
+      'orders',
+      'preparations',
+      'cartonBatches',
+      'issuedCodes',
+      'shipmentLocks',
+      'containers',
+      'operationIntents',
+    ])
+      assert.deepEqual(result.before[field], result.after[field], field)
+    assert.equal(
+      result.reviewed.batches[0].physicalMarkHistoricalReviewRequired,
+      false
+    )
+    assert.equal(
+      result.reviewed.batches[0].physicalMarkResolutionRequired,
+      false
+    )
+    assert.equal(
+      result.reviewed.batches[0].physicalMark.resolution
+        .physicalRelabelConfirmed,
+      true
+    )
+    assert.equal(result.manifest.draft, false)
+    assert.deepEqual(result.backup.orders, archive.orders)
+    for (const field of [
+      'id',
+      'count',
+      'contents',
+      'len',
+      'wid',
+      'ht',
+      'weight',
+      'weightBasis',
+      'sourceFacts',
+      'received',
+      'loaded',
+    ])
+      assert.deepEqual(
+        result.reviewed.batches[0][field],
+        archive.cartonBatches[0][field],
+        field
+      )
+    assert.deepEqual(
+      result.reviewed.batches[0].physicalMark.originalArtwork,
+      archive.cartonBatches[0].physicalMark.originalArtwork
+    )
+  } finally {
+    await browser.close()
+  }
+})
+
+test('native archival witness and current release forgeries fail atomically, including resurrection of a former live holder', async () => {
+  const browser = await databaseBrowser()
+  try {
+    const scenario = await recoveryArchiveFixture(browser, {
+        sealedHolder: false,
+        removeHolder: true,
+      }),
+      free = scenario.archives.find((a) => a.stage === 'foreign-deleted').full,
+      occupied = scenario.archives.find(
+        (a) => a.stage === 'foreign-current'
+      ).full
+    const copies = []
+    for (const mutate of [
+      (w) => {
+        w.reservation.sellerId = 'forged-namespace'
+      },
+      (w) => {
+        w.reservation.orderId = '9999'
+      },
+      (w) => {
+        w.retiredRevision = 9999
+      },
+    ]) {
+      const bad = structuredClone(free)
+      mutate(
+        bad.cartonBatches[0].physicalMark.supersededAliases[0]
+          .reservationWitness
+      )
+      copies.push(bad)
+    }
+    const result = await browser.page.evaluate(
+      async ({ copies, free, occupied }) => {
+        const failures = []
+        for (const [index, bad] of copies.entries()) {
+          const db = await modules.openDatabase({
+            name: `synthetic-forged-witness-${index}`,
+          })
+          try {
+            const before = await db.exportBackup({})
+            let error
+            try {
+              await db.restoreBackup(bad)
+            } catch (failure) {
+              error = failure.code || failure.message
+            }
+            failures.push({ error, before, after: await db.exportBackup({}) })
+          } finally {
+            db.close()
+          }
+        }
+        const db = await modules.openDatabase({
+          name: 'synthetic-current-alias-cannot-be-stolen',
+        })
+        try {
+          await db.restoreBackup(free)
+          const before = await db.exportBackup({})
+          let error
+          try {
+            await db.restoreBackup(occupied)
+          } catch (failure) {
+            error = failure.code || failure.message
+          }
+          return {
+            failures,
+            current: { error, before, after: await db.exportBackup({}) },
+            state: await db.getOperationalState({}),
+          }
+        } finally {
+          db.close()
+        }
+      },
+      { copies, free, occupied }
+    )
+    for (const failure of result.failures) {
+      assert.equal(failure.error, 'PHYSICAL_MARK_RESTORE_CONFLICT')
+      for (const field of [
+        'orders',
+        'preparations',
+        'cartonBatches',
+        'issuedCodes',
+        'shipmentLocks',
+        'containers',
+        'images',
+      ])
+        assert.deepEqual(failure.after[field], failure.before[field], field)
+    }
+    assert.match(
+      result.current.error,
+      /PACKING_CODE_CONFLICT|PHYSICAL_MARK_RESTORE_CONFLICT/
+    )
+    for (const field of [
+      'orders',
+      'preparations',
+      'cartonBatches',
+      'issuedCodes',
+      'shipmentLocks',
+      'containers',
+      'images',
+    ])
+      assert.deepEqual(
+        result.current.after[field],
+        result.current.before[field],
+        field
+      )
+    assert.equal(
+      result.state.issuedCodes.find(
+        (c) => c.kind === 'base' && c.code === 'CE26101002'
+      ).orderId,
+      '1001'
+    )
+  } finally {
+    await browser.close()
+  }
+})
+
+test('native unused-holder retirement and deletion preserve witnessed full, order and packing archives with free P1 alias ownership', async () => {
+  const browser = await databaseBrowser()
+  try {
+    const { archives } = await recoveryArchiveFixture(browser, {
+      sealedHolder: false,
+      removeHolder: true,
+    })
+    for (const stage of archives.filter((a) => a.stage !== 'foreign-current')) {
+      const prep = stage.full.preparations.find((p) => p.orderId === '1001'),
+        selection = {
+          months: ['2026-10'],
+          orders: [
+            {
+              accountId: 'local',
+              orderId: '1001',
+              entryIds: prep.groups.flatMap((g) =>
+                g.variants.flatMap((v) => v.entryIds)
+              ),
+            },
+          ],
+        }
+      for (const [kind, archive] of [
+        ['full', stage.full],
+        ['order', stage.order],
+        ['packing', createPackingBackup(stage.full, selection)],
+      ]) {
+        const restored = await browser.page.evaluate(
+          async ({ archive, name }) => {
+            const db = await modules.openDatabase({ name })
+            try {
+              await db.restoreBackup(archive)
+              return {
+                backup: await db.exportBackup({}),
+                state: await db.getOperationalState({}),
+              }
+            } finally {
+              db.close()
+            }
+          },
+          { archive, name: `synthetic-unused-holder-${stage.stage}-${kind}` }
+        )
+        assert.equal(restored.state.batches[0].physicalMarkRelabelOnly, false)
+        assert.equal(
+          restored.state.batches[0].physicalMarkHistoricalReviewRequired,
+          false
+        )
+        assert.equal(restored.state.batches[0].physicalMarkConflictKind, 'none')
+        assert.equal(
+          restored.state.issuedCodes.find(
+            (c) => c.code === 'CE26101002' && c.kind === 'base'
+          ).orderId,
+          '1001'
+        )
+        assert.deepEqual(restored.backup.orders, stage.full.orders)
+        assert.deepEqual(
+          restored.backup.cartonBatches,
+          stage.full.cartonBatches
+        )
+        assert.deepEqual(restored.backup.images, stage.full.images)
+        assert.equal(restored.backup.images.length, 3)
+        assert.deepEqual(restored.backup.containers, [])
+        assert.deepEqual(restored.backup.shipmentLocks, [])
+        if (kind !== 'full')
+          assert.deepEqual(
+            archive.dependencyOrderRefs,
+            stage.stage === 'foreign-retired'
+              ? [{ accountId: 'local', orderId: '1002' }]
+              : []
+          )
+      }
+    }
+  } finally {
+    await browser.close()
+  }
+})
+
+test('native current-holder conflict is temporary and becomes permanent if that actual holder seals before release', async () => {
+  const browser = await databaseBrowser()
+  try {
+    await recoveryArchiveFixture(browser, {
+      sealedHolder: false,
+      stopBeforeRelabel: true,
+    })
+    const result = await browser.page.evaluate(async () => {
+      const temporary = await aliasDb.getOrderReconciliation({
+          orderId: '1001',
+        }),
+        batch = temporary.batches[0],
+        target = batch.physicalMarkOwnerChoices[0].mark,
+        before = await aliasDb.exportBackup({})
+      let keepError
+      try {
+        await aliasDb.resolveCartonPhysicalMark({
+          orderId: '1001',
+          batchId: batch.id,
+          expectedRevisions: temporary.revisions,
+          targetMark: target,
+          choice: 'keep-recorded-mark',
+          reason: 'Cannot steal a current primary',
+        })
+      } catch (error) {
+        keepError = error.code
+      }
+      const after = await aliasDb.exportBackup({}),
+        foreign = await aliasDb.getOrderReconciliation({ orderId: '1002' }),
+        mark = { orderId: '1002', groupId: foreign.preparation.groups[0].id }
+      await aliasDb.saveOrderCartonFacts({
+        orderId: '1002',
+        expectedRevisions: foreign.revisions,
+        changes: [
+          {
+            after: modules.fixture.syntheticBatch('1002', 1, '30', {
+              month: '2026-10',
+              groups: [mark],
+              mark,
+              received: 1,
+              weight: '8.2504',
+              len: '50',
+              wid: '40',
+              ht: '30',
+              revision: 0,
+            }),
+            expectedRevision: 0,
+          },
+        ],
+      })
+      const c = await aliasDb.createContainer({
+        name: 'Temporary holder becomes sealed',
+      })
+      let view = await aliasDb.includeContainerOrders({
+        id: c.id,
+        expectedRevision: c.revision,
+        orderRefs: [{ orderId: '1002' }],
+      })
+      view = await aliasDb.markContainerLoaded({
+        id: c.id,
+        expectedRevision: view.container.revision,
+      })
+      const review = await aliasDb.reviewContainerSeal({
+        id: c.id,
+        expectedRevision: view.container.revision,
+      })
+      if (!review.ready) throw new Error(JSON.stringify(review.issues))
+      const sealed = await aliasDb.sealContainer({
+          id: c.id,
+          expectedRevision: view.container.revision,
+          reviewToken: review.reviewToken,
+        }),
+        permanent = await aliasDb.getOrderReconciliation({ orderId: '1001' })
+      let permanentError
+      try {
+        await aliasDb.resolveCartonPhysicalMark({
+          orderId: '1001',
+          batchId: batch.id,
+          expectedRevisions: permanent.revisions,
+          targetMark: target,
+          choice: 'keep-recorded-mark',
+          reason: 'Cannot take sealed goods code',
+        })
+      } catch (error) {
+        permanentError = error.code
+      }
+      return {
+        temporary,
+        before,
+        after,
+        keepError,
+        sealed,
+        permanent,
+        permanentError,
+        state: await aliasDb.getOperationalState({}),
+      }
+    })
+    assert.equal(
+      result.temporary.batches[0].physicalMarkConflictKind,
+      'temporary'
+    )
+    assert.match(
+      result.temporary.batches[0].physicalMarkConflictReason,
+      /1002.*currently owns.*clears.*releases/
+    )
+    assert.equal(result.keepError, 'PHYSICAL_MARK_RELABEL_REQUIRED')
+    for (const field of [
+      'orders',
+      'preparations',
+      'cartonBatches',
+      'issuedCodes',
+      'containers',
+      'shipmentLocks',
+    ])
+      assert.deepEqual(result.after[field], result.before[field], field)
+    assert.equal(
+      result.permanent.batches[0].physicalMarkConflictKind,
+      'permanent'
+    )
+    assert.deepEqual(
+      result.permanent.batches[0].physicalMarkResolutionChoices,
+      ['relabel-reprint']
+    )
+    assert.equal(result.permanentError, 'PHYSICAL_MARK_RELABEL_REQUIRED')
+    assert.ok(
+      result.permanent.batches[0].physicalMarkSupersessions[0].conflicts.some(
+        (c) =>
+          c.kind === 'code-consumption' &&
+          c.containerId === result.sealed.container.id
+      )
+    )
+    assert.equal(
+      result.state.issuedCodes.find(
+        (c) => c.kind === 'base' && c.code === 'CE26101002'
+      ).orderId,
+      '1002'
+    )
   } finally {
     await browser.close()
   }

@@ -217,7 +217,11 @@ export function physicalMarkReservations({
     const owner = physicalMarkOwner(batch, preparations)
     for (const alias of physical.aliases) {
       if (
-        physical.supersededAliases?.some((value) => value.code === alias.code)
+        physical.supersededAliases?.some(
+          (value) =>
+            value.code === alias.code &&
+            (value.active !== false || value.reviewRequired === true)
+        )
       )
         continue
       // The mark can point at an independent product while its exact original
@@ -337,6 +341,108 @@ function aliasConflicts(state, batch, alias) {
 }
 const conflictKey = ({ containerName, ...value }) => stableValue(value)
 
+function retirementEvidence(batch, alias, entry) {
+  const retired = [batch, ...(batch.cartonHistory || [])].find(
+    (value) =>
+      sameRetiredLineage(value, batch, alias) &&
+      Date.parse(value.physicalMark.retiredAt) <= Date.parse(entry.at) &&
+      Date.parse(value.updatedAt) <= Date.parse(entry.at)
+  )
+  const event = batch.physicalMark.history.find(
+    (value) =>
+      value.kind === 'superseded' &&
+      value.code === alias.code &&
+      value.at === entry.at &&
+      Array.isArray(value.conflicts) &&
+      value.conflicts.some((owner) =>
+        entry.conflicts.some(
+          (claim) => conflictKey(owner) === conflictKey(claim)
+        )
+      )
+  )
+  return retired && event ? retired : null
+}
+function sameRetiredLineage(value, batch, alias) {
+  return (
+    value.id === batch.id &&
+    value.accountId === batch.accountId &&
+    value.physicalMark?.retiredAt &&
+    value.physicalMark.originalCode === batch.physicalMark.originalCode &&
+    stableValue(value.physicalMark.originalMark) ===
+      stableValue(batch.physicalMark.originalMark) &&
+    stableValue(value.physicalMark.originalArtwork) ===
+      stableValue(batch.physicalMark.originalArtwork) &&
+    value.physicalMark.aliases?.some(
+      (candidate) => stableValue(candidate) === stableValue(alias)
+    )
+  )
+}
+function validReservationWitness(batch, alias, entry) {
+  const witness = entry.reservationWitness,
+    retired = retirementEvidence(batch, alias, entry)
+  if (
+    !witness ||
+    !retired ||
+    witness.batchId !== batch.id ||
+    ![batch, ...(batch.cartonHistory || [])].some(
+      (value) =>
+        sameRetiredLineage(value, batch, alias) &&
+        value.revision === witness.retiredRevision &&
+        value.physicalMark?.retiredAt === witness.retiredAt &&
+        value.physicalMark.aliases?.some(
+          (candidate) => stableValue(candidate) === stableValue(alias)
+        )
+    )
+  )
+    return false
+  const reservation = validateIssuedCode(witness.reservation)
+  return (
+    reservation.kind === 'base' &&
+    reservation.accountId === batch.accountId &&
+    reservation.code === alias.code &&
+    reservation.month === alias.month &&
+    reservation.sellerId === alias.sellerId &&
+    entry.conflicts.some(
+      (conflict) =>
+        conflict.kind === 'current-primary' &&
+        codeReservationMembers(reservation).some(
+          (member) => memberKey(member) === memberKey(conflict)
+        )
+    ) &&
+    batch.physicalMark.history.some(
+      (event) =>
+        ['superseded', 'superseded-update'].includes(event.kind) &&
+        event.code === alias.code &&
+        stableValue(event.reservationWitness) === stableValue(witness)
+    )
+  )
+}
+function reservationWitness(state, batch, alias, previous, conflicts) {
+  if (!previous?.physicalMark?.retiredAt) return undefined
+  const actual = (state.issuedCodes || []).find(
+    (value) =>
+      value.accountId === batch.accountId &&
+      value.kind === 'base' &&
+      value.code === alias.code &&
+      value.month === alias.month &&
+      value.sellerId === alias.sellerId &&
+      conflicts.some(
+        (conflict) =>
+          conflict.kind === 'current-primary' &&
+          codeReservationMembers(value).some(
+            (member) => memberKey(member) === memberKey(conflict)
+          )
+      )
+  )
+  if (!actual) return undefined // Allocation previews have no new stored reservation yet.
+  return {
+    batchId: batch.id,
+    retiredRevision: previous.revision,
+    retiredAt: previous.physicalMark.retiredAt,
+    reservation: clone(validateIssuedCode(actual)),
+  }
+}
+
 /** Derive recovery only from actual final primaries/locks and the stored prior
  * retirement. A caller-supplied supersession never releases a current alias.
  * The result is still the existing carton evidence, not a second code ledger.
@@ -361,19 +467,37 @@ export function recoverPhysicalMarkAliases(
     for (const alias of mark.aliases) {
       const conflicts = aliasConflicts(state, batch, alias),
         known = superseded.find((value) => value.code === alias.code),
-        claimed = incoming.find((value) => value.code === alias.code)
+        claimed = incoming.find((value) => value.code === alias.code),
+        witnessed =
+          claimed?.reservationWitness &&
+          validReservationWitness(batch, alias, claimed),
+        historical =
+          claimed && !prior && retirementEvidence(batch, alias, claimed),
+        missingPermanent = claimed?.conflicts.some(
+          (value) =>
+            value.kind !== 'current-primary' &&
+            !conflicts.some(
+              (actual) => conflictKey(actual) === conflictKey(value)
+            )
+        )
       if (
         claimed &&
         !known &&
-        (!conflicts.length ||
+        (claimed.conflicts.some(
+          (owner) => owner.accountId !== batch.accountId
+        ) ||
           (prior && !previous?.retiredAt) ||
-          (!prior && !mark.retiredAt) ||
+          (claimed.reservationWitness && !witnessed) ||
+          (!prior && !mark.retiredAt && !historical) ||
+          (!conflicts.length && !historical) ||
+          (validateClaims && missingPermanent) ||
           (validateClaims &&
+            conflicts.length &&
             claimed.conflicts.some(
               (value) =>
                 !conflicts.some(
                   (actual) => conflictKey(actual) === conflictKey(value)
-                )
+                ) && !(witnessed && value.kind === 'current-primary')
             )))
       )
         throw codeError(
@@ -382,11 +506,12 @@ export function recoverPhysicalMarkAliases(
         )
       if (
         !known &&
-        conflicts.length &&
-        (previous?.retiredAt || (!prior && mark.retiredAt))
+        (conflicts.length || historical) &&
+        (previous?.retiredAt || (!prior && (mark.retiredAt || historical)))
       ) {
         // An already consumed own lineage is permanent, even after retirement.
         if (
+          conflicts.length &&
           locksOf(state).some(
             (lock) =>
               lock.accountId === batch.accountId &&
@@ -414,22 +539,70 @@ export function recoverPhysicalMarkAliases(
           reason:
             'The released physical alias is now reserved by another current product or shipment; use a fresh current product code and confirm physical relabeling.',
           conflicts: validateClaims
-            ? conflicts
+            ? conflicts.length
+              ? [
+                  ...new Map(
+                    [...(claimed?.conflicts || []), ...conflicts].map(
+                      (value) => [conflictKey(value), value]
+                    )
+                  ).values(),
+                ]
+              : clone(claimed.conflicts)
             : claimed?.conflicts || conflicts,
           currentProducts: [],
+          active: conflicts.length > 0,
+          reviewRequired: !conflicts.length && !witnessed,
+          ...(claimed?.reservationWitness ||
+          reservationWitness(state, batch, alias, prior, conflicts)
+            ? {
+                reservationWitness:
+                  claimed?.reservationWitness ||
+                  reservationWitness(state, batch, alias, prior, conflicts),
+              }
+            : {}),
         }
         superseded.push(entry)
         if (!claimed) mark.history.push({ kind: 'superseded', ...clone(entry) })
-        if (mark.code === alias.code) mark.resolution = null
-      } else if (known && conflicts.length) {
-        known.conflicts = [
-          ...new Map(
-            [...known.conflicts, ...conflicts].map((value) => [
-              conflictKey(value),
-              value,
-            ])
-          ).values(),
-        ]
+        if (mark.code === alias.code && (entry.active || entry.reviewRequired))
+          mark.resolution = null
+      } else if (known) {
+        if (
+          conflicts.length &&
+          known.active === false &&
+          known.reviewRequired !== true &&
+          !previous.retiredAt
+        )
+          throw codeError(
+            'PACKING_CODE_CONFLICT',
+            'The returned physical alias is currently reserved by its related goods.',
+            { code: alias.code }
+          )
+        if (conflicts.length)
+          known.conflicts = [
+            ...new Map(
+              [...known.conflicts, ...conflicts].map((value) => [
+                conflictKey(value),
+                value,
+              ])
+            ).values(),
+          ]
+        known.active = conflicts.length > 0
+        known.reviewRequired = known.reviewRequired === true
+        const freshReview =
+          known.reviewRequired &&
+          mark.resolution?.choice === 'relabel-reprint' &&
+          mark.resolution.physicalRelabelConfirmed === true &&
+          mark.resolution.resolvedAt !== previous.resolution?.resolvedAt &&
+          mark.history.some(
+            (event) =>
+              event.kind === 'resolution' &&
+              event.resolution?.resolvedAt === mark.resolution.resolvedAt &&
+              event.resolution.choice === 'relabel-reprint'
+          )
+        if (freshReview) {
+          known.reviewRequired = false
+          known.reviewedAt = mark.resolution.resolvedAt
+        }
       }
     }
     if (!superseded.length) return batch
@@ -1028,7 +1201,9 @@ export function consumptionLocksForManifest(manifest, state = {}) {
           if (alias.code === group.baseCode) continue
           if (
             carton.physicalMark.supersededAliases?.some(
-              (value) => value.code === alias.code
+              (value) =>
+                value.code === alias.code &&
+                (value.active !== false || value.reviewRequired === true)
             )
           )
             continue
