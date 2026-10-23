@@ -241,6 +241,15 @@ test('Orders merge reviews source ownership without losing a physical mark/count
   const { page, view, before } = await seed(extension, { twoGroups: true })
   await reviewLegacy(page, view)
   const { review, tools } = await group(page, 'Merge products', [0, 1, 2])
+  const mark = review.locator('[data-action="physical-mark-decision"]')
+  await expect(mark).toHaveCount(1)
+  await expect(mark).toContainText(before.preparations[0].groups[1].baseCode)
+  await expect(mark).toContainText(before.preparations[0].groups[0].baseCode)
+  await expect(review.locator('[data-action="review-proceed"]')).toBeDisabled()
+  await mark.locator('[data-choice="keep-recorded-mark"]').check()
+  await mark
+    .locator('[data-action="physical-mark-reason"]')
+    .fill('The actual original printed mark remains on these same six cartons')
   expect((await backup(extension)).preparations).toEqual(before.preparations)
   await review
     .getByRole('button', { name: 'Apply changes', exact: true })
@@ -252,6 +261,18 @@ test('Orders merge reviews source ownership without losing a physical mark/count
     .toBe(1)
   const after = await backup(extension),
     batch = after.cartonBatches[0]
+  expect(batch.physicalMark).toMatchObject({
+    code: before.preparations[0].groups[1].baseCode,
+    originalCode: before.preparations[0].groups[1].baseCode,
+    productCode: before.preparations[0].groups[0].baseCode,
+    resolution: {
+      choice: 'keep-recorded-mark',
+      reason:
+        'The actual original printed mark remains on these same six cartons',
+      physicalRelabelConfirmed: false,
+      provenance: 'manual-confirmed',
+    },
+  })
   expect(batch).toMatchObject({
     id: before.cartonBatches[0].id,
     count: 6,
