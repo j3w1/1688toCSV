@@ -60,6 +60,8 @@ async function seed(extension, count = 500) {
 test('continuous physical rows retain active decimal drafts across the whole list and save after recycling', async ({
   extension,
 }, testInfo) => {
+  // This case seeds 500 physical records and captures their virtual editor.
+  test.setTimeout(60_000)
   const { page, record } = await seed(extension),
     ref = {
       accountId: record.snapshot.accountId || 'local',
