@@ -532,6 +532,13 @@ export function createProductOutput({
           t(source, params, getLanguage(modal))
         try {
           await copied(copy, async () => {
+            if (
+              fields.selected().includes('barcode') &&
+              context.products.some((row) => row.needsSizeMapping)
+            )
+              throw new Error(
+                translate('Map this variant size before generating labels')
+              )
             const table = preparationTable(
               rows.map((row, index) => ({
                 ...row,

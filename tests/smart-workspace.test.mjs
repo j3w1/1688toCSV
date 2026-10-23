@@ -2170,6 +2170,31 @@ test('chosen-column output exposes the shared Headers preference and the capture
   modal.close()
 })
 
+test('chosen-column barcode copying refuses an unresolved variant before any clipboard write', async (testContext) => {
+  const { document } = authoringEnvironment(testContext),
+    source = syntheticManifest()
+  source.products[0].needsSizeMapping = true
+  source.products[0].barcode = ''
+  const context = captureContainerOutput(source),
+    output = createProductOutput({ repository: {}, authoring: {} })
+  await output.copyPreparation(context)
+  const modal = document.querySelector('.preparation-column-dialog'),
+    copy = modal.querySelector('button.primary')
+  assert.equal(modal.querySelector('input[value="barcode"]').checked, true)
+  copy.click()
+  await new Promise((resolve) => setTimeout(resolve, 0))
+  assert.match(
+    document.body.textContent,
+    /Map this variant size before generating labels/
+  )
+  assert.equal(copy.classList.contains('copy-failed'), true)
+  assert.equal(
+    modal.querySelector('input[aria-label="Headers"]').disabled,
+    false
+  )
+  modal.close()
+})
+
 test('shared-code labels retain separate source refs and exact source-line quantities', () => {
   const manifest = view()
   manifest.products = [

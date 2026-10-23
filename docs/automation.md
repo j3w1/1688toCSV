@@ -243,6 +243,8 @@ Full/packing backup uses `.json.gz` archives and [atomic scope rules](data-and-b
 
 Read `#workspace-status[data-status]`; text is for people. Priority is importing, needs-sign-in, export-finished, then idle. `importing` includes progress; `needs-sign-in` requires user attention; `export-finished` supplies a JSON array of actual saved filenames in `data-files`; `idle` means no current job/export since opening or starting another import. The extension does not switch to the attention tab itself. A ready preview alone does not establish a completed download.
 
+Pending size mappings expose visible `[data-issue-code="SIZE_MAPPING_REQUIRED"]` notices in Orders and Backlog. Review uses `PURCHASE_SIZE_REQUIRED` as a warning: a base product identity can be assigned while its variant barcode stays blank. Use the existing Orders size controls to resolve it; barcode copy and print refuse pending variants. Source rows, prices and quantities stay available.
+
 ## Export files
 
 Browser downloads use local `YYYY-MM-DD-HHMMSS`, with `-2` for same-second repeats. Popup language localizes print prefixes/product words, while format keys remain stable.
