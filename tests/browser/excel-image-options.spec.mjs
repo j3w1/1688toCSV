@@ -40,7 +40,8 @@ for (const mode of ['light', 'dark'])
     record.snapshot.purchasedAt = '2026-10-15T12:00:00+08:00'
     record.tags = ['Shared']
     record.productTags = { [record.snapshot.items[0].entryId]: ['Shared'] }
-    for (const item of record.snapshot.items) item.title = '合成玻璃花瓶'
+    for (const [index, item] of record.snapshot.items.entries())
+      item.title = `合成玻璃花瓶 ${index + 1}`
     const restored = await extension.inspector.evaluate(
       ({ record, value }) =>
         chrome.runtime.sendMessage({
@@ -257,7 +258,8 @@ test('image style and detail controls persist, update the same preview, and keep
   record.snapshot.status = '交易成功'
   record.tags = ['Shipment A']
   record.productTags = { [record.snapshot.items[0].entryId]: ['Fragile'] }
-  for (const item of record.snapshot.items) item.title = '合成玻璃花瓶'
+  for (const [index, item] of record.snapshot.items.entries())
+    item.title = `合成玻璃花瓶 ${index + 1}`
   const restored = await extension.inspector.evaluate(
     (record) =>
       chrome.runtime.sendMessage({
@@ -459,7 +461,8 @@ test('store and order details toggle regenerates the raster and persists across 
   record.snapshot.sellerMemberLogin = 'synthetic-identity-toggle'
   record.snapshot.sellerShopOrigin =
     'https://synthetic-identity-toggle.1688.com'
-  for (const item of record.snapshot.items) item.title = '合成玻璃花瓶'
+  for (const [index, item] of record.snapshot.items.entries())
+    item.title = `合成玻璃花瓶 ${index + 1}`
   const result = await extension.inspector.evaluate(
     (record) =>
       chrome.runtime.sendMessage({
@@ -587,7 +590,8 @@ test('image columns reorder, persist across copying and reload, and use the sele
   )
   record.snapshot.sellerMemberLogin = 'synthetic-image-columns'
   record.snapshot.sellerShopOrigin = 'https://synthetic-image-columns.1688.com'
-  for (const item of record.snapshot.items) item.title = '合成玻璃花瓶'
+  for (const [index, item] of record.snapshot.items.entries())
+    item.title = `合成玻璃花瓶 ${index + 1}`
   const result = await extension.inspector.evaluate(
     (record) =>
       chrome.runtime.sendMessage({
