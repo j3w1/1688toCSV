@@ -1,6 +1,6 @@
 # Chrome Web Store Listing — 1688toPL
 
-Last updated: 2026-10-22. **Local SEAL candidate, version 2.10.0; unpublished.** This file is the store metadata source of truth, not authorization to submit or release. Current verification is tracked below; historical test counts do not establish acceptance of this candidate.
+Last updated: 2026-10-23. **SEAL implementation, version 2.10.0; unpublished to the store.** This file is the store metadata source of truth, not authorization to submit or release. Current verification is tracked below; historical test counts do not establish acceptance of this candidate.
 
 ## Store Listing
 
@@ -36,13 +36,13 @@ Use one buyer account per library. Unsupported page layouts or inconsistent tota
 
 ## Graphics & Assets
 
-| Asset                  | Required dimensions     | Status / source                                                                                                                                                                                |
-| ---------------------- | ----------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Icon                   | 128 × 128 PNG           | [Present](icons/icon128.png); rights/store suitability not established.                                                                                                                        |
-| Screenshot             | 1280 × 800 or 640 × 400 | [Orders](screenshots/order-library.png), [dark Orders](screenshots/order-library-dark.png), [packing](screenshots/preparation.png); synthetic documentation images, store composition pending. |
-| Additional screenshots | Same store sizes        | [Spreadsheet import](screenshots/store-spreadsheet-import.png), [label editor](screenshots/label-editor.png), [Settings](screenshots/settings.png).                                            |
-| Small promo tile       | 440 × 280               | Not created.                                                                                                                                                                                   |
-| Optional marquee       | 1400 × 560              | Not created.                                                                                                                                                                                   |
+| Asset                  | Required dimensions     | Status / source                                                                                                                                                                                                                                                               |
+| ---------------------- | ----------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Icon                   | 128 × 128 PNG           | [Present](icons/icon128.png); rights/store suitability not established.                                                                                                                                                                                                       |
+| Screenshot             | 1280 × 800 or 640 × 400 | [Orders](screenshots/order-library.png), [dark Orders](screenshots/order-library-dark.png), [Orders carton reconciliation](screenshots/order-cartons.png), [container loading](screenshots/container-loading.png); synthetic documentation images, store composition pending. |
+| Additional screenshots | Same store sizes        | [Spreadsheet import](screenshots/store-spreadsheet-import.png), [label editor](screenshots/label-editor.png), [Settings](screenshots/settings.png).                                                                                                                           |
+| Small promo tile       | 440 × 280               | Not created.                                                                                                                                                                                                                                                                  |
+| Optional marquee       | 1400 × 560              | Not created.                                                                                                                                                                                                                                                                  |
 
 Synthetic documentation images were refreshed for the renamed candidate, including the [packing export dialog](screenshots/packing-export.png). Store-sized composition is still pending. Confirm rights for 1688/Alibaba, spreadsheet and Casa Elida artwork or replace it before submission. A user-selected logo also needs appropriate rights. Do not imply affiliation.
 
@@ -111,15 +111,36 @@ Visibility/regions are unselected. Repository rename, local implementation or Gi
 
 | Version | Date       | Changes                                                                                                                                                                                                             | Status                                                                                                      |
 | ------- | ---------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------- |
-| 2.10.0 | 2026-10-22 | Orders smart carton reconciliation, purchase-calendar codes, container loading/seal/amendments, immutable three-sheet output and compatible shipment/report backups. | Local implementation; unpublished. No store submission. |
-| 2.9.0   | 2026-10-22 | 1688toPL branding; opt-in detailed JSON; reachable/canonical backup photos; compatible scoped restore/settings initialization; shared XLSX/PDF media; repeat-workbook warning; organized illustrated documentation. | Historical local handoff: 1,047 unit tests and all 538 Chromium tests passed. No store submission.                   |
+| 2.10.0  | 2026-10-22 | Orders smart carton reconciliation, purchase-calendar codes, container loading/seal/amendments, immutable three-sheet output and compatible shipment/report backups.                                                | Local implementation; unpublished. No store submission.                                                     |
+| 2.9.0   | 2026-10-22 | 1688toPL branding; opt-in detailed JSON; reachable/canonical backup photos; compatible scoped restore/settings initialization; shared XLSX/PDF media; repeat-workbook warning; organized illustrated documentation. | Historical local handoff: 1,047 unit tests and all 538 Chromium tests passed. No store submission.          |
 | 2.9.0   | 2026-10-22 | Integrated manual/JSON/store orders, physical cartons, inline capacity planning, Organize, photo tools, operational costs and two-sheet packing exports.                                                            | Historical repository integration; [PR #20](https://github.com/j3w1/1688toPL/pull/20). No store submission. |
 
 Earlier release and verification chronology remains in Git history. It is not current-candidate acceptance.
 
 ## Review Notes
 
-### Development verification
+### SEAL 2.10.0 local verification — 2026-10-23
+
+The local candidate was checked with native Node.js 24 on Linux using synthetic fixtures and temporary browser profiles. These results cover the Orders/container implementation; they do not establish owner workflow acceptance or store readiness. The complete runtime verification belongs to commit `b829b6500bb59bf27a2e8a0d3e497d8e6718f515`, tree `404184bdb6f5d345bce27106e781bb08ef45be06`; this follow-up leaves its application and tests unchanged and restores the previously reviewed complete export-preview image.
+
+| Evidence                                  | Result                                                                                                                                                                                                                                                        |
+| ----------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Source syntax and documentation           | Passed.                                                                                                                                                                                                                                                       |
+| Unit regressions                          | Passed: 1,435 tests; zero failures, cancellations or skips.                                                                                                                                                                                                   |
+| Production rebuild                        | Passed: complete extension 2.10.0; 30 manifest resources checked.                                                                                                                                                                                             |
+| Complete Chromium suite                   | Passed: all 558 tests, serialized; zero failures, skips, retries or flaky results.                                                                                                                                                                            |
+| Real synthetic operator paths             | Passed: China 1,350-unit/15-carton import; exact uneven 1688 report (63 pieces, 57.22 kg, 0.461256 m³); and 100/45 remainder reconciliation, each through loading and seal.                                                                                   |
+| Migration, restore and immutable evidence | Passed automated synthetic checks, including actual pre-SEAL 2.9/464 full/monthly archives, original photo bytes, semantic quantities/value, held legacy evidence, ownership/witness dependencies and stale/forged-write refusal.                             |
+| Physical marks and PDF generation         | Passed automated recorded/current mark, fresh relabel/keep, returned-carton recovery, historical reprint and stale-render/no-side-effect checks. PDF evidence is separate from physical printing.                                                             |
+| Portable local trial                      | Passed tests and complete development build, then reported `no local trial target: nothing loaded`; loaded, staged and verified were all false. No installation or owner database was touched.                                                                |
+| Synthetic screenshots                     | Passed generation of 13 repository images and two narrow captures. Changed images were viewed; the complete export-preview image was retained from its reviewed, byte-identical prior capture after a loading race in regeneration. No older UI was restored. |
+| Installed extension / owner acceptance    | Not run: no local trial target is configured; the old owner install/database were deleted by owner order and were excluded.                                                                                                                                   |
+| Native Excel                              | Not run. Actual XLSX, formula, media and clipboard assertions are automated evidence.                                                                                                                                                                         |
+| Physical print / hardware scanner         | Not run.                                                                                                                                                                                                                                                      |
+
+The extension key and durable `1688-order-library` database/backup compatibility identifiers remain unchanged. Fresh physical relabel confirmation inside a cancelable shipment amendment is refused; keep/history and proposed printing remain available. Complete the amendment or use unsealed cartons before recording actual relabeling. The SEAL remains open for owner workflow acceptance; no store submission is claimed.
+
+### Historical 2.9.0 handoff verification
 
 The renamed 2.9.0 handoff and its verification corrections were checked on 2026-10-22 using native Node.js 24 on Linux and synthetic data in temporary browser profiles. The export tests explicitly opt into detailed automation JSON while retaining workbook, cost and summary-content assertions. Narrow export controls remain clickable without forcing pointer actions.
 
