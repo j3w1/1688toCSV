@@ -652,7 +652,23 @@ export async function startPackingWorkspace({
   }
   const routeChanged = () => void followHash().catch(failure)
   addEventListener('hashchange', routeChanged)
-  await followHash()
+  // An unavailable saved route must not abort library startup: its data read
+  // still needs this controller before guarded navigation can become ready.
+  for (;;) {
+    try {
+      await followHash()
+      break
+    } catch (error) {
+      if (pendingHash) continue // A newer route supersedes the failed one.
+      workspace = 'orders'
+      ordersView = 'products'
+      currentOrder = undefined
+      paint()
+      rememberRoute({ workspace: 'orders', view: 'products' })
+      failure(error)
+      break
+    }
+  }
   return {
     ...authoring,
     copyLabels: output.copyLabels,

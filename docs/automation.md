@@ -8,6 +8,8 @@ Popup language is local: inspect its `lang`, use its language controls and prese
 
 Wait for a data action to become enabled before invoking it. Startup keeps those controls disabled until the stored library and its context have loaded; an empty library keeps row-dependent copy controls disabled. The workspace status values and stable action names are unchanged. Clipboard reads follow the completed Copied state, and downloads follow the actual export/download completion.
 
+An unavailable saved purchase, container or account route keeps its visible notice and returns to Products without adding a history entry. The actual library read still completes, preserving saved drafts and enabling the available controls. A startup storage error stays visible while data-dependent actions remain protected.
+
 Photo Close stays disabled while an edit saves. Its accessible description and the photo status show the existing localized Saving message until the save settles; Escape and backdrop clicks preserve the pending save. Preview zoom, fit and image-toggle controls wait for actual image dimensions. These guards preserve original photos and export bytes.
 
 ## Orders from other sources

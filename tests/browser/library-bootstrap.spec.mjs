@@ -160,3 +160,133 @@ for (const populated of [true, false])
     expect(await page.evaluate(() => window.bootstrapClipboardWrites)).toBe(0)
     expect(extension.unexpectedRequests).toEqual([])
   })
+
+for (const stale of ['purchase', 'container', 'account'])
+  test(`a stale initial ${stale} route retains its notice, source and draft and enables recovery`, async ({
+    extension,
+  }) => {
+    const records = await extension.inspector.evaluate(
+      `(${createDemoRecords.toString()})(document)`
+    )
+    const before = await extension.inspector.evaluate(async (record) => {
+      const repository = await window.testRepository
+      await repository.restoreBackup({
+        format: '1688-order-library',
+        version: 1,
+        exportedAt: new Date().toISOString(),
+        orders: [record],
+        history: [],
+        images: [],
+      })
+      const key = JSON.stringify([
+        'local',
+        record.snapshot.orderId,
+        record.snapshot.items[0].entryId,
+      ])
+      await repository.saveOrderCartonDraft({
+        accountId: 'local',
+        orderId: record.snapshot.orderId,
+        expectedRevision: 0,
+        draft: {
+          version: 1,
+          generation: 1,
+          rawCells: { [JSON.stringify([key, 'capacity'])]: '1.5' },
+        },
+      })
+      return repository.exportBackup({})
+    }, records[0])
+    expect(before.orderCartonDrafts).toHaveLength(1)
+    expect(Object.values(before.orderCartonDrafts[0].value.rawCells)).toEqual([
+      '1.5',
+    ])
+    const page = await extension.context.newPage()
+    await page.addInitScript(() =>
+      localStorage.setItem('1688-library-purchase-months', '[]')
+    )
+    const hash =
+      stale === 'purchase'
+        ? 'workspace=orders&view=cartons&accountId=local&orderId=900000000000000019'
+        : stale === 'account'
+          ? `workspace=orders&view=cartons&accountId=missing-synthetic-account&orderId=${records[0].snapshot.orderId}`
+          : 'workspace=packing&view=loading&containerId=missing-synthetic-container'
+    await page.goto(`${extension.extensionBaseUrl}/library.html#${hash}`)
+    const historyLength = await page.evaluate(() => history.length)
+    await expect(page.locator('#order-count')).toHaveText('1')
+    await expect(page.locator('#orders-products-view')).toBeVisible()
+    await expect(
+      page.locator('#orders-view .error-notice-message')
+    ).toContainText(/no longer|not found|unavailable/i)
+    expect(await page.evaluate(() => location.hash)).toBe(
+      '#workspace=orders&view=products'
+    )
+    expect(await page.evaluate(() => history.length)).toBe(historyLength)
+    for (const selector of bootstrapControls) {
+      if (['#clear-rows', '#remove-orders'].includes(selector))
+        await expect(page.locator(selector)).toBeDisabled()
+      else await expect(page.locator(selector)).toBeEnabled()
+    }
+    await page.locator('#view-packing').click()
+    const packing = page.locator('#packing-view')
+    await expect(packing).toBeVisible()
+    await packing.locator('[data-action="create-container"]').click()
+    const prompt = page.locator('dialog[open]').last()
+    await prompt
+      .getByRole('textbox', { name: 'Container name', exact: true })
+      .fill('Synthetic stale-route recovery')
+    await prompt
+      .getByRole('button', { name: 'Create container', exact: true })
+      .click()
+    await expect(prompt).toBeHidden()
+    await expect(
+      packing.locator('[data-action="choose-container"] option:checked')
+    ).toHaveText('Synthetic stale-route recovery')
+    await page.locator('#view-orders').click()
+    await expect(
+      page.locator('#sheet-body tr[data-selection-key]')
+    ).toHaveCount(3)
+    const after = await extension.inspector.evaluate(async () =>
+      (await window.testRepository).exportBackup({})
+    )
+    expect(after.orders.map((record) => record.snapshot)).toEqual(
+      before.orders.map((record) => record.snapshot)
+    )
+    expect(after.orderCartonDrafts).toEqual(before.orderCartonDrafts)
+    expect(extension.unexpectedRequests).toEqual([])
+  })
+
+test('an actual initial readonly storage abort leaves a visible error and protected data controls', async ({
+  extension,
+}) => {
+  const page = await extension.context.newPage()
+  await page.addInitScript(() => {
+    window.initialReadAborted = false
+    const getAll = IDBIndex.prototype.getAll
+    IDBIndex.prototype.getAll = function (...args) {
+      const request = getAll.apply(this, args)
+      if (
+        this.objectStore.name === 'orders' &&
+        this.name === 'account' &&
+        this.objectStore.transaction.mode === 'readonly'
+      ) {
+        const transaction = this.objectStore.transaction
+        request.addEventListener(
+          'success',
+          () => {
+            if (!window.initialReadAborted) {
+              window.initialReadAborted = true
+              transaction.abort()
+            }
+          },
+          { once: true }
+        )
+      }
+      return request
+    }
+  })
+  await page.goto(`${extension.extensionBaseUrl}/library.html`)
+  await expect(page.locator('.error-notice-message')).toContainText(/abort/i)
+  expect(await page.evaluate(() => window.initialReadAborted)).toBe(true)
+  await expect(page.locator('#copy-values')).toBeDisabled()
+  await expect(page.locator('#view-packing')).toBeDisabled()
+  expect(extension.unexpectedRequests).toEqual([])
+})
