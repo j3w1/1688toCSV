@@ -168,10 +168,34 @@ test('an agent authors Orders, confirms one physical arrangement, seals a named 
     ['weight', '9.5'],
   ]) {
     const first = grid.locator(`[data-grid-column="${column}"]`).first()
+    const key = await first.evaluate(
+      (input) => input.closest('[data-grid-key]').dataset.gridKey
+    )
     await first.fill(value)
     await first.blur()
+    await expect
+      .poll(() =>
+        extension.inspector.evaluate(
+          async ({ ref, key, column }) => {
+            const context = await (
+              await window.testRepository
+            ).getOrderReconciliation(ref)
+            const carton = context.draft?.value?.plannerDraft?.cartons.find(
+              (carton) => carton.id === key
+            )
+            return column === 'dimensions'
+              ? carton
+                ? [carton.len, carton.wid, carton.ht]
+                : null
+              : carton?.weight
+          },
+          { ref, key, column }
+        )
+      )
+      .toEqual(column === 'dimensions' ? ['50', '50', '50'] : '9.5')
     await action(page, 'select-grid-rows').click()
-    await first.focus()
+    // The typed field established the active column; another focus/blur would
+    // queue a second commit after the fill preview captured its generation.
     await action(page, 'fill-grid-range').click()
     await page
       .locator('.grid-paste-preview [data-action="apply-carton-paste"]')
