@@ -5,6 +5,8 @@ import {
   openContainerOutput,
   libraryBackup,
   openOrderReconciliation,
+  editOrderProduct,
+  closeOrderProduct,
 } from './smart-workspace-helpers.mjs'
 
 const productRow = (page, orderId, entryId = '1') =>
@@ -141,7 +143,12 @@ test('a legacy carton marked by one linked purchase retains one read-only physic
       before,
       after,
       refusal,
-      backup: { ...after, cartonBatches: [legacyBatch] },
+      backup: {
+        ...after,
+        version: 4,
+        exportedAt: '2026-10-15T04:00:00.000Z',
+        cartonBatches: [legacyBatch],
+      },
     }
   })
   expect(fixture.refusal).toEqual({
@@ -180,6 +187,9 @@ test('a legacy carton marked by one linked purchase retains one read-only physic
     code = original.groups[0].baseCode
   expect(counterpart.groups[0].baseCode).toBe(code)
   expect(restoredEvidence.cartonBatches[0].needsReview).toBe(true)
+  expect(restoredEvidence.cartonBatches[0].legacyReview.kind).toBe(
+    'cross-order'
+  )
   expect(restoredEvidence.cartonBatches[0].count).toBe(1)
   expect(restoredEvidence.cartonBatches[0].mark).toEqual({
     orderId: '8701',
@@ -256,7 +266,8 @@ test('repeat-product dialog previews both purchases, cancellation writes nothing
   await source.getByRole('checkbox').check()
   const original = productRow(page, '8701')
   await original.getByRole('checkbox').check()
-  await source
+  const sourceEditor = await editOrderProduct(page, source)
+  await sourceEditor
     .getByRole('button', { name: 'Link repeat purchase', exact: true })
     .click()
   let dialog = page.getByRole('dialog', {
@@ -281,7 +292,7 @@ test('repeat-product dialog previews both purchases, cancellation writes nothing
   )
   expect(cancelled.data.preparations).toEqual(backup.preparations)
   expect(cancelled.data.issuedCodes).toEqual(backup.issuedCodes)
-  await source
+  await sourceEditor
     .getByRole('button', { name: 'Link repeat purchase', exact: true })
     .click()
   dialog = page.getByRole('dialog', {
@@ -300,9 +311,23 @@ test('repeat-product dialog previews both purchases, cancellation writes nothing
     .click()
   await expect(dialog).not.toBeVisible()
   await expect(rows).toHaveCount(2)
-  await expect(
-    rows.locator('[aria-label="Linked repeat purchase"]')
-  ).toHaveCount(2)
+  await expect(sourceEditor).toBeHidden()
+  for (const row of [source, original]) {
+    const editor = await editOrderProduct(page, row)
+    await expect(
+      editor.getByRole('button', {
+        name: 'Linked repeat purchase',
+        exact: true,
+      })
+    ).toHaveCount(1)
+    await closeOrderProduct(editor)
+  }
+  const linkedState = await libraryBackup(extension)
+  expect(
+    linkedState.preparations.map((prep) =>
+      Boolean(prep.groups[0].sharedProductId)
+    )
+  ).toEqual([true, true])
   await expect(
     page.locator('#sheet-body tr[aria-selected="true"]')
   ).toHaveCount(2)
@@ -503,8 +528,12 @@ test('repeat link rejects stale preparation revisions and refreshed source evide
           JSON.stringify(afterSource.issuedCodes),
     }
   })
-  expect(result.staleError).toContain('Preparation changed in another tab')
-  expect(result.sourceError).toContain('source order changed')
+  expect(result.staleError).toBe(
+    'The source order or preparation changed. Review the linked products again.'
+  )
+  expect(result.sourceError).toBe(
+    'The source order or preparation changed. Review the linked products again.'
+  )
   expect(result.unchangedStale).toBe(true)
   expect(result.unchangedSource).toBe(true)
 })
@@ -562,7 +591,9 @@ test('repeat feature review detects concurrent changes and linked feature edits 
       statusAllowed: statusEdit.productWorkflow['1'].missingLabels.active,
     }
   })
-  expect(result.staleFeatureError).toContain('The source order changed')
+  expect(result.staleFeatureError).toBe(
+    'The source order or preparation changed. Review the linked products again.'
+  )
   expect(result.noPartialLink).toBe(true)
   expect(result.featureEditError).toContain('Unlink this repeat purchase')
   expect(result.featureUnchanged).toBe(true)
@@ -670,7 +701,8 @@ test('a single-size repeat selects the original S card, stores canonical subset 
   await expect(rows).toHaveCount(4)
   const source = productRow(page, '8805')
   await expect(source.locator('.row-code-copy')).toHaveText('CE26101005')
-  await source
+  const sourceEditor = await editOrderProduct(page, source)
+  await sourceEditor
     .getByRole('button', { name: 'Link repeat purchase', exact: true })
     .click()
   const dialog = page.getByRole('dialog', {
@@ -740,7 +772,8 @@ test('a single-size repeat selects the original S card, stores canonical subset 
         (value) => value.snapshot.orderId === record.snapshot.orderId
       ).snapshot
     ).toEqual(record.snapshot)
-  await source
+  const linkedEditor = await editOrderProduct(page, source)
+  await linkedEditor
     .getByRole('button', { name: 'Linked repeat purchase', exact: true })
     .click()
   const unlink = page.getByRole('dialog', {

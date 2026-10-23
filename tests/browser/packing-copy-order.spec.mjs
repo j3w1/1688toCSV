@@ -16,7 +16,7 @@ async function exportBackup(extension) {
   return response.data
 }
 
-test('Orders barcode and carton previews follow saved packing order across orders and groups', async ({
+test('Orders barcode and carton previews agree on source/code order while preserving legacy packing arrangement metadata', async ({
   extension,
 }) => {
   const demos = await extension.inspector.evaluate(
@@ -99,7 +99,8 @@ test('Orders barcode and carton previews follow saved packing order across order
   await page.goto(`${extension.extensionBaseUrl}/library.html`)
   const rows = page.locator('#sheet-body tr[data-selection-key]')
   await expect(rows).toHaveCount(4)
-  // Orders stays chronological; only the exported labels use packing order.
+  // Orders and its label previews follow current source/code order. Legacy
+  // packing positions remain backed up without driving the active output.
   expect(
     await rows.evaluateAll((rows) =>
       rows.map((row) => row.getAttribute('data-selection-key'))
@@ -117,6 +118,16 @@ test('Orders barcode and carton previews follow saved packing order across order
   )
   await page.locator('#select-rows').click()
   const saved = await exportBackup(extension)
+  for (const preparation of preparations) {
+    const retained = saved.preparations.find(
+      (entry) => entry.orderId === preparation.orderId
+    )
+    expect(retained.packingPosition).toBe(preparation.packingPosition)
+    expect(retained.packingManualReordered).toBe(true)
+    expect(retained.groups.map(({ id }) => id)).toEqual(
+      preparation.groups.map(({ id }) => id)
+    )
+  }
   const packingGroups = [...preparations]
     .sort((a, b) => a.packingPosition - b.packingPosition)
     .flatMap(({ groups }) => groups)
@@ -127,14 +138,17 @@ test('Orders barcode and carton previews follow saved packing order across order
     sourceOrderGroups.map(({ baseCode }) => baseCode)
   )
 
+  const pageCodes = ['CE26100101', 'CE26100102', 'CE26100201', 'CE26100202']
+  expect(sourceOrderGroups.map(({ baseCode }) => baseCode)).toEqual(pageCodes)
+  const previews = []
   for (const [buttonId, expected] of [
     [
       'copy-barcodes',
-      packingGroups.flatMap((group) =>
+      sourceOrderGroups.flatMap((group) =>
         group.variants.map((variant) => barcodeValue(group, variant))
       ),
     ],
-    ['copy-carton-marks', packingGroups.map(({ baseCode }) => baseCode)],
+    ['copy-carton-marks', sourceOrderGroups.map(({ baseCode }) => baseCode)],
   ]) {
     await revealCopyActions(page)
     await expect(page.locator(`#${buttonId}`)).toBeEnabled()
@@ -142,11 +156,13 @@ test('Orders barcode and carton previews follow saved packing order across order
     const dialog = page.locator('.image-copy-dialog')
     await expect(dialog.locator('.image-copy-submit')).toBeEnabled()
     await expect(dialog.locator('figcaption .ce-code')).toHaveText(expected)
+    previews.push(await dialog.locator('figcaption .ce-code').allTextContents())
     await expect(dialog.locator('.copy-preview img')).toHaveCount(4)
     await dialog.getByRole('button', { name: 'Done', exact: true }).click()
     await expect(dialog).not.toBeVisible()
   }
 
+  expect(previews).toEqual([pageCodes, pageCodes])
   const after = await exportBackup(extension)
   expect(after.orders).toEqual(saved.orders)
   expect(after.preparations).toEqual(saved.preparations)
