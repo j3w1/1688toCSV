@@ -561,6 +561,371 @@ for (const relabel of [false, true]) {
   })
 }
 
+test('returned cartons retain original evidence but require a fresh label after their released mark ships on another purchase', async ({
+  extension,
+}, testInfo) => {
+  test.setTimeout(60000)
+  const { page, ref, before, batch, markReview } = await keptAlias(extension),
+    original = before.orders[0],
+    originalPhoto = await markReview
+      .locator('.physical-mark-source-photo')
+      .getAttribute('src'),
+    oldCode = batch.physicalMark.code,
+    foreignRecord = structuredClone(original),
+    foreignRef = { accountId: ref.accountId, orderId: '900000000000000010' }
+  // Save a real original-mark job before its retirement. Regeneration must
+  // later reach the typed repository fence, rather than rebuild a live label.
+  await exportAliasMark(
+    extension,
+    page,
+    markReview,
+    'recorded',
+    batch,
+    testInfo
+  )
+  await markReview.getByRole('button', { name: 'Close', exact: true }).click()
+  foreignRecord.accountId = foreignRef.accountId
+  foreignRecord.orderId = foreignRef.orderId
+  Object.assign(foreignRecord.snapshot, {
+    ...foreignRef,
+    sourceUrl: `https://air.1688.com/app/ctf-page/trade-order-detail/index.html?orderId=${foreignRef.orderId}`,
+    items: [structuredClone(original.snapshot.items[2])],
+    totals: {
+      goodsGross: '30.00',
+      shipping: '0.00',
+      sourceDiscount: '0.00',
+      orderAdjustment: '0.00',
+      goodsNet: '30.00',
+      payable: '30.00',
+    },
+  })
+  function prepared(snapshot) {
+    const value = createPreparation(snapshot, '2026-10')
+    for (const group of value.groups) {
+      group.spanishName = 'SYNTHETIC RECOVERY'
+      group.category = '合成品'
+      for (const variant of group.variants) {
+        const previous = before.preparations[0].groups
+          .flatMap((group) => group.variants)
+          .find((other) =>
+            other.entryIds.some((entryId) => variant.entryIds.includes(entryId))
+          )
+        variant.variantSuffix = previous.variantSuffix
+        variant.sizeSuffix = previous.sizeSuffix
+        variant.needsSizeMapping = false
+      }
+    }
+    return value
+  }
+  const foreign = prepared(foreignRecord.snapshot),
+    fresh = prepared(original.snapshot)
+  foreign.groups[0].baseCode = oldCode
+  const removed = await extension.inspector.evaluate(
+    async ({ ref, foreignRecord, foreign, images }) => {
+      const repository = await window.testRepository,
+        context = await repository.getOrderReconciliation(ref)
+      await repository.removeCartonBatch(context.batches[0])
+      await repository.removeOrders([ref.orderId])
+      const removed = await repository.exportBackup({})
+      await repository.restoreBackup({
+        format: '1688-order-library',
+        version: 1,
+        exportedAt: '2026-10-23T06:00:00.000Z',
+        orders: [foreignRecord],
+        history: [],
+        images,
+      })
+      const [saved] = await repository.savePreparations([foreign], {
+          expectedRevisions: [0],
+        }),
+        foreignRef = { accountId: saved.accountId, orderId: saved.orderId },
+        rc = await repository.getOrderReconciliation(foreignRef),
+        target = { orderId: saved.orderId, groupId: saved.groups[0].id }
+      await repository.saveOrderCartonFacts({
+        ...foreignRef,
+        expectedRevisions: rc.revisions,
+        changes: [
+          {
+            after: {
+              id: 'foreign-synthetic-sealed-carton',
+              ...foreignRef,
+              month: '2026-10',
+              packingBasis: 'exact',
+              count: 1,
+              revision: 0,
+              groups: [target],
+              mark: target,
+              contents: [
+                {
+                  orderId: saved.orderId,
+                  entryId: foreignRecord.snapshot.items[0].entryId,
+                  quantity: '30',
+                },
+              ],
+              unresolvedContents: [],
+              len: '50',
+              wid: '40',
+              ht: '30',
+              weight: '8.2504',
+              weightBasis: 'carton',
+              received: 1,
+            },
+            expectedRevision: 0,
+          },
+        ],
+      })
+      return removed
+    },
+    { ref, foreignRecord, foreign, images: before.images }
+  )
+  expect(removed.orders).toHaveLength(0)
+  expect(removed.cartonBatches[0].deletedAt).toBeTruthy()
+  expect(removed.issuedCodes.some((value) => value.code === oldCode)).toBe(
+    false
+  )
+  await page.reload()
+  const foreignId = await createContainerThroughUI(
+    page,
+    [foreignRef],
+    'Synthetic shipment owning the released mark'
+  )
+  await sealContainerThroughUI(page)
+  const foreignSealed = await backup(extension),
+    foreignManifest = await extension.inspector.evaluate(
+      async (id) => (await window.testRepository).getContainerManifest({ id }),
+      foreignId
+    )
+  expect(foreignManifest.cartons[0].markCode).toBe(oldCode)
+  const recovery = await extension.inspector.evaluate(
+    async ({ ref, original, images, fresh, batchId }) => {
+      const repository = await window.testRepository
+      await repository.restoreBackup({
+        format: '1688-order-library',
+        version: 1,
+        exportedAt: '2026-10-23T06:05:00.000Z',
+        orders: [original],
+        history: [],
+        images,
+      })
+      await repository.savePreparations([fresh], { expectedRevisions: [0] })
+      const state = await repository.getOperationalState({}),
+        tombstone = state.batches.find((value) => value.id === batchId),
+        target = tombstone.physicalMarkOwnerChoices.find(
+          (choice) => choice.groups.length === 1
+        )
+      if (!target) throw new Error('Missing actual current owner choice')
+      const after = { ...tombstone, mark: target.mark, groups: target.groups }
+      delete after.deletedAt
+      const context = await repository.getOrderReconciliation(ref)
+      await repository.saveOrderCartonFacts({
+        ...ref,
+        expectedRevisions: context.revisions,
+        changes: [
+          { after, restore: true, expectedRevision: tombstone.revision },
+        ],
+      })
+      return {
+        tombstone,
+        target,
+        context: await repository.getOrderReconciliation(ref),
+      }
+    },
+    { ref, original, images: before.images, fresh, batchId: batch.id }
+  )
+  expect(recovery.tombstone.deletedAt).toBeTruthy()
+  expect(recovery.tombstone.physicalMarkRelabelOnly).toBe(true)
+  const active = recovery.context.batches.find((value) => value.id === batch.id)
+  expect(active.physicalMarkRelabelOnly).toBe(true)
+  expect(active.physicalMarkResolutionChoices).toEqual(['relabel-reprint'])
+  expect(active.physicalMarkCode).toBe(oldCode)
+  expect(active.physicalMarkSupersessions[0].conflicts).toEqual(
+    expect.arrayContaining([
+      expect.objectContaining({
+        orderId: foreignRef.orderId,
+        containerId: foreignId,
+        revisionId: foreignManifest.revisionId,
+        kind: 'code-consumption',
+      }),
+    ])
+  )
+  for (const group of recovery.context.preparation.groups) {
+    expect(group.baseCode).toBeTruthy()
+    expect(group.baseCode).not.toBe(oldCode)
+  }
+  for (const key of [
+    'id',
+    'contents',
+    'count',
+    'received',
+    'loaded',
+    'len',
+    'wid',
+    'ht',
+    'weight',
+    'weightBasis',
+    'unitContents',
+    'sourceFacts',
+  ])
+    expect(active[key], key).toEqual(batch[key])
+  expect(active.physicalMark.originalArtwork).toEqual(
+    batch.physicalMark.originalArtwork
+  )
+  await page.reload()
+  await page.locator('#view-orders').click()
+  await page.locator('[data-action="orders-products"]').click()
+  await page
+    .locator('#orders-print-actions [data-action="open-print-menu"]')
+    .click()
+  await page.locator('#print-recent').click()
+  const recent = page.locator('.print-recent-dialog'),
+    filesBeforeRefusal = await downloads(extension),
+    jobsBeforeRefusal = await page.evaluate(() =>
+      localStorage.getItem('1688-print-recent')
+    )
+  await recent
+    .getByRole('button', { name: /^Regenerate the print job of / })
+    .first()
+    .click()
+  await expect(recent).toContainText(`belongs to shipment ${foreignId}`)
+  await expect(recent).toContainText(foreignManifest.revisionId)
+  await expect(page.locator('.print-dialog')).toHaveCount(0)
+  expect((await downloads(extension)).map((file) => file.id)).toEqual(
+    filesBeforeRefusal.map((file) => file.id)
+  )
+  expect(
+    await page.evaluate(() => localStorage.getItem('1688-print-recent'))
+  ).toBe(jobsBeforeRefusal)
+  await recent.getByRole('button', { name: 'Close', exact: true }).click()
+  const grid = await openOrderReconciliation(page, ref, 'cartons')
+  await grid
+    .locator(
+      `tr[data-grid-key="${batch.id}"] [data-action="review-carton-physical-mark"]`
+    )
+    .click()
+  const review = page.locator('[data-action="review-physical-mark"]')
+  await expect(
+    review.locator('[data-choice="keep-recorded-mark"]')
+  ).toBeDisabled()
+  await expect(review.locator('[data-mark-role="recorded"]')).toBeDisabled()
+  await expect(review.locator('[data-mark-supersession]')).toContainText(
+    foreignId
+  )
+  await expect(review.locator('[data-mark-supersession]')).toContainText(
+    foreignManifest.revisionId
+  )
+  await expect(review.locator('.physical-mark-source-photo')).toHaveAttribute(
+    'src',
+    originalPhoto
+  )
+  const prePrint = await backup(extension)
+  await exportAliasMark(
+    extension,
+    page,
+    review,
+    'current-product',
+    active,
+    testInfo,
+    {
+      recorded: oldCode,
+      current: active.currentProductCode,
+    }
+  )
+  const postPrint = await backup(extension)
+  for (const key of [
+    'orders',
+    'preparations',
+    'cartonBatches',
+    'containers',
+    'shipmentLocks',
+    'images',
+  ])
+    expect(postPrint[key], key).toEqual(prePrint[key])
+  await review.locator('[data-choice="relabel-reprint"]').check()
+  await review
+    .locator('[data-action="physical-mark-reason"]')
+    .fill(
+      'Fresh current marks printed and applied to the same returned cartons'
+    )
+  await expect(
+    review.locator('[data-action="save-physical-mark-decision"]')
+  ).toBeDisabled()
+  await review.locator('[data-action="confirm-physical-relabel"]').check()
+  await review.locator('[data-action="save-physical-mark-decision"]').click()
+  await expect(review).toBeHidden()
+  const resolved = await realOrderContext(extension, ref),
+    relabeled = resolved.batches.find((value) => value.id === batch.id)
+  expect(relabeled.physicalMarkRelabelOnly).toBe(false)
+  expect(relabeled.physicalMark).toMatchObject({
+    originalCode: oldCode,
+    code: active.currentProductCode,
+    resolution: { choice: 'relabel-reprint', physicalRelabelConfirmed: true },
+  })
+  expect(relabeled.contents).toEqual(batch.contents)
+  expect(relabeled.physicalMark.originalArtwork).toEqual(
+    batch.physicalMark.originalArtwork
+  )
+  const returnedId = await createContainerThroughUI(
+    page,
+    [ref],
+    'Synthetic returned cartons after physical relabel'
+  )
+  await sealContainerThroughUI(page)
+  const returnedManifest = await extension.inspector.evaluate(
+    async (id) => (await window.testRepository).getContainerManifest({ id }),
+    returnedId
+  )
+  expect(returnedManifest.cartons).toHaveLength(6)
+  expect(
+    returnedManifest.cartons.every(
+      (carton) => carton.markCode === active.currentProductCode
+    )
+  ).toBe(true)
+  const final = await backup(extension)
+  expect(
+    final.orders.find((record) => record.snapshot.orderId === ref.orderId)
+      .snapshot
+  ).toEqual(original.snapshot)
+  expect(
+    final.orders.find((record) => record.snapshot.orderId === ref.orderId)
+      .productPhotos
+  ).toEqual(original.productPhotos)
+  for (const image of before.images)
+    expect(final.images.find((current) => current.url === image.url)).toEqual(
+      image
+    )
+  for (const key of ['containers', 'shipmentLocks']) {
+    const owned = (values) =>
+      values.filter((value) =>
+        key === 'containers'
+          ? value.id === foreignId
+          : value.orderId === foreignRef.orderId
+      )
+    expect(JSON.stringify(owned(final[key]))).toBe(
+      JSON.stringify(owned(foreignSealed[key]))
+    )
+  }
+  expect(
+    final.orders.find(
+      (record) => record.snapshot.orderId === foreignRef.orderId
+    )
+  ).toEqual(
+    foreignSealed.orders.find(
+      (record) => record.snapshot.orderId === foreignRef.orderId
+    )
+  )
+  expect(
+    final.issuedCodes.filter(
+      (code) => code.code === oldCode && code.kind === 'base'
+    )
+  ).toEqual([expect.objectContaining({ orderId: foreignRef.orderId })])
+  expect(
+    await extension.inspector.evaluate(
+      async (id) => (await window.testRepository).getContainerManifest({ id }),
+      foreignId
+    )
+  ).toEqual(foreignManifest)
+})
+
 test('a carton change during real mark PDF encoding rejects the captured output without download or recent-job writes', async ({
   extension,
 }) => {
