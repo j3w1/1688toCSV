@@ -1769,6 +1769,21 @@ test('native seal freezes original image bytes, source snapshots, canonical labe
       const record = syntheticOrder()
       record.snapshot.items[0].thumbnail = ref
       record.snapshot.items[0].photos = [ref]
+      record.snapshot.items[0].photoEdits = {
+        0: {
+          tagScale: 2.75,
+          tags: [
+            {
+              id: 'synthetic-tag',
+              code: 'AX',
+              x: 0.5,
+              y: 0.5,
+              labelX: 0.8,
+              labelY: 0.15,
+            },
+          ],
+        },
+      }
       await db.restoreBackup({
         format: '1688-order-library',
         version: 4,
@@ -1911,6 +1926,11 @@ test('native seal freezes original image bytes, source snapshots, canonical labe
         historic: JSON.stringify(saved) === original,
         originalRef: saved.orders[0].record.snapshot.items[0].thumbnail,
         rowPhoto: saved.products[0].thumbnail,
+        frozenEditScale: saved.products[0].photoEdits?.[0]?.tagScale,
+        frozenEditCode: saved.products[0].photoEdits?.[0]?.tags[0]?.code,
+        frozenEditsMatchOriginal:
+          JSON.stringify(saved.products[0].photoEdits) ===
+          JSON.stringify(saved.orders[0].record.snapshot.items[0].photoEdits),
         raw: saved.media.images[0].dataUrl,
         fullPrefs: JSON.stringify(saved.preferences) === JSON.stringify(prefs),
         first: [
@@ -1934,6 +1954,9 @@ test('native seal freezes original image bytes, source snapshots, canonical labe
       originalRef: `local-image:${'1'.repeat(64)}`,
       rowPhoto: (await import('./fixtures/container-fixture.mjs'))
         .SYNTHETIC_PHOTO,
+      frozenEditScale: 2.75,
+      frozenEditCode: 'AX',
+      frozenEditsMatchOriginal: true,
       raw: (await import('./fixtures/container-fixture.mjs')).SYNTHETIC_PHOTO,
       fullPrefs: true,
       first: ['VARIANTE', 'VIDRIO', 'A', 'XL', 'Extra Large', 'Rojo'],

@@ -17,6 +17,7 @@ import {
 } from './inventory-model.js'
 import { cartonBatchMetrics } from './carton-batches.js'
 import { shipmentMoney } from './shipment-money.js'
+import { productFeatures } from './product-features.js'
 import {
   validatePackingPreferences,
   barcodeValue,
@@ -496,6 +497,12 @@ function buildProductRows(
     const before = member.availableBefore.find(
       (row) => row.entryId === entryId
     )?.quantity
+    const features = productFeatures(
+      member.record.productWorkflow?.[entryId]?.features
+    )
+    const payments = (member.record.paymentLinks || []).filter(
+      (link) => !link.targetEntryIds || link.targetEntryIds.includes(entryId)
+    )
     rows.push({
       accountId: member.accountId,
       orderId: member.orderId,
@@ -522,6 +529,35 @@ function buildProductRows(
       packingMonth: group?.month || member.preparation?.month || '',
       thumbnail: item.thumbnail,
       photos: clone(item.photos || [item.thumbnail].filter(Boolean)),
+      ...(item.photoEdits ? { photoEdits: clone(item.photoEdits) } : {}),
+      ...(features.length
+        ? {
+            productFeatures: features
+              .map((feature) => feature.name)
+              .join(' · '),
+            productFeatureCosts: features
+              .filter((feature) => feature.unitCost !== '0.00')
+              .map(
+                (feature) =>
+                  `${feature.name} (¥${feature.unitCost} per piece; ${feature.included ? 'Already recorded' : 'Added cost'})`
+              )
+              .join(' · '),
+          }
+        : {}),
+      ...(payments.length
+        ? {
+            linkedPaymentReasons: payments
+              .map((link) => link.reason)
+              .join(' · '),
+          }
+        : {}),
+      ...(member.record.additionalCharges?.length
+        ? {
+            additionalChargeReasons: member.record.additionalCharges
+              .map((charge) => `${charge.reason} (¥${charge.amount})`)
+              .join(' · '),
+          }
+        : {}),
       quantity,
       loadedQuantity: quantity,
       purchasedQuantity: item.quantity,
