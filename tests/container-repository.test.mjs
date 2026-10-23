@@ -5,6 +5,192 @@ import { createContainerWorkbook } from '../src/container-export.js'
 import { SYNTHETIC_PHOTO } from './fixtures/container-fixture.mjs'
 import { databaseBrowser } from './fixtures/database-browser.mjs'
 
+test('native source refresh and newer legacy restores preserve authored inventory, identity, clears and history', async () => {
+  const fixture = await databaseBrowser()
+  try {
+    const result = await fixture.page.evaluate(async () => {
+      const { openDatabase, fixture: factories } = modules,
+        db = await openDatabase({ name: 'synthetic-refresh-metadata' }),
+        source = factories.syntheticOrder('1001', '100', {
+          purchasedAt: undefined,
+          sellerMemberLogin: '',
+        }).snapshot,
+        fields = [
+          'inventoryDispositions',
+          'inventoryDispositionsUpdatedAt',
+          'inventoryDispositionClears',
+          'purchaseDateResolution',
+          'purchaseDateResolutionUpdatedAt',
+          'supplierIdentityResolution',
+          'supplierIdentityResolutionUpdatedAt',
+          'supplierCodeIdentityReview',
+          'supplierCodeIdentityReviewUpdatedAt',
+          'inventoryMetadataHistory',
+        ],
+        metadata = (record) =>
+          Object.fromEntries(fields.map((field) => [field, record[field]])),
+        remaining = async () => (await db.getBacklog({})).totals.quantity
+      await db.saveSnapshot(source)
+      const legacy = await db.exportBackup()
+      await db.resolvePurchaseDate({
+        orderId: '1001',
+        date: '2026-09-04',
+        expectedObservedAt: source.observedAt,
+      })
+      await db.resolvePurchaseSupplier({
+        orderId: '1001',
+        sellerId: 'synthetic-factory',
+        reason: 'Synthetic reviewed source identity',
+        expectedObservedAt: source.observedAt,
+      })
+      const preparation = factories.syntheticManifest().orders[0].preparation
+      await db.savePreparations([preparation], {
+        expectedRevisions: [0],
+        preserveNaming: true,
+      })
+      const review = await db.reviewLegacySupplierIdentity({ orderId: '1001' })
+      await db.confirmLegacySupplierIdentity({
+        plan: review.plan,
+        expectedRevisions: review.expectedRevisions,
+        reason: 'Synthetic retained supplier equivalence',
+      })
+      await db.setInventoryDispositions({
+        orderId: '1001',
+        entries: {
+          2001: { kind: 'canceled', quantity: '10', reason: 'Documented ten' },
+        },
+      })
+      const before = metadata(await db.getOrder('1001')),
+        original = await db.exportBackup(),
+        initialRemaining = await remaining()
+      const refreshed = await db.saveSnapshot({
+        ...source,
+        status: 'Seller shipped',
+        observedAt: '2026-10-02T12:00:00.000Z',
+      })
+      const afterRefresh = metadata(await db.getOrder('1001'))
+      const missingMetadata = structuredClone(legacy)
+      missingMetadata.orders[0].snapshot.status = 'Received'
+      missingMetadata.orders[0].snapshot.observedAt = '2026-10-03T12:00:00.000Z'
+      missingMetadata.orders[0].lastCheckedAt = '2026-10-03T12:00:00.000Z'
+      await db.restoreBackup(missingMetadata)
+      const afterMissingRestore = metadata(await db.getOrder('1001')),
+        retainedRemaining = await remaining()
+      await db.setInventoryDispositions({
+        orderId: '1001',
+        entries: {
+          2001: { kind: 'canceled', quantity: '20', reason: 'Reviewed twenty' },
+        },
+        expectedValues: { 2001: before.inventoryDispositions['2001'] },
+      })
+      const newer = metadata(await db.getOrder('1001')),
+        stale = structuredClone(original)
+      stale.orders[0].snapshot.status = 'Completed'
+      stale.orders[0].snapshot.observedAt = '2026-10-04T12:00:00.000Z'
+      stale.orders[0].lastCheckedAt = '2026-10-04T12:00:00.000Z'
+      await db.restoreBackup(stale)
+      const afterOlderRestore = metadata(await db.getOrder('1001')),
+        newerRemaining = await remaining(),
+        stableBackup = (backup) =>
+          JSON.stringify({ ...backup, exportedAt: '' }),
+        beforeConflict = stableBackup(await db.exportBackup()),
+        conflicts = []
+      for (const removed of [false, true]) {
+        const current = (await db.getOrder('1001')).snapshot,
+          candidate = {
+            ...current,
+            observedAt: '2026-10-05T12:00:00.000Z',
+            items: current.items.map((item) => ({
+              ...item,
+              entryId: removed ? '2002' : item.entryId,
+              quantity: removed ? '100' : '10',
+            })),
+            totals: removed
+              ? current.totals
+              : {
+                  ...current.totals,
+                  goodsGross: '100.00',
+                  goodsNet: '100.00',
+                  payable: '100.00',
+                },
+          }
+        try {
+          await db.saveSnapshot(candidate)
+        } catch (error) {
+          conflicts.push({ code: error.code, entryId: error.detail?.entryId })
+        }
+      }
+      const atomic = beforeConflict === stableBackup(await db.exportBackup())
+      await db.setInventoryDispositions({
+        orderId: '1001',
+        entries: { 2001: null },
+        expectedValues: { 2001: newer.inventoryDispositions['2001'] },
+      })
+      const cleared = metadata(await db.getOrder('1001'))
+      await db.saveSnapshot({
+        ...(await db.getOrder('1001')).snapshot,
+        status: 'Reviewed complete',
+        observedAt: '2026-10-06T12:00:00.000Z',
+      })
+      await db.restoreBackup(stale)
+      const afterClear = metadata(await db.getOrder('1001')),
+        finalRemaining = await remaining(),
+        backup = await db.exportBackup(),
+        restored = await openDatabase({ name: 'synthetic-refresh-roundtrip' })
+      await restored.restoreBackup(backup)
+      const roundtrip = metadata(await restored.getOrder('1001')),
+        roundtripRemaining = (await restored.getBacklog({})).totals.quantity
+      restored.close()
+      db.close()
+      return {
+        before,
+        afterRefresh,
+        afterMissingRestore,
+        refreshed: refreshed.changed,
+        initialRemaining,
+        retainedRemaining,
+        newer,
+        afterOlderRestore,
+        newerRemaining,
+        conflicts,
+        atomic,
+        cleared,
+        afterClear,
+        finalRemaining,
+        roundtrip,
+        roundtripRemaining,
+      }
+    })
+    assert.equal(result.refreshed, true)
+    assert.equal(result.initialRemaining, '90')
+    assert.equal(result.retainedRemaining, '90')
+    assert.deepEqual(result.afterRefresh, result.before)
+    assert.deepEqual(result.afterMissingRestore, result.before)
+    assert.equal(result.newerRemaining, '80')
+    assert.deepEqual(result.afterOlderRestore, result.newer)
+    assert.deepEqual(
+      result.conflicts,
+      [false, true].map(() => ({
+        code: 'INVENTORY_DISPOSITION_SOURCE_CONFLICT',
+        entryId: '2001',
+      }))
+    )
+    assert.equal(result.atomic, true)
+    assert.deepEqual(result.afterClear, result.cleared)
+    assert.deepEqual(result.roundtrip, result.cleared)
+    assert.equal(result.finalRemaining, '100')
+    assert.equal(result.roundtripRemaining, '100')
+    assert.ok(result.before.supplierCodeIdentityReview.codeOwners.length)
+    assert.ok(
+      result.cleared.inventoryMetadataHistory.length >
+        result.before.inventoryMetadataHistory.length
+    )
+    assert.deepEqual(result.cleared.inventoryDispositionClears, ['2001'])
+  } finally {
+    await fixture.close()
+  }
+})
+
 test('native whole-order reservation, stale tabs, logical loading, atomic seal and historical amendment', async () => {
   const fixture = await databaseBrowser()
   try {

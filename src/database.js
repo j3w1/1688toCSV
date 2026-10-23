@@ -31,6 +31,18 @@ import {
 
 const SNAPSHOT_VERSION = 1
 const BACKUP_FORMAT = '1688-order-library'
+const inventoryMetadataFields = [
+  'inventoryDispositions',
+  'inventoryDispositionsUpdatedAt',
+  'inventoryDispositionClears',
+  'purchaseDateResolution',
+  'purchaseDateResolutionUpdatedAt',
+  'supplierIdentityResolution',
+  'supplierIdentityResolutionUpdatedAt',
+  'supplierCodeIdentityReview',
+  'supplierCodeIdentityReviewUpdatedAt',
+  'inventoryMetadataHistory',
+]
 import {
   OPERATIONS_METADATA_FIELDS,
   validateOperationsMetadata,
@@ -809,6 +821,21 @@ function reconcile(snapshot, previous) {
     previous?.snapshot.items.map((item) => [item.entryId, item]) ?? []
   )
   const currentIds = new Set(snapshot.items.map((item) => item.entryId))
+  if (previous?.inventoryDispositions) {
+    try {
+      validateInventoryDispositions(previous.inventoryDispositions, {
+        snapshot,
+      })
+    } catch (cause) {
+      const error = new Error(
+        'The refreshed source conflicts with an authored inventory exclusion. Review that exclusion in Orders before refreshing again.',
+        { cause }
+      )
+      error.code = 'INVENTORY_DISPOSITION_SOURCE_CONFLICT'
+      error.detail = cause.detail
+      throw error
+    }
+  }
   return {
     changed: true,
     order: {
@@ -818,6 +845,11 @@ function reconcile(snapshot, previous) {
       lastCheckedAt: snapshot.observedAt,
       notes: previous?.notes ?? '',
       tags: previous?.tags ?? [],
+      ...Object.fromEntries(
+        inventoryMetadataFields
+          .filter((field) => previous?.[field] !== undefined)
+          .map((field) => [field, previous[field]])
+      ),
       ...Object.fromEntries(
         [...OPERATIONS_METADATA_FIELDS, 'paymentLinks', 'paymentLinksUpdatedAt']
           .filter((field) => previous?.[field] !== undefined)
