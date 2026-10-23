@@ -8,6 +8,7 @@ import {
 import { validateCartonBatch } from '../../src/carton-batches.js'
 import { repeatProductStoreIdentity } from '../../src/repeat-products.js'
 import { planCartonBatchChanges } from '../../src/carton-batch-changes.js'
+import { validateBackup } from '../../src/database.js'
 import {
   openOrderReconciliation,
   assignSelectedPurchaseCodes,
@@ -586,6 +587,8 @@ test('returned cartons retain original evidence but require a fresh label after 
   await markReview.getByRole('button', { name: 'Close', exact: true }).click()
   foreignRecord.accountId = foreignRef.accountId
   foreignRecord.orderId = foreignRef.orderId
+  foreignRecord.changedEntryIds = []
+  foreignRecord.removedEntryIds = []
   Object.assign(foreignRecord.snapshot, {
     ...foreignRef,
     sourceUrl: `https://air.1688.com/app/ctf-page/trade-order-detail/index.html?orderId=${foreignRef.orderId}`,
@@ -598,6 +601,14 @@ test('returned cartons retain original evidence but require a fresh label after 
       goodsNet: '30.00',
       payable: '30.00',
     },
+  })
+  validateBackup({
+    format: '1688-order-library',
+    version: 1,
+    exportedAt: '2026-10-23T06:00:00.000Z',
+    orders: [foreignRecord],
+    history: [],
+    images: before.images,
   })
   function prepared(snapshot) {
     const value = createPreparation(snapshot, '2026-10')
