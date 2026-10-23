@@ -1877,6 +1877,7 @@ export async function createOrderCartonSession({
     cellWork,
     confirmWork,
     confirmIntent,
+    focusedCell,
     arrangementDirty = false,
     lastInputGeneration = 0
   const commandKinds = [...(restored.history?.commandKinds || [])]
@@ -2561,7 +2562,10 @@ export async function createOrderCartonSession({
       void raw.flush().catch(onError)
     },
     recoveryPending: () => raw.dirty() || raw.status().pending,
-    setActiveCell(key, column) {
+    setActiveCell(key, column, value = rawCell(key, column)) {
+      // This is the displayed value, not a new edit. Keep it independently of
+      // refreshed facts so an untouched, pinned input cannot stage stale text.
+      focusedCell = { key, column, value: String(value ?? '') }
       const focus = raw.state().focus
       if (focus?.key === key && focus?.column === column) return
       raw.focusCell(key, column)
@@ -2570,8 +2574,17 @@ export async function createOrderCartonSession({
     commitCell(key, column, value) {
       if (column === 'capacity') return flush()
       const previous = cellWork,
+        unchanged =
+          focusedCell?.key === key &&
+          focusedCell?.column === column &&
+          focusedCell.value === value,
         current = (async () => {
           if (previous) await previous.catch(() => {})
+          if (
+            unchanged &&
+            raw.state().rawCells[JSON.stringify([key, column])] === undefined
+          )
+            return
           const descriptor = CARTON_GRID_COLUMNS.find(
             (entry) => entry.key === column
           )
@@ -2670,6 +2683,17 @@ export async function createOrderCartonSession({
           throw new Error(
             'Resolve the order reconciliation issues before confirming.'
           )
+        // A clean refresh/focus cycle has no physical operation to confirm.
+        // Capacity proposals and authored commands still use the guarded write.
+        if (
+          !arrangementDirty &&
+          !commandCursor &&
+          !Object.keys(raw.state().rawCells).length &&
+          !plan.cartons.some((carton) =>
+            ['modified', 'proposed', 'removal-proposed'].includes(carton.state)
+          )
+        )
+          return
         const contextContainerId = getContextContainerId()
         if (contextContainerId)
           input.draft.contextContainerId = contextContainerId
@@ -3149,7 +3173,7 @@ export function mountOrderCartonGrid(
         let composing = false
         input.onfocus = () => {
           active = { key: row.key, column: column.key }
-          session.setActiveCell?.(row.key, column.key)
+          session.setActiveCell?.(row.key, column.key, input.value)
         }
         input.oncompositionstart = () => {
           composing = true
@@ -3256,6 +3280,8 @@ export function mountOrderCartonGrid(
       input.value =
         session.rawCell(row.key, column.key) ?? row[column.key] ?? ''
       input.inputMode = 'decimal'
+      input.onfocus = () =>
+        session.setActiveCell?.(row.key, column.key, input.value)
       let composing = false
       input.oncompositionstart = () => {
         composing = true

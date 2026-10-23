@@ -2,7 +2,9 @@ import { test, expect } from './extension-fixture.mjs'
 import { createDemoRecords } from '../../preview/library-fixture.js'
 import {
   openOrderReconciliation,
+  openSmartLibrary,
   realOrderContext,
+  seedSmartOrder,
 } from './smart-workspace-helpers.mjs'
 
 async function seed(extension, count = 500) {
@@ -166,6 +168,151 @@ test('continuous physical rows retain active decimal drafts across the whole lis
     original.record.snapshot
   )
 })
+
+for (const baseline of ['', '2.5'])
+  test(`two-tab carton refresh never commits a focused unedited weight (${JSON.stringify(baseline)}) on blur or Confirm`, async ({
+    extension,
+  }) => {
+    const ref = await seedSmartOrder(extension, {
+      count: 1,
+      quantity: '100',
+      capacity: '100',
+      physical: true,
+    })
+    if (baseline)
+      await extension.inspector.evaluate(
+        async ({ ref, baseline }) => {
+          const repository = await window.testRepository,
+            context = await repository.getOrderReconciliation(ref),
+            draft = window.testPlanner.createReconciliationDraft(context),
+            batch = context.batches[0]
+          draft.cartons = [
+            {
+              ...batch,
+              weight: baseline,
+              baseRevision: batch.revision,
+              draftKind: 'override',
+              requiresDomainReview: true,
+            },
+          ]
+          await repository.confirmOrderCartons({
+            ...ref,
+            draft,
+            expectedRevisions: context.revisions,
+            intentId: crypto.randomUUID(),
+          })
+        },
+        { ref, baseline }
+      )
+    const original = await realOrderContext(extension, ref),
+      batch = original.batches[0],
+      selector = `tr[data-grid-key=${JSON.stringify(batch.id)}] [data-grid-column="weight"]`,
+      page = await openSmartLibrary(extension),
+      grid = await openOrderReconciliation(page, ref, 'cartons'),
+      weight = grid.locator(selector)
+    await expect(weight).toHaveValue(baseline)
+    await weight.focus()
+    // Focus recovery must settle before the second tab captures its own draft
+    // revision. The first operator has never sent an input event.
+    await expect
+      .poll(
+        async () =>
+          (await realOrderContext(extension, ref)).draft?.value?.alignment
+            ?.activeCell
+      )
+      .toEqual({ key: batch.id, column: 'weight' })
+    await page.evaluate(() => {
+      // Observe real IDB writes without substituting a repository or save.
+      window.focusedCellWrites = []
+      for (const name of ['put', 'add', 'delete', 'clear']) {
+        const original = IDBObjectStore.prototype[name]
+        IDBObjectStore.prototype[name] = function (...args) {
+          window.focusedCellWrites.push({ store: this.name, method: name })
+          return original.apply(this, args)
+        }
+      }
+      const button = document.querySelector(
+        '[data-action="confirm-order-cartons"]'
+      )
+      window.focusedCellConfirmSettled = false
+      new MutationObserver((changes) => {
+        if (
+          changes.some((change) => change.oldValue !== null) &&
+          !button.disabled
+        )
+          window.focusedCellConfirmSettled = true
+      }).observe(button, {
+        attributes: true,
+        attributeFilter: ['disabled'],
+        attributeOldValue: true,
+      })
+    })
+    const second = await openSmartLibrary(extension),
+      secondGrid = await openOrderReconciliation(second, ref, 'cartons'),
+      secondWeight = secondGrid.locator(selector),
+      secondConfirm = secondGrid.locator(
+        '[data-action="confirm-order-cartons"]'
+      ),
+      newerWeight = '3.125'
+    await secondWeight.fill(newerWeight)
+    await secondConfirm.click()
+    await expect(secondConfirm).toBeEnabled()
+    await expect
+      .poll(
+        async () =>
+          (await realOrderContext(extension, ref)).batches.find(
+            (value) => value.id === batch.id
+          )?.weight
+      )
+      .toBe(newerWeight)
+    // This visible summary proves the first session accepted the foreign
+    // refresh while its pinned input still shows the original focus value.
+    await expect(
+      grid
+        .locator('.reconciliation-summary > div')
+        .filter({ hasText: 'Known kg' })
+        .locator('strong')
+    ).toHaveText(newerWeight)
+    await expect(weight).toBeFocused()
+    await expect(weight).toHaveValue(baseline)
+    const foreign = await realOrderContext(extension, ref)
+    expect(foreign.batches[0].revision).toBe(batch.revision + 1)
+    expect(foreign.record.snapshot).toEqual(original.record.snapshot)
+    await weight.blur()
+    const confirm = grid.locator('[data-action="confirm-order-cartons"]')
+    await confirm.click()
+    await expect
+      .poll(() => page.evaluate(() => window.focusedCellConfirmSettled))
+      .toBe(true)
+    await expect(confirm).toBeEnabled()
+    expect(await page.evaluate(() => window.focusedCellWrites)).toEqual([])
+    expect(await realOrderContext(extension, ref)).toEqual(foreign)
+    await page.reload()
+    const reloaded = await openOrderReconciliation(page, ref, 'cartons'),
+      currentWeight = reloaded.locator(selector)
+    await expect(currentWeight).toHaveValue(newerWeight)
+    expect((await realOrderContext(extension, ref)).batches).toEqual(
+      foreign.batches
+    )
+    // A deliberate raw edit still commits against the reloaded current
+    // revisions, including zero and decimals beyond floating-point precision.
+    const explicit = baseline ? '12.500000000000000001' : '0'
+    await currentWeight.fill(explicit)
+    const save = reloaded.locator('[data-action="confirm-order-cartons"]')
+    await save.click()
+    await expect(save).toBeEnabled()
+    await expect
+      .poll(
+        async () =>
+          (await realOrderContext(extension, ref)).batches.find(
+            (value) => value.id === batch.id
+          )?.weight
+      )
+      .toBe(explicit)
+    const saved = await realOrderContext(extension, ref)
+    expect(saved.batches[0].revision).toBe(foreign.batches[0].revision + 1)
+    expect(saved.record.snapshot).toEqual(original.record.snapshot)
+  })
 
 test('keyboard reaches every product and shift selection crosses recycled rows with full totals', async ({
   extension,

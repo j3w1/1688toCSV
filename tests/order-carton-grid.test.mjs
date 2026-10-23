@@ -128,10 +128,16 @@ import {
   planGridFill,
   nextGridCell,
   createGridDraftController,
+  createOrderCartonSession,
   sourceKey,
   PRODUCT_GRID_COLUMNS,
   CARTON_GRID_COLUMNS,
 } from '../src/order-carton-grid.js'
+import * as planner from '../src/carton-reconciliation.js'
+import {
+  syntheticOrder,
+  syntheticBatch,
+} from './fixtures/container-fixture.mjs'
 
 const ref = { accountId: 'local', orderId: '10001' }
 function fixture(count = 140) {
@@ -428,4 +434,165 @@ test('failed recovery write retains raw cells and supports a deliberate retry', 
   reject = false
   await draft.flush()
   assert.equal(draft.status().error, null)
+})
+
+function focusedCartonFixture(weight) {
+  const batch = syntheticBatch(ref.orderId, 1, '100', { weight }),
+    context = {
+      record: syntheticOrder(ref.orderId),
+      preparation: { groups: [] },
+      batches: [batch],
+      reports: [],
+      draft: null,
+      revisions: { source: 'source-1', cartons: { [batch.id]: 1 } },
+    },
+    drafts = [],
+    confirmations = []
+  let draftRevision = 0
+  const repository = {
+    getOrderReconciliation: async () => structuredClone(context),
+    async saveOrderCartonDraft(input) {
+      assert.equal(input.expectedRevision, draftRevision)
+      drafts.push(structuredClone(input))
+      context.draft = {
+        revision: ++draftRevision,
+        value: structuredClone(input.draft),
+      }
+      return { revision: draftRevision }
+    },
+    async confirmOrderCartons(input) {
+      confirmations.push(structuredClone(input))
+      assert.deepEqual(
+        input.expectedRevisions,
+        context.revisions,
+        'The carton changed in another tab'
+      )
+      for (const override of input.draft.cartons) {
+        assert.equal(override.baseRevision, context.batches[0].revision)
+        context.batches[0] = {
+          ...context.batches[0],
+          ...structuredClone(override),
+          revision: context.batches[0].revision + 1,
+        }
+        context.revisions.cartons[batch.id] = context.batches[0].revision
+      }
+      context.draft = { revision: ++draftRevision, value: {} }
+    },
+  }
+  return {
+    context,
+    drafts,
+    confirmations,
+    key: batch.id,
+    async create(testContext) {
+      const session = await createOrderCartonSession({
+        repository,
+        orderRef: ref,
+        planner,
+      })
+      testContext.after(() => session.dispose())
+      return session
+    },
+    foreignWeight(value) {
+      context.batches[0].weight = value
+      context.batches[0].revision++
+      context.revisions.cartons[batch.id] = context.batches[0].revision
+    },
+  }
+}
+
+for (const baseline of ['', '2.5'])
+  test(`a focused unedited carton weight (${JSON.stringify(baseline)}) writes nothing on foreign refresh, blur or Confirm`, async (t) => {
+    const fixture = focusedCartonFixture(baseline),
+      session = await fixture.create(t)
+    session.setActiveCell(fixture.key, 'weight', baseline)
+    await session.flush()
+    const draftCount = fixture.drafts.length
+    fixture.foreignWeight('3.125')
+    const foreign = structuredClone(fixture.context)
+    await session.refresh()
+    assert.equal(session.rawCell(fixture.key, 'weight'), '3.125')
+    assert.equal(fixture.drafts.length, draftCount)
+    await session.commitCell(fixture.key, 'weight', baseline)
+    assert.equal(fixture.drafts.length, draftCount)
+    assert.deepEqual(session.state().rawCells, {})
+    assert.equal(session.state().canUndo, false)
+    await session.confirm()
+    assert.equal(fixture.confirmations.length, 0)
+    assert.equal(fixture.drafts.length, draftCount)
+    assert.deepEqual(fixture.context, foreign)
+  })
+
+for (const value of ['', '2.5', '0', '12.500000000000000001'])
+  test(`an explicit raw carton edit (${JSON.stringify(value)}) after a clean foreign refresh keeps exact values and current revisions`, async (t) => {
+    const fixture = focusedCartonFixture('2.5'),
+      session = await fixture.create(t)
+    session.setActiveCell(fixture.key, 'weight', '2.5')
+    await session.flush()
+    fixture.foreignWeight('3.125')
+    const source = structuredClone(fixture.context.record.snapshot)
+    await session.refresh()
+    session.editCell(fixture.key, 'weight', value)
+    await session.commitCell(fixture.key, 'weight', value)
+    assert.equal(
+      session.state().rawCells[JSON.stringify([fixture.key, 'weight'])],
+      value
+    )
+    assert.equal(fixture.confirmations.length, 0)
+    const staged = fixture.drafts.at(-1).draft.plannerDraft.cartons[0]
+    assert.equal(staged.weight, value || null)
+    assert.equal(staged.baseRevision, 2)
+    await session.confirm()
+    assert.equal(fixture.confirmations.length, 1)
+    assert.equal(
+      fixture.confirmations[0].expectedRevisions.cartons[fixture.key],
+      2
+    )
+    assert.equal(fixture.context.batches[0].weight, value || null)
+    assert.equal(fixture.context.batches[0].revision, 3)
+    assert.deepEqual(fixture.context.record.snapshot, source)
+    assert.deepEqual(session.state().rawCells, {})
+  })
+
+test('a clean session still confirms outstanding capacity proposals', async (t) => {
+  const fixture = focusedCartonFixture('')
+  fixture.context.batches = []
+  fixture.context.record.unitsPerCarton = { 2001: '50' }
+  const session = await fixture.create(t)
+  assert.deepEqual(session.state().rawCells, {})
+  assert.equal(session.projection().proposals[0].count, 2)
+  await session.confirm()
+  assert.equal(fixture.confirmations.length, 1)
+})
+
+test('a dirty raw carton edit survives a foreign refresh and retains its original revision guard', async (t) => {
+  const fixture = focusedCartonFixture('2.5'),
+    session = await fixture.create(t),
+    encoded = JSON.stringify([fixture.key, 'weight'])
+  session.setActiveCell(fixture.key, 'weight', '2.5')
+  session.editCell(fixture.key, 'weight', '12..')
+  await assert.rejects(session.flush(), /nonnegative decimal/)
+  fixture.foreignWeight('3.125')
+  const foreign = structuredClone(fixture.context.batches)
+  await session.refresh()
+  assert.equal(session.rawCell(fixture.key, 'weight'), '12..')
+  assert.equal(session.state().rawCells[encoded], '12..')
+  await assert.rejects(
+    session.commitCell(fixture.key, 'weight', '12..'),
+    /nonnegative decimal/
+  )
+  const corrected = '12.500000000000000001'
+  session.editCell(fixture.key, 'weight', corrected)
+  await session.commitCell(fixture.key, 'weight', corrected)
+  assert.equal(
+    fixture.drafts.at(-1).draft.plannerDraft.cartons[0].baseRevision,
+    1
+  )
+  await assert.rejects(session.confirm(), /changed in another tab/)
+  assert.equal(
+    fixture.confirmations[0].expectedRevisions.cartons[fixture.key],
+    1
+  )
+  assert.deepEqual(fixture.context.batches, foreign)
+  assert.equal(session.state().rawCells[encoded], corrected)
 })
