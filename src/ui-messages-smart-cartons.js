@@ -2,6 +2,11 @@
 export const SMART_CARTON_MESSAGES = Object.fromEntries(
   [
     [
+      'The container changed before output was captured. Review the current revision and try again.',
+      'El contenedor cambió antes de capturar la salida. Revisa la versión actual e inténtalo de nuevo.',
+      '生成输出前货柜已发生变化。请核对当前版本后重试。',
+    ],
+    [
       'Review carton participation before copying or printing a partial mark selection.',
       'Revisa qué cajas corresponden a los productos antes de copiar o imprimir una selección parcial de marcas.',
       '复制或打印部分箱唛前，请核对所选产品对应的纸箱。',

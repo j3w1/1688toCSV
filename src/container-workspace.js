@@ -514,11 +514,10 @@ export function createContainerWorkspace({
     )
   )
   action(tools, 'Export packing list', 'export-packing-list', async () => {
+    const route = captureOutputRoute()
     await controller.flush()
     // No selected or filtered product rows enter this request.
-    return output.openWorkbook(
-      await output.containerContext(controller.route())
-    )
+    return output.openWorkbook(await output.containerContext(route))
   })
   action(tools, 'Copy Excel image', 'copy-excel-image', () =>
     capturedCopy('excel-image')
@@ -680,7 +679,7 @@ export function createContainerWorkspace({
   }
   function captureCopyScope() {
     return {
-      route: clone(controller.route()),
+      route: captureOutputRoute(),
       view: currentView,
       partial: selected.size > 0 && currentView !== 'loading',
       keys: [
@@ -691,6 +690,18 @@ export function createContainerWorkspace({
         ),
       ],
     }
+  }
+  function captureOutputRoute() {
+    const route = clone(controller.route()),
+      view = controller.view()
+    if (!route || !view) throw new Error('Choose a container first.')
+    return view.draft && !route.revisionId
+      ? {
+          ...route,
+          draft: true,
+          draftRevision: view.revision ?? view.container.revision,
+        }
+      : { ...route, revisionId: route.revisionId || view.revisionId }
   }
   async function selectedOutput(scope = captureCopyScope(), { kind } = {}) {
     const context = await output.containerContext(scope.route)

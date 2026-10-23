@@ -1629,7 +1629,7 @@ test('all-orders and narrowed carton history share a bounded searchable table an
 function view(id = 'c1', revision = 1) {
   return {
     container: { id, name: 'Synthetic October', revision },
-    revisionId: `${id}-r${revision}`,
+    revisionId: null,
     draft: true,
     orders: [ref, { accountId: 'local', orderId: '20002' }],
     products: [],
@@ -1847,6 +1847,7 @@ test('partial marks use captured physical participation, Se quedó copies its ow
     state = view(),
     calls = []
   state.draft = false
+  state.revisionId = 'c1-r1'
   state.products = [
     {
       ...ref,
@@ -1878,7 +1879,10 @@ test('partial marks use captured physical participation, Se quedó copies its ow
     host: document.getElementById('host'),
     repository: fixture.repository,
     output: {
-      containerContext: async () => captureContainerOutput(state),
+      containerContext: async (scope) => {
+        assert.equal(scope.revisionId, 'c1-r1')
+        return captureContainerOutput(state)
+      },
       copyLabels: async (kind, context) => calls.push({ kind, context }),
       copy: async (context, format) => calls.push({ kind: format, context }),
       openWorkbook: async (context) =>
@@ -2123,6 +2127,10 @@ test('unsealed output captures its actual numeric draft revision without fabrica
     /complete container revision/
   )
   assert.throws(
+    () => captureContainerOutput({ ...draft, revisionId: 'fake-sealed-id' }),
+    /complete container revision/
+  )
+  assert.throws(
     () =>
       captureContainerOutput({
         ...draft,
@@ -2131,6 +2139,47 @@ test('unsealed output captures its actual numeric draft revision without fabrica
       }),
     /complete container revision/
   )
+})
+
+test('whole-container historical routes need no product ref and captured draft output rejects a changed draft revision', async () => {
+  const sealed = syntheticManifest(),
+    draft = { ...sealed, draft: true, revisionId: null, revision: 4 },
+    reads = []
+  let current = sealed
+  const output = createProductOutput({
+    repository: {
+      getContainerManifest: async (args) => {
+        reads.push(args)
+        return current
+      },
+    },
+    authoring: {},
+  })
+  const historical = await output.containerContext({
+    containerId: sealed.container.id,
+    revisionId: sealed.revisionId,
+  })
+  assert.equal(historical.revisionId, sealed.revisionId)
+  assert.deepEqual(reads[0], {
+    id: sealed.container.id,
+    revisionId: sealed.revisionId,
+  })
+  current = draft
+  await assert.rejects(
+    output.containerContext({
+      containerId: draft.container.id,
+      draft: true,
+      draftRevision: 3,
+    }),
+    /container changed before output was captured/
+  )
+  const captured = await output.containerContext({
+    containerId: draft.container.id,
+    draft: true,
+    draftRevision: 4,
+  })
+  assert.equal(captured.revisionId, null)
+  assert.equal(captured.revision, 4)
 })
 
 test('chosen-column output exposes the shared Headers preference and the captured row count across reopening and languages', async (testContext) => {
@@ -2197,6 +2246,8 @@ test('chosen-column barcode copying refuses an unresolved variant before any cli
 
 test('shared-code labels retain separate source refs and exact source-line quantities', () => {
   const manifest = view()
+  manifest.draft = false
+  manifest.revisionId = 'c1-r1'
   manifest.products = [
     {
       ...ref,
