@@ -4189,6 +4189,276 @@ test('read-only Packing details discard supplied mutation callbacks and keep exp
   assert.equal(document.querySelector('.product-details-dialog'), null)
 })
 
+test('remainder rendering batches the 500-product projection while preserving logical scope and fresh destinations', async (context) => {
+  let frameId = 0,
+    reconciliations = 0,
+    session,
+    grid
+  context.after(() => {
+    grid?.destroy()
+    session?.dispose()
+  })
+  const { document, window } = dom(context),
+    fixture = exceptionSessionFixture({
+      planner: {
+        ...actualPlanner,
+        reconcileOrder(input) {
+          reconciliations++
+          return actualPlanner.reconcileOrder(input)
+        },
+      },
+    }),
+    item = fixture.record.snapshot.items[0],
+    frames = new Map()
+  Object.defineProperty(globalThis, 'requestAnimationFrame', {
+    configurable: true,
+    value: (callback) => {
+      frames.set(++frameId, callback)
+      return frameId
+    },
+  })
+  Object.defineProperty(globalThis, 'cancelAnimationFrame', {
+    configurable: true,
+    value: (id) => frames.delete(id),
+  })
+  fixture.record.snapshot.items = Array.from({ length: 500 }, (_, index) => ({
+    ...item,
+    entryId: String(2001 + index),
+    productNo: `REMAINDER-${String(index).padStart(3, '0')}`,
+    quantity: '7',
+    thumbnail: '',
+  }))
+  for (const key of ['goodsGross', 'goodsNet', 'payable'])
+    fixture.record.snapshot.totals[key] = '35000.00'
+  fixture.record.unitsPerCarton = Object.fromEntries(
+    fixture.record.snapshot.items.map((item) => [item.entryId, '5'])
+  )
+  fixture.context.batches = []
+  fixture.context.revisions.cartons = {}
+  const snapshot = structuredClone(fixture.record.snapshot)
+  session = await fixture.create()
+  const plan = session.projection(),
+    keys = plan.products.map((row) => row.key),
+    generation = session.state().generation
+  assert.equal(new Set(keys).size, 500)
+  assert.equal(plan.summary.proposedCount, 500)
+  assert.equal(plan.summary.unassignedPieces, '1000')
+  for (const row of plan.products) {
+    assert.equal(row.purchased, '7')
+    assert.equal(row.capacity, '5')
+    assert.equal(row.proposedCount, 1)
+    assert.equal(row.unassigned, '2')
+  }
+  reconciliations = 0
+  grid = mountOrderCartonGrid(document.getElementById('host'), {
+    session,
+  })
+  assert.equal(reconciliations, 2, 'one summary and one mounted-row batch')
+  const scroller = document.querySelector('.smart-grid-scroll'),
+    body = document.querySelector('tbody'),
+    seen = new Set(),
+    metrics = () =>
+      Object.fromEntries(
+        [...document.querySelector('.reconciliation-summary').children].map(
+          (metric) => [
+            metric.querySelector('span').textContent,
+            metric.querySelector('strong').textContent,
+          ]
+        )
+      ),
+    assertWindow = () => {
+      const mounted = [...body.querySelectorAll('tr[data-grid-key]')]
+      assert.equal(mounted.length, 100)
+      assert.equal(new Set(mounted.map((row) => row.dataset.gridKey)).size, 100)
+      for (const row of mounted) {
+        seen.add(row.dataset.gridKey)
+        assert.equal(
+          row.querySelector('[data-column="unassigned"] .copyable-text')
+            .firstChild.textContent,
+          '2'
+        )
+        assert.equal(row.querySelectorAll('select option').length, 500)
+      }
+      assert.deepEqual(
+        [...mounted[0].querySelector('select').options].map(
+          (option) => option.value
+        ),
+        plan.cartons.map((carton) => carton.key)
+      )
+      assert.deepEqual(grid.target().visibleKeys, keys)
+      assert.equal(
+        document.querySelector('table').getAttribute('aria-rowcount'),
+        '501'
+      )
+      assert.equal(metrics()['Proposed cartons'], '500')
+      assert.equal(metrics()['Unassigned pieces'], '1000')
+    }
+  // Linkedom has no layout; use the same estimated row offsets as the table.
+  body.getBoundingClientRect = () => ({ top: -scroller.scrollTop })
+  assertWindow()
+  document.querySelector('[data-action="select-grid-rows"]').click()
+  await Promise.resolve()
+  assert.deepEqual(grid.target().selectedKeys, keys)
+  for (const first of [100, 200, 300, 400, 499]) {
+    reconciliations = 0
+    scroller.scrollTop = first * 120
+    scroller.dispatchEvent(new window.Event('scroll'))
+    const callbacks = [...frames.values()]
+    frames.clear()
+    for (const callback of callbacks) callback()
+    assert.equal(reconciliations, 1, `one fresh scroll batch at ${first}`)
+    assertWindow()
+    assert.equal(body.querySelectorAll('[aria-selected="true"]').length, 100)
+    assert.deepEqual(grid.target().selectedKeys, keys)
+  }
+  assert.deepEqual([...seen].sort(), [...keys].sort())
+  const search = document.querySelector('input[type="search"]')
+  search.value = 'REMAINDER-250'
+  reconciliations = 0
+  search.oninput()
+  assert.equal(reconciliations, 2)
+  assert.equal(body.querySelectorAll('tr[data-grid-key]').length, 1)
+  assert.deepEqual(grid.target().visibleKeys, [keys[250]])
+  assert.deepEqual(grid.target().selectedKeys, [keys[250]])
+  assert.equal(body.querySelectorAll('select option').length, 500)
+  assert.equal(metrics()['Proposed cartons'], '500')
+  assert.equal(metrics()['Unassigned pieces'], '1000')
+  const oldDestination = plan.cartons.find((carton) =>
+    carton.contentEntries.some((entry) => entry.entryId === '2251')
+  ).key
+  fixture.record.unitsPerCarton['2251'] = '3'
+  fixture.context.revisions.source = 'source-2'
+  reconciliations = 0
+  await session.refresh()
+  assert.equal(reconciliations, 2)
+  assert.equal(session.state().generation, generation)
+  const destination = body.querySelector('select'),
+    index = body.querySelector('input[type="number"]')
+  assert.equal(
+    [...destination.options].some((option) => option.value === oldDestination),
+    false
+  )
+  const freshDestination = session
+    .projection()
+    .cartons.find((carton) =>
+      carton.contentEntries.some((entry) => entry.entryId === '2251')
+    ).key
+  destination.value = freshDestination
+  destination.onchange()
+  assert.equal(index.hidden, false)
+  assert.equal(index.max, '2')
+  assert.equal(body.querySelector('[data-grid-column="capacity"]').value, '3')
+  assert.equal(metrics()['Proposed cartons'], '501')
+  assert.equal(metrics()['Unassigned pieces'], '999')
+  search.value = ''
+  reconciliations = 0
+  search.oninput()
+  assert.equal(reconciliations, 2)
+  assert.deepEqual(grid.target().visibleKeys, keys)
+  assert.deepEqual(grid.target().selectedKeys, keys)
+  assert.equal(body.querySelectorAll('tr[data-grid-key]').length, 100)
+  assert.deepEqual(fixture.record.snapshot, snapshot)
+  assert.deepEqual(fixture.context.batches, [])
+  assert.equal(fixture.drafts.length, 0)
+  assert.equal(fixture.confirmed.length, 0)
+})
+
+test('remainder destinations retain eligibility, uniform indices and custom-session rawCell fallback across unchanged generations', (context) => {
+  let grid
+  context.after(() => grid?.destroy())
+  const { document } = dom(context),
+    commands = [],
+    rawReads = [],
+    products = [
+      {
+        key: 'product',
+        entryId: 'entry',
+        code: 'SYNTHETIC',
+        capacity: '5',
+        unassigned: '2',
+        remainderCommand: { type: 'separate', entryId: 'entry' },
+      },
+    ]
+  let projections = 0,
+    raw = '',
+    cartons = [
+      { key: 'single', label: 'Exact box', count: 1 },
+      { key: 'uniform', label: 'Uniform proposal', count: 3, kind: 'capacity' },
+      { key: 'removed', count: 1, removalRequested: true },
+      { key: 'aggregate', count: 3, kind: 'aggregate' },
+      { key: 'unknown', count: null },
+    ]
+  const session = {
+    orderRef: ref,
+    state: () => ({ generation: 7, canUndo: false, canRedo: false }),
+    projection: () => {
+      projections++
+      return { products, cartons, summary: {} }
+    },
+    rawCell: (key, column) => {
+      rawReads.push({ key, column })
+      return raw
+    },
+    command: async (command) => commands.push(structuredClone(command)),
+    subscribe: () => () => {},
+    cancelParse() {},
+  }
+  grid = mountOrderCartonGrid(document.getElementById('host'), { session })
+  assert.equal(projections, 2)
+  assert.deepEqual(rawReads, [{ key: 'product', column: 'capacity' }])
+  assert.equal(
+    document.querySelector('[data-grid-column="capacity"]').value,
+    ''
+  )
+  const destination = document.querySelector('tbody select'),
+    index = document.querySelector('tbody input[type="number"]')
+  assert.deepEqual(
+    [...destination.options].map((option) => option.value),
+    ['single', 'uniform']
+  )
+  destination.value = 'uniform'
+  destination.onchange()
+  assert.equal(index.hidden, false)
+  assert.equal(index.max, '3')
+  index.value = '2'
+  document.querySelector('[data-action="place-order-remainder"]').click()
+  assert.deepEqual(commands, [
+    {
+      type: 'place',
+      entryId: 'entry',
+      destinationId: 'uniform',
+      destinationIndex: 1,
+    },
+  ])
+  cartons = [{ key: 'fresh', label: 'New exact box', count: 1 }]
+  raw = '0'
+  projections = 0
+  grid.render()
+  assert.equal(projections, 2)
+  assert.equal(session.state().generation, 7)
+  assert.equal(
+    document.querySelector('[data-grid-column="capacity"]').value,
+    '0'
+  )
+  const fresh = document.querySelector('tbody select')
+  assert.deepEqual(
+    [...fresh.options].map((option) => [option.value, option.textContent]),
+    [['fresh', 'New exact box']]
+  )
+  fresh.value = 'fresh'
+  fresh.onchange()
+  assert.equal(
+    document.querySelector('tbody input[type="number"]').hidden,
+    true
+  )
+  document.querySelector('[data-action="place-order-remainder"]').click()
+  assert.deepEqual(commands.at(-1), {
+    type: 'place',
+    entryId: 'entry',
+    destinationId: 'fresh',
+  })
+})
+
 test('virtual grid inspection and explicit checkbox selection stay independent; IME retains one editor', async (context) => {
   let mounted
   context.after(() => mounted?.destroy())
