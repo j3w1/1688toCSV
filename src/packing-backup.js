@@ -10,6 +10,7 @@ import { preparationAuthoring } from './product-vocabulary.js'
 import { paymentSourceDependencies } from './payment-links.js'
 import { cartonBatchesForItems } from './carton-confirmations.js'
 import { batchInPackingScope, cartonBatchMark } from './carton-batches.js'
+import { batchOrderIds } from './inventory-model.js'
 import { repeatProductStoreIdentity } from './repeat-products.js'
 import {
   collectImageReferences,
@@ -481,10 +482,12 @@ export function createPackingBackup(backup, selection) {
         selected.has(key(draft))
       ) ||
       (backup.shipmentLocks || []).some((lock) => selected.has(key(lock))) ||
-      // Modern order-owned physical facts have no shipment-month identity.
-      // They need the same complete dependency scope as reports and containers.
-      (backup.cartonBatches || []).some(
-        (batch) => !batch.month && selected.has(key(batch))
+      // All retained physical facts, including known-month tombstones, need
+      // complete source/history and superseding-owner dependency closure.
+      (backup.cartonBatches || []).some((batch) =>
+        batchOrderIds(batch).some((orderId) =>
+          selected.has(key({ accountId: batch.accountId, orderId }))
+        )
       )
     if (related) {
       const required = new Set(selected.keys())
@@ -519,6 +522,17 @@ export function createPackingBackup(backup, selection) {
             required.add(id)
             changed = true
           }
+        }
+        for (const batch of backup.cartonBatches || []) {
+          const owners = batchOrderIds(batch).map((orderId) => ({
+            accountId: batch.accountId,
+            orderId,
+          }))
+          if (!owners.some((owner) => required.has(key(owner)))) continue
+          owners.forEach(retain)
+          for (const alias of batch.physicalMark?.supersededAliases || [])
+            for (const conflict of alias.conflicts)
+              if (conflict.accountId === batch.accountId) retain(conflict)
         }
         for (const container of backup.containers || []) {
           const references = [
@@ -646,11 +660,21 @@ export function createPackingBackup(backup, selection) {
           orders
         ),
         requestedPackingScope: scope,
+        dependencyOrderRefs: orders
+          .filter((record) => !selected.has(key(record.snapshot)))
+          .map(({ snapshot }) => ({
+            accountId: snapshot.accountId,
+            orderId: snapshot.orderId,
+          })),
       }
       delete result.packingScope
       const refs = collectImageReferences({
         ...result,
         issuedCodes,
+        orderCartonDrafts: [
+          ...result.orderCartonDrafts,
+          ...result.cartonBatches,
+        ],
       })
       result.images = structuredClone(
         (backup.images || []).filter((image) =>
@@ -707,6 +731,7 @@ export function createPackingBackup(backup, selection) {
     }
   )
   const urls = collectImageReferences({
+    orderCartonDrafts: cartonBatches,
     orders: selectedOrders.map(({ snapshot }) => ({
       snapshot: {
         items: snapshot.items.filter((item) =>
