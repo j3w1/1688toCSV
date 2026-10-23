@@ -12,6 +12,7 @@ import {
   createContainerThroughUI,
   sealContainerThroughUI,
   assignSelectedPurchaseCodes,
+  savedBrowserDownload,
 } from './smart-workspace-helpers.mjs'
 
 async function seed(
@@ -253,7 +254,7 @@ test('confirmed six-carton aggregate retains S/M/L source totals, truthful unkno
     downloading = page.waitForEvent('download')
   await exporting.locator('[data-action="download-packing-list"]').click()
   const download = await downloading,
-    bytes = await readFile(await download.path()),
+    bytes = await readFile(await savedBrowserDownload(extension, download)),
     workbook = XLSX.read(bytes, { type: 'buffer' }),
     products = workbook.Sheets['Packing list'],
     cartons = workbook.Sheets.Cartons,

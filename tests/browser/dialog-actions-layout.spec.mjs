@@ -5,6 +5,7 @@ import {
   seedSmartOrder,
   openSmartLibrary,
   libraryBackup,
+  revealOrderCard,
 } from './smart-workspace-helpers.mjs'
 
 let source, styles
@@ -167,10 +168,8 @@ test('small and moderate real purchase reviews keep every full code readable bef
         supplierId: `synthetic-review-${count}`,
       }),
       page = await openSmartLibrary(extension)
-    await page
-      .locator(`.order-card[data-order-id="${ref.orderId}"]`)
-      .getByRole('checkbox')
-      .check()
+    const card = await revealOrderCard(page, ref)
+    await card.getByRole('checkbox').check()
     await page.locator('#select-rows').click()
     await page.locator('#review-purchase-codes').click()
     const review = page.locator('[data-action="purchase-code-review"]')
