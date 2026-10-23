@@ -128,6 +128,7 @@ test('native committed metadata notifications isolate databases, skip abort/read
         name: 'synthetic-change-events',
       })
       await writer.saveSnapshot(modules.fixture.syntheticOrder().snapshot)
+      await writer.setWorkspaceColorScheme('dark')
     })
     const tab = await fixture.newPage()
     await tab.evaluate(async () => {
@@ -171,6 +172,8 @@ test('native committed metadata notifications isolate databases, skip abort/read
       }
       await writer.exportBackup()
       await writer.listCartonBatches()
+      await writer.getPackingPreferences()
+      await writer.setWorkspaceColorScheme('dark')
       await writer.updateOrderCapacities({
         orderId: '1001',
         values: { 2001: '20' },
