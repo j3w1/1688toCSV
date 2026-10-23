@@ -7,6 +7,7 @@ import {
 } from '../../src/packing-model.js'
 import { validateCartonBatch } from '../../src/carton-batches.js'
 import { repeatProductStoreIdentity } from '../../src/repeat-products.js'
+import { planCartonBatchChanges } from '../../src/carton-batch-changes.js'
 import {
   openOrderReconciliation,
   assignSelectedPurchaseCodes,
@@ -234,19 +235,78 @@ async function downloads(extension) {
   return extension.inspector.evaluate(() => chrome.downloads.search({}))
 }
 
-test('a removed mark-only owner is resolved by an explicit actual owner choice in the same grouping review', async ({
+test('a removed mark-only owner is resolved by an explicit actual owner choice in one Orders mark review', async ({
   extension,
-}) => {
+}, testInfo) => {
   const { page, view, before, ref } = await seed(extension, {
     twoGroups: true,
     markOnlyOwner: true,
   })
   await reviewLegacy(page, view)
+  // This restored/retired-owner state differs from Merge: a merge has an
+  // explicitly surviving logical owner and must not pretend it is missing.
+  const retired = before.preparations[0].groups[1],
+    state = await extension.inspector.evaluate(
+      async ({ ref, entryId, quantity }) => {
+        const repository = await window.testRepository
+        await repository.setInventoryDispositions({
+          ...ref,
+          entries: {
+            [entryId]: {
+              kind: 'canceled',
+              quantity,
+              reason:
+                'Only the product with no pieces in these cartons retired',
+            },
+          },
+          expectedValues: { [entryId]: null },
+        })
+        return repository.getOperationalState({})
+      },
+      {
+        ref,
+        entryId: retired.variants[0].entryIds[0],
+        quantity: before.orders[0].snapshot.items[2].quantity,
+      }
+    ),
+    next = structuredClone(state.preparations)
+  next[0].groups = next[0].groups.filter((group) => group.id !== retired.id)
+  const plan = planCartonBatchChanges({
+    batches: state.batches,
+    records: state.records,
+    beforePreparations: state.preparations,
+    afterPreparations: next,
+  })
+  expect(plan.reviews[0].currentProductCode).toBe('')
+  expect(plan.reviews[0].resolutionRequired).toBe(true)
+  await extension.inspector.evaluate(
+    async ({ state, next, plan }) => {
+      return (await window.testRepository).savePreparations(next, {
+        expectedRevisions: state.preparations.map((prep) => prep.revision),
+        expectedSnapshots: state.records.map((record) => ({
+          accountId: record.snapshot.accountId,
+          orderId: record.snapshot.orderId,
+          observedAt: record.snapshot.observedAt,
+        })),
+        cartonBatchChanges: plan.changes,
+        allowCartonReview: true,
+      })
+    },
+    { state, next, plan }
+  )
   const reviewed = await backup(extension),
-    { review, tools } = await group(page, 'Merge products', [0, 1, 2]),
+    pending = await realOrderContext(extension, ref)
+  expect(pending.batches[0].currentProductCode).toBe('')
+  expect(pending.batches[0].physicalMarkResolutionRequired).toBe(true)
+  const grid = await openOrderReconciliation(page, ref, 'cartons')
+  await grid
+    .locator('[data-action="review-carton-physical-mark"]')
+    .first()
+    .click()
+  const review = page.locator('[data-action="review-physical-mark"]'),
     owner = review.locator('[data-action="choose-physical-mark-owner"]'),
     decision = review.locator('[data-action="physical-mark-decision"]'),
-    apply = review.locator('[data-action="review-proceed"]')
+    apply = review.locator('[data-action="save-physical-mark-decision"]')
   await expect(owner).toHaveCount(1)
   await expect(owner).toHaveValue('')
   await expect(decision).toContainText(
@@ -265,11 +325,26 @@ test('a removed mark-only owner is resolved by an explicit actual owner choice i
   }
   await owner.selectOption(JSON.stringify(target))
   await expect(apply).toBeEnabled()
+  const printed = await exportAliasMark(
+    extension,
+    page,
+    review,
+    'current-product',
+    pending.batches[0],
+    testInfo,
+    {
+      recorded: retired.baseCode,
+      current: before.preparations[0].groups[0].baseCode,
+    }
+  )
+  expect(
+    printed.physicalMarks.every((ref) => ref.productGroupId === target.groupId)
+  ).toBe(true)
   expect((await backup(extension)).cartonBatches).toEqual(
     reviewed.cartonBatches
   )
   await apply.click()
-  await expect(tools).toBeHidden()
+  await expect(review).toBeHidden()
   const after = await backup(extension),
     batch = after.cartonBatches[0]
   expect(batch.mark).toEqual(target)
