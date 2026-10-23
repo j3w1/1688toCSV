@@ -293,7 +293,7 @@ export async function startPackingWorkspace({
           getContextContainerId: () => amendmentId,
         })
         sessions.set(key, session)
-      }
+      } else await session.refresh()
       grid?.destroy()
       cartonHistory?.destroy()
       activeSession = session
@@ -302,23 +302,24 @@ export async function startPackingWorkspace({
       workspace = 'orders'
       ordersView = 'cartons'
       paint()
+      const record =
+        getRecords().find(
+          (record) =>
+            record.snapshot.orderId === orderRef.orderId &&
+            (record.accountId || record.snapshot.accountId || 'local') ===
+              orderRef.accountId
+        ) || session.record()
       const host = $('orders-cartons-view'),
         heading = el('div', undefined, 'order-reconciliation-heading'),
         title = el(
           'h2',
-          `${getRecords().find((record) => record.snapshot.orderId === ref.orderId)?.snapshot.sellerName || ''} · ${ref.orderId}`
+          `${record?.snapshot.sellerName || ''} · ${ref.orderId}`
         ),
         productView = el('button', m('Product calculations')),
         cartonView = el('button', m('Physical cartons')),
         historyView = el('button', m('Carton history')),
         mount = el('div')
       heading.append(title, productView, cartonView, historyView)
-      const record =
-        getRecords().find(
-          (record) =>
-            record.snapshot.orderId === ref.orderId &&
-            (record.accountId || 'local') === orderRef.accountId
-        ) || session.record()
       if (record && orderSource(record.snapshot) === '1688') {
         const report = el('button', m('Paste or import carton list'))
         report.dataset.action = 'paste-import-carton-list'
@@ -349,6 +350,10 @@ export async function startPackingWorkspace({
         heading.append(report)
       }
       host.replaceChildren(heading, mount)
+      host.dataset.orderKey = JSON.stringify([
+        orderRef.accountId,
+        orderRef.orderId,
+      ])
       function mountGrid(kind) {
         cartonVersion++
         cartonHistory?.destroy()

@@ -262,7 +262,7 @@ test('140-row paste retains invalid cells across reload without physical writes 
 }) => {
   const ref = await seedSmartOrder(extension, { count: 140 }),
     page = await openSmartLibrary(extension)
-  await page.locator('[data-action="open-order-cartons"]').first().click()
+  await openOrderReconciliation(page, ref)
   await page.locator('[data-action="select-grid-rows"]').click()
   const raw = Array.from({ length: 140 }, (_, index) =>
     index === 100 ? 'invalid' : String(index + 1)
@@ -298,7 +298,7 @@ test('140-row paste retains invalid cells across reload without physical writes 
     await page.locator('.smart-grid-scroll tr[data-grid-key]').count()
   ).toBeLessThanOrEqual(101)
   await page.reload()
-  await page.locator('[data-action="open-order-cartons"]').first().click()
+  await openOrderReconciliation(page, ref)
   await expect(
     page.getByRole('textbox', {
       name: 'Paste carton or capacity cells',
@@ -312,7 +312,7 @@ test('one paste/Undo/Redo changes all capacities atomically without confirming p
 }) => {
   const ref = await seedSmartOrder(extension, { count: 3 }),
     page = await openSmartLibrary(extension)
-  await page.locator('[data-action="open-order-cartons"]').first().click()
+  await openOrderReconciliation(page, ref)
   await page.locator('[data-action="select-grid-rows"]').click()
   await page
     .getByRole('textbox', {
@@ -522,7 +522,7 @@ test('Backlog conserves 27/6/10 cartons across whole-order reservation, 26/3 loa
   expect(reserved.orders.filter((order) => order.reservation)).toHaveLength(2)
   await page.locator('[data-action="mark-all-loaded"]').click()
   for (const button of await page
-    .locator('[data-action="expand-container-order"]')
+    .locator('.container-order [data-action="expand-container-order"]')
     .all())
     await button.click()
   for (const [count, left] of [
@@ -628,7 +628,9 @@ test('partial aggregate loading cannot seal; its complete actual set can seal wi
       [ref],
       'Synthetic aggregate boundary'
     )
-  await page.locator('[data-action="expand-container-order"]').click()
+  await page
+    .locator('.container-order [data-action="expand-container-order"]')
+    .click()
   await expect(
     page.getByRole('spinbutton', { name: /^Left behind out of / })
   ).toHaveCount(0)
