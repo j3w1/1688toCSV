@@ -81,7 +81,9 @@ test('photo navigation follows the full filtered table through continuous scroll
   // Focus scrolls this row into view and may recycle the surrounding window.
   // Keep the identity captured before focus rather than following last().
   const rowKey = await rows.last().getAttribute('data-selection-key')
-  const row = page.locator(`#sheet-body tr[data-selection-key="${rowKey}"]`)
+  const row = page.locator(
+    `#sheet-body tr[data-selection-key=${JSON.stringify(rowKey)}]`
+  )
   await row.focus()
   await row.getByRole('checkbox').check()
   await row.getByRole('button', { name: /^Zoom product photo/ }).click()
