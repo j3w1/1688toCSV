@@ -525,6 +525,7 @@ async function historyFixture(context, { compound = false } = {}) {
       listPreparations: async () => structuredClone([...saved.values()]),
       getPackingPreferences: async () => validatePackingPreferences({}),
       getReservedBarcodes: async () => [],
+      listCartonBatches: async () => [],
       previewPreparations: async (values) => structuredClone(values),
       async savePreparations(values, options) {
         writes.push(structuredClone({ values, options }))
@@ -823,6 +824,10 @@ test('a grouping review keeps its original source/revision/amendment guards when
       listPreparations: async () => [structuredClone(preparation)],
       getPackingPreferences: async () => validatePackingPreferences({}),
       getReservedBarcodes: async () => [],
+      getOrderReconciliation: async () => ({
+        batches: [],
+        amendmentContext: { containerId: 'c1', epoch: 'first' },
+      }),
       previewPreparations: async (values) => structuredClone(values),
       savePreparations: async (values, options) => {
         writes.push(structuredClone({ values, options }))
@@ -1049,6 +1054,139 @@ test('physical confirmation disables only its action and clears the acknowledged
   stop()
   grid.destroy()
   session.dispose()
+})
+
+test('reviewed grouping captures actual physical revisions and compound Undo/Redo retains every carton fact while rejecting foreign changes', async (context) => {
+  const { document } = authoringEnvironment(context),
+    { record, preparation } = syntheticManifest().orders[0],
+    first = preparation.groups[0],
+    second = structuredClone(first)
+  record.snapshot.items.push({
+    ...structuredClone(record.snapshot.items[0]),
+    entryId: '2002',
+  })
+  Object.assign(record.snapshot.totals, {
+    goodsGross: '2000.00',
+    goodsNet: '2000.00',
+    payable: '2000.00',
+  })
+  second.id = 'second-product'
+  second.baseCode = 'CE26090102'
+  second.variants[0].id = 'second-variant'
+  second.variants[0].entryIds = ['2002']
+  preparation.groups.push(second)
+  let saved = structuredClone(preparation),
+    physical = syntheticBatch('1001', 2, '100', {
+      contents: [{ orderId: '1001', entryId: '2002', quantity: '100' }],
+      groups: [{ orderId: '1001', groupId: second.id }],
+      weight: '57.2202',
+      len: '40.125',
+      wid: '30',
+      ht: '25',
+      weightBasis: 'batch',
+      revision: 7,
+    })
+  const original = structuredClone({ record, preparation, physical }),
+    writes = [],
+    reads = [],
+    authoring = await createProductAuthoring({
+      getRecords: () => [record],
+      repository: {
+        listPreparations: async () => [structuredClone(saved)],
+        getPackingPreferences: async () => validatePackingPreferences({}),
+        getReservedBarcodes: async () => [],
+        listCartonBatches: async (args) => {
+          reads.push(structuredClone(args))
+          return [structuredClone(physical)]
+        },
+        previewPreparations: async (values, options) => {
+          assert.equal(options.allowCartonReview, true)
+          return structuredClone(values)
+        },
+        savePreparations: async (values, options) => {
+          writes.push(structuredClone({ values, options }))
+          assert.deepEqual(options.expectedRevisions, [saved.revision])
+          assert.equal(
+            options.cartonBatchChanges[0].expectedRevision,
+            physical.revision
+          )
+          assert.equal(options.allowCartonReview, true)
+          saved = {
+            ...structuredClone(values[0]),
+            revision: saved.revision + 1,
+          }
+          physical = {
+            ...structuredClone(options.cartonBatchChanges[0].after),
+            revision: physical.revision + 1,
+          }
+          return [structuredClone(saved)]
+        },
+      },
+    })
+  context.after(() => authoring.dispose())
+  await authoring.groupProducts(
+    record.snapshot.items.map((item) => ({
+      ...item,
+      accountId: 'local',
+      orderId: '1001',
+    }))
+  )
+  ;[...document.querySelectorAll('.orders-grouping-dialog button')]
+    .find((button) => button.textContent === 'Merge products')
+    .click()
+  await new Promise((resolve) => setTimeout(resolve, 0))
+  const review = document.querySelector('.packing-change-dialog')
+  assert.ok(review)
+  assert.match(review.textContent, /CE26090102/)
+  assert.match(review.textContent, /Review cartons/)
+  assert.equal(writes.length, 0)
+  ;[...review.querySelectorAll('button')]
+    .find((button) => button.textContent === 'Apply changes')
+    .click()
+  await new Promise((resolve) => setTimeout(resolve, 0))
+  assert.equal(saved.groups.length, 1)
+  assert.equal(physical.revision, 8)
+  assert.equal(physical.needsReview, true)
+  assert.deepEqual(physical.groups, original.physical.groups)
+  await authoring.undo()
+  assert.equal(saved.groups.length, 2)
+  assert.equal(physical.revision, 9)
+  assert.equal(physical.needsReview, undefined)
+  await authoring.redo()
+  assert.equal(saved.groups.length, 1)
+  assert.equal(physical.revision, 10)
+  assert.equal(physical.needsReview, true)
+  assert.deepEqual(
+    writes.map((write) => write.options.cartonBatchChanges[0].expectedRevision),
+    [7, 8, 9]
+  )
+  assert.ok(
+    reads.every(
+      (args) =>
+        args.accountId === 'local' &&
+        args.includeDeleted === true &&
+        !Object.hasOwn(args, 'month')
+    )
+  )
+  for (const write of writes) {
+    const batch = write.options.cartonBatchChanges[0].after
+    for (const key of [
+      'contents',
+      'count',
+      'weight',
+      'weightBasis',
+      'len',
+      'wid',
+      'ht',
+    ])
+      assert.deepEqual(batch[key], original.physical[key])
+  }
+  physical.revision++
+  const foreign = structuredClone(physical)
+  await assert.rejects(authoring.undo(), /cartons changed in another tab/)
+  assert.equal(writes.length, 3)
+  assert.deepEqual(physical, foreign)
+  assert.deepEqual(record, original.record)
 })
 
 test('compound capacity Undo replays its known baseline even when the retained textarea still needs a new paste preview', async (testContext) => {
