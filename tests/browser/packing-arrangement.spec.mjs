@@ -37,6 +37,14 @@ async function setup(extension) {
   await expect(view.locator('tr[data-container-row]')).toHaveCount(9)
   return { page, view, refs, id }
 }
+async function setupOrderAuthoring(extension) {
+  const ref = await seedSmartOrder(extension, {
+    orderId: '720000000000000009',
+    count: 3,
+  })
+  const page = await openSmartLibrary(extension)
+  return { page, refs: [ref] }
+}
 const manifest = (extension, id) =>
   extension.inspector.evaluate(
     async (id) => (await window.testRepository).getContainerManifest({ id }),
@@ -143,12 +151,18 @@ test('stable container ordering survives reload and copy without rewriting codes
   expect(after.orders).toEqual(before.orders)
 })
 
-test('header Escape and Orders selection shortcuts remain independent from native text selection', async ({
+test('Escape closes Packing menus and the Orders accelerator preserves independent native text selection', async ({
   extension,
 }) => {
   const { page, view, refs } = await setup(extension)
-  await page.locator('#theme-toggle').focus()
+  await revealCopyActions(page)
+  await expect(view.locator('.copy-actions-panel:visible')).toHaveCount(1)
+  await view.locator('[data-action="open-copy-menu"]').focus()
   await page.keyboard.press('Escape')
+  await expect(view.locator('.copy-actions-panel:visible')).toHaveCount(0)
+  await expect(view).toBeVisible()
+  await page.locator('#theme-toggle').focus()
+  await page.keyboard.press('Alt+Shift+o')
   await expect(page.locator('#orders-view')).toBeVisible()
   await revealOrderCard(page, refs[0])
   const orders = page.locator('#order-list [data-selection-key]')
@@ -243,7 +257,7 @@ for (const [field, value, action, message] of [
   test(`${action} identifies the failing source and returns to its Orders field`, async ({
     extension,
   }) => {
-    const { page, refs } = await setup(extension)
+    const { page, refs } = await setupOrderAuthoring(extension)
     await page.locator('#view-orders').click()
     const ref = { ...refs[0], entryId: '2001' },
       editor = await editOrderProduct(page, ref, { [field]: value })
@@ -366,7 +380,7 @@ test('a stale loading revision rejects without rewriting another tab and reload 
 test('an unresolved size output error names the product and focuses its Orders size field without changing saved evidence', async ({
   extension,
 }) => {
-  const { page, refs } = await setup(extension)
+  const { page, refs } = await setupOrderAuthoring(extension)
   await extension.inspector.evaluate(async (ref) => {
     const repository = await window.testRepository,
       context = await repository.getOrderReconciliation(ref),

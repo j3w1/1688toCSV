@@ -1739,9 +1739,9 @@ for (const [action, id] of [
       .toBe(latestCode)
     if (id === 'copy-preparation') {
       const picker = page.locator('.preparation-column-dialog')
-      await expect(picker.getByRole('heading', { level: 2 })).toHaveText(
-        'Copy 2 product rows'
-      )
+      await expect(
+        picker.getByText('Copy 2 product rows', { exact: true })
+      ).toBeVisible()
       await picker
         .getByRole('button', { name: 'Copy chosen columns', exact: true })
         .click()
