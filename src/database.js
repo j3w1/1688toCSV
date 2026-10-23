@@ -1419,7 +1419,8 @@ export async function openDatabase({ name = '1688-order-library' } = {}) {
         return result
       }
     ).then((result) => {
-      if (notify) changes.publish(stores)
+      if (typeof notify === 'function' ? notify(result) : notify)
+        changes.publish(stores)
       return result
     })
   const cartonBatchesRepository = createCartonBatchesRepository({
@@ -3974,8 +3975,10 @@ export async function openDatabase({ name = '1688-order-library' } = {}) {
     },
 
     async getPackingPreferences() {
-      return write(['packingPreferences', 'orders'], async (tx) =>
-        syncTagCatalogs(tx, await packingPreferencesFor(tx))
+      return write(
+        ['packingPreferences', 'orders'],
+        async (tx) => syncTagCatalogs(tx, await packingPreferencesFor(tx)),
+        { notify: false }
       )
     },
 
@@ -3994,12 +3997,17 @@ export async function openDatabase({ name = '1688-order-library' } = {}) {
     async setWorkspaceColorScheme(colorScheme) {
       if (!['light', 'dark', 'system'].includes(colorScheme))
         throw new Error('The workspace color scheme is invalid.')
-      return write(['packingPreferences'], async (tx) => {
-        const store = tx.objectStore('packingPreferences')
-        const previous = await requested(store.get('workspace-display'))
-        if (previous?.colorScheme !== colorScheme)
+      await write(
+        ['packingPreferences'],
+        async (tx) => {
+          const store = tx.objectStore('packingPreferences')
+          const previous = await requested(store.get('workspace-display'))
+          if (previous?.colorScheme === colorScheme) return false
           store.put({ id: 'workspace-display', colorScheme })
-      })
+          return true
+        },
+        { notify: (changed) => changed }
+      )
     },
 
     async savePackingPreferences(input, { tagCatalogBaseline } = {}) {
