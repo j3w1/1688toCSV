@@ -7,6 +7,7 @@ import {
 } from './print-layout.js'
 import { printLanguage } from './print-language.js'
 import { batchOrderIds } from './inventory-model.js'
+import { physicalMarkSupersessionState } from './physical-mark-aliases.js'
 
 export const PRINT_KEYS = Object.freeze({
   labels: '1688-print-labels',
@@ -170,25 +171,46 @@ export async function makeOrderCartonPrintRef(
       (!refText(amendment.containerId) || !refText(amendment.epoch)))
   )
     throw physicalRefError()
-  const supersession = [
-    ...(batch.physicalMarkSupersessions || []),
-    ...(batch.physicalMark?.supersededAliases || []),
-  ].find((entry) => entry.code === batch.physicalMark?.code)
+  const markState = physicalMarkSupersessionState(batch),
+    supersession = [
+      ...(batch.physicalMarkSupersessions || []),
+      ...(batch.physicalMark?.supersededAliases || []),
+    ].find(
+      (entry) =>
+        entry.code === batch.physicalMark?.code &&
+        (entry.active !== false || entry.reviewRequired === true)
+    )
   if (
     role === 'recorded' &&
-    (batch.physicalMarkRelabelOnly === true || supersession)
+    (markState.physicalMarkRelabelOnly ||
+      markState.physicalMarkHistoricalReviewRequired ||
+      batch.physicalMarkRelabelOnly === true ||
+      batch.physicalMarkHistoricalReviewRequired === true)
   ) {
     const conflicts = supersession?.conflicts || [],
       conflict = conflicts.find((entry) => entry.containerId) || conflicts[0],
       code = batch.physicalMark?.code || '',
-      message = conflict?.containerId
-        ? `The recorded mark ${code} belongs to shipment ${conflict.containerId} (revision ${conflict.revisionId || '—'}). Print the current product mark and confirm physical relabeling.`
-        : conflict?.orderId
-          ? `The recorded mark ${code} belongs to purchase ${conflict.orderId}. Print the current product mark and confirm physical relabeling.`
-          : 'The recorded carton mark is superseded. Print the current product mark and confirm physical relabeling.'
+      historicalReview =
+        markState.physicalMarkHistoricalReviewRequired ||
+        batch.physicalMarkHistoricalReviewRequired === true ||
+        supersession?.reviewRequired === true,
+      message = historicalReview
+        ? `The recorded mark ${code} needs historical ownership review. Print the current product mark and confirm physical relabeling.`
+        : conflict?.containerId
+          ? `The recorded mark ${code} belongs to shipment ${conflict.containerId} (revision ${conflict.revisionId || '—'}). Print the current product mark and confirm physical relabeling.`
+          : conflict?.orderId
+            ? `The recorded mark ${code} is currently reserved by purchase ${conflict.orderId}. This restriction clears when that purchase releases the code. Print the current product mark to relabel now.`
+            : 'The recorded carton mark is superseded. Print the current product mark and confirm physical relabeling.'
     throw Object.assign(new Error(message), {
       code: 'PHYSICAL_MARK_RELABEL_REQUIRED',
-      detail: { code, conflicts: structuredClone(conflicts) },
+      detail: {
+        code,
+        conflicts: structuredClone(conflicts),
+        historicalReviewRequired: historicalReview,
+        conflictKind: historicalReview
+          ? 'historical-review'
+          : markState.physicalMarkConflictKind,
+      },
     })
   }
   const owner = context.preparation?.groups.find(
