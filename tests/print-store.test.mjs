@@ -180,6 +180,59 @@ test('physical mark regeneration rejects changed source, batch, preparation, art
   )
 })
 
+test('typed Orders marks accept proven single-order legacy cartons and reject mixed or missing ownership', async () => {
+  for (const legacyReview of [undefined, { kind: 'legacy-loading' }]) {
+    const context = physicalContext(),
+      batch = context.batches[0]
+    delete batch.orderId
+    batch.contents = [{ orderId: '101', entryId: '201', quantity: '4' }]
+    batch.groups = [{ orderId: '101', groupId: 'surviving' }]
+    if (legacyReview) batch.legacyReview = legacyReview
+    const original = structuredClone(context)
+    for (const role of ['recorded', 'current-product']) {
+      const ref = await makeOrderCartonPrintRef(context, {
+        batchId: batch.id,
+        role,
+      })
+      assert.equal(ref.orderId, '101')
+      assert.equal(ref.code, role === 'recorded' ? 'CE26101002' : 'CE26101001')
+      assert.equal(await assertOrderCartonPrintRef(ref, context), true)
+      for (const change of [
+        (value) =>
+          value.batches[0].contents.push({
+            orderId: '102',
+            entryId: '202',
+            quantity: '1',
+          }),
+        (value) =>
+          value.batches[0].groups.push({ orderId: '102', groupId: 'foreign' }),
+        (value) => {
+          value.batches[0].orderId = '102'
+        },
+        (value) => {
+          value.batches[0].accountId = 'other'
+        },
+        (value) => {
+          value.revisions.source += ':changed'
+        },
+        (value) => {
+          delete value.batches[0].mark
+          value.batches[0].contents = []
+          value.batches[0].groups = []
+        },
+      ]) {
+        const changed = structuredClone(context)
+        change(changed)
+        await assert.rejects(
+          assertOrderCartonPrintRef(ref, changed),
+          /Review the current order/
+        )
+      }
+    }
+    assert.deepEqual(context, original)
+  }
+})
+
 test('malformed physical refs cannot fall back to legacy Orders or container identity', async () => {
   const ref = await makeOrderCartonPrintRef(physicalContext(), {
     batchId: 'batch-a',

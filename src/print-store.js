@@ -6,6 +6,7 @@ import {
   normalizeMarkLayout,
 } from './print-layout.js'
 import { printLanguage } from './print-language.js'
+import { batchOrderIds } from './inventory-model.js'
 
 export const PRINT_KEYS = Object.freeze({
   labels: '1688-print-labels',
@@ -128,6 +129,7 @@ export async function makeOrderCartonPrintRef(
     accountId = snapshot?.accountId || context?.record?.accountId || 'local',
     orderId = snapshot?.orderId,
     batch = context?.batches?.find((batch) => batch.id === batchId),
+    owners = batch ? batchOrderIds(batch) : [],
     revisions = context?.revisions,
     amendment = context?.amendmentContext || revisions?.amendmentContext,
     preparationRevision = context?.preparation?.revision || 0
@@ -137,7 +139,8 @@ export async function makeOrderCartonPrintRef(
     !batch ||
     batch.deletedAt ||
     (batch.accountId || 'local') !== accountId ||
-    batch.orderId !== orderId ||
+    owners.length !== 1 ||
+    owners[0] !== orderId ||
     !Number.isSafeInteger(batch.count) ||
     batch.count < 1 ||
     !Number.isSafeInteger(index) ||
