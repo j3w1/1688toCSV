@@ -2,6 +2,59 @@ import { chromium, expect } from '@playwright/test'
 import { mkdir } from 'node:fs/promises'
 import { startPreview } from './preview.mjs'
 
+async function waitForVisibleProductImages(page) {
+  const images = page.locator(
+    '#sheet-body tr[data-selection-key] .thumb-cell img'
+  )
+  let visibleCount = 0
+  for (const image of await images.all()) {
+    if (!(await image.isVisible())) continue
+    const inView = await image.evaluate((image) => {
+      const rect = image.getBoundingClientRect()
+      const clip = image.closest('.table-scroll').getBoundingClientRect()
+      return (
+        rect.bottom > Math.max(0, clip.top) &&
+        rect.top < Math.min(innerHeight, clip.bottom) &&
+        rect.right > Math.max(0, clip.left) &&
+        rect.left < Math.min(innerWidth, clip.right)
+      )
+    })
+    if (!inView) continue
+    visibleCount++
+    const label = `Visible product photo "${await image.getAttribute('alt')}"`
+    // IntersectionObserver assigns src asynchronously; a visible row alone
+    // does not mean its lazy thumbnail has a source or decoded pixels yet.
+    await expect(image, `${label}: source was not assigned`).toHaveAttribute(
+      'src',
+      /\S/
+    )
+    await expect(image, `${label}: load did not complete`).toHaveJSProperty(
+      'complete',
+      true
+    )
+    await image.evaluate(async (image) => {
+      try {
+        await image.decode()
+      } catch (cause) {
+        throw new Error(
+          `Visible product photo "${image.alt}" failed to decode`,
+          {
+            cause,
+          }
+        )
+      }
+    })
+    expect(
+      await image.evaluate((image) => image.naturalWidth),
+      `${label}: decoded image has no pixels`
+    ).toBeGreaterThan(0)
+  }
+  expect(
+    visibleCount,
+    'Screenshot needs visible product photos'
+  ).toBeGreaterThan(0)
+}
+
 // Production controllers/repository with synthetic purchases in a temporary
 // browser only. A missing domain API fails loudly; no fallback preview model.
 const preview = await startPreview()
@@ -21,8 +74,10 @@ try {
   await expect(
     page.locator('#sheet-body tr[data-selection-key]').nth(7)
   ).toBeVisible()
+  await waitForVisibleProductImages(page)
   await page.screenshot({ path: 'screenshots/order-library-dark.png' })
   await page.getByRole('button', { name: 'Switch to light theme' }).click()
+  await waitForVisibleProductImages(page)
   await page.screenshot({ path: 'screenshots/order-library.png' })
   await page.getByRole('button', { name: 'Switch to dark theme' }).click()
   await page
