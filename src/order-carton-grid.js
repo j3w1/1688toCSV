@@ -3733,11 +3733,12 @@ export function mountOrderCartonGrid(
       card.append(reject)
       suggestionsHost.append(card)
     }
-    for (const row of projection.products) {
-      const element = [...body.querySelectorAll('[data-grid-key]')].find(
-        (element) => element.dataset.gridKey === row.key
-      )
-      if (!element) continue
+    const productsByKey = new Map(
+      projection.products.map((row) => [row.key, row])
+    )
+    for (const element of body.querySelectorAll('[data-grid-key]')) {
+      const row = productsByKey.get(element.dataset.gridKey)
+      if (!row) continue
       for (const key of [
         'available',
         'proposedCount',
