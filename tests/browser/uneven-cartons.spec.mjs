@@ -269,7 +269,7 @@ test('uneven numbered cartons retain exact supplier measurements through the wor
       (row) => row[products.column('Code')] === 'CE26101001'
     ),
     cartonRows = physical.rows.filter((row) =>
-      /^#[1-6]$/.test(row[physical.column('Batch')])
+      /^[1-6]$/.test(row[physical.column('Batch')])
     ),
     total = physical.rows.find(
       (row) => row[physical.column('Batch')] === 'Totals'
@@ -280,18 +280,16 @@ test('uneven numbered cartons retain exact supplier measurements through the wor
   expect(productRows[0][products.column('Pcs/box')]).toBe('Uneven')
   const references = productRows[0][products.column('Cartons')]
   for (let number = 1; number <= 6; number++)
-    expect(references).toContain(`#${number}`)
-  expect(references).toBe(
-    '#1, #2, #3, #4, #5, #6\n3 × 9 + 1 × 11 + 1 × 12 + 1 × 13'
-  )
+    expect(references).toContain(String(number))
+  expect(references).toBe('1, 2, 3, 4, 5, 6\n3 × 9 + 1 × 11 + 1 × 12 + 1 × 13')
   expect(cartonRows).toHaveLength(6)
   expect(cartonRows.map((row) => row[physical.column('Batch')])).toEqual([
-    '#1',
-    '#2',
-    '#3',
-    '#4',
-    '#5',
-    '#6',
+    '1',
+    '2',
+    '3',
+    '4',
+    '5',
+    '6',
   ])
   for (const [index, row] of cartonRows.entries()) {
     const expected = cartons[index]

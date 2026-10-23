@@ -4,6 +4,7 @@ import {
   createSmartContainer,
   openContainerOutput,
   libraryBackup,
+  openOrderReconciliation,
 } from './smart-workspace-helpers.mjs'
 
 const productRow = (page, orderId, entryId = '1') =>
@@ -92,7 +93,7 @@ async function setup(extension) {
   return page
 }
 
-test('a carton marked by one linked purchase prints once when all selected contents belong to its same-code counterpart', async ({
+test('a legacy carton marked by one linked purchase retains one read-only physical count under its same-code counterpart', async ({
   extension,
 }) => {
   const storagePage = await setup(extension)
@@ -170,21 +171,62 @@ test('a carton marked by one linked purchase prints once when all selected conte
   await expect(page.locator('#sheet-body tr[data-selection-key]')).toHaveCount(
     2
   )
-  await productRow(page, '8702').getByRole('checkbox').check()
-  await page.locator('#orders-print-actions .copy-actions-trigger').click()
-  await page.locator('#print-carton-marks').click()
-  const dialog = page.getByRole('dialog', {
-    name: 'Print carton marks',
-    exact: true,
+  const original = restoredEvidence.preparations.find(
+      (prep) => prep.orderId === '8701'
+    ),
+    counterpart = restoredEvidence.preparations.find(
+      (prep) => prep.orderId === '8702'
+    ),
+    code = original.groups[0].baseCode
+  expect(counterpart.groups[0].baseCode).toBe(code)
+  expect(restoredEvidence.cartonBatches[0].needsReview).toBe(true)
+  expect(restoredEvidence.cartonBatches[0].count).toBe(1)
+  expect(restoredEvidence.cartonBatches[0].mark).toEqual({
+    orderId: '8701',
+    groupId: original.groups[0].id,
   })
-  await expect(dialog).toBeVisible()
-  await expect(dialog.getByLabel(/^Quantity for /)).toHaveCount(1)
-  await expect(dialog.getByLabel(/^Quantity for /)).toHaveValue('1')
-  const code = backup.preparations.find((prep) => prep.orderId === '8701')
-    .groups[0].baseCode
-  await expect(dialog.getByLabel(/^Quantity for /)).toHaveAccessibleName(
-    `Quantity for ${code}`
+  const backlog = await extension.inspector.evaluate(async () =>
+    (await window.testRepository).getBacklog()
   )
+  const held = backlog.orders.find((order) => order.orderId === '8702')
+  expect(held.items[0].legacyReview).toBe(true)
+  expect(held.items[0].remaining).toBeNull()
+  expect(restoredEvidence.containers).toEqual([])
+  expect(restoredEvidence.shipmentLocks).toEqual([])
+  const grid = await openOrderReconciliation(page, {
+    accountId: 'local',
+    orderId: '8702',
+  })
+  await grid.locator('[data-action="order-carton-history"]').click()
+  const history = grid.locator(
+    '[data-action="carton-history"] tbody tr[data-history-key]'
+  )
+  await expect(history).toHaveCount(1)
+  await expect(history.locator('td').nth(2)).toHaveText('1')
+  await expect(history.locator('td').nth(3)).toHaveText('1: 27')
+  await expect(history.locator('td').nth(4)).toHaveText('1')
+  await expect(history.locator('td').last()).toContainText('Needs review')
+  await history.focus()
+  await history.press('Enter')
+  const historical = page.locator(
+    'dialog[data-action="inspect-carton-history"]'
+  )
+  await expect(historical).toBeVisible()
+  const retained = JSON.parse(await historical.locator('pre').textContent())
+  expect(retained).toMatchObject(backup.cartonBatches[0])
+  expect(
+    original.groups.find((group) => group.id === retained.mark.groupId).baseCode
+  ).toBe(code)
+  await expect(
+    historical.locator(
+      'input,select,textarea,[data-action="print-carton-marks"]'
+    )
+  ).toHaveCount(0)
+  await historical.getByRole('button', { name: 'Close', exact: true }).click()
+  await expect(historical).toBeHidden()
+  const afterHistory = await libraryBackup(extension)
+  expect(afterHistory.orders).toEqual(restoredEvidence.orders)
+  expect(afterHistory.cartonBatches).toEqual(restoredEvidence.cartonBatches)
 })
 
 test('repeat-product dialog previews both purchases, cancellation writes nothing and applying keeps both selected rows', async ({
