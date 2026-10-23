@@ -88,10 +88,8 @@ test('stable container ordering survives reload and copy without rewriting codes
     expect(values[index].slice(2)).toEqual(['2.00', '100', '0.00'])
   }
   await revealCopyActions(page)
-  const groupCopy = view.getByRole('button', {
-    name: 'Copy group codes',
-    exact: true,
-  })
+  const groupCopy = view.locator('[data-action="copy-group-codes"]')
+  await expect(groupCopy).toHaveAccessibleName('Copy group codes')
   await groupCopy.click()
   await expect(groupCopy).toContainText('Copied')
   expect(
