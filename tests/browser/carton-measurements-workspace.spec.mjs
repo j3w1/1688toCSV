@@ -2,6 +2,7 @@ import { test, expect } from './extension-fixture.mjs'
 import {
   openOrderReconciliation,
   realOrderContext,
+  createContainerThroughUI,
 } from './smart-workspace-helpers.mjs'
 import { createDemoRecords } from '../../preview/library-fixture.js'
 import {
@@ -152,6 +153,13 @@ test('Orders stages exact physical dimensions and zero/unknown weight separately
   await expect(cell(grid, 'suppliedCbm')).toHaveValue('0.21')
   await stage(grid, 'weight', '025,2500')
   await stage(grid, 'dimensions', '80,125 × 50 × 30')
+  const warning = grid.locator('[data-issue-code="volume-discrepancy"]')
+  await expect(warning).toHaveAttribute('data-issue-severity', 'warning')
+  await expect(warning).toContainText('Measured volume 0.48075 m³ is used')
+  await expect(warning).toContainText(
+    'supplied volume 0.84 m³ remains recorded'
+  )
+  await expect(warning).toContainText('0.21 m³ · Per carton · 4 cartons')
   expect((await backup(extension)).cartonBatches).toEqual(before.cartonBatches)
   await confirm(
     grid,
@@ -193,6 +201,23 @@ test('Orders stages exact physical dimensions and zero/unknown weight separately
   expect((await backup(extension)).orders[0].cartonDetails).toEqual(
     before.orders[0].cartonDetails
   )
+  await createContainerThroughUI(
+    page,
+    [ref],
+    'Synthetic measured-volume review'
+  )
+  const packing = page.locator('#packing-view')
+  await packing.locator('[data-action="mark-all-loaded"]').click()
+  await packing.locator('[data-action="review-container-seal"]').click()
+  const review = page.locator('.container-review-dialog'),
+    sealWarning = review.locator('[data-issue-code="volume-discrepancy"]')
+  await expect(sealWarning).toContainText('Measured volume 0.48075 m³ is used')
+  await expect(sealWarning).toContainText(
+    'supplied volume 0.84 m³ remains recorded'
+  )
+  await expect(sealWarning).toContainText('0.21 m³ · Per carton · 4 cartons')
+  await expect(review.locator('[data-action="seal-container"]')).toBeEnabled()
+  await review.getByRole('button', { name: 'Cancel', exact: true }).click()
 })
 
 test('physical measurement edits form one order draft with Undo/Redo before a single confirm and retain exact decimals/history', async ({
