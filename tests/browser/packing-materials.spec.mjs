@@ -123,6 +123,9 @@ test('Orders materials retain automatic source suggestions and deliberate edits 
   ).toHaveText('Aluminio')
   await page.locator('[data-language="en"]').click()
   await page.reload()
+  await expect(
+    productRows.nth(1).locator('[data-attribute="material"] dd')
+  ).toHaveText('Aluminium')
   let editor = await editOrderProduct(page, 0)
   await expect(
     editor.getByRole('textbox', { name: 'Material', exact: true })
@@ -131,7 +134,7 @@ test('Orders materials retain automatic source suggestions and deliberate edits 
   editor = await editOrderProduct(page, 1)
   await expect(
     editor.getByRole('textbox', { name: 'Material', exact: true })
-  ).toHaveValue('Aluminium')
+  ).toHaveValue('Aluminum')
   await closeOrderProduct(editor)
   const result = await libraryBackup(extension),
     variants = result.preparations[0].groups.flatMap((group) => group.variants)
