@@ -479,7 +479,12 @@ export function createPackingBackup(backup, selection) {
       (backup.orderCartonDrafts || []).some((draft) =>
         selected.has(key(draft))
       ) ||
-      (backup.shipmentLocks || []).some((lock) => selected.has(key(lock)))
+      (backup.shipmentLocks || []).some((lock) => selected.has(key(lock))) ||
+      // Modern order-owned physical facts have no shipment-month identity.
+      // They need the same complete dependency scope as reports and containers.
+      (backup.cartonBatches || []).some(
+        (batch) => !batch.month && selected.has(key(batch))
+      )
     if (related) {
       const required = new Set(selected.keys())
       for (const order of scope.orders) {

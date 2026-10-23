@@ -102,6 +102,61 @@ const selection = (entryIds = ['2']) => ({
   orders: [{ orderId: '1001', entryIds }],
 })
 
+test('month-less physical facts require complete v5 order scope and retain exact facts and tombstones', () => {
+  const { backup } = fixture()
+  backup.version = 5
+  const physical = {
+    id: 'synthetic-modern-physical',
+    accountId: 'local',
+    orderId: '1001',
+    storeId: '["1688","synthetic-seller"]',
+    groups: [],
+    contents: [{ orderId: '1001', entryId: '2', quantity: '1' }],
+    count: 1,
+    packingBasis: 'exact',
+    unresolvedContents: [],
+    len: '60',
+    wid: '50',
+    ht: '40',
+    weight: '16.75',
+    weightBasis: 'carton',
+    suppliedCbm: '',
+    volumeBasis: 'carton',
+    received: null,
+    loaded: null,
+    revision: 1,
+    updatedAt: '2026-10-03T12:00:00.000Z',
+    sourceFacts: { supplierCarton: '0007', reportedWeight: '16.75' },
+  }
+  const tombstone = {
+    ...physical,
+    id: 'synthetic-deleted-physical',
+    deletedAt: '2026-10-04T12:00:00.000Z',
+  }
+  backup.cartonBatches = [physical, tombstone]
+  for (const field of [
+    'containers',
+    'packingReports',
+    'reportSources',
+    'orderCartonDrafts',
+    'shipmentLocks',
+    'operationIntents',
+  ])
+    backup[field] = []
+  assert.throws(
+    () => createPackingBackup(backup, selection()),
+    (error) =>
+      error.code === 'PACKING_BACKUP_DEPENDENCY_REVIEW' &&
+      error.requiredOrderRefs[0].orderId === '1001'
+  )
+  const result = createPackingBackup(backup, selection(['1', '2', '3']))
+  assert.deepEqual(result.cartonBatches, [physical, tombstone])
+  assert.deepEqual(result.orders[0].snapshot, backup.orders[0].snapshot)
+  assert.equal(result.version, 5)
+  assert.equal(result.cartonBatches[0].month, undefined)
+  assert.notStrictEqual(result.cartonBatches[0], physical)
+})
+
 test('packing backups retain complete linked payment sources without adding their packing scope', () => {
   const { backup } = fixture()
   const target = backup.orders[0]

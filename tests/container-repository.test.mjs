@@ -355,6 +355,89 @@ test('native source refresh and restore cannot reduce or remove shipped goods or
   }
 })
 
+test('native scoped backups retain month-less confirmed cartons, source value and physical measures through restore', async () => {
+  const fixture = await databaseBrowser()
+  try {
+    const result = await fixture.page.evaluate(async () => {
+      const { openDatabase, fixture: factories } = modules,
+        db = await openDatabase({ name: 'synthetic-monthless-packing-backup' }),
+        record = factories.syntheticOrder(),
+        batch = factories.syntheticBatch('1001', 10, '100', {
+          weight: '1.25',
+          len: '50',
+          wid: '40',
+          ht: '30',
+          sourceFacts: {
+            supplierReference: '0007',
+            quantityBasis: 'uniform-per-carton',
+          },
+        })
+      delete batch.month
+      await db.restoreBackup({
+        format: '1688-order-library',
+        version: 4,
+        exportedAt: new Date().toISOString(),
+        orders: [record],
+        history: [],
+        images: [],
+        preparations: [],
+        allocations: [],
+        issuedCodes: [],
+        packingPreferences: null,
+        cartonBatches: [batch],
+      })
+      await db.savePreparations(
+        [factories.syntheticManifest().orders[0].preparation],
+        {
+          expectedRevisions: [0],
+          preserveNaming: true,
+        }
+      )
+      const full = await db.exportBackup(),
+        scoped = await db.exportBackup({
+          packingScope: {
+            orders: [{ orderId: '1001', entryIds: ['2001'] }],
+            months: ['2026-09'],
+          },
+        }),
+        target = await openDatabase({
+          name: 'synthetic-monthless-packing-restored',
+        })
+      await target.restoreBackup(scoped)
+      const restored = await target.exportBackup(),
+        backlog = await target.getBacklog({})
+      target.close()
+      db.close()
+      return {
+        fullBatches: full.cartonBatches,
+        scopedBatches: scoped.cartonBatches,
+        restoredBatches: restored.cartonBatches,
+        omissions: scoped.omittedCartonBatchIds || [],
+        originalSnapshot: full.orders[0].snapshot,
+        restoredSnapshot: restored.orders[0].snapshot,
+        quantity: backlog.totals.quantity,
+        cartons: backlog.totals.cartons,
+        codes: restored.preparations[0].groups.map((group) => group.baseCode),
+      }
+    })
+    assert.deepEqual(result.scopedBatches, result.fullBatches)
+    assert.deepEqual(result.restoredBatches, result.fullBatches)
+    assert.deepEqual(result.restoredSnapshot, result.originalSnapshot)
+    assert.deepEqual(result.omissions, [])
+    assert.equal(result.quantity, '100')
+    assert.equal(result.cartons, 10)
+    assert.deepEqual(result.codes, ['CE26090101'])
+    assert.equal(result.restoredBatches[0].month, undefined)
+    assert.equal(result.restoredBatches[0].weight, '1.25')
+    assert.deepEqual(result.restoredBatches[0].sourceFacts, {
+      supplierReference: '0007',
+      quantityBasis: 'uniform-per-carton',
+    })
+  } finally {
+    await fixture.close()
+  }
+})
+
 test('native whole-order reservation, stale tabs, logical loading, atomic seal and historical amendment', async () => {
   const fixture = await databaseBrowser()
   try {
