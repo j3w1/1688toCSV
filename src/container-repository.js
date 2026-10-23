@@ -25,6 +25,7 @@ import {
 import {
   validateCartonBatch,
   assertSingleOrderCarton,
+  cartonBatchMarkOwnerChoices,
 } from './carton-batches.js'
 import { repeatProductStoreIdentity } from './repeat-products.js'
 import { reconcileOrder } from './carton-reconciliation.js'
@@ -781,6 +782,16 @@ export function createContainerRepository({
       batches: batches.map((batch) => ({
         ...batch,
         ...physicalMarkReadback(batch, loaded.preparations),
+        ...(batch.physicalMark
+          ? {
+              physicalMarkOwnerChoices: cartonBatchMarkOwnerChoices(
+                batch,
+                loaded.records,
+                loaded.preparations,
+                loaded.batches
+              ),
+            }
+          : {}),
       })),
       reports,
       ...recovery,
@@ -1090,6 +1101,16 @@ export function createContainerRepository({
               ...(batch.physicalMark
                 ? physicalMarkReadback(batch, loaded.preparations)
                 : {}),
+              ...(batch.physicalMark
+                ? {
+                    physicalMarkOwnerChoices: cartonBatchMarkOwnerChoices(
+                      batch,
+                      loaded.records,
+                      loaded.preparations,
+                      loaded.batches
+                    ),
+                  }
+                : {}),
             })),
           containers: loaded.containers.filter(
             (value) => value.accountId === accountId
@@ -1350,11 +1371,33 @@ export function createContainerRepository({
             'PHYSICAL_MARK_REVIEW_REQUIRED',
             'These cartons have no pending physical mark resolution.'
           )
+        let after = clone(batch)
+        if (input.targetMark) {
+          const owner = cartonBatchMarkOwnerChoices(
+            batch,
+            base.records,
+            base.preparations,
+            base.batches
+          ).find(
+            (choice) =>
+              choice.mark.orderId === input.targetMark.orderId &&
+              choice.mark.groupId === input.targetMark.groupId
+          )
+          if (!owner)
+            fail(
+              'PHYSICAL_MARK_OWNER_REQUIRED',
+              'Choose a valid current mark owner from this purchase review.'
+            )
+          after.mark = clone(owner.mark)
+          after.groups = clone(owner.groups)
+          if (owner.needsReview) after.needsReview = true
+          else delete after.needsReview
+        }
         return saveFacts(tx, loaded, {
           ...input,
           changes: [
             {
-              after: batch,
+              after,
               expectedRevision: batch.revision,
               physicalMarkResolution: {
                 choice: input.choice,

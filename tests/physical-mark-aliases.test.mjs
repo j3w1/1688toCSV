@@ -124,6 +124,41 @@ function fixture({ legacy = false } = {}) {
     locks: [],
   }
 }
+
+function independentMarkFixture() {
+  const state = fixture(),
+    record = state.records[0],
+    prep = state.preparations[0]
+  const item = {
+    ...structuredClone(record.snapshot.items[0]),
+    entryId: '2003',
+    title: 'Synthetic bowls',
+    description: 'Synthetic bowls',
+  }
+  record.snapshot.items.push(item)
+  for (const field of ['goodsGross', 'goodsNet', 'payable'])
+    record.snapshot.totals[field] = '900.00'
+  const draft = createPreparation(
+    { ...record.snapshot, items: [item] },
+    '2026-10'
+  )
+  draft.groups[0].spanishName = 'CONTENIDO'
+  draft.groups[0].category = '内装'
+  const added = allocatePreparation(
+    draft,
+    state.allocations,
+    state.issuedCodes,
+    { snapshot: record.snapshot }
+  )
+  prep.groups.push(...added.preparation.groups)
+  state.allocations = added.allocations
+  state.issuedCodes = added.issuedCodes
+  const batch = state.batches[0]
+  batch.mark = { orderId: '1001', groupId: prep.groups[1].id }
+  batch.groups = [{ orderId: '1001', groupId: prep.groups[2].id }]
+  batch.contents = [{ orderId: '1001', entryId: '2003', quantity: '30' }]
+  return state
+}
 async function mergePlan(state) {
   const prep = state.preparations[0]
   const next = await regroupSelection(
@@ -1484,3 +1519,236 @@ test('native fresh relabel attestations cannot live only in a cancelable shipmen
     await browser.close()
   }
 })
+
+for (const choice of ['keep-recorded-mark', 'relabel-reprint'])
+  test(`native removed zero-piece mark owner keeps a live alias and resolves ${choice} through an explicit same-order target`, async () => {
+    const browser = await databaseBrowser()
+    try {
+      await openFixture(browser, independentMarkFixture())
+      const state = await browser.page.evaluate(async () => {
+        await aliasDb.setInventoryDispositions({
+          orderId: '1001',
+          entries: {
+            2002: {
+              kind: 'canceled',
+              quantity: '30',
+              reason: 'Only the old zero-piece mark product retired',
+            },
+          },
+        })
+        return aliasDb.getOperationalState({})
+      })
+      const next = structuredClone(state.preparations)
+      next[0].groups.splice(1, 1)
+      const plan = planCartonBatchChanges({
+        batches: state.batches,
+        records: state.records,
+        beforePreparations: state.preparations,
+        afterPreparations: next,
+      })
+      const targetMark = { orderId: '1001', groupId: next[0].groups[0].id }
+      assert.equal(plan.changes[0].after.physicalMark.productCode, '')
+      assert.deepEqual(plan.changes[0].after.mark, state.batches[0].mark)
+      assert.ok(
+        plan.reviews[0].physicalMarkOwnerChoices.some(
+          (owner) => owner.productCode === 'CE26101001'
+        )
+      )
+      assert.ok(
+        plan.reviews[0].physicalMarkOwnerChoices.some(
+          (owner) => owner.productCode === 'CE26101003'
+        )
+      )
+      assert.equal(
+        plan.reviews[0].physicalMarkOwnerChoices.some(
+          (owner) => owner.mark.groupId === state.batches[0].mark.groupId
+        ),
+        false
+      )
+      assert.throws(
+        () =>
+          resolvePhysicalMarkChange(plan, {
+            batchId: state.batches[0].id,
+            choice,
+            reason: 'No explicit target',
+            physicalRelabelConfirmed: true,
+          }),
+        /explicit current mark owner/
+      )
+      if (choice === 'relabel-reprint') {
+        const resolved = resolvePhysicalMarkChange(plan, {
+          batchId: state.batches[0].id,
+          choice,
+          targetMark,
+          reason: 'Reviewed target in the same grouping confirmation',
+          physicalRelabelConfirmed: true,
+        })
+        assert.equal(resolved.changes[0].after.needsReview, undefined)
+        await saveMerge(browser, state, next, resolved)
+      } else await saveMerge(browser, state, next, plan)
+      const foreignRecord = syntheticOrder('1002', '30', {
+          purchasedAt: '2026-10-05T12:00:00+08:00',
+        }),
+        foreign = createPreparation(foreignRecord.snapshot, '2026-10')
+      foreign.groups[0].baseCode = 'CE26101002'
+      const result = await browser.page.evaluate(
+        async ({ choice, targetMark, foreignRecord, foreign }) => {
+          await aliasDb.restoreBackup({
+            format: '1688-order-library',
+            version: 1,
+            exportedAt: '2026-10-23T05:00:00.000Z',
+            orders: [foreignRecord],
+            history: [],
+            images: [],
+          })
+          const pending = await aliasDb.getOrderReconciliation({
+              orderId: '1001',
+            }),
+            before = await aliasDb.exportBackup({})
+          const refusals = []
+          try {
+            await aliasDb.savePreparations([foreign], {
+              expectedRevisions: [0],
+            })
+          } catch (error) {
+            refusals.push(error.code)
+          }
+          if (choice === 'keep-recorded-mark') {
+            for (const target of [
+              { orderId: '1002', groupId: targetMark.groupId },
+              { orderId: '1001', groupId: 'missing-current-owner' },
+            ]) {
+              try {
+                await aliasDb.resolveCartonPhysicalMark({
+                  orderId: '1001',
+                  batchId: pending.batches[0].id,
+                  expectedRevisions: pending.revisions,
+                  targetMark: target,
+                  choice,
+                  reason: 'Foreign target cannot steal a physical identity',
+                })
+              } catch (error) {
+                refusals.push(error.code)
+              }
+            }
+          }
+          const afterRefusals = await aliasDb.exportBackup({})
+          let resolved = pending
+          if (choice === 'keep-recorded-mark')
+            resolved = await aliasDb.resolveCartonPhysicalMark({
+              orderId: '1001',
+              batchId: pending.batches[0].id,
+              expectedRevisions: pending.revisions,
+              targetMark,
+              choice,
+              reason:
+                'Explicit independent mark owner selected after retirement',
+            })
+          const container = await aliasDb.createContainer({
+            name: `Explicit target ${choice}`,
+          })
+          let view = await aliasDb.includeContainerOrders({
+            id: container.id,
+            expectedRevision: container.revision,
+            orderRefs: [{ orderId: '1001' }],
+          })
+          view = await aliasDb.markContainerLoaded({
+            id: container.id,
+            expectedRevision: view.container.revision,
+          })
+          const review = await aliasDb.reviewContainerSeal({
+            id: container.id,
+            expectedRevision: view.container.revision,
+          })
+          if (!review.ready) throw new Error(JSON.stringify(review.issues))
+          const manifest = await aliasDb.sealContainer({
+            id: container.id,
+            expectedRevision: view.container.revision,
+            reviewToken: review.reviewToken,
+          })
+          const backup = await aliasDb.exportBackup({}),
+            other = await modules.openDatabase({
+              name: `synthetic-target-${choice}-restored`,
+            })
+          await other.restoreBackup(backup)
+          const restored = await other.exportBackup({})
+          other.close()
+          return {
+            pending,
+            before,
+            afterRefusals,
+            refusals,
+            resolved,
+            manifest,
+            backup,
+            restored,
+          }
+        },
+        { choice, targetMark, foreignRecord, foreign }
+      )
+      assert.equal(result.refusals[0], 'PACKING_CODE_CONFLICT')
+      if (choice === 'keep-recorded-mark') {
+        assert.deepEqual(result.refusals.slice(1), [
+          'PHYSICAL_MARK_OWNER_REQUIRED',
+          'PHYSICAL_MARK_OWNER_REQUIRED',
+        ])
+        assert.equal(result.pending.batches[0].physicalMark.productCode, '')
+        assert.equal(
+          result.pending.batches[0].physicalMarkResolutionRequired,
+          true
+        )
+        assert.ok(
+          result.pending.batches[0].physicalMarkOwnerChoices.some(
+            (owner) => owner.productCode === 'CE26101003'
+          )
+        )
+      }
+      for (const field of [
+        'orders',
+        'preparations',
+        'cartonBatches',
+        'issuedCodes',
+        'containers',
+        'operationIntents',
+      ])
+        assert.deepEqual(
+          result.afterRefusals[field],
+          result.before[field],
+          field
+        )
+      const batch = result.resolved.batches[0],
+        expected = choice === 'keep-recorded-mark' ? 'CE26101002' : 'CE26101001'
+      assert.equal(batch.physicalMark.code, expected)
+      assert.equal(batch.currentProductCode, 'CE26101001')
+      assert.deepEqual(batch.currentProductCodes, ['CE26101003'])
+      assert.equal(batch.physicalMarkResolutionRequired, false)
+      assert.equal(Boolean(batch.needsReview), false)
+      assert.deepEqual(batch.contents, state.batches[0].contents)
+      assert.deepEqual(batch.physicalMark.originalArtwork.entryIds, ['2002'])
+      assert.equal(batch.physicalMark.originalArtwork.category, '原唛')
+      assert.equal(result.manifest.cartons.length, 6)
+      assert.equal(result.manifest.cartons[0].markCode, expected)
+      assert.equal(result.manifest.cartons[0].currentProductCode, 'CE26101001')
+      assert.deepEqual(result.manifest.cartons[0].currentProductCodes, [
+        'CE26101003',
+      ])
+      assert.equal(result.manifest.products[0].baseCode, 'CE26101003')
+      assert.deepEqual(
+        result.backup.orders.find(
+          (record) => record.snapshot.orderId === '1001'
+        ).snapshot,
+        state.records[0].snapshot
+      )
+      assert.deepEqual(
+        result.restored.cartonBatches,
+        result.backup.cartonBatches
+      )
+      const summary = createContainerSummary(result.manifest, {
+        file: 'explicit-physical-target.xlsx',
+      })
+      assert.equal(summary.cartons[0].physicalMarkCode, expected)
+      assert.equal(summary.cartons[0].currentProductCode, 'CE26101001')
+    } finally {
+      await browser.close()
+    }
+  })

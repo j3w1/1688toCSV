@@ -85,6 +85,7 @@ import {
   createLegacyCartonBatches,
   cartonBatchIssues,
   assertCartonBatchEvidence,
+  cartonBatchMarkOwnerChoices,
 } from './carton-batches.js'
 const productAnnotationFields = [
   [
@@ -1561,6 +1562,16 @@ export async function openDatabase({ name = '1688-order-library' } = {}) {
           .map((batch) => ({
             ...batch,
             ...physicalMarkReadback(batch, final.preparations),
+            ...(batch.physicalMark
+              ? {
+                  physicalMarkOwnerChoices: cartonBatchMarkOwnerChoices(
+                    batch,
+                    final.records,
+                    final.preparations,
+                    batches
+                  ),
+                }
+              : {}),
           }))
     }
     return [

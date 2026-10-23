@@ -12,6 +12,9 @@ export function cartonBatchReviewChanges(plan) {
           physicalMarkCode: review.physicalMark.code,
           currentProductCode: review.currentProductCode,
           currentProductArtwork: structuredClone(review.currentProductArtwork),
+          physicalMarkOwnerChoices: structuredClone(
+            review.physicalMarkOwnerChoices
+          ),
           resolutionRequired: review.resolutionRequired,
           resolutionChoices: review.resolutionChoices,
         }
@@ -32,7 +35,7 @@ export function cartonBatchReviewChanges(plan) {
             {
               label: m('Product code'),
               before: review.beforeProductCode || review.beforeMarkCode,
-              after: review.currentProductCode || review.afterCodes.join(', '),
+              after: review.currentProductCode || '—',
               kind: 'code',
             },
           ]
