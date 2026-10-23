@@ -420,6 +420,23 @@ test('a failed capacity autosave retains the 155/10 draft and its loose units un
   await savedCapacity(extension, record, 10)
   await capacityInput(source).fill('10')
   await capacityInput(source).press('Tab')
+  // The saved value was already10 before the invalid edit: also wait for the
+  // actual raw-cell acknowledgement before testing native reload recovery.
+  await expect
+    .poll(
+      async () =>
+        (await realOrderContext(extension, ref)).draft?.value?.rawCells?.[
+          JSON.stringify([
+            JSON.stringify([
+              ref.accountId,
+              ref.orderId,
+              record.snapshot.items[0].entryId,
+            ]),
+            'capacity',
+          ])
+        ]
+    )
+    .toBeUndefined()
   await page.reload()
   await expect(capacityInput(source)).toHaveValue('10')
   await visibleSummary(source, 15, 5)
