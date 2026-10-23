@@ -2917,6 +2917,11 @@ export function mountOrderCartonGrid(
   ) {
     return {
       rawCells: state.rawCells,
+      remainderDestinations: (projection.cartons || []).filter(
+        (carton) =>
+          !carton.removalRequested &&
+          (carton.count === 1 || carton.kind === 'capacity')
+      ),
       rows: new Map(
         [...(projection.products || []), ...(projection.cartons || [])].map(
           (row) => [row.key, row]
@@ -3100,13 +3105,7 @@ export function mountOrderCartonGrid(
           button.onclick = () =>
             void session.command(row.remainderCommand).catch(onError)
           td.append(button)
-          const destinations = session
-            .projection()
-            .cartons.filter(
-              (carton) =>
-                !carton.removalRequested &&
-                (carton.count === 1 || carton.kind === 'capacity')
-            )
+          const destinations = cells.remainderDestinations
           if (destinations.length) {
             const destination = el('select'),
               place = el('button', m('Place remainder in carton')),
