@@ -50,6 +50,7 @@ export function captureContainerOutput(manifest) {
       manifest?.draft === true && Number.isSafeInteger(revision) && revision > 0
   if (
     !manifest?.container?.id ||
+    (manifest.draft === true && manifest.revisionId !== null) ||
     (!manifest.revisionId && !identifiedDraft) ||
     !Array.isArray(manifest.products) ||
     !Array.isArray(manifest.cartons) ||
@@ -97,7 +98,7 @@ export function outputLabelModels(context, kind = 'barcode') {
         },
       })
     }
-    if (row.needsSizeMapping)
+    if (kind === 'barcode' && row.needsSizeMapping)
       refuse('Map this variant size before generating labels', 'size')
     if (!code) refuse('Review product codes in Orders first.', 'code')
     if (kind === 'mark' && !category?.trim())
@@ -352,8 +353,17 @@ export function createProductOutput({
         revisionId: ref.revisionId,
       })
     )
-    if (ref.draft !== undefined || ref.revisionId != null)
+    if (ref.orderId && (ref.draft !== undefined || ref.revisionId != null))
       assertContainerPrintRef(ref, captured)
+    else if (
+      captured.containerId !== (ref.containerId || ref.id) ||
+      (ref.revisionId != null && captured.revisionId !== ref.revisionId) ||
+      (ref.draft === true &&
+        (!captured.draft || captured.revision !== ref.draftRevision))
+    )
+      throw new Error(
+        'The container changed before output was captured. Review the current revision and try again.'
+      )
     return captured
   }
   async function copyLabels(kind, source) {

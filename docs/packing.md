@@ -24,6 +24,8 @@ Valid authoring edits autosave; later typing survives an earlier acknowledgement
 
 Packing has no Organize, manifest drag order, product removal, capacity/code/photo/tag editor or grouping shortcut. Output uses stable source/prepared-code order. View filters and selection are display state, never shipment membership.
 
+Copy and label controls capture their current **Packing list** or **Se quedó** side. Explicit partial mark output follows the selected products' retained physical references. The popup shows the captured row count and a shared **Headers** preference. Workbook export always retains the complete container revision and all three sheets.
+
 ## Containers and loading
 
 Packing contains named container history and **Loading / Packing list / Se quedó**. Include whole orders from current Backlog. Previously shipped orders contribute only their eligible remainder. Inclusion reserves current evidence without loading any box; later purchases/cartons require **Review availability changes** and explicit apply.

@@ -27,6 +27,10 @@ Open a carton row to correct its literal supplier reference or choose an indepen
 
 Recovery also compares the order revision captured with the draft. If another tab has changed it, the saved facts stay visible and **Review recovered carton draft** retains the earlier raw values for comparison. Choose **Use these reviewed edits** to recover them under current validation, or **Keep saved version** to keep the current facts. Focusing a field or reopening the table does not erase that pending review.
 
+## Purchase codes and size mapping
+
+Purchase-code review can assign the original purchase-month product code while a variant's size mapping remains pending. Its barcode stays blank, and barcode copy/print asks for mapping first. Use **No size difference** or a manual size ending in the existing Orders editor; source quantities, prices and physical carton evidence stay separate.
+
 ## 1688 packing reports
 
 **Paste or import carton list** augments the existing 1688 purchase. Paste table cells or choose a local XLSX/XLS workbook. The original text/bytes are retained locally before cancellable parsing. A compact review asks only for ambiguous worksheet/header/number/unit/basis/range/code meanings; known facts fill the preview automatically. China purchase-marker rules remain unchanged.
