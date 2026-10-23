@@ -3019,7 +3019,20 @@ export async function openDatabase({ name = '1688-order-library' } = {}) {
           const shipments = await requested(
             tx.objectStore('containers').getAll()
           )
+          const shipmentLocks = await requested(
+            tx.objectStore('shipmentLocks').getAll()
+          )
           if (
+            shipmentLocks.some(
+              (lock) =>
+                lock.accountId === accountId &&
+                (removed.has(lock.orderId) ||
+                  lock.lineages.some((lineage) =>
+                    lineage.members.some((member) =>
+                      removed.has(member.orderId)
+                    )
+                  ))
+            ) ||
             shipments.some(
               (container) =>
                 container.accountId === accountId &&
@@ -3108,6 +3121,13 @@ export async function openDatabase({ name = '1688-order-library' } = {}) {
               containers: await requested(
                 tx.objectStore('containers').getAll()
               ),
+              shipmentLocks,
+              packingReports: await requested(
+                tx.objectStore('packingReports').getAll()
+              ),
+              orderCartonDrafts: await requested(
+                tx.objectStore('orderCartonDrafts').getAll()
+              ),
             })
             for (const photo of candidates)
               if (!retained.has(photo)) tx.objectStore('images').delete(photo)
@@ -3156,9 +3176,8 @@ export async function openDatabase({ name = '1688-order-library' } = {}) {
           const preferences = await requested(
             tx.objectStore('packingPreferences').get('packing')
           )
-          const operationalContainers = await requested(
-            tx.objectStore('containers').getAll()
-          )
+          const operational = await reportRepository.exportOperational(tx)
+          const operationalContainers = operational.containers
           if (includedIds) {
             let changed = true
             while (changed) {
@@ -3179,6 +3198,55 @@ export async function openDatabase({ name = '1688-order-library' } = {}) {
                       changed = true
                     }
               }
+              const retain = (reference) => {
+                if (
+                  (reference.accountId || 'local') === accountId &&
+                  !includedIds.has(reference.orderId)
+                ) {
+                  includedIds.add(reference.orderId)
+                  changed = true
+                }
+              }
+              for (const batch of physical.batches) {
+                if (batch.accountId !== accountId) continue
+                const owners = batchOrderIds(batch)
+                if (owners.some((id) => includedIds.has(id)))
+                  owners.forEach((orderId) => retain({ accountId, orderId }))
+              }
+              for (const lock of operational.shipmentLocks) {
+                const members = [
+                  lock,
+                  ...lock.lineages.flatMap((lineage) => lineage.members),
+                ]
+                if (
+                  members.some(
+                    (member) =>
+                      member.accountId === accountId &&
+                      includedIds.has(member.orderId)
+                  )
+                )
+                  members.forEach(retain)
+              }
+              for (const code of issuedCodes) {
+                const members = [code, ...(code.members || [])]
+                if (
+                  members.some(
+                    (member) =>
+                      member.accountId === accountId &&
+                      includedIds.has(member.orderId)
+                  )
+                )
+                  members.forEach(retain)
+              }
+              for (const record of paymentSourceDependencies(
+                orders,
+                orders.filter(
+                  (entry) =>
+                    entry.snapshot.accountId === accountId &&
+                    includedIds.has(entry.snapshot.orderId)
+                )
+              ))
+                retain(record.snapshot)
             }
           }
           if (includedIds) {
@@ -3205,6 +3273,58 @@ export async function openDatabase({ name = '1688-order-library' } = {}) {
               includedKeys.has(JSON.stringify([entry.accountId, entry.orderId]))
             )
           }
+          const includes = (reference) =>
+            !includedIds ||
+            ((reference.accountId || 'local') === accountId &&
+              includedIds.has(reference.orderId))
+          if (includedIds) {
+            operational.containers = operational.containers.filter(
+              (container) =>
+                [
+                  ...(container.draft?.orders || []),
+                  ...container.revisions.flatMap((revision) => revision.orders),
+                ].some(includes)
+            )
+            operational.packingReports = operational.packingReports.filter(
+              (report) => includes(report.orderKey)
+            )
+            operational.orderCartonDrafts =
+              operational.orderCartonDrafts.filter(includes)
+            operational.shipmentLocks =
+              operational.shipmentLocks.filter(includes)
+            operational.reportSources = operational.reportSources.filter(
+              (source) => source.owners.some(includes)
+            )
+            operational.operationIntents = []
+          }
+          const scopedCodes = issuedCodes.filter(
+            (code) => includes(code) || (code.members || []).some(includes)
+          )
+          const slots = new Set(
+            scopedCodes.map((code) =>
+              JSON.stringify([
+                code.accountId,
+                code.month,
+                Number(code.code.slice(6, 8)),
+              ])
+            )
+          )
+          const scopedAllocations = includedIds
+            ? allocations
+                .map((allocation) => ({
+                  ...allocation,
+                  groups: allocation.groups.filter((group) =>
+                    slots.has(
+                      JSON.stringify([
+                        allocation.accountId,
+                        allocation.month,
+                        group.number,
+                      ])
+                    )
+                  ),
+                }))
+                .filter((allocation) => allocation.groups.length)
+            : allocations
           const backup = {
             format: BACKUP_FORMAT,
             version: 5,
@@ -3219,12 +3339,24 @@ export async function openDatabase({ name = '1688-order-library' } = {}) {
                 (batch.accountId === accountId &&
                   batch.contents.every((item) => includedIds.has(item.orderId)))
             ),
-            ...activePackingState(preparations, allocations, issuedCodes),
+            ...activePackingState(
+              preparations,
+              scopedAllocations,
+              scopedCodes,
+              {
+                historicalReservations:
+                  purchaseCodes.historicalCodeReservations(
+                    operational.shipmentLocks
+                  ),
+                supplierIdentityEquivalences:
+                  purchaseCodes.supplierCodeIdentityEquivalences(orders),
+              }
+            ),
             packingPreferences: preferences
               ? { value: preferences.value, updatedAt: preferences.updatedAt }
               : null,
           }
-          Object.assign(backup, await reportRepository.exportOperational(tx))
+          Object.assign(backup, operational)
           const photoUrls = collectImageReferences(backup)
           const imageStore = tx.objectStore('images')
           const imageKeys = await requested(imageStore.getAllKeys())
@@ -3433,6 +3565,14 @@ export async function openDatabase({ name = '1688-order-library' } = {}) {
             const existing = await requested(
               tx.objectStore('images').get(image.url)
             )
+            if (
+              localImageReference.test(image.url) &&
+              existing &&
+              existing.dataUrl !== image.dataUrl
+            )
+              throw new Error(
+                'Restore conflicts with an original imported photo; its retained bytes cannot be replaced.'
+              )
             if (!existing || existing.storedAt < image.storedAt)
               tx.objectStore('images').put(image)
           }
@@ -3828,6 +3968,17 @@ export async function openDatabase({ name = '1688-order-library' } = {}) {
     async putImage(input) {
       const image = validateImage(input)
       return write(['images'], async (tx) => {
+        const previous = await requested(
+          tx.objectStore('images').get(image.url)
+        )
+        if (
+          localImageReference.test(image.url) &&
+          previous &&
+          previous.dataUrl !== image.dataUrl
+        )
+          throw new Error(
+            'An original imported photo cannot be replaced under the same local reference.'
+          )
         await requested(tx.objectStore('images').put(image))
         return image
       })

@@ -10,6 +10,7 @@ function snapshot() {
     sellerName: 'Synthetic shared carton supplier',
     sellerMemberLogin: 'shared-carton-supplier',
     status: 'Completed',
+    purchasedAt: '2026-10-01T12:00:00+08:00',
     observedAt: '2026-10-01T12:00:00.000Z',
     items: [3, 30, 30].map((quantity, index) => ({
       entryId: String(index + 1),
@@ -121,6 +122,16 @@ test('physical carton batches persist with exact mixed totals and a stale writer
       overallocated,
       batches,
       backupVersion: backup.version,
+      operationalCounts: Object.fromEntries(
+        [
+          'containers',
+          'packingReports',
+          'reportSources',
+          'orderCartonDrafts',
+          'shipmentLocks',
+          'operationIntents',
+        ].map((key) => [key, backup[key].length])
+      ),
       restored,
       metrics,
     }
@@ -128,7 +139,15 @@ test('physical carton batches persist with exact mixed totals and a stale writer
   expect(result.conflict).toBe('CARTON_BATCH_CONFLICT')
   expect(result.overallocated).toContain('exceed')
   expect(result.batches).toHaveLength(1)
-  expect(result.backupVersion).toBe(4)
+  expect(result.backupVersion).toBe(5)
+  expect(result.operationalCounts).toEqual({
+    containers: 0,
+    packingReports: 0,
+    reportSources: 0,
+    orderCartonDrafts: 0,
+    shipmentLocks: 0,
+    operationIntents: 0,
+  })
   expect(result.restored).toEqual(result.batches)
   expect(result.metrics).toMatchObject({
     quantity: '63',
@@ -146,7 +165,15 @@ test('deleted batches survive old backups without resurrection and source refres
     const first = await lib.saveCartonBatch(newBatch()),
       old = await lib.exportBackup()
     await lib.removeCartonBatch(first)
-    await lib.restoreBackup(old)
+    const beforeRestore = await lib.exportBackup()
+    let conflict
+    try {
+      await lib.restoreBackup(old)
+    } catch (error) {
+      conflict = error.code
+    }
+    const afterRestore = await lib.exportBackup()
+    const stable = (backup) => JSON.stringify({ ...backup, exportedAt: '' })
     const visible = await lib.listCartonBatches(),
       retired = await lib.listCartonBatches({ includeDeleted: true })
     const restored = await lib.saveCartonBatches([
@@ -168,8 +195,17 @@ test('deleted batches survive old backups without resurrection and source refres
       },
     })
     const reduced = await lib.listCartonBatches()
-    return { visible, retired, restored, reduced }
+    return {
+      visible,
+      retired,
+      restored,
+      reduced,
+      conflict,
+      atomic: stable(beforeRestore) === stable(afterRestore),
+    }
   }, snapshot())
+  expect(result.conflict).toBe('RESTORE_CARTON_TOMBSTONE')
+  expect(result.atomic).toBe(true)
   expect(result.visible).toEqual([])
   expect(result.retired).toHaveLength(1)
   expect(result.retired[0].deletedAt).toBeTruthy()
@@ -182,50 +218,77 @@ test('deleted batches survive old backups without resurrection and source refres
   ])
 })
 
-test('preparation changes and carton changes commit atomically and preserve month confirmations', async ({
+test('purchase-month codes reject shipment-month moves and reviewed unassignment retires carton context atomically', async ({
   extension,
 }) => {
   const page = await setup(extension)
   const result = await page.evaluate(async () => {
     const batch = await lib.saveCartonBatch(newBatch())
-    const candidate = structuredClone(window.prep)
-    candidate.groups[0].month = '2026-11'
-    candidate.groups[0].baseCode = candidate.groups[0].baseCode.replace(
+    const before = await lib.getPreparation('1001')
+    const sourceBefore = await lib.getOrder('1001')
+    const wrongMonth = structuredClone(before)
+    wrongMonth.groups[0].month = '2026-11'
+    wrongMonth.groups[0].baseCode = wrongMonth.groups[0].baseCode.replace(
       'CE2610',
       'CE2611'
     )
+    const cartonBatchChanges = [
+      {
+        after: { ...batch, deletedAt: new Date().toISOString() },
+        expectedRevision: batch.revision,
+      },
+    ]
+    const monthErrors = []
+    for (const options of [{}, { cartonBatchChanges }]) {
+      try {
+        await lib.savePreparation(wrongMonth, options)
+      } catch (error) {
+        monthErrors.push(error.code)
+      }
+    }
+    const unchanged = await lib.getPreparation('1001')
+    const physicalBefore = await lib.listCartonBatches()
+    const candidate = { ...before, groups: [] }
     let blocked
     try {
       await lib.savePreparation(candidate)
     } catch (error) {
       blocked = error.code
     }
-    const before = await lib.getPreparation('1001')
-    const after = await lib.savePreparation(candidate, {
-      cartonBatchChanges: [
-        {
-          after: { ...batch, deletedAt: new Date().toISOString() },
-          expectedRevision: batch.revision,
-        },
-      ],
-    })
+    const after = await lib.savePreparation(candidate, { cartonBatchChanges })
     const retired = (await lib.listCartonBatches({ includeDeleted: true }))[0]
     return {
       blocked,
-      beforeMonth: before.groups[0].month || before.month,
-      afterMonth: after.groups[0].month || after.month,
+      batch,
+      before,
+      unchanged,
+      physicalBefore,
+      monthErrors,
+      after,
+      sourceUnchanged:
+        JSON.stringify(sourceBefore) ===
+        JSON.stringify(await lib.getOrder('1001')),
       retired,
     }
   })
+  expect(result.monthErrors).toEqual([
+    'PURCHASE_CODE_MONTH',
+    'PURCHASE_CODE_MONTH',
+  ])
+  expect(result.unchanged).toEqual(result.before)
+  expect(result.physicalBefore).toEqual([result.batch])
   expect(result.blocked).toBe('CARTON_BATCHES_AFFECTED')
-  expect(result.beforeMonth).toBe('2026-10')
-  expect(result.afterMonth).toBe('2026-11')
+  expect(result.after.groups).toEqual([])
+  expect(result.sourceUnchanged).toBe(true)
   expect(result.retired).toMatchObject({
     month: '2026-10',
     received: 6,
     loaded: 0,
   })
   expect(result.retired.deletedAt).toBeTruthy()
+  for (const key of ['count', 'weight', 'contents']) {
+    expect(result.retired[key]).toEqual(result.batch[key])
+  }
 })
 
 test('legacy v3 confirmations migrate without guessed per-variant box counts or duplicate batches', async ({
@@ -266,7 +329,7 @@ test('legacy v3 confirmations migrate without guessed per-variant box counts or 
     suppliedCbm: '0.076876',
     month: '2026-10',
   })
-  expect(result.backup.version).toBe(4)
+  expect(result.backup.version).toBe(5)
   expect(
     result.backup.orders[0].cartonConfirmations['1']['2026-11'].received
   ).toBe(9)

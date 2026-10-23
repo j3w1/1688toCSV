@@ -178,6 +178,14 @@ test('label editor saves repeated text edits and copies barcode and carton image
   extension,
 }) => {
   const { page, record } = await openWorkspace(extension)
+  await page.evaluate(() => {
+    window.revokedLabelUrls = []
+    const revoke = URL.revokeObjectURL.bind(URL)
+    URL.revokeObjectURL = (url) => {
+      window.revokedLabelUrls.push(url)
+      return revoke(url)
+    }
+  })
   await assignAll(page)
   const baseCode = (await packingBackup(extension)).preparations[0].groups[0]
     .baseCode
@@ -244,9 +252,21 @@ test('label editor saves repeated text edits and copies barcode and carton image
     printWidth: '40mm',
     printHeight: '20mm',
   })
+  const livePreviewUrl = await label
+    .getByAltText('Printable label preview')
+    .getAttribute('src')
+  expect(livePreviewUrl).toMatch(/^blob:/)
   await label
     .getByRole('button', { name: 'Close label editor', exact: true })
     .click()
+  await expect
+    .poll(() =>
+      page.evaluate(
+        (url) => window.revokedLabelUrls.includes(url),
+        livePreviewUrl
+      )
+    )
+    .toBe(true)
 
   await page.reload()
   await firstRow.getByRole('button', { name: 'Barcode', exact: true }).click()
@@ -1554,7 +1574,7 @@ test('Pcs/box-only order proposes 45+45 and prefills 10 once, confirms once and 
     page = await openSmartLibrary(extension),
     before = await packingBackup(extension)
   const grid = await openOrderReconciliation(page, ref),
-    row = productGridRow(grid, { ...ref, entryId: 'entry-0' })
+    row = productGridRow(grid, { ...ref, entryId: '2001' })
   await row.locator('[data-grid-column="capacity"]').fill('45')
   await row.locator('[data-grid-column="capacity"]').press('Tab')
   await expect(row.locator('[data-column="proposedCount"]')).toHaveText('2')

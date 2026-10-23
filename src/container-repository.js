@@ -154,6 +154,22 @@ export function createContainerRepository({
   function amendmentToken(container) {
     return { containerId: container.id, epoch: container.amendment.epoch }
   }
+  async function draftRecovery(tx, kind, reference, container) {
+    const currentId = draftId(kind, reference, container),
+      saved = await requested(tx.objectStore('orderCartonDrafts').getAll())
+    return {
+      draft: saved.find((draft) => draft.id === currentId) || null,
+      recoveredDrafts: container
+        ? saved.filter(
+            (draft) =>
+              draft.id !== currentId &&
+              orderKey(draft) === orderKey(reference) &&
+              draft.id.startsWith(`${kind}:`) &&
+              draft.amendmentContext?.containerId === container.id
+          )
+        : [],
+    }
+  }
   function refreshedMember(loaded, container, member) {
     const fresh = captureContainerOrder(
         overlay(loaded, container),
@@ -319,6 +335,97 @@ export function createContainerRepository({
       }
     }
     for (const { manifest } of effectiveShipments(state.containers))
+      for (const unit of manifest.cartons || []) {
+        const batch = state.batches.find((batch) => batch.id === unit.batchId),
+          frozenBatch = manifest.batches.find(
+            (value) => value.id === unit.batchId
+          ),
+          current =
+            batch &&
+            physicalUnits(
+              !batch.mark && !batch.groups?.length && frozenBatch?.mark
+                ? { ...batch, mark: frozenBatch.mark }
+                : batch
+            ).find((value) => value.id === unit.id)
+        if (
+          !current ||
+          current.accountId !== unit.accountId ||
+          current.orderId !== unit.orderId
+        )
+          fail(
+            'SHIPMENT_CARTON_MISSING',
+            'An effective shipment requires its current physical carton and purchase ownership.',
+            { cartonId: unit.id }
+          )
+        const fields = [
+          'contents',
+          'weight',
+          'volume',
+          'len',
+          'wid',
+          'ht',
+          'mark',
+          'reference',
+          'labelOrigin',
+        ]
+        if (
+          fields.some(
+            (field) => stableValue(current[field]) !== stableValue(unit[field])
+          ) ||
+          (unit.contents === null &&
+            [
+              'contents',
+              'unresolvedContents',
+              'contentsUnknown',
+              'packingBasis',
+              'count',
+            ].some(
+              (field) =>
+                stableValue(batch[field]) !== stableValue(frozenBatch?.[field])
+            )) ||
+          (['weightBasis', 'volumeBasis'].some(
+            (field) =>
+              batch[field] === 'batch' || frozenBatch?.[field] === 'batch'
+          ) &&
+            ['weight', 'weightBasis', 'suppliedCbm', 'volumeBasis'].some(
+              (field) =>
+                stableValue(batch[field]) !== stableValue(frozenBatch?.[field])
+            ))
+        )
+          fail(
+            'SHIPMENT_CARTON_CHANGED',
+            'Current physical facts contradict an effective shipment; review an amendment before restoring them.',
+            { cartonId: unit.id }
+          )
+      }
+    for (const container of state.containers)
+      for (const member of container.draft?.orders || []) {
+        if (member.reserveRemainder === false) continue
+        const { record } = orderScopeState(state, member)
+        for (const available of member.availableBefore || []) {
+          const eligible = eligibleOrderItems(record, state.records).find(
+            (item) => item.entryId === available.entryId
+          )?.eligible
+          const key = JSON.stringify([
+            member.accountId || 'local',
+            member.orderId,
+            available.entryId,
+          ])
+          if (
+            available.quantity !== null &&
+            eligible !== null &&
+            eligible !== undefined &&
+            BigInt(available.quantity) + (shipped.get(key) || 0n) >
+              BigInt(eligible)
+          )
+            fail(
+              'ORDER_RESERVATION_CONFLICT',
+              'An effective shipment or restored fact conflicts with the reserved purchase remainder.',
+              { orderId: member.orderId, entryId: available.entryId }
+            )
+        }
+      }
+    for (const { manifest } of effectiveShipments(state.containers))
       for (const order of manifest.orders || [])
         if (
           !state.records.some((record) => orderKey(record) === orderKey(order))
@@ -419,6 +526,9 @@ export function createContainerRepository({
             unit
               ? stableValue({
                   id: unit.id,
+                  reference: unit.reference,
+                  labelOrigin: unit.labelOrigin,
+                  quantity: unit.quantity,
                   contents: unit.contents,
                   weight: unit.weight,
                   volume: unit.volume,
@@ -429,6 +539,24 @@ export function createContainerRepository({
                 })
               : null
           if (
+            (units.some((unit) => unit.contents === null) &&
+              [
+                'contents',
+                'unresolvedContents',
+                'contentsUnknown',
+                'packingBasis',
+                'count',
+              ].some(
+                (field) =>
+                  stableValue(before?.[field]) !== stableValue(after[field])
+              )) ||
+            (units.length &&
+              ['weight', 'weightBasis', 'suppliedCbm', 'volumeBasis'].some(
+                (field) =>
+                  stableValue(before?.[field]) !== stableValue(after[field])
+              ) &&
+              (before?.weightBasis === 'batch' ||
+                before?.volumeBasis === 'batch')) ||
             units.some(
               (unit) =>
                 meaning(current.find((value) => value.id === unit.id)) !==
@@ -504,6 +632,24 @@ export function createContainerRepository({
         revision: (before?.revision || 0) + 1,
         updatedAt: nextEditTimestamp(before?.updatedAt),
       })
+      if (!batch.mark && !batch.groups.length && scope.preparation) {
+        batch.groups = scope.preparation.groups
+          .filter((group) =>
+            group.variants.some((variant) =>
+              variant.entryIds.some(
+                (entryId) =>
+                  batch.contents.some((row) => row.entryId === entryId) ||
+                  batch.unresolvedContents?.some(
+                    (claim) =>
+                      claim.groupId === group.id ||
+                      claim.entryIds.includes(entryId)
+                  )
+              )
+            )
+          )
+          .map((group) => ({ orderId: reference.orderId, groupId: group.id }))
+        if (batch.groups.length) batch.mark = { ...batch.groups[0] }
+      }
       if (
         (raw.accountId && raw.accountId !== batch.accountId) ||
         (raw.orderId && raw.orderId !== batch.orderId)
@@ -563,11 +709,7 @@ export function createContainerRepository({
     const reports = loaded.reports.filter(
         (report) => orderKey(report.orderKey || report) === orderKey(reference)
       ),
-      saved = await requested(
-        tx
-          .objectStore('orderCartonDrafts')
-          .get(draftId('cartons', reference, container))
-      )
+      recovery = await draftRecovery(tx, 'cartons', reference, container)
     const projection = {
       eligibility: Object.fromEntries(
         eligibleOrderItems(record, loaded.records).map((item) => [
@@ -597,7 +739,7 @@ export function createContainerRepository({
       preparation: contextualPreparation,
       batches,
       reports,
-      draft: saved || null,
+      ...recovery,
       projection,
       revisions: {
         ...reconciliationRevisions(loaded, reference),
@@ -930,6 +1072,7 @@ export function createContainerRepository({
           ...ref(input),
           revision: (old?.revision || 0) + 1,
           value: clone(input.draft),
+          ...(container ? { amendmentContext: amendmentToken(container) } : {}),
           updatedAt: nextEditTimestamp(old?.updatedAt),
         }
         tx.objectStore('orderCartonDrafts').put(value)
@@ -937,44 +1080,43 @@ export function createContainerRepository({
       })
     },
     updateOrderCapacities(input) {
-      return mutate('updateOrderCapacities', input, async (tx, loaded) => {
-        const { record } = orderScopeState(loaded, ref(input))
-        if (record.snapshot.observedAt !== input.expectedObservedAt)
-          fail('SOURCE_CONFLICT', 'The purchase source changed.')
-        for (const [entryId, value] of Object.entries(input.values || {})) {
-          if (
-            !record.snapshot.items.some((item) => item.entryId === entryId) ||
-            stableValue(record.unitsPerCarton?.[entryId] ?? null) !==
-              stableValue(input.expectedValues?.[entryId] ?? null)
-          )
-            fail(
-              'CAPACITY_CONFLICT',
-              'These capacities changed in another tab.',
-              { entryId }
+      return mutate('updateOrderCapacities', input, (tx, loaded) =>
+        saveOrderMetadata(tx, loaded, input, 'unitsPerCarton', (record) => {
+          if (record.snapshot.observedAt !== input.expectedObservedAt)
+            fail('SOURCE_CONFLICT', 'The purchase source changed.')
+          for (const [entryId, value] of Object.entries(input.values || {})) {
+            if (
+              !record.snapshot.items.some((item) => item.entryId === entryId) ||
+              stableValue(record.unitsPerCarton?.[entryId] ?? null) !==
+                stableValue(input.expectedValues?.[entryId] ?? null)
             )
-          if (
-            value !== null &&
-            (!/^\d+$/.test(String(value)) || BigInt(value) < 1n)
-          )
-            fail(
-              'INVALID_CAPACITY',
-              'Capacity must be a positive whole number or blank.'
+              fail(
+                'CAPACITY_CONFLICT',
+                'These capacities changed in another tab.',
+                { entryId }
+              )
+            if (
+              value !== null &&
+              (!/^\d+$/.test(String(value)) ||
+                BigInt(value) < 1n ||
+                !Number.isSafeInteger(Number(value)))
             )
-        }
-        record.unitsPerCarton = { ...record.unitsPerCarton }
-        for (const [id, value] of Object.entries(input.values || {})) {
-          if (value === null) delete record.unitsPerCarton[id]
-          else record.unitsPerCarton[id] = String(value)
-        }
-        record.unitsPerCartonUpdatedAt = nextEditTimestamp(
-          record.unitsPerCartonUpdatedAt
-        )
-        tx.objectStore('orders').put(record)
-        return {
-          record,
-          revisions: reconciliationRevisions(loaded, ref(input)),
-        }
-      })
+              fail(
+                'INVALID_CAPACITY',
+                'Capacity must be a positive whole number or blank.'
+              )
+          }
+          record.unitsPerCarton = { ...record.unitsPerCarton }
+          for (const [id, value] of Object.entries(input.values || {})) {
+            if (value === null) delete record.unitsPerCarton[id]
+            else record.unitsPerCarton[id] = Number(value)
+          }
+          record.unitsPerCartonUpdatedAt = nextEditTimestamp(
+            record.unitsPerCartonUpdatedAt
+          )
+          return record
+        })
+      )
     },
     resolvePurchaseDate(input) {
       return mutate('resolvePurchaseDate', input, (tx, loaded) =>
@@ -1603,8 +1745,8 @@ export function createContainerRepository({
         const batch = loaded.batches.find((value) => value.id === input.batchId)
         if (
           !batch ||
-          batch.deletedAt ||
-          batch.revision !== input.expectedRevision
+          batch.revision !== input.expectedRevision ||
+          (batch.deletedAt && !batchNeedsLegacyReview(batch))
         )
           fail('CARTON_BATCH_CONFLICT', 'This legacy evidence changed.')
         if (!input.reason?.trim() || input.attestNotShipped !== true)
@@ -1783,6 +1925,7 @@ export function createContainerRepository({
     amendmentFor,
     amendmentToken,
     draftId,
+    draftRecovery,
     refreshedMember,
   }
 }

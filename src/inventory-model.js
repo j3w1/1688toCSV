@@ -1,4 +1,8 @@
-import { cartonBatchMetrics, cartonDecimal } from './carton-batches.js'
+import {
+  cartonBatchMetrics,
+  cartonBatchMark,
+  cartonDecimal,
+} from './carton-batches.js'
 
 export const MAX_OPERATIONAL_CARTONS = 10_000
 export const orderKey = (value) =>
@@ -148,7 +152,6 @@ export function batchOrderIds(batch) {
 }
 export function batchNeedsLegacyReview(batch) {
   return (
-    !batch.deletedAt &&
     !batch.legacyResolution &&
     (batchOrderIds(batch).length !== 1 ||
       Number(batch.loaded || 0) > 0 ||
@@ -283,7 +286,7 @@ export function physicalUnits(batch) {
       len: measurement.len ?? batch.len ?? '',
       wid: measurement.wid ?? batch.wid ?? '',
       ht: measurement.ht ?? batch.ht ?? '',
-      mark: batch.mark,
+      mark: cartonBatchMark(batch),
       needsReview: !!batch.needsReview || batchNeedsLegacyReview(batch),
     }
   })
@@ -551,7 +554,7 @@ export function projectBacklog(
       key = orderKey(record)
     const own = batches.filter(
       (batch) =>
-        !batch.deletedAt &&
+        (!batch.deletedAt || batchNeedsLegacyReview(batch)) &&
         (batch.accountId || 'local') === accountId &&
         batchOrderIds(batch).includes(orderId)
     )

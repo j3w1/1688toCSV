@@ -227,15 +227,15 @@ export function mountStoreSpreadsheetGuide(
     ),
     section(
       'Keep packing exceptions explicit',
-      'After preparation, open Cartons for the code group. Pack together, Separate variants and Use all remaining fill proposals; Apply carton contents saves the allocation. Review leftovers instead of assuming another carton. Add extra order costs separately.'
+      'Import once, then review Products and Cartons in Orders. Supported source carton facts are confirmed during import; capacity-only edits remain proposals. Review prefilled remainders and confirm one order when its physical facts are ready. Add extra order costs separately.'
     ),
     section(
       'Choose contents and carton mark',
-      'Use Exact carton for one numbered carton’s actual contents, or Batch for combined totals. Groups from one purchase can mix; choose the physical carton mark separately, even when its group contributes no pieces. Group codes identify carton marks; full variant codes identify product labels. Other purchases need explicit product links within the same account, store and packing month. Unequal cartons do not imply a common pieces-per-box value.'
+      'Each carton belongs to one purchase. Products from that purchase may mix, with an independent carton mark even when its group contributes no pieces. Eligible repeat purchases may share reviewed codes across purchase months, but keep separate quantities, prices and cartons. Unequal cartons and aggregate totals never establish a uniform per-box split.'
     ),
     section(
-      'Confirm cartons independently',
-      'Different carton dimensions or weights need separate batches. Choose Per carton or Batch total for weight; partial batch-total weight stays unknown. Received and loaded counts are independent: blank is unknown and zero confirms none. They never change received product pieces.'
+      'Confirm loading in a container',
+      'In Packing, include whole orders in a named container and confirm Loaded or Left behind for physical cartons. Product quantities follow those decisions. Seal a revision after review; correct sealed facts through an amendment. Keep per-carton and combined measurements distinct; partial combined totals stay unknown. Receiving and supplier delivery remain separate.'
     ),
     section(
       'Confirm the purchase date',

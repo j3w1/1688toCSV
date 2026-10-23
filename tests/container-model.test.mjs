@@ -3,6 +3,7 @@ import assert from 'node:assert/strict'
 import {
   syntheticOrder,
   syntheticBatch,
+  syntheticManifest,
 } from './fixtures/container-fixture.mjs'
 import {
   captureContainerOrder,
@@ -138,4 +139,238 @@ test('stable per-unit contents and measured exceptions identify actual boxes and
   state.batches[0].revision++
   view = projectContainer(state, container)
   assert(view.issues.some((issue) => issue.code === 'CARTON_STALE'))
+})
+
+test('captured product rows retain canonical variant names, explicit blanks, material overrides and size state', () => {
+  const state = base(),
+    preparation = syntheticManifest().orders[0].preparation
+  const variant = preparation.groups[0].variants[0]
+  preparation.groups[0].spanishName = 'GRUPO'
+  preparation.groups[0].material = 'OBSOLETE GROUP MATERIAL'
+  Object.assign(variant, {
+    spanishName: '',
+    material: 'VIDRIO',
+    materialSource: 'manual',
+    materialOverrides: { 2001: { value: 'ACERO', source: 'manual' } },
+    variantSuffix: 'A',
+    sizeSuffix: '02',
+    needsSizeMapping: false,
+    size: 'XL',
+    variant: 'Red / XL',
+  })
+  state.preparations = [preparation]
+  state.batches[0].groups = [
+    { orderId: '1001', groupId: preparation.groups[0].id },
+  ]
+  const container = draft(state)
+  container.draft.decisions = Object.fromEntries(
+    container.draft.orders[0].cartons.map((unit) => [unit.id, 'loaded'])
+  )
+  const row = projectContainer(state, container).products[0]
+  assert.equal(row.spanishName, '')
+  assert.equal(row.material, 'ACERO')
+  assert.equal(row.materialSource, 'manual')
+  assert.equal(row.variantSuffix, 'A')
+  assert.equal(row.sizeSuffix, '02')
+  assert.equal(row.needsSizeMapping, false)
+  assert.equal(row.sourceSize, 'XL')
+  assert.equal(row.variantDescription, 'Red / XL')
+  assert.equal(row.cartonMarkCode, preparation.groups[0].baseCode)
+  variant.spanishName = 'LATER LIVE NAME'
+  variant.materialOverrides['2001'].value = 'LATER LIVE MATERIAL'
+  assert.equal(projectContainer(state, container).products[0].spanishName, '')
+  assert.equal(projectContainer(state, container).products[0].material, 'ACERO')
+})
+
+test('actual full and per-unit product proof outranks stale complete-set claims and conflicting or overlapping coverage blocks seal', () => {
+  const state = base()
+  state.batches = [syntheticBatch('1001', 3, '30')]
+  state.reports = [
+    {
+      coverage: {
+        completeSetCoverage: {
+          batchIds: ['batch-1001'],
+          provenance: 'owner-confirmed',
+          contents: [{ entryId: '2001', quantity: '100' }],
+        },
+      },
+    },
+  ]
+  let container = draft(state)
+  container.draft.decisions = Object.fromEntries(
+    container.draft.orders[0].cartons.map((unit) => [unit.id, 'loaded'])
+  )
+  let view = projectContainer(state, container)
+  assert.equal(view.products[0].quantity, '30')
+  assert.equal(view.readiness.ready, true)
+  state.batches = [
+    syntheticBatch('1001', 3, '30', {
+      packingBasis: 'aggregate',
+      contents: [],
+      contentsUnknown: true,
+      unresolvedContents: [{ entryIds: ['2001'], quantity: null }],
+      unitContents: {
+        0: [{ orderId: '1001', entryId: '2001', quantity: '12' }],
+      },
+    }),
+  ]
+  state.reports[0].coverage.completeSetCoverage.contents[0].quantity = '5'
+  container = draft(state)
+  container.draft.decisions = Object.fromEntries(
+    container.draft.orders[0].cartons.map((unit) => [unit.id, 'loaded'])
+  )
+  view = projectContainer(state, container)
+  assert.equal(view.readiness.ready, false)
+  assert(
+    view.issues.some((issue) => issue.code === 'COMPLETE_SET_COVERAGE_CONFLICT')
+  )
+  state.reports[0].coverage.completeSetCoverage.contents[0].quantity = '30'
+  state.reports.push(structuredClone(state.reports[0]))
+  view = projectContainer(state, container)
+  assert.equal(view.readiness.ready, false)
+  assert(
+    view.issues.some((issue) => issue.code === 'COMPLETE_SET_COVERAGE_CONFLICT')
+  )
+})
+
+test('full multi-batch coverage allocates exact set measurements without inventing per-box product composition', () => {
+  const state = base(),
+    record = state.records[0]
+  record.snapshot.items.push({ ...record.snapshot.items[0], entryId: '2002' })
+  Object.assign(record.snapshot.totals, {
+    goodsGross: '2000.00',
+    goodsNet: '2000.00',
+    payable: '2000.00',
+  })
+  state.batches = [
+    syntheticBatch('1001', 2, '0', {
+      id: 'set-a',
+      packingBasis: 'aggregate',
+      contents: [],
+      contentsUnknown: true,
+      unresolvedContents: [{ entryIds: ['2001', '2002'], quantity: null }],
+      weight: '7.25',
+      weightBasis: 'batch',
+      suppliedCbm: '0.1',
+      volumeBasis: 'batch',
+    }),
+    syntheticBatch('1001', 2, '0', {
+      id: 'set-b',
+      packingBasis: 'aggregate',
+      contents: [],
+      contentsUnknown: true,
+      unresolvedContents: [{ entryIds: ['2001', '2002'], quantity: null }],
+      weight: '2.75',
+      weightBasis: 'batch',
+      suppliedCbm: '0.2',
+      volumeBasis: 'batch',
+    }),
+  ]
+  state.reports = [
+    {
+      coverage: {
+        completeSetCoverage: {
+          batchIds: ['set-a', 'set-b'],
+          provenance: 'owner-confirmed',
+          contents: [
+            { entryId: '2001', quantity: '30' },
+            { entryId: '2002', quantity: '70' },
+          ],
+        },
+      },
+    },
+  ]
+  const container = draft(state)
+  container.draft.decisions = Object.fromEntries(
+    container.draft.orders[0].cartons.map((unit) => [unit.id, 'loaded'])
+  )
+  const view = projectContainer(state, container)
+  assert.equal(view.readiness.ready, true)
+  assert.equal(view.totals.weight, '10')
+  assert.equal(view.totals.volume, '0.3')
+  assert.deepEqual(
+    view.products.map((row) => [
+      row.quantity,
+      row.allocatedWeight,
+      row.allocatedVolume,
+      row.measurementAllocationBasis,
+    ]),
+    [
+      ['30', '3', '0.09', 'allocated'],
+      ['70', '7', '0.21', 'allocated'],
+    ]
+  )
+  assert(view.cartons.every((unit) => unit.contents === null))
+  assert(view.products.every((row) => row.additiveCartonCount === null))
+})
+
+test('reported padded references and actual independent mark owners follow stable entitlement indices into output', () => {
+  const state = base(),
+    preparation = syntheticManifest().orders[0].preparation
+  const mark = structuredClone(preparation.groups[0])
+  mark.id = 'other-mark'
+  mark.baseCode = 'CE26090102'
+  mark.variants[0].id = 'mark-variant'
+  mark.variants[0].entryIds = []
+  preparation.groups.push(mark)
+  state.preparations = [preparation]
+  state.batches = [
+    syntheticBatch('1001', 2, '20', {
+      groups: [
+        { orderId: '1001', groupId: preparation.groups[0].id },
+        { orderId: '1001', groupId: mark.id },
+      ],
+      mark: { orderId: '1001', groupId: mark.id },
+      entitlementIndices: [1, 4],
+      unitLabels: { 1: '001', 4: '005' },
+    }),
+  ]
+  const container = draft(state)
+  container.draft.decisions = Object.fromEntries(
+    container.draft.orders[0].cartons.map((unit) => [unit.id, 'loaded'])
+  )
+  const view = projectContainer(state, container)
+  assert.deepEqual(
+    view.cartons.map((unit) => [
+      unit.index,
+      unit.reference,
+      unit.markCode,
+      unit.labelOrigin,
+    ]),
+    [
+      [1, '001', 'CE26090102', 'reported'],
+      [4, '005', 'CE26090102', 'reported'],
+    ]
+  )
+  assert.equal(view.products[0].cartonReferenceText, '001, 005')
+  assert.equal(view.products[0].cartonMarkCode, 'CE26090102')
+  assert.equal(view.products[0].baseCode, 'CE26090101')
+})
+
+test('historical remaining projection separates exact unprepared pieces from known left boxes and never reports their missing measures as zero', () => {
+  const state = base()
+  state.batches = [
+    syntheticBatch('1001', 3, '30', { weight: '1', suppliedCbm: '0.1' }),
+  ]
+  const container = draft(state)
+  container.draft.decisions = Object.fromEntries(
+    container.draft.orders[0].cartons.map((unit, index) => [
+      unit.id,
+      index === 0 ? 'loaded' : 'left-behind',
+    ])
+  )
+  const view = projectContainer(state, container)
+  assert.equal(view.products[0].quantity, '10')
+  assert.equal(view.leftBehind.products[0].quantity, '90')
+  assert.equal(view.leftBehind.products[0].remainingQuantity, '90')
+  assert.equal(view.leftBehind.unprepared[0].quantity, '70')
+  assert.equal(view.leftBehind.totals.knownCartons, 2)
+  assert.equal(view.leftBehind.totals.cartons, null)
+  assert.equal(view.leftBehind.totals.weight, null)
+  assert.equal(view.leftBehind.totals.volume, null)
+  assert.equal(view.leftBehind.totals.weightCoverage.knownSubtotal, '2')
+  assert.equal(view.leftBehind.totals.weightCoverage.complete, false)
+  assert.equal(view.leftBehind.totals.weightCoverage.unpreparedQuantity, '70')
+  state.records.push(syntheticOrder('1002'))
+  assert.equal(projectContainer(state, container).leftBehind.products.length, 1)
 })
