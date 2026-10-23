@@ -404,6 +404,7 @@ async function exportAliasMark(
     )
     .click()
   const print = page.locator('.print-dialog')
+  await print.waitFor()
   await expect(print).toBeVisible()
   await expect(print.getByLabel(/^Quantity for /)).toHaveCount(1)
   await expect(print.getByLabel(/^Quantity for /)).toHaveValue('6')
@@ -916,6 +917,7 @@ test('returned cartons retain original evidence but require a fresh label after 
     priorHistoricalFiles = new Set(
       (await downloads(extension)).map((file) => file.id)
     )
+  await historicalPrint.waitFor()
   await expect(historicalPrint.getByLabel(/^Quantity for /)).toHaveCount(1)
   await expect(historicalPrint.getByLabel(/^Quantity for /)).toHaveValue('1')
   expect(
@@ -1025,6 +1027,7 @@ test('a carton change during real mark PDF encoding rejects the captured output 
     )
     .click()
   const print = page.locator('.print-dialog')
+  await print.waitFor()
   await expect(print).toBeVisible()
   const files = await downloads(extension),
     recent = await page.evaluate(() =>

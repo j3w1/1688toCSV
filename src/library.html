@@ -43,6 +43,7 @@
           type="button"
           data-i18n="Orders"
           aria-current="page"
+          disabled
         >
           Orders
         </button>
@@ -51,6 +52,7 @@
           data-action="view-packing"
           type="button"
           data-i18n="Packing list"
+          disabled
         >
           Packing list
         </button>
@@ -112,7 +114,9 @@
           <span data-i18n="Activity">Activity</span
           ><span id="activity-count"></span>
         </button>
-        <button data-i18n="Settings" id="packing-settings">Settings</button>
+        <button data-i18n="Settings" id="packing-settings" disabled>
+          Settings
+        </button>
         <button id="theme-toggle" class="theme-toggle" type="button">
           <span class="to-dark"
             ><span aria-hidden="true">☾</span
@@ -221,7 +225,12 @@
             >
               Add order
             </button>
-            <button data-i18n="Show all" id="all-orders" class="text-button">
+            <button
+              data-i18n="Show all"
+              id="all-orders"
+              class="text-button"
+              disabled
+            >
               Show all
             </button>
           </div>
@@ -289,11 +298,11 @@
           ></div>
           <div class="pane-footer">
             <div class="order-refresh">
-              <button data-i18n="Refresh orders" id="refresh-orders">
+              <button data-i18n="Refresh orders" id="refresh-orders" disabled>
                 Refresh orders</button
               ><span id="refresh-scope"></span>
             </div>
-            <button data-i18n="Remove selected" id="remove-orders">
+            <button data-i18n="Remove selected" id="remove-orders" disabled>
               Remove selected
             </button>
           </div>
@@ -314,6 +323,7 @@
               data-orders-view="products"
               data-i18n="Products"
               aria-current="page"
+              disabled
             >
               Products
             </button>
@@ -321,6 +331,7 @@
               data-action="orders-cartons"
               data-orders-view="cartons"
               data-i18n="Cartons"
+              disabled
             >
               Cartons
             </button>
@@ -328,6 +339,7 @@
               data-action="orders-backlog"
               data-orders-view="backlog"
               data-i18n="Backlog"
+              disabled
             >
               Backlog
             </button>
@@ -468,6 +480,7 @@
                 data-i18n="Select all rows"
                 id="select-rows"
                 data-action="select-all-rows"
+                disabled
               >
                 Select all rows
               </button>
@@ -475,6 +488,7 @@
                 data-i18n="Clear selection"
                 id="clear-rows"
                 data-action="clear-selection"
+                disabled
               >
                 Clear selection
               </button>
@@ -490,17 +504,18 @@
                 >
                   <span data-i18n="Products" class="toolbar-caption"
                     >Products</span
-                  ><button data-i18n="Copy values" id="copy-values">
+                  ><button data-i18n="Copy values" id="copy-values" disabled>
                     Copy values</button
-                  ><button data-i18n="Copy images" id="copy-images">
+                  ><button data-i18n="Copy images" id="copy-images" disabled>
                     Copy images</button
-                  ><button data-i18n="Copy to Excel" id="copy-excel">
+                  ><button data-i18n="Copy to Excel" id="copy-excel" disabled>
                     Copy to Excel</button
                   ><button
                     data-i18n="Copy Excel image"
                     data-i18n-title="Copy selected rows as one picture in your workspace language"
                     id="copy-excel-image"
                     title="Copy selected rows as one picture in your workspace language"
+                    disabled
                   >
                     Copy Excel image
                   </button>
@@ -515,9 +530,14 @@
                   ><button
                     data-i18n="Copy preparation columns"
                     id="copy-preparation"
+                    disabled
                   >
                     Copy preparation columns</button
-                  ><button data-i18n="Copy group codes" id="copy-group-codes">
+                  ><button
+                    data-i18n="Copy group codes"
+                    id="copy-group-codes"
+                    disabled
+                  >
                     Copy group codes</button
                   ><label class="check"
                     ><input id="include-headers" type="checkbox" /><span
@@ -537,6 +557,7 @@
                 data-action="review-purchase-codes"
                 id="review-purchase-codes"
                 data-i18n="Review purchase-month codes"
+                disabled
               >
                 Review purchase-month codes
               </button>
@@ -544,6 +565,7 @@
                 data-action="group-order-products"
                 id="group-order-products"
                 data-i18n="Grouping tools"
+                disabled
               >
                 Grouping tools
               </button>
@@ -567,6 +589,7 @@
                 data-action="include-container-orders"
                 id="include-orders"
                 data-i18n="Include whole orders"
+                disabled
               >
                 Include whole orders
               </button>
@@ -574,6 +597,7 @@
                 id="backup-packing"
                 data-action="backup-packing"
                 data-i18n="Back up packing"
+                disabled
               >
                 Back up packing
               </button>
@@ -697,7 +721,7 @@
           For an occasional full update. Use the Orders panel for individual
           orders or months.
         </p>
-        <button data-i18n="Refresh all orders" id="refresh-all">
+        <button data-i18n="Refresh all orders" id="refresh-all" disabled>
           Refresh all orders
         </button>
       </section>

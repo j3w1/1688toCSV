@@ -337,6 +337,7 @@ test('repeat-product dialog previews both purchases, cancellation writes nothing
   await page.locator('#orders-print-actions .copy-actions-trigger').click()
   await page.locator('#print-labels').click()
   const labels = page.getByRole('dialog', { name: 'Print labels', exact: true })
+  await labels.waitFor({ state: 'visible' })
   await expect(labels.getByLabel(/^Quantity for /)).toHaveCount(1)
   await expect(labels.getByLabel(/^Quantity for /)).toHaveValue('30')
   await labels.getByRole('button', { name: 'Cancel', exact: true }).click()
@@ -379,6 +380,7 @@ test('repeat-product dialog previews both purchases, cancellation writes nothing
     name: 'Print carton marks',
     exact: true,
   })
+  await marks.waitFor({ state: 'visible' })
   await expect(marks.getByLabel(/^Quantity for /)).toHaveCount(1)
   await expect(marks.getByLabel(/^Quantity for /)).toHaveValue('10')
   await expect(marks.locator('.print-known')).toContainText('10')

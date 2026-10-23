@@ -323,9 +323,11 @@ test('Back up packing downloads a self-contained archive with separate requested
   await expect(row).toBeVisible()
   await row.getByRole('checkbox').check()
   await page.locator('#orders-view [data-action="open-copy-menu"]').click()
+  const downloading = page.waitForEvent('download')
   await page
     .getByRole('button', { name: 'Back up packing', exact: true })
     .click()
+  await downloading
   let downloaded
   await expect
     .poll(async () => {

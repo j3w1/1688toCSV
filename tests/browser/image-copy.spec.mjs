@@ -215,6 +215,7 @@ test('clipboard failures stay next to the copy control and can be retried', asyn
     }
   })
   const page = await openLibrary(extension)
+  await page.locator('#sheet-body tr[data-selection-key]').first().waitFor()
   const button = page.locator('#copy-values')
   await revealCopyActions(page)
   await button.click()

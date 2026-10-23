@@ -368,6 +368,7 @@ test('an exceptional unit uses a retained entitlement, leaves untouched combined
   const weight = details.locator('[data-unit-measurement="weight"]')
   await weight.fill('7.125')
   await details.getByRole('button', { name: 'Close', exact: true }).click()
+  await details.waitFor({ state: 'hidden' })
   expect((await backup(extension)).cartonBatches[0].weight).toBe('20.5')
   const current = await realOrderContext(extension, ref)
   expect(JSON.stringify(current.draft)).toContain('7.125')

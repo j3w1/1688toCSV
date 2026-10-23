@@ -2674,6 +2674,14 @@ export async function startLibrary(
       if (filteredRows().some((row) => addedOrderIds.has(row.orderId)))
         productTable.reset()
     }
+    if (!hasLoadedLibrary) {
+      // These handlers need the first stored library/context, even when empty.
+      // Row, selection and code validity remain with their existing render rules.
+      for (const target of document.querySelectorAll(
+        '#packing-settings, #all-orders, #view-orders, #view-packing, #orders-subviews button, #copy-preparation, #copy-group-codes, #review-purchase-codes, #group-order-products, #include-orders, #backup-packing, #print-recent'
+      ))
+        target.disabled = false
+    }
     render()
     hasLoadedLibrary = true
   }
@@ -3205,6 +3213,7 @@ export async function startLibrary(
   const recentPrints = node('button', uiMessage('Recent print jobs…'))
   recentPrints.id = 'print-recent'
   recentPrints.dataset.action = 'print-recent'
+  recentPrints.disabled = true
   decorateIcon(recentPrints, 'undo')
   recentPrints.onclick = () => packing?.openRecentPrints()
   printButtons.push(recentPrints)
@@ -3562,6 +3571,8 @@ export async function startLibrary(
     jobStructure = ''
     render()
   })
+  // Establish empty/loading selection guards before any asynchronous startup read.
+  updateSelection()
   try {
     await repository?.refreshNamingSuggestions?.()
     packing = await startPackingWorkspace({

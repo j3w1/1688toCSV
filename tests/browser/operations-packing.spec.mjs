@@ -232,6 +232,7 @@ test('reviewed payment links preserve source totals, skip payment rows and expor
   await page.locator('#orders-print-actions .copy-actions-trigger').click()
   await page.locator('#print-labels').click()
   const labels = page.getByRole('dialog', { name: 'Print labels', exact: true })
+  await labels.waitFor()
   await expect(labels.getByLabel(/^Quantity for /)).toHaveCount(1)
   await expect(labels.getByLabel(/^Quantity for /)).toHaveValue('3')
   await labels.getByRole('button', { name: 'Cancel', exact: true }).click()

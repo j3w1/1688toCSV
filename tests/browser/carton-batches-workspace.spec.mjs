@@ -596,6 +596,7 @@ test('numbered cartons retain exact cross-code minority contents and independent
     name: 'Print carton marks',
     exact: true,
   })
+  await print.waitFor({ state: 'visible' })
   await expect(print.getByLabel(/^Quantity for /)).toHaveCount(1)
   await expect(print.getByLabel(/^Quantity for /)).toHaveAccessibleName(
     'Quantity for CE26101002'

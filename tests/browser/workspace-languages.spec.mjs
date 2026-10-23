@@ -293,10 +293,10 @@ test('source identities copy directly and the card store name opens details with
   expect(after.height).toBeCloseTo(before.height, 1)
   const shop = header.locator('.order-seller')
   await shop.click()
+  await expect(shop.locator('.copy-text-feedback')).toHaveText('Copied')
   expect(await page.evaluate(() => navigator.clipboard.readText())).toBe(
     'Photo'
   )
-  await expect(shop.locator('.copy-text-feedback')).toHaveText('Copied')
   const card = page.locator('.order-card').first()
   await expect(card).toHaveAttribute('aria-selected', 'false')
   await card.locator('.order-seller').click()
@@ -306,11 +306,21 @@ test('source identities copy directly and the card store name opens details with
   await expect(rows.first()).toHaveAttribute('aria-selected', 'true')
   await expect(card.locator('.order-reference')).toHaveCount(0)
   await details.locator('.order-reference').dblclick()
+  await expect(
+    details.locator('.order-reference .copy-text-feedback')
+  ).toHaveText('Copied')
   await expect(details).toBeVisible()
   await expect(rows.first()).toHaveAttribute('aria-selected', 'true')
   await expect(shop.locator('.copy-text-feedback')).toBeHidden()
   await details.locator('.order-reference').focus()
   await page.keyboard.press('Enter')
+  await expect(details.locator('.order-reference')).not.toHaveAttribute(
+    'aria-busy',
+    'true'
+  )
+  await expect(
+    details.locator('.order-reference .copy-text-feedback')
+  ).toHaveText('Copied')
   expect(await page.evaluate(() => navigator.clipboard.readText())).toBe(
     record.snapshot.orderId
   )

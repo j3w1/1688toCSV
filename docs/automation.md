@@ -6,6 +6,10 @@ Prefer stable `data-action` selectors and labeled fields. Accessible names below
 
 Popup language is local: inspect its `lang`, use its language controls and preserve workspace language. Nested/portalled previews inherit the opener's language. New assignment reviews show full before/after values or a large overview; choose a card for its complete comparison, arrows to move and Escape to close it. Other reviews scroll continuously.
 
+Wait for a data action to become enabled before invoking it. Startup keeps those controls disabled until the stored library and its context have loaded; an empty library keeps row-dependent copy controls disabled. The workspace status values and stable action names are unchanged. Clipboard reads follow the completed Copied state, and downloads follow the actual export/download completion.
+
+Photo Close stays disabled while an edit saves. Its accessible description and the photo status show the existing localized Saving message until the save settles; Escape and backdrop clicks preserve the pending save. Preview zoom, fit and image-toggle controls wait for actual image dimensions. These guards preserve original photos and export bytes.
+
 ## Orders from other sources
 
 `add-other-order` opens a draft; manual entry and JSON use identical complete-order validation. Upload one shared-file JSON through `other-order-file`, review, then `other-order-save`. File import fills fields without saving. At least one product row remains. A failed validation or duplicate supplier/reference leaves the full draft and writes nothing; success selects the new order/month.

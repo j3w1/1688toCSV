@@ -1352,3 +1352,100 @@ test('photo editor translates live without losing its composition or custom vari
     )
   }
 })
+
+for (const abortSave of [false, true])
+  test(`photo Close explains and protects a real pending save through ${abortSave ? 'rollback' : 'commit'}`, async ({
+    extension,
+  }) => {
+    const { page, photo } = await openPhoto(extension)
+    const close = photo.getByRole('button', {
+      name: 'Close product photo',
+      exact: true,
+    })
+    await expect(close).toBeEnabled()
+    const before = await extension.inspector.evaluate(
+      async () =>
+        (await chrome.runtime.sendMessage({ type: 'BACKUP_EXPORT' })).data
+    )
+    await photo.getByRole('button', { name: 'Edit photo', exact: true }).click()
+    const save = photo.getByRole('button', { name: 'Save photo', exact: true })
+    await expect(save).toBeEnabled()
+    await page.evaluate((abortSave) => {
+      window.holdPhotoPersistence = true
+      window.photoPersistenceStarted = false
+      const put = IDBObjectStore.prototype.put
+      IDBObjectStore.prototype.put = function (...args) {
+        const request = put.apply(this, args)
+        if (
+          this.name === 'orders' &&
+          args[0]?.snapshot?.items.some((item) => item.photoEdits) &&
+          window.holdPhotoPersistence
+        ) {
+          window.photoPersistenceStarted = true
+          const store = this,
+            transaction = this.transaction
+          const keepAlive = () => {
+            if (!window.holdPhotoPersistence) {
+              if (abortSave) transaction.abort()
+              return
+            }
+            store.get([
+              args[0].accountId || args[0].snapshot.accountId || 'local',
+              args[0].snapshot.orderId,
+            ]).onsuccess = keepAlive
+          }
+          keepAlive()
+        }
+        return request
+      }
+    }, abortSave)
+    try {
+      await save.click()
+      await expect
+        .poll(() => page.evaluate(() => window.photoPersistenceStarted))
+        .toBe(true)
+      await expect(close).toBeDisabled()
+      await expect(photo.getByRole('status')).toHaveText('Saving…')
+      await expect(close).toHaveAccessibleDescription('Saving…')
+      await close.evaluate((button) => button.click())
+      await expect(photo).toBeVisible()
+      await page.keyboard.press('Escape')
+      await expect(photo).toBeVisible()
+      const bounds = await photo.boundingBox()
+      await page.mouse.click(bounds.x - 5, bounds.y + 10)
+      await expect(photo).toBeVisible()
+      await expect(photo.getByRole('status')).toHaveText('Saving…')
+    } finally {
+      await page.evaluate(() => {
+        window.holdPhotoPersistence = false
+      })
+    }
+    if (abortSave)
+      await expect(photo.getByRole('status')).toContainText('aborted')
+    else
+      await expect(photo.getByRole('status')).toHaveText(
+        'Photo saved. Original preserved.'
+      )
+    await expect(close).toBeEnabled()
+    const after = await extension.inspector.evaluate(
+      async () =>
+        (await chrome.runtime.sendMessage({ type: 'BACKUP_EXPORT' })).data
+    )
+    if (abortSave) {
+      expect(after.orders).toEqual(before.orders)
+      expect(after.images).toEqual(before.images)
+    } else {
+      const edited = after.orders
+        .flatMap((order) => order.snapshot.items)
+        .find((item) => item.photoEdits)
+      const original = before.orders
+        .flatMap((order) => order.snapshot.items)
+        .find((item) => item.entryId === edited.entryId)
+      expect(edited.photos[0]).toBe(original.thumbnail)
+      expect(edited.photoEdits['0']).toBeTruthy()
+      expect(edited.thumbnail).not.toBe(original.thumbnail)
+    }
+    await close.click()
+    await expect(photo).toBeHidden()
+    expect(extension.unexpectedRequests).toEqual([])
+  })

@@ -253,7 +253,9 @@ test('container export preserves advanced columns/order/layout and exact theme/m
       exact: true,
     })
     .check()
+  const downloading = page.waitForEvent('download')
   await download.click()
+  await downloading
   await expect(dialog).toHaveCount(0)
   let files
   await expect
@@ -400,7 +402,9 @@ test('container export preserves advanced columns/order/layout and exact theme/m
     .click()
   await dialog.locator('input[value="spanishName"]').check()
   await dialog.locator('input[value="quantity"]').check()
+  const narrowDownloading = page.waitForEvent('download')
   await download.click()
+  await narrowDownloading
   await expect(dialog).toHaveCount(0)
   await expect
     .poll(async () => {

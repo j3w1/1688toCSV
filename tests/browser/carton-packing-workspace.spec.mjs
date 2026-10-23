@@ -227,6 +227,7 @@ test('shared codes retain each source capacity, unknown capacity remains visible
     name: 'Print carton marks',
     exact: true,
   })
+  await print.waitFor({ state: 'visible' })
   await expect(print.getByLabel(/^Quantity for /)).toHaveValue('10')
   await expect(
     print.getByRole('checkbox', { name: /^Carton count reviewed for / })
@@ -295,6 +296,9 @@ test('capacity changes refresh unedited grids in another tab without creating ca
   await page.locator('[data-action="mark-all-loaded"]').click()
   await page.locator('#packing-view [data-action="open-print-menu"]').click()
   await page.locator('#packing-view [data-action="print-carton-marks"]').click()
+  await page
+    .getByRole('dialog', { name: 'Print carton marks', exact: true })
+    .waitFor({ state: 'visible' })
   await expect(
     page
       .getByRole('dialog', { name: 'Print carton marks', exact: true })

@@ -229,6 +229,7 @@ test('photo, Excel-cells and Excel-image previews copy individual full PNGs and 
     const dialog = page.locator('.image-copy-dialog')
     await expect(dialog.locator('.image-copy-submit')).toBeEnabled()
     const image = dialog.locator('.copy-preview img').first()
+    await image.evaluate((image) => image.decode())
     const expected = await imageDigest(image)
     if (action === 'copy-excel-image') {
       await dialog.getByRole('button', { name: 'Zoom in', exact: true }).click()
@@ -447,6 +448,7 @@ test('Excel preview matches copied bytes, errors retry in place, columns refresh
   const preview = dialog.locator('.copy-preview')
   const zoom = dialog.locator('.copy-preview-zoom')
   const originalSource = await zoom.locator('img').getAttribute('src')
+  await zoom.locator('img').evaluate((image) => image.decode())
   const beforeSize = await zoom.locator('img').boundingBox()
   await preview.hover()
   await page.mouse.wheel(0, -240)
@@ -598,6 +600,7 @@ test('Excel preview preserves its image and zoom when style options toggle', asy
   const style = dialog.locator('.excel-style-details')
   const summary = style.locator('summary')
   const source = await image.getAttribute('src')
+  await image.evaluate((image) => image.decode())
   await expect(style).toHaveJSProperty('open', false)
   await summary.click()
   await expect(style).toHaveJSProperty('open', true)

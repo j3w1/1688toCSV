@@ -511,6 +511,10 @@ test('corrupt inline photos are refused by file entry, the manual picker, storag
     mimeType: 'image/png',
     buffer: Buffer.from('iVBORw0KGgo=', 'base64'),
   })
+  await page.waitForFunction(() => {
+    const photo = document.querySelector('[data-action="other-order-photo"]')
+    return photo?.isConnected && !photo.disabled
+  })
   await expect(page.locator('.other-order-error')).toContainText('decodable')
   await expect(page.locator('.other-order-product img')).toBeHidden()
   const rejected = await extension.inspector.evaluate(

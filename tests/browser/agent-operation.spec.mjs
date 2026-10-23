@@ -437,6 +437,7 @@ test('an agent authors Orders, confirms one physical arrangement, seals a named 
   await action(page, 'select-all-rows').click()
   await action(page, 'open-print-menu').click()
   await action(page, 'print-labels').click()
+  await page.locator('.print-dialog').waitFor()
   await expect(page.locator('[data-action="print-calibration"]')).toBeVisible()
   expect(
     await exportPdf(page, page.locator('[data-action="export-pdf"]'))

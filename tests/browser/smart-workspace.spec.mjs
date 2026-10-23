@@ -956,6 +956,7 @@ test('unsealed container barcode and mark PDFs visibly retain DRAFT and exact re
     await packing.locator('[data-action="open-print-menu"]').click()
     await packing.locator(`[data-action="${action}"]`).click()
     const dialog = page.getByRole('dialog', { name: title, exact: true })
+    await dialog.waitFor({ state: 'visible' })
     await expect(dialog.locator('.container-output-context')).toContainText(
       'DRAFT'
     )

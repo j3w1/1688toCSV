@@ -29,9 +29,11 @@ const groups = (data) => data.preparations.map((prep) => prep.groups)
 const editor = (page) =>
   page.locator('dialog[data-action="edit-order-product"]')
 async function travel(page, direction) {
+  const previous = await editor(page).elementHandle()
   await editor(page)
     .getByRole('button', { name: direction, exact: true })
     .click()
+  await page.waitForFunction((node) => !node.isConnected, previous)
   await expect(editor(page)).toBeVisible()
 }
 const context = (extension, id, revisionId) =>

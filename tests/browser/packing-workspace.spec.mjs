@@ -1099,7 +1099,9 @@ test('Orders Undo/Redo retains both saved typing and confirmed regrouping', asyn
   const grouped = await packingBackup(extension)
   await editOrderProduct(page, 0)
   const travel = async (name) => {
+    const previous = await editor(page).elementHandle()
     await editor(page).getByRole('button', { name, exact: true }).click()
+    await page.waitForFunction((node) => !node.isConnected, previous)
     await expect(editor(page)).toBeVisible()
   }
   await travel('Undo')

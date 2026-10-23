@@ -264,10 +264,14 @@ const codes = (data) =>
 const byOrder = (data, id) =>
   data.preparations.find((prep) => prep.orderId === id)
 async function travel(page, direction) {
+  const previous = await page
+    .locator('dialog[data-action="edit-order-product"]')
+    .elementHandle()
   await page
     .locator('dialog[data-action="edit-order-product"]')
     .getByRole('button', { name: direction, exact: true })
     .click()
+  await page.waitForFunction((node) => !node.isConnected, previous)
   await expect(
     page.locator('dialog[data-action="edit-order-product"]')
   ).toBeVisible()
