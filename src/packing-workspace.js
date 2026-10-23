@@ -426,6 +426,22 @@ export async function startPackingWorkspace({
     })().catch(failure)
   $('group-order-products').onclick = () =>
     void authoring.groupProducts?.(getSelectedRows()).catch(failure)
+  function updateProductHistory() {
+    const state = authoring.historyState()
+    $('undo-order-products').disabled = !state.canUndo
+    $('redo-order-products').disabled = !state.canRedo
+  }
+  for (const direction of ['undo', 'redo'])
+    $(`${direction}-order-products`).onclick = () =>
+      void (async () => {
+        $('undo-order-products').disabled = $('redo-order-products').disabled =
+          true
+        try {
+          await authoring[direction]()
+        } finally {
+          updateProductHistory()
+        }
+      })().catch(failure)
   $('copy-preparation').onclick = () =>
     void output.copyPreparation(getRows()).catch(failure)
   $('copy-group-codes').onclick = () =>
@@ -653,6 +669,7 @@ export async function startPackingWorkspace({
         await activeSession?.refresh()
     },
     updateActions() {
+      updateProductHistory()
       if (
         workspace === 'orders' &&
         ordersView === 'cartons' &&

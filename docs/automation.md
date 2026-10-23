@@ -96,6 +96,8 @@ Click/Enter inspects an item; native checkboxes select. Source text and IDs rema
 | `review-purchase-codes`      | Preview / commit purchase-month identities. Review reserves nothing.                                   |
 | `assign-purchase-codes`      | Preview / commit purchase-month identities. Review reserves nothing.                                   |
 | `group-order-products`       | Reviewed grouping in Orders.                                                                           |
+| `undo-order-products`        | Guarded Orders product/grouping history, including reviewed physical consequences.                     |
+| `redo-order-products`        | Reapply the next Orders history step only while captured revisions remain current.                     |
 | `reconciliation-products`    | Product calculations / physical evidence table.                                                        |
 | `reconciliation-cartons`     | Product calculations / physical evidence table.                                                        |
 | `preview-carton-paste`       | Capture and review keyed alignment / stage the complete paste. Invalid cells remain recovery data.     |

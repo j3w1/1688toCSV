@@ -657,6 +657,90 @@ test('a rejected foreign revision keeps local input and exposes the explicit rec
   modal.close()
 })
 
+test('a visual conflict correction acknowledges the captured live draft and preserves the untouched owner', async (context) => {
+  const { document, window, authoring, saved, repository, records, source } =
+    await historyFixture(context)
+  const actor = saved.get('1001').groups[0],
+    owner = structuredClone(saved.get('1002')),
+    conflicting = owner.groups[0].baseCode
+  repository.queryCodeOwnership = async () => ({
+    owners: [
+      { accountId: 'local', orderId: '1002', groupId: owner.groups[0].id },
+    ],
+  })
+  repository.previewPreparations = async (values) =>
+    values.map((draft) => {
+      const value = structuredClone(draft)
+      if (!value.groups[0].baseCode) value.groups[0].baseCode = 'CE26090199'
+      return value
+    })
+  repository.savePreparations = async (values, options) => {
+    if (values[0].groups[0].baseCode === conflicting)
+      throw Object.assign(new Error(`${conflicting} is already reserved`), {
+        conflict: {
+          code: conflicting,
+          requestedOwner: {
+            accountId: 'local',
+            orderId: '1001',
+            groupId: actor.id,
+          },
+        },
+      })
+    assert.equal(
+      new Set(values.map((value) => value.groups[0].baseCode)).size,
+      values.length
+    )
+    for (const [index, value] of values.entries()) {
+      assert.equal(
+        options.expectedRevisions[index],
+        saved.get(value.orderId).revision
+      )
+      saved.set(value.orderId, {
+        ...structuredClone(value),
+        revision: value.revision + 1,
+      })
+    }
+    return values.map((value) => structuredClone(saved.get(value.orderId)))
+  }
+  await authoring.openEditor({
+    accountId: 'local',
+    orderId: '1001',
+    entryId: '2001',
+  })
+  const input = document.querySelector('[data-authoring-field="product-code"]')
+  input.value = conflicting
+  input.dispatchEvent(new window.Event('input'))
+  await assert.rejects(authoring.flush(), /already reserved/)
+  ;[...document.querySelectorAll('[data-action="edit-order-product"] button')]
+    .find((button) => button.textContent === 'Resolve code conflict')
+    .click()
+  await new Promise((resolve) => setTimeout(resolve, 0))
+  const resolver = document.querySelector('.code-conflict-dialog')
+  assert.ok(resolver)
+  ;[...resolver.querySelectorAll('button')]
+    .find((button) => button.textContent === 'Use next available code')
+    .click()
+  await new Promise((resolve) => setTimeout(resolve, 0))
+  ;[...resolver.querySelectorAll('button')]
+    .find((button) => button.textContent === 'Apply corrections')
+    .click()
+  await new Promise((resolve) => setTimeout(resolve, 0))
+  assert.equal(saved.get('1001').groups[0].baseCode, 'CE26090199')
+  assert.deepEqual(saved.get('1002').groups, owner.groups)
+  assert.equal(
+    document.querySelector('[data-authoring-field="product-code"]').value,
+    'CE26090199'
+  )
+  assert.equal(
+    document.querySelector(
+      '[data-action="edit-order-product"] [aria-invalid="true"]'
+    ),
+    null
+  )
+  assert.deepEqual(records, source)
+  document.querySelector('[data-action="edit-order-product"]').close()
+})
+
 test('history keeps its captured source clock across an advisory reload even when the preparation revision is unchanged', async (context) => {
   const { records, saved, authoring, writes, edit } =
     await historyFixture(context)
@@ -1696,6 +1780,63 @@ test('Orders authoring copies translated source attributes and exact quantity wh
   assert.equal(input.value, 'Retained pending source name')
   assert.deepEqual(record, original)
   modal.close()
+})
+
+test('purchase-code review excludes documented fee quantities but retains unknown source quantities for domain validation', async (context) => {
+  const { document } = authoringEnvironment(context),
+    record = syntheticOrder('1001'),
+    selected = [],
+    calls = []
+  record.snapshot.items.push(
+    { ...structuredClone(record.snapshot.items[0]), entryId: '2002' },
+    {
+      ...structuredClone(record.snapshot.items[0]),
+      entryId: '2003',
+      quantity: '0.5',
+    }
+  )
+  Object.assign(record.snapshot.totals, {
+    goodsGross: '2005.00',
+    goodsNet: '2005.00',
+    payable: '2005.00',
+  })
+  record.inventoryDispositions = {
+    2002: {
+      kind: 'fee',
+      reason: 'Documented freight-only row',
+      updatedAt: '2026-10-20T00:00:00.000Z',
+    },
+  }
+  selected.push(
+    ...record.snapshot.items.map((item) => ({
+      ...item,
+      accountId: 'local',
+      orderId: '1001',
+    }))
+  )
+  const original = structuredClone({ record, selected }),
+    authoring = await createProductAuthoring({
+      repository: {
+        listPreparations: async () => [],
+        getPackingPreferences: async () => validatePackingPreferences({}),
+        reviewPurchaseCodes: async (args) => {
+          calls.push(structuredClone(args))
+          return { changes: [], issues: [] }
+        },
+      },
+      getRecords: () => [record],
+    })
+  context.after(() => authoring.dispose())
+  await authoring.reviewCodes(selected)
+  assert.deepEqual(
+    calls[0].entryRefs.map((ref) => ref.entryId),
+    ['2001', '2003']
+  )
+  assert.deepEqual(calls[0].orderRefs, [
+    { accountId: 'local', orderId: '1001' },
+  ])
+  assert.deepEqual({ record, selected }, original)
+  document.querySelector('.purchase-code-review').close()
 })
 
 test('grouping separates complete source scope from chosen variants and protects unselected shared source rows', async (testContext) => {
