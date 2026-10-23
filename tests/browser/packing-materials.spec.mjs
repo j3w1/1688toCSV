@@ -88,7 +88,26 @@ test('Orders materials retain automatic source suggestions and deliberate edits 
         .flatMap((group) => group.variants)
         .map((variant) => variant.material)
     )
-    .toEqual(['Cotton', 'Cotton', 'Plastic'])
+    .toEqual(['Cotton', 'Cotton', '塑料'])
+  const initialMaterials = (
+    await libraryBackup(extension)
+  ).preparations[0].groups
+    .flatMap((group) => group.variants)
+    .map(({ material, materialSource }) => ({ material, materialSource }))
+  expect(initialMaterials).toEqual([
+    { material: 'Cotton', materialSource: 'manual' },
+    { material: 'Cotton', materialSource: 'manual' },
+    { material: '塑料', materialSource: 'suggested' },
+  ])
+  const suggestedDisplay = page
+    .locator('#sheet-body tr[data-selection-key]')
+    .nth(2)
+    .locator('[data-attribute="material"] dd')
+  await expect(suggestedDisplay).toHaveText('Plastic')
+  await page.locator('#language-toggle [data-language="es"]').click()
+  await expect(suggestedDisplay).toHaveText('Plástico')
+  await page.locator('#language-toggle [data-language="en"]').click()
+  await expect(suggestedDisplay).toHaveText('Plastic')
   for (const index of [0, 1, 2]) await editMaterial(page, index, 'Aluminum')
   await editMaterial(page, 0, '')
   const productRows = page.locator('#sheet-body tr[data-selection-key]')

@@ -231,9 +231,16 @@ function cartonMeasurements(batch, issues) {
     compareExact(dimensionTotal, suppliedTotal)
   )
     issue(issues, 'volume-discrepancy', {
+      severity: 'warning',
       cartonId: batch.id,
       dimensionVolume: dimensionTotal,
       suppliedVolume: suppliedTotal,
+      usedVolume: dimensionTotal,
+      usedVolumeBasis: 'measured',
+      suppliedCbm: suppliedVolume,
+      suppliedVolumeBasis: batch.volumeBasis ?? 'carton',
+      count: batch.count,
+      message: `Measured volume ${dimensionTotal} m³ is used; supplied volume ${suppliedTotal} m³ is retained.`,
     })
   return {
     totalWeight,
@@ -247,6 +254,13 @@ function cartonMeasurements(batch, issues) {
       dimensionVolume ??
       ((batch.volumeBasis ?? 'carton') === 'carton' ? suppliedVolume : null),
   }
+}
+
+/** Reuse confirmed measurement evidence when capturing an immutable shipment. */
+export function cartonMeasurementWarnings(batch) {
+  const issues = []
+  cartonMeasurements(batch, issues)
+  return issues.filter((issue) => issue.severity === 'warning')
 }
 
 /** Selected aggregates disclose unknown partial measurements; never prorate a combined total. */

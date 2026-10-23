@@ -29,6 +29,9 @@ const numberCell = (value, style = 5) => ({
   value: absent(value) ? '' : exactDecimal(value),
   style,
 })
+const excelNumeric = (value) =>
+  !absent(value) &&
+  String(value).replace(/[-.]/g, '').replace(/^0+/, '').length <= 15
 const identity = (value) =>
   JSON.stringify([
     value.accountId || 'local',
@@ -44,6 +47,8 @@ const strings = {
     order: 'Order',
     evidence: 'Source batch evidence',
     suppliedVolume: 'Supplied volume',
+    volumeDiscrepancy: (measured, supplied) =>
+      `Measured volume ${measured} m³ is used; supplied volume ${supplied} m³ is retained.`,
     warning: 'Warning',
     note: 'Complete loaded scope of this container revision. Source purchase rows remain separate; physical cartons and measurements count once on Cartons.',
     cartonNote:
@@ -84,6 +89,8 @@ const strings = {
     order: 'Pedido',
     evidence: 'Datos originales del lote',
     suppliedVolume: 'Volumen declarado',
+    volumeDiscrepancy: (measured, supplied) =>
+      `Se usa el volumen medido de ${measured} m³; se conserva el volumen declarado de ${supplied} m³.`,
     warning: 'Advertencia',
     note: 'Alcance cargado completo de esta revisión. Cada compra mantiene sus filas; cajas y medidas físicas se cuentan una sola vez en Cajas.',
     cartonNote:
@@ -124,6 +131,8 @@ const strings = {
     order: '订单',
     evidence: '原始批次资料',
     suppliedVolume: '申报体积',
+    volumeDiscrepancy: (measured, supplied) =>
+      `采用实测体积 ${measured} m³；保留申报体积 ${supplied} m³。`,
     warning: '提示',
     note: '本货柜修订的全部已装货物。采购明细分开列示；实物纸箱及测量合计仅在纸箱表计算一次。',
     cartonNote:
@@ -940,6 +949,23 @@ function physicalWorksheet(manifest, options) {
       height: Math.min(409, Math.max(83, content.split('\n').length * 15 + 16)),
       cells: columns.map((column) => values[column.key]),
     }
+    const dimensionColumns = ['len', 'wid', 'ht'].map((key) =>
+      columns.findIndex((column) => column.key === key)
+    )
+    if (
+      dimensionColumns.every((index) => index >= 0) &&
+      ['len', 'wid', 'ht'].every((key) => excelNumeric(carton[key])) &&
+      excelNumeric(carton.volume)
+    ) {
+      const refs = dimensionColumns.map(
+        (index) => `${columnName(index)}${row.number}`
+      )
+      const formula = `IF(AND(COUNT(${refs.join(',')})=3,${refs.map((ref) => `${ref}>0`).join(',')}),${refs.join('*')}/1000000,"")`
+      for (const key of ['volumePerCarton', 'totalVolume', 'loadedVolume']) {
+        const index = columns.findIndex((column) => column.key === key)
+        if (index >= 0) row.cells[index].formula = formula
+      }
+    }
     sheet.rows.push(row)
     sheet.lastRow = row.number
     sheet.lastProductRow = row.number
@@ -967,6 +993,25 @@ function physicalWorksheet(manifest, options) {
       loadedVolume: manifest.totals.volume,
     }))
       replaceCell(sheet, row, key, numberCell(value, styles(key, true)))
+    if (
+      manifest.cartons.length &&
+      manifest.cartons.every((carton) => !absent(carton.volume))
+    )
+      for (const key of ['totalVolume', 'loadedVolume']) {
+        const index = columns.findIndex((column) => column.key === key)
+        if (
+          index >= 0 &&
+          excelNumeric(row.cells[index].value) &&
+          sheet.records.every(
+            (record) => sheet.rows[record.row - 1].cells[index]?.formula
+          )
+        ) {
+          const first = sheet.records[0].row,
+            last = sheet.records.at(-1).row
+          row.cells[index].formula =
+            `SUM(${columnName(index)}${first}:${columnName(index)}${last})`
+        }
+      }
     const label = columns.findIndex((column) =>
       ['batch', 'contents', 'cartonMark'].includes(column.key)
     )
@@ -1000,7 +1045,14 @@ function physicalWorksheet(manifest, options) {
         ? warning
         : [
             warning.code,
-            warning.message,
+            warning.code === 'volume-discrepancy' &&
+            !absent(warning.dimensionVolume) &&
+            !absent(warning.suppliedVolume)
+              ? options.words.volumeDiscrepancy(
+                  warning.dimensionVolume,
+                  warning.suppliedVolume
+                )
+              : warning.message,
             warning.cartonId,
             warning.batchId,
             warning.orderId,
@@ -1226,6 +1278,12 @@ export function createContainerSummary(
             'count',
             'quantity',
             'difference',
+            'dimensionVolume',
+            'suppliedVolume',
+            'usedVolume',
+            'usedVolumeBasis',
+            'suppliedCbm',
+            'suppliedVolumeBasis',
           ])
     ),
   }
