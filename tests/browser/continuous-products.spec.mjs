@@ -134,7 +134,9 @@ test('continuous physical rows retain active decimal drafts across the whole lis
   await weight.fill('12.5')
   await expect(weight).toBeFocused()
   await weight.blur()
-  await grid.locator('[data-action="confirm-order-cartons"]').click()
+  const confirm = grid.locator('[data-action="confirm-order-cartons"]')
+  await confirm.click()
+  await expect(confirm).toBeEnabled({ timeout: 20_000 })
   await expect
     .poll(
       async () =>
