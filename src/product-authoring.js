@@ -1865,12 +1865,9 @@ export async function createProductAuthoring({
       bar = el('div', undefined, 'row-preparation')
     if (projected.barcode) {
       const copy = copyTextButton(projected.barcode, {
-          label: uiMessage('Copy code'),
-          className: 'row-code-copy ce-code',
-        }),
-        code = el('span')
-      setCodeText(code, projected.barcode)
-      copy.firstChild.replaceWith(code)
+        label: uiMessage('Copy code'),
+        className: 'row-code-copy ce-code',
+      })
       bar.append(copy)
     }
     if (projected.spanishName)
