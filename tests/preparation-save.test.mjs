@@ -96,6 +96,85 @@ test('a manual base edit during an allocation is retained for the next validated
   assert.equal(draft.revision, 1)
 })
 
+test('acknowledged Undo clears removed optional names so a later autosave cannot resurrect them', () => {
+  const draft = {
+    revision: 2,
+    updatedAt: 'second',
+    groups: [
+      {
+        id: 'g',
+        variants: [
+          {
+            id: 'v',
+            spanishName: 'SECOND SAVED',
+            naming: {
+              spanishName: { source: 'manual', value: 'SECOND SAVED' },
+            },
+          },
+        ],
+      },
+    ],
+  }
+  const submitted = structuredClone(draft)
+  const saved = {
+    revision: 3,
+    updatedAt: 'undo',
+    groups: [{ id: 'g', variants: [{ id: 'v' }] }],
+  }
+  const group = draft.groups[0]
+  const variant = group.variants[0]
+  acknowledgePreparation(draft, submitted, saved)
+  assert.equal(samePreparation(draft, saved), true)
+  assert.equal(draft.groups[0], group)
+  assert.equal(group.variants[0], variant)
+  assert.equal(Object.hasOwn(variant, 'spanishName'), false)
+  assert.equal(Object.hasOwn(variant, 'naming'), false)
+  const nextSubmission = structuredClone(draft)
+  assert.equal(
+    Object.hasOwn(nextSubmission.groups[0].variants[0], 'spanishName'),
+    false
+  )
+
+  const newer = structuredClone(submitted)
+  newer.groups[0].variants[0].spanishName = 'NEWER TYPING'
+  newer.groups[0].variants[0].naming.spanishName.value = 'NEWER TYPING'
+  acknowledgePreparation(newer, submitted, saved)
+  assert.equal(newer.groups[0].variants[0].spanishName, 'NEWER TYPING')
+  assert.equal(
+    newer.groups[0].variants[0].naming.spanishName.value,
+    'NEWER TYPING'
+  )
+})
+
+test('acknowledged grouping Undo restores exact memberships without replacing surviving editor objects', () => {
+  const draft = {
+    revision: 4,
+    updatedAt: 'split',
+    groups: [
+      { id: 'g', variants: [{ id: 'a', entryIds: ['1'] }] },
+      { id: 'split', variants: [{ id: 'b', entryIds: ['2'] }] },
+    ],
+  }
+  const submitted = structuredClone(draft)
+  const saved = {
+    revision: 5,
+    updatedAt: 'undo',
+    groups: [{ id: 'g', variants: [{ id: 'a', entryIds: ['1', '2'] }] }],
+  }
+  const groups = draft.groups
+  const group = groups[0]
+  const variant = group.variants[0]
+  const entryIds = variant.entryIds
+  acknowledgePreparation(draft, submitted, saved)
+  assert.equal(samePreparation(draft, saved), true)
+  assert.equal(draft.groups, groups)
+  assert.equal(groups[0], group)
+  assert.equal(group.variants[0], variant)
+  assert.equal(variant.entryIds, entryIds)
+  assert.deepEqual(entryIds, ['1', '2'])
+  assert.deepEqual(structuredClone(draft).groups, saved.groups)
+})
+
 test('repeated autosaves retain manual names and clears after returning to the initial suggestion', () => {
   for (const initial of ['VELA', '']) {
     let stored = {
