@@ -14,6 +14,7 @@ import {
 import { physicalUnits } from '../src/inventory-model.js'
 import { paymentSourceEvidence } from '../src/payment-links.js'
 import { createContainerSummary } from '../src/container-export.js'
+import { suggestMaterial } from '../src/material-vocabulary.js'
 const base = () => ({
   records: [syntheticOrder()],
   preparations: [],
@@ -36,6 +37,58 @@ function draft(state) {
   ]
   return container
 }
+
+test('captured material suggestions use the library vocabulary without writes, manual-clear replacement or global rule drift', () => {
+  const state = base(),
+    preparation = syntheticManifest().orders[0].preparation
+  state.preparations = [preparation]
+  state.records[0].snapshot.items[0].title = '玻璃杯'
+  const raw = structuredClone(state.preparations)
+  const container = draft(state)
+  container.draft.decisions = Object.fromEntries(
+    container.draft.orders[0].cartons.map((unit) => [unit.id, 'loaded'])
+  )
+  let row = projectContainer(state, container).products[0]
+  assert.equal(row.material, '玻璃')
+  assert.equal(row.materialSource, 'suggested')
+  assert.deepEqual(state.preparations, raw)
+  const custom = base()
+  custom.preparations = [structuredClone(preparation)]
+  custom.records[0].snapshot.items[0].skuProperties = [
+    { label: '材质', value: 'Owner synthetic material' },
+  ]
+  custom.preferences = {
+    materialVocabulary: [
+      {
+        id: 'synthetic',
+        aliases: ['Owner synthetic material'],
+        zh: '合成测试材质',
+        en: 'Synthetic material',
+        es: 'Material sintético',
+        parent: '',
+      },
+    ],
+  }
+  const captured = captureContainerOrder(custom, { orderId: '1001' }, 'custom')
+  assert.equal(
+    captured.preparation.groups[0].variants[0].material,
+    '合成测试材质'
+  )
+  assert.equal(suggestMaterial(custom.records[0].snapshot.items[0]), '')
+  assert.equal(suggestMaterial({ title: '玻璃杯' }), '玻璃')
+  state.preferences = custom.preferences
+  state.records[0].snapshot.items[0].title = 'Metal cup'
+  row = projectContainer(state, container).products[0]
+  assert.equal(row.material, '玻璃')
+  state.preparations[0].groups[0].variants[0].material = ''
+  state.preparations[0].groups[0].variants[0].materialSource = 'manual'
+  const cleared = captureContainerOrder(state, { orderId: '1001' }, 'clear')
+  assert.equal(cleared.preparation.groups[0].variants[0].material, '')
+  assert.equal(
+    cleared.preparation.groups[0].variants[0].materialSource,
+    'manual'
+  )
+})
 
 test('frozen loaded and remaining rows retain original photo edits and readable feature/payment reasons without recalculating values', () => {
   const state = base(),
