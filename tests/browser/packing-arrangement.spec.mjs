@@ -332,10 +332,11 @@ test('filtering a selected subset leaves hidden order revisions, manifest member
   expect(await manifest(extension, id)).toEqual(frozen)
 })
 
-test('a stale loading revision rejects without rewriting another tab and reload reveals the actual saved decisions', async ({
+test('a stale loading revision rejects without rewriting another tab and live refresh retains its actual saved decisions', async ({
   extension,
 }) => {
   const { page, view, id } = await setup(extension)
+  const before = await libraryBackup(extension)
   await view.locator('[data-view="loading"]').click()
   await view
     .locator('.container-order [data-action="expand-container-order"]')
@@ -343,7 +344,7 @@ test('a stale loading revision rejects without rewriting another tab and reload 
     .click()
   const row = view.locator('tr[data-container-row]').first(),
     unitId = await row.getAttribute('data-container-row')
-  await extension.inspector.evaluate(
+  const staleRevision = await extension.inspector.evaluate(
     async ({ id, unitId }) => {
       const repository = await window.testRepository,
         view = await repository.getContainerView({ id })
@@ -353,25 +354,47 @@ test('a stale loading revision rejects without rewriting another tab and reload 
         expectedRevision: view.container.revision,
         intentId: crypto.randomUUID(),
       })
+      return view.container.revision
     },
     { id, unitId }
   )
   const newer = await manifest(extension, id)
-  await row
-    .locator('[data-action="set-carton-loading"][data-state="unconfirmed"]')
-    .click()
-  await expect(page.locator('.error-notice:visible')).toContainText(
-    /changed|stale|revision/i
+  // Advisory cross-tab refresh may already replace the displayed revision.
+  // Submit the captured stale intent explicitly, without disabling that refresh.
+  const rejection = await extension.inspector.evaluate(
+    async ({ id, unitId, staleRevision }) => {
+      const repository = await window.testRepository
+      try {
+        await repository.setContainerLoading({
+          id,
+          decisions: [{ cartonId: unitId, state: 'unconfirmed' }],
+          expectedRevision: staleRevision,
+          intentId: crypto.randomUUID(),
+        })
+        return null
+      } catch (error) {
+        return error.message
+      }
+    },
+    { id, unitId, staleRevision }
   )
+  expect(rejection).toMatch(/changed|stale|revision/i)
   expect(await manifest(extension, id)).toEqual(newer)
+  const savedRow = view.locator(
+    `tr[data-container-row=${JSON.stringify(unitId)}]`
+  )
+  await expect(savedRow).toContainText('Left behind')
+  const after = await libraryBackup(extension)
+  expect(after.orders).toEqual(before.orders)
+  expect(after.preparations).toEqual(before.preparations)
+  expect(after.issuedCodes).toEqual(before.issuedCodes)
   await page.reload()
   await view
     .locator('.container-order [data-action="expand-container-order"]')
     .first()
     .click()
-  await expect(
-    view.locator(`tr[data-container-row=${JSON.stringify(unitId)}]`)
-  ).toContainText('Left behind')
+  await expect(savedRow).toContainText('Left behind')
+  expect(await manifest(extension, id)).toEqual(newer)
   await expect(
     view.locator('.reorder-handle,[data-action="organize-packing"]')
   ).toHaveCount(0)
