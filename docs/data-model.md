@@ -65,6 +65,8 @@ Stable indexed unit contents and measurements support a physical exception witho
 
 Source reconciliation carries all independently authored inventory/identity values, clear markers, edit clocks and metadata history into the new record. Source changes conflicting with an existing exclusion reject for explicit review. Source refresh and restore also validate the effective shipment graph in the same transaction: a positively shipped source row cannot disappear or fall below its committed eligible quantity. Rejection retains the prior source/history and cannot poison unrelated edits or seals.
 
+The shared transaction guard also covers legacy order-writing APIs, including single and bulk payment links: shipped goods cannot become an ineligible payment source after sealing. A source reduction conflicting with a draft's captured reservation rejects as well. Remove the named order from that draft, refresh and review its source, then include its current remainder again.
+
 ## Containers, reservations and historical output
 
 Backlog is a derived projection of eligible purchase quantities less effective shipments. Explicit non-goods, fee, payment-only and canceled dispositions retain authored evidence and independent edit clocks; a legacy UI skip does not establish a goods exclusion. Unknown physical counts remain unknown. Draft-reserved goods stay visible with their container reference. Se quedó is the frozen remainder of included orders at one shipment revision, not current global Backlog.
