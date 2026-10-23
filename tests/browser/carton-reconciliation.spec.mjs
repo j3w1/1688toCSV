@@ -880,6 +880,77 @@ test('returned cartons retain original evidence but require a fresh label after 
       (carton) => carton.markCode === active.currentProductCode
     )
   ).toBe(true)
+  // The actual sealed owner still prints its frozen old-code artwork. Only
+  // the returning goods are fenced; this is a real historical PDF download.
+  const packing = page.locator('#packing-view')
+  await packing
+    .locator('[data-action="choose-container"]')
+    .selectOption(foreignId)
+  await expect(packing.locator('.container-heading')).toContainText(
+    'Synthetic shipment owning the released mark'
+  )
+  await packing
+    .locator('[data-action="container-view"][data-view="packing-list"]')
+    .click()
+  await packing.locator('[data-action="open-print-menu"]').click()
+  await packing.locator('[data-action="print-carton-marks"]').click()
+  const historicalPrint = page.getByRole('dialog', {
+      name: 'Print carton marks',
+      exact: true,
+    }),
+    priorHistoricalFiles = new Set(
+      (await downloads(extension)).map((file) => file.id)
+    )
+  await expect(historicalPrint.getByLabel(/^Quantity for /)).toHaveCount(1)
+  await expect(historicalPrint.getByLabel(/^Quantity for /)).toHaveValue('1')
+  await historicalPrint.locator('[data-action="export-pdf"]').click()
+  let historicalPdf, historicalJson
+  await expect
+    .poll(async () => {
+      const files = (await downloads(extension)).filter(
+        (file) =>
+          !priorHistoricalFiles.has(file.id) && file.state === 'complete'
+      )
+      historicalPdf = files.find((file) => file.filename.endsWith('.pdf'))
+      historicalJson = files.find(
+        (file) =>
+          historicalPdf &&
+          file.filename === historicalPdf.filename.replace(/\.pdf$/, '.json')
+      )
+      return Boolean(historicalPdf && historicalJson)
+    })
+    .toBe(true)
+  const historicalBytes = await readFile(historicalPdf.filename),
+    historicalSummary = JSON.parse(
+      await readFile(historicalJson.filename, 'utf8')
+    )
+  expect(historicalBytes.subarray(0, 8).toString('ascii')).toBe('%PDF-1.4')
+  expect(historicalBytes.toString('latin1')).toContain(
+    '/MediaBox [0 0 595.276 841.89]'
+  )
+  expect(historicalBytes.toString('latin1')).toContain('/PrintScaling /None')
+  expect(historicalBytes.toString('latin1')).toContain('/Count 1')
+  expect(historicalBytes.toString('latin1').match(/ Do Q/g)).toHaveLength(1)
+  expect(historicalBytes.toString('latin1')).toContain(oldCode)
+  expect(historicalBytes.toString('latin1')).not.toContain('DRAFT - UNSEALED')
+  expect(historicalSummary).toMatchObject({
+    kind: 'carton-marks',
+    containerId: foreignId,
+    revisionId: foreignManifest.revisionId,
+    draft: false,
+    totals: { requested: 1, printed: 1 },
+  })
+  expect(historicalSummary.products).toHaveLength(1)
+  expect(historicalSummary.products[0].code).toBe(oldCode)
+  await writeFile(
+    testInfo.outputPath('owning-shipment-historical-synthetic.pdf'),
+    historicalBytes
+  )
+  await writeFile(
+    testInfo.outputPath('owning-shipment-historical-synthetic.json'),
+    JSON.stringify(historicalSummary, null, 2)
+  )
+  await historicalPrint.locator('[data-action="close-print-dialog"]').click()
   const final = await backup(extension)
   expect(
     final.orders.find((record) => record.snapshot.orderId === ref.orderId)
