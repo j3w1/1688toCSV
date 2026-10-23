@@ -59,7 +59,7 @@ async function seed(extension, count = 500) {
 
 test('continuous physical rows retain active decimal drafts across the whole list and save after recycling', async ({
   extension,
-}) => {
+}, testInfo) => {
   const { page, record } = await seed(extension),
     ref = {
       accountId: record.snapshot.accountId || 'local',
@@ -130,6 +130,25 @@ test('continuous physical rows retain active decimal drafts across the whole lis
   expect(invalid.batches).toEqual(original.batches)
   expect(invalid.record.snapshot).toEqual(original.record.snapshot)
   await weight.fill('12.5')
+  await testInfo.attach('valid-input-focus.json', {
+    body: JSON.stringify(
+      await first.evaluateAll((rows) => ({
+        rowCount: rows.length,
+        focused: document.activeElement?.outerHTML,
+        cell: rows[0]?.querySelector('[data-grid-column="weight"]')?.outerHTML,
+        scrollTop: document.querySelector(
+          '#orders-cartons-view .smart-grid-scroll'
+        )?.scrollTop,
+        visibleKeys: [
+          ...document.querySelectorAll(
+            '#orders-cartons-view tr[data-grid-key]'
+          ),
+        ].map((row) => row.dataset.gridKey),
+      }))
+    ),
+    contentType: 'application/json',
+  })
+  await expect(weight).toBeFocused()
   await weight.blur()
   await grid.locator('[data-action="confirm-order-cartons"]').click()
   await expect
