@@ -1261,6 +1261,7 @@ function validatePreparationMembership(preparation, order, history) {
 
 /** Extension-origin IndexedDB is the only durable store for orders and import jobs. */
 export async function openDatabase({ name = '1688-order-library' } = {}) {
+  const physicalMarkBaselines = new WeakMap()
   const database = await new Promise((resolve, reject) => {
     const request = globalThis.indexedDB.open(name, 5)
     let blocked = false
@@ -1421,6 +1422,10 @@ export async function openDatabase({ name = '1688-order-library' } = {}) {
       [...new Set([...stores, ...OPERATIONAL_STORES])],
       'readwrite',
       async (tx) => {
+        physicalMarkBaselines.set(
+          tx,
+          await requested(tx.objectStore('cartonBatches').getAll())
+        )
         const result = await run(tx)
         if (
           stores.some((store) =>
@@ -1518,11 +1523,13 @@ export async function openDatabase({ name = '1688-order-library' } = {}) {
     if (!final.batches.some((batch) => batch.physicalMark)) return []
     const batches = purchaseCodes.retirePhysicalMarkAliases(
       final,
-      nextEditTimestamp
+      nextEditTimestamp,
+      physicalMarkBaselines.get(tx)
     )
     for (let index = 0; index < batches.length; index++)
       if (batches[index] !== final.batches[index])
         tx.objectStore('cartonBatches').put(batches[index])
+    physicalMarkBaselines.set(tx, batches)
     const current = activePackingState(
       final.preparations,
       final.allocations,
@@ -1588,6 +1595,24 @@ export async function openDatabase({ name = '1688-order-library' } = {}) {
     allocationInputs,
     incomingEvidence = []
   ) {
+    const preparations = await requested(
+      tx.objectStore('preparations').getAll()
+    )
+    const physicalState = {
+      preparations,
+      records: await requested(tx.objectStore('orders').getAll()),
+      batches: await requested(tx.objectStore('cartonBatches').getAll()),
+      locks: await requested(tx.objectStore('shipmentLocks').getAll()),
+    }
+    const recovered = purchaseCodes.recoverPhysicalMarkAliases(
+      physicalState,
+      physicalMarkBaselines.get(tx),
+      null,
+      // Restore has not loaded its operational locks yet. This projection is
+      // used only to allocate; the shared final transaction guard corroborates
+      // every imported claim against the actual stored locks before commit.
+      { validateClaims: false }
+    )
     const state = activePackingState(
       await requested(tx.objectStore('preparations').getAll()),
       allocationInputs ??
@@ -1603,13 +1628,8 @@ export async function openDatabase({ name = '1688-order-library' } = {}) {
           )
           .concat(
             purchaseCodes.physicalMarkReservations({
-              preparations: await requested(
-                tx.objectStore('preparations').getAll()
-              ),
-              records: await requested(tx.objectStore('orders').getAll()),
-              batches: await requested(
-                tx.objectStore('cartonBatches').getAll()
-              ),
+              ...physicalState,
+              batches: recovered,
             })
           ),
       }
@@ -2202,7 +2222,7 @@ export async function openDatabase({ name = '1688-order-library' } = {}) {
           ),
           ...drafts,
         ]
-        const physicalAfter = physicalBefore.map((batch) => {
+        const physicalProjected = physicalBefore.map((batch) => {
           const change = cartonBatchChanges.find(
             (value) => (value.after || value.batch)?.id === batch.id
           )
@@ -2214,6 +2234,15 @@ export async function openDatabase({ name = '1688-order-library' } = {}) {
             { issuedCodes }
           )
         })
+        const physicalAfter = purchaseCodes.recoverPhysicalMarkAliases(
+          {
+            preparations: projectedPreparations,
+            records: orders,
+            batches: physicalProjected,
+            locks,
+          },
+          physicalBefore
+        )
         const historicalReservations = [
           ...purchaseCodes.historicalCodeReservations(locks),
           ...purchaseCodes.physicalMarkReservations({
@@ -2344,7 +2373,9 @@ export async function openDatabase({ name = '1688-order-library' } = {}) {
                 .length) ||
               stableValue(batch.physicalMark) !==
                 stableValue(
-                  physicalAfter.find((value) => value.id === batch.id)
+                  // Released-alias recovery is a lifecycle change, not an
+                  // unreviewed grouping edit by the new independent owner.
+                  physicalProjected.find((value) => value.id === batch.id)
                     ?.physicalMark
                 ))
         )

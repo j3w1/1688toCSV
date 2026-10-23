@@ -17,6 +17,11 @@ export function cartonBatchReviewChanges(plan) {
           ),
           resolutionRequired: review.resolutionRequired,
           resolutionChoices: review.resolutionChoices,
+          physicalMarkRelabelOnly: review.physicalMarkRelabelOnly,
+          physicalMarkResolutionChoices: review.physicalMarkResolutionChoices,
+          physicalMarkSupersessions: structuredClone(
+            review.physicalMarkSupersessions
+          ),
         }
       : {}),
     values: [
