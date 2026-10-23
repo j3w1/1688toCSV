@@ -15,7 +15,7 @@
 }
 .workspace-subviews [aria-current='page'] {
   background: var(--accent, #be7043);
-  color: var(--accent-text, #fff);
+  color: var(--on-accent, #fff);
   font-weight: 700;
 }
 .orders-reconciliation,
