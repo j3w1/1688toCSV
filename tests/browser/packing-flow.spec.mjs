@@ -746,6 +746,7 @@ test('mixed valid and unidentified-supplier code review blocks every write and p
   records[1].snapshot.sellerName = 'Seller unavailable'
   records[1].snapshot.sellerUnavailable = true
   records[1].snapshot.observedAt = '2099-01-01T00:00:00Z'
+  records[1].lastCheckedAt = records[1].snapshot.observedAt
   const restored = await extension.inspector.evaluate(
     (orders) =>
       chrome.runtime.sendMessage({

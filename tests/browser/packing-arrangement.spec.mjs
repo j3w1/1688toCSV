@@ -7,6 +7,7 @@ import {
   editOrderProduct,
   closeOrderProduct,
   revealOrderCard,
+  clearOrderProductSelection,
 } from './smart-workspace-helpers.mjs'
 import { revealCopyActions } from './copy-actions-helpers.mjs'
 
@@ -416,19 +417,17 @@ test('an unresolved size output error names the product and focuses its Orders s
   }, refs[0])
   await page.locator('#view-orders').click()
   await page.reload()
-  const clear = page.locator('#clear-rows')
-  if (await clear.isEnabled()) await clear.click()
+  const target = page.locator(
+    `#sheet-body tr[data-selection-key=${JSON.stringify(JSON.stringify(['local', refs[0].orderId, '2001']))}]`
+  )
+  await expect(target).toBeVisible()
+  await clearOrderProductSelection(page)
   await expect(
     page.locator(
       '#sheet-body tr[data-selection-key] input[type="checkbox"]:checked'
     )
   ).toHaveCount(0)
-  await page
-    .locator(
-      `#sheet-body tr[data-selection-key=${JSON.stringify(JSON.stringify(['local', refs[0].orderId, '2001']))}]`
-    )
-    .getByRole('checkbox')
-    .check()
+  await target.getByRole('checkbox').check()
   const before = await libraryBackup(extension)
   await revealCopyActions(page)
   await page
