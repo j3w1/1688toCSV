@@ -4810,3 +4810,372 @@ test('native repeated temporary supersession names the live holder and requires 
     await browser.close()
   }
 })
+
+for (const mode of ['released', 'relabeled', 'current-holder'])
+  test(`native exact original return after a foreign episode: ${mode}`, async () => {
+    const browser = await databaseBrowser()
+    try {
+      const original = await openFixture(browser, fixture()),
+        { next, plan } = await mergePlan(original)
+      await saveMerge(
+        browser,
+        original,
+        next,
+        resolvePhysicalMarkChange(plan, {
+          batchId: original.batches[0].id,
+          choice: 'keep-recorded-mark',
+          reason: 'Original recorded boxes before the foreign episode',
+        })
+      )
+      const foreignRecord = syntheticOrder('1002', '30', {
+          purchasedAt: '2026-10-05T12:00:00+08:00',
+        }),
+        payment = syntheticOrder('1003', '30', {
+          purchasedAt: '2026-10-06T12:00:00+08:00',
+        }),
+        foreign = createPreparation(foreignRecord.snapshot, '2026-10')
+      foreign.groups[0].baseCode = 'CE26101002'
+      const episode = await browser.page.evaluate(
+        async ({ foreignRecord, payment, foreign, mode }) => {
+          const kept = await aliasDb.getOrderReconciliation({ orderId: '1001' })
+          await aliasDb.restoreBackup({
+            format: '1688-order-library',
+            version: 1,
+            exportedAt: '2026-10-23T05:00:00.000Z',
+            orders: [foreignRecord, payment],
+            history: [],
+            images: [],
+          })
+          await aliasDb.linkPayment('1003', {
+            sourceOrderId: '1001',
+            reason: 'Synthetic retirement releases the unused original code',
+          })
+          await aliasDb.savePreparations([foreign], { expectedRevisions: [0] })
+          const links = await aliasDb.getPaymentLinks('1003')
+          await aliasDb.unlinkPayment('1003', (links.links || links)[0].id)
+          const conflicted = await aliasDb.getOrderReconciliation({
+            orderId: '1001',
+          })
+          if (mode === 'relabeled')
+            await aliasDb.resolveCartonPhysicalMark({
+              orderId: '1001',
+              batchId: conflicted.batches[0].id,
+              expectedRevisions: conflicted.revisions,
+              choice: 'relabel-reprint',
+              reason:
+                'Current product marks were actually applied during the foreign hold',
+              physicalRelabelConfirmed: true,
+            })
+          return {
+            kept,
+            conflicted,
+            state: await aliasDb.getOperationalState({}),
+            backup: await aliasDb.exportBackup({}),
+          }
+        },
+        { foreignRecord, payment, foreign, mode }
+      )
+      assert.equal(
+        episode.conflicted.batches[0].physicalMarkConflictKind,
+        'temporary'
+      )
+      assert.equal(episode.conflicted.batches[0].physicalMark.resolution, null)
+      assert.match(
+        episode.conflicted.batches[0].physicalMarkConflictReason,
+        /Order 1002 currently owns CE26101002/
+      )
+      assert.equal(episode.backup.containers.length, 0)
+      assert.equal(episode.backup.shipmentLocks.length, 0)
+
+      if (mode !== 'current-holder') {
+        const state = episode.state,
+          current = state.preparations.find((p) => p.orderId === '1002'),
+          released = structuredClone(current)
+        released.groups[0].baseCode = 'CE26101009'
+        const afterPreparations = state.preparations.map((p) =>
+            p === current ? released : p
+          ),
+          releasePlan = planCartonBatchChanges({
+            batches: state.batches,
+            records: state.records,
+            beforePreparations: state.preparations,
+            afterPreparations,
+            issuedCodes: state.issuedCodes,
+          })
+        // A fresh relabel also retains the intermediate recorded code namespace.
+        // Review that actual transition even when the carton owner is unchanged.
+        for (const batch of state.batches) {
+          const after = transitionPhysicalMark(
+            batch,
+            batch,
+            state.preparations,
+            afterPreparations,
+            { issuedCodes: state.issuedCodes }
+          )
+          if (
+            JSON.stringify(after) !== JSON.stringify(batch) &&
+            !releasePlan.changes.some((change) => change.after.id === batch.id)
+          )
+            releasePlan.changes.push({
+              after,
+              expectedRevision: batch.revision,
+            })
+        }
+        await saveMerge(
+          browser,
+          { ...state, preparations: [current] },
+          [released],
+          releasePlan
+        )
+      }
+      const beforeReturn = await browser.page.evaluate(async () => ({
+          state: await aliasDb.getOperationalState({}),
+          context: await aliasDb.getOrderReconciliation({ orderId: '1001' }),
+          backup: await aliasDb.exportBackup({}),
+        })),
+        current = beforeReturn.context,
+        restored = {
+          ...structuredClone(original.preparations[0]),
+          revision: current.preparation.revision,
+        },
+        afterPreparations = beforeReturn.state.preparations.map((p) =>
+          p.accountId === 'local' && p.orderId === '1001' ? restored : p
+        ),
+        changes = planCartonBatchChanges({
+          batches: beforeReturn.state.batches,
+          records: beforeReturn.state.records,
+          beforePreparations: beforeReturn.state.preparations,
+          afterPreparations,
+          issuedCodes: beforeReturn.state.issuedCodes,
+        }),
+        change = changes.changes.find(
+          (value) => value.after.id === current.batches[0].id
+        ),
+        originalMark = current.batches[0].physicalMark.originalMark
+      assert.ok(change)
+      assert.equal(originalMark.groupId, original.preparations[0].groups[1].id)
+      assert.notDeepEqual(current.batches[0].mark, originalMark)
+      // The generic planner preserves the still-valid merged owner (markg1).
+      // This review explicitly chooses the original owner (markg2), without
+      // inferring an owner from contents or replaying a physical decision.
+      change.after = transitionPhysicalMark(
+        current.batches[0],
+        { ...change.after, mark: structuredClone(originalMark) },
+        beforeReturn.state.preparations,
+        afterPreparations,
+        { issuedCodes: beforeReturn.state.issuedCodes }
+      )
+      assert.equal(change.physicalMarkResolution, undefined)
+      assert.equal(change.restorePhysicalMarkHistory, undefined)
+      const result = await browser.page.evaluate(
+        async ({ restored, changes, current }) => {
+          let error
+          try {
+            await aliasDb.savePreparations([restored], {
+              expectedRevisions: [current.preparation.revision],
+              expectedSnapshots: [
+                {
+                  accountId: 'local',
+                  orderId: '1001',
+                  observedAt: current.record.snapshot.observedAt,
+                },
+              ],
+              cartonBatchChanges: changes.changes,
+              allowCartonReview: true,
+            })
+          } catch (caught) {
+            error = { code: caught.code, message: caught.message }
+          }
+          return {
+            error,
+            context: await aliasDb.getOrderReconciliation({ orderId: '1001' }),
+            backup: await aliasDb.exportBackup({}),
+          }
+        },
+        { restored, changes, current }
+      )
+      const batch = result.context.batches[0],
+        before = current.batches[0]
+      assert.deepEqual(
+        result.context.record.snapshot,
+        original.records[0].snapshot
+      )
+      for (const field of [
+        'orders',
+        'history',
+        'images',
+        'containers',
+        'shipmentLocks',
+      ])
+        assert.deepEqual(
+          result.backup[field],
+          beforeReturn.backup[field],
+          field
+        )
+      for (const field of [
+        'id',
+        'accountId',
+        'orderId',
+        'storeId',
+        'month',
+        'count',
+        'contents',
+        'unitContents',
+        'unitMeasurements',
+        'received',
+        'loaded',
+        'len',
+        'wid',
+        'ht',
+        'weight',
+        'weightBasis',
+        'suppliedCbm',
+        'volumeBasis',
+        'sourceFacts',
+      ])
+        assert.deepEqual(batch[field], before[field], field)
+      for (const field of [
+        'code',
+        'originalCode',
+        'originalMark',
+        'originalArtwork',
+        'artwork',
+      ])
+        assert.deepEqual(
+          batch.physicalMark[field],
+          before.physicalMark[field],
+          field
+        )
+      assert.deepEqual(
+        batch.physicalMark.originalArtwork,
+        episode.kept.batches[0].physicalMark.originalArtwork
+      )
+      assert.deepEqual(
+        batch.physicalMark.history.slice(0, before.physicalMark.history.length),
+        before.physicalMark.history
+      )
+      assert.deepEqual(
+        batch.cartonHistory.slice(0, before.cartonHistory.length),
+        before.cartonHistory
+      )
+      assert.deepEqual(
+        batch.physicalMark.history.filter(
+          (event) => event.kind === 'resolution'
+        ),
+        before.physicalMark.history.filter(
+          (event) => event.kind === 'resolution'
+        )
+      )
+      assert.equal(
+        batch.physicalMark.history.filter(
+          (event) => event.kind === 'logical-history-restore'
+        ).length,
+        0
+      )
+      const foreignBefore = beforeReturn.backup.preparations.find(
+          (p) => p.orderId === '1002'
+        ),
+        foreignAfter = result.backup.preparations.find(
+          (p) => p.orderId === '1002'
+        )
+      assert.deepEqual(foreignAfter, foreignBefore)
+      assert.equal(
+        foreignAfter.groups[0].baseCode,
+        mode === 'current-holder' ? 'CE26101002' : 'CE26101009'
+      )
+      if (mode === 'current-holder') {
+        assert.equal(result.error?.code, 'PACKING_CODE_CONFLICT')
+        for (const field of [
+          'preparations',
+          'cartonBatches',
+          'issuedCodes',
+          'allocations',
+        ])
+          assert.deepEqual(
+            result.backup[field],
+            beforeReturn.backup[field],
+            field
+          )
+        assert.equal(batch.physicalMarkConflictKind, 'temporary')
+        assert.equal(batch.physicalMarkRelabelOnly, true)
+        assert.equal(batch.physicalMarkResolutionRequired, true)
+        assert.deepEqual(batch.physicalMarkResolutionChoices, [
+          'relabel-reprint',
+        ])
+        assert.match(
+          batch.physicalMarkConflictReason,
+          /Order 1002 currently owns/
+        )
+        assert.ok(
+          result.backup.issuedCodes.some(
+            (entry) =>
+              entry.kind === 'base' &&
+              entry.code === 'CE26101002' &&
+              entry.orderId === '1002'
+          )
+        )
+      } else {
+        assert.equal(result.error, undefined)
+        assert.equal(batch.physicalMark.productCode, 'CE26101002')
+        assert.deepEqual(batch.mark, originalMark)
+        assert.equal(batch.physicalMark.resolution, null)
+        assert.equal(batch.physicalMarkConflictKind, 'none')
+        assert.equal(batch.physicalMarkRelabelOnly, false)
+        assert.ok(
+          result.backup.issuedCodes.some(
+            (entry) =>
+              entry.kind === 'base' &&
+              entry.code === 'CE26101002' &&
+              entry.orderId === '1001' &&
+              entry.groupId === originalMark.groupId
+          )
+        )
+        assert.ok(
+          batch.physicalMark.supersededAliases.some(
+            (entry) =>
+              entry.code === 'CE26101002' &&
+              entry.active === false &&
+              entry.conflicts.some((owner) => owner.orderId === '1002')
+          )
+        )
+        if (mode === 'released') {
+          assert.equal(batch.physicalMark.code, 'CE26101002')
+          assert.equal(batch.physicalMarkResolutionRequired, false)
+          assert.equal(
+            batch.physicalMark.history.filter(
+              (event) => event.kind === 'resolution'
+            ).length,
+            1
+          )
+          const ref = await makeOrderCartonPrintRef(result.context, {
+            batchId: batch.id,
+          })
+          assert.equal(ref.code, 'CE26101002')
+          assert.equal(
+            await assertOrderCartonPrintRef(ref, result.context),
+            true
+          )
+        } else {
+          assert.equal(batch.physicalMark.code, 'CE26101001')
+          assert.equal(batch.physicalMarkResolutionRequired, true)
+          assert.equal(
+            batch.physicalMark.history.filter(
+              (event) => event.kind === 'resolution'
+            ).length,
+            2
+          )
+          assert.equal(before.physicalMark.resolution.choice, 'relabel-reprint')
+          const ref = await makeOrderCartonPrintRef(result.context, {
+            batchId: batch.id,
+          })
+          assert.equal(ref.code, 'CE26101001')
+          assert.equal(
+            await assertOrderCartonPrintRef(ref, result.context),
+            true
+          )
+        }
+      }
+    } finally {
+      await browser.close()
+    }
+  })
