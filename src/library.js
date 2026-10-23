@@ -688,8 +688,8 @@ export async function startLibrary(
     if (
       event.isComposing ||
       event.altKey ||
-      event.ctrlKey ||
-      event.metaKey ||
+      ((event.ctrlKey || event.metaKey) &&
+        !['Home', 'End'].includes(event.key)) ||
       !['ArrowUp', 'ArrowDown', 'Home', 'End'].includes(event.key)
     )
       return false
@@ -3423,13 +3423,17 @@ export async function startLibrary(
       $('backup-file').value = ''
     }
   })
-  $('select-rows').addEventListener('click', () => productSelection.selectAll())
+  $('select-rows').addEventListener('click', () => {
+    clearTimeout(searchTimer)
+    renderRows()
+    productSelection.selectAll()
+  })
   $('clear-rows').addEventListener('click', () => productSelection.clear())
   $('search').addEventListener('input', () => {
     clearTimeout(searchTimer)
+    productSelection.reset()
     searchTimer = setTimeout(() => {
       productTable.reset()
-      productSelection.reset()
       renderRows()
     }, 150)
   })

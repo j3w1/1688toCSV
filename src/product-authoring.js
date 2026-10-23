@@ -34,6 +34,7 @@ import {
 } from './preparation-history.js'
 import { preparationOrderFields } from './preparation-clipboard.js'
 import { paymentCostAdjustments } from './payment-links.js'
+import { productAttributes, translateAttribute } from './product-attributes.js'
 import { hasProductFeatureCosts } from './product-features.js'
 import {
   suggestMaterial,
@@ -80,6 +81,8 @@ import {
   reviewPackingChanges,
   packingValueComparison,
 } from './packing-review.js'
+import { planCartonBatchChanges } from './carton-batch-changes.js'
+import { cartonBatchReviewChanges } from './carton-batch-review.js'
 const $ = (id) => document.getElementById(id)
 const orderKey = ({ accountId = 'local', orderId }) =>
   JSON.stringify([accountId, orderId])
@@ -230,7 +233,8 @@ export async function createProductAuthoring({
   const sessions = new Map(),
     cartonFields = new Map()
   const histories = new Map(),
-    historyBaselines = new WeakMap()
+    historyBaselines = new WeakMap(),
+    historyCartonBaselines = new WeakMap()
   const amendmentFor = (ref) =>
     preparations.get(orderKey(ref))?.amendmentContext
   const sameAmendment = (a, b) =>
@@ -245,6 +249,7 @@ export async function createProductAuthoring({
       const stack = createPreparationHistory()
       histories.set(key, stack)
       historyBaselines.set(stack, new Map())
+      historyCartonBaselines.set(stack, new Map())
     }
     return histories.get(key)
   }
@@ -273,6 +278,50 @@ export async function createProductAuthoring({
     historyBaselines
       .get(stack)
       .set(orderKey(preparation), historyGuard(preparation, observedAt))
+  }
+  async function readPhysicalBatches(refs, options = {}) {
+    const batches = options.contextContainerId
+      ? (
+          await Promise.all(
+            refs.map((ref) =>
+              repository.getOrderReconciliation({
+                accountId: ref.accountId || 'local',
+                orderId: ref.orderId,
+                contextContainerId: options.contextContainerId,
+              })
+            )
+          )
+        ).flatMap((context) => {
+          if (
+            !sameAmendment(
+              context.amendmentContext || context.revisions?.amendmentContext,
+              options.expectedAmendment
+            )
+          )
+            throw new Error(
+              'Preparation changed in another tab. Reload it before saving your edits.'
+            )
+          return context.batches
+        })
+      : (
+          await Promise.all(
+            [...new Set(refs.map((ref) => ref.accountId || 'local'))].map(
+              (accountId) =>
+                repository.listCartonBatches({
+                  accountId,
+                  includeDeleted: true,
+                })
+            )
+          )
+        ).flat()
+    return [...new Map(batches.map((batch) => [batch.id, batch])).values()]
+  }
+  function acknowledgeCartonHistory(stack, batches, options) {
+    for (const batch of batches)
+      historyCartonBaselines.get(stack).set(batch.id, {
+        revision: batch.revision,
+        amendmentContext: structuredClone(options.expectedAmendment),
+      })
   }
   const sessionKey = (ref, contextContainerId = getContextContainerId()) =>
     JSON.stringify([
@@ -648,6 +697,14 @@ export async function createProductAuthoring({
       await changed()
     } catch (error) {
       session.error = error
+      if (
+        ['PACKING_REVISION_CONFLICT', 'AMENDMENT_CONTEXT_CONFLICT'].includes(
+          error.code
+        ) ||
+        error.message ===
+          'The source order changed. Review the linked products again.'
+      )
+        session.stale = true
       session.notify?.(error.message)
       retain(session)
       throw error
@@ -791,6 +848,41 @@ export async function createProductAuthoring({
     const candidates = entries.map((entry, index) =>
       restorePreparationHistory(entry.value, before[index])
     )
+    const historyContext = getContextContainerId()
+        ? {
+            contextContainerId: getContextContainerId(),
+            expectedAmendment: guards[0].amendmentContext,
+          }
+        : {},
+      cartons = new Map(
+        entries
+          .flatMap((entry) => Object.values(entry.cartons || {}))
+          .map((batch) => [batch.id, batch])
+      ),
+      cartonBatchChanges = []
+    if (cartons.size) {
+      const actual = new Map(
+        (await readPhysicalBatches(before, historyContext)).map((batch) => [
+          batch.id,
+          batch,
+        ])
+      )
+      for (const [id, after] of cartons) {
+        const expected = historyCartonBaselines.get(stack).get(id)
+        if (
+          !expected ||
+          actual.get(id)?.revision !== expected.revision ||
+          !sameAmendment(
+            expected.amendmentContext,
+            historyContext.expectedAmendment
+          )
+        )
+          throw new Error(
+            'These cartons changed in another tab. Reload the carton list before saving.'
+          )
+        cartonBatchChanges.push({ after, expectedRevision: expected.revision })
+      }
+    }
     const controls = [
         ...document.querySelectorAll(
           '.product-authoring-dialog input,.product-authoring-dialog textarea,.product-authoring-dialog button'
@@ -808,12 +900,7 @@ export async function createProductAuthoring({
     })
     try {
       const results = await repository.savePreparations(candidates, {
-        ...(getContextContainerId()
-          ? {
-              contextContainerId: getContextContainerId(),
-              expectedAmendment: guards[0].amendmentContext,
-            }
-          : {}),
+        ...historyContext,
         expectedRevisions: guards.map((guard) => guard.revision),
         expectedSnapshots: before.map((draft, index) => ({
           accountId: draft.accountId,
@@ -822,7 +909,16 @@ export async function createProductAuthoring({
         })),
         suffixBaselines: candidates,
         preserveNaming: true,
+        ...(cartonBatchChanges.length
+          ? { cartonBatchChanges, allowCartonReview: true }
+          : {}),
       })
+      if (cartons.size) {
+        const actual = (
+          await readPhysicalBatches(results, historyContext)
+        ).filter((batch) => cartons.has(batch.id))
+        acknowledgeCartonHistory(stack, actual, historyContext)
+      }
       stack[direction]()
       for (const [index, saved] of results.entries()) {
         acknowledgeHistory(stack, saved, guards[index].observedAt)
@@ -1483,6 +1579,7 @@ export async function createProductAuthoring({
         session.mounted = false
         session.notify = undefined
       }
+      stopSourceFacts()
       media.forget(modal)
       modal.remove()
     }
@@ -1497,21 +1594,29 @@ export async function createProductAuthoring({
     authoringLanguages(modal)
     const row = preparedRows([ref])[0]
     modal.append(el('p', row.description || row.title))
-    const sourceFacts = el('div', undefined, 'product-authoring-source-facts')
-    for (const [value, label] of [
-      [variant.variant, 'Copy value'],
-      [variant.size, 'Copy size'],
-      [
-        recordFor(ref)?.snapshot.items.find(
-          (item) => item.entryId === ref.entryId
-        )?.quantity,
-        'Copy quantity',
-      ],
-    ])
-      if (value !== undefined && value !== '')
-        sourceFacts.append(
-          copyTextButton(String(value), { label: uiMessage(label) })
-        )
+    const sourceFacts = el('div', undefined, 'product-authoring-source-facts'),
+      sourceItem = recordFor(ref)?.snapshot.items.find(
+        (item) => item.entryId === ref.entryId
+      ),
+      attributes = productAttributes(sourceItem).fields
+    const paintSourceFacts = () => {
+      sourceFacts.replaceChildren()
+      const facts = attributes.map((attribute) => [
+        translateAttribute(attribute, getLanguage()).value,
+        attribute.kind === 'size' ? 'Copy size' : 'Copy value',
+      ])
+      if (!attributes.length) facts.push([variant.variant, 'Copy value'])
+      if (!attributes.some((field) => field.kind === 'size'))
+        facts.push([variant.size, 'Copy size'])
+      facts.push([sourceItem?.quantity, 'Copy quantity'])
+      for (const [value, label] of facts)
+        if (value !== undefined && value !== '')
+          sourceFacts.append(
+            copyTextButton(String(value), { label: uiMessage(label) })
+          )
+    }
+    const stopSourceFacts = onLanguageChange(paintSourceFacts)
+    paintSourceFacts()
     modal.append(sourceFacts)
     if (ref.thumbnail) modal.append(media.photo(ref))
     const fields = []
@@ -2107,7 +2212,8 @@ export async function createProductAuthoring({
         entry.variants.push(match.variant)
     }
     const entries = [...selected.values()],
-      stack = history()
+      stack = history(),
+      beforePreparations = structuredClone([...preparations.values()])
     const baselines = new Map(
         entries.map((entry) => [
           orderKey(entry.draft),
@@ -2163,20 +2269,38 @@ export async function createProductAuthoring({
         })
         // Existing guarded preview/save rejects sealed/physical incompatibility;
         // grouping never changes container membership or destroys cartons.
-        const preview = await repository.previewPreparations(
-          candidates,
-          groupingContext
-        )
+        const preview = await repository.previewPreparations(candidates, {
+          ...groupingContext,
+          allowCartonReview: true,
+        })
         const prepared = Array.isArray(preview)
           ? preview
           : preview.preparations || candidates
+        const physical = await readPhysicalBatches(
+            [...baselines.values()],
+            groupingContext
+          ),
+          replacements = new Map(
+            prepared.map((draft) => [orderKey(draft), draft])
+          ),
+          physicalPlan = planCartonBatchChanges({
+            batches: physical,
+            records: getRecords(),
+            beforePreparations,
+            afterPreparations: beforePreparations.map(
+              (draft) => replacements.get(orderKey(draft)) || draft
+            ),
+          })
         if (
           !(await reviewPackingChanges({
             title: uiMessage('Review product grouping'),
             explanation: uiMessage(
               'Review every affected source row. Purchase quantities, prices and physical carton evidence stay separate.'
             ),
-            changes: groupingReviewChanges(entries, prepared, getRecords()),
+            changes: [
+              ...groupingReviewChanges(entries, prepared, getRecords()),
+              ...cartonBatchReviewChanges(physicalPlan),
+            ],
             proceed: uiMessage('Apply changes'),
             media,
           }))
@@ -2188,7 +2312,22 @@ export async function createProductAuthoring({
         const results = await repository.savePreparations(prepared, {
           ...groupingContext,
           expectedRevisions: before.map((draft) => draft.revision),
+          cartonBatchChanges: physicalPlan.changes,
+          allowCartonReview: true,
         })
+        const physicalIds = new Set(
+            physicalPlan.changes.map((change) => change.after.id)
+          ),
+          actualPhysical = physicalIds.size
+            ? (await readPhysicalBatches(results, groupingContext)).filter(
+                (batch) => physicalIds.has(batch.id)
+              )
+            : [],
+          afterCartons = Object.fromEntries(
+            actualPhysical.map((batch) => [batch.id, batch])
+          )
+        if (actualPhysical.length !== physicalIds.size)
+          throw new Error('The target carton is unavailable.')
         for (const [index, draft] of before.entries())
           beginLocalHistory(
             stack,
@@ -2200,8 +2339,15 @@ export async function createProductAuthoring({
             orderId: orderKey(result),
             before: preparationHistorySnapshot(before[index]),
             after: preparationHistorySnapshot(result),
+            ...(index === 0 && physicalIds.size
+              ? {
+                  beforeCartons: JSON.stringify(physicalPlan.before),
+                  afterCartons: JSON.stringify(afterCartons),
+                }
+              : {}),
           }))
         )
+        acknowledgeCartonHistory(stack, actualPhysical, groupingContext)
         for (const [index, result] of results.entries()) {
           acknowledgeHistory(
             stack,
@@ -2282,7 +2428,7 @@ export async function createProductAuthoring({
         requested.groupId ||
         candidate.groups.find((group) => group.baseCode === code.slice(0, 10))
           ?.id,
-      editedVariantId = requested.variantId || target.variantId,
+      editedVariantId = target.variantId || requested.variantId,
       variantConflict = code.length > 10 && editedVariantId,
       controls = [],
       comparisons = []
@@ -2386,12 +2532,19 @@ export async function createProductAuthoring({
               before: savedGroup?.variants.find(
                 (entry) => entry.id === variant.id
               )
-                ? barcodeValue(
-                    savedGroup,
-                    savedGroup.variants.find((entry) => entry.id === variant.id)
-                  )
+                ? savedGroup.variants.find((entry) => entry.id === variant.id)
+                    .needsSizeMapping
+                  ? ''
+                  : barcodeValue(
+                      savedGroup,
+                      savedGroup.variants.find(
+                        (entry) => entry.id === variant.id
+                      )
+                    )
                 : '',
-              after: barcodeValue(group, variant),
+              after: variant.needsSizeMapping
+                ? ''
+                : barcodeValue(group, variant),
             })),
           ])
         )

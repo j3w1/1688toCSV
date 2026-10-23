@@ -2035,20 +2035,27 @@ export async function createOrderCartonSession({
         context = await repository.getOrderReconciliation(repositoryRef())
         latestContext = context
         expectedDraftRevision = context.draft?.revision ?? 0
-        if (raw.clearAcknowledged(generation)) {
+        if (raw.state().generation === generation) {
+          // clearAcknowledged emits synchronously. Its observers must see the
+          // new physical baseline before they persist focus/recovery state.
           domainDraft = planner.createReconciliationDraft(context)
           history = planner.createReconciliationHistory(domainDraft)
           commandKinds.length = 0
           commandCursor = 0
           arrangementDirty = false
+          raw.clearAcknowledged(generation)
+          await raw.flush()
         }
         confirmIntent = undefined
         notify()
       })()
+      notify()
       return confirmWork.finally(() => {
         confirmWork = undefined
+        notify()
       })
     },
+    busy: () => Boolean(confirmWork),
     subscribe(listener) {
       subscribers.add(listener)
       return () => subscribers.delete(listener)
@@ -2173,7 +2180,7 @@ export function mountOrderCartonGrid(
     const plan = planGridFill(rows, target(), active.column, raw)
     return preview(plan)
   })
-  action('Confirm order cartons', 'confirm-order-cartons', () =>
+  const confirm = action('Confirm order cartons', 'confirm-order-cartons', () =>
     session.confirm()
   )
   const paste = el('textarea')
@@ -2895,6 +2902,7 @@ export function mountOrderCartonGrid(
     const state = session.state()
     undo.disabled = !state.canUndo
     redo.disabled = !state.canRedo
+    confirm.disabled = Boolean(session.busy?.())
     const editing =
       document.activeElement?.matches?.('input[data-grid-column]') &&
       scroller.contains(document.activeElement)

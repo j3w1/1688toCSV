@@ -525,6 +525,7 @@ async function historyFixture(context, { compound = false } = {}) {
       listPreparations: async () => structuredClone([...saved.values()]),
       getPackingPreferences: async () => validatePackingPreferences({}),
       getReservedBarcodes: async () => [],
+      listCartonBatches: async () => [],
       previewPreparations: async (values) => structuredClone(values),
       async savePreparations(values, options) {
         writes.push(structuredClone({ values, options }))
@@ -576,6 +577,7 @@ async function historyFixture(context, { compound = false } = {}) {
     saved,
     original,
     writes,
+    repository,
     authoring,
     edit,
   }
@@ -609,6 +611,50 @@ test('closed-form history rejects a refreshed foreign owner and new adopted edit
     writes.at(-1).options.expectedSnapshots[0].observedAt,
     source[1].snapshot.observedAt
   )
+})
+
+test('a rejected foreign revision keeps local input and exposes the explicit recovered-edit review instead of trapping Close', async (context) => {
+  const fixture = await historyFixture(context),
+    { document, window, saved, authoring, repository } = fixture
+  await authoring.openEditor({
+    accountId: 'local',
+    orderId: '1001',
+    entryId: '2001',
+  })
+  const modal = document.querySelector('[data-action="edit-order-product"]'),
+    input = modal.querySelector('[data-authoring-field="spanish-name"]')
+  input.value = 'LOCAL DRAFT'
+  input.dispatchEvent(new window.Event('input'))
+  saved.get('1001').revision++
+  saved.get('1001').groups[0].variants[0].spanishName = 'NEWER SAVED'
+  const foreign = structuredClone(saved.get('1001'))
+  repository.savePreparations = async () => {
+    throw Object.assign(new Error('Preparation changed in another tab.'), {
+      code: 'PACKING_REVISION_CONFLICT',
+    })
+  }
+  await assert.rejects(authoring.flush(), /changed in another tab/)
+  ;[...modal.querySelectorAll('button')]
+    .find((button) => button.textContent === 'Close')
+    .click()
+  await new Promise((resolve) => setTimeout(resolve, 0))
+  const recovery = [...modal.querySelectorAll('button')].find(
+    (button) => button.textContent === 'Review recovered product edits'
+  )
+  assert.equal(recovery.hidden, false)
+  assert.equal(input.value, 'LOCAL DRAFT')
+  recovery.click()
+  await new Promise((resolve) => setTimeout(resolve, 0))
+  const review = document.querySelector('.packing-change-dialog')
+  assert.ok(review)
+  assert.match(review.textContent, /NEWER SAVED/)
+  assert.match(review.textContent, /LOCAL DRAFT/)
+  assert.deepEqual(saved.get('1001'), foreign)
+  ;[...review.querySelectorAll('button')]
+    .find((button) => button.textContent === 'Cancel')
+    .click()
+  await new Promise((resolve) => setTimeout(resolve, 0))
+  modal.close()
 })
 
 test('history keeps its captured source clock across an advisory reload even when the preparation revision is unchanged', async (context) => {
@@ -778,6 +824,10 @@ test('a grouping review keeps its original source/revision/amendment guards when
       listPreparations: async () => [structuredClone(preparation)],
       getPackingPreferences: async () => validatePackingPreferences({}),
       getReservedBarcodes: async () => [],
+      getOrderReconciliation: async () => ({
+        batches: [],
+        amendmentContext: { containerId: 'c1', epoch: 'first' },
+      }),
       previewPreparations: async (values) => structuredClone(values),
       savePreparations: async (values, options) => {
         writes.push(structuredClone({ values, options }))
@@ -957,6 +1007,187 @@ function exceptionSessionFixture(options = {}) {
       }),
   }
 }
+
+test('physical confirmation disables only its action and clears the acknowledged planner before recovery observers can persist it', async (context) => {
+  const { document } = dom(context),
+    fixture = exceptionSessionFixture()
+  let release
+  const waiting = new Promise((resolve) => {
+    release = resolve
+  })
+  fixture.repository.confirmOrderCartons = async (args) => {
+    fixture.confirmed.push(structuredClone(args))
+    await waiting
+  }
+  const session = await fixture.create(),
+    grid = mountOrderCartonGrid(document.getElementById('host'), {
+      session,
+      kind: 'cartons',
+    }),
+    button = document.querySelector('[data-action="confirm-order-cartons"]')
+  await session.commitCell(fixture.batch.id, 'weight', '0')
+  const pending = session.confirm()
+  await new Promise((resolve) => setTimeout(resolve, 0))
+  assert.equal(button.disabled, true)
+  assert.equal(
+    document.querySelector('[data-grid-column="weight"]').disabled,
+    false
+  )
+  let observed = false
+  const stop = session.subscribe(() => {
+    if (
+      fixture.confirmed.length &&
+      !Object.keys(session.state().rawCells).length &&
+      !observed
+    ) {
+      observed = true
+      session.setActiveCell(fixture.batch.id, 'weight')
+    }
+  })
+  release()
+  await pending
+  await session.flush()
+  assert.equal(observed, true)
+  assert.equal(button.disabled, false)
+  assert.deepEqual(fixture.drafts.at(-1).draft.plannerDraft.cartons, [])
+  assert.deepEqual(fixture.drafts.at(-1).draft.rawCells, {})
+  stop()
+  grid.destroy()
+  session.dispose()
+})
+
+test('reviewed grouping captures actual physical revisions and compound Undo/Redo retains every carton fact while rejecting foreign changes', async (context) => {
+  const { document } = authoringEnvironment(context),
+    { record, preparation } = syntheticManifest().orders[0],
+    first = preparation.groups[0],
+    second = structuredClone(first)
+  record.snapshot.items.push({
+    ...structuredClone(record.snapshot.items[0]),
+    entryId: '2002',
+  })
+  Object.assign(record.snapshot.totals, {
+    goodsGross: '2000.00',
+    goodsNet: '2000.00',
+    payable: '2000.00',
+  })
+  second.id = 'second-product'
+  second.baseCode = 'CE26090102'
+  second.variants[0].id = 'second-variant'
+  second.variants[0].entryIds = ['2002']
+  preparation.groups.push(second)
+  let saved = structuredClone(preparation),
+    physical = syntheticBatch('1001', 2, '100', {
+      contents: [{ orderId: '1001', entryId: '2002', quantity: '100' }],
+      groups: [{ orderId: '1001', groupId: second.id }],
+      weight: '57.2202',
+      len: '40.125',
+      wid: '30',
+      ht: '25',
+      weightBasis: 'batch',
+      revision: 7,
+    })
+  const original = structuredClone({ record, preparation, physical }),
+    writes = [],
+    reads = [],
+    authoring = await createProductAuthoring({
+      getRecords: () => [record],
+      repository: {
+        listPreparations: async () => [structuredClone(saved)],
+        getPackingPreferences: async () => validatePackingPreferences({}),
+        getReservedBarcodes: async () => [],
+        listCartonBatches: async (args) => {
+          reads.push(structuredClone(args))
+          return [structuredClone(physical)]
+        },
+        previewPreparations: async (values, options) => {
+          assert.equal(options.allowCartonReview, true)
+          return structuredClone(values)
+        },
+        savePreparations: async (values, options) => {
+          writes.push(structuredClone({ values, options }))
+          assert.deepEqual(options.expectedRevisions, [saved.revision])
+          assert.equal(
+            options.cartonBatchChanges[0].expectedRevision,
+            physical.revision
+          )
+          assert.equal(options.allowCartonReview, true)
+          saved = {
+            ...structuredClone(values[0]),
+            revision: saved.revision + 1,
+          }
+          physical = {
+            ...structuredClone(options.cartonBatchChanges[0].after),
+            revision: physical.revision + 1,
+          }
+          return [structuredClone(saved)]
+        },
+      },
+    })
+  context.after(() => authoring.dispose())
+  await authoring.groupProducts(
+    record.snapshot.items.map((item) => ({
+      ...item,
+      accountId: 'local',
+      orderId: '1001',
+    }))
+  )
+  ;[...document.querySelectorAll('.orders-grouping-dialog button')]
+    .find((button) => button.textContent === 'Merge products')
+    .click()
+  await new Promise((resolve) => setTimeout(resolve, 0))
+  const review = document.querySelector('.packing-change-dialog')
+  assert.ok(review)
+  assert.match(review.textContent, /CE26090102/)
+  assert.match(review.textContent, /Review cartons/)
+  assert.equal(writes.length, 0)
+  ;[...review.querySelectorAll('button')]
+    .find((button) => button.textContent === 'Apply changes')
+    .click()
+  await new Promise((resolve) => setTimeout(resolve, 0))
+  assert.equal(saved.groups.length, 1)
+  assert.equal(physical.revision, 8)
+  assert.equal(physical.needsReview, true)
+  assert.deepEqual(physical.groups, original.physical.groups)
+  await authoring.undo()
+  assert.equal(saved.groups.length, 2)
+  assert.equal(physical.revision, 9)
+  assert.equal(physical.needsReview, undefined)
+  await authoring.redo()
+  assert.equal(saved.groups.length, 1)
+  assert.equal(physical.revision, 10)
+  assert.equal(physical.needsReview, true)
+  assert.deepEqual(
+    writes.map((write) => write.options.cartonBatchChanges[0].expectedRevision),
+    [7, 8, 9]
+  )
+  assert.ok(
+    reads.every(
+      (args) =>
+        args.accountId === 'local' &&
+        args.includeDeleted === true &&
+        !Object.hasOwn(args, 'month')
+    )
+  )
+  for (const write of writes) {
+    const batch = write.options.cartonBatchChanges[0].after
+    for (const key of [
+      'contents',
+      'count',
+      'weight',
+      'weightBasis',
+      'len',
+      'wid',
+      'ht',
+    ])
+      assert.deepEqual(batch[key], original.physical[key])
+  }
+  physical.revision++
+  const foreign = structuredClone(physical)
+  await assert.rejects(authoring.undo(), /cartons changed in another tab/)
+  assert.equal(writes.length, 3)
+  assert.deepEqual(physical, foreign)
+  assert.deepEqual(record, original.record)
+})
 
 test('compound capacity Undo replays its known baseline even when the retained textarea still needs a new paste preview', async (testContext) => {
   const fixture = exceptionSessionFixture(),
@@ -1413,6 +1644,58 @@ test('same-base variant collisions mark the edited ending and retain saved sibli
   assert.deepEqual(preparation, before)
   document.querySelector('[data-action="edit-order-product"]').close()
   authoring.dispose()
+})
+
+test('Orders authoring copies translated source attributes and exact quantity while language changes retain pending editors and originals', async (context) => {
+  const { document, window } = authoringEnvironment(context),
+    { record, preparation } = syntheticManifest().orders[0],
+    item = record.snapshot.items[0],
+    previous = getLanguage()
+  Object.assign(item, {
+    description: 'Synthetic cups\n颜色：白色\n尺寸：20cm',
+    skuProperties: [
+      { label: '颜色', value: '白色' },
+      { label: '尺寸', value: '20cm' },
+    ],
+  })
+  const original = structuredClone(record),
+    authoring = await createProductAuthoring({
+      repository: {
+        listPreparations: async () => [structuredClone(preparation)],
+        getPackingPreferences: async () => validatePackingPreferences({}),
+      },
+      getRecords: () => [record],
+    })
+  context.after(() => {
+    authoring.dispose()
+    setLanguage(previous, { persist: false })
+  })
+  setLanguage('en', { persist: false })
+  await authoring.openEditor({
+    accountId: 'local',
+    orderId: '1001',
+    entryId: item.entryId,
+  })
+  const modal = document.querySelector('[data-action="edit-order-product"]'),
+    input = modal.querySelector('[data-authoring-field="spanish-name"]'),
+    labels = () =>
+      [...modal.querySelectorAll('.product-authoring-source-facts button')].map(
+        (button) => button.getAttribute('aria-label')
+      )
+  assert.ok(labels().includes('Copy value: White'))
+  assert.ok(labels().includes('Copy size: 20cm'))
+  assert.ok(labels().includes('Copy quantity: 100'))
+  input.value = 'Retained pending source name'
+  input.dispatchEvent(new window.Event('input'))
+  setLanguage('es', { persist: false })
+  assert.ok(labels().includes('Copiar valor: Blanco'))
+  assert.equal(
+    modal.querySelector('[data-authoring-field="spanish-name"]'),
+    input
+  )
+  assert.equal(input.value, 'Retained pending source name')
+  assert.deepEqual(record, original)
+  modal.close()
 })
 
 test('grouping separates complete source scope from chosen variants and protects unselected shared source rows', async (testContext) => {

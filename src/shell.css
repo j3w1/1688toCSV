@@ -731,6 +731,11 @@ body > main {
     padding-inline-start: 0;
     border-inline-start: 0;
   }
+  .action-bar .selection-totals-grid dd {
+    /* Reserve two numeric lines before a selection changes the amount. The
+       footer shares viewport tracks with both panes, so its height is stable. */
+    min-block-size: 2lh;
+  }
   .action-bar .packing-launch {
     padding-inline-start: 0;
     border-inline-start: 0;

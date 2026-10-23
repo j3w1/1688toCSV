@@ -295,9 +295,18 @@ test('container export preserves advanced columns/order/layout and exact theme/m
   expect(xml('/xl/styles.xml')).toContain('EFEBE6')
   expect(xml('/xl/styles.xml')).toContain('DED7CC')
   expect(xml('/xl/styles.xml')).toContain(theme.body)
+  const descriptionIndex = productRows.findIndex(
+    (row) =>
+      row[2] === record.snapshot.items[0].description &&
+      String(row[0]) === record.snapshot.items[0].quantity
+  )
+  expect(descriptionIndex).toBeGreaterThan(headerIndex)
+  expect(productRows[descriptionIndex - 1][0]).toContain(
+    record.snapshot.orderId
+  )
   const descriptionStyle = Number(
     xml('/xl/worksheets/sheet1.xml').match(
-      new RegExp(`<c r="C${headerIndex + 2}" s="(\\d+)"`)
+      new RegExp(`<c r="C${descriptionIndex + 1}" s="(\\d+)"`)
     )[1]
   )
   const cellStyles = xml('/xl/styles.xml')

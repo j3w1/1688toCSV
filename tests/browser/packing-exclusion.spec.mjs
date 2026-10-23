@@ -3,6 +3,7 @@ import { createDemoRecords } from '../../preview/library-fixture.js'
 import {
   libraryBackup,
   assignSelectedPurchaseCodes,
+  clearOrderProductSelection,
 } from './smart-workspace-helpers.mjs'
 
 async function backup(extension) {
@@ -571,7 +572,7 @@ test('fee-only label selection never falls back to saved goods and source code m
     }),
     before = await backup(extension)
   await setDisposition(page, rows.nth(2))
-  await page.locator('#clear-rows').click()
+  await clearOrderProductSelection(page)
   await rows.nth(2).getByRole('checkbox').check()
   await expect(page.locator('#copy-barcodes')).toBeDisabled()
   expect((await backup(extension)).preparations).toEqual(before.preparations)
