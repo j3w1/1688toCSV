@@ -240,12 +240,13 @@ test('Orders merge reviews source ownership without losing a physical mark/count
 }) => {
   const { page, view, before } = await seed(extension, { twoGroups: true })
   await reviewLegacy(page, view)
-  const { review } = await group(page, 'Merge products', [0, 1, 2])
+  const { review, tools } = await group(page, 'Merge products', [0, 1, 2])
   expect((await backup(extension)).preparations).toEqual(before.preparations)
   await review
     .getByRole('button', { name: 'Apply changes', exact: true })
     .click()
   await expect(review).toBeHidden()
+  await expect(tools).toBeHidden()
   await expect
     .poll(async () => (await backup(extension)).preparations[0].groups.length)
     .toBe(1)
@@ -284,11 +285,12 @@ test('splitting same-order source variants preserves one physical identity and m
   const { page, view, before, ref } = await seed(extension)
   await reviewLegacy(page, view)
   const middle = before.preparations[0].groups[0].variants[1],
-    { review } = await group(page, 'Move to new product', [1])
+    { review, tools } = await group(page, 'Move to new product', [1])
   await review
     .getByRole('button', { name: 'Apply changes', exact: true })
     .click()
   await expect(review).toBeHidden()
+  await expect(tools).toBeHidden()
   const after = await backup(extension),
     destination = after.preparations[0].groups.find((group) =>
       group.variants.some((variant) =>
