@@ -887,7 +887,13 @@ export async function createProductAuthoring({
           throw new Error(
             'These cartons changed in another tab. Reload the carton list before saving.'
           )
-        cartonBatchChanges.push({ after, expectedRevision: expected.revision })
+        cartonBatchChanges.push({
+          after,
+          expectedRevision: expected.revision,
+          ...(after.physicalMark?.resolution?.choice === 'keep-recorded-mark'
+            ? { restorePhysicalMarkHistory: true }
+            : {}),
+        })
       }
     }
     const controls = [

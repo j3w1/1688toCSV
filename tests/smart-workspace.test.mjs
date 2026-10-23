@@ -32,6 +32,11 @@ import {
 import * as actualPlanner from '../src/carton-reconciliation.js'
 import { applyCartonUnitException } from '../src/carton-batches.js'
 import {
+  transitionPhysicalMark,
+  retainCartonEvidence,
+  physicalMarkReadback,
+} from '../src/physical-mark-aliases.js'
+import {
   syntheticOrder,
   syntheticBatch,
   syntheticManifest,
@@ -1564,13 +1569,24 @@ test('reviewed grouping captures actual physical revisions and compound Undo/Red
             physical.revision
           )
           assert.equal(options.allowCartonReview, true)
+          const change = options.cartonBatchChanges[0],
+            updatedAt = `2026-10-23T00:00:0${writes.length}.000Z`,
+            nextPhysical = retainCartonEvidence(
+              physical,
+              transitionPhysicalMark(physical, change.after, [saved], values, {
+                decision: change.physicalMarkResolution,
+                restoreHistory: change.restorePhysicalMarkHistory,
+                updatedAt,
+              })
+            )
           saved = {
             ...structuredClone(values[0]),
             revision: saved.revision + 1,
           }
           physical = {
-            ...structuredClone(options.cartonBatchChanges[0].after),
+            ...nextPhysical,
             revision: physical.revision + 1,
+            updatedAt,
           }
           return [structuredClone(saved)]
         },
@@ -1634,11 +1650,24 @@ test('reviewed grouping captures actual physical revisions and compound Undo/Red
   await authoring.undo()
   assert.equal(saved.groups.length, 2)
   assert.equal(physical.revision, 9)
-  assert.equal(physical.physicalMark, undefined)
+  assert.equal(physical.physicalMark.code, 'CE26090102')
+  assert.equal(physical.physicalMark.productCode, 'CE26090102')
+  assert.equal(
+    physicalMarkReadback(physical, [saved]).physicalMarkResolutionRequired,
+    false
+  )
   await authoring.redo()
   assert.equal(saved.groups.length, 1)
   assert.equal(physical.revision, 10)
   assert.equal(physical.physicalMark.code, 'CE26090102')
+  assert.equal(
+    writes[2].options.cartonBatchChanges[0].restorePhysicalMarkHistory,
+    true
+  )
+  assert.equal(
+    writes[2].options.cartonBatchChanges[0].physicalMarkResolution,
+    undefined
+  )
   assert.deepEqual(
     writes.map((write) => write.options.cartonBatchChanges[0].expectedRevision),
     [7, 8, 9]
