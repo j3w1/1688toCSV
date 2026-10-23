@@ -373,8 +373,19 @@ export async function createContainerThroughUI(
 
 export async function sealContainerThroughUI(page, { markAll = true } = {}) {
   const workspace = page.locator('#packing-view')
-  if (markAll)
-    await workspace.locator('[data-action="mark-all-loaded"]').click()
+  await expect(workspace.locator('#container-content')).toHaveAttribute(
+    'aria-busy',
+    'false'
+  )
+  if (markAll) {
+    const all = workspace.locator('[data-action="mark-all-loaded"]')
+    if (await all.isEnabled()) await all.click()
+    await expect(workspace.locator('#container-content')).toHaveAttribute(
+      'aria-busy',
+      'false'
+    )
+    await expect(all).toBeDisabled()
+  }
   await workspace.locator('[data-action="review-container-seal"]').click()
   const review = page.locator('.container-review-dialog')
   await expect(review).toBeVisible()

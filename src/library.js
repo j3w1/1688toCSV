@@ -52,7 +52,6 @@ import { mergeOrderTags } from './order-tags.js'
 import { createRowSelection } from './row-selection.js'
 import { createVirtualTable } from './virtual-table.js'
 import { createVirtualList } from './virtual-list.js'
-import { copyExcelImage } from './excel-image-copy.js'
 import { copySourceImages } from './source-image-copy.js'
 import { mountProductCopyActions, mountCopyActions } from './copy-actions.js'
 import { showErrorNotice, clearErrorNotice } from './error-notice.js'
@@ -970,7 +969,17 @@ export async function startLibrary(
   }
   async function copyAction(button, handler) {
     try {
-      return await copied(button, handler)
+      return await copied(button, async (progress) => {
+        try {
+          return await handler(progress)
+        } catch (error) {
+          if (error?.noticeOptions?.context || error?.noticeOptions?.action) {
+            showErrorNotice(error)
+            return false
+          }
+          throw error
+        }
+      })
     } finally {
       if (button.closest('.copy-actions')) updateSelection()
     }
@@ -3199,23 +3208,13 @@ export async function startLibrary(
   $('copy-excel-image').addEventListener('click', () =>
     copyAction($('copy-excel-image'), async () => {
       if (copyBusy) return false
-      const rows = packing.preparedRows(copyRows())
+      const rows = copyRows()
       if (!rows.length) return false
-      const badges = packing.getImageBadges()
       copyBusy = true
       updateSelection()
-      const abort = new AbortController()
       try {
-        return await copyExcelImage(rows, {
-          badges,
-          renderCartonMark: packing.createCartonMarkRenderer(),
-          loadImage: async (url) => {
-            const image = await send('IMAGE_GET', { url })
-            return typeof image === 'string' ? image : image.dataUrl
-          },
-          signal: abort.signal,
-          errorOptions: packing.errorOptions,
-        })
+        const context = await packing.output.ordersContext(rows)
+        return await packing.output.copy(context, 'excel-image')
       } finally {
         copyBusy = false
         updateSelection()

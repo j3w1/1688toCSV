@@ -487,6 +487,198 @@ test('Orders authoring isolates staged amendment saves, recovery and Undo from e
   authoring.dispose()
 })
 
+async function historyFixture(context, { compound = false } = {}) {
+  const environment = authoringEnvironment(context),
+    records = ['1001', '1002'].map((id) => syntheticOrder(id)),
+    template = syntheticManifest().orders[0].preparation,
+    saved = new Map(),
+    writes = []
+  for (const record of records) {
+    const preparation = structuredClone(template)
+    preparation.orderId = record.snapshot.orderId
+    preparation.groups[0].baseCode =
+      record.snapshot.orderId === '1001' ? 'CE26090101' : 'CE26090102'
+    if (compound) {
+      record.snapshot.items.push({
+        ...structuredClone(record.snapshot.items[0]),
+        entryId: '2002',
+      })
+      Object.assign(record.snapshot.totals, {
+        goodsGross: '2000.00',
+        goodsNet: '2000.00',
+        payable: '2000.00',
+      })
+      const group = preparation.groups[0]
+      group.variants[0].variantSuffix = 'A'
+      group.variants.push({
+        ...structuredClone(group.variants[0]),
+        id: 'second-variant',
+        entryIds: ['2002'],
+        variantSuffix: 'B',
+      })
+    }
+    saved.set(preparation.orderId, preparation)
+  }
+  const original = structuredClone([...saved.values()]),
+    source = structuredClone(records),
+    repository = {
+      listPreparations: async () => structuredClone([...saved.values()]),
+      getPackingPreferences: async () => validatePackingPreferences({}),
+      getReservedBarcodes: async () => [],
+      previewPreparations: async (values) => structuredClone(values),
+      async savePreparations(values, options) {
+        writes.push(structuredClone({ values, options }))
+        for (const [index, value] of values.entries()) {
+          const current = saved.get(value.orderId),
+            expected = options.expectedSnapshots.find(
+              (entry) => entry.orderId === value.orderId
+            ),
+            record = records.find(
+              (entry) => entry.snapshot.orderId === value.orderId
+            )
+          if (
+            options.expectedRevisions[index] !== current.revision ||
+            expected.observedAt !== record.snapshot.observedAt
+          )
+            throw new Error(
+              'Preparation changed in another tab: revision/source conflict'
+            )
+        }
+        const results = values.map((value) => ({
+          ...structuredClone(value),
+          revision: saved.get(value.orderId).revision + 1,
+        }))
+        for (const result of results) saved.set(result.orderId, result)
+        return structuredClone(results)
+      },
+    },
+    authoring = await createProductAuthoring({
+      repository,
+      getRecords: () => records,
+    })
+  context.after(() => authoring.dispose())
+  const edit = async (orderId, value) => {
+    await authoring.openEditor({ accountId: 'local', orderId, entryId: '2001' })
+    const input = environment.document.querySelector(
+      '[data-authoring-field="chinese-category"]'
+    )
+    input.value = value
+    input.dispatchEvent(new environment.window.Event('input'))
+    await authoring.flush()
+    environment.document
+      .querySelector('[data-action="edit-order-product"]')
+      .close()
+  }
+  return {
+    ...environment,
+    records,
+    source,
+    saved,
+    original,
+    writes,
+    authoring,
+    edit,
+  }
+}
+
+test('closed-form history rejects a refreshed foreign owner and new adopted edits preserve the other order history', async (context) => {
+  const fixture = await historyFixture(context),
+    { saved, authoring, writes, edit, original, records, source } = fixture
+  await edit('1002', '另一订单本地编辑')
+  await edit('1001', '本地编辑')
+  saved.get('1001').groups[0].category = '外部保存'
+  saved.get('1001').revision++
+  const foreign = structuredClone(saved.get('1001'))
+  await authoring.reload()
+  await assert.rejects(authoring.undo(), /changed in another tab/)
+  assert.equal(writes.length, 2)
+  assert.deepEqual(saved.get('1001'), foreign)
+  await edit('1001', '明确采用新版后编辑')
+  await authoring.undo()
+  assert.equal(saved.get('1001').groups[0].category, '外部保存')
+  await authoring.undo()
+  assert.equal(
+    saved.get('1002').groups[0].category,
+    original[1].groups[0].category
+  )
+  await authoring.redo()
+  assert.equal(saved.get('1002').groups[0].category, '另一订单本地编辑')
+  assert.deepEqual(records, source)
+  assert.deepEqual(writes.at(-1).options.expectedRevisions, [3])
+  assert.equal(
+    writes.at(-1).options.expectedSnapshots[0].observedAt,
+    source[1].snapshot.observedAt
+  )
+})
+
+test('history keeps its captured source clock across an advisory reload even when the preparation revision is unchanged', async (context) => {
+  const { records, saved, authoring, writes, edit } =
+    await historyFixture(context)
+  await edit('1001', '本地编辑')
+  const before = structuredClone(saved.get('1001'))
+  records[0].snapshot.observedAt = '2026-10-24T12:00:00.000Z'
+  await authoring.reload()
+  await assert.rejects(authoring.undo(), /changed in another tab/)
+  assert.equal(writes.length, 1)
+  assert.deepEqual(saved.get('1001'), before)
+})
+
+test('a foreign save not yet observed by the UI rejects the captured Undo write atomically', async (context) => {
+  const { saved, authoring, writes, edit, records, source } =
+    await historyFixture(context)
+  await edit('1001', '本地编辑')
+  const localRevision = saved.get('1001').revision
+  saved.get('1001').groups[0].category = '外部保存'
+  saved.get('1001').revision++
+  const before = structuredClone(saved.get('1001'))
+  await assert.rejects(authoring.undo(), /revision\/source conflict/)
+  assert.equal(writes.length, 2)
+  assert.deepEqual(writes.at(-1).options.expectedRevisions, [localRevision])
+  assert.equal(
+    writes.at(-1).options.expectedSnapshots[0].observedAt,
+    source[0].snapshot.observedAt
+  )
+  assert.deepEqual(saved.get('1001'), before)
+  assert.deepEqual(records, source)
+})
+
+test('compound grouping history guards every order after its form closes and never partially restores a foreign member', async (context) => {
+  const { document, records, source, saved, writes, authoring } =
+    await historyFixture(context, { compound: true })
+  await authoring.groupProducts(
+    records.flatMap((record) =>
+      record.snapshot.items.map((item) => ({
+        ...item,
+        accountId: 'local',
+        orderId: record.snapshot.orderId,
+      }))
+    )
+  )
+  ;[...document.querySelectorAll('.orders-grouping-dialog button')]
+    .find((button) => button.textContent === 'Share one barcode')
+    .click()
+  await new Promise((resolve) => setTimeout(resolve, 0))
+  ;[...document.querySelectorAll('.packing-change-dialog button')]
+    .find((button) => button.textContent === 'Apply changes')
+    .click()
+  await new Promise((resolve) => setTimeout(resolve, 0))
+  assert.equal(writes.length, 1)
+  assert.equal(writes[0].values.length, 2)
+  for (const preparation of saved.values())
+    assert.deepEqual(preparation.groups[0].variants[0].entryIds, [
+      '2001',
+      '2002',
+    ])
+  saved.get('1002').revision++
+  saved.get('1002').groups[0].category = '外部保存'
+  const before = structuredClone([...saved.values()])
+  await authoring.reload()
+  await assert.rejects(authoring.undo(), /changed in another tab/)
+  assert.equal(writes.length, 1)
+  assert.deepEqual([...saved.values()], before)
+  assert.deepEqual(records, source)
+})
+
 test('canceled amendment saves retain their captured epoch and recovered values require explicit review before a new epoch', async (context) => {
   const { document, window, values } = authoringEnvironment(context),
     manifest = syntheticManifest(),
@@ -1141,6 +1333,7 @@ test('an assigned base with unresolved size stays visibly pending and never beco
   document.body.append(host)
   authoring.decorateRow(host, ref)
   assert.equal(host.querySelector('.row-code-copy'), null)
+  assert.equal(authoring.canCopyLabels([ref]), true)
   assert.equal(
     host.querySelector('.row-base-code').textContent,
     preparation.groups[0].baseCode
@@ -1154,6 +1347,147 @@ test('an assigned base with unresolved size stays visibly pending and never beco
     /Map this variant size before generating labels/
   )
   assert.deepEqual(record, original)
+  authoring.dispose()
+})
+
+test('same-base variant collisions mark the edited ending and retain saved sibling identities', async (testContext) => {
+  const { document, window } = authoringEnvironment(testContext),
+    { record, preparation } = syntheticManifest().orders[0],
+    group = preparation.groups[0],
+    first = group.variants[0]
+  record.snapshot.items.push({
+    ...structuredClone(record.snapshot.items[0]),
+    entryId: '2002',
+  })
+  Object.assign(record.snapshot.totals, {
+    goodsGross: '2000.00',
+    goodsNet: '2000.00',
+    payable: '2000.00',
+  })
+  Object.assign(first, {
+    variantSuffix: 'A',
+    sizeSuffix: '',
+    needsSizeMapping: false,
+  })
+  group.variants.push({
+    ...structuredClone(first),
+    id: 'sibling-variant',
+    entryIds: ['2002'],
+    variantSuffix: 'B',
+  })
+  const before = structuredClone(preparation),
+    authoring = await createProductAuthoring({
+      repository: {
+        listPreparations: async () => [structuredClone(preparation)],
+        getPackingPreferences: async () => validatePackingPreferences({}),
+        savePreparations: async () => {
+          throw Object.assign(
+            new Error(`${group.baseCode}B belongs to another variant`),
+            {
+              conflict: {
+                edit: { groupId: group.id, variantId: first.id },
+                owner: { groupId: group.id, variantId: 'sibling-variant' },
+              },
+            }
+          )
+        },
+      },
+      getRecords: () => [record],
+    })
+  await authoring.openEditor({
+    accountId: 'local',
+    orderId: '1001',
+    entryId: '2001',
+  })
+  const ending = document.querySelector(
+      '[data-authoring-field="variant-ending"]'
+    ),
+    base = document.querySelector('[data-authoring-field="product-code"]')
+  ending.value = 'B'
+  ending.dispatchEvent(new window.Event('input'))
+  await assert.rejects(authoring.flush(), /belongs to another variant/)
+  assert.equal(ending.getAttribute('aria-invalid'), 'true')
+  assert.equal(base.getAttribute('aria-invalid'), null)
+  assert.equal(base.value, group.baseCode)
+  assert.equal(ending.value, 'B')
+  assert.deepEqual(preparation, before)
+  document.querySelector('[data-action="edit-order-product"]').close()
+  authoring.dispose()
+})
+
+test('grouping separates complete source scope from chosen variants and protects unselected shared source rows', async (testContext) => {
+  const { document } = authoringEnvironment(testContext),
+    { record, preparation } = syntheticManifest().orders[0],
+    first = preparation.groups[0],
+    variant = first.variants[0]
+  record.snapshot.items.push(
+    ...['2002', '2003'].map((entryId) => ({
+      ...structuredClone(record.snapshot.items[0]),
+      entryId,
+    }))
+  )
+  Object.assign(record.snapshot.totals, {
+    goodsGross: '3000.00',
+    goodsNet: '3000.00',
+    payable: '3000.00',
+  })
+  Object.assign(variant, {
+    variantSuffix: 'A',
+    sizeSuffix: '',
+    needsSizeMapping: false,
+  })
+  first.variants.push({
+    ...structuredClone(variant),
+    id: 'second-variant',
+    entryIds: ['2002'],
+    variantSuffix: 'B',
+  })
+  const second = {
+    ...structuredClone(first),
+    id: 'second-group',
+    baseCode: 'CE26090102',
+    variants: [
+      {
+        ...structuredClone(variant),
+        id: 'third-variant',
+        entryIds: ['2003'],
+        variantSuffix: '',
+      },
+    ],
+  }
+  preparation.groups.push(second)
+  const originalSource = structuredClone(record.snapshot),
+    authoring = await createProductAuthoring({
+      repository: {
+        listPreparations: async () => [structuredClone(preparation)],
+        getPackingPreferences: async () => validatePackingPreferences({}),
+      },
+      getRecords: () => [record],
+    }),
+    select = (ids) =>
+      ids.map((entryId) => ({ accountId: 'local', orderId: '1001', entryId })),
+    button = (name) =>
+      [...document.querySelectorAll('.orders-grouping-dialog button')].find(
+        (node) => node.textContent === name
+      ),
+    close = () => document.querySelector('.orders-grouping-dialog').close()
+  await authoring.groupProducts(select(['2001']))
+  assert.equal(button('Move to new product').disabled, false)
+  close()
+  await authoring.groupProducts(select(['2001', '2003']))
+  assert.equal(button('Merge products').disabled, true)
+  close()
+  await authoring.groupProducts(select(['2001', '2002', '2003']))
+  assert.equal(button('Merge products').disabled, false)
+  close()
+  preparation.groups = [first]
+  first.variants[0].entryIds = ['2001', '2002']
+  first.variants[1].entryIds = ['2003']
+  await authoring.reload()
+  await authoring.groupProducts(select(['2001', '2003']))
+  assert.equal(button('Share one barcode').disabled, true)
+  assert.deepEqual(record.snapshot, originalSource)
+  close()
   authoring.dispose()
 })
 
@@ -1939,6 +2273,34 @@ test('mark-all-loaded uses complete included order scope regardless mounted or s
     { accountId: 'local', orderId: '20002' },
   ])
   assert.equal(writes[0].args.expectedRevision, 1)
+})
+
+test('Loading action availability follows real complete-set and physical selection state', async (testContext) => {
+  const { document } = dom(testContext),
+    fixture = setup(),
+    state = view()
+  state.cartons[0].state = 'loaded'
+  fixture.setView(state)
+  const workspace = createContainerWorkspace({
+    host: document.getElementById('host'),
+    repository: fixture.repository,
+    output: {},
+  })
+  await workspace.open('c1')
+  const all = document.querySelector('[data-action="mark-all-loaded"]'),
+    selected = document.querySelector('[data-action="mark-cartons-loaded"]')
+  assert.equal(all.disabled, true)
+  assert.equal(selected.disabled, true)
+  state.cartons[0].state = 'unconfirmed'
+  fixture.setView(state)
+  await workspace.reload()
+  assert.equal(all.disabled, false)
+  workspace.selectAll()
+  assert.equal(selected.disabled, false)
+  workspace.clearSelection()
+  assert.equal(selected.disabled, true)
+  assert.equal(fixture.writes.length, 0)
+  workspace.dispose()
 })
 
 test('inclusion is whole-order reservation, never an implicit loading mutation', async () => {
