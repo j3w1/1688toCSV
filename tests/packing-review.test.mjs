@@ -395,6 +395,55 @@ test('review control mount failure removes the unfinished dialog and rejects wit
   }
 })
 
+test('updating a physical mark comparison preserves the mounted choice input and focused value', async () => {
+  const fixture = reviewDocument()
+  try {
+    let setChanges, input, focused
+    Object.defineProperty(fixture.document, 'activeElement', {
+      configurable: true,
+      get: () => focused,
+    })
+    const result = reviewPackingChanges({
+      title: 'Review product grouping',
+      explanation: 'Synthetic relabel review',
+      changes: [
+        { name: 'Physical mark', before: 'CE26101002', after: 'CE26101002' },
+      ],
+      mountControls(context) {
+        setChanges = context.setChanges
+        input = fixture.document.createElement('input')
+        input.value = 'Keep the confirmed reason'
+        input.focus = () => {
+          focused = input
+        }
+        context.host.append(input)
+      },
+    })
+    const modal = fixture.document.querySelector('.packing-change-dialog')
+    input.focus()
+    setChanges([
+      { name: 'Physical mark', before: 'CE26101002', after: 'CE26101001' },
+    ])
+    assert.equal(
+      modal.querySelector('.packing-value-before code').textContent,
+      'CE26101002'
+    )
+    assert.equal(
+      modal.querySelector('.packing-value-after code').textContent,
+      'CE26101001'
+    )
+    assert.equal(modal.querySelector('.packing-review-controls input'), input)
+    assert.equal(input.isConnected, true)
+    assert.equal(input.value, 'Keep the confirmed reason')
+    assert.equal(fixture.document.activeElement, input)
+    modal.querySelector('[data-action="review-cancel"]').click()
+    assert.equal(await result, false)
+    assert.equal(setChanges([]), false)
+  } finally {
+    fixture.restore()
+  }
+})
+
 test('one group exposes every proposed full variant code and helper inline in all three languages without changing its source', async () => {
   const fixture = reviewDocument()
   const source = '合成玻璃杯 · 原始供应商描述'

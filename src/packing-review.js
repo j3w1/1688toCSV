@@ -491,7 +491,20 @@ export async function reviewPackingChanges({
       }
     }
     try {
-      cleanupControls = mountControls?.({ host: controlsHost, apply, modal })
+      cleanupControls = mountControls?.({
+        host: controlsHost,
+        apply,
+        modal,
+        setChanges(nextChanges) {
+          if (!Array.isArray(nextChanges))
+            throw new TypeError('Review changes must be a complete array.')
+          if (settled) return false
+          changes = nextChanges
+          render()
+          if (overview) scheduleFit()
+          return true
+        },
+      })
       modal.showModal()
       if (overview) {
         if (typeof ResizeObserver === 'function') {
