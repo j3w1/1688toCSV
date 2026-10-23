@@ -143,6 +143,20 @@ test('manual other-source order follows packing, labels, carton marks and full/s
       (record) => record.snapshot.orderId === legacy[0].snapshot.orderId
     ).snapshot
   ).toEqual(legacy[0].snapshot)
+  // A manually entered supplier name is display text, not a source account.
+  // Supply explicit authored identity without rewriting the original snapshot.
+  await page
+    .locator('#sheet-body [data-action="review-purchase-evidence"]')
+    .first()
+    .click()
+  const evidence = page.locator(
+    'dialog[data-action="review-purchase-evidence"]'
+  )
+  await evidence
+    .getByLabel('Authored supplier identity', { exact: true })
+    .fill('synthetic-manual-supplier')
+  await evidence.locator('[data-action="resolve-purchase-supplier"]').click()
+  await expect(evidence).toBeHidden()
   await page.locator('#select-rows').click()
   await assignSelectedPurchaseCodes(page)
   await expect(page.locator('#orders-view')).toBeVisible()
@@ -178,6 +192,14 @@ test('manual other-source order follows packing, labels, carton marks and full/s
   await action(page, 'close-print-dialog').click()
   const complete = await orders(extension)
   expect(complete.preparations).toHaveLength(1)
+  const authored = complete.orders.find(
+    (record) => record.snapshot.orderId === entered.snapshot.orderId
+  )
+  expect(authored.snapshot).toEqual(entered.snapshot)
+  expect(authored.supplierIdentityResolution).toMatchObject({
+    sellerId: 'synthetic-manual-supplier',
+    provenance: 'manual-confirmed',
+  })
   await action(page, 'backup-packing').click()
   const backupFiles = await downloaded(extension, 5)
   const scoped = await readBackupFile(
