@@ -1539,3 +1539,152 @@ test('native restore cannot consume another open draft whole-order remainder and
     await browser.close()
   }
 })
+
+test('native v5 scoped backups close physical and financial dependencies, retain drafts and exclude unrelated code/photo context', async () => {
+  const browser = await databaseBrowser()
+  try {
+    const result = await browser.page.evaluate(async () => {
+      const {
+        openDatabase,
+        validateBackup,
+        payments,
+        fixture: { syntheticOrder, syntheticBatch, syntheticManifest },
+      } = modules
+      const db = await openDatabase({ name: 'synthetic-v5-scope' }),
+        target = syntheticOrder(),
+        fee = syntheticOrder('1002', '1'),
+        unrelated = syntheticOrder('1003')
+      target.snapshot.items.push({
+        ...target.snapshot.items[0],
+        entryId: '2002',
+        quantity: '5',
+        price: '2.00',
+      })
+      Object.assign(target.snapshot.totals, {
+        goodsGross: '1010.00',
+        goodsNet: '1010.00',
+        payable: '1010.00',
+      })
+      fee.snapshot.items[0].price = '0.01'
+      Object.assign(fee.snapshot.totals, {
+        goodsGross: '0.01',
+        goodsNet: '0.01',
+        payable: '0.01',
+      })
+      target.paymentLinks = [
+        {
+          id: 'scoped-link',
+          sourceOrderId: '1002',
+          targetEntryIds: ['2001'],
+          amount: '0.01',
+          reason: 'Scoped payment dependency',
+          reviewedAt: target.snapshot.observedAt,
+          sourceEvidence: payments.paymentSourceEvidence(fee),
+        },
+      ]
+      target.paymentLinksUpdatedAt = target.snapshot.observedAt
+      await db.restoreBackup({
+        format: '1688-order-library',
+        version: 4,
+        exportedAt: new Date().toISOString(),
+        orders: [target, fee, unrelated],
+        history: [],
+        images: [],
+        preparations: [],
+        allocations: [],
+        issuedCodes: [],
+        cartonBatches: [syntheticBatch()],
+        packingPreferences: null,
+      })
+      const a = syntheticManifest().orders[0].preparation,
+        b = structuredClone(a)
+      a.groups[0].variants[0].entryIds.push('2002')
+      b.orderId = '1003'
+      b.groups[0].baseCode = 'CE26090102'
+      await db.savePreparations([a, b], {
+        expectedRevisions: [0, 0],
+        preserveNaming: true,
+      })
+      const container = await db.createContainer({ name: 'Scoped container' })
+      await db.includeContainerOrders({
+        id: container.id,
+        orderRefs: [{ orderId: '1001' }],
+        expectedRevision: container.revision,
+      })
+      await db.saveOrderCartonDraft({
+        orderId: '1001',
+        expectedRevision: 0,
+        draft: { rawCells: { count: 'invalid' } },
+      })
+      await db.savePackingReportDraft({
+        orderId: '1003',
+        expectedRevision: 0,
+        draft: { text: 'unrelated invalid text' },
+      })
+      const filtered = await db.exportBackup({ orderIds: ['1001'] })
+      validateBackup(filtered)
+      let partialCode
+      try {
+        await db.exportBackup({
+          packingScope: {
+            months: ['2026-09'],
+            orders: [
+              { accountId: 'local', orderId: '1001', entryIds: ['2001'] },
+            ],
+          },
+        })
+      } catch (error) {
+        partialCode = error.code
+      }
+      const scoped = await db.exportBackup({
+        packingScope: {
+          months: ['2026-09'],
+          orders: [
+            { accountId: 'local', orderId: '1001', entryIds: ['2001', '2002'] },
+          ],
+        },
+      })
+      validateBackup(scoped)
+      const restored = await openDatabase({
+        name: 'synthetic-v5-scope-restored',
+      })
+      await restored.restoreBackup(scoped)
+      const context = await restored.getOrderReconciliation({
+          orderId: '1001',
+        }),
+        state = await restored.getOperationalState({})
+      db.close()
+      restored.close()
+      return {
+        filtered: filtered.orders.map((r) => r.snapshot.orderId),
+        filteredContainers: filtered.containers.length,
+        scoped: scoped.orders.map((r) => r.snapshot.orderId),
+        partialCode,
+        codes: scoped.issuedCodes.map((code) => code.code),
+        draftOrders: scoped.orderCartonDrafts.map((draft) => draft.orderId),
+        restoredOrders: state.records.map((r) => r.snapshot.orderId),
+        restoredContainers: state.containers.length,
+        raw: context.draft.value.rawCells.count,
+        quantity: context.record.snapshot.items.map((item) => item.quantity),
+        price: context.record.snapshot.items.map((item) => item.price),
+        linked: context.record.paymentLinks[0].amount,
+      }
+    })
+    assert.deepEqual(result, {
+      filtered: ['1001', '1002'],
+      filteredContainers: 1,
+      scoped: ['1001', '1002'],
+      partialCode: 'PACKING_BACKUP_DEPENDENCY_REVIEW',
+      codes: ['CE26090101', 'CE26090101'],
+      draftOrders: ['1001'],
+      restoredOrders: ['1001', '1002'],
+      restoredContainers: 1,
+      raw: 'invalid',
+      quantity: ['100', '5'],
+      price: ['10.00', '2.00'],
+      linked: '0.01',
+    })
+  } finally {
+    await browser.close()
+  }
+})
