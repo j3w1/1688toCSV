@@ -6,6 +6,7 @@ import {
   cartonBatchIssues,
   assertCartonBatchEvidence,
   assertSingleOrderCarton,
+  cartonBatchMarkOwnerChoices,
 } from './carton-batches.js'
 import {
   retainCartonEvidence,
@@ -216,6 +217,16 @@ export function createCartonBatchesRepository({
                 ...batch,
                 ...(batch.physicalMark
                   ? physicalMarkReadback(batch, loaded.preparations)
+                  : {}),
+                ...(batch.physicalMark
+                  ? {
+                      physicalMarkOwnerChoices: cartonBatchMarkOwnerChoices(
+                        batch,
+                        loaded.records,
+                        loaded.preparations,
+                        loaded.batches
+                      ),
+                    }
                   : {}),
                 ...(cartonBatchIssues(
                   batch,

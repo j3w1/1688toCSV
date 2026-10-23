@@ -7,7 +7,12 @@ import {
   validatePhysicalMark,
   physicalMarkReadback,
   retainCartonEvidence,
+  physicalMarkOwnerChoices,
 } from './physical-mark-aliases.js'
+import {
+  eligibleOrderItems,
+  batchNeedsLegacyReview,
+} from './inventory-model.js'
 
 const sourceKey = (orderId, entryId) => JSON.stringify([orderId, entryId])
 const referenceKey = (reference) =>
@@ -1005,6 +1010,38 @@ export function assertCartonBatchContext(
   return batch
 }
 
+export function cartonBatchMarkOwnerChoices(
+  batch,
+  records,
+  preparations,
+  batches = []
+) {
+  const orderId =
+      batch.orderId ||
+      batch.physicalMark?.originalMark.orderId ||
+      batch.contents[0]?.orderId,
+    record = records.find(
+      (value) =>
+        (value.snapshot.accountId || 'local') ===
+          (batch.accountId || 'local') && value.snapshot.orderId === orderId
+    )
+  if (!record) return []
+  return physicalMarkOwnerChoices(batch, preparations, {
+    storeId: repeatProductStoreIdentity(record),
+    eligibleEntryIds: eligibleOrderItems(record, records)
+      .filter((item) => item.eligible !== null && BigInt(item.eligible) > 0n)
+      .map((item) => item.entryId),
+  }).map((choice) => {
+    const candidate = { ...batch, mark: choice.mark, groups: choice.groups },
+      issues = cartonBatchIssues(candidate, records, preparations, batches)
+    return {
+      ...choice,
+      issues,
+      needsReview: Boolean(issues.length || batchNeedsLegacyReview(batch)),
+    }
+  })
+}
+
 /** Display/export fields are resolved from source IDs; physical data is never copied to products. */
 export function cartonBatchProjection(batches, records, preparations) {
   return batches
@@ -1048,6 +1085,16 @@ export function cartonBatchProjection(batches, records, preparations) {
       return {
         ...batch,
         ...physicalMarkReadback(batch, preparations),
+        ...(batch.physicalMark
+          ? {
+              physicalMarkOwnerChoices: cartonBatchMarkOwnerChoices(
+                batch,
+                records,
+                preparations,
+                batches
+              ),
+            }
+          : {}),
         mark,
         baseCode: batch.physicalMark?.code || markGroup?.baseCode || '',
         category: batch.physicalMark

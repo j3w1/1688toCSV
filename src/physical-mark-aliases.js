@@ -19,6 +19,23 @@ export const PHYSICAL_MARK_CHOICES = Object.freeze([
 
 const sameReference = (left, right) =>
   left?.orderId === right?.orderId && left?.groupId === right?.groupId
+const artworkValue = (value) =>
+  value == null
+    ? null
+    : JSON.stringify(
+        [
+          'code',
+          'baseCode',
+          'orderId',
+          'groupId',
+          'title',
+          'spanishName',
+          'category',
+          'chineseCategory',
+          'provenance',
+          'entryIds',
+        ].map((field) => value[field])
+      )
 function artwork(owner, code) {
   return owner
     ? {
@@ -30,6 +47,11 @@ function artwork(owner, code) {
         spanishName: owner.group.spanishName || '',
         category: owner.group.category || '',
         chineseCategory: owner.group.category || '',
+        entryIds: [
+          ...new Set(
+            owner.group.variants.flatMap((variant) => variant.entryIds)
+          ),
+        ],
         provenance: 'recorded-owner-text',
       }
     : null
@@ -47,6 +69,14 @@ function validateArtwork(input, code) {
     fail(
       'Retain the recorded mark owner text separately from current product labels.'
     )
+  if (
+    input.entryIds !== undefined &&
+    (!Array.isArray(input.entryIds) ||
+      input.entryIds.some(
+        (id) => typeof id !== 'string' || !/^[1-9]\d*$/.test(id)
+      ))
+  )
+    fail('Retain the recorded mark source-entry associations.')
   return {
     code,
     baseCode: code,
@@ -56,6 +86,9 @@ function validateArtwork(input, code) {
     category: input.category,
     chineseCategory: input.chineseCategory,
     provenance: 'recorded-owner-text',
+    ...(input.entryIds === undefined
+      ? {}
+      : { entryIds: [...new Set(input.entryIds)] }),
   }
 }
 export function physicalMarkResolutionRequired(batch) {
@@ -178,6 +211,74 @@ export function physicalMarkOwner(batch, preparations) {
   )
   const group = preparation?.groups.find((value) => value.id === mark?.groupId)
   return group ? { preparation, group, mark } : null
+}
+
+/** Explicit current mark contexts; contents determine references, never a guessed owner. */
+export function physicalMarkOwnerChoices(
+  batch,
+  preparations,
+  { eligibleEntryIds = [], storeId } = {}
+) {
+  if (storeId !== batch.storeId) return []
+  const orderIds = [
+    ...new Set(
+      [
+        batch.orderId,
+        batch.physicalMark?.originalMark.orderId,
+        ...(batch.contents || []).map((row) => row.orderId),
+        ...(batch.groups || []).map((row) => row.orderId),
+      ].filter(Boolean)
+    ),
+  ]
+  if (orderIds.length !== 1) return []
+  const orderId = orderIds[0],
+    eligible = new Set(eligibleEntryIds),
+    own = preparations.filter(
+      (preparation) =>
+        preparation.accountId === (batch.accountId || 'local') &&
+        preparation.orderId === orderId
+    ),
+    rows = [
+      ...(batch.contents || []),
+      ...Object.values(batch.unitContents || {}).flat(),
+    ],
+    groups = own.flatMap((preparation) =>
+      preparation.groups
+        .filter((group) =>
+          group.variants.some((variant) =>
+            variant.entryIds.some(
+              (id) =>
+                rows.some((row) => row.entryId === id) ||
+                (batch.unresolvedContents || []).some(
+                  (claim) =>
+                    claim.entryIds?.includes(id) || claim.groupId === group.id
+                )
+            )
+          )
+        )
+        .map((group) => ({ orderId, groupId: group.id }))
+    )
+  return own.flatMap((preparation) =>
+    preparation.groups
+      .filter(
+        (group) =>
+          base.test(group.baseCode) &&
+          (batch.orderId ||
+            (group.month || preparation.month) === batch.month) &&
+          group.variants.some((variant) =>
+            variant.entryIds.some((id) => eligible.has(id))
+          )
+      )
+      .map((group) => {
+        const mark = { orderId, groupId: group.id }
+        return {
+          mark,
+          productCode: group.baseCode,
+          artwork: artwork({ preparation, group, mark }, group.baseCode),
+          groups: clone(groups.length ? groups : batch.groups || []),
+        }
+      })
+  )
 }
 
 /** Capture from actual before state. Caller snapshots cannot claim an old printed code. */
@@ -322,14 +423,14 @@ export function transitionPhysicalMark(
             (requested.resolution.resolvedAt == null ||
               requested.resolution.resolvedAt ===
                 saved.resolution.resolvedAt) &&
-            JSON.stringify(saved.artwork ?? null) ===
-              JSON.stringify(physicalMark.artwork ?? null) &&
-            JSON.stringify(requested.artwork ?? null) ===
-              JSON.stringify(physicalMark.artwork ?? null) &&
-            JSON.stringify(saved.originalArtwork ?? null) ===
-              JSON.stringify(physicalMark.originalArtwork ?? null) &&
-            JSON.stringify(requested.originalArtwork ?? null) ===
-              JSON.stringify(physicalMark.originalArtwork ?? null)
+            artworkValue(saved.artwork) ===
+              artworkValue(physicalMark.artwork) &&
+            artworkValue(requested.artwork) ===
+              artworkValue(physicalMark.artwork) &&
+            artworkValue(saved.originalArtwork) ===
+              artworkValue(physicalMark.originalArtwork) &&
+            artworkValue(requested.originalArtwork) ===
+              artworkValue(physicalMark.originalArtwork)
           )
         }
       )
@@ -354,12 +455,41 @@ export function transitionPhysicalMark(
 }
 
 /** Pure grouping-review decision; commit the returned changes with the preparations. */
-export function resolvePhysicalMarkChange(plan, { batchId, ...decision }) {
+export function resolvePhysicalMarkChange(
+  plan,
+  { batchId, targetMark, ...decision }
+) {
   const result = clone(plan)
   const change = result.changes.find((value) => value.after?.id === batchId)
   if (!change?.after.physicalMark)
     fail('Reopen the grouping review for these cartons.')
+  const review = result.reviews.find((value) => value.id === batchId)
+  if (targetMark) {
+    const owner = review?.physicalMarkOwnerChoices?.find((choice) =>
+      sameReference(choice.mark, targetMark)
+    )
+    if (!owner)
+      fail('Choose a valid current mark owner from this purchase review.')
+    change.after.mark = clone(owner.mark)
+    change.after.groups = clone(owner.groups)
+    if (owner.needsReview) change.after.needsReview = true
+    else delete change.after.needsReview
+    change.after.physicalMark.productCode = owner.productCode
+    change.after.physicalMark.resolution = null
+    review.currentProductCode = owner.productCode
+    review.currentProductArtwork = clone(owner.artwork)
+    review.destinationMark = clone(owner.mark)
+    review.destinationGroups = clone(owner.groups)
+    review.afterMarkCode = owner.productCode
+    review.needsReview = Boolean(owner.needsReview)
+    review.issues = clone(owner.issues || [])
+    if (!owner.needsReview) review.kind = 'reanchor'
+  }
   const mark = change.after.physicalMark
+  if (!base.test(mark.productCode))
+    fail(
+      'Select an explicit current mark owner before resolving its physical mark.'
+    )
   const resolved = resolution(
     { ...decision, provenance: 'manual-confirmed', resolvedAt: null },
     { pending: true }
@@ -388,7 +518,6 @@ export function resolvePhysicalMarkChange(plan, { batchId, ...decision }) {
             null
         )
   result.after[batchId] = clone(change.after)
-  const review = result.reviews.find((value) => value.id === batchId)
   if (review) {
     review.physicalMark = clone(mark)
     review.physicalMarkCode = mark.code

@@ -39,6 +39,8 @@ Physical mark aliases and their keep-mark/relabel choices, reasons, attestations
 
 Original and last recorded mark text/category snapshots remain distinct from current-product text. A guarded logical keep-mark history restoration reuses existing server confirmation provenance only when the actual recorded code and known artwork still match. Relabel attestations are never replayed from a backup or Undo snapshot; missing evidence stays for review.
 
+Recorded artwork may retain exact source-entry IDs for original photo/source association even after an independent zero-piece mark owner is retired. Choosing a new current mark owner stays within the same purchase and changes no physical contents or source snapshots. The alias remains reserved while its current contained/related goods remain; canceling only the old mark product does not release it.
+
 Container reservations, effective revisions and immutable historical manifests restore together with their source/report dependencies and original photos. Restore cannot make a shipped physical entitlement available again or silently replace a newer shipment decision. Conflicting effective state rejects with a reviewable error before any write. Earlier manifests and Se quedó remain reproducible after later shipments and amendments.
 
 Old loaded-count annotations do not become verified sealed containers during upgrade. Uncertain legacy loading and cross-order cartons remain visible for review, with their original measurements preserved and their affected stock held from confident availability. A reviewed correction retains the original evidence. New operational cartons always belong to one source purchase.

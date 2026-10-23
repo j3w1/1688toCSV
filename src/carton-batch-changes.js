@@ -1,5 +1,9 @@
 import { groupPackingMonth } from './packing-model.js'
-import { cartonBatchIssues, cartonBatchMark } from './carton-batches.js'
+import {
+  cartonBatchIssues,
+  cartonBatchMark,
+  cartonBatchMarkOwnerChoices,
+} from './carton-batches.js'
 import { repeatProductStoreIdentity } from './repeat-products.js'
 import {
   transitionPhysicalMark,
@@ -258,6 +262,12 @@ export function planCartonBatchChanges({
               afterPreparations
             ).currentProductArtwork,
             resolutionChoices: [...PHYSICAL_MARK_CHOICES],
+            physicalMarkOwnerChoices: cartonBatchMarkOwnerChoices(
+              proposed,
+              records,
+              afterPreparations,
+              batches
+            ),
           }
         : {}),
     })
