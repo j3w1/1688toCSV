@@ -1,5 +1,10 @@
 import { test, expect } from './extension-fixture.mjs'
 import { repeatSubsetFixture } from '../fixtures/repeat-subset-fixture.mjs'
+import {
+  createSmartContainer,
+  openContainerOutput,
+  libraryBackup,
+} from './smart-workspace-helpers.mjs'
 
 const productRow = (page, orderId, entryId = '1') =>
   page.locator(
@@ -91,44 +96,74 @@ test('a carton marked by one linked purchase prints once when all selected conte
   extension,
 }) => {
   const storagePage = await setup(extension)
-  const backup = await storagePage.evaluate(async () => {
+  const fixture = await storagePage.evaluate(async () => {
     const plan = await repeatLibrary.previewRepeatProductLink({
       source: repeatRef(1),
       target: repeatRef(0),
     })
     await repeatLibrary.linkRepeatProduct(plan)
-    await repeatLibrary.saveCartonBatch(
-      {
-        id: 'synthetic-zero-piece-mark-owner',
-        accountId: 'local',
-        month: '2026-10',
-        storeId: '["1688","synthetic-repeat-supplier"]',
-        mark: { orderId: repeatRef(0).orderId, groupId: repeatRef(0).groupId },
-        groups: [
-          { orderId: repeatRef(1).orderId, groupId: repeatRef(1).groupId },
-        ],
-        contents: [
-          { orderId: repeatRef(1).orderId, entryId: '1', quantity: '27' },
-        ],
-        cartonNumber: '1',
-        count: 1,
-        len: '40',
-        wid: '30',
-        ht: '25',
-        weightBasis: 'carton',
-        weight: '9.5',
-        received: 1,
-        loaded: 0,
-      },
-      { expectedRevision: 0 }
-    )
-    return repeatLibrary.exportBackup()
+    // This historical zero-piece mark owner spans two linked purchases. Current
+    // writes must refuse it; backup compatibility retains the old evidence.
+    const legacyBatch = {
+      id: 'synthetic-zero-piece-mark-owner',
+      accountId: 'local',
+      month: '2026-10',
+      storeId: '["1688","synthetic-repeat-supplier"]',
+      mark: { orderId: repeatRef(0).orderId, groupId: repeatRef(0).groupId },
+      groups: [
+        { orderId: repeatRef(1).orderId, groupId: repeatRef(1).groupId },
+      ],
+      contents: [
+        { orderId: repeatRef(1).orderId, entryId: '1', quantity: '27' },
+      ],
+      cartonNumber: '1',
+      count: 1,
+      len: '40',
+      wid: '30',
+      ht: '25',
+      weightBasis: 'carton',
+      weight: '9.5',
+      received: 1,
+      loaded: 0,
+      revision: 1,
+      updatedAt: '2026-10-01T00:00:00.000Z',
+    }
+    const before = await repeatLibrary.exportBackup()
+    let refusal
+    try {
+      await repeatLibrary.saveCartonBatch(legacyBatch, { expectedRevision: 0 })
+    } catch (error) {
+      refusal = { code: error.code, message: error.message }
+    }
+    const after = await repeatLibrary.exportBackup()
+    return {
+      before,
+      after,
+      refusal,
+      backup: { ...after, cartonBatches: [legacyBatch] },
+    }
   })
+  expect(fixture.refusal).toEqual({
+    code: 'CARTON_OWNERSHIP',
+    message: 'A carton can contain products from only one purchase order.',
+  })
+  const { exportedAt: beforeTime, ...before } = fixture.before,
+    { exportedAt: afterTime, ...after } = fixture.after
+  expect(after).toEqual(before)
+  const backup = fixture.backup
   const restored = await extension.inspector.evaluate(
     (backup) => chrome.runtime.sendMessage({ type: 'BACKUP_RESTORE', backup }),
     backup
   )
   expect(restored.ok, restored.error).toBe(true)
+  const restoredEvidence = await libraryBackup(extension)
+  expect(restoredEvidence.orders.map((record) => record.snapshot)).toEqual(
+    sources()
+  )
+  expect(restoredEvidence.cartonBatches).toHaveLength(1)
+  expect(restoredEvidence.cartonBatches[0]).toMatchObject(
+    backup.cartonBatches[0]
+  )
   const page = await extension.context.newPage()
   await page.clock.setFixedTime(new Date('2026-10-15T04:00:00Z'))
   await page.goto(`${extension.extensionBaseUrl}/library.html`)
@@ -238,8 +273,41 @@ test('repeat-product dialog previews both purchases, cancellation writes nothing
   await expect(labels.getByLabel(/^Quantity for /)).toHaveCount(1)
   await expect(labels.getByLabel(/^Quantity for /)).toHaveValue('30')
   await labels.getByRole('button', { name: 'Cancel', exact: true }).click()
-  await page.locator('#orders-print-actions .copy-actions-trigger').click()
-  await page.locator('#print-carton-marks').click()
+  const sourceBeforeCartons = await libraryBackup(extension)
+  const refs = sources().map(({ accountId, orderId }) => ({
+    accountId,
+    orderId,
+  }))
+  await extension.inspector.evaluate(async (refs) => {
+    const repository = await window.testRepository
+    for (const ref of refs) {
+      const context = await repository.getOrderReconciliation(ref)
+      await repository.confirmOrderCartons({
+        ...ref,
+        draft: window.testPlanner.createReconciliationDraft(context),
+        expectedRevisions: context.revisions,
+        intentId: crypto.randomUUID(),
+      })
+    }
+  }, refs)
+  const containerId = await createSmartContainer(extension, refs)
+  await extension.inspector.evaluate(
+    async ({ id, refs }) => {
+      const repository = await window.testRepository,
+        view = await repository.getContainerView({ id })
+      await repository.markContainerLoaded({
+        id,
+        orderRefs: refs,
+        expectedRevision: view.container.revision,
+        intentId: crypto.randomUUID(),
+      })
+    },
+    { id: containerId, refs }
+  )
+  const output = await openContainerOutput(page, containerId)
+  await output.locator('[data-action="select-all-rows"]').click()
+  await output.locator('[data-action="open-print-menu"]').click()
+  await output.locator('[data-action="print-carton-marks"]').click()
   const marks = page.getByRole('dialog', {
     name: 'Print carton marks',
     exact: true,
@@ -248,6 +316,9 @@ test('repeat-product dialog previews both purchases, cancellation writes nothing
   await expect(marks.getByLabel(/^Quantity for /)).toHaveValue('10')
   await expect(marks.locator('.print-known')).toContainText('10')
   await marks.getByRole('button', { name: 'Cancel', exact: true }).click()
+  expect((await libraryBackup(extension)).orders).toEqual(
+    sourceBeforeCartons.orders
+  )
 })
 
 test('reviewed repeated purchases save atomically with one shared owner and separate source finances, then restore a clipped identity', async ({
