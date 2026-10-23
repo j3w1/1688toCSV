@@ -8,6 +8,8 @@ import { setCodeText } from './code-display.js'
 import { decorateIcon } from './icons.js'
 import { measurementWarningMessages } from './ui-messages-smart-cartons.js'
 import { physicalMarkReadback } from './physical-mark-aliases.js'
+import { makeOrderCartonPrintRef } from './print-store.js'
+import { showErrorNotice } from './error-notice.js'
 
 const clone = (value) => structuredClone(value)
 export const sourceKey = ({ accountId = 'local', orderId, entryId }) =>
@@ -197,6 +199,7 @@ export async function openPhysicalMarkReview({
   contextContainerId,
   loadImage,
   onSaved = async () => {},
+  onPrintMark,
 }) {
   const ref = {
       accountId: orderRef.accountId || 'local',
@@ -249,6 +252,44 @@ export async function openPhysicalMarkReview({
     busy = false,
     saved,
     operation
+  const printButtons = []
+  if (onPrintMark) {
+    const printing = el('div', undefined, 'physical-mark-print-actions')
+    for (const [role, title] of [
+      ['recorded', 'Print recorded mark'],
+      ['current-product', 'Print current product mark'],
+    ]) {
+      const button = el('button', m(title))
+      button.type = 'button'
+      button.dataset.action = 'print-order-carton-mark'
+      button.dataset.markRole = role
+      button.onclick = () =>
+        void (async () => {
+          printButtons.forEach((button) => {
+            button.disabled = true
+          })
+          try {
+            const index = physicalUnits(batch)[0]?.index,
+              ref = await makeOrderCartonPrintRef(context, {
+                batchId,
+                role,
+                index,
+              })
+            await onPrintMark(ref)
+          } catch (error) {
+            bindText(status, m(error.message))
+            if (error.noticeOptions) showErrorNotice(error, { scope: modal })
+          } finally {
+            printButtons.forEach((button) => {
+              button.disabled = busy
+            })
+          }
+        })()
+      printButtons.push(button)
+      printing.append(button)
+    }
+    modal.append(printing)
+  }
   const stop = mountPhysicalMarkChoices({
     host,
     apply: save,
@@ -282,6 +323,9 @@ export async function openPhysicalMarkReview({
     for (const field of host.querySelectorAll('input,textarea'))
       field.disabled = value || Boolean(saved) || unavailable.has(field)
     retry.disabled = value
+    printButtons.forEach((button) => {
+      button.disabled = value
+    })
   }
   const finish = async () => {
     await onSaved(saved)
@@ -516,6 +560,8 @@ export async function mountCartonHistory(
     isCurrent = () => true,
     contextContainerId,
     onAmend = () => {},
+    onPrintMark,
+    loadImage,
   }
 ) {
   let destroyed = false
@@ -606,6 +652,8 @@ export async function mountCartonHistory(
                 orderRef: row.refs[0],
                 batchId: row.batch.id,
                 contextContainerId,
+                onPrintMark,
+                loadImage,
                 onSaved: async () => {
                   await refresh()
                   modal.close('saved')
@@ -1479,6 +1527,7 @@ export async function createOrderCartonSession({
   planner,
   onError = () => {},
   getContextContainerId = () => undefined,
+  onPrintMark,
   applyUnitException = async (input) =>
     (await import('./carton-batches.js')).applyCartonUnitException(input),
 }) {
@@ -2196,6 +2245,7 @@ export async function createOrderCartonSession({
         orderRef,
         batchId,
         contextContainerId: getContextContainerId(),
+        onPrintMark,
         ...options,
         onSaved: () => session.refresh(),
       })

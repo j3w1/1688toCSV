@@ -1,6 +1,27 @@
 // UI text only. Supplier/source strings never pass through this catalog.
 export const SMART_CARTON_MESSAGES = Object.fromEntries(
   [
+    ['Print recorded mark', 'Imprimir marca registrada', '打印已记录箱唛'],
+    [
+      'Print current product mark',
+      'Imprimir marca del producto actual',
+      '打印当前商品箱唛',
+    ],
+    [
+      'Proposed amendment artwork — printing does not confirm physical relabeling.',
+      'Diseño propuesto de la enmienda: imprimir no confirma el cambio físico de etiqueta.',
+      '修订中的拟用图稿：打印不代表已实际更换箱唛。',
+    ],
+    [
+      'Review the recorded carton mark evidence in Orders before printing.',
+      'Revisa la evidencia de la marca registrada en Pedidos antes de imprimir.',
+      '打印前请在订单中核对已记录的箱唛证据。',
+    ],
+    [
+      'The captured carton mark changed. Review the current order before printing again.',
+      'La marca de caja capturada cambió. Revisa el pedido actual antes de volver a imprimir.',
+      '已捕获的箱唛已发生变化。再次打印前，请核对当前订单。',
+    ],
     [
       'Relabeling must be confirmed on unsealed cartons. In an amendment, keep the recorded mark (shown beside the code) or finish the amendment first.',
       'El reetiquetado debe confirmarse en cajas sin sellar. En una enmienda, conserva la marca registrada (junto al código) o termina primero la enmienda.',

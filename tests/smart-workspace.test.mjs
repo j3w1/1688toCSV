@@ -111,6 +111,111 @@ test('physical mark choices require each explicit decision, reason and fresh rel
   assert.equal(host.querySelector('.physical-mark-choices'), null)
 })
 
+test('physical mark output uses recorded artwork after its group is gone, counts actual entitlements and rejects stale typed regeneration', async () => {
+  const { record, preparation } = syntheticManifest().orders[0],
+    group = preparation.groups[0],
+    artwork = {
+      code: 'CE26090102',
+      baseCode: 'CE26090102',
+      title: 'Original carton',
+      spanishName: 'CAJA ORIGINAL',
+      category: '旧杯',
+      chineseCategory: '旧杯',
+      orderId: '1001',
+      groupId: 'retired-owner',
+      provenance: 'recorded-owner-text',
+    },
+    batch = syntheticBatch('1001', 2, '100', {
+      groups: [{ orderId: '1001', groupId: group.id }],
+      mark: { orderId: '1001', groupId: group.id },
+      physicalMark: {
+        code: 'CE26090102',
+        originalCode: 'CE26090102',
+        originalMark: { orderId: '1001', groupId: 'retired-owner' },
+        productCode: group.baseCode,
+        aliases: [
+          {
+            code: 'CE26090102',
+            month: '2026-09',
+            sellerId: 'synthetic-factory',
+          },
+        ],
+        relatedEntryIds: ['2001'],
+        resolution: {
+          choice: 'keep-recorded-mark',
+          reason: 'Retain actual original label',
+          physicalRelabelConfirmed: false,
+          provenance: 'manual-confirmed',
+          resolvedAt: '2026-10-22T00:00:00.000Z',
+        },
+        originalArtwork: artwork,
+        artwork,
+        history: [],
+      },
+    }),
+    context = {
+      record,
+      preparation,
+      batches: [batch],
+      reports: [],
+      revisions: {
+        source: 'captured-source',
+        observedAt: record.snapshot.observedAt,
+        preparation: preparation.revision,
+        cartons: { [batch.id]: batch.revision },
+        reports: {},
+      },
+    },
+    original = structuredClone({ record, preparation }),
+    output = createProductOutput({
+      repository: {
+        getOrderReconciliation: async () => structuredClone(context),
+        getPackingPreferences: async () => validatePackingPreferences({}),
+      },
+      authoring: { flush: async () => {} },
+    }),
+    ref = { accountId: 'local', orderId: '1001', batchId: batch.id }
+  const recorded = await output.orderCartonContext({
+      ...ref,
+      role: 'recorded',
+    }),
+    oldModel = outputLabelModels(recorded, 'mark')[0]
+  assert.equal(oldModel.code, 'CE26090102')
+  assert.equal(oldModel.model.category, '旧杯')
+  assert.equal(oldModel.name, 'CAJA ORIGINAL')
+  assert.equal(oldModel.quantity, '2')
+  assert.equal(oldModel.known, 2)
+  assert.deepEqual(
+    oldModel.refs.map((ref) => ref.index),
+    [0, 1]
+  )
+  assert.ok(
+    oldModel.refs.every(
+      (ref) =>
+        ref.scope === 'order-carton-mark' &&
+        ref.markRole === 'recorded' &&
+        ref.groupId === undefined &&
+        /^[a-f0-9]{64}$/.test(ref.sourceGuard)
+    )
+  )
+  const current = await output.orderCartonContext({
+      ...ref,
+      role: 'current-product',
+    }),
+    newModel = outputLabelModels(current, 'mark')[0]
+  assert.equal(newModel.code, group.baseCode)
+  assert.equal(newModel.model.category, group.category)
+  assert.equal(batch.physicalMark.code, 'CE26090102')
+  assert.deepEqual({ record, preparation }, original)
+  batch.revision++
+  context.revisions.cartons[batch.id] = batch.revision
+  await assert.rejects(
+    output.orderCartonContext(oldModel.refs[0]),
+    /captured carton mark changed/
+  )
+  assert.deepEqual({ record, preparation }, original)
+})
+
 test('saved physical mark resolution uses the complete captured token and keeps committed refresh retries read-only', async (context) => {
   const { document, window } = dom(context),
     source = syntheticOrder('1001'),

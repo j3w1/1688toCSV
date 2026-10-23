@@ -248,6 +248,8 @@ export async function startPackingWorkspace({
     cartonHistory?.destroy()
     const next = await mountCartonHistory(host, {
       repository,
+      loadImage,
+      onPrintMark: (ref) => output.printOrderCartonMark(ref),
       contextContainerId: containers.controller.view()?.container.amendment
         ? returnTo?.containerId
         : undefined,
@@ -293,6 +295,7 @@ export async function startPackingWorkspace({
           planner: await modulesForOrders(),
           onError: failure,
           getContextContainerId: () => amendmentId,
+          onPrintMark: (ref) => output.printOrderCartonMark(ref),
         })
         sessions.set(key, session)
       } else await session.refresh()

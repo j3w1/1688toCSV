@@ -20,12 +20,20 @@ import {
   preparationTable,
   preparationFeatureFields,
   writeTable,
+  preparationOrderFields,
 } from './preparation-clipboard.js'
 import { createPreparationColumnPicker } from './preparation-column-picker.js'
 import { createSizeClassifier } from './size-vocabulary.js'
 import { popupLanguageToggle } from './popup-language-toggle.js'
 import { openPrintDialog, openRecentPrintJobs } from './print-dialog.js'
-import { restoreJob, assertContainerPrintRef } from './print-store.js'
+import {
+  restoreJob,
+  assertContainerPrintRef,
+  makeOrderCartonPrintRef,
+  assertOrderCartonPrintRef,
+} from './print-store.js'
+import { physicalUnits } from './inventory-model.js'
+import { physicalMarkReadback } from './physical-mark-aliases.js'
 import { copyExcelImage } from './excel-image-copy.js'
 import { createExcelImageBadges } from './excel-image-badges.js'
 import { resolveOperations } from './operations-workflow.js'
@@ -122,23 +130,33 @@ export function outputLabelModels(context, kind = 'barcode') {
         ? { source: 'other', reference: row.reference ?? row.orderReference }
         : {}),
     }
-    const ref = {
-      accountId: source.accountId,
-      orderId: row.orderId,
-      groupId: row.groupId || row.group?.id,
-      variantId: row.variantId || row.variant?.id,
-      entryIds: row.entryId ? [row.entryId] : [],
-      ...(row.cartonId ? { cartonId: row.cartonId } : {}),
-      ...(context.kind === 'container-revision'
-        ? {
-            containerId: context.containerId,
-            revisionId: context.revisionId,
-            ...(context.draft
-              ? { draft: true, draftRevision: context.revision }
+    if (
+      context.kind === 'order-carton-mark' &&
+      row.printRef?.scope !== 'order-carton-mark'
+    )
+      throw new Error(
+        'The captured carton mark changed. Review the current order before printing again.'
+      )
+    const ref =
+      context.kind === 'order-carton-mark'
+        ? structuredClone(row.printRef)
+        : {
+            accountId: source.accountId,
+            orderId: row.orderId,
+            groupId: row.groupId || row.group?.id,
+            variantId: row.variantId || row.variant?.id,
+            entryIds: row.entryId ? [row.entryId] : [],
+            ...(row.cartonId ? { cartonId: row.cartonId } : {}),
+            ...(context.kind === 'container-revision'
+              ? {
+                  containerId: context.containerId,
+                  revisionId: context.revisionId,
+                  ...(context.draft
+                    ? { draft: true, draftRevision: context.revision }
+                    : {}),
+                }
               : {}),
           }
-        : {}),
-    }
     if (existing) {
       if (quantity == null || existing.quantity === '') existing.quantity = ''
       else
@@ -179,6 +197,27 @@ export function outputLabelModels(context, kind = 'barcode') {
       refs: [ref],
       orders: [source],
     })
+  }
+  if (kind === 'mark' && context.kind === 'order-carton-mark') {
+    for (const item of models.values()) {
+      const units = new Map(
+        item.refs.map((ref) => [JSON.stringify([ref.batchId, ref.index]), ref])
+      )
+      item.quantity = String(units.size)
+      item.known = units.size
+      item.cartonPacking = {
+        exact: true,
+        total: units.size,
+        requiresReview: false,
+        rows: [...units.values()].map((ref) => ({
+          batchId: ref.batchId,
+          index: ref.index,
+          explicit: true,
+          fullCartons: 1,
+          status: 'exact',
+        })),
+      }
+    }
   }
   if (kind === 'mark' && context.kind === 'container-revision') {
     // A physical mark is counted once even when several product rows participate.
@@ -307,6 +346,31 @@ export function createProductOutput({
     context.labelPreferences?.logoDataUrl ||
     new URL('assets/casa-elida.png', location.href).href
   function annotateDialog(context, dialog) {
+    if (context.kind === 'order-carton-mark' && dialog) {
+      const note = el('div', undefined, 'container-output-context')
+      note.append(
+        el(
+          'p',
+          m(
+            context.markRole === 'recorded'
+              ? 'Recorded physical mark'
+              : 'Current product code'
+          )
+        ),
+        el('p', `${m('Carton reference')}: ${context.batchId}`)
+      )
+      if (context.amendmentContext && context.markRole === 'current-product')
+        note.append(
+          el(
+            'p',
+            m(
+              'Proposed amendment artwork — printing does not confirm physical relabeling.'
+            )
+          )
+        )
+      dialog.querySelector('h2')?.after(note)
+      return
+    }
     if (context.kind !== 'container-revision' || !dialog) return
     const note = el('div', undefined, 'container-output-context')
     const identity = el('p')
@@ -368,6 +432,103 @@ export function createProductOutput({
         'The container changed before output was captured. Review the current revision and try again.'
       )
     return captured
+  }
+  async function orderCartonContext(ref) {
+    await authoring.flush()
+    const source = {
+        accountId: ref.accountId || 'local',
+        orderId: ref.orderId,
+        ...(ref.contextContainerId
+          ? { contextContainerId: ref.contextContainerId }
+          : {}),
+      },
+      context = await repository.getOrderReconciliation(source),
+      batch = context.batches.find((batch) => batch.id === ref.batchId),
+      role = ref.markRole || ref.role || 'recorded'
+    if (ref.scope === 'order-carton-mark')
+      await assertOrderCartonPrintRef(ref, context)
+    if (!batch || batch.deletedAt)
+      throw new Error('This edit session is no longer available.')
+    const readback = physicalMarkReadback(
+        batch,
+        context.preparation ? [context.preparation] : []
+      ),
+      owner = context.preparation?.groups.find(
+        (group) => group.id === (batch.mark || batch.groups?.[0])?.groupId
+      ),
+      currentArtwork =
+        readback.currentProductArtwork ||
+        (owner && {
+          title: owner.title,
+          spanishName: owner.spanishName,
+          category: owner.category,
+          groupId: owner.id,
+        }),
+      artwork =
+        role === 'recorded' && batch.physicalMark
+          ? readback.recordedArtwork || batch.physicalMark.artwork
+          : currentArtwork,
+      units = physicalUnits(batch)
+    if (!artwork || !units.length)
+      throw new Error(
+        'Review the recorded carton mark evidence in Orders before printing.'
+      )
+    const item = context.record.snapshot.items.find((item) =>
+        batch.contents.some((part) => part.entryId === item.entryId)
+      ),
+      row = {
+        ...item,
+        ...source,
+        record: context.record,
+        sellerName: context.record.snapshot.sellerName,
+        ...preparationOrderFields({ ...item, ...source }, context.record),
+      },
+      products = []
+    for (const unit of units) {
+      const printRef = await makeOrderCartonPrintRef(context, {
+        batchId: batch.id,
+        role,
+        index: unit.index,
+      })
+      products.push({
+        ...row,
+        groupId: artwork.groupId || owner?.id,
+        baseCode: printRef.currentProductCode,
+        markCode: printRef.code,
+        spanishName: artwork.spanishName || '',
+        chineseCategory: artwork.chineseCategory || artwork.category || '',
+        cartonId: unit.id,
+        printRef,
+      })
+    }
+    const result = freeze(
+      structuredClone({
+        kind: 'order-carton-mark',
+        ...source,
+        batchId: batch.id,
+        batchRevision: batch.revision,
+        markRole: role,
+        amendmentContext:
+          context.amendmentContext || context.revisions?.amendmentContext,
+        preferences: await repository.getPackingPreferences(),
+        products,
+        cartons: units,
+      })
+    )
+    await validateOrderCartonSource(result)
+    return result
+  }
+  async function validateOrderCartonSource(context) {
+    if (context.kind !== 'order-carton-mark') return
+    const fresh = await repository.getOrderReconciliation({
+      accountId: context.accountId,
+      orderId: context.orderId,
+      ...(context.contextContainerId
+        ? { contextContainerId: context.contextContainerId }
+        : {}),
+    })
+    for (const row of context.products)
+      await assertOrderCartonPrintRef(row.printRef, fresh)
   }
   async function copyLabels(kind, source) {
     const context = Array.isArray(source)
@@ -434,6 +595,8 @@ export function createProductOutput({
     const context = Array.isArray(source)
       ? await ordersContext(source, { labels: true })
       : source
+    if (context.kind === 'order-carton-mark')
+      await validateOrderCartonSource(context)
     const printContext =
       context.kind === 'container-revision' && workbookAdapter?.printRows
         ? { ...context, products: workbookAdapter.printRows(context, { kind }) }
@@ -457,12 +620,17 @@ export function createProductOutput({
       })
     }
     if (!items.length) throw new Error('No active labels to copy.')
+    if (context.kind === 'order-carton-mark')
+      await validateOrderCartonSource(context)
     const dialog = openPrintDialog({
       kind: kind === 'mark' ? 'marks' : 'labels',
       items,
       problems: [],
       settings: settings(context),
       logoUrl: logo(context),
+      ...(context.kind === 'order-carton-mark'
+        ? { validateSource: () => validateOrderCartonSource(context) }
+        : {}),
     })
     annotateDialog(context, dialog)
     return dialog
@@ -699,6 +867,10 @@ export function createProductOutput({
   return {
     ordersContext,
     containerContext,
+    orderCartonContext,
+    async printOrderCartonMark(ref) {
+      return printLabels('mark', await orderCartonContext(ref))
+    },
     copyLabels,
     printLabels,
     copyPreparation,
@@ -711,12 +883,27 @@ export function createProductOutput({
             job.products?.flatMap(
               (row) => row.refs || (row.ref ? [row.ref] : [])
             ) || []
-          const containerRef = refs.find((ref) => ref?.containerId)
-          const context = containerRef
-            ? await containerContext(containerRef)
-            : await ordersContext(authoring.rowsForRefs(refs))
+          const physicalRef = refs.find(
+              (ref) => ref?.scope === 'order-carton-mark'
+            ),
+            containerRef = refs.find((ref) => ref?.containerId)
+          const context = physicalRef
+            ? await orderCartonContext(physicalRef)
+            : containerRef
+              ? await containerContext(containerRef)
+              : await ordersContext(authoring.rowsForRefs(refs))
           if (containerRef)
             for (const ref of refs) assertContainerPrintRef(ref, context)
+          if (physicalRef) {
+            const fresh = await repository.getOrderReconciliation({
+              accountId: physicalRef.accountId,
+              orderId: physicalRef.orderId,
+              ...(physicalRef.contextContainerId
+                ? { contextContainerId: physicalRef.contextContainerId }
+                : {}),
+            })
+            for (const ref of refs) await assertOrderCartonPrintRef(ref, fresh)
+          }
           const kind = job.kind === 'marks' ? 'mark' : 'barcode'
           const projected =
             context.kind === 'container-revision' && workbookAdapter?.printRows
@@ -736,6 +923,9 @@ export function createProductOutput({
             problems: [],
             settings: settings(context),
             logoUrl: logo(context),
+            ...(physicalRef
+              ? { validateSource: () => validateOrderCartonSource(context) }
+              : {}),
             job: {
               ...job,
               missing: restored.missing,
