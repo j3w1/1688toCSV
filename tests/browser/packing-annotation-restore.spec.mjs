@@ -82,6 +82,105 @@ async function openSource(extension) {
   return page
 }
 
+for (const authoredSettings of [false, true]) {
+  test(`later packing restores merge new assigned tag definitions while preserving ${authoredSettings ? 'authored' : 'scoped-initialized'} settings`, async ({
+    extension,
+  }) => {
+    const page = await openSource(extension)
+    const result = await page.evaluate(async (authoredSettings) => {
+      const { createPreparation } = await import('/src/packing-model.js')
+      const { createPackingBackup } = await import('/src/packing-backup.js')
+      const source = {
+        ...full.orders[0].snapshot,
+        orderId: '1002',
+        sourceUrl: full.orders[0].snapshot.sourceUrl.replace('1001', '1002'),
+        purchasedAt: '2026-11-01T12:00:00+08:00',
+        observedAt: '2026-11-01T12:00:00.000Z',
+      }
+      const second = await openOrderDatabase({ name: `${databaseName}-second` })
+      await second.saveSnapshot(source)
+      await second.savePreparation(createPreparation(source, '2026-11'))
+      await second.setNotes('1002', {
+        notes: '',
+        tags: ['Priority', 'Second order'],
+      })
+      await second.setProductTags('1002', '2', ['Fragile', 'Second product'])
+      const incomingPreferences = await second.getPackingPreferences()
+      for (const field of ['orderTags', 'productTags']) {
+        for (const tag of incomingPreferences[field]) {
+          tag.colors = { light: '#abcdef', dark: '#123456' }
+          tag.textColors = { light: '#112233', dark: '#ddeeff' }
+        }
+      }
+      incomingPreferences.settings.website = 'incoming.example'
+      await second.savePackingPreferences(incomingPreferences)
+      const incoming = createPackingBackup(await second.exportBackup(), {
+        months: ['2026-11'],
+        orders: [{ orderId: '1002', entryIds: ['2'] }],
+      })
+      second.close()
+      // Valid archives may include unused definitions. Import only those whose
+      // assignments survive the restore, rather than unrelated Settings entries.
+      for (const field of ['orderTags', 'productTags'])
+        incoming.packingPreferences.value[field].push({
+          name: 'Unused incoming',
+          colors: { light: '#abcdef' },
+        })
+
+      const targetName = `${databaseName}-composed-${authoredSettings}`
+      const target = await openOrderDatabase({ name: targetName })
+      await target.restoreBackup(scoped)
+      if (authoredSettings) {
+        const preferences = await target.getPackingPreferences()
+        preferences.settings.website = 'local.example'
+        preferences.appearance.lightTheme = 'apricot'
+        await target.savePackingPreferences(preferences)
+      }
+      const before = await target.exportBackup()
+      await target.restoreBackup(incoming)
+      const restored = await target.exportBackup()
+      await target.restoreBackup(incoming)
+      await target.restoreBackup(scoped)
+      const repeated = await target.exportBackup()
+      target.close()
+      const reopened = await openOrderDatabase({ name: targetName })
+      const persisted = await reopened.exportBackup()
+      reopened.close()
+      return { before, incoming, restored, repeated, persisted }
+    }, authoredSettings)
+
+    const before = result.before.packingPreferences
+    const restored = result.restored.packingPreferences
+    expect(result.restored.orders).toHaveLength(2)
+    expect(
+      result.restored.orders.find(({ snapshot }) => snapshot.orderId === '1002')
+    ).toMatchObject({
+      tags: ['Priority', 'Second order'],
+      productTags: { 2: ['Fragile', 'Second product'] },
+    })
+    const expectedValue = { ...before.value }
+    for (const [field, name] of [
+      ['orderTags', 'Second order'],
+      ['productTags', 'Second product'],
+    ]) {
+      const incoming = result.incoming.packingPreferences.value[field].find(
+        (tag) => tag.name === name
+      )
+      expectedValue[field] = [...before.value[field], incoming]
+      expect(restored.value[field].find((tag) => tag.name === name)).toEqual(
+        incoming
+      )
+    }
+    // Includes existing same-named definitions, global settings, appearance,
+    // catalogs and the preference timestamp; only new assigned tags are added.
+    expect(restored).toEqual({ ...before, value: expectedValue })
+    expect(result.repeated.packingPreferences).toEqual(restored)
+    expect(result.persisted.packingPreferences).toEqual(restored)
+    expect(result.repeated.orders).toEqual(result.restored.orders)
+    expect(result.persisted.orders).toEqual(result.restored.orders)
+  })
+}
+
 test('fresh packing restore keeps assigned tag colors and completes same-time source annotations and preparation from a full backup', async ({
   extension,
 }) => {
