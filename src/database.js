@@ -1827,20 +1827,23 @@ export async function openDatabase({ name = '1688-order-library' } = {}) {
   async function syncTagCatalogs(
     tx,
     value,
-    { previousRecords = [], touch = false } = {}
+    { previousRecords = [], touch = false, restoredDefinitions = {} } = {}
   ) {
     const records = await requested(tx.objectStore('orders').getAll())
     const next = { ...value }
     for (const scope of ['order', 'product']) {
       const field = `${scope}Tags`
-      const catalog = reconcileTagCatalog(
-        value[field],
-        assignedTagNames(records, scope),
-        {
-          previousNames: assignedTagNames(previousRecords, scope),
-          scope,
-        }
-      )
+      const assignedNames = assignedTagNames(records, scope)
+      const assigned = new Set(assignedNames)
+      const catalog = reconcileTagCatalog(value[field], assignedNames, {
+        // Scoped settings stay local, but newly restored assignments need
+        // their saved artwork. Existing definitions keep precedence.
+        previous: (restoredDefinitions[field] || []).filter(({ name }) =>
+          assigned.has(name)
+        ),
+        previousNames: assignedTagNames(previousRecords, scope),
+        scope,
+      })
       if (catalog.length || value[field] !== undefined) next[field] = catalog
     }
     if (JSON.stringify(next) !== JSON.stringify(value)) {
@@ -3962,7 +3965,12 @@ export async function openDatabase({ name = '1688-order-library' } = {}) {
           }
           const preferences = await syncTagCatalogs(
             tx,
-            await packingPreferencesFor(tx)
+            await packingPreferencesFor(tx),
+            {
+              restoredDefinitions: backup.packingScope
+                ? backup.packingPreferences?.value
+                : undefined,
+            }
           )
           // Packing carries exact prepared label values, not the global naming
           // catalog that originally suggested them. Preserve that saved artwork.

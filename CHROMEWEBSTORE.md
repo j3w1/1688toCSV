@@ -1,6 +1,6 @@
 # Chrome Web Store Listing — 1688toPL
 
-Last updated: 2026-10-23. **SEAL implementation, version 2.10.0; unpublished to the store.** This file is the store metadata source of truth, not authorization to submit or release. Current verification is tracked below; historical test counts do not establish acceptance of this candidate.
+Last updated: 2026-10-24. **SEAL implementation, version 2.10.0; unpublished to the store.** This file is the store metadata source of truth, not authorization to submit or release. Current verification is tracked below; historical test counts do not establish acceptance of this candidate.
 
 ## Store Listing
 
@@ -118,6 +118,12 @@ Visibility/regions are unselected. Repository rename, local implementation or Gi
 Earlier release and verification chronology remains in Git history. It is not current-candidate acceptance.
 
 ## Review Notes
+
+### Scoped tag restore correction — 2026-10-24
+
+Later packing restores preserve background and text colors for newly assigned order/product tags while retaining same-named local definitions and existing settings. Unassigned incoming definitions are excluded from the merge. Synthetic regressions cover both scoped-initialized and manually saved settings, repeated restores and database reopening.
+
+Checked locally on Windows with native Node.js 24: changed JavaScript syntax and documentation checks passed; all 1,435 unit tests and 20 targeted Chromium tests passed; the development build verified all 30 manifest resources. `npm run try` reported `no local trial target: nothing loaded` with loaded, staged and verified all false. Installed-extension/owner acceptance, full `npm run verify`, native Excel and physical printing were not run for this correction. These results do not establish installed-extension acceptance or store readiness.
 
 ### SEAL 2.10.0 local verification — 2026-10-23
 
